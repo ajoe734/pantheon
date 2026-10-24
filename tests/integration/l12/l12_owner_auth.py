@@ -262,38 +262,26 @@ def persona_create_identity() -> dict[str, Any]:
     }
 
 
-_CAPITAL_TOKEN_SNIPPET = (
-    "import sys;"
-    "from services.control_plane.bff.personas.service import _PersonaOwnerHttpTransport as T;"
-    "sys.stdout.write(T(tenant_id=sys.argv[1])._service_jwt('capital'))"
-)
+CAPITAL_BLOCKER = "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED"
 
 
-def fresh_capital_authorization(compose_command: Callable[..., list[str]], tenant_id: str) -> str:
-    """A genuine, just-issued Capital service ``Authorization`` value.
+def capital_authorization() -> str:
+    """Capital ``Authorization`` for hosted writes: the executing session's own token.
 
-    The configured operator-bff signs it with its own production transport (the token lives
-    ~120s, so it is requested per call and never held for a phase). It is captured privately:
-    never logged, written to evidence, or placed in an error message.
+    Nothing is minted or signed here; the token the workflow handed over is sent as received.
     """
-    import subprocess
-
-    result = subprocess.run(
-        compose_command("exec", "-T", "operator-bff", "python", "-c", _CAPITAL_TOKEN_SNIPPET, tenant_id),
-        capture_output=True, text=True, timeout=60, check=False,
-    )
-    token = result.stdout.strip()
-    if result.returncode != 0 or token.count(".") != 2:
-        raise RuntimeError(f"operator-bff did not issue a Capital service token (exit {result.returncode})")
-    return f"Bearer {token}"
+    return f"Bearer {hosted_token('OPERATOR')}"
 
 
-def capital_identity(authorization: str) -> tuple[str, str]:
-    """(actor_id, service) Capital will compare a mutation body against, read from the real token.
+def capital_identity(authorization: str, *, blocked_before: str = "capital_pool_creation") -> tuple[str, str]:
+    """(actor_id, service) named by the executing session's token, or a pause before any Capital write.
 
-    Capital trusts ``delegated_actor_id``/``operator_id``/``user_id`` and falls back to the
-    token subject; the calling service must be one of the token's service claims. The claims
-    are only decoded (never verified or minted) so the body can name the genuine principal.
+    Capital binds a mutation to the verified token: the caller service must be one of the
+    token's service claims and the body actor must equal ``delegated_actor_id``/``operator_id``/
+    ``user_id`` (else the token subject). The claims are only decoded, never verified or minted.
+    A human session token carries no service claim, and no existing governed principal path
+    (dev paper principals cover Governance only) lets Capital accept it, so the hosted run
+    stops with ``CAPITAL_BLOCKER`` instead of minting a service token (design doc section 3).
     """
 
     token = authorization.removeprefix("Bearer ").strip()
@@ -301,17 +289,21 @@ def capital_identity(authorization: str) -> tuple[str, str]:
         payload = token.split(".")[1]
         claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     except (IndexError, ValueError):
-        raise RuntimeError("hosted Capital token is not a decodable JWT; its actor cannot be named") from None
+        raise RuntimeError("hosted executor token is not a decodable JWT; its actor cannot be named") from None
     if not isinstance(claims, Mapping):
-        raise RuntimeError("hosted Capital token claims are not an object")
+        raise RuntimeError("hosted executor token claims are not an object")
 
     def first(keys: Sequence[str]) -> str:
         return next((str(claims[k]).strip() for k in keys if str(claims.get(k) or "").strip()), "")
 
     actor = first(("delegated_actor_id", "operator_id", "user_id", "sub"))
-    service = first(("service", "service_id", "serviceId", "client_id", "azp", "sub"))
+    service = first(("service", "service_id", "serviceId", "client_id", "azp"))
     if not actor or not service:
-        raise RuntimeError("hosted Capital token carries no actor or service claim")
+        raise HostedPause(
+            blocked_before,
+            f"{CAPITAL_BLOCKER}: the executing session token carries no Capital service claim and no "
+            "governed principal path authorizes Capital writes; no service token is minted",
+        )
     return actor, service
 
 

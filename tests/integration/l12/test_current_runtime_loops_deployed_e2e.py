@@ -52,7 +52,7 @@ from l12_owner_auth import (
     approve_registry_entry,
     bearer,
     capital_identity,
-    fresh_capital_authorization,
+    capital_authorization,
     hosted_chain_enabled,
     hosted_receipt_fields,
     hosted_token,
@@ -170,7 +170,7 @@ def _encode_jwt_hs256(payload: Mapping[str, Any], *, secret: str) -> str:
 
 def _capital_bearer(name: str) -> dict[str, str]:
     if hosted_chain_enabled():
-        # Capital tokens live ~120s: Settings refreshes a genuine one per request instead.
+        # Hosted Settings send the executing session's own token; nothing is minted.
         return {}
     token = os.getenv(name, "").strip()
     if token:
@@ -299,7 +299,7 @@ class Settings:
             object.__setattr__(
                 settings,
                 "capital_authorization",
-                lambda: fresh_capital_authorization(settings.compose_command, TENANT_ID),
+                capital_authorization,
             )
         return settings
 
@@ -1182,7 +1182,6 @@ class RuntimeChain:
         actor_id, service = capital_identity(self.settings.capital_auth()["Authorization"])
 
         def headers() -> dict[str, str]:
-            # A fresh genuine Capital token per request (~120s lifetime).
             return {"X-Tenant-Id": TENANT_ID, "X-Pantheon-Service": service, **self.settings.capital_auth()}
 
         labels = {"paper_only": True, "execution_context": "paper", "tenant_id": TENANT_ID, **chain.labels()}

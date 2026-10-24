@@ -558,16 +558,9 @@ class UrllibOwnerClient:
         capital_authorization = None
         if os.getenv("PANTHEON_L12_COMPOSE_PROJECT", "").strip():
             sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from l12_owner_auth import fresh_capital_authorization
+            from l12_owner_auth import capital_authorization as hosted_capital_authorization
 
-            def compose_command(*args: str) -> list[str]:
-                command = ["docker", "compose", "-p", _required_env("PANTHEON_L12_COMPOSE_PROJECT")]
-                for path in os.getenv("PANTHEON_L12_COMPOSE_FILES", "").split(os.pathsep):
-                    if path.strip():
-                        command.extend(("-f", path.strip()))
-                return [*command, *args]
-
-            capital_authorization = lambda: fresh_capital_authorization(compose_command, tenant)  # noqa: E731
+            capital_authorization = hosted_capital_authorization
         return cls(
             urls,
             _required_env("PANTHEON_L12_HOSTED_OWNER_TOKEN"),
