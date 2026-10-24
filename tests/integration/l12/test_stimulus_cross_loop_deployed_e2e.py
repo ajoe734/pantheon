@@ -456,6 +456,7 @@ class StimulusDrivenClosureGate:
 
 HOSTED_FLAG = "PANTHEON_L12_HOSTED_CHAIN"
 HOSTED_PHASES = ("A_research", "B_learning", "C_promote", "D_observe", "E_close")
+HOSTED_IDS_PATH_ENV = "PANTHEON_L12_HOSTED_CHAIN_IDS_PATH"
 HOSTED_PHASE_SUITE = {
     "A_research": "research",
     "B_learning": "human",
@@ -677,12 +678,9 @@ class OwnerRecordSpec:
     retired_states: tuple[str, ...] = ()
 
 
-# Retirement order matters: binding before pool, runtime/plan before artifact.
+# Retirement order matters: dependants retire before their authority -- the runtime binding,
+# then the Capital binding, then the pool; runtime/plan before artifact.
 RECORD_SPECS: dict[str, OwnerRecordSpec] = {
-    "capital_binding_id": OwnerRecordSpec(
-        "capital", "/api/bindings/{id}", "PATCH", "/api/bindings/{id}/status",
-        _capital_status_body("revoked", ("persona.admin", "operator")), ("revoked",),
-    ),
     "runtime_binding_id": OwnerRecordSpec(
         "runtime", "/api/runtime-bindings/{id}", "POST", "/api/runtime-bindings/{id}/retire",
         lambda *_a: {},  # runtime retire reads only an optional retired_at
@@ -690,7 +688,13 @@ RECORD_SPECS: dict[str, OwnerRecordSpec] = {
     ),
     "plan_id": OwnerRecordSpec(
         "deployment", "/api/deployment/plans/{id}", "POST", "/api/deployment/plans/{id}/status",
-        lambda *_a: {"status": "aborted"}, ("aborted",),
+        lambda *_a: {"status": "aborted"},
+        # failed/rejected plans have no transition left: nothing to retire
+        ("aborted", "failed", "rejected"),
+    ),
+    "capital_binding_id": OwnerRecordSpec(
+        "capital", "/api/bindings/{id}", "PATCH", "/api/bindings/{id}/status",
+        _capital_status_body("revoked", ("persona.admin", "operator")), ("revoked",),
     ),
     "capital_pool_id": OwnerRecordSpec(
         "capital", "/api/capital-pools/{id}", "PATCH", "/api/capital-pools/{id}/status",
@@ -1150,6 +1154,8 @@ class HostedChainRunner:
     # -- phase ordering ---------------------------------------------------
     def _check_order(self) -> None:
         index = HOSTED_PHASES.index(self.phase)
+        if self.phase == "E_close":
+            return  # retirement is also the governed exit when the chain stopped early
         if index and self.phases.get(HOSTED_PHASES[index - 1], {}).get("phase_status") != "completed":
             raise StimulusProofError(
                 f"phase {self.phase} requires completed predecessor phase {HOSTED_PHASES[index - 1]}"
@@ -1250,16 +1256,23 @@ class HostedChainRunner:
                 ),
                 encoding="utf-8",
             )
-            self.gate._run_domain_suite(
-                domain,
-                root / f"{domain}-report.json",
-                extra_env={
-                    HOSTED_FLAG: "1",
-                    "PANTHEON_L12_HOSTED_CHAIN_PHASE": self.phase,
-                    "PANTHEON_L12_HOSTED_CHAIN_INPUT": str(input_path),
-                },
-                accepted_statuses=("passed", "paused"),
-            )
+            ids_path = root / "created-resource-ids.json"
+            try:
+                self.gate._run_domain_suite(
+                    domain,
+                    root / f"{domain}-report.json",
+                    extra_env={
+                        HOSTED_FLAG: "1",
+                        "PANTHEON_L12_HOSTED_CHAIN_PHASE": self.phase,
+                        "PANTHEON_L12_HOSTED_CHAIN_INPUT": str(input_path),
+                        HOSTED_IDS_PATH_ENV: str(ids_path),
+                    },
+                    accepted_statuses=("passed", "paused"),
+                )
+            finally:
+                # The child flushes every id it creates; keep them even if it crashed or the
+                # report is unusable, so E_close can still retire what the phase created.
+                self._merge_created_ids(ids_path)
         report = self.gate._reports[domain]
         if report.get("chain_id") != self.chain_id or report.get("phase") != self.phase:
             raise StimulusProofError(f"{domain} receipt does not echo chain id and phase")
@@ -1296,6 +1309,19 @@ class HostedChainRunner:
             partial_cases=partial,
             report_sha256=self.gate.evidence.domain_suites[domain]["report_sha256"],
         )
+
+    def _merge_created_ids(self, ids_path: Path) -> None:
+        try:
+            created = json.loads(ids_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(created, Mapping):
+            return
+        for key, value in created.items():
+            try:
+                self.resource_ids[str(key)] = _typed_id(str(key), value)
+            except StimulusProofError:
+                continue  # an unusable id is never retired; the report path still rejects it loudly
 
     # -- E_close ----------------------------------------------------------
     def _close(self) -> dict[str, Any]:
