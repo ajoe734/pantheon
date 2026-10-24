@@ -452,6 +452,8 @@ def _fake_docker(runner, tmp_path, *, head="a" * 40, dirty="", capital="cap-toke
                 "AGORA_HANDOFF_SERVICE_TOKEN": "agora-secret-1234",
                 "POLICY_LEARNING_SERVICE_TOKEN": "policy-secret-1234",
                 "CONSULTATION_SERVICE_TOKEN": "consult-secret-1234",
+                "PANTHEON_PERSONA_SERVICE_TOKEN": "persona-secret-1234",
+                "PANTHEON_PERSONA_SERVICE_ACTOR_ID": "persona-writer-actor",
                 "TRAINING_SESSION_WORKER_TOKEN_FILE": "/run/principals/TRAINING",
             }.get(argv[-1], "")
         elif argv[:2] == ["docker", "exec"] and argv[2] == "cid-train" and "cat" in argv:
@@ -502,9 +504,11 @@ def test_hosted_vm_runner_assembles_private_environment_and_redacts(monkeypatch,
     assert env["PANTHEON_L12_SOURCE_URL"] == env["PANTHEON_L12_SOURCE_INGEST_URL"]
     assert env["PANTHEON_L12_TRAINING_TOKEN"] == "training-secret-1234"
     assert env["PANTHEON_L12_CAPITAL_TOKEN"] == "cap-token-123456"
+    assert env["PANTHEON_L12_PERSONA_SERVICE_TOKEN"] == "persona-secret-1234"
+    assert env["PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID"] == "persona-writer-actor"
     assert state["argv"][-1] == runner.PARENT_NODE and state["cwd"] == str(tmp_path)
     log = (tmp_path / "phase.log").read_text(encoding="utf-8")
-    for secret in ("executor-token-abcdef", "agora-secret-1234", "cap-token-123456"):
+    for secret in ("executor-token-abcdef", "agora-secret-1234", "cap-token-123456", "persona-secret-1234"):
         assert secret not in log
     meta = json.loads((tmp_path / "segment-meta.json").read_text(encoding="utf-8"))
     assert meta["pytest_exit"] == 0 and meta["capital_per_request_refresh_dependency"]

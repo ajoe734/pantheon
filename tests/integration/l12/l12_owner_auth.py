@@ -223,6 +223,21 @@ def hosted_token(role: str) -> str:
     return token
 
 
+def persona_writer_identity() -> tuple[str, str] | None:
+    """(Authorization value, actor_id) of the Persona service writer, hosted mode only.
+
+    The workflow stages the persona container's own opaque service token and actor id.
+    The token is never decoded; ``None`` means use the caller's human identity (isolated).
+    """
+    if not hosted_chain_enabled():
+        return None
+    token = os.getenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "").strip()
+    if not token:
+        return None
+    actor = os.getenv("PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID", "").strip() or "operator-bff"
+    return f"Bearer {token.removeprefix('Bearer ').strip()}", actor
+
+
 _CAPITAL_TOKEN_SNIPPET = (
     "import sys;"
     "from services.control_plane.bff.personas.service import _PersonaOwnerHttpTransport as T;"

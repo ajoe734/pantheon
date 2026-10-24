@@ -1,0 +1,29 @@
+{
+  "task_id": "HOSTED-ALL12-PERSONA-WRITER-20261023",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "follows_up": "HOSTED-ALL12-COMPOSE-READBACK-20261023",
+  "failure_followed": {
+    "run": "40042081495",
+    "artifact": "12539194768",
+    "sha256": "32bb326436461bfd972905ec191526ed5c27fee26ff9145d2bb11a92be8c5a30",
+    "error": "POST /api/personas 403 PERSONA_OWNER_REQUIRED: caller operator-a lacks persona.admin"
+  },
+  "changed_files": [
+    ".github/workflows/nonprod-deploy.yml",
+    "tests/integration/l12/l12_owner_auth.py",
+    "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+    "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+    "scripts/test_isolated_l12_provider_workflow.py",
+    "tests/unit/l12/test_hosted_domain_contract.py",
+    "docs/deployment/evidence/HOSTED-ALL12-PERSONA-WRITER-20261023/evidence.json"
+  ],
+  "behavior": {
+    "change": "Staged run_phase.py reads the persona container's own PANTHEON_PERSONA_SERVICE_TOKEN (fallback PERSONA_SERVICE_TOKEN) via container_env into PANTHEON_L12_PERSONA_SERVICE_TOKEN (private, redacted) and PANTHEON_PERSONA_SERVICE_ACTOR_ID (default operator-bff) into PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID. l12_owner_auth.persona_writer_identity() returns the pair in hosted mode only; both hosted _ensure_persona use that Authorization and actor_id for Persona GET/POST. The opaque token is never decoded.",
+    "unchanged": "Persona owner authentication, actor binding and tenant checks; no role elevation of operator-a or TEST_ADMIN; Registry/Governance/H1 roles; isolated behavior (no staged writer -> human operator identity). Same-tenant existing Persona is still reused; tenant mismatch still fails closed."
+  },
+  "verification": {
+    "command": "pytest tests/unit/l12/test_hosted_domain_contract.py scripts/test_isolated_l12_provider_workflow.py",
+    "result": "50 passed"
+  },
+  "not_done": "No VM SSH, provider, model or business calls; no hosted dispatch. Root01a11 owns owner readback, samechain retry and release steps after merge."
+}

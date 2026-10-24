@@ -905,3 +905,60 @@ def test_hosted_capital_credential_is_requested_fresh_for_every_call(
     assert chain.settings.capital_auth() == {"Authorization": f"Bearer {CAPITAL_JWT}"}
     chain.settings.capital_auth()
     assert len(issued) == 2
+
+
+# --------------------------------------------------------------------------- persona writer identity
+
+
+@pytest.mark.parametrize(
+    "filename, cls",
+    [
+        ("test_current_research_loops_deployed_e2e.py", "DeployedResearchHarness"),
+        ("test_current_human_learning_deployed_e2e.py", "DeployedHumanLearningHarness"),
+    ],
+)
+def test_hosted_ensure_persona_pairs_service_token_with_service_actor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, filename: str, cls: str
+) -> None:
+    mod = _load(monkeypatch, filename, f"persona_writer_{cls}")
+    _hosted_env(monkeypatch, tmp_path, "A_research" if "research" in filename else "B_learning")
+    monkeypatch.setenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "opaque-persona-service-token")
+    monkeypatch.setenv("PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID", "operator-bff")
+    harness = getattr(mod, cls)()
+    seen: list[tuple[str, str, Any, str]] = []
+
+    def owner(base_url: str, path: str, *, method: str = "GET", payload: Any = None,
+              headers: Mapping[str, str] | None = None, expected: Any = (200,), **_k: Any) -> Any:
+        seen.append((method, path, payload, (headers or {}).get("Authorization", "")))
+        if method == "POST":
+            return {}
+        return {"persona_id": "p-1", "tenant_id": harness.tenant_id}
+
+    harness._http_json = owner
+    # same-tenant existing Persona is reused without any write
+    harness._ensure_persona("p-1", name="n", mandate="m")
+    assert [c[0] for c in seen] == ["GET"]
+    assert seen[0][3] == "Bearer opaque-persona-service-token"
+
+    seen.clear()
+    state = {"n": 0}
+
+    def create(base_url: str, path: str, **kw: Any) -> Any:
+        state["n"] += 1
+        seen.append((kw.get("method", "GET"), path, kw.get("payload"), (kw.get("headers") or {}).get("Authorization", "")))
+        if state["n"] == 1:
+            return None  # 404: absent
+        return {} if kw.get("method") == "POST" else {"persona_id": "p-1", "tenant_id": harness.tenant_id}
+
+    harness._http_json = create
+    harness._ensure_persona("p-1", name="n", mandate="m")
+    post = next(c for c in seen if c[0] == "POST")
+    assert post[2]["actor_id"] == "operator-bff" and post[2]["tenant_id"] == harness.tenant_id
+    assert {c[3] for c in seen} == {"Bearer opaque-persona-service-token"}
+
+    # without a staged writer (isolated / ordinary operator) the caller identity is untouched
+    monkeypatch.delenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN")
+    assert mod.persona_writer_identity() is None
+    monkeypatch.delenv("PANTHEON_L12_HOSTED_CHAIN")
+    monkeypatch.setenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "x")
+    assert mod.persona_writer_identity() is None
