@@ -1175,42 +1175,66 @@ class RuntimeChain:
         return view if isinstance(view, Mapping) and view.get("decision_id") == decision_id else None
 
     def _hosted_capital(self, persona_id: str, ids: dict[str, Any]) -> dict[str, str]:
-        """Read back the paper pool and binding the product's BFF provisioning wrote; never write Capital.
+        """Ensure the chain's paper pool and binding through the product's BFF capital-only entry.
 
-        The harness sends no Capital POST/PATCH and borrows no service token. Absent or unproven
-        records pause before Capital with CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED.
+        The harness sends no Capital POST/PATCH and borrows no service token: the executor's own BFF
+        session calls ``POST /bff/personas/{id}/provisioning/paper-capital``, where the BFF validates
+        the caller, tenant and paper scope and writes Capital as its own principal. The entry never
+        proposes, reviews or decides an approval. Existing matching records are read first and adopted
+        unchanged (their historical writer is kept). A failed or unproven entry stays a named pause.
         """
         chain = self.hosted_input
         assert chain is not None
         pool_id, binding_id = chain.id("pool"), chain.id("pcb")
 
         def pause(detail: str) -> HostedPause:
-            return HostedPause(
-                "capital_pool_creation",
-                f"{CAPITAL_BLOCKER}: {detail}; no existing BFF paper-provisioning entry creates only the "
-                "chain's pool and binding under the BFF's own service identity without auto-approving "
-                "H1/H3 (design doc section 3); the harness sends no direct Capital write",
-            )
+            return HostedPause("capital_pool_creation", f"{CAPITAL_BLOCKER}: {detail}")
 
-        def readback(kind: str, key: str, path: str, record_id: str) -> Mapping[str, Any]:
-            # Product BFF read routes with the operator session: the BFF reads Capital under its own
-            # service identity, so no service header is borrowed and no Capital reader allow-list is hit.
+        def fetch(path: str, key: str, record_id: str) -> Mapping[str, Any] | None:
+            # Product BFF read routes with the operator session; the BFF reads Capital under its own identity.
             envelope = self.http.request("bff", "GET", path, headers=self.bff_headers, expected={200, 404})
             record = envelope.get("data") if isinstance(envelope, Mapping) else None
-            if not isinstance(record, Mapping) or record.get(key) != record_id:
-                raise pause(f"{kind} {record_id} is absent")
+            return record if isinstance(record, Mapping) and record.get(key) == record_id else None
+
+        def current() -> tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]:
+            return (
+                fetch(f"/api/v1/capital-pools/{pool_id}", "pool_id", pool_id),
+                fetch(f"/api/v1/bindings/{binding_id}", "binding_id", binding_id),
+            )
+
+        pool, binding = current()
+        entry: Mapping[str, Any] | None = None
+        if (
+            pool is None
+            or binding is None
+            or binding.get("status") != "active"
+            or str(binding.get("created_by") or "").strip() != PRODUCT_PROVISIONING_WRITER
+        ):
+            # Absent, inactive or historically-created records go through the BFF entry, which reads
+            # them first and adopts exact matches without rewriting their original creator.
+            ids["capital_pool_id"], ids["capital_binding_id"] = pool_id, binding_id  # persist before any child failure
+            entry = self._capital_entry(persona_id, ids, pool_id, binding_id, pause)
+            pool, binding = current()
+        if pool is None:
+            raise pause(f"paper pool {pool_id} is absent after the BFF entry")
+        if binding is None:
+            raise pause(f"persona capital binding {binding_id} is absent after the BFF entry")
+        for kind, record, record_id in (("paper pool", pool, pool_id), ("persona capital binding", binding, binding_id)):
             meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
             if meta.get("chain_id") != chain.chain_id or record.get("tenant_id", TENANT_ID) != TENANT_ID:
                 raise pause(f"{kind} {record_id} lacks the chain labels or tenant")
-            return record
-
-        pool = readback("paper pool", "pool_id", f"/api/v1/capital-pools/{pool_id}", pool_id)
         if (pool.get("metadata") or {}).get("execution_context") != "paper":
             raise pause(f"pool {pool_id} is not a paper pool")
-        binding = readback("persona capital binding", "binding_id", f"/api/v1/bindings/{binding_id}", binding_id)
-        # CapitalPool carries no writer field; provenance is the binding's created_by, which Capital
-        # binds to the verified BFF service identity (personas/service.py PERSONA_OWNER_SERVICE_ACTOR_ID).
-        if str(binding.get("created_by") or "").strip() != PRODUCT_PROVISIONING_WRITER:
+        # CapitalPool carries no writer field; provenance is the binding's created_by. A record the product
+        # BFF created carries its identity; an existing record keeps its original creator and is accepted
+        # only when this run's BFF entry just validated and adopted it (writer_actor_id in its receipt).
+        creator = str(binding.get("created_by") or "").strip()
+        adopted = (
+            entry is not None
+            and entry.get("writer_actor_id") == PRODUCT_PROVISIONING_WRITER
+            and creator == HOSTED_TASK_ID
+        )
+        if creator != PRODUCT_PROVISIONING_WRITER and not adopted:
             raise pause(f"binding {binding_id} was not written by the product BFF identity {PRODUCT_PROVISIONING_WRITER}")
         if binding.get("capital_pool_id") != pool_id or binding.get("persona_id") != persona_id:
             raise pause(f"binding {binding_id} does not tie persona {persona_id} to pool {pool_id}")
@@ -1219,6 +1243,38 @@ class RuntimeChain:
         if binding.get("status") != "active" or binding.get("allowed_deployment_scope") != "paper":
             raise pause(f"binding {binding_id} is not active paper-only authority")
         return {"capital_pool_id": pool_id, "persona_id": persona_id, "capital_binding_id": binding_id}
+
+    def _capital_entry(
+        self, persona_id: str, ids: dict[str, Any], pool_id: str, binding_id: str, pause: Callable[[str], Exception]
+    ) -> Mapping[str, Any]:
+        chain = self.hosted_input
+        assert chain is not None
+        body: dict[str, Any] = {
+            "capital_pool_id": pool_id,
+            "binding_id": binding_id,
+            "labels": chain.labels(),
+        }
+        # The chain's H1-approved StrategySpec is read back by the BFF; nothing is re-derived or approved
+        # here. The execution artifact is still a candidate until H3, so it is not referenced yet.
+        for field_name, value in (
+            ("strategy_spec_registry_id", ids.get("registry_id")),
+            ("currency", chain.predecessor("capital_currency")),
+        ):
+            if value:
+                body[field_name] = value
+        envelope = self.http.request(
+            "bff",
+            "POST",
+            f"/bff/personas/{urllib.parse.quote(persona_id, safe='')}/provisioning/paper-capital",
+            body=body,
+            headers=self.bff_headers,
+            expected={200, 401, 403, 404, 409, 422},
+        )
+        data = envelope.get("data") if isinstance(envelope, Mapping) else None
+        if not isinstance(data, Mapping):
+            error = envelope.get("error") if isinstance(envelope, Mapping) else None
+            raise pause(f"the BFF paper-capital entry refused the request: {_canonical_json(error or envelope)}")
+        return data
 
     def _hosted_promote(self, chain: Any, ids: dict[str, Any]) -> None:
         wanted = {key: chain.predecessor(key) for key in ("registry_id", "checksum", "governance_handoff_id")}

@@ -117,6 +117,15 @@ class FakeOwnerTransport:
         value = self.objects.get((owner, path))
         return deepcopy(value) if value is not None else None
 
+    def list(self, owner: str, path: str) -> list[Mapping[str, Any]]:
+        self.calls.append(("GET", owner, path, None))
+        base = path.split("?", 1)[0]
+        return [
+            deepcopy(v)
+            for (o, p), v in self.objects.items()
+            if o == owner and p.startswith(f"{base}/") and p.count("/") == base.count("/") + 1
+        ]
+
     def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         body = deepcopy(dict(payload))
         self.calls.append(("POST", owner, path, body))
@@ -534,7 +543,9 @@ def _record_and_store(request_payload: dict[str, Any] | None = None) -> tuple[Tr
     return store, record
 
 
-def _schedule_receipt(persona_id: str, pool_id: str, binding_id: str) -> dict[str, Any]:
+def _schedule_receipt(
+    persona_id: str, pool_id: str, binding_id: str, **_kwargs: Any
+) -> dict[str, Any]:
     return {
         "persona_id": persona_id,
         "capital_pool_id": pool_id,
@@ -2418,3 +2429,332 @@ def test_retired_ledger_projects_as_retired_not_paper_running(monkeypatch) -> No
     assert persona["lifecycle_state"] == "retired"
     assert metadata["provisioning_state"] == "retired"
     assert metadata["paper_runtime_state"] == "retired"
+
+
+# --- chain paper capital entry (capital-only; no approvals) ---------------------
+
+_CHAIN = {
+    "tenant_id": "tenant-a",
+    "persona_id": "persona-chain",
+    "capital_pool_id": "hosted-all12-chain-1-pool",
+    "binding_id": "hosted-all12-chain-1-pcb",
+}
+
+
+def _chain_coordinator(
+    transport: FakeOwnerTransport,
+    runtime_bindings: list[dict[str, Any]] | None = None,
+) -> PersonaProvisioningCoordinator:
+    store, _ = _record_and_store()
+    coordinator = _coordinator(store, transport, _schedule_receipt, actor_id="control-plane-bff")
+    coordinator.runtime_binding_reader = lambda plan_id, pool_id: list(
+        runtime_bindings or []
+    )
+    return coordinator
+
+
+def _seed_approved_registry(
+    transport: FakeOwnerTransport,
+    *,
+    tenant: str = "tenant-a",
+    state: str = "approved",
+    checksum: str = "sha256:frozen",
+) -> None:
+    for kind, artifact_type, registry_id in (
+        ("strategy-specs", "strategy_spec", "reg-spec-frozen"),
+        ("strategy-artifacts", "execution_bundle", "artifact-frozen"),
+    ):
+        transport.objects[("registry", f"/api/registry/{kind}/{registry_id}")] = {
+            "entry": {
+                "registry_id": registry_id,
+                "artifact_type": artifact_type,
+                "artifact_state": state,
+                "owner_tenant": tenant,
+                "version": "1.0.0",
+                "checksum": checksum,
+            }
+        }
+
+
+def _ensure(coordinator: PersonaProvisioningCoordinator, **overrides: Any) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        **_CHAIN,
+        "requested_by": "operator-a",
+        "currency": "USD",
+        "budget": 25000,
+        "strategy_spec_registry_id": "reg-spec-frozen",
+        "strategy_artifact_id": "artifact-frozen",
+        "strategy_artifact_checksum": "sha256:frozen",
+    }
+    kwargs.update(overrides)
+    return coordinator.ensure_chain_paper_capital(**kwargs)
+
+
+def test_chain_paper_capital_writes_only_capital_as_bff_with_requester_audit() -> None:
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport)
+
+    result = _ensure(_chain_coordinator(transport))
+
+    writes = [(m, o, p) for m, o, p, _ in transport.calls if m != "GET"]
+    pool_path = f"/api/capital-pools/{_CHAIN['capital_pool_id']}"
+    pcb_path = f"/api/bindings/{_CHAIN['binding_id']}"
+    assert writes == [
+        ("POST", "capital", "/api/capital-pools"),
+        ("POST", "capital", "/api/bindings"),
+        ("POST", "capital", f"{pcb_path}/activate"),
+    ]
+    assert {o for _, o, _ in writes} == {"capital"}
+    bodies = {p: b for m, _, p, b in transport.calls if m == "POST"}
+    for path in ("/api/capital-pools", "/api/bindings"):
+        assert bodies[path]["actor_id"] == "control-plane-bff"
+        assert bodies[path]["metadata"]["requested_by"] == "operator-a"
+        assert bodies[path]["metadata"]["tenant_id"] == "tenant-a"
+    assert bodies["/api/bindings"]["created_by"] == "control-plane-bff"
+    assert bodies["/api/bindings"]["allowed_deployment_scope"] == "paper"
+    assert bodies["/api/bindings"]["metadata"]["registry_id"] == "artifact-frozen"
+    assert result["writer_actor_id"] == "control-plane-bff"
+    assert result["requested_by"] == "operator-a"
+    assert result["persona_capital_binding"]["status"] == "active"
+    assert transport.objects[("capital", pool_path)]["pool_id"] == _CHAIN["capital_pool_id"]
+    assert result["registry"]["strategy_artifact"]["checksum"] == "sha256:frozen"
+    assert not any(o in {"governance", "deployment"} for _, o, _, _ in transport.calls)
+
+
+def test_chain_paper_capital_adopts_existing_records_without_rewriting_writer() -> None:
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport)
+    transport.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
+        "pool_id": _CHAIN["capital_pool_id"],
+        "owner_id": "tenant-a",
+        "owner_type": "org",
+        "status": "active",
+        "single_runtime_enforced": True,
+        "metadata": {"execution_context": "paper", "chain_id": "chain-1"},
+    }
+    transport.objects[("capital", f"/api/bindings/{_CHAIN['binding_id']}")] = {
+        "binding_id": _CHAIN["binding_id"],
+        "persona_id": "persona-chain",
+        "capital_pool_id": _CHAIN["capital_pool_id"],
+        "role": "paper_owner",
+        "allowed_deployment_scope": "paper",
+        "status": "active",
+        "created_by": "HOSTED-ALL12-CHAIN-DESIGN-20261023",
+    }
+
+    labels = {"chain_id": "chain-1"}
+    result = _ensure(_chain_coordinator(transport), labels=labels)
+    again = _ensure(_chain_coordinator(transport), labels=labels)
+
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+    assert result["persona_capital_binding"]["created_by"] == "HOSTED-ALL12-CHAIN-DESIGN-20261023"
+    assert again["persona_capital_binding"] == result["persona_capital_binding"]
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        {"tenant": "tenant-b"},
+        {"state": "candidate"},
+        {"checksum": "sha256:rederived"},
+    ],
+)
+def test_chain_paper_capital_rejects_unapproved_foreign_or_rederived_artifact(
+    seed: dict[str, str],
+) -> None:
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport, **seed)
+
+    with pytest.raises(PersonaProvisioningCoordinationError):
+        _ensure(_chain_coordinator(transport))
+
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+
+
+def test_chain_paper_capital_rejects_foreign_tenant_or_non_paper_existing_records() -> None:
+    foreign = FakeOwnerTransport()
+    _seed_approved_registry(foreign)
+    foreign.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
+        "pool_id": _CHAIN["capital_pool_id"],
+        "owner_id": "tenant-b",
+        "owner_type": "org",
+        "status": "active",
+        "single_runtime_enforced": True,
+        "metadata": {"execution_context": "paper"},
+    }
+    with pytest.raises(PersonaProvisioningCoordinationError, match="tenant-owned paper"):
+        _ensure(_chain_coordinator(foreign))
+
+    live = FakeOwnerTransport()
+    _seed_approved_registry(live)
+    live.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
+        "pool_id": _CHAIN["capital_pool_id"],
+        "owner_id": "tenant-a",
+        "owner_type": "org",
+        "status": "active",
+        "single_runtime_enforced": True,
+        "metadata": {"execution_context": "live"},
+    }
+    with pytest.raises(PersonaProvisioningCoordinationError, match="tenant-owned paper"):
+        _ensure(_chain_coordinator(live))
+    assert [c for c in live.calls if c[0] != "GET"] == []
+
+
+def test_chain_paper_capital_retires_binding_before_pool_and_only_chain_records() -> None:
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport)
+    coordinator = _chain_coordinator(transport)
+    _ensure(coordinator)
+    transport.calls.clear()
+
+    retired = coordinator.retire_chain_paper_capital(
+        tenant_id="tenant-a",
+        persona_id="persona-chain",
+        capital_pool_id=_CHAIN["capital_pool_id"],
+        binding_id=_CHAIN["binding_id"],
+    )
+
+    patches = [(p, b["status"]) for m, _, p, b in transport.calls if m == "PATCH"]
+    assert patches == [
+        (f"/api/bindings/{_CHAIN['binding_id']}/status", "revoked"),
+        (f"/api/capital-pools/{_CHAIN['capital_pool_id']}/status", "archived"),
+    ]
+    assert retired["capital_pool"]["status"] == "archived"
+    assert all(b["actor_id"] == "control-plane-bff" for m, _, _, b in transport.calls if m == "PATCH")
+
+    other = FakeOwnerTransport()
+    other.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
+        "pool_id": _CHAIN["capital_pool_id"],
+        "owner_id": "tenant-b",
+        "status": "active",
+        "single_runtime_enforced": True,
+        "metadata": {"execution_context": "paper", "persona_id": "persona-chain"},
+    }
+    with pytest.raises(PersonaProvisioningCoordinationError, match="another tenant"):
+        _chain_coordinator(other).retire_chain_paper_capital(
+            tenant_id="tenant-a",
+            persona_id="persona-chain",
+            capital_pool_id=_CHAIN["capital_pool_id"],
+            binding_id=_CHAIN["binding_id"],
+        )
+    assert [c for c in other.calls if c[0] != "GET"] == []
+
+
+def test_chain_paper_capital_labels_are_allow_listed_and_new_pool_needs_currency() -> None:
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport)
+    with pytest.raises(PersonaProvisioningCoordinationError, match="currency is required"):
+        _ensure(_chain_coordinator(transport), currency=None)
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+
+    _ensure(
+        _chain_coordinator(transport),
+        labels={"chain_id": "chain-1", "paper_only": True, "actor_id": "spoofed", "tenant_id": "tenant-b"},
+    )
+    bodies = {p: b for m, _, p, b in transport.calls if m == "POST"}
+    for path in ("/api/capital-pools", "/api/bindings"):
+        metadata = bodies[path]["metadata"]
+        assert metadata["chain_id"] == "chain-1" and metadata["paper_only"] is True
+        assert metadata["tenant_id"] == "tenant-a" and "actor_id" not in metadata
+
+
+_RETIRE = {
+    "tenant_id": "tenant-a",
+    "persona_id": "persona-chain",
+    "capital_pool_id": _CHAIN["capital_pool_id"],
+    "binding_id": _CHAIN["binding_id"],
+}
+
+
+def _seed_pool(
+    transport: FakeOwnerTransport, *, metadata: dict[str, Any], **overrides: Any
+) -> None:
+    transport.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
+        "pool_id": _CHAIN["capital_pool_id"],
+        "owner_id": "tenant-a",
+        "owner_type": "org",
+        "status": "active",
+        "single_runtime_enforced": True,
+        "metadata": metadata,
+        **overrides,
+    }
+
+
+def _seed_pcb(transport: FakeOwnerTransport, binding_id: str, **overrides: Any) -> None:
+    transport.objects[("capital", f"/api/bindings/{binding_id}")] = {
+        "binding_id": binding_id,
+        "persona_id": "persona-chain",
+        "capital_pool_id": _CHAIN["capital_pool_id"],
+        "role": "paper_owner",
+        "allowed_deployment_scope": "paper",
+        "status": "active",
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize(
+    "pool",
+    [
+        {"metadata": {"execution_context": "live", "persona_id": "persona-chain"}},
+        {"metadata": {"execution_context": "paper", "persona_id": "persona-someone-else"}},
+        {"metadata": {"execution_context": "paper", "persona_id": "persona-chain"},
+         "single_runtime_enforced": False},
+    ],
+)
+def test_chain_paper_capital_retire_refuses_unproven_or_non_paper_pool(
+    pool: dict[str, Any],
+) -> None:
+    transport = FakeOwnerTransport()
+    _seed_pool(transport, **pool)
+
+    with pytest.raises(PersonaProvisioningCoordinationError, match="paper pool|not proven"):
+        _chain_coordinator(transport).retire_chain_paper_capital(**_RETIRE)
+
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+
+
+def test_chain_paper_capital_retire_refuses_live_runtime_dependants() -> None:
+    transport = FakeOwnerTransport()
+    _seed_pool(transport, metadata={"execution_context": "paper", "persona_id": "persona-chain"})
+    _seed_pcb(transport, _CHAIN["binding_id"])
+
+    with pytest.raises(PersonaProvisioningCoordinationError, match="RuntimeBindings are not retired"):
+        _chain_coordinator(
+            transport, [{"binding_id": "rb-1", "status": "active"}]
+        ).retire_chain_paper_capital(**_RETIRE)
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+
+    retired = _chain_coordinator(
+        transport, [{"binding_id": "rb-1", "status": "retired"}]
+    ).retire_chain_paper_capital(**_RETIRE)
+    assert retired["capital_pool"]["status"] == "archived"
+
+
+def test_chain_paper_capital_retire_refuses_other_live_pool_bindings() -> None:
+    transport = FakeOwnerTransport()
+    _seed_pool(transport, metadata={"execution_context": "paper", "persona_id": "persona-chain"})
+    _seed_pcb(transport, _CHAIN["binding_id"])
+    _seed_pcb(transport, "pcb-other", persona_id="persona-someone-else")
+
+    with pytest.raises(PersonaProvisioningCoordinationError, match="other PersonaCapitalBindings"):
+        _chain_coordinator(transport).retire_chain_paper_capital(**_RETIRE)
+
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+
+
+def test_chain_paper_capital_ensure_refuses_pool_of_another_persona_or_chain() -> None:
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport)
+    _seed_pool(
+        transport,
+        metadata={
+            "execution_context": "paper",
+            "persona_id": "persona-someone-else",
+            "chain_id": "chain-other",
+        },
+    )
+
+    with pytest.raises(PersonaProvisioningCoordinationError, match="does not belong"):
+        _ensure(_chain_coordinator(transport), labels={"chain_id": "chain-1"})
+
+    assert [c for c in transport.calls if c[0] != "GET"] == []

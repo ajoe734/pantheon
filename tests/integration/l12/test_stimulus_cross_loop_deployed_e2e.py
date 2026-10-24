@@ -498,8 +498,12 @@ class UrllibOwnerClient:
         service_headers: Mapping[str, Mapping[str, str]] | None = None,
         capital_authorization: Callable[[], str] | None = None,
         tenant_id: str = "",
+        bff_bearer: str = "",
     ) -> None:
         self.urls = dict(urls)
+        # Hosted Capital is reached only through the product BFF (reads, and the capital-only retire
+        # entry) with the executor's own session; no service token is signed or borrowed.
+        self.bff_bearer = bff_bearer
         # Capital tokens live ~120s: one genuine token is fetched per request, never held.
         self.capital_authorization = capital_authorization
         self.tenant_id = tenant_id
@@ -517,6 +521,10 @@ class UrllibOwnerClient:
             name: _required_env(f"PANTHEON_L12_{name.upper()}_URL").rstrip("/")
             for name in services
         }
+        bff_url = os.getenv("PANTHEON_L12_BFF_URL", "").strip().rstrip("/")
+        bff_bearer = os.getenv("PANTHEON_L12_BFF_BEARER", "").strip().removeprefix("Bearer ").strip()
+        if bff_url and bff_bearer:
+            urls["bff"] = bff_url
         roles = tuple(
             r.strip()
             for r in os.getenv("PANTHEON_L12_HOSTED_OWNER_ROLES", "").split(",")
@@ -569,7 +577,41 @@ class UrllibOwnerClient:
             service_headers,
             capital_authorization,
             tenant,
+            bff_bearer if "bff" in urls else "",
         )
+
+    def _bff_capital(self) -> bool:
+        return self.capital_authorization is not None and "bff" in self.urls and bool(self.bff_bearer)
+
+    def _bff_headers(self) -> dict[str, str]:
+        headers = {"Accept": "application/json", "Authorization": f"Bearer {self.bff_bearer}"}
+        if self.tenant_id:
+            headers["X-Tenant-Id"] = self.tenant_id
+        return headers
+
+    def retire_chain_paper_capital(self, persona_id: str, pool_id: str, binding_id: str) -> int:
+        """Retire only the chain's Capital binding then pool via the BFF capital-only entry."""
+        status, _ = self._send(
+            "bff",
+            "POST",
+            f"/bff/personas/{urllib.parse.quote(persona_id, safe='')}/provisioning/paper-capital/retire",
+            {"capital_pool_id": pool_id, "binding_id": binding_id},
+            self._bff_headers(),
+            None,
+        )
+        return status
+
+    def _capital_read_via_bff(self, path: str) -> tuple[int, Any]:
+        bindings, pools = "/api/bindings/", "/api/capital-pools/"
+        if path.startswith(bindings):
+            bff_path, key = f"/api/v1/bindings/{path[len(bindings):]}", "binding"
+        elif path.startswith(pools):
+            bff_path, key = f"/api/v1/capital-pools/{path[len(pools):]}", "pool"
+        else:
+            raise StimulusProofError(f"Capital read {path} has no BFF read route")
+        status, payload = self._send("bff", "GET", bff_path, None, self._bff_headers(), None)
+        data = payload.get("data") if isinstance(payload, Mapping) else None
+        return status, ({key: data} if status == 200 and isinstance(data, Mapping) else payload)
 
     def _capital_request_auth(self) -> tuple[dict[str, str], str, tuple[str, ...]]:
         """Fresh Capital headers plus the (actor, roles) that token really carries."""
@@ -599,6 +641,10 @@ class UrllibOwnerClient:
         body: Mapping[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> tuple[int, Any]:
+        if service == "capital" and self._bff_capital():
+            if method != "GET":
+                raise StimulusProofError("hosted Capital writes go only through the BFF capital-only entry")
+            return self._capital_read_via_bff(path)
         if service not in self.urls:
             raise StimulusProofError(f"no owner URL configured for {service}")
         headers = {"Accept": "application/json", "Authorization": f"Bearer {self.token}"}
@@ -608,6 +654,18 @@ class UrllibOwnerClient:
             headers = {"Accept": "application/json", **self._capital_request_auth()[0]}
         elif service in self.service_headers:
             headers = {"Accept": "application/json", **self.service_headers[service]}
+        return self._send(service, method, path, body, headers, idempotency_key)
+
+    def _send(
+        self,
+        service: str,
+        method: str,
+        path: str,
+        body: Mapping[str, Any] | None,
+        headers: dict[str, str],
+        idempotency_key: str | None,
+    ) -> tuple[int, Any]:
+        headers = dict(headers)
         data = None
         if body is not None:
             data = _canonical_json(dict(body)).encode("utf-8")
@@ -1345,19 +1403,31 @@ class HostedChainRunner:
                 # An executed plan is immutable (executed -> aborted is refused): retire its saga instead.
                 self._retire_executed_plan_saga(record_id, retired, retained, incomplete, failures)
                 continue
-            identity = getattr(self.owner, "identity_for", None)
-            body_actor, body_roles = identity(spec.service) if callable(identity) else (actor, roles)
-            body = spec.retire_body(record, self.chain_id, body_actor, body_roles)
-            if body is None:
-                incomplete.append(f"{kind} {record_id}: executing identity has no role for retirement")
-                continue
-            code, _ = self.owner.request(
-                spec.service,
-                spec.retire_method or "POST",
-                spec.retire_path.format(id=quoted),
-                body,
-                idempotency_key=f"{self.chain_id}-e-close-{kind}",
-            )
+            bff_retire = getattr(self.owner, "retire_chain_paper_capital", None)
+            if kind in ("capital_binding_id", "capital_pool_id") and callable(bff_retire) and self.owner._bff_capital():
+                # Hosted Capital retirement is the BFF capital-only entry (binding before pool); the
+                # harness never signs a Capital write or borrows a service identity.
+                persona_id = self.resource_ids.get("persona_id")
+                pool_id = self.resource_ids.get("capital_pool_id")
+                binding_id = self.resource_ids.get("capital_binding_id")
+                if not (persona_id and pool_id and binding_id):
+                    incomplete.append(f"{kind} {record_id}: BFF capital retirement needs persona, pool and binding ids")
+                    continue
+                code = bff_retire(persona_id, pool_id, binding_id)
+            else:
+                identity = getattr(self.owner, "identity_for", None)
+                body_actor, body_roles = identity(spec.service) if callable(identity) else (actor, roles)
+                body = spec.retire_body(record, self.chain_id, body_actor, body_roles)
+                if body is None:
+                    incomplete.append(f"{kind} {record_id}: executing identity has no role for retirement")
+                    continue
+                code, _ = self.owner.request(
+                    spec.service,
+                    spec.retire_method or "POST",
+                    spec.retire_path.format(id=quoted),
+                    body,
+                    idempotency_key=f"{self.chain_id}-e-close-{kind}",
+                )
             if code not in (200, 201, 202):
                 failures.append(f"{kind} {record_id}: retire returned {code}")
                 continue
