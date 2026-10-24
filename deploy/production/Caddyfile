@@ -26,6 +26,14 @@
 		-Server
 	}
 
+	# External same-origin runtime config: lives outside the sealed FE release directory,
+	# rendered by bootstrap.sh, never cacheable.
+	handle /runtime-config.js {
+		root * {$PROD_ROOT}/config
+		header Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+		file_server
+	}
+
 	handle /deployment.json {
 		header Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
 		file_server
@@ -37,6 +45,7 @@
 	@spa_shell {
 		not path /assets/*
 		not path /deployment.json
+		not path /runtime-config.js
 	}
 	header @spa_shell Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
 	handle @spa_shell {

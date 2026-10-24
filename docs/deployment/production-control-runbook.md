@@ -5,7 +5,7 @@
 - Design: [`vm-dev-staging-prod-management-plan.md`](vm-dev-staging-prod-management-plan.md), [`first-production-release-readiness.md`](first-production-release-readiness.md)
 
 > [!IMPORTANT]
-> Merging this source mutates no cloud resource, GitHub setting or Environment. Local tests use a fake ops adapter and prove controller behavior only; they are **not** hosted drill evidence and cannot claim `release_complete`. No production project, domain, billing account, IdP, reviewer, RPO/RTO or on-call choice is assumed.
+> Merging this source mutates no cloud resource, GitHub setting or Environment. Local tests drive the real `prod_ops.sh`/`bootstrap.sh`/controller scripts against fake docker/curl/mountpoint binaries and a temp state tree; they prove script behavior only; they are **not** hosted drill evidence and cannot claim `release_complete`. No production project, domain, billing account, IdP, reviewer, RPO/RTO or on-call choice is assumed.
 
 ## 1. Components
 
@@ -18,7 +18,13 @@
 | `deploy/production/Caddyfile` | `bff_upstream.caddy` snippet + `fe/current` symlink root |
 | `.github/workflows/production-release.yml` | Inert `workflow_dispatch`; `deploy` job bound to protected `production` Environment |
 
-Host-side effects (compose start/stop, proxy reload, gates, snapshot, singleton handoff, identity readback) go through `PROD_OPS_CMD <step> <release_id> [args]`. The adapter is a hosted prerequisite and is not provided here.
+Host-side effects go through `PROD_OPS_CMD <step> <release_id> [args]`, implemented by `scripts/deploy/prod_ops.sh` (runs on the control VM; every step is a real readback and fails non-zero, no synthetic pass JSON): `snapshot_preflight` (fresh READY snapshot record for this release and data disk, disk mounted), `baseline_health`, `start_green`/`stop_green` (`--no-build`, manifest-only digests), `gate health|auth|cors|tenant|read_only|schema|old_new_compat`, `drain_singletons`/`activate_singletons`/`resume_baseline_singletons` (exactly one `lifecycle-projector`), `reload_proxy`, `verify_runtime_config`, `post_identity`. `deploy/production/bootstrap.sh` prepares the VM tree for the first release (503 upstream placeholder, no `fe/current`, never formats/mounts the data disk, secrets must pre-exist at mode 0400/0600).
+
+Contracts the adapter relies on (to be confirmed on the first hosted run): manifest `backend.images` must include `runtime_manager`, `governance`, `deployment`, `lifecycle_projector` besides `operator_bff`; the BFF image carries labels `org.pantheon.migration_set_sha256` and `org.pantheon.compatibility_manifest_sha256`; `PROD_GATE_TOKEN_FILE` holds a read-only synthetic identity for the tenant gate (missing => gate fails, never skipped). The BFF is stateless per color; the singleton owner is the single `lifecycle-projector`, which is stopped before the upstream switch and started after it. Colors alternate: the target is whichever of `PROD_BLUE_PORT`/`PROD_GREEN_PORT` the retained baseline (`active_port`) is not on.
+
+Runtime config: `/runtime-config.js` is rendered by `bootstrap.sh` into `${PROD_ROOT}/config/`, served same-origin by Caddy with `no-store`, outside the sealed FE release dir (coordinated with FE-IMMUTABLE-RELEASE-CONFIG-20261024); the controller verifies the served bytes, header and BFF origin after the FE switch and rolls back on mismatch.
+
+Workflow: `PROD_*` variables are Environment-scoped, so they are read only in the `deploy` job (after Environment approval, before cloud auth). The `preflight` job has no Environment and validates only the manifest/evidence. After auth the runner takes the pre-release disk snapshot, then transports manifest, `staging_evidence`, approvals, env-policy, FE bundle, snapshot record and controller scripts to the control VM with `gcloud compute scp --tunnel-through-iap` and runs the controller there with `PROD_OPS_CMD`, `PROD_ROOT`, ports and `FE_ARTIFACT_PATH` exported; the controller is never run on the GitHub runner.
 
 ## 2. Required explicit configuration (missing = fail closed)
 

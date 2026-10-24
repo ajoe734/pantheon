@@ -6,8 +6,8 @@
   "release_complete_claimed": false,
   "validation": {
     "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
-    "result": "40 tests OK",
-    "scope": "fake ops adapter and temp state tree; controller behavior only"
+    "result": "60 tests OK (local)",
+    "scope": "real prod_ops.sh/bootstrap.sh/controller scripts with fake docker/curl/mountpoint binaries and temp state tree; script behavior only, not hosted drill evidence"
   },
   "hosted_acceptance": {
     "status": "external_wait",
@@ -15,7 +15,7 @@
       "production project, billing, domain, IdP",
       "production WIF/SA/IAM/secrets",
       "GitHub production Environment approval is configured (reviewer ajoe734, prevent_self_review=false); a genuine run approval remains a hosted prerequisite",
-      "control VM ops adapter and artifact transport",
+      "production control VM provisioning, PROD_VM_NAME/PROD_ROOT/ports Environment variables, secrets env/postgres password files, GATE token identity, manifest backend.images owner closure and image labels (contracts in runbook)",
       "approved RPO/RTO/retention/on-call/rollback owner",
       "genuine hosted staging_verified evidence for the exact manifest",
       "two production-shaped deploy/rollback drills (<120s rollback)",

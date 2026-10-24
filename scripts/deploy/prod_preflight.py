@@ -236,6 +236,7 @@ def run_all(
     baseline_path: Path | None,
     bootstrap: bool,
     require_approval: bool = True,
+    skip_baseline: bool = False,
 ) -> dict[str, Any]:
     config = check_config(env)
     manifest = release_manifest.load_manifest_file(manifest_path)
@@ -275,7 +276,12 @@ def run_all(
             baseline_state = json.loads(baseline_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise PreflightError(f"baseline state unreadable: {exc}") from exc
-    posture = check_baseline(manifest, bootstrap=bootstrap, baseline_state=baseline_state)
+    if skip_baseline:
+        # Runner-side pass: the retained baseline lives on the control VM, where the
+        # controller re-runs this preflight with the real baseline file.
+        posture = "deferred_to_control_vm"
+    else:
+        posture = check_baseline(manifest, bootstrap=bootstrap, baseline_state=baseline_state)
     return {
         "status": "preflight_passed",
         "release_id": manifest["release_id"],
@@ -301,6 +307,7 @@ def _cli() -> int:
     a.add_argument("--env-policy", type=Path, default=None, help="GitHub production Environment record")
     a.add_argument("--baseline", type=Path, default=None)
     a.add_argument("--bootstrap", action="store_true")
+    a.add_argument("--skip-baseline", action="store_true", help="runner-side: baseline is checked on the control VM")
     a.add_argument("--skip-approval", action="store_true", help="pre-approval validation only")
     args = p.parse_args()
     try:
@@ -319,6 +326,7 @@ def _cli() -> int:
             baseline_path=args.baseline,
             bootstrap=args.bootstrap,
             require_approval=not args.skip_approval,
+            skip_baseline=args.skip_baseline,
         )
         print(json.dumps(result, sort_keys=True))
         return 0
