@@ -58,6 +58,8 @@ class OwnerTransport(Protocol):
 
     def get(self, owner: str, path: str) -> Mapping[str, Any] | None: ...
 
+    def list(self, owner: str, path: str) -> "list[Mapping[str, Any]]": ...
+
     def post(
         self,
         owner: str,
@@ -1325,6 +1327,12 @@ class PersonaProvisioningCoordinator:
                 raise PersonaProvisioningCoordinationError(
                     "CapitalPool readback is not an active tenant-owned paper pool"
                 )
+            if not self._pool_owned_by_chain(
+                metadata, persona_id=persona_id, chain_id=extra_labels.get("chain_id")
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "CapitalPool does not belong to this persona or chain; refusing to adopt it"
+                )
 
         pool = self._create_then_get(
             owner="capital",
@@ -1424,6 +1432,14 @@ class PersonaProvisioningCoordinator:
             "requested_by": requested_by,
         }
 
+    @staticmethod
+    def _pool_owned_by_chain(
+        metadata: Mapping[str, Any], *, persona_id: str, chain_id: Any
+    ) -> bool:
+        if metadata.get("persona_id") == persona_id:
+            return True
+        return bool(chain_id) and metadata.get("chain_id") == chain_id
+
     def retire_chain_paper_capital(
         self,
         *,
@@ -1431,24 +1447,82 @@ class PersonaProvisioningCoordinator:
         persona_id: str,
         capital_pool_id: str,
         binding_id: str,
+        chain_id: str | None = None,
     ) -> dict[str, Any]:
         """Revoke the chain binding, then archive its pool (binding before pool).
 
-        Runtime dependants must already be retired.  Only these two paper
-        records are touched; an absent record is reported, not an error.  The
-        pool must belong to ``tenant_id`` before it is archived.
+        Only a tenant-owned paper pool proven to belong to this persona or
+        chain is touched: by its binding (read back present or already
+        revoked), ``metadata.persona_id`` or ``metadata.chain_id``.  Runtime
+        dependants and any other non-terminal binding of the pool are checked
+        first; every refusal is a named error raised before any write.  An
+        absent record is reported, not an error.
         """
 
-        pool = self._owner_get("capital", f"/api/capital-pools/{_path_id(capital_pool_id)}")
-        if pool is not None and pool.get("owner_id") != tenant_id:
-            raise PersonaProvisioningCoordinationError(
-                "CapitalPool belongs to another tenant; refusing to retire it"
+        pool_path = f"/api/capital-pools/{_path_id(capital_pool_id)}"
+        pool = self._owner_get("capital", pool_path)
+        binding = self._owner_get("capital", f"/api/bindings/{_path_id(binding_id)}")
+        if binding is not None:
+            self._check_binding_identity(
+                binding,
+                persona_id=persona_id,
+                pool_id=capital_pool_id,
+                binding_id=binding_id,
             )
-        binding = self._revoke_binding(
+        if pool is not None:
+            metadata = pool.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            if pool.get("owner_id") != tenant_id:
+                raise PersonaProvisioningCoordinationError(
+                    "CapitalPool belongs to another tenant; refusing to retire it"
+                )
+            if (
+                metadata.get("execution_context") != "paper"
+                or pool.get("single_runtime_enforced") is not True
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "CapitalPool is not a paper pool; refusing to retire it"
+                )
+            if binding is None and not self._pool_owned_by_chain(
+                metadata, persona_id=persona_id, chain_id=chain_id
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "CapitalPool ownership by this persona or chain is not proven; "
+                    "refusing to retire it"
+                )
+
+        if self.runtime_binding_reader is None:
+            raise PersonaProvisioningCoordinationError(
+                "RuntimeBinding reader is not configured"
+            )
+        live_runtime = {
+            str(b.get("binding_id") or b.get("id") or ""): str(b.get("status") or "")
+            for b in self.runtime_binding_reader("", capital_pool_id) or []
+            if str(b.get("status") or "") not in TERMINAL_RUNTIME_BINDING_STATUSES
+        }
+        if live_runtime:
+            raise PersonaProvisioningCoordinationError(
+                f"RuntimeBindings are not retired: {sorted(live_runtime.items())}"
+            )
+        other_bindings = {
+            str(b.get("binding_id") or ""): str(b.get("status") or "")
+            for b in self.transport.list(
+                "capital", f"/api/bindings?capital_pool_id={_path_id(capital_pool_id)}"
+            )
+            if b.get("capital_pool_id") == capital_pool_id
+            and b.get("binding_id") != binding_id
+            and b.get("status") not in {"revoked", "expired"}
+        }
+        if other_bindings:
+            raise PersonaProvisioningCoordinationError(
+                f"other PersonaCapitalBindings still reference the pool: {sorted(other_bindings.items())}"
+            )
+
+        binding_result = self._revoke_binding(
             persona_id=persona_id, pool_id=capital_pool_id, binding_id=binding_id
         )
         pool_result = self._archive_pool(pool_id=capital_pool_id)
-        return {"persona_capital_binding": dict(binding), "capital_pool": dict(pool_result)}
+        return {"persona_capital_binding": dict(binding_result), "capital_pool": dict(pool_result)}
 
     def _preview(self, record: ProvisioningRecord) -> ProvisioningRecord:
         self._capital_pool_currency(record)

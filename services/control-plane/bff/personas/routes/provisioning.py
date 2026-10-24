@@ -51,6 +51,7 @@ class ChainPaperCapitalRetireRequest(BaseModel):
 
     capital_pool_id: str = Field(pattern=_ID_PATTERN)
     binding_id: str = Field(pattern=_ID_PATTERN)
+    chain_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
 
 
 def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:

@@ -537,6 +537,16 @@ def test_paper_capital_route_is_operator_tenant_scoped_and_capital_only(
     )
     assert route_harness.transport.calls == []
 
+    class _NoRuntimeBindings:
+        def list_by_plan(self, _plan_id):
+            return []
+
+        def list_by_pool(self, _pool_id):
+            return []
+
+    monkeypatch.setattr(
+        personas_service_mod, "_runtime_manager_client", lambda: _NoRuntimeBindings()
+    )
     ok = route_harness.client.post(
         path,
         json=_chain_capital_body(),
