@@ -1125,7 +1125,7 @@ def test_synthesis_only_retry_and_restart_adoption(bff_client):
     class Boom:
         def invoke_structured_extraction(self, **kw):
             raise AssertionError("must not call provider")
-    again = _synthesize(Boom(), list(reversed(detail["opinions"])), "t", operator_id="o", trace_id="tr",
+    again = _synthesize(Boom(), list(reversed(detail["opinions"])), operator_id="o", trace_id="tr",
                         interaction_id=interaction_id, attempt=1, lifecycle_store=interaction_lifecycle, lease_owner="w2")
     assert again == detail["synthesis"] and len(factory.synthesis_log) == synth_calls
 
@@ -1142,7 +1142,7 @@ def test_crash_window_is_not_re_executed_and_set_order_is_normalized(bff_client)
             raise KeyboardInterrupt  # worker dies after the call started, before finish_invocation
     kw = dict(operator_id="o", trace_id="tr", interaction_id=interaction_id, lifecycle_store=interaction_lifecycle)
     with pytest.raises(KeyboardInterrupt):
-        _synthesize(Dies(), opinions, "2026-01-01T00:00:00Z", attempt=7, lease_owner="w1", **kw)
+        _synthesize(Dies(), opinions, attempt=7, lease_owner="w1", **kw)
     for row in interaction_lifecycle._invocations[interaction_id].values():
         if row["status"] == "running":
             row["lease_until"] = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
@@ -1150,14 +1150,14 @@ def test_crash_window_is_not_re_executed_and_set_order_is_normalized(bff_client)
         def invoke_structured_extraction(self, **kw):
             seen.append(kw["idempotency_key"])
             return _ok(opinions)
-    result = _synthesize(Counting(), list(reversed(opinions)), "2026-01-01T00:00:00Z", attempt=7, lease_owner="w2", **kw)
+    result = _synthesize(Counting(), list(reversed(opinions)), attempt=7, lease_owner="w2", **kw)
     assert len(seen) == 1 and result["status"] == "degraded" and result["summary"] == "Synthesis unavailable."
     failed = [i for i in interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["provider_invocations"]
               if i["status"] == "failed"]
     assert failed[-1]["error"]["code"] == "SYNTHESIS_OUTCOME_AMBIGUOUS"
     # same saved set in the opposite order is the same synthesis identity
-    reordered = _synthesize(Counting(), opinions, "t", attempt=1, lease_owner="w3", **kw)
-    again = _synthesize(Counting(), list(reversed(opinions)), "t", attempt=1, lease_owner="w3", **kw)
+    reordered = _synthesize(Counting(), opinions, attempt=1, lease_owner="w3", **kw)
+    again = _synthesize(Counting(), list(reversed(opinions)), attempt=1, lease_owner="w3", **kw)
     assert again == reordered and len(seen) == 2
 
 
@@ -1328,3 +1328,31 @@ def test_loop_lease_is_configured_and_covers_heartbeat_gap(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("PANTHEON_LOOP_CONTROL_DSN", raising=False)
     assert worker_module.build_loop_writer() is None
+
+
+def test_operation_timestamps_follow_actual_clock_not_admission_time(bff_client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from services.control_plane.bff.agora.interaction import worker as worker_module
+    ticks = iter(datetime(2100, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=n) for n in range(1, 200))
+    monkeypatch.setattr(worker_module, "_utc_now", lambda: next(ticks).isoformat().replace("+00:00", "Z"))
+    factory, _ = _make_mock_client()
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    before = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    admitted_at, submitted_at = before.get("admitted_at") or before["created_at"], before["human_request"]["submitted_at"]
+    AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                           read_store=read_store, client_factory=factory).run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert (detail.get("admitted_at") or detail["created_at"]) == admitted_at and detail["human_request"]["submitted_at"] == submitted_at
+    persona_invocations = [i for i in detail["provider_invocations"] if i["participant"]["persona_id"] != "synthesis"]
+    assert len(persona_invocations) == 2
+    for inv in persona_invocations:
+        assert inv["started_at"] > admitted_at and inv["completed_at"] > inv["started_at"]
+    opinion_times = {o["provider_invocation_id"]: o["created_at"] for o in detail["opinions"]}
+    for inv in persona_invocations:
+        assert opinion_times[inv["invocation_id"]] == inv["completed_at"]
+    assert len({inv["completed_at"] for inv in persona_invocations}) == 2
+    synth = detail["synthesis"]
+    assert synth["created_at"] > max(opinion_times.values())
+    synth_inv = next(i for i in detail["provider_invocations"] if i["participant"]["persona_id"] == "synthesis")
+    assert synth_inv["started_at"] > max(opinion_times.values()) and synth_inv["completed_at"] == synth["created_at"]
