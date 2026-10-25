@@ -6,14 +6,17 @@
 #   retrieves/hashes the FE artifact bundle (`STAGING_FE_ARTIFACT_PATH` or `STAGING_FE_ARTIFACT_URI`),
 #   queries the BFF container digest (`@sha256:...`) via `GCLOUD_BIN` in live mode, and fails closed
 #   on any missing artifact or checksum/digest mismatch without rebuilding FE or BFF.
-# - `deploy-host`: Transfers immutable FE/BFF artifacts, compose overlay, Caddy template, and
-#   sanitized data verifier to the provisioned ephemeral staging VM via `GCLOUD_BIN compute scp`,
-#   mounts the attached sanitized data disk, starts the `core` Compose profile with `--no-build`
-#   and `pull_policy: never`, and records live observed deployment identity from the VM.
-# - `collect-verify-gates`: Executes and collects real verification gate readbacks from the live
-#   staging VM via `GCLOUD_BIN compute ssh` (observed deployed digests, sanitized Postgres dataset,
-#   expand-phase forward migration & old-app/new-schema smoke, backup/restore readability query,
-#   exact-pair rollback rehearsal, and tenant/RBAC + safe-off runtime readbacks).
+# - `deploy-host`: Creates `/tmp/pantheon-staging-bundle` on the target VM over IAP SSH
+#   (`--tunnel-through-iap`), transfers the immutable FE tarball, release manifest, compose overlay,
+#   Caddy template, `bootstrap.sh`, and `pantheon-staging-collect-gates` via IAP SCP
+#   (`--tunnel-through-iap`), executes `bootstrap.sh` over IAP SSH to bootstrap bare Debian,
+#   validate isolated secrets, pull digest-pinned owner-closure images, unpack the FE bundle,
+#   render external `/runtime-config.js`, start Compose `--no-build`, and query live on-host
+#   deploy identity (`docker inspect`, `curl /bff/readyz`, `curl /bff/version`, `deployment.json`,
+#   `.artifact_sha256`, `mountpoint`).
+# - `collect-verify-gates`: Invokes `/usr/local/bin/pantheon-staging-collect-gates` on the live
+#   staging VM over IAP SSH (`--tunnel-through-iap`) to execute live migration, backup/restore,
+#   readability, exact-pair rollback, and security/safe-off checks.
 
 set -euo pipefail
 
@@ -21,9 +24,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DEFAULTS_FILE="${REPO_ROOT}/deploy/staging/staging-env.defaults"
 
+# Load defaults without overwriting caller/test environment overrides.
 if [[ -f "${DEFAULTS_FILE}" ]]; then
-  # shellcheck disable=SC1090
-  source "${DEFAULTS_FILE}"
+  while IFS='=' read -r k v; do
+    [[ -z "$k" || "$k" =~ ^[[:space:]]*# ]] && continue
+    k="$(echo "$k" | xargs)"
+    if [[ -n "$k" && -z "${!k+x}" ]]; then
+      export "$k=$v"
+    fi
+  done < "${DEFAULTS_FILE}"
 fi
 
 die_json() {
@@ -129,7 +138,6 @@ PY
       IMG_JSON="${gcloud_img_json}" EXPECTED_REF="${expected_bff_image}" python3 - <<'PY'
 import json
 import os
-import sys
 
 payload = json.loads(os.environ["IMG_JSON"])
 if not isinstance(payload, dict):
@@ -179,6 +187,53 @@ summary["observed_fe_artifact_sha256"] = os.environ["OBSERVED_FE_SHA"]
 summary["observed_operator_bff_image"] = os.environ["OBSERVED_BFF_REF"]
 summary["fe_artifact_path"] = os.environ["FE_ARTIFACT_FILE"]
 print(json.dumps(summary, sort_keys=True))
+PY
+}
+
+build_remote_env_exports() {
+  python3 - <<'PY'
+import os, shlex
+
+passthrough_vars = (
+    "STAGING_ROOT",
+    "STAGING_DATA_MOUNT",
+    "STAGING_FE_ROOT",
+    "STAGING_BFF_PORT",
+    "STAGING_FE_HTTP_PORT",
+    "STAGING_POSTGRES_PORT",
+    "STAGING_BIN_DIR",
+    "STAGING_CADDYFILE_PATH",
+    "STAGING_SECRETS_ENV_FILE",
+    "STAGING_POSTGRES_PASSWORD_FILE",
+    "STAGING_SECRETS_GSM_NAME",
+    "STAGING_POSTGRES_PASSWORD_GSM_NAME",
+    "STAGING_POSTGRES_USER",
+    "STAGING_POSTGRES_DB",
+    "STAGING_JWT_ISSUER",
+    "STAGING_JWT_AUDIENCE",
+    "STAGING_IDP_ISSUER",
+    "STAGING_POSTGRES_IMAGE",
+    "STAGING_NATS_IMAGE",
+    "STAGING_ALLOW_APT_INSTALL",
+    "STAGING_READY_TRIES",
+    "STAGING_READY_INTERVAL",
+    "STAGING_RUNTIME_CONFIG_URL",
+    "DOCKER_BIN",
+    "CURL_BIN",
+    "CADDY_BIN",
+    "MOUNTPOINT_BIN",
+    "PSQL_BIN",
+    "PG_DUMP_BIN",
+    "PG_RESTORE_BIN",
+    "SUDO_BIN",
+)
+parts = []
+for k in passthrough_vars:
+    val = os.environ.get(k)
+    if val is not None and val != "":
+        parts.append(f"{k}={shlex.quote(val)}")
+if parts:
+    print("export " + " ".join(parts) + "; ")
 PY
 }
 
@@ -236,49 +291,67 @@ PY
       fi
     done
 
-    # Transfer immutable FE bundle, manifest, compose overlay, and Caddy template to the staging VM
+    REMOTE_BUNDLE_DIR="/tmp/pantheon-staging-bundle"
+    STAGE_BUNDLE_DIR="$(mktemp -d "${STATE_DIR}/artifacts/bundle-${RELEASE_ID}-XXXXXX")"
+    cp "${RELEASE_MANIFEST_PATH}" "${STAGE_BUNDLE_DIR}/manifest.json"
+    cp "${FE_ARTIFACT_FILE}" "${STAGE_BUNDLE_DIR}/fe-dist.tar.gz"
+    cp "${REPO_ROOT}/deploy/staging/docker-compose.staging.yml" "${STAGE_BUNDLE_DIR}/docker-compose.staging.yml"
+    cp "${REPO_ROOT}/deploy/staging/Caddyfile.staging.tmpl" "${STAGE_BUNDLE_DIR}/Caddyfile.staging.tmpl"
+    cp "${REPO_ROOT}/deploy/staging/staging-env.defaults" "${STAGE_BUNDLE_DIR}/staging-env.defaults"
+    cp "${REPO_ROOT}/deploy/staging/bootstrap.sh" "${STAGE_BUNDLE_DIR}/bootstrap.sh"
+    cp "${REPO_ROOT}/deploy/staging/pantheon-staging-collect-gates" "${STAGE_BUNDLE_DIR}/pantheon-staging-collect-gates"
+    cp "${SCRIPT_DIR}/staging_sanitize.py" "${STAGE_BUNDLE_DIR}/staging_sanitize.py"
+    cp "${SCRIPT_DIR}/release_manifest.py" "${STAGE_BUNDLE_DIR}/release_manifest.py"
+    chmod 0755 "${STAGE_BUNDLE_DIR}/bootstrap.sh" "${STAGE_BUNDLE_DIR}/pantheon-staging-collect-gates"
+
+    # 1. Create remote bundle directory safely over IAP SSH before SCP transfer.
+    REMOTE_MKDIR_CMD="set -euo pipefail; rm -rf '${REMOTE_BUNDLE_DIR}' && mkdir -p '${REMOTE_BUNDLE_DIR}' && chmod 0700 '${REMOTE_BUNDLE_DIR}'"
+    if ! "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
+      --project="${STAGING_GCP_PROJECT_ID}" \
+      --zone="${STAGING_GCP_ZONE}" \
+      --tunnel-through-iap \
+      --quiet \
+      --command="${REMOTE_MKDIR_CMD}" >/dev/null 2>&1; then
+      rm -rf "${STAGE_BUNDLE_DIR}"
+      die_json "HOST_SSH_MKDIR_FAILED" "Failed to prepare ${REMOTE_BUNDLE_DIR} on ${VM_NAME} over IAP SSH"
+    fi
+
+    # 2. Transfer immutable FE tarball, manifest, compose overlay, Caddy template, bootstrap.sh, and gate collector over IAP SCP.
     if ! "${GCLOUD_BIN}" compute scp \
       --project="${STAGING_GCP_PROJECT_ID}" \
       --zone="${STAGING_GCP_ZONE}" \
+      --tunnel-through-iap \
       --quiet \
-      "${RELEASE_MANIFEST_PATH}" \
-      "${FE_ARTIFACT_FILE}" \
-      "${REPO_ROOT}/deploy/staging/docker-compose.staging.yml" \
-      "${REPO_ROOT}/deploy/staging/Caddyfile.staging.tmpl" \
-      "${REPO_ROOT}/deploy/staging/staging-env.defaults" \
-      "${VM_NAME}:/tmp/pantheon-staging-bundle/" >/dev/null 2>&1; then
-      die_json "HOST_SCP_FAILED" "Failed to transfer immutable release bundle to ${VM_NAME}"
+      "${STAGE_BUNDLE_DIR}/manifest.json" \
+      "${STAGE_BUNDLE_DIR}/fe-dist.tar.gz" \
+      "${STAGE_BUNDLE_DIR}/docker-compose.staging.yml" \
+      "${STAGE_BUNDLE_DIR}/Caddyfile.staging.tmpl" \
+      "${STAGE_BUNDLE_DIR}/staging-env.defaults" \
+      "${STAGE_BUNDLE_DIR}/bootstrap.sh" \
+      "${STAGE_BUNDLE_DIR}/pantheon-staging-collect-gates" \
+      "${STAGE_BUNDLE_DIR}/staging_sanitize.py" \
+      "${STAGE_BUNDLE_DIR}/release_manifest.py" \
+      "${VM_NAME}:${REMOTE_BUNDLE_DIR}/" >/dev/null 2>&1; then
+      rm -rf "${STAGE_BUNDLE_DIR}"
+      die_json "HOST_SCP_FAILED" "Failed to transfer immutable release bundle to ${VM_NAME} over IAP SCP"
     fi
+    rm -rf "${STAGE_BUNDLE_DIR}"
 
-    # Execute remote bootstrap, data-disk mount, FE atomic symlink, Caddy render, and Compose core start (no rebuild)
-    REMOTE_DEPLOY_CMD="set -euo pipefail; \
-      export PANTHEON_ENV=staging \
-             PANTHEON_RELEASE_ID='${RELEASE_ID}' \
-             PANTHEON_OPERATOR_BFF_IMAGE='${BFF_IMAGE}' \
-             PANTHEON_PROVIDER_ENABLED=false \
-             PANTHEON_LIVE_BROKER_ENABLED=false \
-             PANTHEON_REAL_WRITES_ENABLED=false \
-             PANTHEON_DEV_STUB_WRITES_ENABLED=false \
-             PANTHEON_EXECUTION_MODE=paper \
-             VITE_BFF_MODE=live \
-             VITE_BFF_FALLBACK=strict \
-             STAGING_BFF_CORS_ORIGINS='${STAGING_FE_ORIGIN:-https://stg-${RELEASE_ID}.internal}'; \
-      sudo mkdir -p /var/lib/pantheon-staging /var/www/pantheon-staging-fe/releases/'${RELEASE_ID}'; \
-      if [[ -b /dev/disk/by-id/google-staging-data ]] && ! mountpoint -q /var/lib/pantheon-staging; then \
-        sudo mount /dev/disk/by-id/google-staging-data /var/lib/pantheon-staging; \
-      fi; \
-      sudo tar -xzf '/tmp/pantheon-staging-bundle/$(basename "${FE_ARTIFACT_FILE}")' -C '/var/www/pantheon-staging-fe/releases/${RELEASE_ID}'; \
-      sudo ln -sfn '/var/www/pantheon-staging-fe/releases/${RELEASE_ID}' /var/www/pantheon-staging-fe/current; \
-      docker compose -f /tmp/pantheon-staging-bundle/docker-compose.staging.yml --profile core up -d --no-build"
+    # 3. Execute remote bare-Debian bootstrap, digest-pinned pull, external runtime-config render, Compose start, and live identity readback over IAP SSH.
+    BFF_HOST="${STAGING_BFF_HOST:-bff-stg-${RELEASE_ID}.pantheon.internal}"
+    FE_HOST="${STAGING_FE_HOST:-stg-${RELEASE_ID}.pantheon.internal}"
+    REMOTE_ENV_EXPORTS="$(build_remote_env_exports)"
+    REMOTE_DEPLOY_CMD="set -euo pipefail; ${REMOTE_ENV_EXPORTS}bash '${REMOTE_BUNDLE_DIR}/bootstrap.sh' --bundle-dir '${REMOTE_BUNDLE_DIR}' --release-id '${RELEASE_ID}' --fe-sha '${FE_SHA256}' --bff-image '${BFF_IMAGE}' --bff-host '${BFF_HOST}' --fe-host '${FE_HOST}'"
 
     if ! SSH_DEPLOY_OUT="$(
       "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
         --project="${STAGING_GCP_PROJECT_ID}" \
         --zone="${STAGING_GCP_ZONE}" \
+        --tunnel-through-iap \
         --quiet \
         --command="${REMOTE_DEPLOY_CMD}" 2>&1
     )"; then
-      die_json "HOST_SSH_DEPLOY_FAILED" "Remote staging deployment command failed on ${VM_NAME}"
+      die_json "HOST_SSH_DEPLOY_FAILED" "Remote staging deployment command failed on ${VM_NAME}: $(printf '%s' "$SSH_DEPLOY_OUT" | tail -n 5 | tr '\n"' '  ')"
     fi
 
     OBSERVED_DEPLOY_FILE="${OBSERVED_DEPLOY_FILE}" \
@@ -301,23 +374,35 @@ if not raw:
     print(json.dumps({"status": "error", "error_code": "EMPTY_HOST_DEPLOY_READBACK", "message": "SSH deploy returned empty output"}), file=sys.stderr)
     raise SystemExit(1)
 
-lines = [line.strip() for line in raw.splitlines() if line.strip().startswith("{")]
-if not lines:
+observed = None
+for line in reversed(raw.splitlines()):
+    candidate = line.strip()
+    if candidate.startswith("{") and candidate.endswith("}"):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            observed = parsed
+            break
+
+if observed is None:
     print(json.dumps({"status": "error", "error_code": "INVALID_HOST_DEPLOY_READBACK", "message": "SSH deploy returned no JSON readback"}), file=sys.stderr)
     raise SystemExit(1)
 
-observed = json.loads(lines[-1])
 if observed.get("observed_from_live_vm") is not True or observed.get("dry_run") is not False:
     print(json.dumps({"status": "error", "error_code": "UNOBSERVED_HOST_DEPLOY", "message": "Host deploy readback is not marked observed_from_live_vm=true"}), file=sys.stderr)
     raise SystemExit(1)
-if observed.get("rebuilt_during_promotion") is not False:
+if observed.get("rebuilt_during_promotion") is not False or int(observed.get("rebuild_command_count", 0)) != 0:
     print(json.dumps({"status": "error", "error_code": "REBUILD_FORBIDDEN", "message": "FE/BFF rebuild detected during promotion"}), file=sys.stderr)
     raise SystemExit(1)
 
+fe_commit = observed.get("frontend_commit") or observed.get("frontend_commit_sha")
+bff_commit = observed.get("backend_commit") or observed.get("backend_commit_sha")
 checks = [
-    ("frontend_commit", observed.get("frontend_commit"), os.environ["EXPECTED_FE_COMMIT"]),
+    ("frontend_commit", fe_commit, os.environ["EXPECTED_FE_COMMIT"]),
     ("frontend_artifact_sha256", observed.get("frontend_artifact_sha256"), os.environ["EXPECTED_FE_SHA256"]),
-    ("backend_commit", observed.get("backend_commit"), os.environ["EXPECTED_BFF_COMMIT"]),
+    ("backend_commit", bff_commit, os.environ["EXPECTED_BFF_COMMIT"]),
     ("operator_bff_image", observed.get("operator_bff_image"), os.environ["EXPECTED_BFF_IMAGE"]),
 ]
 for field, actual, expected in checks:
@@ -352,9 +437,9 @@ payload = {
     "release_id": os.environ["RELEASE_ID"],
     "vm_name": os.environ["VM_NAME"],
     "reserved_ip": os.environ["RESERVED_IP"],
-    "frontend_commit": observed["frontend_commit"],
+    "frontend_commit": fe_commit,
     "frontend_artifact_sha256": observed["frontend_artifact_sha256"],
-    "backend_commit": observed["backend_commit"],
+    "backend_commit": bff_commit,
     "operator_bff_image": observed["operator_bff_image"],
     "data_disk_mounted": True,
     "bff_healthy": True,
@@ -378,15 +463,18 @@ PY
     done
 
     VM_TARGET="${VM_NAME:-pantheon-stg-${RELEASE_ID}}"
-    REMOTE_VERIFY_CMD="set -euo pipefail; pantheon-staging-collect-gates --release-id '${RELEASE_ID}'"
+    COLLECTOR_BIN="${STAGING_BIN_DIR:-/usr/local/bin}/pantheon-staging-collect-gates"
+    REMOTE_ENV_EXPORTS="$(build_remote_env_exports)"
+    REMOTE_VERIFY_CMD="set -euo pipefail; ${REMOTE_ENV_EXPORTS}'${COLLECTOR_BIN}' --release-id '${RELEASE_ID}'"
     if ! SSH_VERIFY_OUT="$(
       "${GCLOUD_BIN}" compute ssh "${VM_TARGET}" \
         --project="${STAGING_GCP_PROJECT_ID}" \
         --zone="${STAGING_GCP_ZONE}" \
+        --tunnel-through-iap \
         --quiet \
         --command="${REMOTE_VERIFY_CMD}" 2>&1
     )"; then
-      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via SSH"
+      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via IAP SSH: $(printf '%s' "$SSH_VERIFY_OUT" | tail -n 5 | tr '\n"' '  ')"
     fi
 
     GATE_OUT_DIR="${STATE_DIR}/observed-gates/${RELEASE_ID}"
@@ -402,12 +490,22 @@ import sys
 from pathlib import Path
 
 raw = os.environ["SSH_VERIFY_OUT"].strip()
-lines = [line.strip() for line in raw.splitlines() if line.strip().startswith("{")]
-if not lines:
+bundle = None
+for line in reversed(raw.splitlines()):
+    candidate = line.strip()
+    if candidate.startswith("{") and candidate.endswith("}"):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            bundle = parsed
+            break
+
+if bundle is None:
     print(json.dumps({"status": "error", "error_code": "EMPTY_GATE_COLLECTION", "message": "No JSON output from VM gate collection"}), file=sys.stderr)
     raise SystemExit(1)
 
-bundle = json.loads(lines[-1])
 if bundle.get("observed_from_live_vm") is not True or bundle.get("dry_run") is not False:
     print(json.dumps({"status": "error", "error_code": "UNOBSERVED_GATE_BUNDLE", "message": "Gate bundle was not observed from a live VM"}), file=sys.stderr)
     raise SystemExit(1)

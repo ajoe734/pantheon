@@ -1,7 +1,8 @@
 {
   "schema_version": 1,
   "template_name_prefix": "pantheon-stg-template",
-  "description": "Ephemeral Staging GCE Instance Template (Phase 2, standard non-Spot VM, 2h default TTL).",
+  "name": "pantheon-stg-template-20261024",
+  "description": "Pantheon ephemeral staging instance template (non-Spot e2-standard-2, bare Debian 12 bookworm, IAP SSH + HTTPS only).",
   "properties": {
     "machineType": "e2-standard-2",
     "scheduling": {
@@ -14,17 +15,19 @@
       {
         "boot": true,
         "autoDelete": true,
-        "Mode": "READ_WRITE",
+        "mode": "READ_WRITE",
+        "type": "PERSISTENT",
         "initializeParams": {
           "diskSizeGb": "50",
           "diskType": "pd-balanced",
-          "sourceImage": "projects/debian-cloud/global/images/family/debian-12"
+          "sourceImage": "projects/debian-cloud/global/images/debian-12-bookworm-v20261023"
         }
       }
     ],
     "networkInterfaces": [
       {
-        "network": "global/networks/default",
+        "network": "projects/pantheon-stg-20260902/global/networks/pantheon-staging",
+        "subnetwork": "projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1",
         "accessConfigs": [
           {
             "name": "External NAT",
@@ -34,25 +37,45 @@
         ]
       }
     ],
+    "serviceAccounts": [
+      {
+        "email": "pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com",
+        "scopes": [
+          "https://www.googleapis.com/auth/cloud-platform"
+        ]
+      }
+    ],
+    "shieldedInstanceConfig": {
+      "enableIntegrityMonitoring": true,
+      "enableSecureBoot": false,
+      "enableVtpm": true
+    },
     "tags": {
       "items": [
-        "pantheon-staging-https"
+        "pantheon-iap",
+        "pantheon-https"
       ]
     },
     "labels": {
       "environment": "staging",
       "cleanup_policy": "automatic",
-      "managed_by": "pantheon-ephemeral-staging"
+      "managed_by": "pantheon-ephemeral-staging",
+      "owner": "pantheon-release-ops",
+      "role": "staging-candidate"
     },
     "metadata": {
       "items": [
+        {
+          "key": "block-project-ssh-keys",
+          "value": "TRUE"
+        },
         {
           "key": "enable-oslogin",
           "value": "TRUE"
         },
         {
-          "key": "block-project-ssh-keys",
-          "value": "TRUE"
+          "key": "serial-port-enable",
+          "value": "FALSE"
         }
       ]
     }

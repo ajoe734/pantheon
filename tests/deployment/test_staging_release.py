@@ -1,9 +1,12 @@
 """Local controller and contract tests for Ephemeral Staging (`ENV-STG-EPHEMERAL-IMPL-001`).
 
 NOTE: These tests validate local controller behavior, schema/manifest contracts,
-sanitization logic, live `gcloud` CLI invocation/error propagation, cross-run
-cloud orphan discovery, valid GCP labels, artifact checksum verification,
-no-live-success-from-dryrun enforcement, and workflow `actionlint` compliance.
+sanitization logic, live `gcloud` CLI invocation/error propagation, IAP-only SSH/SCP
+enforcement, bare-Debian bootstrap (`deploy/staging/bootstrap.sh`), real on-VM gate
+collection (`deploy/staging/pantheon-staging-collect-gates`) under constrained host
+binaries (`docker`, `curl`, `caddy`, `mountpoint`, `psql`, `pg_dump`, `pg_restore`, `sudo`),
+cross-run cloud orphan discovery, valid GCP labels, artifact checksum verification,
+deployer/runtime SA separation, and workflow `actionlint` compliance.
 They do NOT constitute hosted GCP/GitHub Environment drill evidence.
 """
 from __future__ import annotations
@@ -33,33 +36,443 @@ PROVISION_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "staging_provision.sh"
 OPS_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh"
 VERIFY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "staging_verify.sh"
 DESTROY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "staging_destroy.sh"
+BOOTSTRAP_SCRIPT = REPO_ROOT / "deploy" / "staging" / "bootstrap.sh"
+COLLECTOR_SCRIPT = REPO_ROOT / "deploy" / "staging" / "pantheon-staging-collect-gates"
 EPHEMERAL_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "staging-ephemeral-deploy.yml"
 ORPHAN_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "staging-orphan-cleanup.yml"
 INSTANCE_TEMPLATE = REPO_ROOT / "deploy" / "staging" / "instance-template.json"
 COMPOSE_STAGING = REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml"
+CADDY_TEMPLATE = REPO_ROOT / "deploy" / "staging" / "Caddyfile.staging.tmpl"
 ACTIONLINT_CANDIDATES = (
     Path("/tmp/pantheon-env-current-20261024/tools/actionlint"),
 )
 
 
-FAKE_GCLOUD_SCRIPT = r"""#!/usr/bin/env python3
+FAKE_HOST_BIN_SCRIPT = r"""#!/usr/bin/env python3
 import hashlib
 import json
 import os
+from pathlib import Path
+import subprocess
+import sys
+
+tool = Path(sys.argv[0]).name
+args = sys.argv[1:]
+
+vm_state_file = Path(os.environ["VM_RUNTIME_STATE_FILE"])
+vm_log_file = Path(os.environ["VM_BIN_LOG_FILE"])
+vm_log_file.parent.mkdir(parents=True, exist_ok=True)
+with vm_log_file.open("a", encoding="utf-8") as lf:
+    lf.write(f"{tool} {' '.join(args)}\n")
+
+
+def load_state() -> dict:
+    if vm_state_file.exists():
+        return json.loads(vm_state_file.read_text(encoding="utf-8"))
+    return {"pulled_images": [], "containers": {}, "databases": {}, "caddy_validated": False, "caddy_reloaded": False}
+
+
+def save_state(st: dict) -> None:
+    vm_state_file.parent.mkdir(parents=True, exist_ok=True)
+    vm_state_file.write_text(json.dumps(st, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    out = {}
+    if not path.exists():
+        return out
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+if tool == "sudo":
+    if not args:
+        raise SystemExit(0)
+    proc = subprocess.run(args, env=os.environ.copy())
+    raise SystemExit(proc.returncode)
+
+if tool == "mountpoint":
+    if os.environ.get("FAKE_DATA_MOUNTED", "true") != "true":
+        raise SystemExit(1)
+    target = args[-1] if args else ""
+    if not target or not Path(target).is_dir():
+        raise SystemExit(1)
+    raise SystemExit(0)
+
+if tool == "caddy":
+    if not args:
+        raise SystemExit(1)
+    sub = args[0]
+    cfg_path = ""
+    for i, a in enumerate(args):
+        if a == "--config" and i + 1 < len(args):
+            cfg_path = args[i + 1]
+    if not cfg_path or not Path(cfg_path).exists():
+        print("caddy config file missing", file=sys.stderr)
+        raise SystemExit(1)
+    text = Path(cfg_path).read_text(encoding="utf-8")
+    if "__STAGING_" in text or "/runtime-config.js" not in text:
+        print("caddy config has unrendered placeholders or lacks /runtime-config.js route", file=sys.stderr)
+        raise SystemExit(1)
+    st = load_state()
+    if sub == "validate":
+        st["caddy_validated"] = True
+    elif sub in ("reload", "start"):
+        st["caddy_reloaded"] = True
+    save_state(st)
+    raise SystemExit(0)
+
+if tool == "docker":
+    st = load_state()
+    if args[:2] == ["compose", "version"]:
+        print("Docker Compose version v2.29.7")
+        raise SystemExit(0)
+
+    if args[:1] == ["pull"]:
+        img = args[1]
+        if "@sha256:" not in img:
+            print(f"refusing unpinned image pull: {img}", file=sys.stderr)
+            raise SystemExit(1)
+        fail_pull = os.environ.get("FAKE_DOCKER_PULL_FAIL", "").strip()
+        if fail_pull and fail_pull in img:
+            print(f"simulated docker pull failure for {img}", file=sys.stderr)
+            raise SystemExit(1)
+        if img not in st.setdefault("pulled_images", []):
+            st["pulled_images"].append(img)
+        save_state(st)
+        print(f"Pulled {img}")
+        raise SystemExit(0)
+
+    if args[:2] == ["image", "inspect"]:
+        img = args[-1]
+        if img not in st.get("pulled_images", []):
+            print(f"image not pulled locally: {img}", file=sys.stderr)
+            raise SystemExit(1)
+        fmt = ""
+        for i, a in enumerate(args):
+            if a == "-f" and i + 1 < len(args):
+                fmt = args[i + 1]
+        if "migration_set_sha256" in fmt:
+            print(os.environ.get("FAKE_IMAGE_MIGRATION_LABEL", st.get("migration_set_sha256", "")))
+        elif "compatibility_manifest_sha256" in fmt:
+            print(os.environ.get("FAKE_IMAGE_COMPAT_LABEL", st.get("compatibility_manifest_sha256", "")))
+        else:
+            print(json.dumps([{"Id": img}]))
+        raise SystemExit(0)
+
+    if args[:1] == ["inspect"]:
+        cid = args[-1]
+        fmt = ""
+        for i, a in enumerate(args):
+            if a == "-f" and i + 1 < len(args):
+                fmt = args[i + 1]
+        cinfo = None
+        for svc, info in st.get("containers", {}).items():
+            if info.get("cid") == cid:
+                cinfo = info
+                break
+        if not cinfo:
+            print(f"No such container: {cid}", file=sys.stderr)
+            raise SystemExit(1)
+        if fmt == "{{.Config.Image}}":
+            print(cinfo["image"])
+        elif "Config.Env" in fmt:
+            for k, v in sorted(cinfo.get("env", {}).items()):
+                print(f"{k}={v}")
+        else:
+            print(json.dumps(cinfo))
+        raise SystemExit(0)
+
+    if args[:1] == ["compose"]:
+        env_file = None
+        for i, a in enumerate(args):
+            if a == "--env-file" and i + 1 < len(args):
+                env_file = Path(args[i + 1])
+        c_env = parse_env_file(env_file) if env_file else {}
+
+        if "ps" in args and "-q" in args:
+            svc = args[-1]
+            cinfo = st.get("containers", {}).get(svc)
+            if cinfo and cinfo.get("running"):
+                count = int(os.environ.get("FAKE_SINGLETON_COUNT", "1")) if svc == "lifecycle-projector" else 1
+                for idx in range(count):
+                    print(cinfo["cid"] if idx == 0 else f"{cinfo['cid']}-{idx}")
+            raise SystemExit(0)
+
+        if "rm" in args and "-fsv" in args:
+            svc = args[-1]
+            if svc in st.get("containers", {}):
+                st["containers"][svc]["running"] = False
+                save_state(st)
+            print(f"Removed {svc}")
+            raise SystemExit(0)
+
+        if "up" in args and "-d" in args:
+            if "--no-build" not in args:
+                print("compose up without --no-build is forbidden", file=sys.stderr)
+                raise SystemExit(1)
+            svc_image_keys = {
+                "postgres": "PANTHEON_POSTGRES_IMAGE",
+                "nats": "PANTHEON_NATS_IMAGE",
+                "runtime-manager": "PANTHEON_RUNTIME_MANAGER_IMAGE",
+                "governance": "PANTHEON_GOVERNANCE_IMAGE",
+                "deployment": "PANTHEON_DEPLOYMENT_IMAGE",
+                "lifecycle-projector": "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE",
+                "operator-bff": "PANTHEON_OPERATOR_BFF_IMAGE",
+            }
+            explicit_svcs = [a for a in args if a in svc_image_keys]
+            target_svcs = explicit_svcs if explicit_svcs else list(svc_image_keys.keys())
+            omit_svc = os.environ.get("FAKE_OMIT_SERVICE", "").strip()
+
+            secrets_env = {}
+            if c_env.get("STAGING_SECRETS_ENV_FILE"):
+                secrets_env = parse_env_file(Path(c_env["STAGING_SECRETS_ENV_FILE"]))
+
+            for svc in target_svcs:
+                if omit_svc and svc == omit_svc:
+                    continue
+                img_key = svc_image_keys[svc]
+                img_ref = c_env.get(img_key, "")
+                if not img_ref or img_ref not in st.get("pulled_images", []):
+                    print(f"pull_policy:never violation — image for {svc} ({img_ref!r}) not pre-pulled", file=sys.stderr)
+                    raise SystemExit(1)
+                merged_svc_env = {
+                    "PANTHEON_ENV": "staging",
+                    "PANTHEON_RELEASE_ID": c_env.get("PANTHEON_RELEASE_ID", ""),
+                    "PANTHEON_PROVIDER_ENABLED": "false",
+                    "PANTHEON_LIVE_BROKER_ENABLED": os.environ.get("FAKE_CONTAINER_LIVE_BROKER", "false"),
+                    "PANTHEON_REAL_WRITES_ENABLED": "false",
+                    "PANTHEON_DEV_STUB_WRITES_ENABLED": "false",
+                    "PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT": "false",
+                    "PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED": "false",
+                    "PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED": "false",
+                    "PANTHEON_ASSISTANT_PROVIDER": "disabled",
+                    "PANTHEON_EXECUTION_MODE": "paper",
+                    "PANTHEON_BFF_AUTH_MODE": "strict",
+                    "PANTHEON_BFF_AUTH_STUB": "false",
+                    "BFF_COMMIT": c_env.get("PANTHEON_BACKEND_COMMIT", ""),
+                    "BFF_IMAGE_DIGEST": c_env.get("PANTHEON_OPERATOR_BFF_DIGEST", ""),
+                    **secrets_env,
+                }
+                st.setdefault("containers", {})[svc] = {
+                    "cid": f"cid-{svc}",
+                    "image": img_ref,
+                    "running": True,
+                    "env": merged_svc_env,
+                }
+            save_state(st)
+            # Emit ordinary Docker Compose stdout to prove deploy-host does not rely on compose printing JSON.
+            print("Container pantheon-staging-operator-bff-1 Started")
+            raise SystemExit(0)
+
+    print(f"Unsupported docker args: {args}", file=sys.stderr)
+    raise SystemExit(1)
+
+if tool == "curl":
+    st = load_state()
+    url = args[-1]
+    write_status_only = "-w" in args and "%{http_code}" in args
+    dump_headers = "-D" in args
+    out_file = None
+    method = "GET"
+    headers = {}
+    for i, a in enumerate(args):
+        if a == "-o" and i + 1 < len(args):
+            out_file = args[i + 1]
+        elif a == "-X" and i + 1 < len(args):
+            method = args[i + 1].upper()
+        elif a == "-H" and i + 1 < len(args) and ":" in args[i + 1]:
+            hk, hv = args[i + 1].split(":", 1)
+            headers[hk.strip().lower()] = hv.strip()
+
+    if url.endswith("/bff/readyz"):
+        required_up = ("postgres", "nats", "runtime-manager", "governance", "deployment", "lifecycle-projector", "operator-bff")
+        all_up = all(st.get("containers", {}).get(s, {}).get("running") is True for s in required_up)
+        if os.environ.get("FAKE_BFF_UNHEALTHY") == "true":
+            all_up = False
+        code = 200 if all_up else 503
+        body = json.dumps({"status": "ok" if all_up else "unavailable", "ready": all_up})
+        if write_status_only:
+            print(str(code), end="")
+            raise SystemExit(0)
+        if code != 200:
+            raise SystemExit(22)
+        print(body)
+        raise SystemExit(0)
+
+    if url.endswith("/bff/version"):
+        bff = st.get("containers", {}).get("operator-bff", {})
+        b_env = bff.get("env", {})
+        body = json.dumps({
+            "environment": b_env.get("PANTHEON_ENV", "staging"),
+            "source_commit_sha": b_env.get("BFF_COMMIT", ""),
+            "image_digest": b_env.get("BFF_IMAGE_DIGEST", ""),
+        })
+        if write_status_only:
+            print("200", end="")
+        else:
+            print(body)
+        raise SystemExit(0)
+
+    if url.endswith("/runtime-config.js"):
+        cfg_path = Path(os.environ.get("STAGING_ROOT", "")) / "config" / "runtime-config.js"
+        if not cfg_path.exists():
+            raise SystemExit(22)
+        content = cfg_path.read_text(encoding="utf-8")
+        if out_file and out_file != "/dev/null":
+            Path(out_file).write_text(content, encoding="utf-8")
+        cc = os.environ.get("FAKE_RUNTIME_CONFIG_CACHE_CONTROL", "no-store, no-cache, must-revalidate, max-age=0")
+        if dump_headers:
+            print(f"HTTP/1.1 200 OK\r\nCache-Control: {cc}\r\nContent-Type: application/javascript\r\n\r\n", end="")
+        else:
+            print(content, end="")
+        raise SystemExit(0)
+
+    if url.endswith("/bff/capabilities"):
+        auth = headers.get("authorization", "")
+        tenant = headers.get("x-tenant-id", "")
+        role = headers.get("x-pantheon-role", "")
+        if not auth:
+            code = int(os.environ.get("FAKE_UNAUTH_STATUS", "401"))
+        elif tenant == "tenant-bravo":
+            code = int(os.environ.get("FAKE_CROSS_TENANT_STATUS", "403"))
+        elif method == "POST" and role == "viewer":
+            code = int(os.environ.get("FAKE_VIEWER_MUTATION_STATUS", "403"))
+        else:
+            code = 200
+        if write_status_only:
+            print(str(code), end="")
+        raise SystemExit(0)
+
+    print(f"Unsupported curl URL: {url}", file=sys.stderr)
+    raise SystemExit(1)
+
+if tool in ("psql", "pg_dump", "pg_restore"):
+    st = load_state()
+    expected_pw = st.get("expected_pg_password", "")
+    if not os.environ.get("PGPASSWORD") or (expected_pw and os.environ.get("PGPASSWORD") != expected_pw):
+        print("psql authentication failed: invalid or missing PGPASSWORD", file=sys.stderr)
+        raise SystemExit(1)
+
+    db_name = "pantheon_staging"
+    for i, a in enumerate(args):
+        if a == "-d" and i + 1 < len(args):
+            db_name = args[i + 1]
+
+    if tool == "pg_dump":
+        if os.environ.get("FAKE_PG_DUMP_FAIL") == "true":
+            print("simulated pg_dump failure", file=sys.stderr)
+            raise SystemExit(1)
+        out_f = ""
+        for i, a in enumerate(args):
+            if a == "-f" and i + 1 < len(args):
+                out_f = args[i + 1]
+        db_data = st.get("databases", {}).get(db_name, {})
+        Path(out_f).write_text(json.dumps(db_data, sort_keys=True), encoding="utf-8")
+        raise SystemExit(0)
+
+    if tool == "pg_restore":
+        if os.environ.get("FAKE_PG_RESTORE_FAIL") == "true":
+            print("simulated pg_restore failure", file=sys.stderr)
+            raise SystemExit(1)
+        dump_file = Path(args[-1])
+        if not dump_file.exists():
+            print("dump file missing", file=sys.stderr)
+            raise SystemExit(1)
+        st.setdefault("databases", {})[db_name] = json.loads(dump_file.read_text(encoding="utf-8"))
+        save_state(st)
+        raise SystemExit(0)
+
+    # tool == psql
+    sql = ""
+    for i, a in enumerate(args):
+        if a == "-c" and i + 1 < len(args):
+            sql = args[i + 1]
+
+    db_tables = st.setdefault("databases", {}).setdefault(db_name, {}).setdefault("tables", {})
+    if "CREATE DATABASE" in sql:
+        new_db = sql.split('CREATE DATABASE "', 1)[1].split('"', 1)[0]
+        st["databases"][new_db] = {"tables": {}}
+        save_state(st)
+        print("CREATE DATABASE")
+        raise SystemExit(0)
+    if "json_build_object('migration_set_sha256'" in sql:
+        migs = db_tables.get("schema_migrations") or []
+        summary = {
+            "migration_set_sha256": migs[0]["checksum_sha256"] if migs else "",
+            "counts": {
+                "users": len(db_tables.get("users") or []),
+                "tenants": len(db_tables.get("tenants") or []),
+                "broker_credentials": len(db_tables.get("broker_credentials") or []),
+                "exchange_api_keys": len(db_tables.get("exchange_api_keys") or []),
+                "user_sessions": len(db_tables.get("user_sessions") or []),
+            },
+        }
+        print(json.dumps(summary, sort_keys=True))
+        raise SystemExit(0)
+    if "json_build_object('users'" in sql:
+        print(json.dumps(db_tables, sort_keys=True))
+        raise SystemExit(0)
+    if "PRE_MIGRATION_SCHEMA" in sql:
+        print(json.dumps(st.get("old_app_schema", {"users": {"id": {"type": "text"}}})))
+        raise SystemExit(0)
+    if "POST_MIGRATION_SCHEMA" in sql:
+        print(json.dumps(st.get("new_schema", {
+            "users": {
+                "id": {"type": "text"},
+                "staging_note": {"type": "text", "nullable": True, "has_default": False},
+            }
+        })))
+        raise SystemExit(0)
+    if "ALTER TABLE" in sql:
+        if os.environ.get("FAKE_FAIL_MIGRATION_SQL") == "true":
+            print("ERROR: syntax or lock error executing migration SQL", file=sys.stderr)
+            raise SystemExit(1)
+        st["migration_applied"] = True
+        save_state(st)
+        print("ALTER TABLE")
+        raise SystemExit(0)
+    if "FROM schema_migrations" in sql and "json_build_object" not in sql:
+        migs = db_tables.get("schema_migrations") or []
+        print(migs[0]["checksum_sha256"] if migs else "")
+        raise SystemExit(0)
+    if "OLD_APP_COMPAT_SMOKE" in sql:
+        users = db_tables.get("users") or []
+        if not users:
+            raise SystemExit(1)
+        u = users[0]
+        print(f"{u['id']}|{u['email']}|{u['tenant_id']}|{u['role']}")
+        raise SystemExit(0)
+
+    print("OK")
+    raise SystemExit(0)
+"""
+
+
+FAKE_GCLOUD_SCRIPT = r"""#!/usr/bin/env python3
+import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 state_file = Path(os.environ["GCLOUD_STATE_FILE"])
 log_file = Path(os.environ["GCLOUD_LOG_FILE"])
 
-args = [a for a in sys.argv[1:] if a != "--format=json" and a != "--quiet"]
+raw_args = sys.argv[1:]
+args = [a for a in raw_args if a != "--format=json" and a != "--quiet"]
 log_file.parent.mkdir(parents=True, exist_ok=True)
 with log_file.open("a", encoding="utf-8") as lf:
-    lf.write(" ".join(sys.argv[1:]) + "\n")
+    lf.write(" ".join(raw_args) + "\n")
 
 fail_on = os.environ.get("GCLOUD_FAIL_ON", "").strip()
-if fail_on and fail_on in " ".join(sys.argv[1:]):
+if fail_on and fail_on in " ".join(raw_args):
     print(f"simulated gcloud failure on {fail_on}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -77,7 +490,7 @@ else:
         "iam_bindings": [],
         "images": {},
         "gcs_blobs": {},
-        "vm_Verify_bundles": {},
+        "vm_mkdir_ready": {},
     }
 
 
@@ -209,6 +622,7 @@ if args[:3] == ["compute", "instances", "create"]:
     project = parse_flag("--project")
     zone = parse_flag("--zone")
     address = parse_flag("--address")
+    sa_email = parse_flag("--service-account")
     labels = parse_labels(parse_flag("--labels"))
     disk_specs = parse_multi_flag("--disk")
     disks_attached = []
@@ -231,6 +645,7 @@ if args[:3] == ["compute", "instances", "create"]:
         "selfLink": f"https://www.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{name}",
         "labels": labels,
         "disks": disks_attached,
+        "serviceAccounts": [{"email": sa_email, "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
         "networkInterfaces": [
             {
                 "accessConfigs": [{"natIP": address}],
@@ -259,23 +674,6 @@ if args[:2] == ["projects", "get-iam-policy"]:
     print(json.dumps({"bindings": state.get("iam_bindings", [])}))
     raise SystemExit(0)
 
-if args[:2] == ["projects", "add-iam-policy-binding"]:
-    member = parse_flag("--member")
-    role = parse_flag("--role")
-    bindings = state.setdefault("iam_bindings", [])
-    found = False
-    for b in bindings:
-        if b.get("role") == role:
-            if member not in b.setdefault("members", []):
-                b["members"].append(member)
-            found = True
-            break
-    if not found:
-        bindings.append({"role": role, "members": [member]})
-    save_state()
-    print(json.dumps({"bindings": bindings}))
-    raise SystemExit(0)
-
 if args[:2] == ["projects", "remove-iam-policy-binding"]:
     member = parse_flag("--member")
     role = parse_flag("--role")
@@ -289,109 +687,43 @@ if args[:2] == ["projects", "remove-iam-policy-binding"]:
     raise SystemExit(0)
 
 if args[:2] == ["compute", "scp"]:
-    # Record transferred files on the target VM state
+    if "--tunnel-through-iap" not in raw_args:
+        print("IAP-only firewall: direct public SCP is forbidden (--tunnel-through-iap required)", file=sys.stderr)
+        raise SystemExit(1)
     target = args[-1]
-    vm_name = target.split(":", 1)[0]
+    vm_name, remote_dest = target.split(":", 1)
+    remote_dir = Path(remote_dest.rstrip("/"))
+    if not state.get("vm_mkdir_ready", {}).get(vm_name) or not remote_dir.is_dir():
+        print(f"Remote directory {remote_dir} was not created over IAP SSH before SCP on {vm_name}", file=sys.stderr)
+        raise SystemExit(1)
     files = [a for a in args[2:-1] if not a.startswith("--")]
-    manifest_file = next((f for f in files if f.endswith(".json")), None)
-    fe_tar = next((f for f in files if f.endswith(".tar.gz")), None)
-    if manifest_file and fe_tar:
-        m_data = json.loads(Path(manifest_file).read_text(encoding="utf-8"))
-        fe_sha = "sha256:" + hashlib.sha256(Path(fe_tar).read_bytes()).hexdigest()
-        rel_id = m_data["release_id"]
-        mig_sha = m_data["migration_set_sha256"]
-        rb = m_data["rollback_baseline"]
-        observed_deploy = {
-            "observed_from_live_vm": True,
-            "dry_run": False,
-            "rebuilt_during_promotion": False,
-            "release_id": rel_id,
-            "frontend_commit": m_data["frontend"]["commit"],
-            "frontend_artifact_sha256": fe_sha,
-            "backend_commit": m_data["backend"]["commit"],
-            "operator_bff_image": m_data["backend"]["images"]["operator_bff"],
-            "data_disk_mounted": True,
-            "bff_healthy": True,
-        }
-        state.setdefault("vm_verify_bundles", {})[vm_name] = {
-            "observed_from_live_vm": True,
-            "dry_run": False,
-            "observed_deploy": observed_deploy,
-            "sanitized_dataset": state.get("default_sanitized_dataset", {}),
-            "migration_plan": {
-                "expected_migration_set_sha256": mig_sha,
-                "observed_migration_set_sha256": mig_sha,
-                "phase": "expand",
-                "statements": ["ALTER TABLE users ADD COLUMN staging_note TEXT NULL;"],
-                "old_app_schema": {"users": {"id": {"type": "text"}}},
-                "new_schema": {
-                    "users": {
-                        "id": {"type": "text"},
-                        "staging_note": {"type": "text", "nullable": True, "has_default": False},
-                    }
-                },
-                "forward_migration_applied": True,
-                "old_app_smoke_against_new_schema_passed": True,
-            },
-            "backup_restore_record": {
-                "backup_id": f"stg-bak-{rel_id}",
-                "backup_sha256": "sha256:" + ("8" * 64),
-                "expected_migration_set_sha256": mig_sha,
-                "restored_migration_set_sha256": mig_sha,
-                "restore_completed": True,
-                "read_query_verified": True,
-                "restored_row_counts": {
-                    "users": 1,
-                    "tenants": 1,
-                    "broker_credentials": 0,
-                    "exchange_api_keys": 0,
-                    "user_sessions": 0,
-                },
-            },
-            "rollback_readback": {
-                "served_release_id": rb["previous_release_id"],
-                "served_frontend_commit": rb["frontend_commit"],
-                "served_frontend_artifact_sha256": rb["frontend_artifact_sha256"],
-                "served_backend_commit": rb["backend_commit"],
-                "fe_manifest_paired_backend_commit": rb["backend_commit"],
-                "served_operator_bff_image": rb["backend_operator_bff_image"],
-                "bff_healthy": True,
-                "singleton_worker_owner_unique": True,
-                "rollback_duration_seconds": 24,
-            },
-            "security_readback": {
-                "tenant_isolation_enforced": True,
-                "cross_tenant_read_rejected": True,
-                "cross_tenant_write_rejected": True,
-                "unauthenticated_rejected": True,
-                "viewer_mutation_rejected": True,
-                "role_map_strict": True,
-                "provider_enabled": False,
-                "real_writes_enabled": False,
-                "dev_stub_writes_enabled": False,
-                "live_broker_enabled": False,
-                "control_vm_broker_credentials_present": False,
-                "vite_bff_mode": "live",
-                "vite_bff_fallback": "strict",
-                "execution_mode": "paper",
-            },
-        }
-        save_state()
-    print(json.dumps({"scp": "ok"}))
+    for src in files:
+        shutil.copy2(src, remote_dir / Path(src).name)
+    print(json.dumps({"scp": "ok", "count": len(files)}))
     raise SystemExit(0)
 
 if args[:2] == ["compute", "ssh"]:
+    if "--tunnel-through-iap" not in raw_args:
+        print("IAP-only firewall: direct public SSH is forbidden (--tunnel-through-iap required)", file=sys.stderr)
+        raise SystemExit(1)
     vm_name = args[2]
     cmd = parse_flag("--command")
-    bundle = state.get("vm_verify_bundles", {}).get(vm_name)
-    if not bundle:
-        print(f"No deployed bundle on VM {vm_name}", file=sys.stderr)
+    if not cmd:
+        print("compute ssh missing --command", file=sys.stderr)
         raise SystemExit(1)
-    if "pantheon-staging-collect-gates" in cmd:
-        print(json.dumps(bundle, sort_keys=True))
-    else:
-        print(json.dumps(bundle["observed_deploy"], sort_keys=True))
-    raise SystemExit(0)
+    if "mkdir -p '/tmp/pantheon-staging-bundle'" in cmd or "mkdir -p /tmp/pantheon-staging-bundle" in cmd:
+        state.setdefault("vm_mkdir_ready", {})[vm_name] = True
+        save_state()
+    child_env = os.environ.copy()
+    host_bin_dir = os.environ.get("FAKE_HOST_BIN_DIR", "")
+    if host_bin_dir:
+        child_env["PATH"] = f"{host_bin_dir}:{child_env.get('PATH', '')}"
+    proc = subprocess.run(["bash", "-c", cmd], env=child_env, text=True, capture_output=True)
+    if proc.stdout:
+        sys.stdout.write(proc.stdout)
+    if proc.stderr:
+        sys.stderr.write(proc.stderr)
+    raise SystemExit(proc.returncode)
 
 print(f"Unsupported fake gcloud command: {args}", file=sys.stderr)
 raise SystemExit(1)
@@ -420,11 +752,12 @@ def _sample_manifest(
     fe_commit = "a" * 40
     bff_commit = "b" * 40
     fe_sha_val = fe_sha or ("sha256:" + ("1" * 64))
-    bff_img = "asia-east1-docker.pkg.dev/pantheon-stg-20260902/containers/operator-bff@sha256:" + ("2" * 64)
+    reg = "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases"
+    bff_img = f"{reg}/operator-bff@sha256:" + ("2" * 64)
     compat_sha = "sha256:" + ("3" * 64)
     mig_sha = "sha256:" + ("4" * 64)
     prev_fe_sha = "sha256:" + ("5" * 64)
-    prev_bff_img = "asia-east1-docker.pkg.dev/pantheon-stg-20260902/containers/operator-bff@sha256:" + ("6" * 64)
+    prev_bff_img = f"{reg}/operator-bff@sha256:" + ("6" * 64)
     return release_manifest.build_manifest(
         release_id=release_id,
         release_state=state,
@@ -432,6 +765,12 @@ def _sample_manifest(
         frontend_artifact_sha256=fe_sha_val,
         backend_commit=bff_commit,
         operator_bff_image=bff_img,
+        additional_images={
+            "runtime_manager": f"{reg}/runtime-manager@sha256:" + ("a" * 64),
+            "governance": f"{reg}/governance@sha256:" + ("b" * 64),
+            "deployment": f"{reg}/deployment@sha256:" + ("c" * 64),
+            "lifecycle_projector": f"{reg}/lifecycle-projector@sha256:" + ("d" * 64),
+        },
         compatibility_manifest_sha256=compat_sha,
         migration_set_sha256=mig_sha,
         config_schema_version="pantheon.env-config.v1",
@@ -576,11 +915,11 @@ class ReleaseManifestContractTests(unittest.TestCase):
             release_manifest.verify_promotion_eligibility(
                 manifest,
                 expected_manifest_sha256=outer_sha,
-                observed_bff_digest="asia-east1-docker.pkg.dev/pantheon-stg-20260902/containers/operator-bff@sha256:" + ("e" * 64),
+                observed_bff_digest="asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:" + ("e" * 64),
             )
 
         bad_tag = copy.deepcopy(manifest)
-        bad_tag["backend"]["images"]["operator_bff"] = "asia-east1-docker.pkg.dev/pantheon-stg-20260902/containers/operator-bff:latest"
+        bad_tag["backend"]["images"]["operator_bff"] = "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff:latest"
         with self.assertRaisesRegex(release_manifest.ReleaseManifestError, "immutable digest reference"):
             release_manifest.validate_manifest(bad_tag)
 
@@ -760,6 +1099,9 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
 
 class StagingControllerLifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
+        if getattr(self, "tmp_dir", None) is not None:
+            self.tmp_dir.cleanup()
+        shutil.rmtree("/tmp/pantheon-staging-bundle", ignore_errors=True)
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmp_dir.name)
         self.state_dir = self.tmp_path / "state"
@@ -770,13 +1112,79 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
         self.manifest_sha = release_manifest.compute_manifest_sha256(self.manifest)
 
+        # Constrained host binaries used when FAKE_GCLOUD_SCRIPT executes remote SSH commands
+        self.host_bin_dir = self.tmp_path / "host_bin"
+        self.host_bin_dir.mkdir(parents=True, exist_ok=True)
+        for tool in ("docker", "curl", "caddy", "mountpoint", "psql", "pg_dump", "pg_restore", "sudo"):
+            tpath = self.host_bin_dir / tool
+            tpath.write_text(FAKE_HOST_BIN_SCRIPT, encoding="utf-8")
+            tpath.chmod(0o755)
+
+        self.vm_env_dir = self.tmp_path / "vm_env"
+        self.staging_root = self.vm_env_dir / "root"
+        self.data_mount = self.vm_env_dir / "data"
+        self.fe_root = self.vm_env_dir / "fe"
+        self.bin_dir = self.vm_env_dir / "bin"
+        self.caddyfile_path = self.vm_env_dir / "etc" / "caddy" / "Caddyfile"
+        self.secrets_dir = self.staging_root / "secrets"
+        for d in (self.staging_root, self.data_mount / "sanitized", self.fe_root, self.bin_dir, self.secrets_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        self.secrets_env_file = self.secrets_dir / "staging.secrets.env"
+        self.secrets_env_file.write_text(
+            "PANTHEON_BFF_JWT_SECRET=stg-jwt-secret-value-001\n"
+            "PANTHEON_RUNTIME_JWT_SECRET=stg-runtime-jwt-secret-001\n"
+            "PANTHEON_DATABASE_URL=postgresql://pantheon_stg:stg-pg-pass@127.0.0.1:15432/pantheon_staging\n",
+            encoding="utf-8",
+        )
+        self.secrets_env_file.chmod(0o600)
+
+        self.pg_pw_file = self.secrets_dir / "postgres_password"
+        self.pg_pw_file.write_text("stg-isolated-pg-password-20261025\n", encoding="utf-8")
+        self.pg_pw_file.chmod(0o600)
+
+        sanitized = staging_sanitize.sanitize_dataset(_sample_raw_dataset(self.manifest["migration_set_sha256"]))
+        (self.data_mount / "sanitized" / "snapshot-metadata.json").write_text(
+            json.dumps(sanitized["metadata"], indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        (self.data_mount / "sanitized" / "migration-spec.json").write_text(
+            json.dumps({
+                "phase": "expand",
+                "statements": ["ALTER TABLE users ADD COLUMN staging_note TEXT NULL;"],
+                "old_app_schema": {"users": {"id": {"type": "text"}}},
+                "new_schema": {
+                    "users": {
+                        "id": {"type": "text"},
+                        "staging_note": {"type": "text", "nullable": True, "has_default": False},
+                    }
+                },
+            }, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+        self.vm_runtime_state_file = self.vm_env_dir / "vm_runtime_state.json"
+        self.vm_bin_log_file = self.vm_env_dir / "vm_bin.log"
+        self.vm_runtime_state_file.write_text(
+            json.dumps({
+                "pulled_images": [],
+                "containers": {},
+                "expected_pg_password": "stg-isolated-pg-password-20261025",
+                "migration_set_sha256": self.manifest["migration_set_sha256"],
+                "compatibility_manifest_sha256": self.manifest["compatibility_manifest_sha256"],
+                "databases": {
+                    "pantheon_staging": {"tables": sanitized["tables"]},
+                },
+            }, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
         self.gcloud_bin = self.tmp_path / "fake-gcloud.py"
         self.gcloud_bin.write_text(FAKE_GCLOUD_SCRIPT, encoding="utf-8")
         self.gcloud_bin.chmod(0o755)
         self.gcloud_state_file = self.tmp_path / "gcloud-state.json"
         self.gcloud_log_file = self.tmp_path / "gcloud-commands.log"
 
-        sanitized = staging_sanitize.sanitize_dataset(_sample_raw_dataset(self.manifest["migration_set_sha256"]))
         self.gcloud_state_file.write_text(
             json.dumps({
                 "addresses": [],
@@ -785,13 +1193,13 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 "iam_bindings": [],
                 "images": {},
                 "gcs_blobs": {"gs://pantheon-stg-artifacts/fe-bundle.tar.gz": str(self.fe_tarball)},
-                "vm_verify_bundles": {},
-                "default_sanitized_dataset": sanitized,
+                "vm_mkdir_ready": {},
             }),
             encoding="utf-8",
         )
 
     def tearDown(self) -> None:
+        shutil.rmtree("/tmp/pantheon-staging-bundle", ignore_errors=True)
         self.tmp_dir.cleanup()
 
     def _base_env(self, **overrides: str) -> dict[str, str]:
@@ -799,8 +1207,10 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             **os.environ,
             "STAGING_GCP_PROJECT_ID": "pantheon-stg-20260902",
             "STAGING_GCP_ZONE": "asia-east1-b",
-            "STAGING_INSTANCE_TEMPLATE": "pantheon-stg-template-v1",
-            "STAGING_SERVICE_ACCOUNT": "pantheon-stg-deployer@pantheon-stg-20260902.iam.gserviceaccount.com",
+            "STAGING_INSTANCE_TEMPLATE": "pantheon-stg-template-20261024",
+            "STAGING_DEPLOY_SERVICE_ACCOUNT": "pantheon-stg-github-deploy@pantheon-stg-20260902.iam.gserviceaccount.com",
+            "STAGING_RUNTIME_SERVICE_ACCOUNT": "pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com",
+            "STAGING_SERVICE_ACCOUNT": "pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com",
             "STAGING_SANITIZED_SNAPSHOT": "pantheon-nonprod-sanitized-20261024",
             "RELEASE_MANIFEST_PATH": str(self.manifest_path),
             "EXPECTED_MANIFEST_SHA256": self.manifest_sha,
@@ -809,6 +1219,27 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             "STAGING_STATE_DIR": str(self.state_dir),
             "STAGING_DRY_RUN": "false",
             "STAGING_NOW_EPOCH": "1792828800",
+            "STAGING_ROOT": str(self.staging_root),
+            "STAGING_DATA_MOUNT": str(self.data_mount),
+            "STAGING_FE_ROOT": str(self.fe_root),
+            "STAGING_BIN_DIR": str(self.bin_dir),
+            "STAGING_CADDYFILE_PATH": str(self.caddyfile_path),
+            "STAGING_SECRETS_ENV_FILE": str(self.secrets_env_file),
+            "STAGING_POSTGRES_PASSWORD_FILE": str(self.pg_pw_file),
+            "STAGING_ALLOW_APT_INSTALL": "false",
+            "STAGING_READY_TRIES": "3",
+            "STAGING_READY_INTERVAL": "0",
+            "DOCKER_BIN": str(self.host_bin_dir / "docker"),
+            "CURL_BIN": str(self.host_bin_dir / "curl"),
+            "CADDY_BIN": str(self.host_bin_dir / "caddy"),
+            "MOUNTPOINT_BIN": str(self.host_bin_dir / "mountpoint"),
+            "PSQL_BIN": str(self.host_bin_dir / "psql"),
+            "PG_DUMP_BIN": str(self.host_bin_dir / "pg_dump"),
+            "PG_RESTORE_BIN": str(self.host_bin_dir / "pg_restore"),
+            "SUDO_BIN": "",
+            "FAKE_HOST_BIN_DIR": str(self.host_bin_dir),
+            "VM_RUNTIME_STATE_FILE": str(self.vm_runtime_state_file),
+            "VM_BIN_LOG_FILE": str(self.vm_bin_log_file),
             "GCLOUD_BIN": str(self.gcloud_bin),
             "GCLOUD_STATE_FILE": str(self.gcloud_state_file),
             "GCLOUD_LOG_FILE": str(self.gcloud_log_file),
@@ -843,6 +1274,162 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         self.assertNotEqual(res_ttl.returncode, 0)
         self.assertIn("INVALID_TTL", res_ttl.stderr)
+
+    def test_deployer_service_account_rejected_on_vm_and_zero_project_iam_mutation(self) -> None:
+        # 1. Attaching the WIF deployer SA to the staging VM is rejected fail-closed
+        for forbidden_sa in (
+            "pantheon-stg-github-deploy@pantheon-stg-20260902.iam.gserviceaccount.com",
+            "pantheon-stg-deployer@pantheon-stg-20260902.iam.gserviceaccount.com",
+        ):
+            res = subprocess.run(
+                [str(PROVISION_SCRIPT)],
+                env=self._base_env(
+                    STAGING_RUNTIME_SERVICE_ACCOUNT=forbidden_sa,
+                    STAGING_SERVICE_ACCOUNT=forbidden_sa,
+                ),
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("DEPLOYER_SA_FORBIDDEN_ON_VM", res.stderr)
+
+        # 2. Normal provisioning uses runtime SA on VM and never mutates project IAM
+        prov = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        lease = json.loads(prov.stdout)
+        self.assertEqual(
+            lease["service_account"],
+            "pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com",
+        )
+        cmds = self.gcloud_log_file.read_text(encoding="utf-8").splitlines()
+        self.assertFalse(any("add-iam-policy-binding" in c for c in cmds))
+        self.assertFalse(any("remove-iam-policy-binding" in c for c in cmds))
+
+    def test_iap_only_ssh_scp_and_ordinary_compose_stdout_counterexamples(self) -> None:
+        # Counterexample 1: strict IAP-only firewall wrapper around gcloud
+        strict_iap_wrapper = self.tmp_path / "strict-iap-gcloud.py"
+        strict_iap_wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] in (['compute', 'scp'], ['compute', 'ssh']) and '--tunnel-through-iap' not in args:\n"
+            "    print('IAP-only firewall: direct public SSH is not permitted', file=sys.stderr)\n"
+            "    raise SystemExit(1)\n"
+            f"os.execv({str(self.gcloud_bin)!r}, [{str(self.gcloud_bin)!r}] + args)\n",
+            encoding="utf-8",
+        )
+        strict_iap_wrapper.chmod(0o755)
+
+        prov = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(GCLOUD_BIN=str(strict_iap_wrapper)),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        lease = json.loads(prov.stdout)
+        self.assertEqual(lease["status"], "active")
+
+        ver = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", GCLOUD_BIN=str(strict_iap_wrapper)),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        ver_json = json.loads(ver.stdout)
+        self.assertEqual(ver_json["status"], "staging_verified")
+
+        # Verify that SSH mkdir ran BEFORE SCP and all SSH/SCP commands included --tunnel-through-iap
+        cmds = self.gcloud_log_file.read_text(encoding="utf-8").splitlines()
+        ssh_scp_cmds = [c for c in cmds if c.startswith("compute ssh") or c.startswith("compute scp")]
+        self.assertGreaterEqual(len(ssh_scp_cmds), 3)
+        for c in ssh_scp_cmds:
+            self.assertIn("--tunnel-through-iap", c)
+        self.assertTrue(ssh_scp_cmds[0].startswith("compute ssh"))
+        self.assertIn("mkdir -p", ssh_scp_cmds[0])
+        self.assertTrue(ssh_scp_cmds[1].startswith("compute scp"))
+
+        # Counterexample 2: docker compose up prints ordinary stdout ("Container pantheon-staging-operator-bff-1 Started")
+        # and bootstrap.sh queries on-host identity afterward. Verify vm_bin.log recorded real docker pull,
+        # compose up --no-build, docker inspect, curl /bff/readyz, and curl /bff/version.
+        vm_logs = self.vm_bin_log_file.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(any(l.startswith("docker pull ") and "operator-bff@sha256:" in l for l in vm_logs))
+        self.assertTrue(any(l.startswith("docker pull ") and "runtime-manager@sha256:" in l for l in vm_logs))
+        self.assertTrue(any("compose" in l and "up -d --no-build" in l for l in vm_logs))
+        self.assertTrue(any(l.startswith("docker inspect -f {{.Config.Image}}") for l in vm_logs))
+        self.assertTrue(any("/bff/readyz" in l for l in vm_logs))
+        self.assertTrue(any("/bff/version" in l for l in vm_logs))
+
+        # Also verify that if a broken SSH transport ONLY emits ordinary compose stdout without
+        # the on-host identity JSON readback, staging_provision.sh fails closed and compensates.
+        self.setUp()
+        no_json_ssh_wrapper = self.tmp_path / "no-json-ssh-gcloud.py"
+        no_json_ssh_wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] == ['compute', 'ssh'] and any('bootstrap.sh' in a for a in args):\n"
+            "    print('Container pantheon-staging-operator-bff-1 Started')\n"
+            "    raise SystemExit(0)\n"
+            f"os.execv({str(self.gcloud_bin)!r}, [{str(self.gcloud_bin)!r}] + args)\n",
+            encoding="utf-8",
+        )
+        no_json_ssh_wrapper.chmod(0o755)
+        bad_ssh_prov = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(GCLOUD_BIN=str(no_json_ssh_wrapper)),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(bad_ssh_prov.returncode, 0)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", bad_ssh_prov.stderr)
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(cloud_state["instances"], [])
+        self.assertEqual(cloud_state["disks"], [])
+        self.assertEqual(cloud_state["addresses"], [])
+
+    def test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates(self) -> None:
+        # 1. Missing runtime binary when apt install is disabled fails closed with RUNTIME_BINARY_MISSING
+        bad_bin_env = self._base_env(CADDY_BIN="/nonexistent/caddy-binary", STAGING_ALLOW_APT_INSTALL="false")
+        res_bin = subprocess.run([str(PROVISION_SCRIPT)], env=bad_bin_env, capture_output=True, text=True)
+        self.assertNotEqual(res_bin.returncode, 0)
+        self.assertIn("RUNTIME_BINARY_MISSING", res_bin.stderr)
+
+        # 2. Insecure secret file permissions (0644) fail closed with SECRET_MODE
+        self.setUp()
+        self.secrets_env_file.chmod(0o644)
+        res_mode = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True)
+        self.assertNotEqual(res_mode.returncode, 0)
+        self.assertIn("SECRET_MODE", res_mode.stderr)
+
+        # 3. Missing owner-closure service (e.g. governance not running) fails closed
+        self.setUp()
+        res_owner = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(FAKE_OMIT_SERVICE="governance"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res_owner.returncode, 0)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res_owner.stderr)
+
+        # 4. Real collector gate failures (migration SQL error, pg_restore failure, cross-tenant HTTP 200 leak, live broker env leak)
+        self.setUp()
+        base_prov_env = self._base_env(RELEASE_ID="pantheon-20261024-001")
+        subprocess.run([str(PROVISION_SCRIPT)], env=base_prov_env, capture_output=True, text=True, check=True)
+        for gate_case, overrides, expected_err in (
+            ("migration_sql_fail", {"FAKE_FAIL_MIGRATION_SQL": "true"}, "MIGRATION_SQL_FAILED"),
+            ("pg_restore_fail", {"FAKE_PG_RESTORE_FAIL": "true"}, "PG_RESTORE_FAILED"),
+            ("cross_tenant_leak", {"FAKE_CROSS_TENANT_STATUS": "200"}, "SECURITY_READBACK_FAILED"),
+            ("live_broker_leak", {"FAKE_CONTAINER_LIVE_BROKER": "true"}, "SECURITY_READBACK_FAILED"),
+            ("cacheable_runtime_cfg", {"FAKE_RUNTIME_CONFIG_CACHE_CONTROL": "public, max-age=3600"}, "RUNTIME_CONFIG_CACHEABLE"),
+        ):
+            with self.subTest(gate_case=gate_case):
+                env = self._base_env(**overrides, RELEASE_ID="pantheon-20261024-001")
+                ver = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True)
+                self.assertNotEqual(ver.returncode, 0)
+                self.assertIn("LIVE_GATE_COLLECTION_FAILED", ver.stderr)
+                self.assertIn(expected_err, ver.stderr)
 
     def test_no_gcloud_false_success_rejected_fail_closed(self) -> None:
         # 1. STAGING_DRY_RUN=false with unset/empty GCLOUD_BIN must fail closed and record 0 resources
@@ -904,10 +1491,11 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(any("compute disks create pantheon-stg-pantheon-20261024-001-boot" in c for c in cmds))
         inst_create_cmd = next(c for c in cmds if "compute instances create pantheon-stg-pantheon-20261024-001" in c)
         self.assertIn("--address=203.0.113.10", inst_create_cmd)
+        self.assertIn("--service-account=pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com", inst_create_cmd)
         self.assertIn("name=pantheon-stg-pantheon-20261024-001-boot,device-name=pantheon-stg-pantheon-20261024-001-boot,boot=yes,mode=rw,auto-delete=no", inst_create_cmd)
         self.assertIn("name=pantheon-stg-data-pantheon-20261024-001,device-name=staging-data,mode=rw,auto-delete=no", inst_create_cmd)
-        self.assertTrue(any("compute scp" in c for c in cmds))
-        self.assertTrue(any("compute ssh pantheon-stg-pantheon-20261024-001" in c for c in cmds))
+        self.assertTrue(any("compute scp" in c and "--tunnel-through-iap" in c for c in cmds))
+        self.assertTrue(any("compute ssh pantheon-stg-pantheon-20261024-001" in c and "--tunnel-through-iap" in c for c in cmds))
 
         # Test gcloud error propagation during provisioning (e.g. SCP failure triggers partial-create compensation)
         for fail_token in ("compute instances create", "compute scp", "compute ssh"):
@@ -1021,7 +1609,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         first = subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
         first_json = json.loads(first.stdout)
         self.assertEqual(first_json["status"], "active")
-        self.assertEqual(first_json["resource_count"], 5)
+        self.assertEqual(first_json["resource_count"], 4)
 
         # Same release_id + same workflow_run_id -> idempotent re-entry
         second = subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
@@ -1077,9 +1665,9 @@ class StagingControllerLifecycleTests(unittest.TestCase):
 
         # 2. Seed preexisting IAM binding and unowned Dev VM in cloud state before provisioning
         cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
-        sa_member = "serviceAccount:pantheon-stg-deployer@pantheon-stg-20260902.iam.gserviceaccount.com"
+        sa_member = "serviceAccount:pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com"
         cloud_state["iam_bindings"] = [
-            {"role": "roles/compute.viewer", "members": [sa_member]},
+            {"role": "roles/logging.logWriter", "members": [sa_member]},
             {"role": "roles/owner", "members": ["user:bryan@example.com"]},
         ]
         cloud_state["instances"].append({
@@ -1093,9 +1681,6 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.gcloud_state_file.write_text(json.dumps(cloud_state), encoding="utf-8")
 
         subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
-        inv = json.loads((self.state_dir / "inventory" / "pantheon-20261024-001.json").read_text(encoding="utf-8"))
-        iam_res = next(r for r in inv["resources"] if r["type"] == "iam_binding")
-        self.assertTrue(iam_res["preexisting"])
 
         # 3. Wipe local runner state completely to prove stateless cross-run cloud orphan discovery!
         shutil.rmtree(self.state_dir)
@@ -1142,7 +1727,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(final_cloud["disks"], [])
         self.assertEqual(final_cloud["addresses"], [])
         self.assertIn(
-            {"role": "roles/compute.viewer", "members": [sa_member]},
+            {"role": "roles/logging.logWriter", "members": [sa_member]},
             final_cloud["iam_bindings"],
         )
 
@@ -1344,7 +1929,6 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
             self.assertNotIn("push", triggers)
             self.assertNotIn("pull_request", triggers)
 
-            # Workflow-level env must never reference runner/steps/job contexts
             for k, v in (parsed.get("env") or {}).items():
                 self.assertIsNone(
                     disallowed_job_env_ctx.search(str(v)),
@@ -1357,7 +1941,6 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
             for job_id, job in parsed["jobs"].items():
                 if job.get("environment") == "staging":
                     has_staging_env = True
-                # Job-level env must never reference runner/steps/job contexts (actionlint rule)
                 for k, v in (job.get("env") or {}).items():
                     self.assertIsNone(
                         disallowed_job_env_ctx.search(str(v)),
@@ -1367,6 +1950,8 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
                     uses = str(step.get("uses") or "")
                     if uses.startswith("google-github-actions/auth@"):
                         has_wif_auth = True
+                        sa_expr = str((step.get("with") or {}).get("service_account") or "")
+                        self.assertIn("STAGING_GCP_DEPLOY_SERVICE_ACCOUNT", sa_expr)
                     if uses.startswith("google-github-actions/setup-gcloud@"):
                         has_setup_gcloud = True
                     if "run" in step:
@@ -1393,17 +1978,36 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
             self.assertEqual(lint.returncode, 0, f"actionlint failed:\n{lint.stdout}\n{lint.stderr}")
 
         tpl = json.loads(INSTANCE_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertEqual(tpl["name"], "pantheon-stg-template-20261024")
         self.assertEqual(tpl["properties"]["machineType"], "e2-standard-2")
         self.assertFalse(tpl["properties"]["scheduling"]["preemptible"])
         self.assertEqual(tpl["properties"]["scheduling"]["provisioningModel"], "STANDARD")
+        self.assertEqual(
+            tpl["properties"]["serviceAccounts"][0]["email"],
+            "pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com",
+        )
+        self.assertIn("pantheon-iap", tpl["properties"]["tags"]["items"])
+        self.assertIn("pantheon-https", tpl["properties"]["tags"]["items"])
 
         compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        for svc_name in ("postgres", "nats", "runtime-manager", "governance", "deployment", "lifecycle-projector", "operator-bff"):
+            svc = compose["services"][svc_name]
+            self.assertEqual(svc["pull_policy"], "never")
+            self.assertNotIn("build", svc)
+
+        pg = compose["services"]["postgres"]
+        self.assertEqual(pg["environment"]["POSTGRES_PASSWORD_FILE"], "/run/secrets/postgres_password")
+        self.assertIn("postgres_password", pg["secrets"])
+
         bff = compose["services"]["operator-bff"]
-        self.assertEqual(bff["pull_policy"], "never")
-        self.assertNotIn("build", bff)
-        self.assertEqual(bff["environment"]["PANTHEON_LIVE_BROKER_ENABLED"], "false")
-        self.assertEqual(bff["environment"]["PANTHEON_PROVIDER_ENABLED"], "false")
-        self.assertEqual(bff["environment"]["PANTHEON_REAL_WRITES_ENABLED"], "false")
+        self.assertEqual(bff["environment"]["PANTHEON_BFF_AUTH_MODE"], "strict")
+        self.assertEqual(bff["environment"]["PANTHEON_BFF_AUTH_STUB"], "false")
+
+        caddy_raw = CADDY_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("handle /runtime-config.js", caddy_raw)
+        self.assertIn("root * __STAGING_CONFIG_DIR__", caddy_raw)
+        self.assertTrue(BOOTSTRAP_SCRIPT.exists() and os.access(BOOTSTRAP_SCRIPT, os.X_OK))
+        self.assertTrue(COLLECTOR_SCRIPT.exists() and os.access(COLLECTOR_SCRIPT, os.X_OK))
 
 
 if __name__ == "__main__":

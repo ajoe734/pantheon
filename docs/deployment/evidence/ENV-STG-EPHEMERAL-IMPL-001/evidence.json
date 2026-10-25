@@ -2,7 +2,7 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "ENV-STG-EPHEMERAL-IMPL-001",
   "title": "Ephemeral Staging Template & Automated Lifecycle Engine",
-  "recorded_at": "2026-10-24T12:59:10Z",
+  "recorded_at": "2026-10-25T15:36:00Z",
   "owner": "Antigravity",
   "reviewer": "Claude",
   "target_repo": "pantheon",
@@ -14,17 +14,23 @@
       "pr": "https://github.com/ajoe734/pantheon/pull/6758",
       "head_sha": "63155c0feecec77873b4623b029d137042a42c16",
       "merge_commit_sha": "5dc101e9d1b943d9411a2c5156f7163f0f36bf01",
-      "note": "Historical initial source delivery preserved as source history only; superseded by this corrective implementation."
+      "note": "Initial source delivery preserved as historical source evidence only."
+    },
+    {
+      "pr": "https://github.com/ajoe734/pantheon/pull/6764",
+      "head_sha": "8d83804e4f379396ef5b7ab6f442a0ec3e1d6759",
+      "merge_commit_sha": "e15d6390b7d72638641fc314bc48a105a4be1a0e",
+      "note": "Second source delivery preserved as historical source evidence only; superseded by this corrective implementation resolving all 7 demonstrated source counterexamples/gaps."
     }
   ],
   "completion_tracks": {
     "functional": {
       "status": "ready_for_review",
-      "scope": "Corrective source implementation of release manifest contract, ephemeral staging provision/ops/verify/destroy controller with mandatory live GCLOUD_BIN & observed resource identity enforcement, genuine boot-disk/data-disk/reserved-IP attachment, stateless cross-run cloud orphan discovery & post-delete readback, preexisting IAM binding preservation, valid GCP cloud labels with epoch TTLs, immutable FE/BFF artifact retrieval & checksum verification via staging_ops.sh, live VM gate collection refusing dry-run/unobserved inputs from staging_verified, prod_preflight evidence alignment, actionlint-clean workflows with staging Environment & WIF/setup-gcloud, runbook, and focused local controller/contract test suite."
+      "scope": "Corrective source implementation resolving all 7 source defects: (1) IAP-only SSH/SCP (--tunnel-through-iap) with safe pre-SCP remote directory creation over IAP SSH; (2) bare-Debian bootstrap (deploy/staging/bootstrap.sh) for debian-12-bookworm-v20261023 (application_installed=false), digest-pinned @sha256:... image pre-acquisition via docker pull before compose --no-build (pull_policy: never), and external /runtime-config.js rendered outside the sealed FE release directory served no-store; (3) real on-host deploy identity readback queries (docker inspect, curl /bff/readyz, curl /bff/version, deployment.json, .artifact_sha256, mountpoint) emitted after ordinary docker compose stdout; (4) real shipped on-VM gate collector (deploy/staging/pantheon-staging-collect-gates) executing live psql, pg_dump, pg_restore, docker, curl, and mountpoint checks without prebuilt/manufactured booleans; (5) separation of WIF deploy SA (pantheon-stg-github-deploy@...) from VM runtime SA (pantheon-stg-runtime@...), DEPLOYER_SA_FORBIDDEN_ON_VM enforcement, and removal of project-IAM mutations from staging_provision.sh; (6) isolated Postgres password-file secrets (0400/0600 STAGING_POSTGRES_PASSWORD_FILE + STAGING_SECRETS_ENV_FILE) and full /bff/readyz owner closure (runtime-manager, governance, deployment, lifecycle-projector, operator-bff, postgres, nats); (7) local regressions executing real bootstrap.sh and pantheon-staging-collect-gates under constrained host binaries."
     },
     "hosted": {
       "status": "external_wait",
-      "note": "Local/mocked tests prove controller and adapter behavior only and do not count as hosted drill evidence. Hosted acceptance requires infrastructure bootstrap (WIF provider, service account, instance template, sanitized snapshot, GitHub staging Environment variables), an accepted dev_verified release manifest from Root01a11, and two consecutive zero-to-zero live staging releases."
+      "note": "Local/simulated tests prove controller, bootstrap, and gate-collector behavior only and do not count as hosted drill evidence. Hosted acceptance requires an accepted dev_verified release manifest from Root01a11, refreshed GCP operator authentication (or GitHub Actions WIF dispatch after merge), and two consecutive zero-to-zero live staging releases."
     }
   },
   "artifacts": [
@@ -41,6 +47,8 @@
     "deploy/staging/docker-compose.staging.yml",
     "deploy/staging/Caddyfile.staging.tmpl",
     "deploy/staging/staging-env.defaults",
+    "deploy/staging/bootstrap.sh",
+    "deploy/staging/pantheon-staging-collect-gates",
     "tests/deployment/test_staging_release.py",
     "docs/deployment/ephemeral-staging-runbook.md",
     "docs/deployment/evidence/ENV-STG-EPHEMERAL-IMPL-001/evidence.json"
@@ -52,6 +60,9 @@
     "secret_values_read": false,
     "nonprod_deploy_or_product_code_modified": false,
     "rebuilt_fe_or_bff_during_promotion": false,
+    "iap_only_ssh_and_scp_enforced": true,
+    "deployer_sa_forbidden_on_vm": true,
+    "project_iam_mutated_during_provision": false,
     "no_gcloud_false_success_rejected": true,
     "dry_run_cannot_produce_staging_verified": true,
     "retired_projects_or_hosts_rejected": [
@@ -70,55 +81,47 @@
       "live_broker_enabled": false,
       "real_writes_enabled": false,
       "dev_stub_writes_enabled": false,
-      "control_vm_broker_credentials_present": false
+      "control_vm_broker_credentials_present": false,
+      "management_nl_assistant_provider_enabled": false,
+      "assistant_provider": "disabled",
+      "bff_auth_mode": "strict",
+      "bff_auth_stub": false
     }
   },
-  "cloud_project_and_billing_baseline": {
+  "cloud_project_and_foundation_baseline": {
     "staging_project_id": "pantheon-stg-20260902",
+    "staging_project_number": "58603439583",
     "production_project_id": "pantheon-prod-20260902",
     "billing_account": "017011-E5B441-28904B",
     "billing_enabled": true,
-    "relinked_at": "2026-10-24T12:14:43Z",
-    "billing_evidence_path": "/tmp/pantheon-billing-relink-20261024/20261024T121443Z/summary.json",
-    "enabled_apis": [
-      "compute.googleapis.com",
-      "iam.googleapis.com",
-      "iamcredentials.googleapis.com",
-      "sts.googleapis.com",
-      "artifactregistry.googleapis.com",
-      "secretmanager.googleapis.com",
-      "dns.googleapis.com",
-      "logging.googleapis.com",
-      "monitoring.googleapis.com"
-    ],
-    "region_quota_asia_east1": {
-      "CPUS": 32.0,
-      "DISKS_TOTAL_GB": 2048.0,
-      "STATIC_ADDRESSES": 8.0,
-      "IN_USE_ADDRESSES": 4.0,
-      "INSTANCES": 8.0,
-      "current_vms": 0
-    },
-    "target_machine_sizing": "Standard Debian 12 e2-standard-2 non-Spot target pending measured staging sizing verification during live drills."
+    "foundation_evidence_path": "/tmp/pantheon-env-current-20261024/foundation/pantheon-stg-20260902.json",
+    "instance_template_name": "pantheon-stg-template-20261024",
+    "source_image": "projects/debian-cloud/global/images/debian-12-bookworm-v20261023",
+    "application_installed_in_template": false,
+    "network": "pantheon-staging",
+    "subnetwork": "pantheon-staging-asia-east1",
+    "wif_provider": "projects/58603439583/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider",
+    "deploy_service_account": "pantheon-stg-github-deploy@pantheon-stg-20260902.iam.gserviceaccount.com",
+    "runtime_service_account": "pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com",
+    "sanitized_snapshot": "pantheon-stg-sanitized-seed-20261024"
   },
   "external_wait_prerequisites": [
-    "Infrastructure bootstrap in `pantheon-stg-20260902`: Workload Identity Federation pool/provider (`STAGING_WIF_PROVIDER`), staging deployer service account (`STAGING_SERVICE_ACCOUNT`), GCE instance template (`STAGING_INSTANCE_TEMPLATE`), and initial non-production sanitized snapshot (`STAGING_SANITIZED_SNAPSHOT`).",
-    "Creation of GitHub `staging` Environment in `ajoe734/pantheon` (concurrency 1) and explicit configuration of `STAGING_GCP_PROJECT_ID=pantheon-stg-20260902`, `STAGING_GCP_ZONE=asia-east1-b`, `STAGING_WIF_PROVIDER`, `STAGING_INSTANCE_TEMPLATE`, `STAGING_SERVICE_ACCOUNT`, `STAGING_SANITIZED_SNAPSHOT`, `STAGING_FE_ARTIFACT_URI`, `STAGING_EPHEMERAL_ENABLED=true`, and `STAGING_ORPHAN_CLEANUP_ENABLED=true`.",
     "Genuine `dev_verified` release manifest after `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (`Root01a11`) resolves all12 chain `h12-01a11-20261023-9aeb`.",
-    "Execution of two consecutive live ephemeral staging releases starting from zero staging resources, passing all live verification gates, and destroying all owned VM/disks/IP/IAM bindings with zero orphan inventory."
+    "Refreshed GCP operator login (`bryan@cctech-support.com` currently expired with `invalid_grant`) or GitHub Actions WIF execution once this corrective PR merges to `dev`.",
+    "Execution of two consecutive live ephemeral staging releases starting from zero staging resources, passing all live verification gates, and destroying all owned VM/disks/IP resources with zero orphan inventory."
   ],
   "validation": {
     "commands": [
       {
         "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -v tests/deployment/test_staging_release.py tests/deployment/test_production_release.py",
-        "result": "39 passed, 14 subtests passed (18 in test_staging_release.py, 21 in test_production_release.py; local controller/contract validation only, not hosted proof)"
+        "result": "63 passed, 19 subtests passed (21 in test_staging_release.py, 42 in test_production_release.py; local controller/bootstrap/collector contract validation only, not hosted proof)"
       },
       {
         "command": "/tmp/pantheon-env-current-20261024/tools/actionlint .github/workflows/staging-ephemeral-deploy.yml .github/workflows/staging-orphan-cleanup.yml",
         "result": "exit 0 (0 errors)"
       },
       {
-        "command": "bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_ops.sh scripts/deploy/staging_verify.sh scripts/deploy/staging_destroy.sh",
+        "command": "bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_ops.sh scripts/deploy/staging_verify.sh scripts/deploy/staging_destroy.sh deploy/staging/bootstrap.sh",
         "result": "exit 0"
       }
     ]
