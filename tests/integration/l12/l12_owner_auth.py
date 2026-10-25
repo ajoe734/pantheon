@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -429,3 +430,117 @@ def require_decided_approval(
         "owner_user_id": record.get("owner_user_id"),
         "tenant_id": record.get("tenant_id"),
     }
+
+
+# -- hosted Teaching pre-edit lineage (HOSTED-ALL12-RESUMED-A-PRE-EDIT-LINEAGE-20261025) ----
+
+PRE_EDIT_EVALUATION_ABSENT = "pre_edit_evaluation_absent"
+TEACHING_EDIT_KEYS = frozenset({"short_window", "long_window"})
+TEACHING_METRIC_KEYS = ("total_return", "sharpe_ratio", "max_drawdown")
+
+
+def persona_service_subjects() -> set[str]:
+    """Persona service writer subject(s) whose ``control_patch`` is never an eligible user edit.
+
+    Same subject ``persona_writer_identity`` reports for a hosted child, readable from the
+    hosted parent too (the parent only sets the hosted flag for its child).
+    """
+    if not os.getenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "").strip():
+        return set()
+    return {os.getenv("PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID", "").strip() or "operator-bff"}
+
+
+def _utc(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def eligible_teaching_control_patches(events: Any, refused: set[str] | frozenset[str]) -> list[Mapping[str, Any]]:
+    """The A_research edit rule: a ``user`` control_patch changing both windows, not by a service subject."""
+    return [
+        e for e in (events if isinstance(events, list) else [])
+        if isinstance(e, Mapping) and e.get("event_type") == "control_patch" and isinstance(e.get("patch_delta"), list)
+        and e.get("actor_type") == "user" and str(e.get("actor") or "") and str(e.get("actor")) not in refused
+        and {
+            d.get("parameter_key") for d in e["patch_delta"]
+            if isinstance(d, Mapping) and d.get("previous_value") != d.get("new_value")
+        } >= TEACHING_EDIT_KEYS
+    ]
+
+
+def latest_teaching_control_patch(events: Any, refused: set[str] | frozenset[str]) -> Mapping[str, Any] | None:
+    patches = eligible_teaching_control_patches(events, refused)
+    return max(patches, key=lambda e: str(e.get("timestamp") or e.get("emitted_at") or "")) if patches else None
+
+
+def pre_edit_evaluation_before(bundle: Any, edit: Mapping[str, Any]) -> dict[str, str] | None:
+    """Latest Training evaluation with finite metrics evaluated strictly before ``edit``.
+
+    ``bundle`` is the Training owner ``GET /api/training/previews/{session}`` record; each
+    ``evaluations[eval_id].evaluation_result`` carries the owner's own ``evaluated_at``. A
+    post-edit (or same-instant) evaluation never qualifies and no metric is synthesised.
+    """
+    edit_at = _utc(edit.get("timestamp") or edit.get("emitted_at"))
+    evaluations = bundle.get("evaluations") if isinstance(bundle, Mapping) else None
+    if edit_at is None or not isinstance(evaluations, Mapping):
+        return None
+    best: tuple[datetime, str, str] | None = None
+    for key, preview in evaluations.items():
+        result = preview.get("evaluation_result") if isinstance(preview, Mapping) else None
+        if not isinstance(result, Mapping) or not str(result.get("eval_id") or "") or result.get("eval_id") != key:
+            continue
+        metrics = result.get("metrics") if isinstance(result.get("metrics"), Mapping) else {}
+        values = [metrics.get(k) for k in TEACHING_METRIC_KEYS]
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf") for v in values):
+            continue
+        proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), Mapping) else {}
+        stamp_text = str(result.get("evaluated_at") or proof.get("evaluated_at") or "").strip()
+        stamp = _utc(stamp_text)
+        if stamp is None or stamp >= edit_at:
+            continue
+        if best is None or (stamp, str(key)) > (best[0], best[1]):
+            best = (stamp, str(key), stamp_text)
+    return {"pre_edit_eval_id": best[1], "pre_edit_evaluated_at": best[2]} if best else None
+
+
+def resolve_pre_edit_lineage(
+    get: Callable[[str], Any],
+    session_id: str,
+    refused: set[str] | frozenset[str],
+    *,
+    blocked_before: str,
+    resource_ids: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    """Derive the missing pre-edit lineage from Training owner truth with two GETs only.
+
+    ``get(path)`` returns the decoded owner body, or None when the owner has no record.
+    Takes the newest eligible control_patch (the edit #6787 accepts) and the latest
+    finite-metric evaluation strictly before it; otherwise pauses with
+    ``pre_edit_evaluation_absent``. Never writes, never relabels an event.
+    """
+    quoted = urllib.parse.quote(session_id, safe="")
+    edit = latest_teaching_control_patch(get(f"/api/training/sessions/{quoted}/events"), refused)
+    ids = {**dict(resource_ids or {}), "teaching_session_id": session_id}
+    if edit is None:
+        raise HostedPause(
+            blocked_before,
+            f"{PRE_EDIT_EVALUATION_ABSENT}: TeachingSession {session_id} holds no eligible nonzero user "
+            "control_patch to anchor the pre-edit evaluation",
+            ids,
+        )
+    found = pre_edit_evaluation_before(get(f"/api/training/previews/{quoted}"), edit)
+    if found is None:
+        raise HostedPause(
+            blocked_before,
+            f"{PRE_EDIT_EVALUATION_ABSENT}: no Training evaluation with finite metrics precedes control_patch "
+            f"{edit.get('event_id')} at {edit.get('timestamp') or edit.get('emitted_at')} on TeachingSession "
+            f"{session_id}; a post-edit evaluation is never used",
+            ids,
+        )
+    return found

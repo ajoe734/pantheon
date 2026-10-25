@@ -1,9 +1,12 @@
 name: Pantheon Production Release
 
 # Inert by default. Never triggers on push or PR; merging source mutates zero cloud or
-# GitHub settings. Execution requires PRODUCTION_RELEASE_ENABLED=true, explicit production
-# variables, staging_verified evidence for the exact manifest, and genuine protected
-# `production` Environment approval by a reviewer distinct from the initiator.
+# GitHub settings. Execution requires PRODUCTION_RELEASE_ENABLED=true (repository variable),
+# staging_verified evidence for the exact manifest, and genuine protected `production`
+# Environment approval by a required reviewer (self review only if the actual Environment has
+# prevent_self_review=false). PROD_* values are Environment-scoped variables, so they are read
+# ONLY inside the `deploy` job, after the Environment gate has released it and before any
+# cloud authentication. The `preflight` job has no Environment and no PROD_* access.
 
 on:
   workflow_dispatch:
@@ -24,6 +27,10 @@ on:
         description: "Repository-relative path to the staging_verified evidence JSON"
         required: true
         type: string
+      frontend_artifact_uri:
+        description: "gs:// URI of the immutable FE bundle named by the manifest (never rebuilt)"
+        required: true
+        type: string
       bootstrap_first_release:
         description: "Explicitly declare first production release (no prior baseline)"
         required: false
@@ -39,43 +46,17 @@ concurrency:
   group: production-release
   cancel-in-progress: false
 
-env:
-  RELEASE_ID: ${{ inputs.release_id }}
-  RELEASE_MANIFEST_PATH: ${{ inputs.release_manifest_path }}
-  EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
-  STAGING_EVIDENCE_PATH: ${{ inputs.staging_evidence_path }}
-  PANTHEON_PROVIDER_ENABLED: "false"
-  PANTHEON_LIVE_BROKER_ENABLED: "false"
-  PANTHEON_REAL_WRITES_ENABLED: "false"
-  PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT: "false"
-  PROD_GCP_PROJECT_ID: ${{ vars.PROD_GCP_PROJECT_ID }}
-  PROD_GCP_ZONE: ${{ vars.PROD_GCP_ZONE }}
-  PROD_WIF_PROVIDER: ${{ vars.PROD_WIF_PROVIDER }}
-  PROD_SERVICE_ACCOUNT: ${{ vars.PROD_SERVICE_ACCOUNT }}
-  PROD_IAM_POLICY_REF: ${{ vars.PROD_IAM_POLICY_REF }}
-  PROD_SECRETS_REF: ${{ vars.PROD_SECRETS_REF }}
-  PROD_DATA_DISK: ${{ vars.PROD_DATA_DISK }}
-  PROD_NETWORK: ${{ vars.PROD_NETWORK }}
-  PROD_BFF_HOST: ${{ vars.PROD_BFF_HOST }}
-  PROD_FE_HOST: ${{ vars.PROD_FE_HOST }}
-  PROD_IDP_ISSUER: ${{ vars.PROD_IDP_ISSUER }}
-  PROD_RPO_SECONDS: ${{ vars.PROD_RPO_SECONDS }}
-  PROD_RTO_SECONDS: ${{ vars.PROD_RTO_SECONDS }}
-  PROD_RETENTION_DAYS: ${{ vars.PROD_RETENTION_DAYS }}
-  PROD_ONCALL_OWNER: ${{ vars.PROD_ONCALL_OWNER }}
-  PROD_ROLLBACK_OWNER: ${{ vars.PROD_ROLLBACK_OWNER }}
-  STAGING_GCP_PROJECT_ID: ${{ vars.STAGING_GCP_PROJECT_ID }}
-  DEV_GCP_PROJECT_ID: ${{ vars.DEV_GCP_PROJECT_ID }}
-
 jobs:
   preflight:
-    name: Production preflight (no cloud access, no approval yet)
+    name: Production preflight (no Environment, no cloud access, no PROD_* values)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Gate production authority (fail-closed)
+        env:
+          PRODUCTION_RELEASE_ENABLED: ${{ vars.PRODUCTION_RELEASE_ENABLED }}
         run: |
-          if [[ "${{ vars.PRODUCTION_RELEASE_ENABLED }}" != "true" ]]; then
+          if [[ "${PRODUCTION_RELEASE_ENABLED}" != "true" ]]; then
             echo "Production release is held (PRODUCTION_RELEASE_ENABLED != true)." >&2
             exit 1
           fi
@@ -83,14 +64,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Validate configuration, manifest and staging_verified evidence
+      - name: Validate manifest checksum and staging_verified evidence binding
+        env:
+          RELEASE_MANIFEST_PATH: ${{ inputs.release_manifest_path }}
+          EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+          STAGING_EVIDENCE_PATH: ${{ inputs.staging_evidence_path }}
         run: |
-          python3 scripts/deploy/prod_preflight.py all \
+          python3 scripts/deploy/release_manifest.py validate \
             --manifest "${RELEASE_MANIFEST_PATH}" \
-            --expected-sha256 "${EXPECTED_MANIFEST_SHA256}" \
-            --staging-evidence "${STAGING_EVIDENCE_PATH}" \
-            --skip-approval \
-            ${{ inputs.bootstrap_first_release == 'true' && '--bootstrap' || '' }}
+            --expected-sha256 "${EXPECTED_MANIFEST_SHA256}"
+          test -f "${STAGING_EVIDENCE_PATH}"
 
   deploy:
     name: Production blue/green switch (protected Environment approval)
@@ -98,6 +81,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: production
+    env:
+      RELEASE_ID: ${{ inputs.release_id }}
+      RELEASE_MANIFEST_PATH: ${{ inputs.release_manifest_path }}
+      EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      STAGING_EVIDENCE_PATH: ${{ inputs.staging_evidence_path }}
+      FE_ARTIFACT_URI: ${{ inputs.frontend_artifact_uri }}
+      PROD_BOOTSTRAP_FIRST_RELEASE: ${{ inputs.bootstrap_first_release }}
+      PANTHEON_PROVIDER_ENABLED: "false"
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+      PANTHEON_REAL_WRITES_ENABLED: "false"
+      PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT: "false"
+      PROD_GCP_PROJECT_ID: ${{ vars.PROD_GCP_PROJECT_ID }}
+      PROD_GCP_ZONE: ${{ vars.PROD_GCP_ZONE }}
+      PROD_WIF_PROVIDER: ${{ vars.PROD_WIF_PROVIDER }}
+      PROD_SERVICE_ACCOUNT: ${{ vars.PROD_SERVICE_ACCOUNT }}
+      PROD_IAM_POLICY_REF: ${{ vars.PROD_IAM_POLICY_REF }}
+      PROD_SECRETS_REF: ${{ vars.PROD_SECRETS_REF }}
+      PROD_DATA_DISK: ${{ vars.PROD_DATA_DISK }}
+      PROD_NETWORK: ${{ vars.PROD_NETWORK }}
+      PROD_BFF_HOST: ${{ vars.PROD_BFF_HOST }}
+      PROD_FE_HOST: ${{ vars.PROD_FE_HOST }}
+      PROD_IDP_ISSUER: ${{ vars.PROD_IDP_ISSUER }}
+      PROD_RPO_SECONDS: ${{ vars.PROD_RPO_SECONDS }}
+      PROD_RTO_SECONDS: ${{ vars.PROD_RTO_SECONDS }}
+      PROD_RETENTION_DAYS: ${{ vars.PROD_RETENTION_DAYS }}
+      PROD_ONCALL_OWNER: ${{ vars.PROD_ONCALL_OWNER }}
+      PROD_ROLLBACK_OWNER: ${{ vars.PROD_ROLLBACK_OWNER }}
+      PROD_VM_NAME: ${{ vars.PROD_VM_NAME }}
+      PROD_ROOT: ${{ vars.PROD_ROOT }}
+      PROD_DATA_MOUNT: ${{ vars.PROD_DATA_MOUNT }}
+      PROD_BLUE_PORT: ${{ vars.PROD_BLUE_PORT }}
+      PROD_GREEN_PORT: ${{ vars.PROD_GREEN_PORT }}
+      STAGING_GCP_PROJECT_ID: ${{ vars.STAGING_GCP_PROJECT_ID }}
+      DEV_GCP_PROJECT_ID: ${{ vars.DEV_GCP_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -108,28 +125,77 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/approvals" > "${RUNNER_TEMP}/approvals.json"
-      - name: Verify distinct production approver before any cloud access
+          gh api "repos/${{ github.repository }}/environments/production" > "${RUNNER_TEMP}/env-policy.json"
+      - name: Full production preflight incl. approver vs actual Environment policy (before any cloud access)
+        env:
+          WORKFLOW_INITIATOR: ${{ github.triggering_actor }}
         run: |
-          python3 - <<'PY'
-          import json, os, sys
-          sys.path.insert(0, "scripts/deploy")
-          import prod_preflight
-          approvals = json.load(open(os.environ["RUNNER_TEMP"] + "/approvals.json"))
-          print("approver:", prod_preflight.check_approval(approvals, "${{ github.triggering_actor }}"))
-          PY
+          python3 scripts/deploy/prod_preflight.py all \
+            --manifest "${RELEASE_MANIFEST_PATH}" \
+            --expected-sha256 "${EXPECTED_MANIFEST_SHA256}" \
+            --staging-evidence "${STAGING_EVIDENCE_PATH}" \
+            --approvals "${RUNNER_TEMP}/approvals.json" \
+            --env-policy "${RUNNER_TEMP}/env-policy.json" \
+            --initiator "${WORKFLOW_INITIATOR}" \
+            --skip-baseline \
+            $([[ "${PROD_BOOTSTRAP_FIRST_RELEASE}" == "true" ]] && echo --bootstrap)
       - name: Authenticate to production (WIF, no long-lived keys)
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
           workload_identity_provider: ${{ vars.PROD_WIF_PROVIDER }}
           service_account: ${{ vars.PROD_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
-      - name: Run atomic switch on the production control VM
-        env:
-          WORKFLOW_INITIATOR: ${{ github.triggering_actor }}
-          PROD_BOOTSTRAP_FIRST_RELEASE: ${{ inputs.bootstrap_first_release }}
+      - name: Retrieve immutable FE bundle and pre-release data-disk snapshot
         run: |
-          # The VM-side adapter (PROD_OPS_CMD) and artifact transport are hosted prerequisites
-          # recorded as external_wait; this step fails closed until they exist.
-          echo "Hosted execution requires the provisioned control VM and ops adapter." >&2
-          test -n "${{ vars.PROD_OPS_CMD }}" || exit 1
-          ./scripts/deploy/prod_atomic_switch.sh
+          mkdir -p "${RUNNER_TEMP}/bundle"
+          gcloud storage cp "${FE_ARTIFACT_URI}" "${RUNNER_TEMP}/bundle/fe.tar.gz"
+          snap="pantheon-prod-pre-${RELEASE_ID}"
+          gcloud compute disks snapshot "${PROD_DATA_DISK}" --project "${PROD_GCP_PROJECT_ID}" \
+            --zone "${PROD_GCP_ZONE}" --snapshot-names "${snap}"
+          status="$(gcloud compute snapshots describe "${snap}" --project "${PROD_GCP_PROJECT_ID}" --format='value(status)')"
+          python3 - "${RELEASE_ID}" "${PROD_DATA_DISK}" "${snap}" "${status}" > "${RUNNER_TEMP}/bundle/snapshot.json" <<'PY'
+          import datetime, json, sys
+          print(json.dumps({"release_id": sys.argv[1], "disk": sys.argv[2], "snapshot": sys.argv[3],
+                            "status": sys.argv[4],
+                            "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}))
+          PY
+      - name: Transport immutable artifacts, evidence and controller scripts to the control VM (IAP)
+        run: |
+          cp "${RELEASE_MANIFEST_PATH}" "${RUNNER_TEMP}/bundle/manifest.json"
+          cp "${STAGING_EVIDENCE_PATH}" "${RUNNER_TEMP}/bundle/staging_evidence.json"
+          cp "${RUNNER_TEMP}/approvals.json" "${RUNNER_TEMP}/bundle/approvals.json"
+          cp "${RUNNER_TEMP}/env-policy.json" "${RUNNER_TEMP}/bundle/env-policy.json"
+          cp scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh \
+             scripts/deploy/prod_preflight.py scripts/deploy/release_manifest.py "${RUNNER_TEMP}/bundle/"
+          cp deploy/production/docker-compose.prod-control.yml deploy/production/Caddyfile deploy/production/bootstrap.sh "${RUNNER_TEMP}/bundle/"
+          {
+            for v in RELEASE_ID EXPECTED_MANIFEST_SHA256 PROD_BOOTSTRAP_FIRST_RELEASE PROD_ROOT PROD_DATA_MOUNT \
+                     PROD_BLUE_PORT PROD_GREEN_PORT PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_WIF_PROVIDER \
+                     PROD_SERVICE_ACCOUNT PROD_IAM_POLICY_REF PROD_SECRETS_REF PROD_DATA_DISK PROD_NETWORK \
+                     PROD_BFF_HOST PROD_FE_HOST PROD_IDP_ISSUER PROD_RPO_SECONDS PROD_RTO_SECONDS \
+                     PROD_RETENTION_DAYS PROD_ONCALL_OWNER PROD_ROLLBACK_OWNER STAGING_GCP_PROJECT_ID \
+                     DEV_GCP_PROJECT_ID; do
+              printf 'export %s=%q\n' "$v" "${!v}"
+            done
+            printf 'export WORKFLOW_INITIATOR=%q\n' "${{ github.triggering_actor }}"
+          } > "${RUNNER_TEMP}/bundle/remote.env"
+          gcloud compute scp --tunnel-through-iap --recurse --quiet \
+            --project "${PROD_GCP_PROJECT_ID}" --zone "${PROD_GCP_ZONE}" \
+            "${RUNNER_TEMP}/bundle" "${PROD_VM_NAME}:/tmp/pantheon-release-${RELEASE_ID}"
+      - name: Run atomic switch on the production control VM
+        run: |
+          # The remote shell installs the bundle, places the snapshot record, then runs the
+          # controller with PROD_OPS_CMD pointing at the VM-side prod_ops.sh adapter.
+          gcloud compute ssh "${PROD_VM_NAME}" --tunnel-through-iap --quiet \
+            --project "${PROD_GCP_PROJECT_ID}" --zone "${PROD_GCP_ZONE}" --command "set -euo pipefail
+            B=/tmp/pantheon-release-${RELEASE_ID}/bundle
+            source \$B/remote.env
+            sudo install -d \"\$PROD_ROOT/bin\" \"\$PROD_ROOT/state/snapshots\"
+            sudo install -m 0755 \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
+            sudo install -m 0644 \$B/snapshot.json \"\$PROD_ROOT/state/snapshots/\$RELEASE_ID.json\"
+            sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
+              PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
+              PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
+              RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
+              APPROVALS_PATH=\$B/approvals.json ENV_POLICY_PATH=\$B/env-policy.json \
+              FE_ARTIFACT_PATH=\$B/fe.tar.gz \"\$PROD_ROOT/bin/prod_atomic_switch.sh\""
