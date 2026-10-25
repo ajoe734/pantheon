@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 BFF_ROOT = Path(__file__).resolve().parents[1]
 
-from runtime.router import create_runtime_router
+from services.control_plane.bff.runtime.router import create_runtime_router
 
 
 class _BindingsStore:
@@ -111,3 +111,45 @@ def test_runtime_action_route_injects_request_without_a_query_parameter() -> Non
             "replacement": "/bff/v1/commands",
         }
     }
+
+
+def test_binding_detail_route_reads_through_composed_capital_domain_port() -> None:
+    from services.control_plane.bff.ports.persona_capital_runtime import (
+        CapitalPoolPort,
+        PersonaCapitalRuntimeDomainPort,
+    )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    binding = {
+        "binding_id": "pcb-original",
+        "persona_id": "persona-original",
+        "capital_pool_id": "pool-original",
+        "status": "ACTIVE",
+    }
+    ports = ReadSurfacePorts(
+        persona_capital_runtime=PersonaCapitalRuntimeDomainPort(
+            capital_port=CapitalPoolPort(
+                pools_provider=lambda: [],
+                bindings_provider=lambda: [binding],
+            )
+        )
+    )
+    router = create_runtime_router(
+        get_read_store=lambda: ports,
+        dependencies={
+            "_extract_identity": lambda _authorization: object(),
+            "_require_read_role": lambda _identity: None,
+            "_dataset_surface_status": lambda *_args, **_kwargs: {"status": "ok"},
+            "_read_surface_meta": lambda *_args, **_kwargs: {},
+            "utc_now": lambda: "2026-10-24T00:00:00Z",
+        },
+    )
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get("/api/v1/bindings/pcb-original")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["binding_id"] == "pcb-original"
+    assert response.json()["data"]["capital_pool_id"] == "pool-original"

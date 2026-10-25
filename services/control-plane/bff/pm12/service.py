@@ -754,9 +754,9 @@ def _pm12_attribution_metrics(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     return _agora_perf.pm12_attribution_metrics(entries)
 
 
-def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str) -> List[Dict[str, Any]]:
+def _pm12_performance_attribution_facts(sources: Dict[str, Any]) -> List[Dict[str, Any]]:
     from ..agora.performance import service as _agora_perf
-    return _agora_perf.pm12_performance_attribution_facts(sources, period_key)
+    return _agora_perf.pm12_performance_attribution_facts(sources)
 
 
 def _pm12_performance_attribution_rows(

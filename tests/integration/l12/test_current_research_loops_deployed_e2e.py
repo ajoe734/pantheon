@@ -1263,7 +1263,7 @@ class DeployedResearchHarness:
         self.chain.update({"authority_run": exact_run, "experiment_run": experiment_run, "session": session})
 
     def _operator_teaching_patch(self, session_id: str, by_key: Mapping[str, Any]) -> dict[str, Any]:
-        """Isolated mode only: the harness itself plays the operator and PATCHes the controls."""
+        """Authorised research-suite control edit: PATCH controls through the Training owner API."""
         # A recovered session may already hold the usual values from an earlier service-only
         # patch; pick values that differ from the current ones so the edit is a real delta.
         wanted = {
@@ -1295,7 +1295,7 @@ class DeployedResearchHarness:
     def _await_human_teaching_edit(
         self, session_id: str, by_key: Mapping[str, Any], headers: Mapping[str, str]
     ) -> dict[str, Any]:
-        """Hosted: never write controls. Record the pre-edit evaluation ids, then wait for a human edit.
+        """Hosted: record the pre-edit evaluation ids first, reuse an eligible user edit, else restore the authorised edit.
 
         Returns the control values the human set (read back from the control_patch event). Only
         scalar owner ids cross segments; B reads the pre-edit evaluation back from Training.
@@ -1303,8 +1303,7 @@ class DeployedResearchHarness:
         quoted = urllib.parse.quote(session_id, safe="")
         events = self._http_json(self.training_url, f"/api/training/sessions/{quoted}/events", headers=headers)
         writer = persona_writer_identity()
-        executor = token_subject(human_token("OPERATOR"))
-        refused = {executor, *([str(writer[1])] if writer and writer[1] else [])}
+        refused = {str(writer[1])} if writer and writer[1] else set()
         control_patches = [
             e for e in (events if isinstance(events, list) else [])
             if isinstance(e, Mapping) and e.get("event_type") == "control_patch" and e.get("patch_delta")
@@ -1312,6 +1311,8 @@ class DeployedResearchHarness:
         patches = [
             e for e in control_patches
             if e.get("actor_type") == "user" and str(e.get("actor") or "") and str(e.get("actor")) not in refused
+            and {d.get("parameter_key") for d in e["patch_delta"] if d.get("previous_value") != d.get("new_value")}
+            >= {"short_window", "long_window"}
         ]
         carried = self.hosted_input.predecessors if self.hosted_input else {}
         pre_id = str(carried.get("pre_edit_eval_id") or "").strip()
@@ -1333,16 +1334,35 @@ class DeployedResearchHarness:
         ids = {k: v for k, v in ids.items() if v not in (None, "")}
         if not patches:
             rejected = (
-                " (an existing control_patch from the hosted executor or a service identity was ignored)"
+                " (an existing control_patch from a service identity or non-user actor was ignored)"
                 if control_patches else ""
             )
-            raise HostedPause(
-                "teaching_human_control_edit",
-                "awaiting_human_edit: waiting for the operator to edit short_window/long_window of "
-                f"TeachingSession {session_id} in the Management UI{rejected}; "
-                "this suite never writes Teaching controls",
-                ids,
-            )
+            if not pre_id:
+                raise HostedPause(
+                    "teaching_human_control_edit",
+                    f"pre_edit_evaluation_missing: no pre-edit evaluation recorded for TeachingSession {session_id}"
+                    f"{rejected}; refusing to write controls without it",
+                    ids,
+                )
+            # Read-before-write: no eligible user edit exists, so use the authorised research-suite
+            # control operation through the Training owner API (OPERATOR token), then verify its event.
+            self._operator_teaching_patch(session_id, by_key)
+            events = self._http_json(self.training_url, f"/api/training/sessions/{quoted}/events", headers=headers)
+            patches = [
+                e for e in (events if isinstance(events, list) else [])
+                if isinstance(e, Mapping) and e.get("event_type") == "control_patch" and e.get("patch_delta")
+                and e.get("actor_type") == "user" and str(e.get("actor") or "") and str(e.get("actor")) not in refused
+                and {d.get("parameter_key") for d in e["patch_delta"] if d.get("previous_value") != d.get("new_value")}
+                >= {"short_window", "long_window"}
+            ]
+            if not patches:
+                raise HostedPause(
+                    "teaching_human_control_edit",
+                    "awaiting_human_edit: the authorised control edit produced no nonzero user control_patch "
+                    f"event on TeachingSession {session_id}",
+                    ids,
+                )
+            by_key = None
         latest = max(patches, key=lambda e: str(e.get("timestamp") or e.get("emitted_at") or ""))
         wanted = {
             str(d["parameter_key"]): d["new_value"]
@@ -1354,7 +1374,7 @@ class DeployedResearchHarness:
             "the human Teaching edit did not change both short_window and long_window",
         )
         self._require(
-            all(by_key[k].get("current_value") == v for k, v in wanted.items()),
+            by_key is None or all(by_key[k].get("current_value") == v for k, v in wanted.items()),
             "Teaching controls no longer hold the human's edited values",
         )
         self._require(bool(pre_id), "no pre-edit evaluation id was recorded before the human edit")

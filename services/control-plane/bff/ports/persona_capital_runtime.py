@@ -976,6 +976,9 @@ class PersonaCapitalRuntimeDomainPort:
     def list_bindings(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.capital.list_bindings(**kwargs)
 
+    def get_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.capital.get_binding(binding_id)
+
     def get_bindings_for_pool(self, pool_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.capital.get_bindings_for_pool(pool_id)
 
