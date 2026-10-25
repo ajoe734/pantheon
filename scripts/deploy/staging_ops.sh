@@ -91,13 +91,18 @@ validate_and_inspect_artifacts() {
     die_json "MANIFEST_VALIDATION_FAILED" "Release manifest rejected: $(printf '%s' "$base_summary" | tr '\n"' '  ')"
   fi
 
-  local release_id expected_fe_sha expected_bff_image
+  local release_id expected_fe_sha expected_bff_image prev_release_id expected_base_fe_sha expected_base_bff_image
   release_id="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"])["release_id"])')"
   expected_fe_sha="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"])["frontend_artifact_sha256"])')"
   expected_bff_image="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"])["operator_bff_image"])')"
+  prev_release_id="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"]).get("rollback_previous_release_id", ""))')"
+  expected_base_fe_sha="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"]).get("rollback_frontend_artifact_sha256", ""))')"
+  expected_base_bff_image="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"]).get("rollback_operator_bff_image", ""))')"
 
   local observed_fe_sha="${OBSERVED_FE_ARTIFACT_SHA256:-}"
   local fe_artifact_file="${STAGING_FE_ARTIFACT_PATH:-}"
+  local observed_base_fe_sha="${OBSERVED_BASELINE_FE_ARTIFACT_SHA256:-}"
+  local fe_baseline_artifact_file="${STAGING_FE_BASELINE_ARTIFACT_PATH:-}"
 
   if [[ "${DRY_RUN}" != "true" ]]; then
     require_live_gcloud
@@ -109,6 +114,16 @@ validate_and_inspect_artifacts() {
     fi
     if [[ -z "${fe_artifact_file}" || ! -f "${fe_artifact_file}" ]]; then
       die_json "FE_ARTIFACT_MISSING" "Live staging promotion requires STAGING_FE_ARTIFACT_PATH or retrievable STAGING_FE_ARTIFACT_URI"
+    fi
+
+    if [[ -z "${fe_baseline_artifact_file}" && -n "${STAGING_FE_BASELINE_ARTIFACT_URI:-}" ]]; then
+      fe_baseline_artifact_file="${STATE_DIR}/artifacts/${prev_release_id:-baseline}-fe-bundle.tar.gz"
+      if ! "${GCLOUD_BIN}" storage cp "${STAGING_FE_BASELINE_ARTIFACT_URI}" "${fe_baseline_artifact_file}" >/dev/null 2>&1; then
+        die_json "BASELINE_FE_ARTIFACT_RETRIEVAL_FAILED" "Failed to retrieve baseline FE artifact from ${STAGING_FE_BASELINE_ARTIFACT_URI}"
+      fi
+    fi
+    if [[ -z "${fe_baseline_artifact_file}" || ! -f "${fe_baseline_artifact_file}" ]]; then
+      die_json "BASELINE_FE_ARTIFACT_MISSING" "Live staging promotion requires STAGING_FE_BASELINE_ARTIFACT_PATH or retrievable STAGING_FE_BASELINE_ARTIFACT_URI matching rollback_baseline.frontend_artifact_sha256"
     fi
   fi
 
@@ -128,7 +143,24 @@ PY
     )"
   fi
 
+  if [[ -n "${fe_baseline_artifact_file}" ]]; then
+    if [[ ! -f "${fe_baseline_artifact_file}" ]]; then
+      die_json "BASELINE_FE_ARTIFACT_MISSING" "Configured STAGING_FE_BASELINE_ARTIFACT_PATH (${fe_baseline_artifact_file}) does not exist"
+    fi
+    observed_base_fe_sha="$(
+      FE_PATH="${fe_baseline_artifact_file}" python3 - <<'PY'
+import hashlib
+import os
+from pathlib import Path
+
+digest = hashlib.sha256(Path(os.environ["FE_PATH"]).read_bytes()).hexdigest()
+print(f"sha256:{digest}")
+PY
+    )"
+  fi
+
   local observed_bff_digest="${OBSERVED_BFF_IMAGE_DIGEST:-}"
+  local observed_base_bff_digest="${OBSERVED_BASELINE_BFF_IMAGE_DIGEST:-}"
   if [[ "${DRY_RUN}" != "true" ]]; then
     local gcloud_img_json
     if ! gcloud_img_json="$("${GCLOUD_BIN}" artifacts docker images describe "${expected_bff_image}" --format=json 2>&1)"; then
@@ -152,6 +184,31 @@ PY
     )"; then
       die_json "BFF_IMAGE_DIGEST_UNOBSERVED" "Artifact Registry response lacked valid sha256 digest for ${expected_bff_image}"
     fi
+
+    if [[ -n "${expected_base_bff_image}" ]]; then
+      local gcloud_base_img_json
+      if ! gcloud_base_img_json="$("${GCLOUD_BIN}" artifacts docker images describe "${expected_base_bff_image}" --format=json 2>&1)"; then
+        die_json "BASELINE_BFF_IMAGE_LOOKUP_FAILED" "Failed to describe immutable baseline BFF image ${expected_base_bff_image}"
+      fi
+      if ! observed_base_bff_digest="$(
+        IMG_JSON="${gcloud_base_img_json}" EXPECTED_REF="${expected_base_bff_image}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["IMG_JSON"])
+if not isinstance(payload, dict):
+    raise SystemExit(1)
+summary = payload.get("image_summary") or payload
+digest = summary.get("digest") or payload.get("digest") or ""
+repo_ref = os.environ["EXPECTED_REF"].split("@sha256:", 1)[0]
+if not isinstance(digest, str) or not digest.startswith("sha256:") or len(digest) != 71:
+    raise SystemExit(1)
+print(f"{repo_ref}@{digest}")
+PY
+      )"; then
+        die_json "BASELINE_BFF_IMAGE_DIGEST_UNOBSERVED" "Artifact Registry response lacked valid sha256 digest for ${expected_base_bff_image}"
+      fi
+    fi
   fi
 
   local verify_args=(
@@ -166,6 +223,12 @@ PY
   if [[ -n "${observed_bff_digest}" ]]; then
     verify_args+=("--observed-bff-digest" "${observed_bff_digest}")
   fi
+  if [[ -n "${observed_base_fe_sha}" ]]; then
+    verify_args+=("--observed-baseline-fe-sha256" "${observed_base_fe_sha}")
+  fi
+  if [[ -n "${observed_base_bff_digest}" ]]; then
+    verify_args+=("--observed-baseline-bff-digest" "${observed_base_bff_digest}")
+  fi
 
   local verified_summary
   if ! verified_summary="$(python3 "${SCRIPT_DIR}/release_manifest.py" "${verify_args[@]}" 2>&1)"; then
@@ -175,8 +238,11 @@ PY
   MANIFEST_SUMMARY="${verified_summary}" \
   DRY_RUN="${DRY_RUN}" \
   FE_ARTIFACT_FILE="${fe_artifact_file}" \
+  FE_BASELINE_ARTIFACT_FILE="${fe_baseline_artifact_file}" \
   OBSERVED_FE_SHA="${observed_fe_sha:-$expected_fe_sha}" \
   OBSERVED_BFF_REF="${observed_bff_digest:-$expected_bff_image}" \
+  OBSERVED_BASE_FE_SHA="${observed_base_fe_sha:-$expected_base_fe_sha}" \
+  OBSERVED_BASE_BFF_REF="${observed_base_bff_digest:-$expected_base_bff_image}" \
   python3 - <<'PY'
 import json
 import os
@@ -185,7 +251,10 @@ summary = json.loads(os.environ["MANIFEST_SUMMARY"])
 summary["dry_run"] = os.environ["DRY_RUN"] == "true"
 summary["observed_fe_artifact_sha256"] = os.environ["OBSERVED_FE_SHA"]
 summary["observed_operator_bff_image"] = os.environ["OBSERVED_BFF_REF"]
+summary["observed_baseline_fe_artifact_sha256"] = os.environ["OBSERVED_BASE_FE_SHA"]
+summary["observed_baseline_operator_bff_image"] = os.environ["OBSERVED_BASE_BFF_REF"]
 summary["fe_artifact_path"] = os.environ["FE_ARTIFACT_FILE"]
+summary["fe_baseline_artifact_path"] = os.environ["FE_BASELINE_ARTIFACT_FILE"]
 print(json.dumps(summary, sort_keys=True))
 PY
 }
@@ -195,6 +264,7 @@ build_remote_env_exports() {
 import os, shlex
 
 passthrough_vars = (
+    "STAGING_GCP_PROJECT_ID",
     "STAGING_ROOT",
     "STAGING_DATA_MOUNT",
     "STAGING_FE_ROOT",
@@ -218,6 +288,7 @@ passthrough_vars = (
     "STAGING_READY_TRIES",
     "STAGING_READY_INTERVAL",
     "STAGING_RUNTIME_CONFIG_URL",
+    "STAGING_METADATA_TOKEN_URL",
     "DOCKER_BIN",
     "CURL_BIN",
     "CADDY_BIN",
@@ -226,6 +297,7 @@ passthrough_vars = (
     "PG_DUMP_BIN",
     "PG_RESTORE_BIN",
     "SUDO_BIN",
+    "FAKE_OSLOGIN_NONROOT",
 )
 parts = []
 for k in passthrough_vars:
@@ -250,6 +322,7 @@ case "${SUBCOMMAND}" in
     BFF_COMMIT="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"])["backend_commit"])' )"
     BFF_IMAGE="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"])["operator_bff_image"])' )"
     FE_ARTIFACT_FILE="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"]).get("fe_artifact_path", ""))' )"
+    FE_BASELINE_ARTIFACT_FILE="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"]).get("fe_baseline_artifact_path", ""))' )"
     OBSERVED_DEPLOY_FILE="${STATE_DIR}/evidence/${RELEASE_ID}-observed-deploy.json"
 
     if [[ "${DRY_RUN}" == "true" ]]; then
@@ -291,10 +364,15 @@ PY
       fi
     done
 
+    if [[ -z "${FE_BASELINE_ARTIFACT_FILE}" || ! -f "${FE_BASELINE_ARTIFACT_FILE}" ]]; then
+      die_json "BASELINE_FE_ARTIFACT_MISSING" "deploy-host requires verified baseline FE tarball matching rollback_baseline.frontend_artifact_sha256"
+    fi
+
     REMOTE_BUNDLE_DIR="/tmp/pantheon-staging-bundle"
     STAGE_BUNDLE_DIR="$(mktemp -d "${STATE_DIR}/artifacts/bundle-${RELEASE_ID}-XXXXXX")"
     cp "${RELEASE_MANIFEST_PATH}" "${STAGE_BUNDLE_DIR}/manifest.json"
     cp "${FE_ARTIFACT_FILE}" "${STAGE_BUNDLE_DIR}/fe-dist.tar.gz"
+    cp "${FE_BASELINE_ARTIFACT_FILE}" "${STAGE_BUNDLE_DIR}/fe-baseline-dist.tar.gz"
     cp "${REPO_ROOT}/deploy/staging/docker-compose.staging.yml" "${STAGE_BUNDLE_DIR}/docker-compose.staging.yml"
     cp "${REPO_ROOT}/deploy/staging/Caddyfile.staging.tmpl" "${STAGE_BUNDLE_DIR}/Caddyfile.staging.tmpl"
     cp "${REPO_ROOT}/deploy/staging/staging-env.defaults" "${STAGE_BUNDLE_DIR}/staging-env.defaults"
@@ -316,7 +394,7 @@ PY
       die_json "HOST_SSH_MKDIR_FAILED" "Failed to prepare ${REMOTE_BUNDLE_DIR} on ${VM_NAME} over IAP SSH"
     fi
 
-    # 2. Transfer immutable FE tarball, manifest, compose overlay, Caddy template, bootstrap.sh, and gate collector over IAP SCP.
+    # 2. Transfer immutable FE tarballs (candidate + baseline), manifest, compose overlay, Caddy template, bootstrap.sh, and gate collector over IAP SCP.
     if ! "${GCLOUD_BIN}" compute scp \
       --project="${STAGING_GCP_PROJECT_ID}" \
       --zone="${STAGING_GCP_ZONE}" \
@@ -324,6 +402,7 @@ PY
       --quiet \
       "${STAGE_BUNDLE_DIR}/manifest.json" \
       "${STAGE_BUNDLE_DIR}/fe-dist.tar.gz" \
+      "${STAGE_BUNDLE_DIR}/fe-baseline-dist.tar.gz" \
       "${STAGE_BUNDLE_DIR}/docker-compose.staging.yml" \
       "${STAGE_BUNDLE_DIR}/Caddyfile.staging.tmpl" \
       "${STAGE_BUNDLE_DIR}/staging-env.defaults" \

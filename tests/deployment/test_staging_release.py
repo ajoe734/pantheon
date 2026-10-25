@@ -49,10 +49,13 @@ ACTIONLINT_CANDIDATES = (
 
 
 FAKE_HOST_BIN_SCRIPT = r"""#!/usr/bin/env python3
+import base64
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -69,7 +72,14 @@ with vm_log_file.open("a", encoding="utf-8") as lf:
 def load_state() -> dict:
     if vm_state_file.exists():
         return json.loads(vm_state_file.read_text(encoding="utf-8"))
-    return {"pulled_images": [], "containers": {}, "databases": {}, "caddy_validated": False, "caddy_reloaded": False}
+    return {
+        "pulled_images": [],
+        "logged_in_registries": [],
+        "containers": {},
+        "databases": {},
+        "caddy_validated": False,
+        "caddy_reloaded": False,
+    }
 
 
 def save_state(st: dict) -> None:
@@ -90,11 +100,73 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+def _root_owned_dirs() -> list[Path]:
+    dirs = []
+    for env_key in ("STAGING_ROOT", "STAGING_FE_ROOT", "STAGING_BIN_DIR", "STAGING_DATA_MOUNT"):
+        val = os.environ.get(env_key, "").strip()
+        if val:
+            b = Path(val)
+            dirs.append(b)
+            for sub in ("secrets", "state", "config", "lib", "releases", "backups", "sanitized"):
+                sd = b / sub
+                if sd.exists() and sd.is_dir():
+                    dirs.append(sd)
+                    for child in sd.iterdir():
+                        if not child.is_symlink() and child.is_dir():
+                            dirs.append(child)
+    caddy_p = os.environ.get("STAGING_CADDYFILE_PATH", "").strip()
+    if caddy_p:
+        dirs.append(Path(caddy_p).parent)
+    return dirs
+
+
+def _unlock_privileged_paths() -> list[tuple[Path, int]]:
+    restores: list[tuple[Path, int]] = []
+    for p in _root_owned_dirs():
+        if p.exists() and p.is_dir():
+            if (p.stat().st_mode & 0o777) == 0o555:
+                p.chmod(0o755)
+    for sec_key in ("STAGING_SECRETS_ENV_FILE", "STAGING_POSTGRES_PASSWORD_FILE"):
+        s_val = os.environ.get(sec_key, "").strip()
+        if s_val and Path(s_val).exists():
+            sp = Path(s_val)
+            smode = sp.stat().st_mode & 0o777
+            if smode == 0o000:
+                sp.chmod(0o600)
+                restores.append((sp, 0o000))
+    return restores
+
+
+def _relock_privileged_paths(secret_restores: list[tuple[Path, int]]) -> None:
+    if os.environ.get("FAKE_OSLOGIN_NONROOT") != "true":
+        return
+    for sp, mode in secret_restores:
+        if sp.exists():
+            sp.chmod(mode)
+    for p in reversed(_root_owned_dirs()):
+        if p.exists() and p.is_dir():
+            p.chmod(0o555)
+
+
 if tool == "sudo":
-    if not args:
+    cmd_args = list(args)
+    while cmd_args and cmd_args[0] in ("-E", "--preserve-env"):
+        cmd_args.pop(0)
+    if not cmd_args:
         raise SystemExit(0)
-    proc = subprocess.run(args, env=os.environ.copy())
-    raise SystemExit(proc.returncode)
+    child_env = os.environ.copy()
+    child_env["PANTHEON_PRIVILEGED"] = "1"
+    secret_restores = _unlock_privileged_paths()
+    try:
+        proc = subprocess.run(cmd_args, env=child_env)
+        raise SystemExit(proc.returncode)
+    finally:
+        _relock_privileged_paths(secret_restores)
+
+if os.environ.get("FAKE_OSLOGIN_NONROOT") == "true" and os.environ.get("PANTHEON_PRIVILEGED") != "1":
+    if tool in ("docker", "caddy", "mountpoint"):
+        print(f"{tool}: permission denied (non-root OS Login user must invoke via sudo)", file=sys.stderr)
+        raise SystemExit(1)
 
 if tool == "mountpoint":
     if os.environ.get("FAKE_DATA_MOUNTED", "true") != "true":
@@ -133,11 +205,35 @@ if tool == "docker":
         print("Docker Compose version v2.29.7")
         raise SystemExit(0)
 
+    if args[:1] == ["login"]:
+        if "-u" not in args or "oauth2accesstoken" not in args or "--password-stdin" not in args:
+            print("docker login requires -u oauth2accesstoken --password-stdin", file=sys.stderr)
+            raise SystemExit(1)
+        token_in = sys.stdin.read().strip()
+        expected_tok = os.environ.get("FAKE_EXPECTED_METADATA_TOKEN", "ya29.fake-stg-runtime-sa-token")
+        if not token_in or token_in != expected_tok:
+            print("unauthorized: invalid or empty Artifact Registry access token", file=sys.stderr)
+            raise SystemExit(1)
+        reg_url = args[-1].rstrip("/")
+        if reg_url not in st.setdefault("logged_in_registries", []):
+            st["logged_in_registries"].append(reg_url)
+        save_state(st)
+        print("Login Succeeded")
+        raise SystemExit(0)
+
     if args[:1] == ["pull"]:
         img = args[1]
         if "@sha256:" not in img:
             print(f"refusing unpinned image pull: {img}", file=sys.stderr)
             raise SystemExit(1)
+        if img.startswith("asia-east1-docker.pkg.dev/"):
+            reg_host = "https://" + img.split("/", 1)[0]
+            if reg_host not in st.get("logged_in_registries", []):
+                print(
+                    f"Error response from daemon: Head {img}: denied: unauthenticated pull against {reg_host}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
         fail_pull = os.environ.get("FAKE_DOCKER_PULL_FAIL", "").strip()
         if fail_pull and fail_pull in img:
             print(f"simulated docker pull failure for {img}", file=sys.stderr)
@@ -255,6 +351,8 @@ if tool == "docker":
                     "PANTHEON_EXECUTION_MODE": "paper",
                     "PANTHEON_BFF_AUTH_MODE": "strict",
                     "PANTHEON_BFF_AUTH_STUB": "false",
+                    "PANTHEON_BFF_JWT_ISSUER": c_env.get("PANTHEON_BFF_JWT_ISSUER", "https://auth.pantheon.internal"),
+                    "PANTHEON_BFF_JWT_AUDIENCE": c_env.get("PANTHEON_BFF_JWT_AUDIENCE", "pantheon-operator-bff"),
                     "BFF_COMMIT": c_env.get("PANTHEON_BACKEND_COMMIT", ""),
                     "BFF_IMAGE_DIGEST": c_env.get("PANTHEON_OPERATOR_BFF_DIGEST", ""),
                     **secrets_env,
@@ -281,6 +379,7 @@ if tool == "curl":
     out_file = None
     method = "GET"
     headers = {}
+    req_body = ""
     for i, a in enumerate(args):
         if a == "-o" and i + 1 < len(args):
             out_file = args[i + 1]
@@ -289,6 +388,27 @@ if tool == "curl":
         elif a == "-H" and i + 1 < len(args) and ":" in args[i + 1]:
             hk, hv = args[i + 1].split(":", 1)
             headers[hk.strip().lower()] = hv.strip()
+        elif a in ("-d", "--data", "--data-raw") and i + 1 < len(args):
+            req_body = args[i + 1]
+
+    def _emit_http(code: int, body_obj: dict) -> "NoReturn":
+        body_str = json.dumps(body_obj, sort_keys=True)
+        if out_file and out_file != "/dev/null":
+            Path(out_file).write_text(body_str, encoding="utf-8")
+        if write_status_only:
+            print(str(code), end="")
+            raise SystemExit(0)
+        if code >= 400 and "-f" in "".join(a for a in args if a.startswith("-")):
+            raise SystemExit(22)
+        print(body_str)
+        raise SystemExit(0)
+
+    if "computeMetadata/v1/instance/service-accounts/default/token" in url:
+        if headers.get("metadata-flavor") != "Google" or os.environ.get("FAKE_METADATA_TOKEN_FAIL") == "true":
+            raise SystemExit(22)
+        tok = os.environ.get("FAKE_METADATA_TOKEN_VALUE", "ya29.fake-stg-runtime-sa-token")
+        print(json.dumps({"access_token": tok, "expires_in": 3599, "token_type": "Bearer"}))
+        raise SystemExit(0)
 
     if url.endswith("/bff/readyz"):
         required_up = ("postgres", "nats", "runtime-manager", "governance", "deployment", "lifecycle-projector", "operator-bff")
@@ -296,28 +416,16 @@ if tool == "curl":
         if os.environ.get("FAKE_BFF_UNHEALTHY") == "true":
             all_up = False
         code = 200 if all_up else 503
-        body = json.dumps({"status": "ok" if all_up else "unavailable", "ready": all_up})
-        if write_status_only:
-            print(str(code), end="")
-            raise SystemExit(0)
-        if code != 200:
-            raise SystemExit(22)
-        print(body)
-        raise SystemExit(0)
+        _emit_http(code, {"status": "ok" if all_up else "unavailable", "ready": all_up})
 
     if url.endswith("/bff/version"):
         bff = st.get("containers", {}).get("operator-bff", {})
         b_env = bff.get("env", {})
-        body = json.dumps({
+        _emit_http(200, {
             "environment": b_env.get("PANTHEON_ENV", "staging"),
             "source_commit_sha": b_env.get("BFF_COMMIT", ""),
             "image_digest": b_env.get("BFF_IMAGE_DIGEST", ""),
         })
-        if write_status_only:
-            print("200", end="")
-        else:
-            print(body)
-        raise SystemExit(0)
 
     if url.endswith("/runtime-config.js"):
         cfg_path = Path(os.environ.get("STAGING_ROOT", "")) / "config" / "runtime-config.js"
@@ -333,21 +441,125 @@ if tool == "curl":
             print(content, end="")
         raise SystemExit(0)
 
-    if url.endswith("/bff/capabilities"):
+    def _verify_jwt() -> tuple[dict | None, str | None]:
         auth = headers.get("authorization", "")
-        tenant = headers.get("x-tenant-id", "")
-        role = headers.get("x-pantheon-role", "")
         if not auth:
+            return None, "AUTH_REQUIRED"
+        if not auth.startswith("Bearer "):
+            return None, "AUTH_INVALID"
+        token = auth.split(" ", 1)[1].strip()
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None, "AUTH_INVALID"
+        h_b64, p_b64, s_b64 = parts
+        bff_env = st.get("containers", {}).get("operator-bff", {}).get("env", {})
+        secret = bff_env.get("PANTHEON_BFF_JWT_SECRET", "")
+        if not secret:
+            return None, "AUTH_INVALID"
+        signing_input = f"{h_b64}.{p_b64}".encode("ascii")
+        expected_sig = base64.urlsafe_b64encode(
+            hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+        ).rstrip(b"=").decode("ascii")
+        if not hmac.compare_digest(s_b64, expected_sig):
+            return None, "AUTH_INVALID"
+        padded = p_b64 + "=" * (-len(p_b64) % 4)
+        try:
+            claims = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        except Exception:
+            return None, "AUTH_INVALID"
+        if claims.get("iss") != bff_env.get("PANTHEON_BFF_JWT_ISSUER", "https://auth.pantheon.internal"):
+            return None, "AUTH_INVALID"
+        if claims.get("aud") != bff_env.get("PANTHEON_BFF_JWT_AUDIENCE", "pantheon-operator-bff"):
+            return None, "AUTH_INVALID"
+        return claims, None
+
+    if url.endswith("/bff/me"):
+        if method != "GET":
+            _emit_http(405, {"detail": "Method Not Allowed"})
+        # Also verify the migrated database works when the old-app BFF handles /bff/me
+        bff_img = st.get("containers", {}).get("operator-bff", {}).get("image", "")
+        if os.environ.get("FAKE_OLD_APP_INCOMPATIBLE") == "true" and ("6" * 64) in bff_img:
+            _emit_http(500, {"error": {"code": "INTERNAL_ERROR", "message": "old app incompatible with new schema"}})
+        claims, err_code = _verify_jwt()
+        if err_code:
             code = int(os.environ.get("FAKE_UNAUTH_STATUS", "401"))
-        elif tenant == "tenant-bravo":
+            _emit_http(code, {"error": {"code": err_code, "message": "Authentication required or invalid"}})
+        req_tenant = headers.get("x-tenant-id") or claims.get("tenant_id", "")
+        if req_tenant not in (claims.get("allowed_tenants") or []):
             code = int(os.environ.get("FAKE_CROSS_TENANT_STATUS", "403"))
-        elif method == "POST" and role == "viewer":
+            _emit_http(code, {
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "Requested tenant is outside authenticated tenant scope.",
+                    "details": {"precondition_failed": "tenant_scope"},
+                }
+            })
+        _emit_http(200, {
+            "data": {
+                "user_id": claims["sub"],
+                "email": claims.get("email"),
+                "tenant_id": req_tenant,
+                "allowed_tenants": claims["allowed_tenants"],
+                "roles": claims["roles"],
+            }
+        })
+
+    if url.endswith("/bff/switch-tenant"):
+        if method != "POST":
+            _emit_http(405, {"detail": "Method Not Allowed"})
+        claims, err_code = _verify_jwt()
+        if err_code:
+            _emit_http(401, {"error": {"code": err_code, "message": "Authentication required or invalid"}})
+        try:
+            payload = json.loads(req_body) if req_body else {}
+        except Exception:
+            payload = {}
+        target_tenant = payload.get("tenant_id", "")
+        if target_tenant not in (claims.get("allowed_tenants") or []):
+            code = int(os.environ.get("FAKE_CROSS_TENANT_STATUS", "403"))
+            _emit_http(code, {
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "Requested tenant is outside authenticated tenant scope.",
+                    "details": {"precondition_failed": "tenant_scope"},
+                }
+            })
+        _emit_http(200, {"data": {"tenant_id": target_tenant, "allowed_tenants": claims["allowed_tenants"]}})
+
+    if url.endswith("/bff/command-confirmations"):
+        if method != "POST":
+            _emit_http(405, {"detail": "Method Not Allowed"})
+        claims, err_code = _verify_jwt()
+        if err_code:
+            _emit_http(401, {"error": {"code": err_code, "message": "Authentication required or invalid"}})
+        req_tenant = headers.get("x-tenant-id") or claims.get("tenant_id", "")
+        if req_tenant not in (claims.get("allowed_tenants") or []):
+            _emit_http(403, {
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "Requested tenant is outside authenticated tenant scope.",
+                    "details": {"precondition_failed": "tenant_scope"},
+                }
+            })
+        roles = claims.get("roles") or []
+        if not any(r in ("operator", "admin") for r in roles):
             code = int(os.environ.get("FAKE_VIEWER_MUTATION_STATUS", "403"))
-        else:
-            code = 200
-        if write_status_only:
-            print(str(code), end="")
-        raise SystemExit(0)
+            _emit_http(code, {
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "Role is not permitted to confirm commands.",
+                    "details": {"precondition_failed": "role_check"},
+                }
+            })
+        _emit_http(200, {"data": {"status": "confirmed"}})
+
+    if url.endswith("/bff/capabilities"):
+        if method != "GET":
+            _emit_http(405, {"detail": "Method Not Allowed"})
+        claims, err_code = _verify_jwt()
+        if err_code:
+            _emit_http(401, {"error": {"code": err_code}})
+        _emit_http(200, {"data": {"roles": claims["roles"]}})
 
     print(f"Unsupported curl URL: {url}", file=sys.stderr)
     raise SystemExit(1)
@@ -384,6 +596,9 @@ if tool in ("psql", "pg_dump", "pg_restore"):
         if not dump_file.exists():
             print("dump file missing", file=sys.stderr)
             raise SystemExit(1)
+        if db_name not in st.get("databases", {}):
+            print(f'pg_restore: error: connection to database "{db_name}" failed: FATAL:  database "{db_name}" does not exist', file=sys.stderr)
+            raise SystemExit(1)
         st.setdefault("databases", {})[db_name] = json.loads(dump_file.read_text(encoding="utf-8"))
         save_state(st)
         raise SystemExit(0)
@@ -394,13 +609,56 @@ if tool in ("psql", "pg_dump", "pg_restore"):
         if a == "-c" and i + 1 < len(args):
             sql = args[i + 1]
 
-    db_tables = st.setdefault("databases", {}).setdefault(db_name, {}).setdefault("tables", {})
-    if "CREATE DATABASE" in sql:
+    # Enforce PostgreSQL rule: DROP DATABASE and CREATE DATABASE cannot run inside a multi-statement -c transaction block
+    stmts_in_c = [s.strip() for s in sql.split(";") if s.strip()]
+    if len(stmts_in_c) > 1 and any(kw in sql.upper() for kw in ("DROP DATABASE", "CREATE DATABASE")):
+        print("ERROR:  DROP DATABASE cannot run inside a transaction block", file=sys.stderr)
+        raise SystemExit(1)
+
+    if sql.upper().startswith("DROP DATABASE"):
+        target_db = sql.split('"', 1)[1].split('"', 1)[0] if '"' in sql else stmts_in_c[0].split()[-1]
+        st.setdefault("databases", {}).pop(target_db, None)
+        save_state(st)
+        print("DROP DATABASE")
+        raise SystemExit(0)
+
+    if sql.upper().startswith("CREATE DATABASE"):
         new_db = sql.split('CREATE DATABASE "', 1)[1].split('"', 1)[0]
-        st["databases"][new_db] = {"tables": {}}
+        st.setdefault("databases", {})[new_db] = {"tables": {}, "schema": {}}
         save_state(st)
         print("CREATE DATABASE")
         raise SystemExit(0)
+
+    db_entry = st.setdefault("databases", {}).setdefault(db_name, {})
+    db_tables = db_entry.setdefault("tables", {})
+    default_catalog = {
+        "users": {
+            "id": {"type": "text", "nullable": False, "has_default": False},
+            "email": {"type": "text", "nullable": False, "has_default": False},
+            "full_name": {"type": "text", "nullable": False, "has_default": False},
+            "password_hash": {"type": "text", "nullable": False, "has_default": False},
+            "phone": {"type": "text", "nullable": True, "has_default": False},
+            "national_id": {"type": "text", "nullable": True, "has_default": False},
+            "tenant_id": {"type": "text", "nullable": False, "has_default": False},
+            "role": {"type": "text", "nullable": False, "has_default": False},
+        },
+        "tenants": {
+            "id": {"type": "text", "nullable": False, "has_default": False},
+            "name": {"type": "text", "nullable": False, "has_default": False},
+            "status": {"type": "text", "nullable": False, "has_default": False},
+        },
+        "schema_migrations": {
+            "version": {"type": "text", "nullable": False, "has_default": False},
+            "applied_at": {"type": "text", "nullable": False, "has_default": False},
+            "checksum_sha256": {"type": "text", "nullable": False, "has_default": False},
+        },
+    }
+    db_schema = db_entry.setdefault("schema", default_catalog)
+
+    if "FROM information_schema.columns" in sql:
+        print(json.dumps(db_schema, sort_keys=True))
+        raise SystemExit(0)
+
     if "json_build_object('migration_set_sha256'" in sql:
         migs = db_tables.get("schema_migrations") or []
         summary = {
@@ -418,21 +676,25 @@ if tool in ("psql", "pg_dump", "pg_restore"):
     if "json_build_object('users'" in sql:
         print(json.dumps(db_tables, sort_keys=True))
         raise SystemExit(0)
-    if "PRE_MIGRATION_SCHEMA" in sql:
-        print(json.dumps(st.get("old_app_schema", {"users": {"id": {"type": "text"}}})))
-        raise SystemExit(0)
-    if "POST_MIGRATION_SCHEMA" in sql:
-        print(json.dumps(st.get("new_schema", {
-            "users": {
-                "id": {"type": "text"},
-                "staging_note": {"type": "text", "nullable": True, "has_default": False},
-            }
-        })))
-        raise SystemExit(0)
     if "ALTER TABLE" in sql:
         if os.environ.get("FAKE_FAIL_MIGRATION_SQL") == "true":
             print("ERROR: syntax or lock error executing migration SQL", file=sys.stderr)
             raise SystemExit(1)
+        if os.environ.get("FAKE_SKIP_SCHEMA_MUTATION") != "true":
+            m = re.search(
+                r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z0-9_]+)(.*)",
+                sql,
+                re.IGNORECASE,
+            )
+            if m:
+                tbl, col, ctype, tail = m.group(1), m.group(2), m.group(3).lower(), m.group(4).upper()
+                has_def = "DEFAULT" in tail
+                is_null = "NOT NULL" not in tail
+                db_schema.setdefault(tbl, {})[col] = {
+                    "type": ctype,
+                    "nullable": is_null,
+                    "has_default": has_def,
+                }
         st["migration_applied"] = True
         save_state(st)
         print("ALTER TABLE")
@@ -441,7 +703,7 @@ if tool in ("psql", "pg_dump", "pg_restore"):
         migs = db_tables.get("schema_migrations") or []
         print(migs[0]["checksum_sha256"] if migs else "")
         raise SystemExit(0)
-    if "OLD_APP_COMPAT_SMOKE" in sql:
+    if "SELECT id, email, tenant_id, role FROM users" in sql:
         users = db_tables.get("users") or []
         if not users:
             raise SystemExit(1)
@@ -748,6 +1010,7 @@ def _sample_manifest(
     release_id: str = "pantheon-20261024-001",
     state: str = "dev_verified",
     fe_sha: str | None = None,
+    prev_fe_sha: str | None = None,
 ) -> dict:
     fe_commit = "a" * 40
     bff_commit = "b" * 40
@@ -756,7 +1019,7 @@ def _sample_manifest(
     bff_img = f"{reg}/operator-bff@sha256:" + ("2" * 64)
     compat_sha = "sha256:" + ("3" * 64)
     mig_sha = "sha256:" + ("4" * 64)
-    prev_fe_sha = "sha256:" + ("5" * 64)
+    prev_fe_sha_val = prev_fe_sha or ("sha256:" + ("5" * 64))
     prev_bff_img = f"{reg}/operator-bff@sha256:" + ("6" * 64)
     return release_manifest.build_manifest(
         release_id=release_id,
@@ -789,9 +1052,17 @@ def _sample_manifest(
         rollback_baseline={
             "previous_release_id": "pantheon-20261023-001",
             "frontend_commit": "c" * 40,
-            "frontend_artifact_sha256": prev_fe_sha,
+            "frontend_artifact_sha256": prev_fe_sha_val,
             "backend_commit": "d" * 40,
             "backend_operator_bff_image": prev_bff_img,
+            "backend_images": {
+                "operator_bff": prev_bff_img,
+                "runtime_manager": f"{reg}/runtime-manager@sha256:" + ("61" * 32),
+                "governance": f"{reg}/governance@sha256:" + ("62" * 32),
+                "deployment": f"{reg}/deployment@sha256:" + ("63" * 32),
+                "lifecycle_projector": f"{reg}/lifecycle-projector@sha256:" + ("64" * 32),
+            },
+            "config_schema_version": "pantheon.env-config.v1",
         },
     )
 
@@ -1098,7 +1369,35 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
 
 
 class StagingControllerLifecycleTests(unittest.TestCase):
+    def _unlock_vm_env_dir(self) -> None:
+        vm_env = getattr(self, "vm_env_dir", None)
+        if vm_env and Path(vm_env).exists():
+            for p in [Path(vm_env), *Path(vm_env).rglob("*")]:
+                if p.is_symlink():
+                    continue
+                try:
+                    if p.is_dir():
+                        p.chmod(0o755)
+                    elif (p.stat().st_mode & 0o777) == 0o000:
+                        p.chmod(0o600)
+                except OSError:
+                    pass
+
+    def _lock_root_owned_paths(self) -> None:
+        if self.secrets_env_file.exists():
+            self.secrets_env_file.chmod(0o000)
+        if self.pg_pw_file.exists():
+            self.pg_pw_file.chmod(0o000)
+        for base in (self.staging_root, self.fe_root, self.bin_dir, self.data_mount, self.caddyfile_path.parent):
+            if base.exists():
+                for p in sorted([base, *base.rglob("*")], key=lambda x: len(str(x)), reverse=True):
+                    if p.is_symlink():
+                        continue
+                    if p.is_dir():
+                        p.chmod(0o555)
+
     def setUp(self) -> None:
+        self._unlock_vm_env_dir()
         if getattr(self, "tmp_dir", None) is not None:
             self.tmp_dir.cleanup()
         shutil.rmtree("/tmp/pantheon-staging-bundle", ignore_errors=True)
@@ -1107,7 +1406,12 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.state_dir = self.tmp_path / "state"
         self.fe_tarball = self.tmp_path / "fe-bundle.tar.gz"
         self.fe_sha = _build_fe_tarball(self.fe_tarball)
-        self.manifest = _sample_manifest(fe_sha=self.fe_sha)
+        self.fe_baseline_tarball = self.tmp_path / "fe-baseline-bundle.tar.gz"
+        self.fe_baseline_sha = _build_fe_tarball(
+            self.fe_baseline_tarball,
+            content="<!doctype html><title>Pantheon Baseline Release</title>",
+        )
+        self.manifest = _sample_manifest(fe_sha=self.fe_sha, prev_fe_sha=self.fe_baseline_sha)
         self.manifest_path = self.tmp_path / "release-manifest.json"
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
         self.manifest_sha = release_manifest.compute_manifest_sha256(self.manifest)
@@ -1127,7 +1431,14 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.bin_dir = self.vm_env_dir / "bin"
         self.caddyfile_path = self.vm_env_dir / "etc" / "caddy" / "Caddyfile"
         self.secrets_dir = self.staging_root / "secrets"
-        for d in (self.staging_root, self.data_mount / "sanitized", self.fe_root, self.bin_dir, self.secrets_dir):
+        for d in (
+            self.staging_root,
+            self.data_mount / "sanitized",
+            self.fe_root,
+            self.bin_dir,
+            self.secrets_dir,
+            self.caddyfile_path.parent,
+        ):
             d.mkdir(parents=True, exist_ok=True)
 
         self.secrets_env_file = self.secrets_dir / "staging.secrets.env"
@@ -1151,23 +1462,22 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         (self.data_mount / "sanitized" / "migration-spec.json").write_text(
             json.dumps({
                 "phase": "expand",
+                "migration_set_sha256": self.manifest["migration_set_sha256"],
                 "statements": ["ALTER TABLE users ADD COLUMN staging_note TEXT NULL;"],
-                "old_app_schema": {"users": {"id": {"type": "text"}}},
-                "new_schema": {
-                    "users": {
-                        "id": {"type": "text"},
-                        "staging_note": {"type": "text", "nullable": True, "has_default": False},
-                    }
-                },
             }, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+
+        # Lock root-owned directories (0555) and secret files (0000) so non-root OS Login commands
+        # fail with EACCES unless elevated via sudo.
+        self._lock_root_owned_paths()
 
         self.vm_runtime_state_file = self.vm_env_dir / "vm_runtime_state.json"
         self.vm_bin_log_file = self.vm_env_dir / "vm_bin.log"
         self.vm_runtime_state_file.write_text(
             json.dumps({
                 "pulled_images": [],
+                "logged_in_registries": [],
                 "containers": {},
                 "expected_pg_password": "stg-isolated-pg-password-20261025",
                 "migration_set_sha256": self.manifest["migration_set_sha256"],
@@ -1192,13 +1502,19 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 "instances": [],
                 "iam_bindings": [],
                 "images": {},
-                "gcs_blobs": {"gs://pantheon-stg-artifacts/fe-bundle.tar.gz": str(self.fe_tarball)},
+                "gcs_blobs": {
+                    "gs://pantheon-stg-artifacts/fe-bundle.tar.gz": str(self.fe_tarball),
+                    "gs://pantheon-stg-artifacts/fe-baseline-bundle.tar.gz": str(self.fe_baseline_tarball),
+                    "gs://pantheon-stg-20260902-release-artifacts/fe-bundle.tar.gz": str(self.fe_tarball),
+                    "gs://pantheon-stg-20260902-release-artifacts/fe-baseline-bundle.tar.gz": str(self.fe_baseline_tarball),
+                },
                 "vm_mkdir_ready": {},
             }),
             encoding="utf-8",
         )
 
     def tearDown(self) -> None:
+        self._unlock_vm_env_dir()
         shutil.rmtree("/tmp/pantheon-staging-bundle", ignore_errors=True)
         self.tmp_dir.cleanup()
 
@@ -1215,6 +1531,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             "RELEASE_MANIFEST_PATH": str(self.manifest_path),
             "EXPECTED_MANIFEST_SHA256": self.manifest_sha,
             "STAGING_FE_ARTIFACT_PATH": str(self.fe_tarball),
+            "STAGING_FE_BASELINE_ARTIFACT_PATH": str(self.fe_baseline_tarball),
             "WORKFLOW_RUN_ID": "500001",
             "STAGING_STATE_DIR": str(self.state_dir),
             "STAGING_DRY_RUN": "false",
@@ -1236,7 +1553,8 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             "PSQL_BIN": str(self.host_bin_dir / "psql"),
             "PG_DUMP_BIN": str(self.host_bin_dir / "pg_dump"),
             "PG_RESTORE_BIN": str(self.host_bin_dir / "pg_restore"),
-            "SUDO_BIN": "",
+            "SUDO_BIN": str(self.host_bin_dir / "sudo"),
+            "FAKE_OSLOGIN_NONROOT": "true",
             "FAKE_HOST_BIN_DIR": str(self.host_bin_dir),
             "VM_RUNTIME_STATE_FILE": str(self.vm_runtime_state_file),
             "VM_BIN_LOG_FILE": str(self.vm_bin_log_file),
@@ -1397,7 +1715,13 @@ class StagingControllerLifecycleTests(unittest.TestCase):
 
         # 2. Insecure secret file permissions (0644) fail closed with SECRET_MODE
         self.setUp()
+        self._unlock_vm_env_dir()
         self.secrets_env_file.chmod(0o644)
+        self.pg_pw_file.chmod(0o000)
+        for base in (self.staging_root, self.fe_root, self.bin_dir, self.data_mount, self.caddyfile_path.parent):
+            for p in sorted([base, *base.rglob("*")], key=lambda x: len(str(x)), reverse=True):
+                if p.is_dir():
+                    p.chmod(0o555)
         res_mode = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True)
         self.assertNotEqual(res_mode.returncode, 0)
         self.assertIn("SECRET_MODE", res_mode.stderr)
@@ -1796,6 +2120,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 "served_backend_commit": rb["backend_commit"],
                 "fe_manifest_paired_backend_commit": rb["backend_commit"],
                 "served_operator_bff_image": rb["backend_operator_bff_image"],
+                "served_backend_images": rb["backend_images"],
                 "bff_healthy": True,
                 "singleton_worker_owner_unique": True,
                 "rollback_duration_seconds": 25,
@@ -1868,7 +2193,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
 
     def test_two_consecutive_simulated_releases_zero_to_zero_and_prod_preflight_alignment(self) -> None:
         for idx, rel_id in enumerate(("pantheon-20261024-001", "pantheon-20261024-002"), start=1):
-            manifest = _sample_manifest(release_id=rel_id, fe_sha=self.fe_sha)
+            manifest = _sample_manifest(release_id=rel_id, fe_sha=self.fe_sha, prev_fe_sha=self.fe_baseline_sha)
             m_path = self.tmp_path / f"{rel_id}.json"
             m_path.write_text(json.dumps(manifest), encoding="utf-8")
             m_sha = release_manifest.compute_manifest_sha256(manifest)
@@ -1907,6 +2232,131 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             self.assertEqual(cloud_state["instances"], [])
             self.assertEqual(cloud_state["disks"], [])
             self.assertEqual(cloud_state["addresses"], [])
+
+    def test_pr6798_five_blocking_source_findings_regressions(self) -> None:
+        # Finding 1: Missing or tampered rollback_baseline FE tarball fails closed before/during bootstrap;
+        # real unpacked baseline archive and full 5-service owner closure are verified on rollback.
+        missing_base_fe = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(
+                STAGING_FE_BASELINE_ARTIFACT_PATH=str(self.tmp_path / "missing-baseline.tar.gz"),
+                STAGING_FE_BASELINE_ARTIFACT_URI="",
+            ),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(missing_base_fe.returncode, 0)
+        self.assertIn("BASELINE_FE_ARTIFACT_MISSING", missing_base_fe.stderr)
+
+        tampered_base_tar = self.tmp_path / "tampered-baseline.tar.gz"
+        _build_fe_tarball(tampered_base_tar, content="tampered-baseline-fe")
+        mismatch_base_fe = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(STAGING_FE_BASELINE_ARTIFACT_PATH=str(tampered_base_tar)),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(mismatch_base_fe.returncode, 0)
+        self.assertIn("immutable baseline FE artifact checksum mismatch", mismatch_base_fe.stderr)
+
+        # Finding 5: Non-root OS Login without sudo elevation or without metadata token fails closed
+        self.setUp()
+        no_sudo_prov = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(SUDO_BIN=""),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(no_sudo_prov.returncode, 0)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", no_sudo_prov.stderr)
+
+        self.setUp()
+        no_meta_tok_prov = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(FAKE_METADATA_TOKEN_FAIL="true"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(no_meta_tok_prov.returncode, 0)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", no_meta_tok_prov.stderr)
+
+        # Provision cleanly via GCS URIs (including gs://pantheon-stg-20260902-release-artifacts/...)
+        self.setUp()
+        prov_env = self._base_env(
+            RELEASE_ID="pantheon-20261024-001",
+            STAGING_FE_ARTIFACT_PATH="",
+            STAGING_FE_ARTIFACT_URI="gs://pantheon-stg-20260902-release-artifacts/fe-bundle.tar.gz",
+            STAGING_FE_BASELINE_ARTIFACT_PATH="",
+            STAGING_FE_BASELINE_ARTIFACT_URI="gs://pantheon-stg-20260902-release-artifacts/fe-baseline-bundle.tar.gz",
+        )
+        subprocess.run([str(PROVISION_SCRIPT)], env=prov_env, capture_output=True, text=True, check=True)
+
+        # Finding 3: Live catalog observation (no fallback to mig_spec) and old-app execution against new schema
+        res_no_catalog_change = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env={**prov_env, "FAKE_SKIP_SCHEMA_MUTATION": "true"},
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res_no_catalog_change.returncode, 0)
+        self.assertIn("MIGRATION_VERIFICATION_FAILED", res_no_catalog_change.stderr)
+
+        res_old_app_broken = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env={**prov_env, "FAKE_OLD_APP_INCOMPATIBLE": "true"},
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res_old_app_broken.returncode, 0)
+        self.assertIn("MIGRATION_VERIFICATION_FAILED", res_old_app_broken.stderr)
+
+        # Finding 1 on-host tamper check: if baseline index.html is replaced with a fabricated placeholder,
+        # pantheon-staging-collect-gates rejects it with BASELINE_FE_CONTENT_TAMPERED.
+        self._unlock_vm_env_dir()
+        baseline_index = self.fe_root / "releases" / "pantheon-20261023-001" / "index.html"
+        orig_baseline_bytes = baseline_index.read_bytes()
+        baseline_index.write_text("<!doctype html><title>Pantheon Rollback Baseline</title>", encoding="utf-8")
+        self._lock_root_owned_paths()
+        tampered_ver = subprocess.run([str(VERIFY_SCRIPT)], env=prov_env, capture_output=True, text=True)
+        self.assertNotEqual(tampered_ver.returncode, 0)
+        self.assertIn("BASELINE_FE_CONTENT_TAMPERED", tampered_ver.stderr)
+        self._unlock_vm_env_dir()
+        baseline_index.write_bytes(orig_baseline_bytes)
+        self._lock_root_owned_paths()
+
+        # Finding 2: Returning 401 or 405 instead of 403 FORBIDDEN on cross-tenant or viewer mutation
+        # is rejected fail-closed (never treated as a passing rejection).
+        for bad_case, bad_overrides in (
+            ("cross_tenant_returns_401", {"FAKE_CROSS_TENANT_STATUS": "401"}),
+            ("cross_tenant_returns_405", {"FAKE_CROSS_TENANT_STATUS": "405"}),
+            ("viewer_mutation_returns_401", {"FAKE_VIEWER_MUTATION_STATUS": "401"}),
+            ("viewer_mutation_returns_405", {"FAKE_VIEWER_MUTATION_STATUS": "405"}),
+        ):
+            with self.subTest(bad_case=bad_case):
+                res_sec = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env={**prov_env, **bad_overrides},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res_sec.returncode, 0)
+                self.assertIn("SECURITY_READBACK_FAILED", res_sec.stderr)
+
+        # Finding 4: Verify full gate pass and inspect vm_bin.log for separate DROP/CREATE DATABASE calls,
+        # docker login via metadata token, live information_schema query, and real /bff/me, /bff/switch-tenant,
+        # and /bff/command-confirmations probes.
+        ver_ok = subprocess.run([str(VERIFY_SCRIPT)], env=prov_env, capture_output=True, text=True, check=True)
+        ver_payload = json.loads(ver_ok.stdout)
+        self.assertEqual(ver_payload["status"], "staging_verified")
+        vm_logs = self.vm_bin_log_file.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(any(l.startswith("docker login ") and "oauth2accesstoken" in l for l in vm_logs))
+        self.assertTrue(any("FROM information_schema.columns" in l for l in vm_logs))
+        self.assertFalse(any("PRE_MIGRATION_SCHEMA" in l or "POST_MIGRATION_SCHEMA" in l for l in vm_logs))
+        self.assertTrue(any('DROP DATABASE IF EXISTS "pantheon_staging_restore_verify";' in l and "CREATE DATABASE" not in l for l in vm_logs))
+        self.assertTrue(any('CREATE DATABASE "pantheon_staging_restore_verify";' in l and "DROP DATABASE" not in l for l in vm_logs))
+        self.assertTrue(any(l.endswith("/bff/me") for l in vm_logs))
+        self.assertTrue(any(l.endswith("/bff/switch-tenant") for l in vm_logs))
+        self.assertTrue(any(l.endswith("/bff/command-confirmations") for l in vm_logs))
 
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):

@@ -2,7 +2,7 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "ENV-STG-EPHEMERAL-IMPL-001",
   "title": "Ephemeral Staging Template & Automated Lifecycle Engine",
-  "recorded_at": "2026-10-25T15:36:00Z",
+  "recorded_at": "2026-10-25T17:06:00Z",
   "owner": "Antigravity",
   "reviewer": "Claude",
   "target_repo": "pantheon",
@@ -20,19 +20,51 @@
       "pr": "https://github.com/ajoe734/pantheon/pull/6764",
       "head_sha": "8d83804e4f379396ef5b7ab6f442a0ec3e1d6759",
       "merge_commit_sha": "e15d6390b7d72638641fc314bc48a105a4be1a0e",
-      "note": "Second source delivery preserved as historical source evidence only; superseded by this corrective implementation resolving all 7 demonstrated source counterexamples/gaps."
+      "note": "Second source delivery preserved as historical source evidence only."
+    },
+    {
+      "pr": "https://github.com/ajoe734/pantheon/pull/6798",
+      "rejected_head_sha": "a6f7f509fa95a454d3803cb7e808a9bf2ebde504",
+      "note": "Rejected in review_requeue_intent with 5 concrete pre-deployment source findings; superseded by the current branch head resolving all 5 findings."
     }
   ],
   "completion_tracks": {
     "functional": {
       "status": "ready_for_review",
-      "scope": "Corrective source implementation resolving all 7 source defects: (1) IAP-only SSH/SCP (--tunnel-through-iap) with safe pre-SCP remote directory creation over IAP SSH; (2) bare-Debian bootstrap (deploy/staging/bootstrap.sh) for debian-12-bookworm-v20261023 (application_installed=false), digest-pinned @sha256:... image pre-acquisition via docker pull before compose --no-build (pull_policy: never), and external /runtime-config.js rendered outside the sealed FE release directory served no-store; (3) real on-host deploy identity readback queries (docker inspect, curl /bff/readyz, curl /bff/version, deployment.json, .artifact_sha256, mountpoint) emitted after ordinary docker compose stdout; (4) real shipped on-VM gate collector (deploy/staging/pantheon-staging-collect-gates) executing live psql, pg_dump, pg_restore, docker, curl, and mountpoint checks without prebuilt/manufactured booleans; (5) separation of WIF deploy SA (pantheon-stg-github-deploy@...) from VM runtime SA (pantheon-stg-runtime@...), DEPLOYER_SA_FORBIDDEN_ON_VM enforcement, and removal of project-IAM mutations from staging_provision.sh; (6) isolated Postgres password-file secrets (0400/0600 STAGING_POSTGRES_PASSWORD_FILE + STAGING_SECRETS_ENV_FILE) and full /bff/readyz owner closure (runtime-manager, governance, deployment, lifecycle-projector, operator-bff, postgres, nats); (7) local regressions executing real bootstrap.sh and pantheon-staging-collect-gates under constrained host binaries."
+      "scope": "Corrective source implementation resolving all 7 prior source counterexamples plus all 5 concrete PR #6798 pre-deployment source findings: (1) Real exact-pair rollback baseline FE tarball retrieval/verification (STAGING_FE_BASELINE_ARTIFACT_PATH / STAGING_FE_BASELINE_ARTIFACT_URI), removal of fabricated placeholder index.html in deploy/staging/bootstrap.sh, on-host archive SHA-256 + member digest verification, and full 5-service owner-closure rollback (operator-bff, runtime-manager, governance, deployment, lifecycle-projector); (2) Real HS256-authenticated security, tenant isolation, and RBAC gate in deploy/staging/pantheon-staging-collect-gates and scripts/deploy/staging_sanitize.py exercising GET /bff/me, POST /bff/switch-tenant, and POST /bff/command-confirmations with positive controls (HTTP 200) and strict negative controls (401 AUTH_REQUIRED unauthenticated, 403 FORBIDDEN tenant_scope on cross-tenant read/write, 403 FORBIDDEN role_check on viewer mutation; 404/405 never accepted); (3) Live PostgreSQL information_schema.columns pre/post migration catalog observation without static spec fallbacks, plus live old-app (rollback_baseline.backend_operator_bff_image) execution against the migrated schema; (4) Separate single-statement psql -c invocations for DROP DATABASE IF EXISTS and CREATE DATABASE during backup/restore verification; (5) Non-root IAP OS Login privilege elevation (sudo -n / sudo -E), Debian 12 docker-compose-plugin support, and GCE metadata-token docker login (oauth2accesstoken) to Artifact Registry before docker pull."
     },
     "hosted": {
       "status": "external_wait",
-      "note": "Local/simulated tests prove controller, bootstrap, and gate-collector behavior only and do not count as hosted drill evidence. Hosted acceptance requires an accepted dev_verified release manifest from Root01a11, refreshed GCP operator authentication (or GitHub Actions WIF dispatch after merge), and two consecutive zero-to-zero live staging releases."
+      "note": "Local/simulated tests prove controller, bootstrap, and gate-collector behavior only and do not count as hosted drill evidence. Hosted acceptance requires an accepted dev_verified release manifest from Root01a11, a populated sanitized non-production snapshot pantheon-stg-sanitized-seed-20261024, and two consecutive zero-to-zero live staging releases."
     }
   },
+  "pr6798_blocking_source_findings_remediation": [
+    {
+      "finding_id": 1,
+      "title": "Rollback rehearsal fabricates a placeholder frontend and only rolls back 2 of 5 backend owner services",
+      "remediation": "Added STAGING_FE_BASELINE_ARTIFACT_PATH / STAGING_FE_BASELINE_ARTIFACT_URI (and fe_baseline_artifact_uri workflow input), pre-SCP SHA-256 verification against rollback_baseline.frontend_artifact_sha256 in staging_ops.sh and release_manifest.py, SCP of fe-baseline-dist.tar.gz to the VM, removal of the placeholder index.html in deploy/staging/bootstrap.sh, on-host tarball + unpacked file digest verification in pantheon-staging-collect-gates, and full 5-service owner-closure rollback (operator-bff, runtime-manager, governance, deployment, lifecycle-projector) in bootstrap.sh, pantheon-staging-collect-gates, and staging_sanitize.py."
+    },
+    {
+      "finding_id": 2,
+      "title": "Security, tenant isolation, and RBAC gate is vacuous against real operator-bff routes",
+      "remediation": "Replaced fake-token /bff/capabilities probes with real HS256 JWTs signed using PANTHEON_BFF_JWT_SECRET for operator and viewer personas in pantheon-staging-collect-gates. Added positive controls (GET /bff/me for operator and viewer -> 200, POST /bff/switch-tenant same-tenant -> 200) and negative controls (GET /bff/me unauthenticated -> 401 AUTH_REQUIRED; GET /bff/me X-Tenant-Id: tenant-bravo -> 403 FORBIDDEN precondition_failed=tenant_scope; POST /bff/switch-tenant tenant-bravo -> 403 FORBIDDEN precondition_failed=tenant_scope; POST /bff/command-confirmations viewer -> 403 FORBIDDEN precondition_failed=role_check), enforced fail-closed by staging_sanitize.verify_security_and_safety_readbacks."
+    },
+    {
+      "finding_id": 3,
+      "title": "Schema compatibility and old-app/new-schema verification are simulated, not observed",
+      "remediation": "Removed SELECT /* PRE_MIGRATION_SCHEMA */ 1; and SELECT /* POST_MIGRATION_SCHEMA */ 1; and removed all fallback to mig_spec['old_app_schema'] / mig_spec['new_schema']. pantheon-staging-collect-gates now queries live PostgreSQL information_schema.columns before and after migration SQL execution, verifies added columns exist in the post-migration catalog, starts rollback_baseline.backend_operator_bff_image against the migrated database, verifies /bff/readyz (200), /bff/version (rollback_baseline.backend_commit), authenticated GET /bff/me (200), and SQL read compatibility, then restores the candidate BFF."
+    },
+    {
+      "finding_id": 4,
+      "title": "Backup/restore verification uses multi-statement DROP DATABASE ...; CREATE DATABASE ...; in a single psql -c call",
+      "remediation": "Split restore database preparation and cleanup in deploy/staging/pantheon-staging-collect-gates into separate single-command psql -c invocations (DROP DATABASE IF EXISTS followed by CREATE DATABASE, plus post-verification DROP DATABASE IF EXISTS cleanup) with strict identifier validation. Updated test_staging_release.py fake psql to fail closed with 'ERROR:  DROP DATABASE cannot run inside a transaction block' if DROP DATABASE or CREATE DATABASE is ever combined in a multi-statement -c call."
+    },
+    {
+      "finding_id": 5,
+      "title": "Bare-Debian bootstrap fails under non-root IAP OS Login and lacks Artifact Registry authentication before docker pull",
+      "remediation": "Updated deploy/staging/bootstrap.sh to stage rendered files in a user-owned local workdir and execute all root-path installs, mounts, secret mode checks, Caddy reloads, and Docker commands through run_priv (sudo -n), auto-elevate pantheon-staging-collect-gates via sudo -E when invoked by a non-root OS Login user, install docker-compose-plugin on Debian 12 bookworm, fetch an OAuth2 access token from the GCE metadata server for the attached runtime SA, and run docker login -u oauth2accesstoken --password-stdin https://asia-east1-docker.pkg.dev before docker pull."
+    }
+  ],
   "artifacts": [
     "scripts/deploy/release_manifest.py",
     "schemas/release-manifest.schema.json",
@@ -94,7 +126,13 @@
     "production_project_id": "pantheon-prod-20260902",
     "billing_account": "017011-E5B441-28904B",
     "billing_enabled": true,
-    "foundation_evidence_path": "/tmp/pantheon-env-current-20261024/foundation/pantheon-stg-20260902.json",
+    "foundation_evidence_path": "/tmp/pantheon-launch-resume-20261025/cloud-1554/summary.json",
+    "artifact_store_evidence_path": "/tmp/pantheon-launch-resume-20261025/cloud-1554/artifact-store/summary.json",
+    "artifact_store_bucket": "gs://pantheon-stg-20260902-release-artifacts",
+    "artifact_store_region": "ASIA-EAST1",
+    "artifact_store_public_access_prevention": "enforced",
+    "artifact_store_uniform_bucket_level_access": true,
+    "artifact_store_versioning_enabled": true,
     "instance_template_name": "pantheon-stg-template-20261024",
     "source_image": "projects/debian-cloud/global/images/debian-12-bookworm-v20261023",
     "application_installed_in_template": false,
@@ -107,14 +145,14 @@
   },
   "external_wait_prerequisites": [
     "Genuine `dev_verified` release manifest after `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (`Root01a11`) resolves all12 chain `h12-01a11-20261023-9aeb`.",
-    "Refreshed GCP operator login (`bryan@cctech-support.com` currently expired with `invalid_grant`) or GitHub Actions WIF execution once this corrective PR merges to `dev`.",
+    "Creation of non-production sanitized snapshot `pantheon-stg-sanitized-seed-20261024` in `pantheon-stg-20260902`.",
     "Execution of two consecutive live ephemeral staging releases starting from zero staging resources, passing all live verification gates, and destroying all owned VM/disks/IP resources with zero orphan inventory."
   ],
   "validation": {
     "commands": [
       {
         "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -v tests/deployment/test_staging_release.py tests/deployment/test_production_release.py",
-        "result": "63 passed, 19 subtests passed (21 in test_staging_release.py, 42 in test_production_release.py; local controller/bootstrap/collector contract validation only, not hosted proof)"
+        "result": "64 passed, 23 subtests passed (22 in test_staging_release.py, 42 in test_production_release.py; local controller/bootstrap/collector contract validation only, not hosted proof)"
       },
       {
         "command": "/tmp/pantheon-env-current-20261024/tools/actionlint .github/workflows/staging-ephemeral-deploy.yml .github/workflows/staging-orphan-cleanup.yml",
