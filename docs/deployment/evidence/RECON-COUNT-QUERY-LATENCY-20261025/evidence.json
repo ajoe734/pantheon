@@ -18,22 +18,22 @@
   },
   "immutable_source_evidence_inputs": [
     {
-      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/actual-reconciliation-container-five-file-bytes-exact-a1-readonly.json",
+      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402146-official-readonly/actual-reconciliation-container-five-file-bytes-exact-a1-readonly.json",
       "sha256": "9fd9ee0409b9f92e447a1c2fe8b5fe24584955e9451426d3eedd07499da944df",
       "summary": "Proves live pantheon-reconciliation-drift container matches merge commit a1b80a026650148bfa85044514e464e6c8303792 byte-for-byte across all five service/foundation files."
     },
     {
-      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/actual-existing-five-aggregate-SQL-vs-plain-count-readonly-profile.json",
+      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402146-official-readonly/actual-existing-five-aggregate-SQL-vs-plain-count-readonly-profile.json",
       "sha256": "16f79a962a15baea942ee005189c94716bfcabe24a165bd60394131a17286921",
-      "summary": "Proves reconciliation_drift.drift_evaluations existing jsonb_typeof(CASE ...) count took 2500.647ms vs 22.748ms plain COUNT(*), while the other four tables took < 10ms total and five connection opens totaled 88.241ms (< 100ms)."
+      "summary": "Proves reconciliation_drift.drift_evaluations existing jsonb_typeof(CASE ...) count took 2500.647ms vs 798.855ms plain COUNT(*), while the other four tables' existing valid-count queries totaled 203.549ms (3.277ms + 3.541ms + 185.854ms + 10.877ms) and five connection opens totaled 85.727ms (< 100ms)."
     },
     {
-      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/actual-existing-evaluation-aggregate-query-plan-and-table-statistics-readonly.json",
+      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402146-official-readonly/actual-existing-evaluation-aggregate-query-plan-and-table-statistics-readonly.json",
       "sha256": "24dec45020871da973d5c8ae25a1a51076d5fe6ea0b55c1693a33b3537583ee2",
       "summary": "Proves EXPLAIN (ANALYZE, BUFFERS) on reconciliation_drift.drift_evaluations (63,846 live rows, 2,510 dead tuples, only drift_evaluations_pkey index) executed a Seq Scan with 101,666 shared hit + 9,611 read = 111,277 blocks in 2405.370ms due to TOASTed payload detoasting."
     },
     {
-      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/observer-correction-stale-health-source-citation-withdrawn-actual6s-remains.json",
+      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402146-official-readonly/observer-correction-stale-health-source-citation-withdrawn-actual6s-remains.json",
       "sha256": "539e6c6f4bed6b5f141cc8a2c962455d9c898dea3e99a5f53620d097f1624f7e",
       "summary": "Withdraws stale old-checkout list_all health citation while preserving the actual hosted 5978ms (~6s) /readyz timeout observation under the unchanged 3s deadline."
     }
@@ -42,6 +42,8 @@
     "actual_hosted_readyz_observation_ms": 5978,
     "actual_hosted_readyz_deadline_ms": 3000,
     "actual_hosted_drift_evaluations_count_query_ms": 2500.647,
+    "actual_hosted_drift_evaluations_plain_count_ms": 798.855,
+    "actual_hosted_other_four_valid_count_queries_total_ms": 203.549,
     "actual_hosted_drift_evaluations_explain_analyze_ms": 2405.37,
     "actual_hosted_drift_evaluations_live_rows": 63846,
     "actual_hosted_drift_evaluations_shared_blocks": {
@@ -49,9 +51,9 @@
       "shared_read": 9611,
       "total_blocks": 111277
     },
-    "actual_hosted_five_connections_total_ms": 88.241,
+    "actual_hosted_five_connections_total_ms": 85.727,
     "hosted_latency_claimed_fixed": false,
-    "separation_note": "The 5978ms hosted /readyz observation and 2500.647ms/2405.370ms hosted SQL measurements are historical read-only evidence from the frozen accepted deployment (BE a1b80a026650148bfa85044514e464e6c8303792). Local PostgreSQL 16 plan measurements below are isolated local verification only and do not claim hosted readiness latency is resolved until originalRoot01a11 deploys and verifies hosted /readyz under the unchanged 3s deadline."
+    "separation_note": "The 5978ms hosted /readyz observation and 2500.647ms/2405.370ms hosted SQL measurements (with 798.855ms evaluation plain COUNT(*), 203.549ms total across the other four valid-count queries, and 85.727ms across five connection opens) are historical read-only evidence from the frozen accepted deployment (BE a1b80a026650148bfa85044514e464e6c8303792). Local PostgreSQL 16 plan measurements (3535.467ms -> 10.191ms/10.391ms) below are isolated local verification only and do not claim hosted readiness latency is resolved until originalRoot01a11 deploys and verifies hosted /readyz under the unchanged 3s deadline."
   },
   "scoped_solution": {
     "production_files_modified": [
