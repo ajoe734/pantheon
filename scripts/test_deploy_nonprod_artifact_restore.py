@@ -25,8 +25,24 @@ SCRIPT = ROOT / "scripts/deploy_nonprod_vm.sh"
 SHA = "a" * 40
 PRIOR = "b" * 40
 CONTROLLER_ROOT = "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/controllers"
-REAL_NODE = Path(__import__("shutil").which("node") or "/usr/bin/node").resolve()
-REAL_NODE_DIR = str(REAL_NODE.parent)
+STUB_NODE_VERSION = "v22.12.0"
+
+
+def _stub_node_dir(base: Path) -> str:
+    """Hermetic Node 22 runtime for PANTHEON_DEV_FE_NODE_BIN_DIR.
+
+    The runner's own node (whatever major it ships) must never decide these tests.
+    """
+    bin_dir = base / "stub-node22" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    node = bin_dir / "node"
+    node.write_text('#!/usr/bin/env bash\n'
+                    'case "${1:-}" in\n'
+                    f'  -v|--version) echo "{STUB_NODE_VERSION}" ;;\n'
+                    '  *) echo "stub node: unsupported arguments: $*" >&2; exit 64 ;;\n'
+                    'esac\n')
+    node.chmod(0o755)
+    return str(bin_dir)
 
 
 def _source() -> str:
@@ -116,7 +132,7 @@ def fixture(tmp_path: Path):
     stub_node.chmod(0o755)
     env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "RECORDER": str(recorder),
            "SYNTHETIC_CONTROLLER_ROOT": str(controller_root),
-           "PANTHEON_DEV_FE_NODE_BIN_DIR": REAL_NODE_DIR}
+           "PANTHEON_DEV_FE_NODE_BIN_DIR": _stub_node_dir(tmp_path)}
     # Explicitly synthetic environment for the actual approved-prefix function.
     for variable in re.findall(r'\$\{([A-Z][A-Z0-9_]*)', _function("with_dev_bff_runtime_env")):
         env[variable] = "fixture"
@@ -807,7 +823,8 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
         '    echo "Deployment rejected: non-delegated lease." >&2\n'
         '    exit 2\n'
         'fi\n'
-        'export NODE_VERSION="$(node -e \'const v = process.version; if (!v.startsWith("v22.")) { process.exit(1); } console.log(v);\')"\n'
+        'export NODE_VERSION="$(node -v)"\n'
+        '[[ "${NODE_VERSION}" == v22.* ]] || exit 1\n'
         'python3 - <<\'PY\'\n'
         'import json, os, sys\n'
         'from_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON", "{}"))\n'
@@ -918,17 +935,18 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     assert res_bad.returncode != 0
     assert "FE owner Node runtime missing or unsafe" in res_bad.stderr
 
-    wrong_node_dir = tmp_path / "wrong-node" / "bin"
-    wrong_node_dir.mkdir(parents=True)
-    wrong_node = wrong_node_dir / "node"
-    wrong_node.write_text("#!/usr/bin/env bash\necho 'v20.18.0'\n")
-    wrong_node.chmod(0o755)
-    wrong_node_env = dict(env,
-                          PANTHEON_DEV_FE_NODE_BIN_DIR=str(wrong_node_dir),
-                          PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON=json.dumps(to_seal))
-    res_wrong = _run(_remote(), wrong_node_env)
-    assert res_wrong.returncode != 0
-    assert "returned invalid version 'v20.18.0' (expected v22.*)" in res_wrong.stderr
+    for wrong_version in ("v20.18.0", "v24.21.0"):
+        wrong_node_dir = tmp_path / f"wrong-node-{wrong_version}" / "bin"
+        wrong_node_dir.mkdir(parents=True)
+        wrong_node = wrong_node_dir / "node"
+        wrong_node.write_text(f"#!/usr/bin/env bash\necho '{wrong_version}'\n")
+        wrong_node.chmod(0o755)
+        wrong_node_env = dict(env,
+                              PANTHEON_DEV_FE_NODE_BIN_DIR=str(wrong_node_dir),
+                              PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON=json.dumps(to_seal))
+        res_wrong = _run(_remote(), wrong_node_env)
+        assert res_wrong.returncode != 0
+        assert f"returned invalid version '{wrong_version}' (expected v22.*)" in res_wrong.stderr
 
 
 def test_fe_owner_restore_sealed_rejects_unauthorized_owner(fixture, tmp_path):
@@ -1190,7 +1208,8 @@ owner="${PANTHEON_DEPLOY_LEASE_OWNER:-}"
 [[ "${owner}" =~ ^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$ ]] \
   || { echo "Deployment rejected: unauthorized lease owner '${owner}'." >&2; exit 2; }
 [[ "${PANTHEON_DEPLOY_LEASE_DELEGATED:-}" == "true" ]] || { echo "Deployment rejected: non-delegated lease." >&2; exit 2; }
-export NODE_VERSION="$(node -e 'const v = process.version; if (!v.startsWith("v22.")) { process.exit(1); } console.log(v);')"
+export NODE_VERSION="$(node -v)"
+[[ "${NODE_VERSION}" == v22.* ]] || exit 1
 python3 - <<'PY'
 import json, os
 to_doc = json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])
@@ -1350,7 +1369,7 @@ def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tampe
         "PANTHEON_DEV_FE_ROOT": str(d.FE_LINK),
         "PANTHEON_DEV_FE_RELEASES_DIR": str(d.FE_STORE),
     }
-    artifact_env["PANTHEON_DEV_FE_NODE_BIN_DIR"] = REAL_NODE_DIR
+    artifact_env["PANTHEON_DEV_FE_NODE_BIN_DIR"] = _stub_node_dir(tmp_path)
     env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=identity["candidate_backend_sha"], extra_env=artifact_env)
     real_git = __import__("shutil").which("git")
     stub_git = tmp_path / "bin/git"
@@ -1376,7 +1395,7 @@ def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tampe
     _install_chain_shims(tmp_path, artifact_root=artifact_root, fe_store=d.FE_STORE, state=state, recorder=recorder)
     lease = os.environ["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
     env.update({
-        "PANTHEON_DEV_FE_NODE_BIN_DIR": REAL_NODE_DIR,
+        "PANTHEON_DEV_FE_NODE_BIN_DIR": artifact_env["PANTHEON_DEV_FE_NODE_BIN_DIR"],
         "TARGET_ENV": "dev",
         "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
         "DEV_VM": "pantheon-dev-deploy",
