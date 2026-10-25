@@ -1005,6 +1005,34 @@ def canonical_task_with_archive_proof(
         return task
 
 
+def terminal_task_roles_were_archive_proven(
+    thin_task: Mapping[str, Any] | None,
+    resolved_task: Mapping[str, Any] | None,
+) -> bool:
+    """Return whether the resolver hydrated terminal roles from a valid archive.
+
+    A thin terminal projection intentionally omits owner/reviewer.  The only
+    supported way to recover those roles is ``canonical_task_with_archive_proof``;
+    a malformed or drifting receipt leaves the projection thin.  Markerless
+    dead-worker cleanup is permitted only in the former case.
+    """
+
+    if not isinstance(thin_task, Mapping) or not isinstance(resolved_task, Mapping):
+        return False
+    if str(thin_task.get("status") or "").strip().lower() != "done":
+        return False
+    if str(thin_task.get("owner") or "").strip() or str(thin_task.get("reviewer") or "").strip():
+        return False
+    if str(resolved_task.get("id") or "") != str(thin_task.get("id") or ""):
+        return False
+    if str(resolved_task.get("generation") or "") != str(thin_task.get("generation") or ""):
+        return False
+    return bool(
+        str(resolved_task.get("owner") or "").strip()
+        and str(resolved_task.get("reviewer") or "").strip()
+    )
+
+
 def assistant_dev_bridge_tooling_dirs(repo_root: Path) -> list[Path]:
     """Use this supervisor's command source; repo_root supplies data only."""
 
@@ -7863,9 +7891,25 @@ def _run_reserved_runtime_phase(
                             continue
 
                         if transitioned_to_superseded or superseded_queue_cleanup:
-                            fresh_task = _safe_load_canonical_task(config, {}, t_id)
+                            fresh_status = _safe_load_canonical_status(config)
+                            fresh_thin_task = (
+                                task_index_from_status(config, fresh_status).get(t_id)
+                                if isinstance(fresh_status, Mapping)
+                                else None
+                            )
+                            fresh_task = canonical_task_with_archive_proof(
+                                config, fresh_thin_task, state=fresh_status
+                            )
                             if fresh_task is None:
-                                continue
+                                # A terminal-dead-worker cleanup still relies on
+                                # the same current canonical/archive proof as any
+                                # other supersede.  The task may have been valid
+                                # when polling classified it, but a proof that
+                                # drifts before this CAS must veto the whole
+                                # runtime update rather than releasing a slot on
+                                # stale authority.
+                                cas_matches = False
+                                break
 
                             is_gen_fence = not worker_matches_current_task_generation(r_worker, fresh_task)
                             fresh_decision = active_worker_governance_lease_decision(
@@ -7887,6 +7931,13 @@ def _run_reserved_runtime_phase(
                                 config, str(r_worker.get("agent_id") or r_worker.get("provider") or "")
                             )
                             is_actor_mismatch = bool(expected_actor and r_actor and r_actor != expected_actor)
+                            is_terminal_dead_worker = (
+                                str(fresh_task.get("status") or "").strip().lower() == "done"
+                                and terminal_task_roles_were_archive_proven(
+                                    fresh_thin_task, fresh_task
+                                )
+                                and worker_process_is_confirmed_gone(r_worker)
+                            )
 
                             has_pending_intent = fresh_task.get("review_decision_intent") not in (None, {}, [])
                             if has_pending_intent:
@@ -7900,7 +7951,12 @@ def _run_reserved_runtime_phase(
                                     cas_matches = False
                                     break
                             else:
-                                if not (is_gen_fence or is_gov_terminate or is_actor_mismatch):
+                                if not (
+                                    is_gen_fence
+                                    or is_gov_terminate
+                                    or is_actor_mismatch
+                                    or is_terminal_dead_worker
+                                ):
                                     cas_matches = False
                                     break
 
@@ -8210,6 +8266,19 @@ def worker_fence_proves_queue_completion(worker: Mapping[str, Any]) -> bool:
     return not pid_is_alive(worker.get("pid")) or not worker_process_generation_is_current(
         worker
     )
+
+
+def worker_process_is_confirmed_gone(worker: Mapping[str, Any]) -> bool:
+    """Return whether an identity-bound worker PID has definitely exited.
+
+    A missing or malformed identity is not proof of an exited process.  That
+    distinction matters for a canonical ``done`` task: its obsolete lease can
+    be released only after the original worker PID itself is known to be gone,
+    never merely because the runtime record lacks a marker.
+    """
+
+    identity = worker_process_identity(worker)
+    return bool(identity) and not pid_is_alive(identity.get("pid"))
 
 
 def canonical_worker_terminal_status(
@@ -13501,9 +13570,8 @@ def recover_lost_worker_lease(
         return False
     status = status if isinstance(status, dict) else load_status(config)
     task_id = str(worker.get("task_id") or "")
-    task = canonical_task_with_archive_proof(
-        config, task_index_from_status(config, status).get(task_id), state=status,
-    )
+    thin_task = task_index_from_status(config, status).get(task_id)
+    task = canonical_task_with_archive_proof(config, thin_task, state=status)
     if drain and task is not None:
         existing = _canonical_worker_recovery_receipt(status, task)
         if existing and existing.get("receipt_id") == "promotion-drain-" + drain["digest"]:
@@ -13529,14 +13597,24 @@ def recover_lost_worker_lease(
             config, worker, task, state=status,
             activity_events=recent_governance_activity_events(config),
         )
-        # "preserve" protects a process that may still be running. A finished
-        # runner whose process generation is gone has nothing left to preserve
-        # for a task already done at its generation; holding it would keep a
-        # dead "running" worker (and its slot) forever.
-        runner_gone = bool(worker.get("runner_finished_at")) and not (
+        # "preserve" protects a process that may still be running.  The
+        # terminal status command can win the canonical race before the
+        # supervisor has committed ``runner_finished_at``.  That markerless
+        # case is safe only when the resolver has rehydrated this otherwise
+        # thin task from its receipt-proven archive and the identity-bound PID
+        # is gone; an invalid archive keeps the lease intact.
+        marker_confirms_exit = bool(worker.get("runner_finished_at")) and not (
             worker_process_generation_is_current(worker)
         )
-        if decision.get("action") != "terminate" and not runner_gone:
+        archive_proven_dead_worker = (
+            terminal_task_roles_were_archive_proven(thin_task, task)
+            and worker_process_is_confirmed_gone(worker)
+        )
+        if (
+            decision.get("action") != "terminate"
+            and not marker_confirms_exit
+            and not archive_proven_dead_worker
+        ):
             return False
         if drain:
             drain["status"] = "consumed"
