@@ -5,20 +5,26 @@
 - Design: [`vm-dev-staging-prod-management-plan.md`](vm-dev-staging-prod-management-plan.md), [`first-production-release-readiness.md`](first-production-release-readiness.md)
 
 > [!IMPORTANT]
-> Merging this source mutates no cloud resource, GitHub setting or Environment. Local tests use a fake ops adapter and prove controller behavior only; they are **not** hosted drill evidence and cannot claim `release_complete`. No production project, domain, billing account, IdP, reviewer, RPO/RTO or on-call choice is assumed.
+> Merging this source mutates no cloud resource, GitHub setting or Environment. Local tests drive the real `prod_ops.sh`/`bootstrap.sh`/controller scripts against fake docker/curl/mountpoint binaries and a temp state tree; they prove script behavior only; they are **not** hosted drill evidence and cannot claim `release_complete`. No production project, domain, billing account, IdP, reviewer, RPO/RTO or on-call choice is assumed.
 
 ## 1. Components
 
 | Artifact | Role |
 | --- | --- |
-| `scripts/deploy/prod_preflight.py` | Fail-closed config, manifest checksum, `staging_verified` evidence binding, distinct-approver, baseline/bootstrap checks |
+| `scripts/deploy/prod_preflight.py` | Fail-closed config, manifest checksum, `staging_verified` evidence binding, approver-vs-Environment-policy, baseline/bootstrap checks |
 | `scripts/deploy/prod_atomic_switch.sh` | Blue/green controller (journal, green on alternate port, gates, singleton drain, upstream + FE atomic switch, exact identity readback) |
 | `scripts/deploy/prod_rollback.sh` | Restores FE symlink, BFF upstream/config and singleton owner from the journal |
 | `deploy/production/docker-compose.prod-control.yml` | Digest-pinned, `pull_policy: never`, safe-off defaults; stateful services exist once |
 | `deploy/production/Caddyfile` | `bff_upstream.caddy` snippet + `fe/current` symlink root |
 | `.github/workflows/production-release.yml` | Inert `workflow_dispatch`; `deploy` job bound to protected `production` Environment |
 
-Host-side effects (compose start/stop, proxy reload, gates, snapshot, singleton handoff, identity readback) go through `PROD_OPS_CMD <step> <release_id> [args]`. The adapter is a hosted prerequisite and is not provided here.
+Host-side effects go through `PROD_OPS_CMD <step> <release_id> [args]`, implemented by `scripts/deploy/prod_ops.sh` (runs on the control VM; every step is a real readback and fails non-zero, no synthetic pass JSON): `snapshot_preflight` (fresh READY snapshot record for this release and data disk, disk mounted), `baseline_health`, `start_green`/`stop_green` (`--no-build`, manifest-only digests), `gate health|auth|cors|tenant|read_only|schema|old_new_compat`, `drain_singletons`/`activate_singletons`/`resume_baseline_singletons` (exactly one `lifecycle-projector`), `reload_proxy`, `verify_runtime_config`, `post_identity`. `deploy/production/bootstrap.sh` prepares the VM tree for the first release (503 upstream placeholder, no `fe/current`, never formats/mounts the data disk, secrets must pre-exist at mode 0400/0600).
+
+Contracts the adapter relies on (to be confirmed on the first hosted run): manifest `backend.images` must include `runtime_manager`, `governance`, `deployment`, `lifecycle_projector` besides `operator_bff`; the BFF image carries labels `org.pantheon.migration_set_sha256` and `org.pantheon.compatibility_manifest_sha256`; `PROD_GATE_TOKEN_FILE` holds a read-only synthetic identity for the tenant gate (missing => gate fails, never skipped). The BFF is stateless per color; the singleton owner is the single `lifecycle-projector`, which is stopped before the upstream switch and started after it. Colors alternate: the target is whichever of `PROD_BLUE_PORT`/`PROD_GREEN_PORT` the retained baseline (`active_port`) is not on.
+
+Runtime config: `/runtime-config.js` is rendered by `bootstrap.sh` into `${PROD_ROOT}/config/`, served same-origin by Caddy with `no-store`, outside the sealed FE release dir (coordinated with FE-IMMUTABLE-RELEASE-CONFIG-20261024); the controller verifies the served bytes, header and BFF origin after the FE switch and rolls back on mismatch.
+
+Workflow: `PROD_*` variables are Environment-scoped, so they are read only in the `deploy` job (after Environment approval, before cloud auth). The `preflight` job has no Environment and validates only the manifest/evidence. After auth the runner takes the pre-release disk snapshot, then transports manifest, `staging_evidence`, approvals, env-policy, FE bundle, snapshot record and controller scripts to the control VM with `gcloud compute scp --tunnel-through-iap` and runs the controller there with `PROD_OPS_CMD`, `PROD_ROOT`, ports and `FE_ARTIFACT_PATH` exported; the controller is never run on the GitHub runner.
 
 ## 2. Required explicit configuration (missing = fail closed)
 
@@ -26,7 +32,7 @@ Host-side effects (compose start/stop, proxy reload, gates, snapshot, singleton 
 
 ## 3. Switch sequence
 
-1. Preflight: config, manifest SHA-256, `staging_verified` evidence for that exact manifest, `production` Environment approval by someone other than the initiator (run-approvals API), baseline posture.
+1. Preflight: config, manifest SHA-256, `staging_verified` evidence for that exact manifest, genuine `production` Environment approval (run-approvals API) by a required reviewer of the actual Environment record (`--env-policy` / `ENV_POLICY_PATH`); the approver may equal the initiator only when that record has `prevent_self_review=false` (operator policy 2026-10-24, same GitHub account `ajoe734`; readback `production-same-account-approval-policy.json`). Without a policy record the strict distinct-approver default applies, baseline posture.
 2. FE artifact bytes must equal manifest `artifact_sha256`; an existing release directory with different content is refused (never overwritten, never rebuilt).
 3. Snapshot preflight and healthy retained baseline (`baseline_health`).
 4. Journal restore targets, stage FE into `fe/releases/<id>`, start green on the alternate port.
@@ -49,4 +55,4 @@ First release needs explicit `PROD_BOOTSTRAP_FIRST_RELEASE=true` and a manifest 
 
 ## 6. Missing hosted prerequisites (recorded, not forged)
 
-Production project/billing/domain/IdP, WIF/SA/IAM, `production` GitHub Environment with required reviewers, `PRODUCTION_RELEASE_ENABLED`, ops adapter and artifact transport on the control VM, approved RPO/RTO/retention/on-call/rollback owner, `staging_verified` evidence from a genuine hosted staging run, and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 / all12 chain `h12-01a11-20261023-9aeb` (not rerun or relabeled here).
+Production project/billing/domain/IdP, WIF/SA/IAM, `production` GitHub Environment with required reviewers (ajoe734; prevent_self_review=false), `PRODUCTION_RELEASE_ENABLED`, ops adapter and artifact transport on the control VM, approved RPO/RTO/retention/on-call/rollback owner, `staging_verified` evidence from a genuine hosted staging run, and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 / all12 chain `h12-01a11-20261023-9aeb` (not rerun or relabeled here).

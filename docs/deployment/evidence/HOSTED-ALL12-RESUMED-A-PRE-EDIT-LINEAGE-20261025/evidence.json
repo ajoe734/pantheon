@@ -1,0 +1,29 @@
+{
+  "task_id": "HOSTED-ALL12-RESUMED-A-PRE-EDIT-LINEAGE-20261025",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "observed": {
+    "chain_id": "h12-01a11-20261023-9aeb",
+    "a_prior_receipt_run": "40074506189",
+    "a_replay_run": "40164565333 (replayed as completed in 0.94s; receipt lacks pre_edit_eval_id/pre_edit_evaluated_at)",
+    "b_run": "40165486940 (paused at agora_interaction_evidence: pre_edit_evaluation_missing)",
+    "post_edit_evaluation": "teval-55d5cd0fb5f8 (validation_status failed; never used as pre-edit)"
+  },
+  "short_circuit_owner": "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py HostedChainRunner.run(): a completed prior phase with clean predecessor verification was reused as-is; nonprod-deploy.yml only downloads the receipt hint and is unchanged",
+  "change": "A completed A_research reused without pre_edit_eval_id is incomplete for that field only: the parent fills pre_edit_eval_id/pre_edit_evaluated_at from Training owner GETs (events + previews) into A's resource_ids/receipt so B gets them as predecessors, or pauses at A_research:pre_edit_evaluation_absent. A_research reusing an existing eligible control_patch without a carried id derives it the same way instead of from terminal-readback (which may be post-edit), or pauses with pre_edit_evaluation_absent.",
+  "owner_reads": [
+    "GET /api/training/sessions/{id}/events -> newest eligible nonzero user control_patch (#6787 rule)",
+    "GET /api/training/previews/{id} -> latest evaluations[eval_id] with finite metrics and evaluation_result.evaluated_at strictly before that event"
+  ],
+  "kept": [
+    "#6787 executor-saved edit accepted; saving_actor_id separate from authorization_source",
+    "B_learning unchanged; it consumes the predecessors as before",
+    "no PATCH, preview job or A resource recreation on replay",
+    "no post-edit evaluation, synthesised metric or relabelled event"
+  ],
+  "validation": {
+    "command": "python3 -m pytest -q tests/unit/l12",
+    "result": "131 passed (origin/dev: 125 passed)",
+    "without_fix": "6 of the 7 new tests fail with tests/integration/l12 reverted (the 7th guards reuse of an A receipt that already carries lineage)"
+  },
+  "no_ssh_or_product_calls": true
+}

@@ -13,7 +13,8 @@
 # Required env: PROD_ROOT PROD_OPS_CMD RELEASE_ID RELEASE_MANIFEST_PATH EXPECTED_MANIFEST_SHA256
 #   STAGING_EVIDENCE_PATH APPROVALS_PATH WORKFLOW_INITIATOR FE_ARTIFACT_PATH
 #   PROD_BLUE_PORT PROD_GREEN_PORT plus PROD_* configuration (see prod_preflight.py).
-# Optional: PROD_BOOTSTRAP_FIRST_RELEASE=true, PROD_ROLLBACK_BUDGET_SECONDS (default 120).
+# Optional: ENV_POLICY_PATH (actual GitHub production Environment record; absent => approver must differ from initiator),
+#   PROD_BOOTSTRAP_FIRST_RELEASE=true, PROD_ROLLBACK_BUDGET_SECONDS (default 120).
 
 set -uo pipefail
 
@@ -40,7 +41,15 @@ mkdir -p "$STATE" "${PROD_ROOT}/fe/releases" "${PROD_ROOT}/proxy"
 PREFLIGHT_ARGS=(all --manifest "$RELEASE_MANIFEST_PATH" --expected-sha256 "$EXPECTED_MANIFEST_SHA256"
   --staging-evidence "$STAGING_EVIDENCE_PATH" --approvals "$APPROVALS_PATH"
   --initiator "$WORKFLOW_INITIATOR" --baseline "$BASELINE_FILE")
+[[ -z "${ENV_POLICY_PATH:-}" ]] || PREFLIGHT_ARGS+=(--env-policy "$ENV_POLICY_PATH")
 BOOTSTRAP=false
+# Colors alternate per release: the target is whichever port the retained baseline is NOT on.
+ACTIVE_PORT="$PROD_BLUE_PORT"
+if [[ -f "$BASELINE_FILE" ]]; then
+  ACTIVE_PORT="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get("active_port") or d.get("blue_port") or sys.argv[2])' "$BASELINE_FILE" "$PROD_BLUE_PORT" 2>/dev/null)" || ACTIVE_PORT="$PROD_BLUE_PORT"
+fi
+if [[ "$ACTIVE_PORT" == "$PROD_GREEN_PORT" ]]; then TARGET_PORT="$PROD_BLUE_PORT"; else ACTIVE_PORT="$PROD_BLUE_PORT"; TARGET_PORT="$PROD_GREEN_PORT"; fi
+export PROD_ACTIVE_PORT="$ACTIVE_PORT" PROD_TARGET_PORT="$TARGET_PORT"
 if [[ "${PROD_BOOTSTRAP_FIRST_RELEASE:-false}" == "true" ]]; then
   BOOTSTRAP=true; PREFLIGHT_ARGS+=(--bootstrap)
 fi
@@ -107,13 +116,13 @@ if [[ ! -e "$FE_RELEASE" ]]; then
 fi
 
 # 6. Green on the alternate port, then every pre-traffic gate.
-if ! "$PROD_OPS_CMD" start_green "$RELEASE_ID" "$PROD_GREEN_PORT" "$BFF_IMAGE"; then
+if ! "$PROD_OPS_CMD" start_green "$RELEASE_ID" "$TARGET_PORT" "$BFF_IMAGE"; then
   "$PROD_OPS_CMD" stop_green "$RELEASE_ID" 2>/dev/null
   write_state prod_aborted
   die_json "GREEN_START_FAILED" "green failed to start; blue untouched"
 fi
 for gate in health auth cors tenant read_only schema old_new_compat; do
-  if ! "$PROD_OPS_CMD" gate "$RELEASE_ID" "$gate" "$PROD_GREEN_PORT"; then
+  if ! "$PROD_OPS_CMD" gate "$RELEASE_ID" "$gate" "$TARGET_PORT"; then
     "$PROD_OPS_CMD" stop_green "$RELEASE_ID" 2>/dev/null
     write_state prod_aborted
     die_json "GATE_FAILED" "pre-traffic gate ${gate} failed; blue untouched"
@@ -126,7 +135,7 @@ write_state prod_green_verified
 : > "${JOURNAL}/singletons_drained"
 
 # 8. Compensated BFF upstream switch (atomic file replace + proxy reload).
-printf 'reverse_proxy 127.0.0.1:%s\n' "$PROD_GREEN_PORT" > "${UPSTREAM_FILE}.new.$$" || rollback_and_exit "upstream_write_failed"
+printf 'reverse_proxy 127.0.0.1:%s\n' "$TARGET_PORT" > "${UPSTREAM_FILE}.new.$$" || rollback_and_exit "upstream_write_failed"
 mv -f "${UPSTREAM_FILE}.new.$$" "$UPSTREAM_FILE" || rollback_and_exit "upstream_replace_failed"
 : > "${JOURNAL}/bff_switched"
 "$PROD_OPS_CMD" reload_proxy "$RELEASE_ID" || rollback_and_exit "proxy_reload_failed"
@@ -136,6 +145,9 @@ mv -f "${UPSTREAM_FILE}.new.$$" "$UPSTREAM_FILE" || rollback_and_exit "upstream_
 ln -sfn "$FE_RELEASE" "${FE_CURRENT}.new.$$" || rollback_and_exit "fe_link_failed"
 mv -T -f "${FE_CURRENT}.new.$$" "$FE_CURRENT" || rollback_and_exit "fe_switch_failed"
 : > "${JOURNAL}/fe_switched"
+
+# External same-origin /runtime-config.js (no-store, outside the sealed FE release dir).
+"$PROD_OPS_CMD" verify_runtime_config "$RELEASE_ID" || rollback_and_exit "runtime_config_unverified"
 
 # 10. Post-switch exact hosted identities (FE artifact sha + BFF image digest).
 IDENTITY="$("$PROD_OPS_CMD" post_identity "$RELEASE_ID")" || rollback_and_exit "post_identity_unavailable"
@@ -151,8 +163,8 @@ PY
 [[ "$IDENT_OK" == "yes" ]] || rollback_and_exit "post_switch_identity_mismatch"
 
 # Retain exact previous pair as rollback baseline; this release becomes the new baseline.
-printf '{"release_id":"%s","healthy":true,"frontend_artifact_sha256":"%s","operator_bff_image":"%s","blue_port":"%s"}\n' \
-  "$RELEASE_ID" "$FE_SHA" "$BFF_IMAGE" "$PROD_GREEN_PORT" > "${STATE}/baseline.json.new.$$" \
+printf '{"release_id":"%s","healthy":true,"frontend_artifact_sha256":"%s","operator_bff_image":"%s","active_port":"%s"}\n' \
+  "$RELEASE_ID" "$FE_SHA" "$BFF_IMAGE" "$TARGET_PORT" > "${STATE}/baseline.json.new.$$" \
   && mv -f "${STATE}/baseline.json.new.$$" "$BASELINE_FILE"
 write_state prod_active
 printf '{"status":"prod_active","release_id":"%s","observation_window_minutes":30,"note":"release_complete requires hosted drills and 30-minute observation; not asserted here"}\n' "$RELEASE_ID"
