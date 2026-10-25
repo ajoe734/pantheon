@@ -1,0 +1,1218 @@
+#!/usr/bin/env python3
+"""Pantheon Ephemeral Staging Live On-VM Gate Collector (`ENV-STG-EPHEMERAL-IMPL-001`).
+
+Installed to `/usr/local/bin/pantheon-staging-collect-gates` by `deploy/staging/bootstrap.sh`
+and invoked over IAP SSH by `scripts/deploy/staging_ops.sh collect-verify-gates`.
+
+Executes real commands on the staging VM (docker, curl, mountpoint, psql, pg_dump, pg_restore)
+to collect and verify all 6 host-level staging verification sections:
+1. `observed_deploy`: live container digests, `/bff/readyz`, `/bff/version`, FE `.artifact_sha256`,
+   `deployment.json`, external `/runtime-config.js` (`Cache-Control: no-store`), data disk mount.
+2. `sanitized_dataset`: live Postgres table contents and snapshot provenance metadata validated by
+   `staging_sanitize.verify_sanitized_dataset`.
+3. `migration_plan`: pre-migration schema readback, expand-phase SQL execution via `psql`,
+   post-migration schema and `schema_migrations` readback, image label check, and compatibility
+   smoke validated by `staging_sanitize.verify_migration_and_compatibility`.
+4. `backup_restore_record`: real `pg_dump` backup archive creation, SHA-256 hashing, `pg_restore`
+   into an isolated verification database, and post-restore readability SQL queries validated by
+   `staging_sanitize.verify_backup_restore_readability`.
+5. `rollback_readback`: live rehearsal switching FE symlink and `operator-bff` + `lifecycle-projector`
+   to `manifest.rollback_baseline`, verifying health/version/digest/singleton uniqueness and RTO,
+   then restoring the candidate release, validated by `staging_sanitize.verify_exact_pair_rollback`.
+6. `security_readback`: live HTTP probes (`curl`) for unauthenticated, cross-tenant read/write, and
+   viewer mutation rejection plus live container env + DB + secrets inspection for safe-off posture,
+   validated by `staging_sanitize.verify_security_and_safety_readbacks`.
+
+Never manufactures passing booleans; any command failure or invariant violation exits non-zero.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import hmac
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+from typing import Any
+
+
+def _fail(code: str, message: str) -> "NoReturn":
+    print(
+        json.dumps(
+            {
+                "status": "error",
+                "step": "collect-verify-gates",
+                "error_code": code,
+                "message": message,
+            },
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
+def _load_env_file(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+def _run(
+    cmd: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+    error_code: str = "COMMAND_FAILED",
+) -> subprocess.CompletedProcess[str]:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    proc = subprocess.run(cmd, env=merged_env, text=True, capture_output=True, check=False)
+    if check and proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        _fail(error_code, f"Command {' '.join(cmd[:4])} failed (rc={proc.returncode}): {detail}")
+    return proc
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _mint_staging_jwt(
+    *,
+    secret: str,
+    issuer: str,
+    audience: str,
+    sub: str,
+    email: str,
+    tenant_id: str,
+    allowed_tenants: list[str],
+    roles: list[str],
+    ttl_seconds: int = 300,
+) -> str:
+    now = int(time.time())
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "iss": issuer,
+        "aud": audience,
+        "sub": sub,
+        "email": email,
+        "tenant_id": tenant_id,
+        "allowed_tenants": allowed_tenants,
+        "roles": roles,
+        "iat": now,
+        "nbf": now - 5,
+        "exp": now + ttl_seconds,
+    }
+    h_b64 = _b64url_encode(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    p_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signing_input = f"{h_b64}.{p_b64}".encode("ascii")
+    sig = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    return f"{h_b64}.{p_b64}.{_b64url_encode(sig)}"
+
+
+def _http_probe(
+    curl_bin: str,
+    url: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    with tempfile.NamedTemporaryFile(prefix="stg-http-probe-", suffix=".json", delete=False) as tf:
+        body_path = Path(tf.name)
+    try:
+        cmd = [curl_bin, "-sS", "-o", str(body_path), "-m", "10", "-w", "%{http_code}", "-X", method]
+        merged_headers = dict(headers or {})
+        if json_body is not None:
+            merged_headers.setdefault("Content-Type", "application/json")
+        for k, v in merged_headers.items():
+            cmd.extend(["-H", f"{k}: {v}"])
+        if json_body is not None:
+            cmd.extend(["-d", json.dumps(json_body, sort_keys=True)])
+        cmd.append(url)
+        proc = _run(cmd, check=False)
+        if proc.returncode != 0:
+            return 0, {}
+        try:
+            status_code = int(proc.stdout.strip())
+        except ValueError:
+            status_code = 0
+        parsed_body: dict[str, Any] = {}
+        if body_path.exists():
+            raw_text = body_path.read_text(encoding="utf-8", errors="replace").strip()
+            if raw_text:
+                try:
+                    loaded = json.loads(raw_text)
+                    if isinstance(loaded, dict):
+                        parsed_body = loaded
+                except json.JSONDecodeError:
+                    parsed_body = {}
+        return status_code, parsed_body
+    finally:
+        body_path.unlink(missing_ok=True)
+
+
+def _http_status(curl_bin: str, url: str, *, method: str = "GET", headers: dict[str, str] | None = None) -> int:
+    status_code, _ = _http_probe(curl_bin, url, method=method, headers=headers)
+    return status_code
+
+
+def _http_json(curl_bin: str, url: str, *, error_code: str) -> dict[str, Any]:
+    proc = _run([curl_bin, "-fsS", "-m", "10", url], error_code=error_code)
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        _fail(error_code, f"Invalid JSON from {url}: {exc}")
+    if not isinstance(data, dict):
+        _fail(error_code, f"Expected JSON object from {url}")
+    return data
+
+
+def _verify_unpacked_tarball_matches_dir(tarball_path: Path, target_dir: Path) -> None:
+    if not tarball_path.exists():
+        _fail("BASELINE_FE_ARCHIVE_MISSING", f"Retained baseline FE archive missing at {tarball_path}")
+    if not target_dir.exists():
+        _fail("BASELINE_FE_DIR_MISSING", f"Baseline FE release directory missing at {target_dir}")
+    member_count = 0
+    with tarfile.open(tarball_path, "r:gz") as tf:
+        for member in tf.getmembers():
+            if not member.isfile():
+                continue
+            rel_name = member.name.lstrip("./")
+            if not rel_name:
+                continue
+            extracted_file = target_dir / rel_name
+            if not extracted_file.exists() or not extracted_file.is_file():
+                _fail(
+                    "BASELINE_FE_CONTENT_MISMATCH",
+                    f"Baseline FE directory {target_dir} is missing archive member {rel_name!r}",
+                )
+            fobj = tf.extractfile(member)
+            if fobj is None:
+                _fail("BASELINE_FE_ARCHIVE_CORRUPT", f"Cannot read archive member {rel_name!r}")
+            expected_digest = hashlib.sha256(fobj.read()).hexdigest()
+            actual_digest = hashlib.sha256(extracted_file.read_bytes()).hexdigest()
+            if actual_digest != expected_digest:
+                _fail(
+                    "BASELINE_FE_CONTENT_TAMPERED",
+                    f"Baseline FE file {rel_name!r} digest {actual_digest} != archive digest {expected_digest}",
+                )
+            member_count += 1
+    if member_count == 0:
+        _fail("BASELINE_FE_ARCHIVE_EMPTY", f"Baseline FE archive {tarball_path} contains no regular files")
+
+
+def _as_bool(val: Any, default: bool = False) -> bool:
+    if isinstance(val, bool):
+        return val
+    if val is None:
+        return default
+    return str(val).strip().lower() in ("true", "1", "yes")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release-id", required=True)
+    args = parser.parse_args()
+    release_id = args.release_id
+
+    sudo_bin = os.environ.get("SUDO_BIN", "sudo")
+    if (
+        (os.geteuid() != 0 or os.environ.get("FAKE_OSLOGIN_NONROOT") == "true")
+        and os.environ.get("PANTHEON_PRIVILEGED") != "1"
+        and sudo_bin
+    ):
+        elevated_env = os.environ.copy()
+        elevated_env["PANTHEON_PRIVILEGED"] = "1"
+        proc = subprocess.run(
+            [sudo_bin, "-E", sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
+            env=elevated_env,
+            text=True,
+            capture_output=False,
+            check=False,
+        )
+        return proc.returncode
+
+    staging_root = Path(os.environ.get("STAGING_ROOT", "/var/lib/pantheon-staging-root"))
+    compose_env = _load_env_file(staging_root / "state" / "compose.env")
+    for k, v in compose_env.items():
+        os.environ.setdefault(k, v)
+
+    data_mount = Path(os.environ.get("STAGING_DATA_MOUNT", "/var/lib/pantheon-staging"))
+    fe_root = Path(os.environ.get("STAGING_FE_ROOT", "/var/www/pantheon-staging-fe"))
+    bff_port = os.environ.get("STAGING_BFF_PORT", "18001")
+    fe_port = os.environ.get("STAGING_FE_HTTP_PORT", "18080")
+    pg_port = os.environ.get("STAGING_POSTGRES_PORT", "15432")
+    pg_user = os.environ.get("STAGING_POSTGRES_USER", "pantheon_stg")
+    pg_db = os.environ.get("STAGING_POSTGRES_DB", "pantheon_staging")
+    pg_pw_file = Path(
+        os.environ.get("STAGING_POSTGRES_PASSWORD_FILE", str(staging_root / "secrets" / "postgres_password"))
+    )
+    secrets_env_file = Path(
+        os.environ.get("STAGING_SECRETS_ENV_FILE", str(staging_root / "secrets" / "staging.secrets.env"))
+    )
+
+    docker_bin = os.environ.get("DOCKER_BIN", "docker")
+    curl_bin = os.environ.get("CURL_BIN", "curl")
+    mountpoint_bin = os.environ.get("MOUNTPOINT_BIN", "mountpoint")
+    psql_bin = os.environ.get("PSQL_BIN", "psql")
+    pg_dump_bin = os.environ.get("PG_DUMP_BIN", "pg_dump")
+    pg_restore_bin = os.environ.get("PG_RESTORE_BIN", "pg_restore")
+
+    lib_dir = staging_root / "lib"
+    if lib_dir.exists():
+        sys.path.insert(0, str(lib_dir))
+    repo_deploy_dir = Path(__file__).resolve().parents[2] / "scripts" / "deploy"
+    if repo_deploy_dir.exists():
+        sys.path.insert(0, str(repo_deploy_dir))
+
+    try:
+        import staging_sanitize  # type: ignore
+    except ImportError as exc:
+        _fail("SANITIZE_IMPORT_FAILED", f"Cannot import staging_sanitize: {exc}")
+
+    manifest_path = staging_root / "state" / "manifest.json"
+    if not manifest_path.exists():
+        _fail("MANIFEST_MISSING", f"Staging manifest not found at {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    compose_file = staging_root / "docker-compose.staging.yml"
+    compose_env_path = staging_root / "state" / "compose.env"
+    if not compose_file.exists() or not compose_env_path.exists():
+        _fail("COMPOSE_STATE_MISSING", "Staging compose file or compose.env is missing")
+
+    def compose_cmd(*sub_args: str) -> list[str]:
+        return [
+            docker_bin,
+            "compose",
+            "-p",
+            "pantheon-staging",
+            "-f",
+            str(compose_file),
+            "--env-file",
+            str(compose_env_path),
+            *sub_args,
+        ]
+
+    # Verify data disk is mounted
+    _run([mountpoint_bin, "-q", str(data_mount)], error_code="DATA_DISK_NOT_MOUNTED")
+
+    # Verify Postgres password file & secrets file
+    if not pg_pw_file.exists() or not secrets_env_file.exists():
+        _fail("SECRET_MISSING", "Postgres password file or staging secrets env file is missing")
+    pg_password = pg_pw_file.read_text(encoding="utf-8").strip()
+    if not pg_password:
+        _fail("SECRET_EMPTY", "Postgres password file is empty")
+    pg_env = {"PGPASSWORD": pg_password}
+
+    def psql_query(sql: str, *, db: str = pg_db, error_code: str = "PSQL_QUERY_FAILED") -> str:
+        proc = _run(
+            [
+                psql_bin,
+                "-h",
+                "127.0.0.1",
+                "-p",
+                pg_port,
+                "-U",
+                pg_user,
+                "-d",
+                db,
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-t",
+                "-A",
+                "-c",
+                sql,
+            ],
+            env=pg_env,
+            error_code=error_code,
+        )
+        return proc.stdout.strip()
+
+    # 1. Collect live observed_deploy
+    required_services = (
+        "operator-bff",
+        "runtime-manager",
+        "governance",
+        "deployment",
+        "lifecycle-projector",
+        "postgres",
+        "nats",
+    )
+    service_cids: dict[str, str] = {}
+    for svc in required_services:
+        proc = _run(compose_cmd("ps", "-q", svc), error_code="COMPOSE_PS_FAILED")
+        cid = proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
+        if not cid:
+            _fail("SERVICE_NOT_RUNNING", f"Required staging service {svc} is not running")
+        service_cids[svc] = cid
+
+    bff_cid = service_cids["operator-bff"]
+    observed_bff_image = _run(
+        [docker_bin, "inspect", "-f", "{{.Config.Image}}", bff_cid],
+        error_code="DOCKER_INSPECT_FAILED",
+    ).stdout.strip()
+    bff_env_lines = _run(
+        [docker_bin, "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", bff_cid],
+        error_code="DOCKER_INSPECT_ENV_FAILED",
+    ).stdout.splitlines()
+    bff_env: dict[str, str] = {}
+    for line in bff_env_lines:
+        if "=" in line:
+            k, v = line.split("=", 1)
+            bff_env[k.strip()] = v.strip()
+
+    current_fe = fe_root / "current"
+    artifact_sha_file = current_fe / ".artifact_sha256"
+    dep_json_file = current_fe / "deployment.json"
+    if not artifact_sha_file.exists() or not dep_json_file.exists():
+        _fail("FE_RELEASE_MISSING", "Active FE release .artifact_sha256 or deployment.json missing")
+    observed_fe_sha = artifact_sha_file.read_text(encoding="utf-8").strip()
+    dep_json = json.loads(dep_json_file.read_text(encoding="utf-8"))
+
+    # Verify external /runtime-config.js is outside sealed FE release dir and served no-store
+    rt_cfg_file = staging_root / "config" / "runtime-config.js"
+    if not rt_cfg_file.exists():
+        _fail("RUNTIME_CONFIG_MISSING", f"{rt_cfg_file} is missing")
+    if str(rt_cfg_file.resolve()).startswith(str(current_fe.resolve()) + "/"):
+        _fail("RUNTIME_CONFIG_SEALED", "runtime-config.js must live outside the sealed FE release directory")
+
+    rt_readback_path = staging_root / "state" / "runtime-config.readback"
+    rt_url = os.environ.get("STAGING_RUNTIME_CONFIG_URL", f"http://127.0.0.1:{fe_port}/runtime-config.js")
+    rt_hdrs = _run(
+        [curl_bin, "-sS", "-m", "10", "-D", "-", "-o", str(rt_readback_path), rt_url],
+        error_code="RUNTIME_CONFIG_FETCH_FAILED",
+    ).stdout
+    if not any(
+        line.lower().startswith("cache-control:") and "no-store" in line.lower()
+        for line in rt_hdrs.splitlines()
+    ):
+        _fail("RUNTIME_CONFIG_CACHEABLE", "/runtime-config.js was not served with Cache-Control: no-store")
+    if rt_readback_path.read_text(encoding="utf-8") != rt_cfg_file.read_text(encoding="utf-8"):
+        _fail("RUNTIME_CONFIG_DRIFT", "Served /runtime-config.js differs from rendered config file")
+
+    readyz = _http_json(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz", error_code="BFF_READYZ_FAILED")
+    version = _http_json(curl_bin, f"http://127.0.0.1:{bff_port}/bff/version", error_code="BFF_VERSION_FAILED")
+    bff_healthy = str(readyz.get("status", "")).lower() in ("ok", "ready", "healthy") or readyz.get("ready") is True
+    if not bff_healthy:
+        _fail("BFF_UNHEALTHY", f"/bff/readyz reported unhealthy: {readyz}")
+
+    observed_deploy = {
+        "status": "deployed_observed",
+        "dry_run": False,
+        "observed": True,
+        "observed_from_live_vm": True,
+        "rebuilt_during_promotion": False,
+        "release_id": str(dep_json.get("release_id") or release_id),
+        "frontend_commit": str(dep_json.get("frontend_commit") or dep_json.get("frontend_commit_sha") or ""),
+        "frontend_artifact_sha256": observed_fe_sha,
+        "backend_commit": str(version.get("source_commit_sha") or dep_json.get("backend_commit") or ""),
+        "operator_bff_image": observed_bff_image,
+        "data_disk_mounted": True,
+        "bff_healthy": True,
+    }
+
+    # 2. Sanitized dataset verification via live Postgres query
+    snap_meta_path = data_mount / "sanitized" / "snapshot-metadata.json"
+    if not snap_meta_path.exists():
+        _fail("SNAPSHOT_METADATA_MISSING", f"Sanitized snapshot metadata missing at {snap_meta_path}")
+    snap_meta = json.loads(snap_meta_path.read_text(encoding="utf-8"))
+
+    tables_sql = (
+        "SELECT json_build_object("
+        "'users', COALESCE((SELECT json_agg(row_to_json(t)) FROM users t), '[]'::json),"
+        "'broker_credentials', COALESCE((SELECT json_agg(row_to_json(t)) FROM broker_credentials t), '[]'::json),"
+        "'exchange_api_keys', COALESCE((SELECT json_agg(row_to_json(t)) FROM exchange_api_keys t), '[]'::json),"
+        "'user_sessions', COALESCE((SELECT json_agg(row_to_json(t)) FROM user_sessions t), '[]'::json),"
+        "'system_settings', COALESCE((SELECT json_agg(row_to_json(t)) FROM system_settings t), '[]'::json),"
+        "'telemetry_events', COALESCE((SELECT json_agg(row_to_json(t)) FROM telemetry_events t), '[]'::json),"
+        "'tenants', COALESCE((SELECT json_agg(row_to_json(t)) FROM tenants t), '[]'::json),"
+        "'rbac_bindings', COALESCE((SELECT json_agg(row_to_json(t)) FROM rbac_bindings t), '[]'::json),"
+        "'schema_migrations', COALESCE((SELECT json_agg(row_to_json(t)) FROM schema_migrations t), '[]'::json)"
+        ");"
+    )
+    tables_raw = psql_query(tables_sql, error_code="SANITIZED_TABLES_QUERY_FAILED")
+    try:
+        live_tables = json.loads(tables_raw)
+    except json.JSONDecodeError as exc:
+        _fail("SANITIZED_TABLES_JSON_INVALID", f"Invalid JSON from Postgres tables query: {exc}")
+
+    sanitized_dataset = {
+        "observed_from_live_vm": True,
+        "dry_run": False,
+        "metadata": snap_meta,
+        "tables": live_tables,
+    }
+    try:
+        staging_sanitize.verify_sanitized_dataset(sanitized_dataset)
+    except Exception as exc:
+        _fail("SANITIZED_DATASET_INVALID", str(exc))
+
+    # Prepare rollback baseline compose environment and JWT credentials for Section 3, 5, and 6
+    rollback_baseline = manifest.get("rollback_baseline")
+    if not isinstance(rollback_baseline, dict):
+        _fail("ROLLBACK_BASELINE_MISSING", "Manifest is missing rollback_baseline")
+
+    prev_release_id = str(rollback_baseline["previous_release_id"])
+    baseline_fe_dir = fe_root / "releases" / prev_release_id
+    candidate_fe_dir = fe_root / "releases" / release_id
+    baseline_fe_archive = staging_root / "state" / "fe-baseline-dist.tar.gz"
+    if not baseline_fe_dir.exists():
+        _fail("BASELINE_FE_DIR_MISSING", f"Baseline FE release directory {baseline_fe_dir} does not exist")
+    if not baseline_fe_archive.exists():
+        _fail("BASELINE_FE_ARCHIVE_MISSING", f"Retained baseline FE archive {baseline_fe_archive} does not exist")
+
+    baseline_archive_sha = "sha256:" + hashlib.sha256(baseline_fe_archive.read_bytes()).hexdigest()
+    if baseline_archive_sha != str(rollback_baseline["frontend_artifact_sha256"]):
+        _fail(
+            "BASELINE_FE_ARCHIVE_SHA_MISMATCH",
+            f"Retained baseline FE archive digest {baseline_archive_sha} != manifest {rollback_baseline['frontend_artifact_sha256']}",
+        )
+    _verify_unpacked_tarball_matches_dir(baseline_fe_archive, baseline_fe_dir)
+
+    baseline_compose_env = staging_root / "state" / "compose.baseline.env"
+    baseline_env_map = dict(compose_env)
+    baseline_bff_img = str(rollback_baseline["backend_operator_bff_image"])
+    baseline_images_map = rollback_baseline.get("backend_images")
+    if not isinstance(baseline_images_map, dict):
+        baseline_images_map = {}
+
+    baseline_rm_img = str(
+        baseline_images_map.get("runtime_manager") or compose_env.get("PANTHEON_RUNTIME_MANAGER_IMAGE", "")
+    )
+    baseline_gov_img = str(
+        baseline_images_map.get("governance") or compose_env.get("PANTHEON_GOVERNANCE_IMAGE", "")
+    )
+    baseline_dep_img = str(
+        baseline_images_map.get("deployment") or compose_env.get("PANTHEON_DEPLOYMENT_IMAGE", "")
+    )
+    baseline_lp_img = str(
+        baseline_images_map.get("lifecycle_projector") or compose_env.get("PANTHEON_LIFECYCLE_PROJECTOR_IMAGE", "")
+    )
+
+    baseline_env_map["PANTHEON_RELEASE_ID"] = prev_release_id
+    baseline_env_map["PANTHEON_BACKEND_COMMIT"] = str(rollback_baseline["backend_commit"])
+    baseline_env_map["PANTHEON_FRONTEND_COMMIT"] = str(rollback_baseline["frontend_commit"])
+    baseline_env_map["PANTHEON_FRONTEND_ARTIFACT_SHA256"] = str(rollback_baseline["frontend_artifact_sha256"])
+    baseline_env_map["PANTHEON_CONFIG_SCHEMA_VERSION"] = str(
+        rollback_baseline.get("config_schema_version") or compose_env.get("PANTHEON_CONFIG_SCHEMA_VERSION", "")
+    )
+    baseline_env_map["PANTHEON_OPERATOR_BFF_IMAGE"] = baseline_bff_img
+    baseline_env_map["PANTHEON_OPERATOR_BFF_DIGEST"] = "sha256:" + baseline_bff_img.split("@sha256:", 1)[1]
+    if baseline_rm_img and "@sha256:" in baseline_rm_img:
+        baseline_env_map["PANTHEON_RUNTIME_MANAGER_IMAGE"] = baseline_rm_img
+        baseline_env_map["PANTHEON_RUNTIME_MANAGER_DIGEST"] = "sha256:" + baseline_rm_img.split("@sha256:", 1)[1]
+    if baseline_gov_img and "@sha256:" in baseline_gov_img:
+        baseline_env_map["PANTHEON_GOVERNANCE_IMAGE"] = baseline_gov_img
+        baseline_env_map["PANTHEON_GOVERNANCE_DIGEST"] = "sha256:" + baseline_gov_img.split("@sha256:", 1)[1]
+    if baseline_dep_img and "@sha256:" in baseline_dep_img:
+        baseline_env_map["PANTHEON_DEPLOYMENT_IMAGE"] = baseline_dep_img
+        baseline_env_map["PANTHEON_DEPLOYMENT_DIGEST"] = "sha256:" + baseline_dep_img.split("@sha256:", 1)[1]
+    if baseline_lp_img and "@sha256:" in baseline_lp_img:
+        baseline_env_map["PANTHEON_LIFECYCLE_PROJECTOR_IMAGE"] = baseline_lp_img
+        baseline_env_map["PANTHEON_LIFECYCLE_PROJECTOR_DIGEST"] = "sha256:" + baseline_lp_img.split("@sha256:", 1)[1]
+
+    baseline_compose_env.write_text(
+        "".join(f"{k}={v}\n" for k, v in sorted(baseline_env_map.items())),
+        encoding="utf-8",
+    )
+
+    secrets_kv = _load_env_file(secrets_env_file)
+    jwt_secret = (
+        secrets_kv.get("PANTHEON_BFF_JWT_SECRET")
+        or bff_env.get("PANTHEON_BFF_JWT_SECRET")
+        or ""
+    ).strip()
+    if not jwt_secret:
+        _fail("JWT_SECRET_MISSING", "PANTHEON_BFF_JWT_SECRET is missing from staging secrets env and BFF container env")
+    jwt_issuer = (
+        bff_env.get("PANTHEON_BFF_JWT_ISSUER")
+        or compose_env.get("PANTHEON_BFF_JWT_ISSUER")
+        or "https://auth.pantheon.internal"
+    ).strip()
+    jwt_audience = (
+        bff_env.get("PANTHEON_BFF_JWT_AUDIENCE")
+        or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE")
+        or "pantheon-operator-bff"
+    ).strip()
+
+    operator_token = _mint_staging_jwt(
+        secret=jwt_secret,
+        issuer=jwt_issuer,
+        audience=jwt_audience,
+        sub="usr-101",
+        email="staging-user-usr-101@pantheon.internal",
+        tenant_id="tenant-alpha",
+        allowed_tenants=["tenant-alpha"],
+        roles=["operator"],
+    )
+    viewer_token = _mint_staging_jwt(
+        secret=jwt_secret,
+        issuer=jwt_issuer,
+        audience=jwt_audience,
+        sub="usr-viewer-101",
+        email="staging-user-viewer-101@pantheon.internal",
+        tenant_id="tenant-alpha",
+        allowed_tenants=["tenant-alpha"],
+        roles=["viewer"],
+    )
+
+    # 3. Expand-phase forward migration & old-app/new-schema compatibility
+    mig_spec_path = data_mount / "sanitized" / "migration-spec.json"
+    if not mig_spec_path.exists():
+        _fail("MIGRATION_SPEC_MISSING", f"Migration specification missing at {mig_spec_path}")
+    mig_spec = json.loads(mig_spec_path.read_text(encoding="utf-8"))
+    spec_mig_sha = str(mig_spec.get("migration_set_sha256") or manifest["migration_set_sha256"])
+    if spec_mig_sha != manifest["migration_set_sha256"]:
+        _fail(
+            "MIGRATION_SPEC_SHA_MISMATCH",
+            f"migration-spec.json migration_set_sha256 {spec_mig_sha!r} != manifest {manifest['migration_set_sha256']!r}",
+        )
+
+    live_catalog_sql = (
+        "SELECT COALESCE("
+        "  json_object_agg(table_name, cols),"
+        "  '{}'::json"
+        ")::text "
+        "FROM ("
+        "  SELECT table_name,"
+        "    json_object_agg("
+        "      column_name,"
+        "      json_build_object("
+        "        'type', data_type,"
+        "        'nullable', (is_nullable = 'YES'),"
+        "        'has_default', (column_default IS NOT NULL)"
+        "      )"
+        "    ) AS cols "
+        "  FROM information_schema.columns "
+        "  WHERE table_schema = 'public' "
+        "  GROUP BY table_name"
+        ") s;"
+    )
+
+    def query_live_catalog(query_error_code: str, empty_error_code: str) -> dict[str, Any]:
+        raw = psql_query(live_catalog_sql, error_code=query_error_code)
+        try:
+            catalog = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            _fail(empty_error_code, f"Live PostgreSQL information_schema query returned non-JSON {raw!r}: {exc}")
+        if not isinstance(catalog, dict) or not catalog or "users" not in catalog:
+            _fail(empty_error_code, f"Live PostgreSQL information_schema catalog is empty or missing 'users': {catalog!r}")
+        return catalog
+
+    old_app_schema = query_live_catalog("PRE_SCHEMA_QUERY_FAILED", "PRE_SCHEMA_CATALOG_EMPTY")
+
+    statements = mig_spec.get("statements") or []
+    if not isinstance(statements, list) or not statements:
+        _fail("MIGRATION_STATEMENTS_EMPTY", "migration-spec.json must provide non-empty SQL statements")
+
+    for stmt in statements:
+        psql_query(str(stmt), error_code="MIGRATION_SQL_FAILED")
+
+    new_schema = query_live_catalog("POST_SCHEMA_QUERY_FAILED", "POST_SCHEMA_CATALOG_EMPTY")
+    observed_mig_sha = psql_query(
+        "SELECT checksum_sha256 FROM schema_migrations ORDER BY applied_at DESC LIMIT 1;",
+        error_code="MIGRATION_SHA_QUERY_FAILED",
+    )
+
+    img_mig_label = _run(
+        [
+            docker_bin,
+            "image",
+            "inspect",
+            "-f",
+            '{{index .Config.Labels "org.pantheon.migration_set_sha256"}}',
+            observed_bff_image,
+        ],
+        error_code="IMAGE_MIGRATION_LABEL_FAILED",
+    ).stdout.strip()
+    img_compat_label = _run(
+        [
+            docker_bin,
+            "image",
+            "inspect",
+            "-f",
+            '{{index .Config.Labels "org.pantheon.compatibility_manifest_sha256"}}',
+            observed_bff_image,
+        ],
+        error_code="IMAGE_COMPAT_LABEL_FAILED",
+    ).stdout.strip()
+    if img_mig_label != manifest["migration_set_sha256"]:
+        _fail(
+            "IMAGE_MIGRATION_LABEL_MISMATCH",
+            f"Image label {img_mig_label!r} != manifest {manifest['migration_set_sha256']!r}",
+        )
+    if img_compat_label != manifest["compatibility_manifest_sha256"]:
+        _fail(
+            "IMAGE_COMPAT_LABEL_MISMATCH",
+            f"Image compat label {img_compat_label!r} != manifest {manifest['compatibility_manifest_sha256']!r}",
+        )
+
+    # Exercise the retained old application (rollback_baseline.backend_operator_bff_image)
+    # against the migrated database (new_schema) before restoring candidate BFF.
+    _run(
+        [
+            docker_bin,
+            "compose",
+            "-p",
+            "pantheon-staging",
+            "-f",
+            str(compose_file),
+            "--env-file",
+            str(baseline_compose_env),
+            "--profile",
+            "core",
+            "up",
+            "-d",
+            "--no-build",
+            "operator-bff",
+        ],
+        error_code="OLD_APP_COMPAT_START_FAILED",
+    )
+    old_app_cid = (
+        _run(compose_cmd("ps", "-q", "operator-bff"), error_code="OLD_APP_COMPAT_PS_FAILED")
+        .stdout.strip()
+        .splitlines()[0]
+    )
+    old_app_image_observed = _run(
+        [docker_bin, "inspect", "-f", "{{.Config.Image}}", old_app_cid],
+        error_code="OLD_APP_COMPAT_INSPECT_FAILED",
+    ).stdout.strip()
+    if old_app_image_observed != baseline_bff_img:
+        _fail(
+            "OLD_APP_COMPAT_IMAGE_MISMATCH",
+            f"Old-app compatibility check started {old_app_image_observed!r}, expected {baseline_bff_img!r}",
+        )
+    old_app_readyz_status = _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz")
+    old_app_version = _http_json(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/version",
+        error_code="OLD_APP_COMPAT_VERSION_FAILED",
+    )
+    old_app_version_commit = str(old_app_version.get("source_commit_sha") or "")
+    if old_app_version_commit != str(rollback_baseline["backend_commit"]):
+        _fail(
+            "OLD_APP_COMPAT_COMMIT_MISMATCH",
+            f"Old-app /bff/version source_commit_sha {old_app_version_commit!r} != baseline {rollback_baseline['backend_commit']!r}",
+        )
+    old_app_me_status, old_app_me_body = _http_probe(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/me",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {operator_token}",
+            "X-Tenant-Id": "tenant-alpha",
+        },
+    )
+    old_app_me_data = old_app_me_body.get("data") if isinstance(old_app_me_body.get("data"), dict) else {}
+    smoke_out = psql_query(
+        "SELECT id, email, tenant_id, role FROM users WHERE tenant_id = 'tenant-alpha' LIMIT 1;",
+        error_code="OLD_APP_SMOKE_QUERY_FAILED",
+    )
+
+    # Restore candidate operator-bff after old-app compatibility check
+    _run(
+        compose_cmd("--profile", "core", "up", "-d", "--no-build", "operator-bff"),
+        error_code="OLD_APP_COMPAT_RESTORE_CANDIDATE_FAILED",
+    )
+    post_mig_ready = _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") == 200
+    post_mig_version = _http_json(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/version",
+        error_code="POST_MIG_CANDIDATE_VERSION_FAILED",
+    )
+    if str(post_mig_version.get("source_commit_sha") or "") != str(manifest["backend"]["commit"]):
+        _fail(
+            "POST_MIG_CANDIDATE_RESTORE_MISMATCH",
+            "Candidate BFF was not restored after old-app compatibility smoke",
+        )
+
+    old_app_compat_passed = (
+        bool(smoke_out)
+        and old_app_image_observed == baseline_bff_img
+        and old_app_version_commit == str(rollback_baseline["backend_commit"])
+        and old_app_readyz_status == 200
+        and old_app_me_status == 200
+        and old_app_me_data.get("tenant_id") == "tenant-alpha"
+        and post_mig_ready
+    )
+
+    migration_plan = {
+        "observed_from_live_vm": True,
+        "dry_run": False,
+        "catalog_observed": True,
+        "expected_migration_set_sha256": manifest["migration_set_sha256"],
+        "observed_migration_set_sha256": observed_mig_sha,
+        "phase": str(mig_spec.get("phase") or "expand"),
+        "statements": statements,
+        "old_app_schema": old_app_schema,
+        "new_schema": new_schema,
+        "forward_migration_applied": True,
+        "old_app_image_observed": old_app_image_observed,
+        "old_app_version_commit_observed": old_app_version_commit,
+        "old_app_readyz_status": old_app_readyz_status,
+        "old_app_me_read_status": old_app_me_status,
+        "old_app_smoke_against_new_schema_passed": old_app_compat_passed,
+    }
+    try:
+        staging_sanitize.verify_migration_and_compatibility(migration_plan)
+    except Exception as exc:
+        _fail("MIGRATION_VERIFICATION_FAILED", str(exc))
+
+    # 4. Backup & restore readability rehearsal via pg_dump and pg_restore
+    backup_dir = data_mount / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_file = backup_dir / f"{release_id}.dump"
+    _run(
+        [
+            pg_dump_bin,
+            "-h",
+            "127.0.0.1",
+            "-p",
+            pg_port,
+            "-U",
+            pg_user,
+            "-d",
+            pg_db,
+            "-Fc",
+            "-f",
+            str(backup_file),
+        ],
+        env=pg_env,
+        error_code="PG_DUMP_FAILED",
+    )
+    if not backup_file.exists() or backup_file.stat().st_size == 0:
+        _fail("BACKUP_FILE_EMPTY", f"pg_dump did not produce a non-empty backup at {backup_file}")
+    backup_sha256 = "sha256:" + hashlib.sha256(backup_file.read_bytes()).hexdigest()
+
+    restore_db = f"{pg_db}_restore_verify"
+    if not re.fullmatch(r"^[a-z][a-z0-9_]{1,62}$", restore_db) or restore_db == pg_db:
+        _fail("RESTORE_DB_NAME_INVALID", f"Invalid or unsafe restore database identifier: {restore_db!r}")
+
+    # PostgreSQL forbids DROP DATABASE / CREATE DATABASE inside a multi-command -c transaction block.
+    # Always invoke DROP DATABASE and CREATE DATABASE in separate psql -c calls.
+    psql_query(f'DROP DATABASE IF EXISTS "{restore_db}";', db=pg_db, error_code="RESTORE_DB_DROP_FAILED")
+    psql_query(f'CREATE DATABASE "{restore_db}";', db=pg_db, error_code="RESTORE_DB_CREATE_FAILED")
+    _run(
+        [
+            pg_restore_bin,
+            "-h",
+            "127.0.0.1",
+            "-p",
+            pg_port,
+            "-U",
+            pg_user,
+            "-d",
+            restore_db,
+            "--clean",
+            "--if-exists",
+            str(backup_file),
+        ],
+        env=pg_env,
+        error_code="PG_RESTORE_FAILED",
+    )
+
+    restored_summary_raw = psql_query(
+        "SELECT json_build_object("
+        "'migration_set_sha256', (SELECT checksum_sha256 FROM schema_migrations ORDER BY applied_at DESC LIMIT 1),"
+        "'counts', json_build_object("
+        "'users', (SELECT count(*) FROM users),"
+        "'tenants', (SELECT count(*) FROM tenants),"
+        "'broker_credentials', (SELECT count(*) FROM broker_credentials),"
+        "'exchange_api_keys', (SELECT count(*) FROM exchange_api_keys),"
+        "'user_sessions', (SELECT count(*) FROM user_sessions)"
+        ")"
+        ");",
+        db=restore_db,
+        error_code="RESTORED_DB_QUERY_FAILED",
+    )
+    psql_query(f'DROP DATABASE IF EXISTS "{restore_db}";', db=pg_db, error_code="RESTORE_DB_CLEANUP_FAILED")
+    try:
+        restored_summary = json.loads(restored_summary_raw)
+    except json.JSONDecodeError as exc:
+        _fail("RESTORED_DB_JSON_INVALID", f"Invalid JSON from restored DB query: {exc}")
+
+    backup_restore_record = {
+        "observed_from_live_vm": True,
+        "dry_run": False,
+        "backup_id": f"stg-backup-{release_id}",
+        "backup_sha256": backup_sha256,
+        "expected_migration_set_sha256": manifest["migration_set_sha256"],
+        "restored_migration_set_sha256": str(restored_summary.get("migration_set_sha256") or ""),
+        "restore_completed": True,
+        "read_query_verified": True,
+        "restored_row_counts": restored_summary.get("counts") or {},
+    }
+    try:
+        staging_sanitize.verify_backup_restore_readability(backup_restore_record)
+    except Exception as exc:
+        _fail("BACKUP_RESTORE_VERIFICATION_FAILED", str(exc))
+
+    # 5. Exact-pair application rollback rehearsal to rollback_baseline across full 5-service owner closure
+    rt_cfg_candidate = staging_root / "config" / "runtime-config.candidate.js"
+    rt_cfg_baseline = staging_root / "config" / "runtime-config.baseline.js"
+    owner_services = (
+        ("operator-bff", "operator_bff"),
+        ("runtime-manager", "runtime_manager"),
+        ("governance", "governance"),
+        ("deployment", "deployment"),
+        ("lifecycle-projector", "lifecycle_projector"),
+    )
+
+    t0 = time.monotonic()
+    # Drain singleton before switching
+    _run(compose_cmd("--profile", "singleton", "rm", "-fsv", "lifecycle-projector"), error_code="ROLLBACK_DRAIN_FAILED")
+    if current_fe.is_symlink() or current_fe.exists():
+        current_fe.unlink()
+    current_fe.symlink_to(baseline_fe_dir)
+    if rt_cfg_baseline.exists():
+        shutil.copyfile(rt_cfg_baseline, rt_cfg_file)
+    _run(
+        [
+            docker_bin,
+            "compose",
+            "-p",
+            "pantheon-staging",
+            "-f",
+            str(compose_file),
+            "--env-file",
+            str(baseline_compose_env),
+            "--profile",
+            "core",
+            "up",
+            "-d",
+            "--no-build",
+            "operator-bff",
+            "runtime-manager",
+            "governance",
+            "deployment",
+            "lifecycle-projector",
+        ],
+        error_code="ROLLBACK_COMPOSE_UP_FAILED",
+    )
+
+    rb_ready = _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") == 200
+    rb_version = _http_json(curl_bin, f"http://127.0.0.1:{bff_port}/bff/version", error_code="ROLLBACK_VERSION_FAILED")
+    served_backend_images: dict[str, str] = {}
+    for compose_svc, manifest_key in owner_services:
+        svc_cid = (
+            _run(compose_cmd("ps", "-q", compose_svc), error_code="ROLLBACK_PS_FAILED")
+            .stdout.strip()
+            .splitlines()[0]
+        )
+        svc_img = _run(
+            [docker_bin, "inspect", "-f", "{{.Config.Image}}", svc_cid],
+            error_code="ROLLBACK_INSPECT_FAILED",
+        ).stdout.strip()
+        served_backend_images[manifest_key] = svc_img
+
+    rb_bff_image = served_backend_images["operator_bff"]
+    rb_singleton_cids = [
+        line.strip()
+        for line in _run(compose_cmd("ps", "-q", "lifecycle-projector"), error_code="ROLLBACK_SINGLETON_PS_FAILED").stdout.splitlines()
+        if line.strip()
+    ]
+    rb_fe_sha = (current_fe / ".artifact_sha256").read_text(encoding="utf-8").strip()
+    rb_dep_json = json.loads((current_fe / "deployment.json").read_text(encoding="utf-8"))
+    rollback_duration = round(time.monotonic() - t0, 3)
+
+    # Restore candidate pair across all 5 owner services after rollback readback
+    _run(compose_cmd("--profile", "singleton", "rm", "-fsv", "lifecycle-projector"), error_code="RESTORE_CANDIDATE_DRAIN_FAILED")
+    if current_fe.is_symlink() or current_fe.exists():
+        current_fe.unlink()
+    current_fe.symlink_to(candidate_fe_dir)
+    if rt_cfg_candidate.exists():
+        shutil.copyfile(rt_cfg_candidate, rt_cfg_file)
+    _run(
+        compose_cmd(
+            "--profile",
+            "core",
+            "up",
+            "-d",
+            "--no-build",
+            "operator-bff",
+            "runtime-manager",
+            "governance",
+            "deployment",
+            "lifecycle-projector",
+        ),
+        error_code="RESTORE_CANDIDATE_UP_FAILED",
+    )
+    if _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") != 200:
+        _fail("RESTORE_CANDIDATE_UNHEALTHY", "Candidate BFF failed /bff/readyz after rollback rehearsal")
+
+    rollback_readback = {
+        "observed_from_live_vm": True,
+        "dry_run": False,
+        "verified_baseline_archive_sha256": baseline_archive_sha,
+        "served_release_id": str(rb_dep_json.get("release_id") or ""),
+        "served_frontend_commit": str(rb_dep_json.get("frontend_commit") or rb_dep_json.get("frontend_commit_sha") or ""),
+        "served_frontend_artifact_sha256": rb_fe_sha,
+        "served_backend_commit": str(rb_version.get("source_commit_sha") or ""),
+        "fe_manifest_paired_backend_commit": str(rb_dep_json.get("backend_commit") or rb_dep_json.get("backend_commit_sha") or ""),
+        "served_operator_bff_image": rb_bff_image,
+        "served_backend_images": served_backend_images,
+        "bff_healthy": rb_ready,
+        "singleton_worker_owner_unique": len(rb_singleton_cids) == 1,
+        "rollback_duration_seconds": rollback_duration,
+    }
+    try:
+        staging_sanitize.verify_exact_pair_rollback(rollback_baseline, rollback_readback)
+    except Exception as exc:
+        _fail("ROLLBACK_VERIFICATION_FAILED", str(exc))
+
+    # 6. Security, tenant isolation, RBAC, and safe-off readbacks against real operator-bff routes
+    # Positive Control 1: Authenticated operator same-tenant read (GET /bff/me -> 200)
+    op_read_code, op_read_body = _http_probe(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/me",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {operator_token}",
+            "X-Tenant-Id": "tenant-alpha",
+        },
+    )
+    op_read_data = op_read_body.get("data") if isinstance(op_read_body.get("data"), dict) else {}
+    op_read_roles = op_read_data.get("roles") if isinstance(op_read_data.get("roles"), list) else []
+    op_read_allowed = (
+        op_read_code == 200
+        and op_read_data.get("tenant_id") == "tenant-alpha"
+        and "operator" in op_read_roles
+    )
+
+    # Positive Control 2: Authenticated viewer same-tenant read (GET /bff/me -> 200)
+    vw_read_code, vw_read_body = _http_probe(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/me",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {viewer_token}",
+            "X-Tenant-Id": "tenant-alpha",
+        },
+    )
+    vw_read_data = vw_read_body.get("data") if isinstance(vw_read_body.get("data"), dict) else {}
+    vw_read_roles = vw_read_data.get("roles") if isinstance(vw_read_data.get("roles"), list) else []
+    vw_read_allowed = (
+        vw_read_code == 200
+        and vw_read_data.get("tenant_id") == "tenant-alpha"
+        and "viewer" in vw_read_roles
+    )
+
+    # Positive Control 3: Authenticated operator same-tenant write (POST /bff/switch-tenant -> 200)
+    op_write_code, op_write_body = _http_probe(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/switch-tenant",
+        method="POST",
+        headers={"Authorization": f"Bearer {operator_token}"},
+        json_body={"tenant_id": "tenant-alpha"},
+    )
+    op_write_data = op_write_body.get("data") if isinstance(op_write_body.get("data"), dict) else {}
+    op_write_allowed = op_write_code == 200 and op_write_data.get("tenant_id") == "tenant-alpha"
+
+    # Negative Control 1: Unauthenticated request (GET /bff/me -> 401 AUTH_REQUIRED)
+    unauth_code, unauth_body = _http_probe(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/me",
+        method="GET",
+    )
+    unauth_err = unauth_body.get("error") if isinstance(unauth_body.get("error"), dict) else {}
+    unauth_err_code = str(unauth_err.get("code") or "")
+
+    # Negative Control 2: Cross-tenant read (GET /bff/me with X-Tenant-Id: tenant-bravo -> 403 FORBIDDEN tenant_scope)
+    cross_read_code, cross_read_body = _http_probe(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/me",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {operator_token}",
+            "X-Tenant-Id": "tenant-bravo",
+        },
+    )
+    cross_read_err = cross_read_body.get("error") if isinstance(cross_read_body.get("error"), dict) else {}
+    cross_read_details = cross_read_err.get("details") if isinstance(cross_read_err.get("details"), dict) else {}
+    cross_read_err_code = str(cross_read_err.get("code") or "")
+    cross_read_precond = str(cross_read_details.get("precondition_failed") or "")
+
+    # Negative Control 3: Cross-tenant write (POST /bff/switch-tenant {"tenant_id": "tenant-bravo"} -> 403 FORBIDDEN tenant_scope)
+    cross_write_code, cross_write_body = _http_probe(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/switch-tenant",
+        method="POST",
+        headers={"Authorization": f"Bearer {operator_token}"},
+        json_body={"tenant_id": "tenant-bravo"},
+    )
+    cross_write_err = cross_write_body.get("error") if isinstance(cross_write_body.get("error"), dict) else {}
+    cross_write_details = cross_write_err.get("details") if isinstance(cross_write_err.get("details"), dict) else {}
+    cross_write_err_code = str(cross_write_err.get("code") or "")
+    cross_write_precond = str(cross_write_details.get("precondition_failed") or "")
+
+    # Negative Control 4: Viewer mutation (POST /bff/command-confirmations -> 403 FORBIDDEN role_check)
+    viewer_mut_code, viewer_mut_body = _http_probe(
+        curl_bin,
+        f"http://127.0.0.1:{bff_port}/bff/command-confirmations",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {viewer_token}",
+            "X-Tenant-Id": "tenant-alpha",
+            "Idempotency-Key": f"stg-rbac-probe-{release_id}",
+        },
+        json_body={
+            "confirm_token": "ct-stg-probe",
+            "command_id": "cmd-stg-probe",
+        },
+    )
+    viewer_mut_err = viewer_mut_body.get("error") if isinstance(viewer_mut_body.get("error"), dict) else {}
+    viewer_mut_details = viewer_mut_err.get("details") if isinstance(viewer_mut_err.get("details"), dict) else {}
+    viewer_mut_err_code = str(viewer_mut_err.get("code") or "")
+    viewer_mut_precond = str(viewer_mut_details.get("precondition_failed") or "")
+
+    unauth_rejected = unauth_code == 401 and unauth_err_code == "AUTH_REQUIRED"
+    cross_read_rejected = (
+        cross_read_code == 403
+        and cross_read_err_code == "FORBIDDEN"
+        and cross_read_precond == "tenant_scope"
+    )
+    cross_write_rejected = (
+        cross_write_code == 403
+        and cross_write_err_code == "FORBIDDEN"
+        and cross_write_precond == "tenant_scope"
+    )
+    viewer_mut_rejected = (
+        viewer_mut_code == 403
+        and viewer_mut_err_code == "FORBIDDEN"
+        and viewer_mut_precond == "role_check"
+    )
+    tenant_isolation_enforced = (
+        op_read_allowed
+        and vw_read_allowed
+        and op_write_allowed
+        and unauth_rejected
+        and cross_read_rejected
+        and cross_write_rejected
+    )
+
+    # Inspect live BFF container env, secrets file, and DB system_settings for safety flags
+    cand_bff_cid = _run(compose_cmd("ps", "-q", "operator-bff"), error_code="CAND_PS_FAILED").stdout.strip().splitlines()[0]
+    cand_env_lines = _run(
+        [docker_bin, "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", cand_bff_cid],
+        error_code="CAND_INSPECT_ENV_FAILED",
+    ).stdout.splitlines()
+    cand_env: dict[str, str] = {}
+    for line in cand_env_lines:
+        if "=" in line:
+            k, v = line.split("=", 1)
+            cand_env[k.strip()] = v.strip()
+
+    db_settings = (live_tables.get("system_settings") or [{}])[0]
+
+    role_map_strict = (
+        cand_env.get("PANTHEON_BFF_AUTH_MODE") == "strict"
+        and cand_env.get("PANTHEON_BFF_AUTH_STUB", "").lower() == "false"
+    )
+    provider_enabled = (
+        _as_bool(cand_env.get("PANTHEON_PROVIDER_ENABLED"), False)
+        or _as_bool(cand_env.get("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED"), False)
+        or _as_bool(cand_env.get("PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED"), False)
+        or cand_env.get("PANTHEON_ASSISTANT_PROVIDER", "disabled").lower() != "disabled"
+        or _as_bool(db_settings.get("provider_enabled"), False)
+    )
+    live_broker_enabled = (
+        _as_bool(cand_env.get("PANTHEON_LIVE_BROKER_ENABLED"), False)
+        or _as_bool(db_settings.get("live_broker_enabled"), False)
+    )
+    real_writes_enabled = (
+        _as_bool(cand_env.get("PANTHEON_REAL_WRITES_ENABLED"), False)
+        or _as_bool(db_settings.get("real_writes_enabled"), False)
+    )
+    dev_stub_writes_enabled = (
+        _as_bool(cand_env.get("PANTHEON_DEV_STUB_WRITES_ENABLED"), False)
+        or _as_bool(cand_env.get("PANTHEON_BFF_AUTH_STUB"), False)
+    )
+
+    forbidden_cred_prefixes = ("BROKER_API_KEY", "BROKER_SECRET", "EXCHANGE_PRIVATE_KEY", "LIVE_BROKER_TOKEN")
+    has_env_broker_creds = any(
+        any(k.upper().startswith(p) for p in forbidden_cred_prefixes)
+        for k in (*cand_env.keys(), *secrets_kv.keys())
+    )
+    has_db_broker_creds = bool(live_tables.get("broker_credentials")) or bool(live_tables.get("exchange_api_keys"))
+    broker_creds_present = (
+        _as_bool(cand_env.get("PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT"), False)
+        or has_env_broker_creds
+        or has_db_broker_creds
+    )
+
+    security_readback = {
+        "observed_from_live_vm": True,
+        "dry_run": False,
+        "same_tenant_operator_read_status": op_read_code,
+        "same_tenant_operator_read_allowed": op_read_allowed,
+        "same_tenant_viewer_read_status": vw_read_code,
+        "same_tenant_viewer_read_allowed": vw_read_allowed,
+        "same_tenant_operator_write_status": op_write_code,
+        "same_tenant_operator_write_allowed": op_write_allowed,
+        "unauthenticated_status": unauth_code,
+        "unauthenticated_error_code": unauth_err_code,
+        "cross_tenant_read_status": cross_read_code,
+        "cross_tenant_read_error_code": cross_read_err_code,
+        "cross_tenant_read_precondition": cross_read_precond,
+        "cross_tenant_write_status": cross_write_code,
+        "cross_tenant_write_error_code": cross_write_err_code,
+        "cross_tenant_write_precondition": cross_write_precond,
+        "viewer_mutation_status": viewer_mut_code,
+        "viewer_mutation_error_code": viewer_mut_err_code,
+        "viewer_mutation_precondition": viewer_mut_precond,
+        "tenant_isolation_enforced": tenant_isolation_enforced,
+        "cross_tenant_read_rejected": cross_read_rejected,
+        "cross_tenant_write_rejected": cross_write_rejected,
+        "unauthenticated_rejected": unauth_rejected,
+        "viewer_mutation_rejected": viewer_mut_rejected,
+        "role_map_strict": role_map_strict,
+        "provider_enabled": provider_enabled,
+        "real_writes_enabled": real_writes_enabled,
+        "dev_stub_writes_enabled": dev_stub_writes_enabled,
+        "live_broker_enabled": live_broker_enabled,
+        "control_vm_broker_credentials_present": broker_creds_present,
+        "vite_bff_mode": str(dep_json.get("vite_bff_mode") or "live"),
+        "vite_bff_fallback": str(dep_json.get("vite_bff_fallback") or "strict"),
+        "execution_mode": str(cand_env.get("PANTHEON_EXECUTION_MODE") or db_settings.get("execution_mode") or "paper"),
+    }
+    try:
+        staging_sanitize.verify_security_and_safety_readbacks(security_readback)
+    except Exception as exc:
+        _fail("SECURITY_READBACK_FAILED", str(exc))
+
+    bundle = {
+        "status": "ok",
+        "observed_from_live_vm": True,
+        "dry_run": False,
+        "release_id": release_id,
+        "observed_deploy": observed_deploy,
+        "sanitized_dataset": sanitized_dataset,
+        "migration_plan": migration_plan,
+        "backup_restore_record": backup_restore_record,
+        "rollback_readback": rollback_readback,
+        "security_readback": security_readback,
+    }
+    print(json.dumps(bundle, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

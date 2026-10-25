@@ -311,9 +311,15 @@ def _validate_rollback_baseline(baseline: Any, current_release_id: str) -> None:
         "backend_commit",
         "backend_operator_bff_image",
     }
-    if set(baseline.keys()) != required_keys:
+    optional_keys = {
+        "backend_images",
+        "config_schema_version",
+    }
+    keys = set(baseline.keys())
+    if not required_keys.issubset(keys) or not keys.issubset(required_keys | optional_keys):
         raise ReleaseManifestError(
-            f"rollback_baseline must have exact keys: {sorted(required_keys)}"
+            f"rollback_baseline must have required keys {sorted(required_keys)} "
+            f"(optional: {sorted(optional_keys)})"
         )
     prev_id = _require_str(baseline, "previous_release_id", RELEASE_ID_RE, "rollback_baseline.previous_release_id")
     if prev_id == current_release_id:
@@ -326,12 +332,30 @@ def _validate_rollback_baseline(baseline: Any, current_release_id: str) -> None:
         "rollback_baseline.frontend_artifact_sha256",
     )
     _require_str(baseline, "backend_commit", COMMIT_SHA_RE, "rollback_baseline.backend_commit")
-    _require_str(
+    bff_img = _require_str(
         baseline,
         "backend_operator_bff_image",
         IMAGE_DIGEST_RE,
         "rollback_baseline.backend_operator_bff_image",
     )
+    if "backend_images" in baseline:
+        b_images = baseline.get("backend_images")
+        if not isinstance(b_images, dict) or "operator_bff" not in b_images:
+            raise ReleaseManifestError("rollback_baseline.backend_images must be an object including 'operator_bff'")
+        for svc_name, img_ref in b_images.items():
+            if not isinstance(svc_name, str) or not svc_name.strip():
+                raise ReleaseManifestError("rollback_baseline.backend_images service key must be non-empty string")
+            if not isinstance(img_ref, str) or not IMAGE_DIGEST_RE.fullmatch(img_ref):
+                raise ReleaseManifestError(
+                    f"rollback_baseline.backend_images[{svc_name!r}] must be an immutable digest reference "
+                    f"('<repo>@sha256:<64-hex>'), got {img_ref!r}"
+                )
+        if b_images["operator_bff"] != bff_img:
+            raise ReleaseManifestError(
+                "rollback_baseline.backend_images['operator_bff'] must match rollback_baseline.backend_operator_bff_image"
+            )
+    if "config_schema_version" in baseline:
+        _require_str(baseline, "config_schema_version", None, "rollback_baseline.config_schema_version")
 
 
 def verify_promotion_eligibility(
@@ -340,6 +364,8 @@ def verify_promotion_eligibility(
     expected_manifest_sha256: str | None = None,
     observed_fe_sha256: str | None = None,
     observed_bff_digest: str | None = None,
+    observed_baseline_fe_sha256: str | None = None,
+    observed_baseline_bff_digest: str | None = None,
     require_rollback_baseline: bool = True,
 ) -> dict[str, Any]:
     """Verify a manifest is eligible to provision/promote to Ephemeral Staging.
@@ -349,7 +375,7 @@ def verify_promotion_eligibility(
     - Outer manifest SHA-256 mismatch (tampering after Dev verification).
     - Release state not `dev_verified` or missing `dev_verification` proof.
     - Missing `rollback_baseline` when required.
-    - Observed FE artifact checksum or BFF container digest mismatch.
+    - Observed FE artifact checksum or BFF container digest mismatch (candidate or baseline).
     """
     validate_manifest(manifest)
 
@@ -417,6 +443,44 @@ def verify_promotion_eligibility(
                 f"observed={observed_bff_digest}"
             )
 
+    if observed_baseline_fe_sha256 is not None:
+        if "rollback_baseline" not in manifest:
+            raise ReleaseManifestError("cannot verify baseline FE sha256 without rollback_baseline in manifest")
+        normalized_base_fe = (
+            observed_baseline_fe_sha256
+            if observed_baseline_fe_sha256.startswith("sha256:")
+            else f"sha256:{observed_baseline_fe_sha256}"
+        )
+        expected_base_fe = manifest["rollback_baseline"]["frontend_artifact_sha256"]
+        if normalized_base_fe != expected_base_fe:
+            raise ReleaseManifestError(
+                f"immutable baseline FE artifact checksum mismatch: manifest={expected_base_fe}, "
+                f"observed={normalized_base_fe}"
+            )
+
+    if observed_baseline_bff_digest is not None:
+        if "rollback_baseline" not in manifest:
+            raise ReleaseManifestError("cannot verify baseline BFF digest without rollback_baseline in manifest")
+        expected_base_bff = manifest["rollback_baseline"]["backend_operator_bff_image"]
+        expected_base_digest = "sha256:" + expected_base_bff.split("@sha256:", 1)[1]
+        observed_base_norm = (
+            "sha256:" + observed_baseline_bff_digest.split("@sha256:", 1)[1]
+            if "@sha256:" in observed_baseline_bff_digest
+            else (
+                observed_baseline_bff_digest
+                if observed_baseline_bff_digest.startswith("sha256:")
+                else f"sha256:{observed_baseline_bff_digest}"
+            )
+        )
+        if observed_base_norm != expected_base_digest or (
+            "@sha256:" in observed_baseline_bff_digest and observed_baseline_bff_digest != expected_base_bff
+        ):
+            raise ReleaseManifestError(
+                f"immutable baseline BFF image digest mismatch: manifest={expected_base_bff}, "
+                f"observed={observed_baseline_bff_digest}"
+            )
+
+    rb = manifest.get("rollback_baseline") or {}
     return {
         "release_id": manifest["release_id"],
         "manifest_sha256": actual_manifest_sha256,
@@ -424,6 +488,9 @@ def verify_promotion_eligibility(
         "frontend_artifact_sha256": manifest["frontend"]["artifact_sha256"],
         "backend_commit": manifest["backend"]["commit"],
         "operator_bff_image": manifest["backend"]["images"]["operator_bff"],
+        "rollback_previous_release_id": rb.get("previous_release_id", ""),
+        "rollback_frontend_artifact_sha256": rb.get("frontend_artifact_sha256", ""),
+        "rollback_operator_bff_image": rb.get("backend_operator_bff_image", ""),
         "release_state": manifest["release_state"],
     }
 
@@ -496,6 +563,8 @@ def _cli() -> int:
     val_p.add_argument("--expected-sha256", default=None)
     val_p.add_argument("--observed-fe-sha256", default=None)
     val_p.add_argument("--observed-bff-digest", default=None)
+    val_p.add_argument("--observed-baseline-fe-sha256", default=None)
+    val_p.add_argument("--observed-baseline-bff-digest", default=None)
     val_p.add_argument("--require-dev-verified", action="store_true")
     val_p.add_argument("--no-require-rollback-baseline", action="store_true")
 
@@ -509,12 +578,21 @@ def _cli() -> int:
             validate_manifest(manifest)
             print(compute_manifest_sha256(manifest))
             return 0
-        if args.require_dev_verified or args.expected_sha256 or args.observed_fe_sha256 or args.observed_bff_digest:
+        if (
+            args.require_dev_verified
+            or args.expected_sha256
+            or args.observed_fe_sha256
+            or args.observed_bff_digest
+            or args.observed_baseline_fe_sha256
+            or args.observed_baseline_bff_digest
+        ):
             summary = verify_promotion_eligibility(
                 manifest,
                 expected_manifest_sha256=args.expected_sha256,
                 observed_fe_sha256=args.observed_fe_sha256,
                 observed_bff_digest=args.observed_bff_digest,
+                observed_baseline_fe_sha256=args.observed_baseline_fe_sha256,
+                observed_baseline_bff_digest=args.observed_baseline_bff_digest,
                 require_rollback_baseline=not args.no_require_rollback_baseline,
             )
         else:
