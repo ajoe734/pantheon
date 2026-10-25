@@ -189,6 +189,8 @@ def teaching_agora_content(
     if not digest or not snapshot_at:
         raise NoGenuineControlEdit("Teaching exposes no real candidate snapshot to attach feedback to", ids)
     operator_id, operator_roles = str(operator.get("sub") or ""), operator.get("roles") or []
+    if not operator_id or "operator" not in operator_roles:
+        raise NoGenuineControlEdit("no issuer-authenticated OPERATOR identity to verify the edit actor", ids)
     if hosted:
         executor_subject = executor_subject.strip()
         if not executor_subject:
@@ -209,9 +211,6 @@ def teaching_agora_content(
             raise NoGenuineControlEdit(
                 "waiting for an authorised OPERATOR control edit on the Teaching session", ids, "awaiting_human_edit"
             )
-        operator_id = str(human_events[0].get("actor"))
-    elif not operator_id or "operator" not in operator_roles:
-        raise NoGenuineControlEdit("no issuer-authenticated OPERATOR identity to verify the edit actor", ids)
     observation_vector = vector
     if hosted:
         pre_metrics = (pre_edit_evaluation or {}).get("metrics") if isinstance(pre_edit_evaluation, Mapping) else None
@@ -244,7 +243,7 @@ def teaching_agora_content(
         for event in events
         if event.get("event_type") == "control_patch"
         and event.get("actor_type") == "user"
-        and event.get("actor") == operator_id
+        and (event.get("actor") == operator_id if not hosted else event in human_events)
         and event.get("event_id")
         and isinstance(event.get("patch_delta"), list)
         and event["patch_delta"]
@@ -287,8 +286,10 @@ def teaching_agora_content(
             {**ids, "candidate_snapshot_at": snapshot_at},
         )
     event_id = str(edit["event_id"])
+    # The saving actor is the control_patch event's actor, which may be the authorised
+    # executor; it is not evidence a physical human chose the parameters.
     return {
-        "actor_id": operator_id,
+        "actor_id": str(edit.get("actor") or operator_id),
         "actor_role": "operator",
         "decision": "edit",
         "target": {

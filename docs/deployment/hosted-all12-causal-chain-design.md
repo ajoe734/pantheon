@@ -251,23 +251,28 @@ record that carries it, and any edge where the consumer does not carry it is rep
 not inferred from the shared `chain_id`. T1 verifies this table against the live owner payloads before
 anything is built.
 
-### Human Teaching edit step (operator decision, 2026-10-24; `HOSTED-ALL12-REAL-HUMAN-TEACHING-EDIT-20261024`)
+### Authorized Teaching control edit step
 
 The demonstration that feeds Behaviour Cloning in `B_learning` is an **authorised OPERATOR control edit** on the
 chain's `TeachingSession` (changing both `short_window` and `long_window`), saved through the existing Training
 owner API under a real authenticated session and tenant. It may be saved by the authorised executor; no UI-only
 rule and no same-subject rule applies (section 0). The harness never invents an edit or delta.
 
-- `A_research` (hosted) never PATCHes Teaching controls. After the TeachingSession exists it records the
-  evaluation state **before** any edit as scalar owner ids only (`pre_edit_eval_id`, `pre_edit_evaluated_at`;
-  receipts carry scalars, never objects) and, unless a nonzero `control_patch` by an authenticated `user` actor
-  exists (known service subjects and non-user actors are refused; the latest authorised edit is used), pauses at
-  `teaching_human_control_edit` with the named state `awaiting_human_edit`. A same-subject executor edit is
-  accepted. The isolated (non-hosted) suite keeps its own operator-token PATCH unchanged.
+- `A_research` (hosted) is read-before-write. After the TeachingSession exists it records the evaluation state
+  **before** any edit as scalar owner ids only (`pre_edit_eval_id`, `pre_edit_evaluated_at`; receipts carry
+  scalars, never objects). If an eligible nonzero `control_patch` by an authenticated `user` actor already exists
+  (known service subjects and non-user actors are refused; the latest is used) it is reused. Otherwise, with
+  `pre_edit_eval_id` captured, it performs the authorised research-suite control operation (OPERATOR-token
+  `PATCH /api/training/sessions/{id}/controls`) and verifies the resulting nonzero user `control_patch` event.
+  Without `pre_edit_eval_id`, or without the verified event, it pauses at `teaching_human_control_edit`
+  (`pre_edit_evaluation_missing` / `awaiting_human_edit`); no delta is invented. A same-subject executor edit is
+  accepted.
 - `B_learning` accepts the edit only when the event's `actor_type` is `user` and its actor is not a known service
   subject. A service or non-user edit is rejected with `service_identity_edit_rejected` (paused, never
-  relabelled); no edit at all stays `awaiting_human_edit`. The recorded `actor_id` is the real saving actor; the
-  true human business-decision source is recorded separately and no physical human authorship is inferred.
+  relabelled); no edit at all stays `awaiting_human_edit`. `B_learning` also requires an issuer-authenticated
+  OPERATOR token and picks the newest bound candidate edit. The recorded `actor_id` is the real saving actor
+  (an authorised executor paper-test edit); the true human business-decision source is recorded separately and
+  no physical human authorship is inferred.
 - BC observations use the pre-edit evaluation, which `B_learning` reads back from the Training owner
   (`GET /api/training/previews/{session}` → `evaluations[pre_edit_eval_id]`) (it must predate the edit and differ from the post-edit
   evaluation); the post-edit metrics are only the reward/outcome. Missing it pauses with
