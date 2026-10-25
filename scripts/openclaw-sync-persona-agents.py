@@ -288,7 +288,7 @@ def reconcile(personas: List[Mapping[str, Any]]) -> Dict[str, Any]:
                         "repair_action": "recreate_openclaw_agent_or_add_set_model_support",
                     })
                     continue
-                proc = subprocess.run(["openclaw", "agents", "set-identity", pid, "--name", str(p.get("name") or pid)],
+                proc = subprocess.run(["openclaw", "agents", "set-identity", "--agent", pid, "--name", str(p.get("name") or pid)],
                                       capture_output=True, text=True, timeout=60)
                 if proc.returncode != 0:
                     report["failed"].append({"persona_id": pid, "error": (proc.stderr or proc.stdout or "agents set-identity failed")[:300]})

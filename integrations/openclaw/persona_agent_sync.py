@@ -430,7 +430,7 @@ def sync_persona_agents(
                     })
                     continue
                 proc = run([
-                    "openclaw", "agents", "set-identity", spec.persona_id,
+                    "openclaw", "agents", "set-identity", "--agent", spec.persona_id,
                     "--name", spec.name,
                 ])
                 if proc.returncode != 0:
