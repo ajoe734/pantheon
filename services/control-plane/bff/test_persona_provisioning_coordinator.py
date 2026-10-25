@@ -283,6 +283,8 @@ class FakeOwnerTransport:
         if owner == "capital" and path == "/api/capital-pools":
             pool = {
                 **body,
+                # The Capital owner stamps the authenticated formal tenant.
+                "tenant_id": body["metadata"]["tenant_id"],
                 "created_at": "2026-07-15T00:00:00Z",
                 "idempotent_replay": False,
             }
@@ -2527,6 +2529,7 @@ def test_chain_paper_capital_adopts_existing_records_without_rewriting_writer() 
     transport.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
         "pool_id": _CHAIN["capital_pool_id"],
         "owner_id": "tenant-a",
+        "tenant_id": "tenant-a",
         "owner_type": "org",
         "status": "active",
         "single_runtime_enforced": True,
@@ -2577,6 +2580,7 @@ def test_chain_paper_capital_rejects_foreign_tenant_or_non_paper_existing_record
     foreign.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
         "pool_id": _CHAIN["capital_pool_id"],
         "owner_id": "tenant-b",
+        "tenant_id": "tenant-b",
         "owner_type": "org",
         "status": "active",
         "single_runtime_enforced": True,
@@ -2590,6 +2594,7 @@ def test_chain_paper_capital_rejects_foreign_tenant_or_non_paper_existing_record
     live.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
         "pool_id": _CHAIN["capital_pool_id"],
         "owner_id": "tenant-a",
+        "tenant_id": "tenant-a",
         "owner_type": "org",
         "status": "active",
         "single_runtime_enforced": True,
@@ -2626,6 +2631,7 @@ def test_chain_paper_capital_retires_binding_before_pool_and_only_chain_records(
     other.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
         "pool_id": _CHAIN["capital_pool_id"],
         "owner_id": "tenant-b",
+        "tenant_id": "tenant-b",
         "status": "active",
         "single_runtime_enforced": True,
         "metadata": {"execution_context": "paper", "persona_id": "persona-chain"},
@@ -2672,6 +2678,7 @@ def _seed_pool(
     transport.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")] = {
         "pool_id": _CHAIN["capital_pool_id"],
         "owner_id": "tenant-a",
+        "tenant_id": "tenant-a",
         "owner_type": "org",
         "status": "active",
         "single_runtime_enforced": True,
@@ -2759,6 +2766,63 @@ def test_chain_paper_capital_retire_keeps_legacy_pool_without_persona_metadata()
     assert retired["capital_pool"]["status"] == "archived"
     pool = transport.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")]
     assert pool["created_by"] == "HOSTED-ALL12-CHAIN-DESIGN-20261023"
+
+
+_OPERATOR_OWNER = {
+    "owner_id": "HOSTED-ALL12-CHAIN-DESIGN-20261023",
+    "owner_type": "operator",
+    "created_by": "HOSTED-ALL12-CHAIN-DESIGN-20261023",
+}
+
+
+def _seed_operator_pool(transport: FakeOwnerTransport, **overrides: Any) -> None:
+    _seed_pool(
+        transport,
+        metadata={"execution_context": "paper", "chain_id": "chain-1"},
+        **{**_OPERATOR_OWNER, "tenant_id": "tenant-a", **overrides},
+    )
+    _seed_pcb(transport, _CHAIN["binding_id"], metadata={"chain_id": "chain-1"})
+
+
+def test_chain_paper_capital_operator_owned_formal_tenant_pool_is_adopted_and_retired() -> None:
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport)
+    _seed_operator_pool(transport)
+
+    _ensure(_chain_coordinator(transport), labels={"chain_id": "chain-1"})
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+
+    _chain_coordinator(transport).retire_chain_paper_capital(**_RETIRE, chain_id="chain-1")
+    patches = [(p, b["status"]) for m, _, p, b in transport.calls if m == "PATCH"]
+    assert patches == [
+        (f"/api/bindings/{_CHAIN['binding_id']}/status", "revoked"),
+        (f"/api/capital-pools/{_CHAIN['capital_pool_id']}/status", "archived"),
+    ]
+    pool = transport.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")]
+    for key, value in _OPERATOR_OWNER.items():
+        assert pool[key] == value
+
+
+@pytest.mark.parametrize("formal", [None, "", "  ", "tenant-b"])
+def test_chain_paper_capital_missing_or_foreign_formal_tenant_refuses_before_writes(
+    formal: str | None,
+) -> None:
+    claims = {"owner_id": "tenant-a", "owner_type": "org"}
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport)
+    _seed_operator_pool(transport, **claims)
+    pool_key = ("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")
+    transport.objects[pool_key]["metadata"]["tenant_id"] = "tenant-a"
+    if formal is None:
+        del transport.objects[pool_key]["tenant_id"]
+    else:
+        transport.objects[pool_key]["tenant_id"] = formal
+
+    with pytest.raises(PersonaProvisioningCoordinationError, match="tenant-owned paper"):
+        _ensure(_chain_coordinator(transport), labels={"chain_id": "chain-1"})
+    with pytest.raises(PersonaProvisioningCoordinationError, match="another tenant"):
+        _chain_coordinator(transport).retire_chain_paper_capital(**_RETIRE, chain_id="chain-1")
+    assert [c for c in transport.calls if c[0] != "GET"] == []
 
 
 def test_chain_paper_capital_retire_refuses_live_runtime_dependants() -> None:
