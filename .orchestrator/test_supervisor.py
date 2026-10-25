@@ -7487,22 +7487,103 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                 reason_kind="worker_process_missing", reason="worker disappeared",
             )
 
+    def _archive_done_task(self) -> None:
+        """Replace the active task with its receipt-proven thin terminal row."""
+        status = supervisor.load_status(self.config)
+        full = copy.deepcopy(status["tasks"][0])
+        full.update(status="done", terminal_outcome="completed")
+        snapshot = {"task_id": full["id"], "task": full}
+        archive_root = self.root / "ai-task-archive"
+        archive_file = archive_root / "tasks" / f"{full['id']}.json"
+        archive_file.parent.mkdir(parents=True, exist_ok=True)
+        archive_file.write_text(json.dumps(snapshot), encoding="utf-8")
+        status["tasks"] = [
+            {
+                "id": full["id"],
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": full["generation"],
+            }
+        ]
+        status["terminal_facts"] = {
+            full["id"]: {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": full["generation"],
+                "recorded_at": "2026-08-28T10:03:00Z",
+            }
+        }
+        status["archive_receipts"] = {
+            full["id"]: {
+                "schema_version": 1,
+                "archive_root": str(archive_root),
+                "snapshot_sha256": supervisor.task_archive._canonical_json_sha256(snapshot),
+                "index_sha256": "0" * 64,
+                "recorded_at": "2026-08-28T10:03:00Z",
+            }
+        }
+        supervisor.write_status(self.config, status, source="test-archive-task-done")
+
     def test_finished_runner_on_done_task_releases_preserved_lease(self):
         worker = self._worker()
         worker["runner_finished_at"] = "2026-08-28T10:03:00Z"
-        with mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=None):
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=False):
             self.assertTrue(self._done_task_with_preserved_worker(worker))
         self.assertEqual(worker["status"], "superseded")
         self.assertTrue(worker["lease_fenced_at"])
 
+    def test_dead_done_worker_releases_without_runner_finished_marker(self):
+        """A status-command closeout can outlive its worker-state marker."""
+        worker = self._worker()
+        state = with_healthy_delivery_health(self.config, runtime_state.default_state())
+        self._store_started(state, worker)
+        self._archive_done_task()
+        runtime_state.save_runtime_state(self.config, state)
+
+        def recover(scratch):
+            current = scratch["workers"][worker["run_id"]]
+            return supervisor.recover_lost_worker_lease(
+                self.config,
+                scratch,
+                current,
+                reason_kind="worker_process_missing",
+                reason="worker disappeared after canonical closeout",
+                status=supervisor.load_status(self.config),
+            )
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "active_worker_governance_lease_decision",
+                return_value={"action": "preserve", "reason_code": "missing_or_ambiguous_task_truth"},
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config, "test-dead-done-worker", recover
+                )
+            )
+
+        final = runtime_state.load_runtime_state(self.config)
+        self.assertIn(
+            final["workers"].get(worker["run_id"], {}).get("status", "reaped"),
+            {"superseded", "reaped"},
+        )
+        self.assertEqual(
+            final["queue"]["events"][worker["queue_event_id"]]["status"],
+            "completed",
+        )
+
     def test_done_task_preserves_lease_while_runner_may_still_run(self):
-        for finished, start_ticks in ((None, None), ("2026-08-28T10:03:00Z", 5678)):
-            with self.subTest(finished=finished, start_ticks=start_ticks):
+        for finished in (None, "2026-08-28T10:03:00Z"):
+            with self.subTest(finished=finished):
                 worker = self._worker()
                 if finished:
                     worker["runner_finished_at"] = finished
-                with mock.patch.object(
-                    supervisor, "worker_pid_start_ticks", return_value=start_ticks
+                with (
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                    mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=5678),
                 ):
                     self.assertFalse(self._done_task_with_preserved_worker(worker))
                 self.assertEqual(worker["status"], "running")

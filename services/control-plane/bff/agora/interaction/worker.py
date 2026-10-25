@@ -404,6 +404,7 @@ class AgoraInteractionWorker:
                     invocation_attempt=attempt,
                     lease_owner=self.worker_id,
                     lease_duration_seconds=self.lease_duration_seconds,
+                    clock=lambda: _utc_now(),
                 )
             elapsed = time.monotonic() - start_time
             final_status = result.get("status", "completed")

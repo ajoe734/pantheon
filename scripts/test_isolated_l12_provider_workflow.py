@@ -423,9 +423,20 @@ def test_hosted_vm_runner_owner_labels_are_real_compose_services() -> None:
     assert "research-orchestrator-svc" in services
 
 
-def _fake_docker(runner, tmp_path, *, head="a" * 40, dirty="", capital="cap-token-123456"):
+def _fake_docker(
+    runner,
+    tmp_path,
+    *,
+    head="a" * 40,
+    dirty="",
+    capital="cap-token-123456",
+    working_dir=None,
+    heads=None,
+    dirties=None,
+):
     calls: list[list[str]] = []
     state = {"pytest_env": None}
+    bff_working_dir = str(tmp_path) if working_dir is None else str(working_dir)
     containers = {"operator-bff": "cid-bff", "training-session-preview-worker": "cid-train"}
     for _names, service, _port in runner.OWNERS:
         containers.setdefault(service, f"cid-{service}")
@@ -437,14 +448,16 @@ def _fake_docker(runner, tmp_path, *, head="a" * 40, dirty="", capital="cap-toke
         calls.append(list(argv))
         out = ""
         if argv[:2] == ["git", "-C"] and "rev-parse" in argv:
-            out = head
+            out = (heads or {}).get(argv[2], head)
         elif argv[:2] == ["git", "-C"] and "status" in argv:
-            out = dirty
+            out = (dirties or {}).get(argv[2], dirty)
         elif argv[:2] == ["docker", "ps"]:
             service = [a for a in argv if a.startswith("label=com.docker.compose.service=")][0].split("=", 2)[2]
             out = containers.get(service, "")
         elif argv[:2] == ["docker", "port"]:
             out = f"0.0.0.0:{port_for[argv[2]]}\n[::]:{port_for[argv[2]]}\n"
+        elif argv[:2] == ["docker", "inspect"] and "working_dir" in argv[-1]:
+            out = bff_working_dir
         elif argv[:2] == ["docker", "inspect"]:
             out = "/srv/dev-root/docker-compose.yml,/srv/dev-root/override.yml"
         elif argv[:2] == ["docker", "exec"] and "printenv" in argv:
@@ -578,8 +591,74 @@ def test_hosted_vm_runner_fails_without_any_compose_base(monkeypatch, tmp_path: 
     assert state["pytest_env"] is None
 
 
+def test_hosted_vm_runner_uses_accepted_bff_compose_working_dir_and_covers_root_served(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = _load_vm_runner()
+    root_sha = "55b67c49ed7b0d036df0befd72a4813404ee76db"
+    bff_sha = "4289bcb686050131522f2318a0ebb05b8d4a8886"
+    dev_root = str(tmp_path / "dev-root")
+    dev_bff = str(tmp_path / "dev-bff")
+    heads = {dev_root: root_sha, dev_bff: bff_sha}
+    bundle = {
+        "executor_token": "executor-token-abcdef",
+        "actor_id": "human-1",
+        "roles": ["operator"],
+        "tenant_id": "tenant-dev",
+    }
+
+    # Reproduce run 40203361162 source split: args.worktree (dev-root) is at 55b67c49...
+    # while operator-bff compose working_dir (dev-bff) is at accepted 4289bcb6...
+    calls, state, fake_run, fake_sub = _fake_docker(
+        runner, tmp_path, working_dir=dev_bff, heads=heads, dirties={dev_root: "", dev_bff: ""}
+    )
+    monkeypatch.setattr(runner, "run", fake_run)
+    monkeypatch.setattr(runner.subprocess, "run", fake_sub)
+    args = type("A", (), dict(
+        scratch=str(tmp_path), worktree=dev_root, expected_sha=bff_sha,
+        chain_id="h12-01a11-20261023-9aeb", phase="A_research", timeout=60,
+    ))()
+    assert runner.execute(args, bundle) == 0
+    assert state["cwd"] == dev_bff
+    assert state["pytest_env"]["PANTHEON_L12_STIMULUS_EXPECTED_SHA"] == bff_sha
+    meta = json.loads((tmp_path / "segment-meta.json").read_text(encoding="utf-8"))
+    assert meta["managed_checkout"] == {
+        "head": bff_sha,
+        "expected": bff_sha,
+        "clean": True,
+        "worktree": dev_bff,
+    }
+    git_worktrees = [c[2] for c in calls if c[:2] == ["git", "-C"]]
+    assert git_worktrees == [dev_bff, dev_bff]
+
+    # Root-served case (both explicit compose working_dir == dev-root and empty label fallback).
+    for label_dir in (dev_root, ""):
+        _calls, state_root, fake_run_root, fake_sub_root = _fake_docker(
+            runner, tmp_path, working_dir=label_dir, heads=heads, dirties={dev_root: "", dev_bff: ""}
+        )
+        monkeypatch.setattr(runner, "run", fake_run_root)
+        monkeypatch.setattr(runner.subprocess, "run", fake_sub_root)
+        args_root = type("A", (), dict(
+            scratch=str(tmp_path), worktree=dev_root, expected_sha=root_sha,
+            chain_id="h12-01a11-20261023-9aeb", phase="A_research", timeout=60,
+        ))()
+        assert runner.execute(args_root, bundle) == 0
+        assert state_root["cwd"] == dev_root
+        meta_root = json.loads((tmp_path / "segment-meta.json").read_text(encoding="utf-8"))
+        assert meta_root["managed_checkout"] == {
+            "head": root_sha,
+            "expected": root_sha,
+            "clean": True,
+            "worktree": dev_root,
+        }
+
+
 def test_hosted_vm_runner_refuses_dirty_or_other_checkout(monkeypatch, tmp_path: Path) -> None:
     runner = _load_vm_runner()
+    root_sha = "55b67c49ed7b0d036df0befd72a4813404ee76db"
+    bff_sha = "4289bcb686050131522f2318a0ebb05b8d4a8886"
+    dev_root = str(tmp_path / "dev-root")
+    dev_bff = str(tmp_path / "dev-bff")
     for head, dirty in (("b" * 40, ""), ("a" * 40, " M file.py")):
         _calls, state, fake_run, fake_sub = _fake_docker(runner, tmp_path, head=head, dirty=dirty)
         monkeypatch.setattr(runner, "run", fake_run)
@@ -590,6 +669,28 @@ def test_hosted_vm_runner_refuses_dirty_or_other_checkout(monkeypatch, tmp_path:
         ))()
         assert runner.execute(args, {"executor_token": "x" * 12, "tenant_id": "t"}) == 2
         assert state["pytest_env"] is None  # the parent is never launched
+
+    # Never relabel 55b67c49... as 4289bcb6..., and refuse dirty resolved BFF checkout even if root is clean.
+    for heads, dirties in (
+        ({dev_root: root_sha, dev_bff: root_sha}, {dev_root: "", dev_bff: ""}),
+        ({dev_root: bff_sha, dev_bff: bff_sha}, {dev_root: "", dev_bff: " M services/bff/app.py"}),
+    ):
+        _calls, state, fake_run, fake_sub = _fake_docker(
+            runner, tmp_path, working_dir=dev_bff, heads=heads, dirties=dirties
+        )
+        monkeypatch.setattr(runner, "run", fake_run)
+        monkeypatch.setattr(runner.subprocess, "run", fake_sub)
+        args = type("A", (), dict(
+            scratch=str(tmp_path), worktree=dev_root, expected_sha=bff_sha,
+            chain_id="h12-01a11-20261023-9aeb", phase="A_research", timeout=60,
+        ))()
+        assert runner.execute(args, {"executor_token": "x" * 12, "tenant_id": "t"}) == 2
+        assert state["pytest_env"] is None
+        meta = json.loads((tmp_path / "segment-meta.json").read_text(encoding="utf-8"))
+        assert meta["error"] == "managed checkout is not the exact accepted clean source"
+        assert meta["managed_checkout"]["expected"] == bff_sha
+        assert meta["managed_checkout"]["head"] == heads[dev_bff]
+        assert meta["managed_checkout"]["worktree"] == dev_bff
 
 
 def test_hosted_validation_guard_script(tmp_path: Path) -> None:

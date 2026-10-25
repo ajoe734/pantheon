@@ -1125,7 +1125,7 @@ def test_synthesis_only_retry_and_restart_adoption(bff_client):
     class Boom:
         def invoke_structured_extraction(self, **kw):
             raise AssertionError("must not call provider")
-    again = _synthesize(Boom(), list(reversed(detail["opinions"])), "t", operator_id="o", trace_id="tr",
+    again = _synthesize(Boom(), list(reversed(detail["opinions"])), operator_id="o", trace_id="tr",
                         interaction_id=interaction_id, attempt=1, lifecycle_store=interaction_lifecycle, lease_owner="w2")
     assert again == detail["synthesis"] and len(factory.synthesis_log) == synth_calls
 
@@ -1142,7 +1142,7 @@ def test_crash_window_is_not_re_executed_and_set_order_is_normalized(bff_client)
             raise KeyboardInterrupt  # worker dies after the call started, before finish_invocation
     kw = dict(operator_id="o", trace_id="tr", interaction_id=interaction_id, lifecycle_store=interaction_lifecycle)
     with pytest.raises(KeyboardInterrupt):
-        _synthesize(Dies(), opinions, "2026-01-01T00:00:00Z", attempt=7, lease_owner="w1", **kw)
+        _synthesize(Dies(), opinions, attempt=7, lease_owner="w1", **kw)
     for row in interaction_lifecycle._invocations[interaction_id].values():
         if row["status"] == "running":
             row["lease_until"] = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
@@ -1150,14 +1150,14 @@ def test_crash_window_is_not_re_executed_and_set_order_is_normalized(bff_client)
         def invoke_structured_extraction(self, **kw):
             seen.append(kw["idempotency_key"])
             return _ok(opinions)
-    result = _synthesize(Counting(), list(reversed(opinions)), "2026-01-01T00:00:00Z", attempt=7, lease_owner="w2", **kw)
+    result = _synthesize(Counting(), list(reversed(opinions)), attempt=7, lease_owner="w2", **kw)
     assert len(seen) == 1 and result["status"] == "degraded" and result["summary"] == "Synthesis unavailable."
     failed = [i for i in interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["provider_invocations"]
               if i["status"] == "failed"]
     assert failed[-1]["error"]["code"] == "SYNTHESIS_OUTCOME_AMBIGUOUS"
     # same saved set in the opposite order is the same synthesis identity
-    reordered = _synthesize(Counting(), opinions, "t", attempt=1, lease_owner="w3", **kw)
-    again = _synthesize(Counting(), list(reversed(opinions)), "t", attempt=1, lease_owner="w3", **kw)
+    reordered = _synthesize(Counting(), opinions, attempt=1, lease_owner="w3", **kw)
+    again = _synthesize(Counting(), list(reversed(opinions)), attempt=1, lease_owner="w3", **kw)
     assert again == reordered and len(seen) == 2
 
 
@@ -1328,3 +1328,78 @@ def test_loop_lease_is_configured_and_covers_heartbeat_gap(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("PANTHEON_LOOP_CONTROL_DSN", raising=False)
     assert worker_module.build_loop_writer() is None
+
+
+def test_operation_timestamps_follow_actual_clock_not_admission_time(bff_client, monkeypatch):
+    import copy
+    from datetime import datetime, timedelta, timezone
+    from services.control_plane.bff.agora.interaction import runner as runner_module, worker as worker_module
+    ticks = iter(datetime(2100, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=n) for n in range(1, 400))
+    clock_fn = lambda: next(ticks).isoformat().replace("+00:00", "Z")
+    monkeypatch.setattr(worker_module, "_utc_now", clock_fn)
+    monkeypatch.setattr(runner_module, "_operation_now", clock_fn)
+    err = OpenClawOpsClientError("temp outage", status_code=503, error_code="SERVICE_UNAVAILABLE")
+    failures = {"macro-quant": err, "execution-guard": err}
+    factory, calls = _make_mock_client(return_values=failures)
+    submit_resp, workshop_id = _submit_interaction(
+        bff_client, personas=("risk-analyst", "macro-quant", "execution-guard"),
+    )
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    before = copy.deepcopy(interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user"))
+    admitted_at = before.get("admitted_at") or before["created_at"]
+    snapshots = (
+        before.get("admitted_at"), before["created_at"], before["human_request"],
+        before["context_snapshot"], before["participants"], before.get("_frozen_personas"),
+    )
+    worker = AgoraInteractionWorker(
+        lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+        read_store=read_store, client_factory=factory,
+    )
+    worker.run_once()
+    first = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert first["status"] == "degraded"
+    inv0 = {i["participant"]["persona_id"]: i for i in first["provider_invocations"]}
+    for inv in inv0.values():
+        assert inv["started_at"] > admitted_at and inv["completed_at"] > inv["started_at"]
+    assert len({inv0[p]["completed_at"] for p in ("risk-analyst", "macro-quant", "execution-guard")}) == 3
+    opn0_risk = first["opinions"][0]
+    assert opn0_risk["created_at"] == inv0["risk-analyst"]["completed_at"]
+    synth0 = first["synthesis"]
+    assert synth0["created_at"] == inv0["synthesis"]["completed_at"] > inv0["execution-guard"]["completed_at"]
+
+    failures.clear()
+    interaction_lifecycle.prepare_retry(
+        interaction_id, "pantheon-dev", "interaction-user",
+        idempotency_key="retry-clock-1", fingerprint="fp-clock-1",
+        actor_id="interaction-user", reason="retry transient failures",
+    )
+    worker.run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["status"] == "completed"
+    assert (
+        detail.get("admitted_at"), detail["created_at"], detail["human_request"],
+        detail["context_snapshot"], detail["participants"], detail.get("_frozen_personas"),
+    ) == snapshots
+    assert all(before["human_request"]["submitted_at"] in c["prompt"] for c in calls)
+    assert [i for i in detail["provider_invocations"] if i["participant"]["persona_id"] == "risk-analyst"] == [inv0["risk-analyst"]]
+    assert next(o for o in detail["opinions"] if o["participant"]["persona_id"] == "risk-analyst") == opn0_risk
+    retried = [
+        i for i in detail["provider_invocations"]
+        if i["participant"]["persona_id"] in {"macro-quant", "execution-guard"} and i["status"] == "succeeded"
+    ]
+    assert len(retried) == 2 and len({i["completed_at"] for i in retried}) == 2
+    opinion_times = {o["provider_invocation_id"]: o["created_at"] for o in detail["opinions"]}
+    for inv in retried:
+        assert inv["started_at"] > synth0["created_at"] > admitted_at and inv["completed_at"] > inv["started_at"]
+        assert opinion_times[inv["invocation_id"]] == inv["completed_at"]
+    synth1 = detail["synthesis"]
+    synth1_inv = [i for i in detail["provider_invocations"] if i["participant"]["persona_id"] == "synthesis"][-1]
+    assert synth1_inv["started_at"] > max(opinion_times.values()) > synth0["created_at"]
+    assert synth1["created_at"] == synth1_inv["completed_at"] > synth1_inv["started_at"]
+    retry_card = next(c for c in workshop_store.list_workshop_cards(workshop_id) if c["card_id"].endswith("_retry_1"))
+    assert retry_card["payload"]["freshness"] > synth1["created_at"]
+    adopted = runner_module._synthesize(
+        factory(), detail["opinions"], operator_id="interaction-user", trace_id=detail["trace_id"],
+        interaction_id=interaction_id, attempt=1, lifecycle_store=interaction_lifecycle, lease_owner="w2",
+    )
+    assert adopted == synth1 and adopted["created_at"] == synth1["created_at"]
