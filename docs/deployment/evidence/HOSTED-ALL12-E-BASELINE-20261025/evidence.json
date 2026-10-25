@@ -1,0 +1,120 @@
+{
+  "task_id": "HOSTED-ALL12-E-BASELINE-20261025",
+  "title": "Repair chain cleanup baseline comparison after proven external replacement",
+  "status": "ready_for_review",
+  "task_class": "functional",
+  "scope": "source_only_existing_hosted_harness_repair",
+  "evidence_classification": "source_and_unit_regression_only_not_hosted_runtime_acceptance",
+  "hosted_e_close_executed_by_worker": false,
+  "all12_passed": false,
+  "recorded_at_utc": "2026-10-25T22:43:00Z",
+  "approved_design": {
+    "pr_number": 6736,
+    "merge_commit": "43473d1512dbb094074ec575ac1128be9b02e634",
+    "document": "docs/deployment/hosted-all12-causal-chain-design.md",
+    "sections": [
+      "section_4_cleanup_semantics_for_shared_hosted_dev",
+      "section_10_T3_parent_phase_resume_and_E_close_contract"
+    ]
+  },
+  "historical_incident_and_readonly_owner_proof": {
+    "chain_id": "h12-01a11-20261023-9aeb",
+    "original_baseline_fleet": {
+      "active_count": 1,
+      "binding_ids": [
+        "rb-3a7f9d9682ff4e359d9b8a8d352a9831"
+      ],
+      "recorded_at": "2026-10-24T09:19:29Z"
+    },
+    "retired_historical_nonchain_binding": {
+      "binding_id": "rb-3a7f9d9682ff4e359d9b8a8d352a9831",
+      "status": "retired",
+      "effective_at": "2026-10-23T23:07:47Z",
+      "retired_at": "2026-10-25T03:32:15Z",
+      "deployment_correlation_id": "dev-paper-release-40035859151-1",
+      "retirement_telemetry_event_id": "45be23b3-d14d-5637-916e-1183a8451383",
+      "retirement_telemetry_acked_at": "2026-10-25T03:32:15Z",
+      "persona_id": "persona-bd0a3cfbf3851700744f",
+      "runtime_id": "rt-8634a4c8",
+      "plan_id": "plan-persona-paper-dc6635f5ed831403403c",
+      "capital_pool_id": "pool-persona-paper-dc6635f5ed831403403c",
+      "persona_capital_binding_id": "pcb-persona-paper-dc6635f5ed831403403c",
+      "artifact_id": "artifact-persona-paper-dc6635f5ed831403403c",
+      "artifact_version": "1.0.0",
+      "registry_version": "1.0.0",
+      "artifact_checksum": "sha256:bdb5ce82dbd0e4db0e5788159ccaeebda6113aefe395744a39bd6dfee42f617a",
+      "approval_decision_id": "apv-persona-paper-artifact-dc6635f5ed831403403c"
+    },
+    "accepted_release_replacement_nonchain_binding": {
+      "binding_id": "rb-b74c4828c4454ffcbca07b82d31f4ee7",
+      "status": "active",
+      "effective_at": "2026-10-25T19:54:46Z",
+      "retired_at": null,
+      "deployment_correlation_id": "dev-paper-release-40226368878-1",
+      "deployment_saga_id": "deployment-saga-plan-persona-paper-9f758ef3a51f3923073f",
+      "deployment_trace_id": "persona-provisioning:9f758ef3a51f3923073f",
+      "persona_id": "persona-3d47ba698b04bd04dd63",
+      "runtime_id": "rt-8e8a30ed",
+      "plan_id": "plan-persona-paper-9f758ef3a51f3923073f",
+      "capital_pool_id": "pool-persona-paper-9f758ef3a51f3923073f",
+      "persona_capital_binding_id": "pcb-persona-paper-9f758ef3a51f3923073f",
+      "artifact_id": "artifact-persona-paper-9f758ef3a51f3923073f",
+      "artifact_version": "1.0.0",
+      "registry_version": "1.0.0",
+      "artifact_state": "approved",
+      "artifact_checksum": "sha256:73ad1b619847a55912cf446303dffb6497657f093cf83b8bcfae5d1bbad6e5ad",
+      "approval_decision_id": "apv-persona-paper-artifact-9f758ef3a51f3923073f"
+    },
+    "chain_runtime_binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+    "readonly_evidence_sources": [
+      "/tmp/pantheon-codex-01a11-review-20261023/E-baseline-original-contract-independent-readonly-review-20261025.json",
+      "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402342-official-readonly/nonchain-current-and-original-baseline-real-owner-identity-bounded-audit.json",
+      "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402342-official-readonly/nonchain-paper-and-original-baseline-actual-owner-GET-only-20261025T215942Z.json",
+      "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402342-official-readonly/original-baseline-real-canonical-retirement-event-bounded-audit.json",
+      "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402263-official-readonly/official-final-dev-paper-release-case-retire.json",
+      "/tmp/pantheon-codex-01a11-review-20261023/h12-01a11-20261023-9aeb-C40221198494/receipt.json"
+    ]
+  },
+  "acceptance_criteria_source_verification": {
+    "criterion_1_original_contract_and_historical_incident_reproduced": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "summary": "Verified immutable design 43473d1512dbb094074ec575ac1128be9b02e634 section 4 and original T3 acceptance: E_close must restore active_count to the pre-C baseline and leave zero active chain bindings while never touching unrelated non-chain records. Reproduced the Oct 24 baseline snapshot (active_count=1, rb-3a7f9d9682ff4e359d9b8a8d352a9831) retired at 2026-10-25T03:32:15Z and replaced by accepted release rb-b74c4828c4454ffcbca07b82d31f4ee7 (dev-paper-release-40226368878-1)."
+    },
+    "criterion_2_e_close_baseline_comparison_and_immutable_history": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "summary": "HostedChainRunner._close captures active non-chain binding IDs, meaningful owner state, and exposed versions (Runtime artifact_version and Registry strategy-artifact version) at E_close start and compares them at E_close end. Original hosted.baseline_fleet remains immutable; proven pre-E external replacements are reported separately in phases.E_close.baseline_external_replacement alongside phases.E_close.nonchain_fleet_preservation. Original active_count restoration and zero active chain bindings remain mandatory."
+    },
+    "criterion_3_unknown_replacement_and_e_window_drift_honestly_paused": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "summary": "Unknown replacement bindings, missing/unretired historical bindings, missing retirement telemetry or release correlation, missing/unapproved Registry artifacts, version/checksum mismatches, foreign-tenant or chain-tagged records, and any non-chain ID or meaningful owner-state/version change during E_close remain paused with baseline_fleet_check='mismatch' (or 'chain_binding_still_active') and blocked_before='E_close:cleanup_incomplete'. Volatile diagnostic timestamps (such as metadata.session_admission.observed_at) are excluded from meaningful owner state comparison."
+    },
+    "criterion_4_focused_regression_coverage_and_h4_semantics_preserved": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "regression_tests": [
+        "tests/unit/l12/test_hosted_stimulus_contract.py::test_e_close_unchanged_baseline_verifies_owner_state_and_ignores_volatile_diagnostics",
+        "tests/unit/l12/test_hosted_stimulus_contract.py::test_e_close_proven_pre_e_external_replacement_keeps_baseline_immutable_and_respects_h4",
+        "tests/unit/l12/test_hosted_stimulus_contract.py::test_e_close_unknown_or_unproven_replacement_stays_paused",
+        "tests/unit/l12/test_hosted_stimulus_contract.py::test_e_close_nonchain_change_during_e_window_pauses",
+        "tests/unit/l12/test_hosted_stimulus_contract.py::test_e_close_remaining_chain_active_binding_pauses"
+      ],
+      "h4_and_all12_semantics_preserved": true,
+      "validation_command": "./.venv-pantheon/bin/python3 -m pytest -q tests/unit/l12/test_hosted_stimulus_contract.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+      "validation_result": "100 passed, 2 skipped"
+    },
+    "criterion_5_source_only_worker_discipline": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "source_only_worker_boundaries": {
+        "ssh_executed": false,
+        "deploy_executed": false,
+        "product_http_called": false,
+        "provider_or_model_called": false,
+        "workflow_chain_dispatched": false
+      }
+    }
+  }
+}
