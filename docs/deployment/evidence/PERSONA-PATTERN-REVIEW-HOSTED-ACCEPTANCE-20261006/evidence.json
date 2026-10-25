@@ -1,0 +1,853 @@
+{
+  "task_id": "PERSONA-PATTERN-REVIEW-HOSTED-ACCEPTANCE-20261006",
+  "scope": "Freeze existing hosted scheduled_pattern evidence for the original six acceptance clauses; no producer source reopening or new runtime stimulus",
+  "compiled_at": "2026-10-25T12:13:01.358472+00:00",
+  "compiled_by": "Codex acting as the existing local Human/Ops evidence executor; no physical-human activity is asserted",
+  "status": "frozen_existing_hosted_evidence_ready_for_original_independent_review",
+  "canonical_review": {
+    "reviewer": "Antigravity2",
+    "status": "pending_frozen_head_review",
+    "prior_reconciliation_is_not_frozen_head_approval": true
+  },
+  "source_delivery": {
+    "task_id": "PERSONA-PATTERN-REVIEW-PRODUCER-20261006",
+    "PR": 6208,
+    "merge_commit": "524fa63e44dd5117c9a20f85e1ca923d400e3b78",
+    "preserved_as_delivered": true,
+    "reopened": false,
+    "producer_is_ancestor_of_historical_b91": true,
+    "historical_b91": "b91ec9ce06e292896e6e6d5f0eabb071d01be18a"
+  },
+  "original_acceptance": [
+    "Preserve the unfulfilled hosted obligation of the merged scheduled_pattern producer (PR 6208 merge 524fa63e4) without reopening or duplicating its delivered source; the archived done status of PERSONA-PATTERN-REVIEW-PRODUCER-20261006 is not hosted acceptance",
+    "Hosted proof starts only after the existing release coordinator deploys an exact pair containing 524fa63e4 and the served persona and persona-evaluator-agent image identities are shown to contain it",
+    "The prerequisites listed in the producer evidence are satisfied and shown: closed paper episodes exist for at least one dev persona and the evaluator holds a Persona service credential and the persona service holds a matching telemetry service credential and tenant and a reachable structured reflection provider",
+    "On hosted dev one natural evaluator interval produces a scheduled_pattern reflection for a persona with at least two uncovered closed episodes and the authenticated BFF trade-patterns route returns it after reload; the next interval makes no provider call for the same episodes",
+    "A persona with fewer than two uncovered closed episodes records a no-op and no reflection; no fixture or seeded reflection stands in for the natural run",
+    "This checkpoint grants no deployment or VM operation by itself and workers receive no SSH or VM credentials"
+  ],
+  "evidence_sections": {
+    "positive_closed_paper_episodes": {
+      "persona_id": "persona-132519698e6199e80326",
+      "rows": [
+        {
+          "trade_episode_id": "3496a5c9-2850-4882-82c9-3fa11fb3a147",
+          "tenant_id": "tenant-dev",
+          "persona_id": "persona-132519698e6199e80326",
+          "status": "closed",
+          "environment": "paper",
+          "closed_at": "2026-10-15T20:55:32Z",
+          "runtime_binding_id": "rb-ece1ab6cfcdc4c518c40874a97a58a66",
+          "artifact_id": "artifact-persona-paper-aa060d53ff712cbba704",
+          "capital_pool_id": "pool-persona-paper-aa060d53ff712cbba704"
+        },
+        {
+          "trade_episode_id": "bc07aa0b-dcce-443f-b78a-3afc87cff105",
+          "tenant_id": "tenant-dev",
+          "persona_id": "persona-132519698e6199e80326",
+          "status": "closed",
+          "environment": "paper",
+          "closed_at": "2026-10-15T20:51:30Z",
+          "runtime_binding_id": "rb-ece1ab6cfcdc4c518c40874a97a58a66",
+          "artifact_id": "artifact-persona-paper-aa060d53ff712cbba704",
+          "capital_pool_id": "pool-persona-paper-aa060d53ff712cbba704"
+        }
+      ],
+      "uncovered_when_valid_positive_created": true,
+      "captured_rows_date": "2026-10-20T00:08:01.848072+00:00",
+      "coverage_is_partial_not_a_new_eligibility_gate": true
+    },
+    "historical_natural_positive_and_immediate_next_interval": {
+      "single_continuous_container": {
+        "container_name": "pantheon-persona-evaluator-agent-1",
+        "container_id": "af4fbb867eac5222cbd59ef485fa9cdc01184b34ffbbde27926962bccbce815a",
+        "image_sha256": "sha256:f325e8d88ec76e48c7fc4939a03a6897314d56268fa026898068ef0aa3633d3e",
+        "started_at": "2026-10-16T13:21:13.10656448Z",
+        "pid": 860227,
+        "interval_seconds": 900
+      },
+      "evaluator_loop_source": {
+        "git_head_on_2026_10_16": "b91ec9ce06e292896e6e6d5f0eabb071d01be18a",
+        "module_path": "services/persona-evaluator-agent/persona_evaluator_agent.py",
+        "module_sha256_at_b91ec9ce": "2714093fdc6ae773cfc94c947347281896e843eef73ad194edb2cc41f881cc84",
+        "main_loop_sequence": [
+          "1. run_once(client) -> sets state['last_run']['at'] = moment.isoformat() at start of run_once and writes /data/persona-evaluator-agent/state.json",
+          "2. pattern_review_once(client) -> iterates personas[:MAX_PATTERN_PERSONAS] calling POST /api/personas/{id}/trade-reflections:pattern-review, then overwrites state['last_pattern_review'] = {**pattern, 'at': datetime.now(timezone.utc).isoformat()} and writes /data/persona-evaluator-agent/state.json",
+          "3. time.sleep(interval) -> sleeps exactly PERSONA_EVALUATOR_INTERVAL_SECONDS (900.0s) after state['last_pattern_review']['at'] before starting the next tick's run_once(client)"
+        ]
+      },
+      "three_ticks": {
+        "tick_0_container_startup": {
+          "evidence_line_in_01a10c97": 123183,
+          "captured_at": "2026-10-16T13:31:40.228137+00:00",
+          "last_run_at": "2026-10-16T13:21:13.874684+00:00",
+          "last_pattern_review_at": "2026-10-16T13:21:17.007872+00:00",
+          "last_pattern_review_summary": {
+            "failed": 58,
+            "no_op": 0,
+            "reviewed": 0,
+            "status": "degraded",
+            "unchanged": 0
+          },
+          "next_wakeup_from_900s_sleep": "2026-10-16T13:36:17.007872+00:00"
+        },
+        "tick_1_first_natural_900s_interval_positive_review": {
+          "natural_wakeup_at": "2026-10-16T13:36:17.008+00:00",
+          "openclaw_gateway_session_id": "8d6135ba-59b9-4516-bc59-cb901e6a4fa7",
+          "openclaw_session_file": "/data/openclaw-state/agents/persona-132519698e6199e80326-r1/sessions/8d6135ba-59b9-4516-bc59-cb901e6a4fa7.jsonl",
+          "openclaw_prompt_sent_at": "2026-10-16T13:36:38.866Z",
+          "openclaw_prompt_text_sha256": "1e3a6b302141b87a4e60e55e5539dd1ff8b8d1d28b3ea75828d0392aa5e899c2",
+          "openclaw_response_received_at": "2026-10-16T13:37:10.718Z",
+          "openclaw_response_provider_model": "claude-cli / claude-opus-4-8",
+          "openclaw_response_text_sha256": "c47941a9ea3addfb4f6eaf31fc57b8ea7eeb0dfd8b3b23f3bb2efee5cf079807",
+          "reflection_id_committed": "72215b2f-7601-44bb-997d-0b4687bdf934",
+          "reflection_generated_at": "2026-10-16T13:37:10.876508+00:00",
+          "persona_updated_at": "2026-10-16T13:37:10.902515Z",
+          "covered_episode_ids": [
+            "3496a5c9-2850-4882-82c9-3fa11fb3a147",
+            "bc07aa0b-dcce-443f-b78a-3afc87cff105"
+          ],
+          "pattern_review_once_completed_at_derived_from_tick2_last_run_minus_900s": "2026-10-16T13:37:13.067702+00:00",
+          "delta_between_72215b2f_commit_and_tick1_completion_seconds": 2.191194,
+          "manual_commands_in_01a10c97_between_13_31_40Z_and_13_37_41Z": 0,
+          "evidence_lines_in_01a10c97": [
+            123317,
+            123334,
+            123392,
+            123425
+          ]
+        },
+        "tick_2_second_natural_900s_interval_dedupe": {
+          "evidence_line_in_01a10c97": 123551,
+          "captured_at": "2026-10-16T13:57:32.019622+00:00",
+          "last_run_at": "2026-10-16T13:52:13.067702+00:00",
+          "last_pattern_review_at": "2026-10-16T13:52:35.972082+00:00",
+          "last_pattern_review_summary": {
+            "failed": 0,
+            "no_op": 58,
+            "reviewed": 0,
+            "status": "ok",
+            "unchanged": 1
+          },
+          "post_dedupe_reflections_get_line": 123553,
+          "post_dedupe_provider_turn_check_line": 123650,
+          "rows_count_unchanged": 2,
+          "provider_session_line_count_unchanged": 4
+        }
+      },
+      "raw_source_session_id": "01a10c97-4d16-7002-ad80-dc4384781fe2",
+      "raw_source_line_integrity": [
+        {
+          "line": 123183,
+          "sha256_matches_reviewer_extraction": true,
+          "contains_existing_reflection_id": false,
+          "contains_original_container_PID": true,
+          "contains_tick2_time": false,
+          "contains_provider_session": false
+        },
+        {
+          "line": 123334,
+          "sha256_matches_reviewer_extraction": true,
+          "contains_existing_reflection_id": true,
+          "contains_original_container_PID": false,
+          "contains_tick2_time": false,
+          "contains_provider_session": false
+        },
+        {
+          "line": 123392,
+          "sha256_matches_reviewer_extraction": true,
+          "contains_existing_reflection_id": false,
+          "contains_original_container_PID": false,
+          "contains_tick2_time": false,
+          "contains_provider_session": true
+        },
+        {
+          "line": 123551,
+          "sha256_matches_reviewer_extraction": true,
+          "contains_existing_reflection_id": false,
+          "contains_original_container_PID": true,
+          "contains_tick2_time": true,
+          "contains_provider_session": false
+        },
+        {
+          "line": 123553,
+          "sha256_matches_reviewer_extraction": true,
+          "contains_existing_reflection_id": true,
+          "contains_original_container_PID": false,
+          "contains_tick2_time": false,
+          "contains_provider_session": false
+        },
+        {
+          "line": 123650,
+          "sha256_matches_reviewer_extraction": true,
+          "contains_existing_reflection_id": true,
+          "contains_original_container_PID": false,
+          "contains_tick2_time": false,
+          "contains_provider_session": false
+        }
+      ],
+      "interpretation": "Natural origin reconstructed from retained same-process state, 900-second loop and actual provider/reflection/next-state timestamps. Transient positive-tick summary was overwritten; exact wake/completion times derived in the cited reconstruction are not relabelled as directly captured timestamps.",
+      "negative_boundary": "The earlier7ce68816 startup row is quarantined for invalid string confidence and is not used as the valid natural positive."
+    },
+    "authenticated_BFF_saved_result_and_reload": {
+      "actual_HTTP_requests_in_saved_capture": 2,
+      "unique_requested_paths": [
+        "/bff/personas/persona-132519698e6199e80326/trade-patterns"
+      ],
+      "two_GETs_are_same_endpoint": true,
+      "unique_reflection_DTOs_in_each_body": 2,
+      "full_response_body_comparisons": [
+        {
+          "index": 0,
+          "before_pointer": "/BFF_saved_patterns/0/body",
+          "after_pointer": "/BFF_saved_patterns/0/body",
+          "path": "/bff/personas/persona-132519698e6199e80326/trade-patterns",
+          "HTTP": 200,
+          "path_and_HTTP_equal": true,
+          "complete_body_changed_paths": [],
+          "complete_body_equal_no_exclusions": true,
+          "canonical_parsed_body_sha256_before": "b95991fb9d2fd6cb3bdb6c9d18df2105719366aa0f799782859e987f74e177dd",
+          "canonical_parsed_body_sha256_after": "b95991fb9d2fd6cb3bdb6c9d18df2105719366aa0f799782859e987f74e177dd",
+          "recorded_raw_sha256_before": "49dfecce361dfe09c35e8cefda6ce3f9578f96e114a63d85ff063c12d1e13675",
+          "recorded_raw_sha256_after": "49dfecce361dfe09c35e8cefda6ce3f9578f96e114a63d85ff063c12d1e13675"
+        },
+        {
+          "index": 1,
+          "before_pointer": "/BFF_saved_patterns/1/body",
+          "after_pointer": "/BFF_saved_patterns/1/body",
+          "path": "/bff/personas/persona-132519698e6199e80326/trade-patterns",
+          "HTTP": 200,
+          "path_and_HTTP_equal": true,
+          "complete_body_changed_paths": [],
+          "complete_body_equal_no_exclusions": true,
+          "canonical_parsed_body_sha256_before": "b95991fb9d2fd6cb3bdb6c9d18df2105719366aa0f799782859e987f74e177dd",
+          "canonical_parsed_body_sha256_after": "b95991fb9d2fd6cb3bdb6c9d18df2105719366aa0f799782859e987f74e177dd",
+          "recorded_raw_sha256_before": "49dfecce361dfe09c35e8cefda6ce3f9578f96e114a63d85ff063c12d1e13675",
+          "recorded_raw_sha256_after": "49dfecce361dfe09c35e8cefda6ce3f9578f96e114a63d85ff063c12d1e13675"
+        }
+      ],
+      "individual_reflection_comparisons": [
+        {
+          "pointer": "/BFF_saved_patterns/0/body/data/0",
+          "reflection_id": "7ce68816-129d-4228-b3c5-878c6749b729",
+          "persona_id": "persona-132519698e6199e80326",
+          "trigger": "scheduled_pattern",
+          "review_state": "quarantined",
+          "generated_at": "2026-10-16T10:13:42.911009+00:00",
+          "covered_episode_ids": [
+            "3496a5c9-2850-4882-82c9-3fa11fb3a147",
+            "bc07aa0b-dcce-443f-b78a-3afc87cff105"
+          ],
+          "same_two_original_closed_episodes": true,
+          "complete_DTO_changed_paths": [],
+          "complete_DTO_equal_without_exclusions": true,
+          "canonical_parsed_DTO_sha256": "c37e35fd778694631320a61adf10f3880ec97adef8cfb87c13b3a79019b6db81",
+          "provider_label_present": true,
+          "model_label_present": true,
+          "producer_attribution_limit": "Stored provider/model/trigger fields are data provenance labels; this capture does not contain the original scheduler invocation/provider trace that produced this saved row."
+        },
+        {
+          "pointer": "/BFF_saved_patterns/0/body/data/1",
+          "reflection_id": "72215b2f-7601-44bb-997d-0b4687bdf934",
+          "persona_id": "persona-132519698e6199e80326",
+          "trigger": "scheduled_pattern",
+          "review_state": "proposed",
+          "generated_at": "2026-10-16T13:37:10.876508+00:00",
+          "covered_episode_ids": [
+            "3496a5c9-2850-4882-82c9-3fa11fb3a147",
+            "bc07aa0b-dcce-443f-b78a-3afc87cff105"
+          ],
+          "same_two_original_closed_episodes": true,
+          "complete_DTO_changed_paths": [],
+          "complete_DTO_equal_without_exclusions": true,
+          "canonical_parsed_DTO_sha256": "077bd7a17a6ec4c99485afc0be2d351ba746da8732763cba899d81aed47bab50",
+          "provider_label_present": true,
+          "model_label_present": true,
+          "producer_attribution_limit": "Stored provider/model/trigger fields are data provenance labels; this capture does not contain the original scheduler invocation/provider trace that produced this saved row."
+        }
+      ],
+      "comparison_method": "Type-sensitive recursive full body/DTO comparison, including all metadata and array order, with no field exclusions. File byte hashes independently recomputed; canonical parsed hashes use sorted-key compact UTF-8 JSON.",
+      "raw_HTTP_hash_limit": "Collector-recorded raw_sha256 values are equal, but standalone raw HTTP bytes are not separately present. Parsed/pretty file hashes are not relabeled as raw response hashes.",
+      "actual_UI_limit": "These are saved authenticated HTTP reads, not a new UI/browser interaction or rendering capture."
+    },
+    "provider_response_and_validity": {
+      "reflection_id": "72215b2f-7601-44bb-997d-0b4687bdf934",
+      "trigger": "scheduled_pattern",
+      "provider": "claude-cli",
+      "model": "claude-opus-4-8",
+      "prompt_text_sha256": "1e3a6b302141b87a4e60e55e5539dd1ff8b8d1d28b3ea75828d0392aa5e899c2",
+      "response_text_sha256": "c47941a9ea3addfb4f6eaf31fc57b8ea7eeb0dfd8b3b23f3bb2efee5cf079807",
+      "schema_validity": {
+        "reflection_id": "72215b2f-7601-44bb-997d-0b4687bdf934",
+        "generated_at": "2026-10-16T13:37:10.876508+00:00",
+        "trigger": "scheduled_pattern",
+        "review_state": "proposed",
+        "covered_episode_ids": [
+          "3496a5c9-2850-4882-82c9-3fa11fb3a147",
+          "bc07aa0b-dcce-443f-b78a-3afc87cff105"
+        ],
+        "schema_errors": [],
+        "top_level_trace_keys": []
+      },
+      "semantic_preservation": "Provider-owned expected_vs_actual, attribution, counterfactuals and lesson semantics match saved row after accounting for known pipeline-generated lesson ID/supporting episode/expiry fields. Do not reject this merely because enriched object bytes differ.",
+      "facts_hash_limit": "Actual retained input hash0f3b9caa differs from canonical b50461fd. Preserve this unexplained provenance limitation; do not turn exact byte/hash equality into an extra standalone acceptance gate or undo established provider semantic preservation."
+    },
+    "existing_fewer_than_two_natural_noop": {
+      "supported": true,
+      "required_new_negative_execution_found": false,
+      "evidence_class": "Actual retained natural daemon intervals plus actual owner GET data and identical deployed/source no-op branch; not merely SDK/unit fixture.",
+      "original_target": "persona-7f4cd7f87611f66cd083",
+      "original_artifact": "artifact-persona-paper-00400aa279b49774cde4",
+      "Root_of_historical_receipts": 39656137935,
+      "natural_successful_intervals": [
+        {
+          "logged_at": "2026-10-21T19:19:21.275385065Z",
+          "pattern_review": {
+            "status": "ok",
+            "reviewed": 0,
+            "unchanged": 1,
+            "no_op": 77,
+            "failed": 0
+          }
+        },
+        {
+          "logged_at": "2026-10-21T19:34:43.829878799Z",
+          "pattern_review": {
+            "status": "ok",
+            "reviewed": 0,
+            "unchanged": 1,
+            "no_op": 77,
+            "failed": 0
+          }
+        },
+        {
+          "logged_at": "2026-10-21T19:50:07.075437223Z",
+          "pattern_review": {
+            "status": "ok",
+            "reviewed": 0,
+            "unchanged": 1,
+            "no_op": 77,
+            "failed": 0
+          }
+        },
+        {
+          "logged_at": "2026-10-21T20:05:30.220640893Z",
+          "pattern_review": {
+            "status": "ok",
+            "reviewed": 0,
+            "unchanged": 1,
+            "no_op": 77,
+            "failed": 0
+          }
+        },
+        {
+          "logged_at": "2026-10-21T20:20:51.051738206Z",
+          "pattern_review": {
+            "status": "ok",
+            "reviewed": 0,
+            "unchanged": 1,
+            "no_op": 77,
+            "failed": 0
+          }
+        },
+        {
+          "logged_at": "2026-10-21T20:36:16.598734055Z",
+          "pattern_review": {
+            "status": "ok",
+            "reviewed": 0,
+            "unchanged": 1,
+            "no_op": 77,
+            "failed": 0
+          }
+        }
+      ],
+      "observed_startup_failure_retained_not_counted_as_success": [
+        {
+          "logged_at": "2026-10-21T19:03:59.835323045Z",
+          "pattern_review": {
+            "status": "degraded",
+            "reviewed": 0,
+            "unchanged": 0,
+            "no_op": 0,
+            "failed": 78
+          }
+        }
+      ],
+      "actual_saved_owner": {
+        "observed_at": "2026-10-21T20:33:47.337798+00:00",
+        "episodes_pointer": "/records/episodes/body/data",
+        "closed_count": 1,
+        "episode_ids": [
+          "d83f0796-a18e-4c3a-a16d-d7965e44e3d0"
+        ],
+        "closed_at": [
+          "2026-10-21T12:46:05Z"
+        ],
+        "source_systems": [
+          "paper_execution_runtime"
+        ],
+        "reflections_pointer": "/records/reflections/body/data",
+        "reflections": [],
+        "patterns_pointer": "/records/patterns/body/data",
+        "patterns": [],
+        "all_three_HTTP": [
+          200,
+          200,
+          200
+        ]
+      },
+      "inference_steps": [
+        "Six retained natural intervals actually report status ok, no_op77, unchanged1, reviewed0 and failed0. The earlier startup failed78 is retained separately.",
+        "Same original current0040 Persona owner read has one closed paper-execution episode, no saved reflection and no Pattern. This is fewer than original minimum2, not a seeded positive.",
+        "Captured physical Persona and evaluator files match exact9aeb bytes. review_pattern lines115-125 returns no_op for fewer than2 pending and no covered IDs, before pipeline.process at134; evaluator lines428-432 counts actual owner returned status, and main518-526 records the natural scheduled interval.",
+        "Therefore originalAC5 has a real bounded natural negative witness. Attribution of that specific Persona to no_op is source+owner+aggregate inference; a standalone per-Persona response body from that interval was not saved. OriginalAC5 does not require new tracing or another negative run."
+      ],
+      "provider_limit": "No provider call is made on the inspected source no-op branch; aggregate reviewed0 is not a measurement of globally zero provider calls across the whole evaluator run. Observer provider_calls0 is not used as runtime proof."
+    },
+    "dated_actual_persona_and_evaluator_images_and_source_samples": {
+      "Oct21_accepted_pair_and_actual_owners": {
+        "accepted_proof": {
+          "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39656137935-accepted-exact-artifact-roundtrip-proof-20261021.json",
+          "sha256": "89b624ce120ddfc75e1467896945ad765f6509f05fbd1b1ad5f51e53c18c82f9"
+        },
+        "accepted_BE": "e231f85638791517447d1125c69cfdc041849a2d",
+        "accepted_FE": "d6b988d0e7e4f79e7c9f8ec68b0abd7e6b32b54c",
+        "controller_run": 39656137935,
+        "terminal_at": "2026-10-21T19:52:21Z",
+        "actual_owners_proof": {
+          "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39656137935-original-Pattern-real-owners-code-and-natural-intervals-readonly-20261021.json",
+          "sha256": "8a1e1c88cfb33c23f3486b32d6acd90cb50432cc8b6607904ebee0995fa4f75d"
+        },
+        "actual_owners_read_at": "2026-10-21T20:51:05.317222+00:00",
+        "actual_owners": {
+          "persona-evaluator-agent": {
+            "container_id": "83e85f05772505a7dc3a4fffbb725567a376d48992a6d8fd9165fc1e1c1d22a9",
+            "image_id": "sha256:8baffede043e99d4c60497d8527c4956698a5f925b9ca7e0f0244f44bef852b1",
+            "started_at": "2026-10-21T19:03:55.734442093Z",
+            "OCI_revision": null,
+            "readback": {
+              "source_sha256": "bd6afb1f6d59f176fd1f61ce103d23755ace63d9edafada20f0ea172f311cc02",
+              "last_pattern_review": {
+                "at": "2026-10-21T20:36:16.597660+00:00",
+                "failed": 0,
+                "no_op": 77,
+                "reviewed": 0,
+                "status": "ok",
+                "unchanged": 1
+              },
+              "state_sha256": "7f9320312c7875b6be0057d8aea5a4b2d6fb2fd45dd276fad2f15288ee27e301",
+              "state_bytes": 18374
+            }
+          },
+          "persona": {
+            "container_id": "8177545ac3cec7e2c2a9f0e6adf8ccdb1b8a87c35203c2da13a664ba5d1793a6",
+            "image_id": "sha256:25c68a5b9297eab3127884ccc06cee7b8ac905da67b0b6ff7aff9b4df03e9a70",
+            "started_at": "2026-10-21T19:03:38.405179796Z",
+            "OCI_revision": null,
+            "readback": {
+              "source_sha256": "c0ae867b073ab6fafe763dfeb12d39d49db779a296cf79194dc956441d24f933"
+            }
+          }
+        },
+        "explicit_limits": "These Oct21 owner IDs and physical hashes are dated later evidence. OCI revisions were null; no whole-image Git equivalence or retroactiveOct16 physical-file observation is claimed."
+      },
+      "Oct20_four_physical_source_samples": {
+        "capture": {
+          "path": "/tmp/pantheon-assist-20261013/natural-Pattern-current-owner-episodes-and-saved-readonly-20261020T000800Z.json",
+          "sha256": "addb7b657a07a9000f4df0ceb04a841f87238f615cd709619c15599a8cc08ad7"
+        },
+        "earlier_capture": {
+          "path": "/tmp/pantheon-assist-20261013/current-existing-Pattern-owner-images-episodes-BFF-readonly-20261019.json",
+          "sha256": "a60a43e190ac98c7a2ac6fdf544e14d8541c7479d80e96264d14c4029e556a0a"
+        },
+        "exact_original_reference_commit": "ce532ae5c180a73d1422902afee76e54d642b8ad",
+        "four_file_checks_against_Oct21_accepted_source": [
+          {
+            "physical_read_at": "2026-10-20T00:08:01.848072+00:00",
+            "owner": "persona",
+            "container_id": "8c383c3b1988713aab873b57009261cc4366dcdf9d127075e72023f04ba84a53",
+            "image_id": "sha256:b4be7978383b75a3b5a5ae423ecd3ff10e8f5273c58565ef13dc6718c040f30b",
+            "file": "services/persona/trade_pattern_review.py",
+            "actual_physical_sha256": "c0ae867b073ab6fafe763dfeb12d39d49db779a296cf79194dc956441d24f933",
+            "exact_git_reference": "e231f85638791517447d1125c69cfdc041849a2d",
+            "Git_file_sha256": "c0ae867b073ab6fafe763dfeb12d39d49db779a296cf79194dc956441d24f933",
+            "same_relevant_file_bytes": true
+          },
+          {
+            "physical_read_at": "2026-10-20T00:08:01.848072+00:00",
+            "owner": "persona",
+            "container_id": "8c383c3b1988713aab873b57009261cc4366dcdf9d127075e72023f04ba84a53",
+            "image_id": "sha256:b4be7978383b75a3b5a5ae423ecd3ff10e8f5273c58565ef13dc6718c040f30b",
+            "file": "services/persona/trade_reflection_pipeline.py",
+            "actual_physical_sha256": "81c23beccce53dc0acfec1c77ca2e3980ede33d375046ce56028539727982b77",
+            "exact_git_reference": "e231f85638791517447d1125c69cfdc041849a2d",
+            "Git_file_sha256": "81c23beccce53dc0acfec1c77ca2e3980ede33d375046ce56028539727982b77",
+            "same_relevant_file_bytes": true
+          },
+          {
+            "physical_read_at": "2026-10-20T00:08:01.848072+00:00",
+            "owner": "persona",
+            "container_id": "8c383c3b1988713aab873b57009261cc4366dcdf9d127075e72023f04ba84a53",
+            "image_id": "sha256:b4be7978383b75a3b5a5ae423ecd3ff10e8f5273c58565ef13dc6718c040f30b",
+            "file": "services/persona/write_owner.py",
+            "actual_physical_sha256": "c045448f12d11a8fe970d756520143f84c8d7e6e145cb8ad225244a8bfb3d6da",
+            "exact_git_reference": "e231f85638791517447d1125c69cfdc041849a2d",
+            "Git_file_sha256": "c045448f12d11a8fe970d756520143f84c8d7e6e145cb8ad225244a8bfb3d6da",
+            "same_relevant_file_bytes": true
+          },
+          {
+            "physical_read_at": "2026-10-20T00:08:01.848072+00:00",
+            "owner": "persona-evaluator-agent",
+            "container_id": "9d54c66ebac601bd39f887524b6e934aa316ae964709d3db35be90587de41c9b",
+            "image_id": "sha256:55cb1024feb01dcdb8409a4e172ee0dc395ebc5f738199070f2b1f4d43573084",
+            "file": "services/persona-evaluator-agent/persona_evaluator_agent.py",
+            "actual_physical_sha256": "bd6afb1f6d59f176fd1f61ce103d23755ace63d9edafada20f0ea172f311cc02",
+            "exact_git_reference": "e231f85638791517447d1125c69cfdc041849a2d",
+            "Git_file_sha256": "bd6afb1f6d59f176fd1f61ce103d23755ace63d9edafada20f0ea172f311cc02",
+            "same_relevant_file_bytes": true
+          }
+        ],
+        "boundary": "The same sampled source file bytes can occur in several repository commits. Equality does not identify an entire image or assignOct21 acceptedpair toOct20."
+      }
+    },
+    "accepted_exact_pair_before_natural_positive": {
+      "primary_rollout": "/home/chloe_ong_dev_cctech_support_com/.codex/sessions/2026/10/05/rollout-2026-10-05T15-03-25-01a10c97-4d16-7002-ad80-dc4384781fe2.jsonl",
+      "primary_records": [
+        {
+          "rollout_line": 119662,
+          "at": "2026-10-16T09:51:31.523Z",
+          "raw_line_sha256": "eeff8a73323250a5f553f9392b09cdd7e1fafcd7a00919704a7805dc39ded7fc",
+          "identity_readbacks": [
+            {
+              "source_commit_sha": "75aa1e47182c845d1bfc0d6665a74e6e834694cd",
+              "image_digest": "sha256:95774f252ac5e8452bdfba321117c574d4defd8d29bd29de7ca63b3bbc3126a3"
+            },
+            {
+              "frontendSha": "1f9c3e01252947bcc73f3c9510c7846bfb8e07d5",
+              "bffCommit": "75aa1e47182c845d1bfc0d6665a74e6e834694cd",
+              "deploymentState": "accepted",
+              "acceptedAt": "2026-10-16T02:36:28Z",
+              "pairId": "725aae445f3f2bdbc1a4b39bdd68a8d0ae20bb9136d315f9d96ea69a4c317fa0",
+              "deployedAt": "20261016T023320Z",
+              "controller": {
+                "repository": "ajoe734/pantheon",
+                "workflow": "nonprod-deploy.yml",
+                "runId": "38835128564"
+              }
+            }
+          ]
+        },
+        {
+          "rollout_line": 121283,
+          "at": "2026-10-16T11:31:18.617Z",
+          "raw_line_sha256": "be35445364ee8ca7371868e57c49432e43dd0f831700f337f33c60a122a41350",
+          "identity_readbacks": [
+            {
+              "frontendSha": "1f9c3e01252947bcc73f3c9510c7846bfb8e07d5",
+              "bffCommit": "75aa1e47182c845d1bfc0d6665a74e6e834694cd",
+              "deploymentState": "accepted",
+              "acceptedAt": "2026-10-16T02:36:28Z",
+              "pairId": "725aae445f3f2bdbc1a4b39bdd68a8d0ae20bb9136d315f9d96ea69a4c317fa0",
+              "deployedAt": "20261016T023320Z",
+              "controller": {
+                "repository": "ajoe734/pantheon",
+                "runId": "38835128564",
+                "workflow": "nonprod-deploy.yml"
+              }
+            }
+          ]
+        },
+        {
+          "rollout_line": 122148,
+          "at": "2026-10-16T12:21:02.832Z",
+          "raw_line_sha256": "82758ecd82b675ce26dfdcd9eeeb0ed0903904cc7595cf5755d63d20250e47b7",
+          "identity_readbacks": [
+            {
+              "frontendSha": "1f9c3e01252947bcc73f3c9510c7846bfb8e07d5",
+              "bffCommit": "75aa1e47182c845d1bfc0d6665a74e6e834694cd",
+              "deploymentState": "accepted",
+              "controller": {
+                "repository": "ajoe734/pantheon",
+                "workflow": "nonprod-deploy.yml",
+                "runId": "38835128564"
+              }
+            }
+          ]
+        }
+      ],
+      "earliest_selected_observation": "2026-10-16T09:51:31.523Z",
+      "accepted_BE": "75aa1e47182c845d1bfc0d6665a74e6e834694cd",
+      "accepted_FE": "1f9c3e01252947bcc73f3c9510c7846bfb8e07d5",
+      "controller_run": 38835128564,
+      "accepted_at": "2026-10-16T02:36:28Z",
+      "BFF_image_at_selected_readback": "sha256:95774f252ac5e8452bdfba321117c574d4defd8d29bd29de7ca63b3bbc3126a3",
+      "actual_BFF_source_equals_manifest_BE_at_0951": true,
+      "later_selected_manifest_agreement_only_not_new_actual_BFF_check": true,
+      "not_claiming_b91_candidate_or_current_release_was_accepted_then": true
+    },
+    "producer_ancestry": [
+      {
+        "ancestor": "524fa63e44dd5117c9a20f85e1ca923d400e3b78",
+        "descendant": "75aa1e47182c845d1bfc0d6665a74e6e834694cd",
+        "git_exit": 0,
+        "is_ancestor": true
+      },
+      {
+        "ancestor": "524fa63e44dd5117c9a20f85e1ca923d400e3b78",
+        "descendant": "b91ec9ce06e292896e6e6d5f0eabb071d01be18a",
+        "git_exit": 0,
+        "is_ancestor": true
+      },
+      {
+        "ancestor": "524fa63e44dd5117c9a20f85e1ca923d400e3b78",
+        "descendant": "e231f85638791517447d1125c69cfdc041849a2d",
+        "git_exit": 0,
+        "is_ancestor": true
+      }
+    ],
+    "actual_evaluator_identity_on_positive_day": {
+      "primary": {
+        "rollout_line": 123183,
+        "at": "2026-10-16T13:31:52.107Z",
+        "raw_line_sha256": "177f1d62e1e92b44ca9186ab1b67143712acfb6311606734dd8ceaf5c56227fc",
+        "identity_readbacks": []
+      },
+      "receipt_path_as_recorded": "/tmp/pantheon-assist-20261013/Pattern1325-original-natural900s-worker-state-readonly-20261016T133140Z.json",
+      "receipt_sha256_as_recorded": "9531fb7810218ebf79256200671fa370dfee0b60408117034f7021eccc0b95cb",
+      "observation": {
+        "at": "2026-10-16T13:31:40.228137+00:00",
+        "container": {
+          "name": "pantheon-persona-evaluator-agent-1",
+          "id": "af4fbb867eac5222cbd59ef485fa9cdc01184b34ffbbde27926962bccbce815a",
+          "image": "sha256:f325e8d88ec76e48c7fc4939a03a6897314d56268fa026898068ef0aa3633d3e",
+          "started_at": "2026-10-16T13:21:13.10656448Z",
+          "pid": 860227
+        },
+        "state_selected": {
+          "mtime_UTC": "2026-10-16T13:21:17.007267+00:00",
+          "interval_seconds": null,
+          "last_run": {
+            "at": "2026-10-16T13:21:13.874684+00:00",
+            "created": 0,
+            "quarter": "2026-Q4",
+            "reason": "ranking read API unavailable: <urlopen error [Errno -3] Temporary failure in name resolution>",
+            "status": "degraded"
+          },
+          "last_pattern_review": {
+            "at": "2026-10-16T13:21:17.007872+00:00",
+            "failed": 58,
+            "no_op": 0,
+            "reviewed": 0,
+            "status": "degraded",
+            "unchanged": 0
+          },
+          "results_count": 0
+        },
+        "observer_provider_calls": 0,
+        "observer_business_POSTs": 0,
+        "observer_force_run": false
+      },
+      "b91_Git_module_sha256": "2714093fdc6ae773cfc94c947347281896e843eef73ad194edb2cc41f881cc84",
+      "b91_hash_kind": "Git source bytes, not a retained physical-file read from thisOct16 container",
+      "same_f325_build_to_b91_source_receipt_located_by_this_read": false
+    },
+    "configured_service_credential_connections": {
+      "collector_source": {
+        "path": "/tmp/pantheon-assist-20261013/read-existing-Pattern-hosted-owner-baseline-20261019.py",
+        "sha256": "43ef73b8865515b31e86c659b99a5fa96baae7b86e3b4a755a93208788149964"
+      },
+      "evaluator_to_Persona": {
+        "raw_proof": {
+          "path": "/tmp/pantheon-assist-20261013/natural-Pattern-current-owner-episodes-and-saved-readonly-20261020T000800Z.json",
+          "sha256": "addb7b657a07a9000f4df0ceb04a841f87238f615cd709619c15599a8cc08ad7"
+        },
+        "pointer": "/owners/persona-evaluator-agent/readonly",
+        "at": "2026-10-20T00:08:01.848072+00:00",
+        "configured_service_credential_GET_succeeded": true,
+        "configured_credential_used": true,
+        "token_present_inferred_from_successful_configured_credential_read": true,
+        "tenant": "tenant-dev",
+        "persona_count": 74,
+        "original_pattern_persona_in_list": true,
+        "HTTP_code_separately_recorded_in_this_raw": false,
+        "code_boundary": "collector lines53–57 read configured Persona service token in container and execute existing owner._http GET with tenant header; no token value is included"
+      },
+      "Persona_to_Telemetry": {
+        "raw_proof": {
+          "path": "/tmp/pantheon-assist-20261013/natural-Pattern-current-owner-episodes-and-saved-readonly-20261020T000800Z.json",
+          "sha256": "addb7b657a07a9000f4df0ceb04a841f87238f615cd709619c15599a8cc08ad7"
+        },
+        "pointer": "/owners/persona/readonly/episodes/persona-132519698e6199e80326",
+        "at": "2026-10-20T00:08:01.848072+00:00",
+        "existing_telemetry_episode_lister_succeeded": true,
+        "configured_service_credential_used": true,
+        "token_present_inferred_from_failclosed_lister_success": true,
+        "tenant": "tenant-dev",
+        "projection_count": 3,
+        "qualifying_closed_count": 2,
+        "HTTP_code_separately_recorded_in_this_raw": false,
+        "code_boundary": "collector lines37–45 invokes production telemetry_episode_lister inside Persona. Exact sourcee231 trade_pattern_review.py70–96 requires configured nonblank credential and sends Authorization+X-Tenant-Id; this capture retains returned rows, not explicit numericHTTP status."
+      },
+      "separate_explicit_successful_GET_status_receipt": {
+        "proof": {
+          "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Pattern-existing-all-tenant-episodes-and-original-natural-prerequisites-readonly-20261021.json",
+          "sha256": "87fceb4283bee36e4dc7e09aa6f1e38171dfa4e0d290d537f9d8126d8bf7fe43"
+        },
+        "at": "2026-10-21T01:44:16.696307+00:00",
+        "tenant": "tenant-dev",
+        "GETs": [
+          {
+            "path": "http://127.0.0.1:8002/api/personas",
+            "status": 200
+          },
+          {
+            "path": "http://telemetry:8083/api/telemetry/trade-episodes",
+            "status": 200
+          }
+        ],
+        "persona_count": 92,
+        "episode_count": 32,
+        "boundary": "This separateOct21 receipt records HTTP200. It is not substituted for the unrecorded numericHTTP statuses inOct20 raw captures."
+      },
+      "actual_structured_provider": {
+        "proof": {
+          "path": "/tmp/pantheon-assist-20261013/current-state-20261019/Pattern-original-1337-actual-provider-response-canonical-four-fields-and-facts-hash-readonly-20261020.json",
+          "sha256": "8065702c7a59f8619f6c047937cd38c821f65b8bfbc0d3fa062cc80e98c9bf82"
+        },
+        "actual_provider": {
+          "provider": "claude-cli",
+          "model": "claude-opus-4-8",
+          "stopReason": "stop"
+        },
+        "original_upstream_session_file_sha256": "11f27a411509bb7107ae0f5998caa7d77881b75783fbe7af2601305ef12f8e20",
+        "canonical_reflection_id": "72215b2f-7601-44bb-997d-0b4687bdf934",
+        "canonical_generated_at": "2026-10-16T13:37:10.876508+00:00",
+        "scheduled_pattern_request_label": true,
+        "raw_content_or_credentials_included": false,
+        "later_semantic_enrichment_boundary_proof": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Pattern-original-1337-known-pipeline-lesson-enrichment-and-input-hash-boundary-readonly-20261020.json",
+        "original_input_hash_difference_retained_not_new_acceptance_gate": true
+      }
+    }
+  },
+  "retained_evidence_files": [
+    {
+      "id": "actual_owners_and_intervals",
+      "file_name": "Root39656137935-original-Pattern-real-owners-code-and-natural-intervals-readonly-20261021.json",
+      "sha256": "8a1e1c88cfb33c23f3486b32d6acd90cb50432cc8b6607904ebee0995fa4f75d",
+      "bytes": 2410
+    },
+    {
+      "id": "concrete_deployment_and_credential_fields",
+      "file_name": "Pattern-original-AC2-AC3-concrete-existing-proof-fields-and-manual-worktree-native-path-readonly-20261025.json",
+      "sha256": "94b79b45b14d91039c60c8bdc644ec86dd8969b373870727dbe40a4fe7e02b8e",
+      "bytes": 19173
+    },
+    {
+      "id": "episodes_and_saved_DTO_audit",
+      "file_name": "Pattern-natural0001-original-two-episodes-and-saved-DTOS-independent-audit-20261020.json",
+      "sha256": "a215e6845472ff57d1137a8165ab1981cab5b4ec5d3011ec3c51f2b918d26287",
+      "bytes": 12545
+    },
+    {
+      "id": "natural_positive_reconstruction",
+      "file_name": "AGY2-Pattern-AC4-Oct16-primary-rollout-01a10c97-provenance-reconciliation-20261025.json",
+      "sha256": "db20be32cb006a14bb1aded4553ac11b2a188b631fdb6a9793493d611116b3f7",
+      "bytes": 12420
+    },
+    {
+      "id": "negative_and_later_dedupe",
+      "file_name": "Pattern-original-AC5-existing-natural-noop-and-AC4-next-interval-evidence-bounded-reconciliation-20261023.json",
+      "sha256": "a6590c8e5380ec678836b7abc1f2502ab7f002ccef5f93f6058adafff2b2cbe6",
+      "bytes": 17811
+    },
+    {
+      "id": "original_scope_audit",
+      "file_name": "current-Pattern-original-six-AC-existing-history-audit-20261025.json",
+      "sha256": "0fd31c1e94d283f6eb200e02ab8d9f9918cd0e3da8a7cb63695e2b593e3a7ac2",
+      "bytes": 18179
+    },
+    {
+      "id": "primary_line_integrity",
+      "file_name": "Pattern-existing-reviewer-natural-positive-primary-line-integrity-readonly-20261025.json",
+      "sha256": "bab0f0cc9399ce211cdc5b3e8dfdf2106541d4d7671ed9e2bd2cf06fa378ed60",
+      "bytes": 2415
+    },
+    {
+      "id": "raw_two_closed_paper_episodes",
+      "file_name": "natural-Pattern-current-owner-episodes-and-saved-readonly-20261020T000800Z.json",
+      "sha256": "addb7b657a07a9000f4df0ceb04a841f87238f615cd709619c15599a8cc08ad7",
+      "bytes": 56644
+    }
+  ],
+  "boundaries": [
+    "No fresh episode requirement or post-release reexecution is added. Existing valid historical proof may fulfill the original contract.",
+    "Same-episode no-provider dedupe does not mean zero provider calls globally.",
+    "The fewer-than-two witness combines actual saved one-episode owner data, existing natural aggregate counters and inspected no-op source; no new per-Persona tracing requirement is introduced.",
+    "Raw HTTP byte hashes are distinguished from canonical parsed DTO hashes.",
+    "Prompt/canonical facts hashes differ as retained in the original audit; semantic preservation and known pipeline enrichment are recorded without inventing an explanation for that hash difference.",
+    "This checkpoint grants no VM/deployment/credential authority and is not all12, full49 or designatedTOTAL completion.",
+    "No directOct16 physicalPersona/evaluatorfileSHA pair was located in these bounded receipts. Do not manufacture one from b91Git modulehash. This does not add a per-file historicalSHA acceptance requirement.",
+    "A same-f325-image build receipt binding theOct16 image to b91 source was not located by this read. Actualimage/container/time and prepositiveacceptedpair/producerancestry are independently retained.",
+    "LaterOct20/21 physical-file captures provide concrete dated relevant-source containment. Formalassignedreviewer decides originalAC2 from these actual facts; do not fill verified merely from earlieraudit label."
+  ],
+  "actions_for_this_freeze": {
+    "new_product_API_calls": 0,
+    "new_provider_calls": 0,
+    "manual_ticks": 0,
+    "new_episodes_or_reflections": 0,
+    "producer_or_product_source_changes": 0,
+    "canonical_task_or_queue_JSON_hand_edits": 0,
+    "worker_credentials_provided": false
+  },
+  "acceptance_evidence_map": [
+    {
+      "AC": 1,
+      "sections": [
+        "source_delivery"
+      ],
+      "review_status": "submitted_to_original_assigned_reviewer"
+    },
+    {
+      "AC": 2,
+      "sections": [
+        "accepted_exact_pair_before_natural_positive",
+        "producer_ancestry",
+        "actual_evaluator_identity_on_positive_day",
+        "dated_actual_persona_and_evaluator_images_and_source_samples"
+      ],
+      "review_status": "submitted_with_explicit_dated_image_source_limits_to_original_assigned_reviewer"
+    },
+    {
+      "AC": 3,
+      "sections": [
+        "positive_closed_paper_episodes",
+        "configured_service_credential_connections",
+        "provider_response_and_validity"
+      ],
+      "review_status": "submitted_to_original_assigned_reviewer"
+    },
+    {
+      "AC": 4,
+      "sections": [
+        "historical_natural_positive_and_immediate_next_interval",
+        "authenticated_BFF_saved_result_and_reload",
+        "provider_response_and_validity"
+      ],
+      "review_status": "submitted_with_direct_vs_reconstructed_timing_boundary_to_original_assigned_reviewer"
+    },
+    {
+      "AC": 5,
+      "sections": [
+        "existing_fewer_than_two_natural_noop"
+      ],
+      "review_status": "submitted_with_source_owner_aggregate_inference_boundary_to_original_assigned_reviewer"
+    },
+    {
+      "AC": 6,
+      "sections": [
+        "actions_for_this_freeze"
+      ],
+      "review_status": "preserved_no_new_VM_or_credential_authority"
+    }
+  ]
+}
