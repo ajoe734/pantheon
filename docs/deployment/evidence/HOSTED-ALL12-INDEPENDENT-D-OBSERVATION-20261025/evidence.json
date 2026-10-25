@@ -1,0 +1,169 @@
+{
+  "task_id": "HOSTED-ALL12-INDEPENDENT-D-OBSERVATION-20261025",
+  "title": "Independent D observation from exact controller harness",
+  "status": "ready_for_review",
+  "task_class": "functional",
+  "scope": "source_only_existing_hosted_harness_repair",
+  "evidence_classification": "source_and_unit_regression_only_not_hosted_runtime_acceptance",
+  "hosted_d_observe_executed_by_worker": false,
+  "all12_passed": false,
+  "recorded_at_utc": "2026-10-25T19:52:00Z",
+  "approved_design": {
+    "pr_number": 6736,
+    "merge_commit": "43473d1512dbb094074ec575ac1128be9b02e634",
+    "document": "docs/deployment/hosted-all12-causal-chain-design.md",
+    "sections": [
+      "section_5A_phase_D_observation_and_H4",
+      "section_10_T7_runtime_suites_C_promote_and_D_observe"
+    ]
+  },
+  "acceptance_criteria_source_verification": {
+    "criterion_1_independent_loop12_observation": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "loop_id": "bff_health_monitoring",
+      "case_id": "loop_12_bff_typed_health",
+      "owner_service": "operator-bff",
+      "endpoint": "GET /bff/admin/health/components",
+      "typed_targets": [
+        "runtime-manager",
+        "paper-fleet-reconciler"
+      ],
+      "trigger_event": "bff-typed-health-h12-01a11-20261023-9aeb",
+      "terminal_output_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+      "l11_to_l12_edge_exists": false,
+      "summary": "Loop 12 BFF typed-health probe executes in _hosted_observe after same-chain paper fill verification and before Loop 10/11 natural owner readbacks, preserving its own trigger/output/consumer evidence even when same-chain Incident or Evolution is absent."
+    },
+    "criterion_2_genuine_reconciliation_and_evolution_partial_negative_evidence": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "chain_id": "h12-01a11-20261023-9aeb",
+      "reference_readonly_d_observe_run_id": 40221474310,
+      "reference_readonly_d_observe_observed_at_utc": "2026-10-25T18:33:18.868346+00:00",
+      "same_chain_fill": {
+        "event_id": "a4263fe2-9448-42bf-9cf2-30f28fd89fc9",
+        "runtime_id": "rt-eb295fe2",
+        "binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+        "artifact_id": "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact",
+        "artifact_bytes_sha256": "fa3a3cdf56c61c8ada5cf29863a89204e13aafa89845b98fe60bff419c6aed75",
+        "source_snapshot_id": "0ff217ca-c40e-500d-8784-d38c1f7300d1"
+      },
+      "reconciliation_evaluation_canonical_dto": {
+        "read_route": "GET /api/reconciliation-drift/evaluations/{evaluation_id}",
+        "evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-10-25T-rb-eea1cd16cf3745479f42e-a883ec3057a5534b",
+        "evaluated_at": "2026-10-25T09:52:06Z",
+        "tick_id": "scheduled:tenant-dev:2026-10-25T09:50:00Z:PT300S",
+        "runtime_id": "rt-eb295fe2",
+        "binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+        "status": "ok",
+        "summary": {
+          "status": "ok",
+          "reconciliation_check_count": 6,
+          "observed_metric_count": 5,
+          "telemetry_event_count": 2,
+          "baseline_metric_count": 0,
+          "drift_check_count": 0
+        },
+        "snapshot_event_id": "0ff217ca-c40e-500d-8784-d38c1f7300d1",
+        "lifecycle_append": {
+          "status": "accepted",
+          "outcome": "accepted",
+          "event_id": "8042dfe1-9cb1-5486-b6e4-aff7866cfaf6",
+          "upstream_event_id": "0ff217ca-c40e-500d-8784-d38c1f7300d1",
+          "event_metadata_source_fill_event_id": "a4263fe2-9448-42bf-9cf2-30f28fd89fc9"
+        },
+        "same_chain_fill_cited": true,
+        "drift_evaluated": false,
+        "measured_zero_drift": false,
+        "drift_outcome": "unmeasured_no_baseline",
+        "missing_summary_counts_policy": "refuse_non_canonical_without_coercing_to_zero",
+        "incident_ids": []
+      },
+      "evolution_input_coverage_canonical_dto": {
+        "read_route": "GET /api/evolution/input-coverage",
+        "artifact_id": "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact",
+        "artifact_version": "1.0.0",
+        "binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+        "runtime_id": "rt-eb295fe2",
+        "deployment_stage": "paper",
+        "complete": false,
+        "evaluable": false,
+        "metrics": [
+          {
+            "metric_name": "rolling_drawdown_multiple",
+            "summary_field": "drawdown",
+            "has_numeric_value": false,
+            "metric_provenance_ok": false,
+            "metric_fresh": false,
+            "requires_baseline": true,
+            "baseline_key": "expected_drawdown",
+            "approved_baseline_value": null,
+            "has_approved_baseline": false,
+            "evaluable": false
+          }
+        ],
+        "gaps": [
+          "rolling_drawdown_multiple: telemetry field 'drawdown' missing or non-numeric",
+          "rolling_drawdown_multiple: telemetry field 'drawdown' has missing/mismatched provenance",
+          "rolling_drawdown_multiple: telemetry field 'drawdown' has no fresh as-of time",
+          "rolling_drawdown_multiple: no approved 'expected_drawdown' baseline for artifact_id='hosted-all12-h12-01a11-20261023-9aeb-execution-artifact'"
+        ]
+      },
+      "baseline_governance_boundary": "Same-model or equivalent baseline is not proven by checksum comparison across namespaces or negative Sharpe; old Teaching baseline (short_window=7/long_window=21) is not inherited for the fa3 execution bundle target (close_to_close_momentum/lookback=2/threshold=0.01/quantity=1 SHARES/2330) without explicit proof.",
+      "d_observe_phase_status": "paused",
+      "blocked_before": "drift_incident_observation",
+      "all12_passed": false,
+      "preserved_resource_id_count": 39,
+      "h4_approval_semantics_preserved": true
+    },
+    "criterion_3_staged_exact_harness_without_product_root_deploy": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "workflow_file": ".github/workflows/nonprod-deploy.yml",
+      "staged_harness_files": [
+        "tests/integration/l12/l12_owner_auth.py",
+        "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py"
+      ],
+      "scratch_stage_path": "${scratch}/harness",
+      "runtime_cwd_preserved": true,
+      "reference_accepted_runtime_identity": {
+        "root_run_id": 40214680779,
+        "root_created_at_utc": "2026-10-25T17:04:18Z",
+        "accepted_at_utc": "2026-10-25T18:19:46Z",
+        "root_completed_at_utc": "2026-10-25T18:20:29Z",
+        "backend_sha": "a1b80a026650148bfa85044514e464e6c8303792",
+        "frontend_sha": "ad31927ded9a9ebd99eb436eb7320bc7a97e4065",
+        "candidate_id": "41ca36b40391944f7df97b2b451332320a827aeadd69ea3b1eab91a63fd288f5",
+        "pair_id": "337d1cf400f82f9ecbc0a1c97d656114929f6ef2df77b8e12db94b9814b8c0ff",
+        "integration_gate_run_id": 40217192275,
+        "frontend_deploy_run_id": 40218662627,
+        "frontend_release_target": "/var/www/pantheon-dev-fe-releases/20261025T181634Z-ad31927ded9a-gate-40217192275-40218662627-1-4010372-operator-live",
+        "bff_working_dir": "/home/chloe_ong_dev_cctech_support_com/pantheon-dev-bff"
+      },
+      "separate_harness_source_recorded_in": [
+        "segment-meta.json#harness_source",
+        "segment-result.json#harness_source_sha",
+        "segment-result.json#accepted_runtime_sha"
+      ],
+      "product_root_deploy_required_for_tests_only_change": false
+    },
+    "criterion_4_focused_regression_coverage_and_worker_discipline": {
+      "source_contract_verified": true,
+      "hosted_runtime_acceptance_claimed": false,
+      "regression_tests": [
+        "tests/unit/l12/test_hosted_domain_contract.py::test_hosted_observe_pauses_without_claiming_loops_that_were_not_observed",
+        "tests/unit/l12/test_hosted_domain_contract.py::test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_claim_all12",
+        "scripts/test_isolated_l12_provider_workflow.py::test_hosted_vm_runner_executes_staged_harness_while_preserving_accepted_runtime_checkout",
+        "scripts/test_isolated_l12_provider_workflow.py::test_hosted_vm_runner_refuses_dirty_or_other_checkout"
+      ],
+      "unit_test_fixtures_note": "Unit test fixtures in test_hosted_domain_contract.py use the saved canonical D402214 DTO shapes (summary counts, lifecycle_append.event.metadata.source_fill_event_id, artifact_id, metrics[].evaluable, complete, and actual rolling_drawdown_multiple gaps) plus synthetic unit fixture identifiers (such as harness_sha='f3c91a4208e45b19d26c88a71e0943b67c52d110' in test_isolated_l12_provider_workflow.py and synthetic incident_id='inc-d402214' for the post-incident unevaluable/eligible Evolution branch). Passing unit tests verify source/DTO contract logic only and do not constitute hosted runtime acceptance.",
+      "source_only_worker_boundaries": {
+        "ssh_executed": false,
+        "deploy_executed": false,
+        "product_http_called": false,
+        "workflow_chain_dispatched": false
+      }
+    }
+  }
+}

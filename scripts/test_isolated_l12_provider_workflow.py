@@ -735,3 +735,76 @@ def test_hosted_validation_guard_script(tmp_path: Path) -> None:
     assert run(PRIOR_RECEIPT_RUN_ID="abc").returncode != 0
     for bad in ('{"decisions": {"api_token": "x"}}', '{"decisions": {"approved": true}}', '{"other": 1}'):
         assert run(CHAIN_INPUT_JSON=bad).returncode != 0, bad
+
+
+def test_hosted_vm_runner_executes_staged_harness_while_preserving_accepted_runtime_checkout(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = _load_vm_runner()
+    accepted_sha = "a1b80a026650148bfa85044514e464e6c8303792"
+    harness_sha = "f3c91a4208e45b19d26c88a71e0943b67c52d110"
+    dev_bff = str(tmp_path / "dev-bff")
+    staged_dir = tmp_path / "harness" / "tests" / "integration" / "l12"
+    staged_dir.mkdir(parents=True)
+    for rel in runner.HARNESS_FILES:
+        target = tmp_path / "harness" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# staged harness\n", encoding="utf-8")
+
+    bundle = {
+        "executor_token": "executor-token-abcdef",
+        "actor_id": "human-1",
+        "roles": ["operator"],
+        "tenant_id": "tenant-dev",
+    }
+    _calls, state, fake_run, fake_sub = _fake_docker(
+        runner, tmp_path, working_dir=dev_bff, heads={dev_bff: accepted_sha}, dirties={dev_bff: ""}
+    )
+    monkeypatch.setattr(runner, "run", fake_run)
+    monkeypatch.setattr(runner.subprocess, "run", fake_sub)
+    args = type(
+        "A",
+        (),
+        dict(
+            scratch=str(tmp_path),
+            worktree=dev_bff,
+            expected_sha=accepted_sha,
+            harness_sha=harness_sha,
+            chain_id="h12-01a11-20261023-9aeb",
+            phase="D_observe",
+            timeout=60,
+        ),
+    )()
+    assert runner.execute(args, bundle) == 0
+    expected_node = f"{tmp_path / 'harness' / 'tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py'}::test_hosted_chain_phase"
+    assert state["argv"][-1] == expected_node
+    assert state["cwd"] == dev_bff
+    env = state["pytest_env"]
+    assert env["PANTHEON_L12_STIMULUS_EXPECTED_SHA"] == accepted_sha
+    assert env["PANTHEON_L12_HARNESS_ROOT"] == str(tmp_path / "harness")
+    assert env["PANTHEON_L12_HARNESS_SOURCE_SHA"] == harness_sha
+    assert env["PYTHONPATH"].split(os.pathsep)[:2] == [str(tmp_path / "harness"), dev_bff]
+    meta = json.loads((tmp_path / "segment-meta.json").read_text(encoding="utf-8"))
+    assert meta["managed_checkout"] == {
+        "head": accepted_sha,
+        "expected": accepted_sha,
+        "clean": True,
+        "worktree": dev_bff,
+    }
+    assert meta["harness_source"] == {
+        "sha": harness_sha,
+        "staged": True,
+        "files": list(runner.HARNESS_FILES),
+        "parent_node": expected_node,
+        "runtime_expected_sha": accepted_sha,
+    }
+
+    # Even when staged harness files are present in scratch, wrong or dirty runtime checkouts are refused.
+    for bad_head, bad_dirty in (("b" * 40, ""), (accepted_sha, " M services/bff/app.py")):
+        _c, bad_state, bad_run, bad_sub = _fake_docker(
+            runner, tmp_path, working_dir=dev_bff, heads={dev_bff: bad_head}, dirties={dev_bff: bad_dirty}
+        )
+        monkeypatch.setattr(runner, "run", bad_run)
+        monkeypatch.setattr(runner.subprocess, "run", bad_sub)
+        assert runner.execute(args, bundle) == 2
+        assert bad_state["pytest_env"] is None

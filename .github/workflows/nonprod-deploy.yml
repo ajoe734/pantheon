@@ -3571,6 +3571,7 @@ jobs:
           printf -v scratch_q '%q' "${scratch}"
           printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
           printf -v sha_q '%q' "${ACCEPTED_BACKEND_SHA}"
+          printf -v harness_sha_q '%q' "${GITHUB_SHA}"
           printf -v chain_q '%q' "${CHAIN_ID}"
           printf -v phase_q '%q' "${CHAIN_PHASE}"
           pins_q="$(while read -r pin; do printf '%q ' "${pin}"; done < "${WHEELS_DIR}/pins.txt")"
@@ -3599,6 +3600,11 @@ jobs:
           import time
 
           PARENT_NODE = "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py::test_hosted_chain_phase"
+          HARNESS_FILES = (
+              "tests/integration/l12/l12_owner_auth.py",
+              "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+              "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+          )
           PROJECT = "pantheon"
           BFF_SERVICE = "operator-bff"
           # (PANTHEON_L12_<name>_URL names, compose service, container port); the host
@@ -3765,6 +3771,20 @@ jobs:
               if head != args.expected_sha or dirty:
                   meta["error"] = "managed checkout is not the exact accepted clean source"
                   return finish(2)
+              harness_root = os.path.join(scratch, "harness")
+              staged_parent = os.path.join(harness_root, "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py")
+              use_staged_harness = os.path.isfile(staged_parent)
+              target_node = f"{staged_parent}::test_hosted_chain_phase" if use_staged_harness else PARENT_NODE
+              harness_sha = (getattr(args, "harness_sha", "") or "").strip() or (
+                  args.expected_sha if not use_staged_harness else ""
+              )
+              meta["harness_source"] = {
+                  "sha": harness_sha,
+                  "staged": use_staged_harness,
+                  "files": list(HARNESS_FILES) if use_staged_harness else [],
+                  "parent_node": target_node,
+                  "runtime_expected_sha": args.expected_sha,
+              }
               urls, unresolved = {}, []
               for names, service, port in OWNERS:
                   cid = container(service)
@@ -3842,11 +3862,20 @@ jobs:
               )
               if os.path.exists(prior):
                   environment["PANTHEON_L12_HOSTED_CHAIN_PRIOR_RECEIPT"] = prior
+              if use_staged_harness:
+                  existing_py = environment.get("PYTHONPATH", "").strip()
+                  environment["PYTHONPATH"] = (
+                      f"{harness_root}{os.pathsep}{worktree}"
+                      + (f"{os.pathsep}{existing_py}" if existing_py else "")
+                  )
+                  environment["PANTHEON_L12_HARNESS_ROOT"] = harness_root
+                  if harness_sha:
+                      environment["PANTHEON_L12_HARNESS_SOURCE_SHA"] = harness_sha
               meta["stage"] = "pytest"
               started = time.time()
               try:
                   completed = subprocess.run(
-                      [os.path.join(scratch, "venv", "bin", "python"), "-m", "pytest", "-q", "-p", "no:cacheprovider", PARENT_NODE],
+                      [os.path.join(scratch, "venv", "bin", "python"), "-m", "pytest", "-q", "-p", "no:cacheprovider", target_node],
                       cwd=worktree, env=environment, capture_output=True, text=True, timeout=args.timeout,
                   )
                   code, output = completed.returncode, completed.stdout + completed.stderr
@@ -3868,6 +3897,7 @@ jobs:
               runner.add_argument("--scratch", required=True)
               runner.add_argument("--worktree", required=True)
               runner.add_argument("--expected-sha", required=True)
+              runner.add_argument("--harness-sha", default="")
               runner.add_argument("--chain-id", required=True)
               runner.add_argument("--phase", required=True)
               runner.add_argument("--timeout", type=int, default=8100)
@@ -3881,6 +3911,13 @@ jobs:
           if __name__ == "__main__":
               sys.exit(main())
           PY
+          mkdir -p "${WHEELS_DIR}/harness/tests/integration/l12"
+          for harness_rel in \
+            tests/integration/l12/l12_owner_auth.py \
+            tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py \
+            tests/integration/l12/test_current_runtime_loops_deployed_e2e.py; do
+            cp "${GITHUB_WORKSPACE}/${harness_rel}" "${WHEELS_DIR}/harness/${harness_rel}"
+          done
           cp "${EVIDENCE_DIR}/chain-input.json" "${WHEELS_DIR}/chain-input.json"
           [[ -f "${EVIDENCE_DIR}/prior-receipt.json" ]] && cp "${EVIDENCE_DIR}/prior-receipt.json" "${WHEELS_DIR}/prior-receipt.json"
           rc=0
@@ -3938,7 +3975,7 @@ jobs:
           # 3. One phase process; the parent writes the receipt even when paused.
           rc=0
           timeout --kill-after=30 8400 "${transport}" exec \
-            "set -uo pipefail; umask 077; python3 ${scratch_q}/run_phase.py run --scratch ${scratch_q} --worktree ${worktree_q} --expected-sha ${sha_q} --chain-id ${chain_q} --phase ${phase_q}" \
+            "set -uo pipefail; umask 077; python3 ${scratch_q}/run_phase.py run --scratch ${scratch_q} --worktree ${worktree_q} --expected-sha ${sha_q} --harness-sha ${harness_sha_q} --chain-id ${chain_q} --phase ${phase_q}" \
             < "${bundle}" > "${EVIDENCE_DIR}/phase-console.txt" 2>&1 || rc=$?
           rm -f "${bundle}"
 
@@ -3966,12 +4003,14 @@ jobs:
           status = hosted.get("phase_status")
           result = {
               "accepted_identity": load("accepted-identity.json"),
+              "accepted_runtime_sha": os.environ.get("ACCEPTED_BACKEND_SHA", ""),
               "all12_claim_allowed": bool(
                   rc == 0 and phase == "E_close" and status == "completed" and hosted.get("all12_passed") is True
               ),
               "blocked_before": hosted.get("blocked_before"),
               "chain_id": os.environ["CHAIN_ID"],
               "complete": status == "completed",
+              "harness_source_sha": (meta.get("harness_source") or {}).get("sha") or os.environ.get("GITHUB_SHA", ""),
               "incomplete_reason": None if status == "completed" else (hosted.get("blocked_before") or "segment_not_completed"),
               "phase": phase,
               "phase_status": status,
