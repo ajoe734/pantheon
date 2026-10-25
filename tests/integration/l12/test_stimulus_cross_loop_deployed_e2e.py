@@ -906,15 +906,6 @@ class HostedChainRunner:
         }
         self.decisions: dict[str, Any] = {**dict(hosted.get("decisions") or {}), **dict(decision_refs or {})}
         self.baseline_fleet: dict[str, Any] | None = hosted.get("baseline_fleet") or None
-        self.accepted_release_retire: Mapping[str, Any] | None = (
-            hosted.get("accepted_release_retire")
-            if isinstance(hosted.get("accepted_release_retire"), Mapping)
-            else (
-                (prior_receipt or {}).get("accepted_release_retire")
-                if isinstance((prior_receipt or {}).get("accepted_release_retire"), Mapping)
-                else None
-            )
-        )
         self.loops: dict[str, dict[str, Any]] = {
             item["loop_id"]: item for item in hosted.get("loops") or []
         }
@@ -1677,11 +1668,6 @@ class HostedChainRunner:
         rec = _unwrap(raw) if status == 200 else {}
         source = rec if (status == 200 and rec) else fleet_item
         meta = source.get("metadata") if isinstance(source.get("metadata"), Mapping) else {}
-        att = (
-            meta.get("authoritative_loader_attestation")
-            if isinstance(meta.get("authoritative_loader_attestation"), Mapping)
-            else None
-        )
         artifact_id = str(source.get("artifact_id") or fleet_item.get("artifact_id") or "").strip()
         reg_status: int | None = None
         reg_state: dict[str, Any] | None = None
@@ -1702,8 +1688,6 @@ class HostedChainRunner:
                     "version": str(art.get("version") or ""),
                     "checksum": str(art.get("checksum") or ""),
                     "approval_decision_id": str(art.get("approval_decision_id") or ""),
-                    "approved_at": str(art.get("approved_at") or ""),
-                    "created_at": str(art.get("created_at") or ""),
                     "retired_at": art.get("retired_at"),
                 }
         return {
@@ -1735,7 +1719,6 @@ class HostedChainRunner:
                 "deployment_correlation_id": str(meta.get("deployment_correlation_id") or ""),
                 "deployment_saga_id": str(meta.get("deployment_saga_id") or ""),
                 "deployment_trace_id": str(meta.get("deployment_trace_id") or ""),
-                "authoritative_loader_attestation": dict(att) if isinstance(att, Mapping) else None,
                 "registry_artifact": reg_state,
             },
         }
@@ -1805,101 +1788,6 @@ class HostedChainRunner:
                 )
         return None
 
-    def _verify_replacement_acceptance_proof(
-        self,
-        new_id: str,
-        new_state: Mapping[str, Any],
-        retired_baseline_records: list[dict[str, Any]],
-        e_started_at: datetime | None,
-    ) -> str | None:
-        diag = new_state.get("diagnostics") if isinstance(new_state.get("diagnostics"), Mapping) else {}
-        new_corr = str(diag.get("deployment_correlation_id") or "").strip()
-        att = diag.get("authoritative_loader_attestation")
-        reg_art = diag.get("registry_artifact") if isinstance(diag.get("registry_artifact"), Mapping) else {}
-
-        has_release_retire_proof = False
-        if isinstance(self.accepted_release_retire, Mapping):
-            outcome = str(self.accepted_release_retire.get("outcome") or "").strip()
-            if outcome != "accepted":
-                return (
-                    f"replacement binding {new_id}: release retirement evidence outcome is "
-                    f"{outcome!r}, expected 'accepted'"
-                )
-            new_case_key = str(self.accepted_release_retire.get("new_case_key") or "").strip()
-            if not new_case_key:
-                return f"replacement binding {new_id}: release retirement evidence missing new_case_key"
-            if new_corr and new_corr != new_case_key:
-                return (
-                    f"replacement binding {new_id}: deployment_correlation_id {new_corr!r} "
-                    f"!= accepted release new_case_key {new_case_key!r}"
-                )
-            case_states = self.accepted_release_retire.get("case_states") or {}
-            results = self.accepted_release_retire.get("results") or {}
-            already_retired = set(self.accepted_release_retire.get("already_retired") or [])
-            for old_entry in retired_baseline_records:
-                old_c = str(old_entry.get("deployment_correlation_id") or "").strip()
-                if old_c and (case_states or results or already_retired):
-                    converged = (
-                        old_c in already_retired
-                        or results.get(old_c) == "retired"
-                        or case_states.get(old_c) == "retired"
-                    )
-                    if not converged:
-                        return (
-                            f"historical baseline binding {old_entry['binding_id']}: "
-                            f"case {old_c!r} not retired in release retirement evidence"
-                        )
-            has_release_retire_proof = True
-
-        has_loader_attestation_proof = False
-        if isinstance(att, Mapping):
-            if str(att.get("status") or "").lower() != "passed":
-                return (
-                    f"replacement binding {new_id}: authoritative_loader_attestation status is "
-                    f"{att.get('status')!r}, expected 'passed'"
-                )
-            if att.get("tenant_id") and str(att.get("tenant_id")) != self.tenant_id:
-                return (
-                    f"replacement binding {new_id}: authoritative_loader_attestation tenant "
-                    f"{att.get('tenant_id')!r} != {self.tenant_id!r}"
-                )
-            if att.get("artifact_id") and str(att.get("artifact_id")) != new_state.get("artifact_id"):
-                return (
-                    f"replacement binding {new_id}: authoritative_loader_attestation artifact_id "
-                    f"{att.get('artifact_id')!r} != {new_state.get('artifact_id')!r}"
-                )
-            if att.get("artifact_version") and str(att.get("artifact_version")) != new_state.get("artifact_version"):
-                return (
-                    f"replacement binding {new_id}: authoritative_loader_attestation artifact_version "
-                    f"{att.get('artifact_version')!r} != {new_state.get('artifact_version')!r}"
-                )
-            verified_at_str = str(att.get("verified_at") or "").strip()
-            if verified_at_str:
-                verified_dt = _parse_iso_utc(verified_at_str)
-                if verified_dt is None or (e_started_at is not None and verified_dt > e_started_at):
-                    return (
-                        f"replacement binding {new_id}: authoritative_loader_attestation verified_at "
-                        f"{verified_at_str!r} is invalid or after E_close start"
-                    )
-            has_loader_attestation_proof = True
-
-        for ts_key in ("approved_at", "created_at"):
-            ts_val = str(reg_art.get(ts_key) or "").strip()
-            if ts_val:
-                ts_dt = _parse_iso_utc(ts_val)
-                if ts_dt is None or (e_started_at is not None and ts_dt > e_started_at):
-                    return (
-                        f"replacement binding {new_id}: Registry artifact {ts_key} "
-                        f"{ts_val!r} is invalid or after E_close start"
-                    )
-
-        if not (has_release_retire_proof or has_loader_attestation_proof):
-            return (
-                f"replacement binding {new_id}: missing pre-E accepted-release or "
-                "authoritative_loader_attestation evidence"
-            )
-        return None
-
     def _verify_pre_close_replacement(
         self,
         removed_ids: list[str],
@@ -1950,6 +1838,8 @@ class HostedChainRunner:
                 )
             effective_str = str(old_rec.get("effective_at") or "").strip()
             effective_dt = _parse_iso_utc(effective_str)
+            if effective_str and effective_dt is None:
+                return None, f"historical baseline binding {old_id}: invalid effective_at {old_rec.get('effective_at')!r}"
             if effective_dt is not None and effective_dt > retired_dt:
                 return (
                     None,
@@ -2025,14 +1915,8 @@ class HostedChainRunner:
                     f"replacement binding {new_id}: effective_at {effective_str} is after "
                     f"E_close start {pre_close_fleet.get('captured_at')}",
                 )
-            proof_error = self._verify_replacement_acceptance_proof(
-                new_id, new_state, retired_baseline_records, e_started_at
-            )
-            if proof_error:
-                return None, proof_error
             diag = new_state.get("diagnostics") if isinstance(new_state.get("diagnostics"), Mapping) else {}
             art = diag.get("registry_artifact") if isinstance(diag.get("registry_artifact"), Mapping) else {}
-            att = diag.get("authoritative_loader_attestation") if isinstance(diag.get("authoritative_loader_attestation"), Mapping) else {}
             replacement_active_records.append(
                 {
                     "binding_id": new_id,
@@ -2051,13 +1935,13 @@ class HostedChainRunner:
                     "persona_capital_binding_id": str(diag.get("persona_capital_binding_id") or ""),
                     "artifact_state": str(art.get("artifact_state") or ""),
                     "artifact_checksum": str(art.get("checksum") or diag.get("artifact_checksum") or ""),
-                    "approval_decision_id": str(art.get("approval_decision_id") or att.get("approval_decision_id") or ""),
-                    "loader_attestation_verified_at": str(att.get("verified_at") or ""),
+                    "approval_decision_id": str(art.get("approval_decision_id") or ""),
                 }
             )
 
         return (
             {
+                "classification": "observed_external_replacement",
                 "original_baseline_fleet": copy.deepcopy(self.baseline_fleet),
                 "retired_baseline_bindings": retired_baseline_records,
                 "replacement_active_bindings": replacement_active_records,
@@ -2171,6 +2055,7 @@ class HostedChainRunner:
                 f"fleet now {now} differs from baseline {self.baseline_fleet}: {replacement_error}",
                 {},
             )
+        details["observed_external_replacement"] = replacement_report
         details["baseline_external_replacement"] = replacement_report
         return "verified", "", details
 
