@@ -3377,7 +3377,7 @@ def _ops_read_model_entry_for_persona(
     attribution_sources = _pm12_performance_attribution_sources(clean_tenant or None)
     persona_facts = [
         fact
-        for fact in _pm12_performance_attribution_facts(attribution_sources, period_key)
+        for fact in _pm12_performance_attribution_facts(attribution_sources)
         if str(fact.get("persona_id") or "") == persona_id
     ]
     has_formal_attribution = any(

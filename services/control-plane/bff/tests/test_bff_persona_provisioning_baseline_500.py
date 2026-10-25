@@ -1097,7 +1097,7 @@ def test_dev_paper_baseline_pm12_route_excludes_other_tenant_runtime(monkeypatch
 
     pm12_ns = _compile_pm12_namespace(read_store)
     sources = pm12_ns["_pm12_performance_attribution_sources"]("tenant-dev")
-    assert pm12_ns["_pm12_performance_attribution_facts"](sources, "latest") == []
+    assert pm12_ns["_pm12_performance_attribution_facts"](sources) == []
 
     def _strategy_allocation_runtime_facts(s):
         return [r for r in s.get("runtime_bindings", []) if r.get("persona_id") in s.get("personas_by_id", {})]

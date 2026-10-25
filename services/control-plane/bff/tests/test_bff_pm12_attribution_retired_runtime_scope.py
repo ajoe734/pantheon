@@ -148,7 +148,7 @@ def test_persona_id_drill_down_returns_retired_runtime() -> None:
 
 
 def test_facts_builder_stays_unscoped_for_other_readers() -> None:
-    facts = perf.pm12_performance_attribution_facts(_mixed_sources(), "latest")
+    facts = perf.pm12_performance_attribution_facts(_mixed_sources())
     assert {fact["runtime_id"] for fact in facts} >= {"rt-retired-empty-1", "rt-retired-empty-2"}
 
 
@@ -175,7 +175,7 @@ def test_ops_read_model_still_sees_retired_runtime_facts() -> None:
 
     persona_facts = [
         fact
-        for fact in pm12_service._pm12_performance_attribution_facts(_mixed_sources(), "latest")
+        for fact in pm12_service._pm12_performance_attribution_facts(_mixed_sources())
         if str(fact.get("persona_id") or "") == "p-retired-empty-1"
     ]
     assert [fact["runtime_id"] for fact in persona_facts] == ["rt-retired-empty-1"]

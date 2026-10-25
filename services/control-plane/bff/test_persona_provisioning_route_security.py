@@ -478,3 +478,122 @@ def test_controller_isolates_one_malformed_persona_from_later_records(
 
     assert _reconcile_persona_provisioning_once() == 1
     assert evaluated == ["persona-bad", "persona-good"]
+
+
+def _chain_capital_body(**overrides):
+    body = {
+        "capital_pool_id": "hosted-all12-chain-1-pool",
+        "binding_id": "hosted-all12-chain-1-pcb",
+        "currency": "USD",
+    }
+    body.update(overrides)
+    return body
+
+
+def test_paper_capital_route_is_operator_tenant_scoped_and_capital_only(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_tenant_payload(
+        monkeypatch,
+        lambda identity, requested_tenant=None: {
+            "id": "tenant-a" if identity.operator_id != "operator-b" else "tenant-b"
+        },
+    )
+    created = route_harness.client.post(
+        "/bff/personas",
+        headers=_headers("operator-a", "persona-paper-capital-create"),
+        json={"name": "Paper Capital Entry", "risk": "low"},
+    )
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["data"]["id"]
+    route_harness.transport.calls.clear()
+    path = f"/bff/personas/{persona_id}/provisioning/paper-capital"
+
+    assert route_harness.client.post(path, json=_chain_capital_body()).status_code == 401
+    assert (
+        route_harness.client.post(
+            path,
+            json=_chain_capital_body(),
+            headers={"Authorization": "Bearer viewer-a:viewer"},
+        ).status_code
+        == 403
+    )
+    assert (
+        route_harness.client.post(
+            path,
+            json=_chain_capital_body(),
+            headers={"Authorization": "Bearer operator-b:operator"},
+        ).status_code
+        == 404
+    )
+    assert (
+        route_harness.client.post(
+            path,
+            json=_chain_capital_body(actor_id="spoofed", tenant_id="tenant-b"),
+            headers={"Authorization": "Bearer operator-a:operator"},
+        ).status_code
+        == 422
+    )
+    assert route_harness.transport.calls == []
+
+    class _NoRuntimeBindings:
+        def list_by_plan(self, _plan_id):
+            return []
+
+        def list_by_pool(self, _pool_id):
+            return []
+
+    monkeypatch.setattr(
+        personas_service_mod, "_runtime_manager_client", lambda: _NoRuntimeBindings()
+    )
+    ok = route_harness.client.post(
+        path,
+        json=_chain_capital_body(),
+        headers={"Authorization": "Bearer operator-a:operator"},
+    )
+
+    assert ok.status_code == 200, ok.text
+    data = ok.json()["data"]
+    assert data["writer_actor_id"] == "control-plane-bff"
+    assert data["requested_by"] == "operator-a"
+    assert data["persona_capital_binding"]["status"] == "active"
+    writes = [(m, o) for m, o, _, _ in route_harness.transport.calls if m != "GET"]
+    assert writes and {o for _, o in writes} == {"capital"}
+    pool_body = next(
+        b for m, _, p, b in route_harness.transport.calls if m == "POST" and p == "/api/capital-pools"
+    )
+    assert pool_body["owner_id"] == "tenant-a"
+
+    retired = route_harness.client.post(
+        f"{path}/retire",
+        json={
+            "capital_pool_id": "hosted-all12-chain-1-pool",
+            "binding_id": "hosted-all12-chain-1-pcb",
+        },
+        headers={"Authorization": "Bearer operator-a:operator"},
+    )
+    assert retired.status_code == 200, retired.text
+    assert retired.json()["data"]["capital_pool"]["status"] == "archived"
+
+
+def test_paper_capital_route_names_unapproved_artifact_failure(
+    route_harness: _RouteHarness,
+) -> None:
+    created = route_harness.client.post(
+        "/bff/personas",
+        headers=_headers("operator-a", "persona-paper-capital-missing"),
+        json={"name": "Paper Capital Missing", "risk": "low"},
+    )
+    persona_id = created.json()["data"]["id"]
+    route_harness.transport.calls.clear()
+
+    response = route_harness.client.post(
+        f"/bff/personas/{persona_id}/provisioning/paper-capital",
+        json=_chain_capital_body(strategy_artifact_id="artifact-missing"),
+        headers={"Authorization": "Bearer operator-a:operator"},
+    )
+
+    assert response.status_code == 409
+    assert "artifact-missing" in response.text
+    assert [c for c in route_harness.transport.calls if c[0] != "GET" and c[1] == "capital"] == []

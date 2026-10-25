@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "task_id": "BFF-PAPER-CAPITAL-PROVISIONING-ENTRY-20261024",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "delivery_kind": "source_only",
+  "deployed_or_business_run": false,
+  "summary": "Capital-only BFF paper provisioning entry (ensure + retire), get_binding delegate fix, and hosted C/E wiring to the BFF entry. No approval is proposed, reviewed or decided; no id is derived.",
+  "entry_points": [
+    "POST /bff/personas/{persona_id}/provisioning/paper-capital",
+    "POST /bff/personas/{persona_id}/provisioning/paper-capital/retire",
+    "PersonaProvisioningCoordinator.ensure_chain_paper_capital / retire_chain_paper_capital"
+  ],
+  "acceptance_mapping": {
+    "AC2_AC4": "coordinator reuses _create_then_get/_transition_then_get and the pool/binding payload shape; BFF principal is actor_id/created_by, caller subject only in metadata.requested_by; tenant comes from the session; unknown body fields (422), foreign tenant (404), viewer (403), anonymous (401) are rejected with zero owner calls",
+    "AC3": "approved StrategySpec/execution artifact are GET-read back (approved, same tenant, frozen checksum); only Capital owner writes occur (asserted: no governance/deployment/registry write)",
+    "AC5": "read-before-create; matching existing records are adopted with zero writes and original created_by kept; retire is binding then pool, tenant-checked",
+    "AC6": "C _hosted_capital calls the BFF entry with the operator session and persists ids first; E_close reads Capital via BFF read routes and retires via the BFF retire entry; refusal stays CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED with the owner reason",
+    "binding_detail_500": "PersonaCapitalRuntimeDomainPort.get_binding delegate added; route regression through real CapitalPoolPort/ReadSurfacePorts"
+  },
+  "tests_run": {
+    "services/control-plane/bff/test_persona_provisioning_coordinator.py": "51 passed",
+    "services/control-plane/bff/test_persona_provisioning_route_security.py": "20 passed",
+    "services/control-plane/bff/tests/test_runtime_router.py": "5 passed",
+    "services/control-plane/bff/tests/test_persona_owner_transport_contract.py + tests/test_persona_provisioning_reconcile.py + test_loop_prod_per_001_provisioning.py": "passed",
+    "tests/unit/l12": "119 passed"
+  },
+  "known_preexisting_issues": [
+    "scripts/test_bff_route_diff.py::test_route_diff_baseline_matches_current_failure_surface fails on unmodified dev (stale agora/v5 baseline, unrelated)",
+    "test_persona_provisioning_route_security.py fixture _schedule_receipt rejected the deadline kwarg on dev (13 failures); fixed in the test fixture only",
+    "tests/test_runtime_router.py imported runtime.router top-level and failed collection; import qualified"
+  ],
+  "backend_routes_manifest": "regenerated with scripts/bff_route_manifest_backend.py; adds the two routes and drops two stale rebalance entries the live app no longer registers",
+  "not_done": [
+    "deployment, SSH, model calls, business mutations, real C/E run (release owner Root01a11)",
+    "execution artifact is not referenced by the C harness yet because it is still a candidate until H3; the entry supports it"
+  ]
+}

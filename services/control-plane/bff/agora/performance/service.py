@@ -362,6 +362,40 @@ class PerformanceProjectionService:
 
 PM12_ATTRIBUTION_DIMENSIONS = ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime")
 
+# Management attribution is composed from point-in-time runtime telemetry
+# summaries (``/api/telemetry/runtime-summaries``): cumulative P&L and trade
+# totals per runtime with a single ``collected_at``.  The BFF read path has no
+# dated per-runtime P&L or trade series to window over, so every request is
+# answered from the latest snapshot and the response says so instead of
+# echoing the requested period as if it had been applied.
+PM12_ATTRIBUTION_APPLIED_PERIOD = "latest"
+PM12_ATTRIBUTION_PERIOD_BASIS = "latest_runtime_telemetry_snapshot"
+PM12_ATTRIBUTION_PERIOD_NOT_WINDOWED_REASON = "dated_attribution_source_unavailable"
+
+
+def pm12_attribution_period_scope(requested_period: Optional[str]) -> Dict[str, Any]:
+    """Describe the period the attribution response actually applied.
+
+    ``requested`` echoes the caller's ``period``; ``applied`` is always the
+    latest snapshot and ``windowed`` is always false until a dated attribution
+    source exists.  Any requested value is accepted (no 4xx) so existing
+    frontend period selectors keep working; a request other than ``latest``
+    carries a reason explaining why no window was applied.
+    """
+    requested = str(requested_period or "").strip() or PM12_ATTRIBUTION_APPLIED_PERIOD
+    requested_latest = requested.lower() == PM12_ATTRIBUTION_APPLIED_PERIOD
+    return {
+        "requested": requested,
+        "applied": PM12_ATTRIBUTION_APPLIED_PERIOD,
+        "windowed": False,
+        "basis": PM12_ATTRIBUTION_PERIOD_BASIS,
+        "reason": None if requested_latest else PM12_ATTRIBUTION_PERIOD_NOT_WINDOWED_REASON,
+        "message": None if requested_latest else (
+            f"Period '{requested}' was not applied: performance attribution has no dated "
+            "per-runtime P&L or trade source, so figures are the latest runtime telemetry snapshot."
+        ),
+    }
+
 
 def _pm12_management_record_id(record: Dict[str, Any], *keys: str) -> str:
     for key in keys:
@@ -792,7 +826,12 @@ def pm12_performance_attribution_sources(
     }
 
 
-def pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str) -> List[Dict[str, Any]]:
+def pm12_performance_attribution_facts(sources: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Build attribution facts from the latest runtime telemetry snapshots.
+
+    Facts are not windowed; each one is stamped with the applied period
+    (``latest``), never with a caller-requested window.
+    """
     facts: List[Dict[str, Any]] = []
     plans_by_id = sources["plans_by_id"]
     bindings_by_id = sources["bindings_by_id"]
@@ -1013,7 +1052,7 @@ def pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str)
 
             facts.append({
                 "id": f"{runtime_id or runtime_binding_id or 'runtime'}:{index}",
-                "period": period_key,
+                "period": PM12_ATTRIBUTION_APPLIED_PERIOD,
                 "runtime_id": runtime_id,
                 "runtime_binding_id": runtime_binding_id,
                 "deployment_plan_id": plan_id or _pm12_management_record_id(plan, "plan_id", "id"),
@@ -1332,12 +1371,13 @@ def pm12_performance_attribution_response(
 ) -> Dict[str, Any]:
     resolved_utc_now = utc_now or (lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     snapshot_at = resolved_utc_now()
-    period_key = str(period or "").strip() or "latest"
+    period_scope = pm12_attribution_period_scope(period)
+    period_key = period_scope["applied"]
     if sources_fn is not None:
         sources = sources_fn(tenant_id)
     else:
         sources = pm12_performance_attribution_sources(tenant_id, read_store=read_store)
-    facts = pm12_performance_attribution_facts(sources, period_key)
+    facts = pm12_performance_attribution_facts(sources)
 
     # Default list scope: drop retired runtimes that never produced attribution
     # data, before filtering, grouping and paging so totals match rows.  An
@@ -1348,6 +1388,9 @@ def pm12_performance_attribution_response(
         if retired_runtime_ids:
             facts = [fact for fact in facts if fact.get("runtime_id") not in retired_runtime_ids]
 
+    # ``period`` is deliberately not passed: every fact carries the applied
+    # period, so comparing it with itself would filter nothing while implying
+    # a window.  The applied/requested period is reported in ``meta.period``.
     from services.control_plane.bff.personas.service import _filter_by_common_identifiers
     facts = _filter_by_common_identifiers(
         facts,
@@ -1358,7 +1401,7 @@ def pm12_performance_attribution_response(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage, period=period_key, as_of=as_of
+        stage=stage, as_of=as_of
     )
 
     page_entries, total, next_page_token, aggregate_metrics = pm12_performance_attribution_page_entries(
@@ -1441,7 +1484,9 @@ def pm12_performance_attribution_response(
         "average_slippage_bps": aggregate_metrics["average_slippage_bps"],
         "total_trades": aggregate_metrics["total_trades"],
         "latest_telemetry_at": aggregate_metrics["latest_telemetry_at"],
-        "basis": "latest_runtime_telemetry_snapshot",
+        "basis": PM12_ATTRIBUTION_PERIOD_BASIS,
+        "requested_period": period_scope["requested"],
+        "period_windowed": period_scope["windowed"],
     }
     data = {
         "id": data_id,
@@ -1469,7 +1514,7 @@ def pm12_performance_attribution_response(
                 "GET /bff/personas",
                 "GET /bff/strategies",
             ],
-            "period": period_key,
+            "period": period_scope,
             "dimensions": dimensions,
             "policy": "read_only_performance_attribution",
         },
