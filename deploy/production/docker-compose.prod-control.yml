@@ -1,20 +1,46 @@
 # Pantheon Production Blue/Green Compose Overlay (ENV-PROD-CONTROL-IMPL-001).
 # Source template only: no cloud resource is created by merging it. Images are the
-# immutable digests from the release manifest and are never rebuilt or pulled by tag.
-# Stateful services (postgres, nats) are shared and exist ONCE; only the stateless BFF
-# is duplicated per color. Singleton workers are owned by exactly one color at a time
-# (drained on the old color before the new color activates; see prod_atomic_switch.sh).
+# immutable digests from the release manifest (backend.images) and are never rebuilt or
+# pulled by tag. Stateful services (postgres, nats) and the core owner closure
+# (runtime-manager, governance, deployment, lifecycle-projector) exist ONCE; only the
+# stateless BFF is duplicated per color. The lifecycle-projector is the singleton worker:
+# prod_ops.sh drains it before the BFF upstream switch and re-activates it afterwards, so
+# there is never more than one instance and never a blue+green owner overlap.
+#
+# Secrets (never in this file): PROD_SECRETS_ENV_FILE is a root-owned 0600 env file that
+# supplies PANTHEON_BFF_JWT_SECRET, PANTHEON_RUNTIME_JWT_SECRET, PANTHEON_DATABASE_URL and
+# the OIDC client secret. PROD_POSTGRES_PASSWORD_FILE is a 0600 file; postgres initialises
+# with POSTGRES_PASSWORD_FILE (never trust auth, never an inline password).
 
 name: pantheon-production
+
+x-core-env: &core_env
+  PANTHEON_ENV: production
+  PANTHEON_RELEASE_ID: ${PANTHEON_RELEASE_ID:?release_id required}
+  PANTHEON_LIVE_BROKER_ENABLED: "false"
+  PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED: "false"
+  PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED: "false"
+  PANTHEON_ASSISTANT_PROVIDER: "disabled"
+  PANTHEON_BFF_JWT_ISSUER: ${PROD_JWT_ISSUER:?jwt issuer required}
+  PANTHEON_BFF_JWT_AUDIENCE: ${PROD_JWT_AUDIENCE:?jwt audience required}
+  PANTHEON_RUNTIME_JWT_ISSUER: ${PROD_JWT_ISSUER:?jwt issuer required}
+  PANTHEON_RUNTIME_JWT_AUDIENCE: ${PROD_JWT_AUDIENCE:?jwt audience required}
+
+x-secrets: &secrets
+  env_file:
+    - ${PROD_SECRETS_ENV_FILE:?production secrets env file required}
 
 services:
   postgres:
     image: ${PANTHEON_POSTGRES_IMAGE:?pinned postgres image required}
+    pull_policy: never
     restart: unless-stopped
     profiles: ["stateful"]
     environment:
       POSTGRES_USER: ${PROD_POSTGRES_USER:?required}
       POSTGRES_DB: ${PROD_POSTGRES_DB:?required}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
     volumes:
       # Dedicated persistent data disk mount. Never recreated or overwritten by a release.
       - ${PROD_DATA_MOUNT:?production data disk mount required}/postgres:/var/lib/postgresql/data
@@ -23,6 +49,7 @@ services:
 
   nats:
     image: ${PANTHEON_NATS_IMAGE:?pinned nats image required}
+    pull_policy: never
     restart: unless-stopped
     profiles: ["stateful"]
     command: ["-js", "-sd", "/data"]
@@ -31,23 +58,66 @@ services:
     ports:
       - "127.0.0.1:4222:4222"
 
-  # One color of the stateless BFF. Run with: --profile blue | --profile green and an
-  # explicit PROD_COLOR_PORT (blue and green must use different ports).
+  # Core owner closure required by BFF /bff/readyz. Images come from manifest backend.images.
+  runtime-manager:
+    image: ${PANTHEON_RUNTIME_MANAGER_IMAGE:?immutable runtime-manager digest required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core"]
+    <<: *secrets
+    environment: *core_env
+    labels: {"org.pantheon.role": "owner"}
+
+  governance:
+    image: ${PANTHEON_GOVERNANCE_IMAGE:?immutable governance digest required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core"]
+    <<: *secrets
+    environment: *core_env
+    labels: {"org.pantheon.role": "owner"}
+
+  deployment:
+    image: ${PANTHEON_DEPLOYMENT_IMAGE:?immutable deployment digest required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core"]
+    <<: *secrets
+    environment: *core_env
+    labels: {"org.pantheon.role": "owner"}
+
+  # The single singleton worker. Exactly one instance may exist; drained/activated by ops.
+  lifecycle-projector:
+    image: ${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:?immutable lifecycle-projector digest required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["singleton"]
+    <<: *secrets
+    environment: *core_env
+    labels: {"org.pantheon.role": "singleton"}
+
+  # One color of the stateless BFF. Run with: --profile blue | --profile green and
+  # explicit ports (blue and green must differ). Owners are reached by compose DNS.
   operator-bff-blue:
     image: ${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}
     pull_policy: never
     restart: unless-stopped
     profiles: ["blue"]
+    <<: *secrets
     environment: &bff_env
-      PANTHEON_ENV: production
-      PANTHEON_RELEASE_ID: ${PANTHEON_RELEASE_ID:?release_id required}
-      PANTHEON_PROVIDER_ENABLED: "false"
-      PANTHEON_LIVE_BROKER_ENABLED: "false"
-      PANTHEON_REAL_WRITES_ENABLED: "false"
-      PANTHEON_DEV_STUB_WRITES_ENABLED: "false"
-      PANTHEON_EXECUTION_MODE: "paper"
+      <<: *core_env
+      PANTHEON_BFF_AUTH_MODE: strict
+      PANTHEON_BFF_AUTH_STUB: "false"
+      PANTHEON_BFF_OIDC_ISSUER: ${PROD_IDP_ISSUER:?idp issuer required}
+      PANTHEON_BFF_OIDC_DISCOVERY_URL: ${PROD_IDP_ISSUER:?idp issuer required}/.well-known/openid-configuration
       PANTHEON_BFF_CORS_ORIGINS: ${PROD_BFF_CORS_ORIGINS:?production FE origin required}
-      PANTHEON_SINGLETON_OWNER: ${PROD_BLUE_SINGLETON_OWNER:-"false"}
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8000
+      PANTHEON_GOVERNANCE_API_URL: http://governance:8000
+      PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8000
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8000
+      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8000
+      PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8000
+    labels: {"org.pantheon.role": "bff", "org.pantheon.color": "blue"}
     ports:
       - "127.0.0.1:${PROD_BLUE_PORT:?blue port required}:8000"
 
@@ -56,9 +126,12 @@ services:
     pull_policy: never
     restart: unless-stopped
     profiles: ["green"]
-    environment:
-      <<: *bff_env
-      # Green starts as a non-owner; ownership is handed over only after drain.
-      PANTHEON_SINGLETON_OWNER: ${PROD_GREEN_SINGLETON_OWNER:-"false"}
+    <<: *secrets
+    environment: *bff_env
+    labels: {"org.pantheon.role": "bff", "org.pantheon.color": "green"}
     ports:
       - "127.0.0.1:${PROD_GREEN_PORT:?green port required}:8000"
+
+secrets:
+  postgres_password:
+    file: ${PROD_POSTGRES_PASSWORD_FILE:?postgres password file required}
