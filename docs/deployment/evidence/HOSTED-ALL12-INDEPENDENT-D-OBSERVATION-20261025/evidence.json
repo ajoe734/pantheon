@@ -1,0 +1,118 @@
+{
+  "task_id": "HOSTED-ALL12-INDEPENDENT-D-OBSERVATION-20261025",
+  "title": "Independent D observation from exact controller harness",
+  "status": "ready_for_review",
+  "recorded_at_utc": "2026-10-25T19:29:00Z",
+  "approved_design": {
+    "pr_number": 6736,
+    "merge_commit": "43473d1512dbb094074ec575ac1128be9b02e634",
+    "document": "docs/deployment/hosted-all12-causal-chain-design.md",
+    "sections": [
+      "section_5A_phase_D_observation_and_H4",
+      "section_10_T7_runtime_suites_C_promote_and_D_observe"
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "criterion_1_independent_loop12_observation": {
+      "satisfied": true,
+      "loop_id": "bff_health_monitoring",
+      "case_id": "loop_12_bff_typed_health",
+      "owner_service": "operator-bff",
+      "endpoint": "GET /bff/admin/health/components",
+      "typed_targets": [
+        "runtime-manager",
+        "paper-fleet-reconciler"
+      ],
+      "trigger_event": "bff-typed-health-h12-01a11-20261023-9aeb",
+      "terminal_output_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+      "l11_to_l12_edge_exists": false,
+      "summary": "Loop 12 BFF typed-health probe executes in _hosted_observe after same-chain paper fill verification and before Loop 10/11 natural owner readbacks, preserving its own trigger/output/consumer evidence even when same-chain Incident or Evolution is absent."
+    },
+    "criterion_2_genuine_reconciliation_and_evolution_partial_negative_evidence": {
+      "satisfied": true,
+      "chain_id": "h12-01a11-20261023-9aeb",
+      "reference_d_observe_run_id": "40221474310",
+      "same_chain_fill": {
+        "event_id": "a4263fe2-9448-42bf-9cf2-30f28fd89fc9",
+        "runtime_id": "rt-7d40a8a391ce4a109c7224fb15f87b4a",
+        "binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+        "artifact_id": "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact",
+        "source_snapshot_id": "0ff217ca-c40e-500d-8784-d38c1f7300d1"
+      },
+      "reconciliation_evaluation": {
+        "read_route": "GET /api/reconciliation-drift/evaluations/{evaluation_id}",
+        "evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-10-25T-rb-eea1cd16cf3745479f42e-a883ec3057a5534b",
+        "lifecycle_event_id": "8042dfe1-9cb1-5486-b6e4-aff7866cfaf6",
+        "snapshot_event_id": "0ff217ca-c40e-500d-8784-d38c1f7300d1",
+        "source_fill_event_id": "a4263fe2-9448-42bf-9cf2-30f28fd89fc9",
+        "same_chain_fill_cited": true,
+        "status": "ok",
+        "reconciliation_check_count": 6,
+        "observed_metric_count": 5,
+        "telemetry_event_count": 2,
+        "baseline_metric_count": 0,
+        "drift_check_count": 0,
+        "drift_evaluated": false,
+        "measured_zero_drift": false,
+        "drift_outcome": "unmeasured_no_baseline",
+        "incident_ids": []
+      },
+      "evolution_input_coverage": {
+        "read_route": "GET /api/evolution/input-coverage",
+        "target_id": "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact",
+        "binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+        "complete": false,
+        "evaluable": false,
+        "gaps": [
+          "missing_incident_case",
+          "missing_reconciliation_drift_incident",
+          "missing_shadow_or_paper_comparative_window",
+          "missing_sweep_candidate_set"
+        ]
+      },
+      "d_observe_phase_status": "paused",
+      "blocked_before": "drift_incident_observation",
+      "all12_passed": false,
+      "preserved_resource_id_count": 39,
+      "h4_approval_semantics_preserved": true
+    },
+    "criterion_3_staged_exact_harness_without_product_root_deploy": {
+      "satisfied": true,
+      "workflow_file": ".github/workflows/nonprod-deploy.yml",
+      "staged_harness_files": [
+        "tests/integration/l12/l12_owner_auth.py",
+        "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py"
+      ],
+      "scratch_stage_path": "${scratch}/harness",
+      "runtime_cwd_preserved": true,
+      "accepted_runtime_identity": {
+        "release_id": "20261024T044636Z-a1b80a026650-b9fb0ba98002",
+        "backend_sha": "a1b80a026650148bfa85044514e464e6c8303792",
+        "fe_sha": "b9fb0ba98002026c2d73938223d950fc65c3a826",
+        "bff_working_dir": "/home/chloe_ong_dev_cctech_support_com/pantheon-dev-bff"
+      },
+      "separate_harness_source_recorded_in": [
+        "segment-meta.json#harness_source",
+        "segment-result.json#harness_source_sha",
+        "segment-result.json#accepted_runtime_sha"
+      ],
+      "product_root_deploy_required_for_tests_only_change": false
+    },
+    "criterion_4_focused_regression_coverage_and_worker_discipline": {
+      "satisfied": true,
+      "regression_tests": [
+        "tests/unit/l12/test_hosted_domain_contract.py::test_hosted_observe_pauses_without_claiming_loops_that_were_not_observed",
+        "tests/unit/l12/test_hosted_domain_contract.py::test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_claim_all12",
+        "scripts/test_isolated_l12_provider_workflow.py::test_hosted_vm_runner_executes_staged_harness_while_preserving_accepted_runtime_checkout",
+        "scripts/test_isolated_l12_provider_workflow.py::test_hosted_vm_runner_refuses_dirty_or_other_checkout"
+      ],
+      "source_only_worker_boundaries": {
+        "ssh_executed": false,
+        "deploy_executed": false,
+        "product_http_called": false,
+        "workflow_chain_dispatched": false
+      }
+    }
+  }
+}
