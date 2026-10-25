@@ -1318,8 +1318,7 @@ class PersonaProvisioningCoordinator:
             metadata = metadata if isinstance(metadata, Mapping) else {}
             if (
                 receipt.get("pool_id") != capital_pool_id
-                or receipt.get("owner_id") != tenant_id
-                or receipt.get("owner_type") != "org"
+                or not self._formal_tenant_matches(receipt, tenant_id)
                 or receipt.get("status") != "active"
                 or receipt.get("single_runtime_enforced") is not True
                 or metadata.get("execution_context") != "paper"
@@ -1433,6 +1432,13 @@ class PersonaProvisioningCoordinator:
         }
 
     @staticmethod
+    def _formal_tenant_matches(pool: Mapping[str, Any], tenant_id: str) -> bool:
+        # Capital's owner-returned formal tenant_id is the only tenant authority;
+        # business owner_id/owner_type and metadata.tenant_id are caller-writable labels.
+        formal = pool.get("tenant_id")
+        return isinstance(formal, str) and bool(formal.strip()) and formal == tenant_id
+
+    @staticmethod
     def _pool_owned_by_chain(
         metadata: Mapping[str, Any], *, persona_id: str, chain_id: Any
     ) -> bool:
@@ -1479,7 +1485,7 @@ class PersonaProvisioningCoordinator:
         if pool is not None:
             metadata = pool.get("metadata")
             metadata = metadata if isinstance(metadata, Mapping) else {}
-            if pool.get("owner_id") != tenant_id:
+            if not self._formal_tenant_matches(pool, tenant_id):
                 raise PersonaProvisioningCoordinationError(
                     "CapitalPool belongs to another tenant; refusing to retire it"
                 )
