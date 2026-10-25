@@ -799,3 +799,86 @@ def test_postgres_json_owner_store_count_aggregates_without_payload_hydration_or
         with mock.patch.object(conn, "execute", side_effect=_failing_execute):
             with pytest.raises(RuntimeError, match="Postgres connection failure"):
                 store.count()
+
+
+def test_postgres_json_owner_store_count_index_bootstrap_and_semantics():
+    from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        unindexed = PostgresJsonOwnerStore(
+            dsn="postgresql://test:test@localhost:5432/test",
+            table="reconciliation_drift.alert_handoffs",
+            owner_service="reconciliation-drift-svc",
+            bootstrap=True,
+        )
+        assert unindexed.count_index is False
+        assert not any("CREATE INDEX" in stmt.upper() for stmt in _FakeConnection.statements)
+
+        _FakeConnection.statements.clear()
+        no_bootstrap = PostgresJsonOwnerStore(
+            dsn="postgresql://test:test@localhost:5432/test",
+            table="reconciliation_drift.drift_evaluations",
+            owner_service="reconciliation-drift-svc",
+            bootstrap=False,
+            count_index=True,
+        )
+        assert no_bootstrap.count_index is True
+        assert _FakeConnection.statements == []
+
+        read_only_store = PostgresJsonOwnerStore(
+            dsn="postgresql://test:test@localhost:5432/test",
+            table="reconciliation_drift.drift_evaluations",
+            owner_service="reconciliation-drift-svc",
+            bootstrap=True,
+            read_only=True,
+            count_index=True,
+        )
+        assert read_only_store.count_index is True
+        assert _FakeConnection.statements == []
+
+        indexed = PostgresJsonOwnerStore(
+            dsn="postgresql://test:test@localhost:5432/test",
+            table="reconciliation_drift.drift_evaluations",
+            owner_service="reconciliation-drift-svc",
+            bootstrap=True,
+            count_index=True,
+        )
+        index_stmts = [
+            " ".join(stmt.split())
+            for stmt in _FakeConnection.statements
+            if "CREATE INDEX" in stmt.upper()
+        ]
+        assert index_stmts == [
+            'CREATE INDEX IF NOT EXISTS "drift_evaluations_count_idx" '
+            'ON "reconciliation_drift"."drift_evaluations" ((jsonb_typeof(payload))) '
+            "WHERE jsonb_typeof(payload) IN ('object', 'string')"
+        ]
+
+        indexed.put("rec-1", {"evaluation_id": "rec-1"})
+        indexed.put("rec-2", {"evaluation_id": "rec-2"})
+        table_key = indexed.table
+        _FakeConnection.rows[table_key]["rec-str-obj"] = '{"evaluation_id": "rec-str-obj"}'
+        _FakeConnection.rows[table_key]["rec-str-arr"] = "[1, 2]"
+        _FakeConnection.rows[table_key]["rec-arr"] = [1, 2]
+        _FakeConnection.rows[table_key]["rec-null"] = None
+        _FakeConnection.rows[table_key]["rec-num"] = 42
+
+        _FakeConnection.statements.clear()
+        assert indexed.count() == 3
+        assert len(_FakeConnection.statements) == 1
+        indexed_sql = " ".join(_FakeConnection.statements[0].split())
+        assert "WHERE jsonb_typeof(payload) IN ('object', 'string')" in indexed_sql
+        assert "AND jsonb_typeof(payload) = 'string'" in indexed_sql
+        assert "AND jsonb_typeof((payload #>> '{}')::jsonb) <> 'object'" in indexed_sql
+        assert "ORDER BY" not in indexed_sql.upper()
+
+        _FakeConnection.rows[table_key]["rec-bad"] = "not-json"
+        with pytest.raises(Exception):
+            indexed.count()
+        del _FakeConnection.rows[table_key]["rec-bad"]
+
+        conn = fake_psycopg.connect("postgresql://test:test@localhost:5432/test")
+        with mock.patch.object(conn, "execute", return_value=_FakeCursor([])):
+            with pytest.raises(RuntimeError, match="Aggregate count query returned no rows"):
+                indexed.count()
