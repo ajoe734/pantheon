@@ -1,0 +1,10 @@
+{
+  "task_id": "OPENCLAW-SET-IDENTITY-CLI-20261025",
+  "change": "existing-agent `openclaw agents set-identity` now selects target via `--agent <id>` instead of unsupported positional id (OpenClaw 2026.7.1)",
+  "files": ["integrations/openclaw/persona_agent_sync.py", "scripts/openclaw-sync-persona-agents.py"],
+  "validation": {
+    "integrations/openclaw/test_persona_agent_sync.py": "22 passed; with positional form restored 2 failed (mock rejects it)",
+    "services/openclaw-gateway-adapter agent/identity/ensure tests": "37 passed"
+  },
+  "not_done": "no SSH/hosted calls; H2 interaction not retried"
+}
