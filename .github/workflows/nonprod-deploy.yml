@@ -3701,6 +3701,13 @@ jobs:
               return container_env(cid, "TRAINING_SESSION_WORKER_TOKEN")
 
 
+          def compose_working_dir(bff_cid):
+              return run(
+                  ["docker", "inspect", bff_cid, "--format",
+                   '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}']
+              ).stdout.strip()
+
+
           def compose_files(bff_cid):
               labels = run(
                   ["docker", "inspect", bff_cid, "--format",
@@ -3740,18 +3747,23 @@ jobs:
                       json.dump(meta, handle, indent=2, sort_keys=True)
                   return code
 
-              head = run(["git", "-C", args.worktree, "rev-parse", "HEAD"]).stdout.strip()
-              dirty = run(["git", "-C", args.worktree, "status", "--porcelain", "--untracked-files=no"]).stdout.strip()
-              meta["managed_checkout"] = {"head": head, "expected": args.expected_sha, "clean": not dirty}
-              if head != args.expected_sha or dirty:
-                  meta["error"] = "managed checkout is not the exact accepted clean source"
-                  return finish(2)
-
               environment = dict(os.environ)
               secrets = [bundle["executor_token"]]
               bff_cid = container(BFF_SERVICE)
               if not bff_cid:
                   meta["error"] = "operator-bff container not found in the compose project"
+                  return finish(2)
+              worktree = compose_working_dir(bff_cid) or args.worktree
+              head = run(["git", "-C", worktree, "rev-parse", "HEAD"]).stdout.strip()
+              dirty = run(["git", "-C", worktree, "status", "--porcelain", "--untracked-files=no"]).stdout.strip()
+              meta["managed_checkout"] = {
+                  "head": head,
+                  "expected": args.expected_sha,
+                  "clean": not dirty,
+                  "worktree": worktree,
+              }
+              if head != args.expected_sha or dirty:
+                  meta["error"] = "managed checkout is not the exact accepted clean source"
                   return finish(2)
               urls, unresolved = {}, []
               for names, service, port in OWNERS:
@@ -3835,7 +3847,7 @@ jobs:
               try:
                   completed = subprocess.run(
                       [os.path.join(scratch, "venv", "bin", "python"), "-m", "pytest", "-q", "-p", "no:cacheprovider", PARENT_NODE],
-                      cwd=args.worktree, env=environment, capture_output=True, text=True, timeout=args.timeout,
+                      cwd=worktree, env=environment, capture_output=True, text=True, timeout=args.timeout,
                   )
                   code, output = completed.returncode, completed.stdout + completed.stderr
               except subprocess.TimeoutExpired as expired:
