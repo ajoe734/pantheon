@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "task_id": "HOSTED-ALL12-D-OWNER-AUTH-20261025",
+  "title": "Repair real service credentials in original hosted D observation",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "ready_for_review",
+  "dependency_lineage": {
+    "HOSTED-ALL12-INDEPENDENT-D-OBSERVATION-20261025": {
+      "status": "done",
+      "pr_number": 6803,
+      "merge_commit": "0bbf7056f04e71b9d24fc2810ee74fe4b6621bca"
+    },
+    "dev_base_commit": "76062f676bf4d9f34e4d587de42d403c83081cc2",
+    "deployed_dev_merge_sha_for_d40240151927": "ad31927ded9a9ebd99eb436eb7320bc7a97e4065"
+  },
+  "reproduction_evidence": {
+    "workflow_run_id": "40240151927",
+    "chain_id": "h12-01a11-20261023-9aeb",
+    "phase": "D_observe",
+    "git_sha": "ad31927ded9a9ebd99eb436eb7320bc7a97e4065",
+    "review_artifact": "/tmp/pantheon-codex-01a11-review-20261023/D401-owner-auth-original-scope-independent-readonly-review-20261025.json",
+    "phase_log_path": "/tmp/pantheon-codex-01a11-review-20261023/h12-01a11-20261023-9aeb-D40240151927/phase.log",
+    "segment_result_path": "/tmp/pantheon-codex-01a11-review-20261023/h12-01a11-20261023-9aeb-D40240151927/segment-result.json",
+    "failure_summary": "RuntimeChain._hosted_reconciliation_evaluation sent GET reconciliation/api/reconciliation-drift/evaluations/rdeval-sched-scheduled-tenant-dev-2026-10-25T-rb-eea1cd16cf3745479f42e-a883ec3057a5534b with headers=None and failed with HTTP 401 '{\"detail\":\"invalid reconciliation bearer token\"}'; additionally _init_hosted_headers assigned operator executor JWT to reconciliation_headers and evolution_headers instead of each owner service's configured bearer token and X-Tenant-Id."
+  },
+  "owner_auth_contracts": {
+    "reconciliation-drift-svc": {
+      "compose_service": "reconciliation-drift-svc",
+      "container_env_var": "RECONCILIATION_DRIFT_AUTH_TOKEN",
+      "runner_env_var": "PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN",
+      "middleware_path": "services/reconciliation-drift/main.py",
+      "required_headers": [
+        "Authorization: Bearer <RECONCILIATION_DRIFT_AUTH_TOKEN>",
+        "X-Tenant-Id: <PANTHEON_L12_TENANT_ID>"
+      ],
+      "d_observe_endpoints": [
+        "GET /api/reconciliation-drift/evaluations/{evaluation_id}"
+      ]
+    },
+    "evolution": {
+      "compose_service": "evolution",
+      "container_env_var": "EVOLUTION_AUTH_TOKEN",
+      "runner_env_var": "PANTHEON_L12_EVOLUTION_AUTH_TOKEN",
+      "middleware_path": "services/evolution/main.py",
+      "required_headers": [
+        "Authorization: Bearer <EVOLUTION_AUTH_TOKEN>",
+        "X-Tenant-Id: <PANTHEON_L12_TENANT_ID>"
+      ],
+      "d_observe_endpoints": [
+        "GET /api/evolution/input-coverage",
+        "GET /api/evolution/proposals",
+        "GET /api/evolution/proposals/{decision_id}"
+      ]
+    }
+  },
+  "repaired_seams": [
+    {
+      "file": ".github/workflows/nonprod-deploy.yml",
+      "change": "Added PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN (from reconciliation-drift-svc RECONCILIATION_DRIFT_AUTH_TOKEN) and PANTHEON_L12_EVOLUTION_AUTH_TOKEN (from evolution EVOLUTION_AUTH_TOKEN) to SERVICE_CREDENTIALS so the private VM runner injects them into the subprocess environment and redacts both values in phase.log and segment-meta.json."
+    },
+    {
+      "file": "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+      "change": "Updated RuntimeChain._init_hosted_headers to require PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN and PANTHEON_L12_EVOLUTION_AUTH_TOKEN only when hosted_input.phase == 'D_observe' (building distinct Bearer + X-Tenant-Id headers and leaving C_promote free of D-only credential prerequisites), and passed headers=self.reconciliation_headers on GET /api/reconciliation-drift/evaluations/{evaluation_id} in _hosted_reconciliation_evaluation."
+    },
+    {
+      "file": "tests/unit/l12/test_hosted_domain_contract.py",
+      "change": "Updated hosted runtime unit fixtures and FakeRuntimeHttp to enforce exact service bearer + X-Tenant-Id headers on Reconciliation evaluation and Evolution input-coverage/proposal GETs, verify C_promote does not require D-only credentials, and verify missing D_observe credentials fail closed with DeployedProofError naming the missing variable."
+    },
+    {
+      "file": "scripts/test_isolated_l12_provider_workflow.py",
+      "change": "Extended VM runner tests to assert SERVICE_CREDENTIALS mapping, docker exec printenv reads for reconciliation-drift-svc and evolution, private subprocess env propagation, and redaction from phase.log and segment-meta.json."
+    }
+  ],
+  "verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q tests/unit/l12/test_hosted_domain_contract.py scripts/test_isolated_l12_provider_workflow.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+    "result": "78 passed, 2 skipped"
+  },
+  "hosted_execution_truth": {
+    "hosted_d_observe_executed_by_worker": false,
+    "all12_passed": false,
+    "note": "Worker scope is repository code, test, and evidence repair only; live hosted D_observe re-execution requires merge, deploy to dev, and operator/chatbox workflow dispatch."
+  }
+}

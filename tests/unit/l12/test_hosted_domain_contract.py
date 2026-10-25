@@ -34,6 +34,8 @@ CAPITAL_JWT = ".".join(
     for part in ({"alg": "none"}, {"sub": "svc-capital", "service": "svc-capital",
                                     "delegated_actor_id": "operator-real"}, "sig")
 )
+RECONCILIATION_TOKEN = "reconciliation-real"
+EVOLUTION_TOKEN = "evolution-real"
 
 
 def _load(monkeypatch: pytest.MonkeyPatch, filename: str, alias: str) -> Any:
@@ -82,6 +84,12 @@ def _hosted_env(
         "PANTHEON_L12_BFF_BEARER": "bff-real",
     }.items():
         monkeypatch.setenv(key, value)
+    if phase == "D_observe":
+        monkeypatch.setenv("PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN", RECONCILIATION_TOKEN)
+        monkeypatch.setenv("PANTHEON_L12_EVOLUTION_AUTH_TOKEN", EVOLUTION_TOKEN)
+    else:
+        monkeypatch.delenv("PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("PANTHEON_L12_EVOLUTION_AUTH_TOKEN", raising=False)
     # the harness-minted tokens must be ignored in hosted mode
     monkeypatch.setenv("PANTHEON_L12_OPERATOR_TOKEN", "minted.operator.token")
     monkeypatch.setenv("PANTHEON_L12_REVIEWER_TOKEN", "minted.reviewer.token")
@@ -953,6 +961,7 @@ class FakeRuntimeHttp:
         self.execution: dict[str, Any] | None = None
         self.calls: list[tuple[str, str, str]] = []
         self.bodies: dict[str, Any] = {}
+        self.headers: dict[str, Any] = {}
         self.h3, self.validation_ok, self.drop_reference = h3, validation_ok, drop_reference
         self.bundle, self.h3_scope = bundle, h3_scope
         self.incidents: list[dict[str, Any]] = []
@@ -969,6 +978,7 @@ class FakeRuntimeHttp:
                 query: Any = None, expected: Any = frozenset({200}), timeout: float = 20.0) -> Any:
         self.calls.append((service, method, path))
         self.bodies[f"{method} {path}"] = body
+        self.headers[f"{method} {path}"] = headers
         registry_id = f"reg-{CHAIN}"
         if path.startswith("/api/registry/strategy-specs/"):
             spec = _runtime_spec(recipe=self.bundle)
@@ -1048,13 +1058,21 @@ class FakeRuntimeHttp:
         if path == "/api/incidents":
             return self.incidents
         if path.startswith("/api/reconciliation-drift/evaluations/"):
+            assert service == "reconciliation" and method == "GET"
+            assert headers == {"Authorization": f"Bearer {RECONCILIATION_TOKEN}", "X-Tenant-Id": TENANT}
             eval_id = urllib.parse.unquote(path.rsplit("/", 1)[-1])
             return self.reconciliation_evaluations.get(eval_id, {"detail": "nf"})
         if path == "/api/evolution/input-coverage":
+            assert service == "evolution" and method == "GET"
+            assert headers == {"Authorization": f"Bearer {EVOLUTION_TOKEN}", "X-Tenant-Id": TENANT}
             return self.evolution_coverage
         if path == "/api/evolution/proposals":
+            assert service == "evolution" and method == "GET"
+            assert headers == {"Authorization": f"Bearer {EVOLUTION_TOKEN}", "X-Tenant-Id": TENANT}
             return self.proposals
         if path.startswith("/api/evolution/proposals/"):
+            assert service == "evolution" and method == "GET"
+            assert headers == {"Authorization": f"Bearer {EVOLUTION_TOKEN}", "X-Tenant-Id": TENANT}
             found = [p for p in self.proposals if p["decision_id"] == path.rsplit("/", 1)[-1]]
             return found[0] if found else {"detail": "nf"}
         if path.startswith("/api/runtime-bindings/"):
@@ -1111,9 +1129,32 @@ def test_hosted_runtime_headers_are_real_identities_and_default_headers_are_unch
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     mod, chain, _ = _runtime(monkeypatch, tmp_path, "C_promote")
-    for headers in (chain.runtime_headers, chain.deployment_headers, chain.evolution_headers):
+    for headers in (chain.runtime_headers, chain.deployment_headers):
         assert headers["Authorization"] == f"Bearer {EXECUTOR_TOKEN}" and "mfa" not in headers["Authorization"]
+    assert chain.reconciliation_headers == {}
+    assert chain.evolution_headers == {}
     assert chain.bff_headers["Authorization"] == "Bearer bff-real"
+
+    _, d_chain, _ = _runtime(monkeypatch, tmp_path, "D_observe", predecessors=D_PREDECESSORS)
+    assert d_chain.reconciliation_headers == {
+        "Authorization": f"Bearer {RECONCILIATION_TOKEN}",
+        "X-Tenant-Id": TENANT,
+    }
+    assert d_chain.evolution_headers == {
+        "Authorization": f"Bearer {EVOLUTION_TOKEN}",
+        "X-Tenant-Id": TENANT,
+    }
+    assert d_chain.reconciliation_headers["Authorization"] != d_chain.evolution_headers["Authorization"]
+    assert d_chain.reconciliation_headers["Authorization"] != f"Bearer {EXECUTOR_TOKEN}"
+    assert d_chain.evolution_headers["Authorization"] != f"Bearer {EXECUTOR_TOKEN}"
+
+    monkeypatch.delenv("PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN")
+    with pytest.raises(mod.DeployedProofError, match="PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN"):
+        mod.RuntimeChain(d_chain.settings)
+    monkeypatch.setenv("PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN", RECONCILIATION_TOKEN)
+    monkeypatch.delenv("PANTHEON_L12_EVOLUTION_AUTH_TOKEN")
+    with pytest.raises(mod.DeployedProofError, match="PANTHEON_L12_EVOLUTION_AUTH_TOKEN"):
+        mod.RuntimeChain(d_chain.settings)
 
     for name in ("PANTHEON_L12_HOSTED_CHAIN", "PANTHEON_L12_CROSS_LOOP_RUN_ID", "PANTHEON_L12_HOSTED_CHAIN_PHASE"):
         monkeypatch.delenv(name)
@@ -1123,6 +1164,8 @@ def test_hosted_runtime_headers_are_real_identities_and_default_headers_are_unch
     isolated = mod.RuntimeChain(chain.settings)
     assert isolated.hosted_input is None
     assert isolated.runtime_headers["Authorization"] == "Bearer l12-current-e2e:operator:mfa"
+    assert isolated.reconciliation_headers["Authorization"] == "Bearer pantheon-local-reconciliation-drift-service"
+    assert isolated.evolution_headers["Authorization"] == "Bearer pantheon-local-evolution-service"
 
 
 def test_hosted_promote_pauses_before_any_write_when_predecessors_are_missing(
@@ -1286,6 +1329,14 @@ def test_hosted_observe_pauses_without_claiming_loops_that_were_not_observed(
     _, chain, fake = _observe(monkeypatch, tmp_path, incidents=[INCIDENT], proposals=[_proposal()])
     chain.run_hosted()  # loops 10-12 observed, H4 not supplied
     assert _paused_at(tmp_path) == ("evolution_decision_acceptance", {10, 11, 12})
+    assert fake.headers["GET /api/evolution/input-coverage"] == {
+        "Authorization": f"Bearer {EVOLUTION_TOKEN}",
+        "X-Tenant-Id": TENANT,
+    }
+    assert fake.headers["GET /api/evolution/proposals"] == {
+        "Authorization": f"Bearer {EVOLUTION_TOKEN}",
+        "X-Tenant-Id": TENANT,
+    }
     assert fake.writes() == []  # D only reads owners
 
 
@@ -1501,6 +1552,17 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
     assert rec_eval["snapshot_event_id"] == snapshot_id
     assert rec_eval["lifecycle_event_id"] == lifecycle_id
     assert not any(c[2] == "/api/reconciliation-drift/evaluations" for c in fake.calls)
+    assert fake.headers[f"GET /api/reconciliation-drift/evaluations/{eval_id}"] == {
+        "Authorization": f"Bearer {RECONCILIATION_TOKEN}",
+        "X-Tenant-Id": TENANT,
+    }
+    assert fake.headers["GET /api/evolution/input-coverage"] == {
+        "Authorization": f"Bearer {EVOLUTION_TOKEN}",
+        "X-Tenant-Id": TENANT,
+    }
+    assert fake.writes() == []
+    for secret in (RECONCILIATION_TOKEN, EVOLUTION_TOKEN, EXECUTOR_TOKEN):
+        assert secret not in json.dumps(receipt)
 
     evo_cov = obs["evolution_input_coverage"]
     assert evo_cov["artifact_id"] == EXEC_ID

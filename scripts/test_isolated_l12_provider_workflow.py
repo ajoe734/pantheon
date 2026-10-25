@@ -421,6 +421,19 @@ def test_hosted_vm_runner_owner_labels_are_real_compose_services() -> None:
     research = [svc for names, svc, _p in runner.OWNERS if "RESEARCH" in names]
     assert research == ["research-orchestrator-svc"]
     assert "research-orchestrator-svc" in services
+    assert (
+        "PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN",
+        "reconciliation-drift-svc",
+        "RECONCILIATION_DRIFT_AUTH_TOKEN",
+        "",
+    ) in runner.SERVICE_CREDENTIALS
+    assert (
+        "PANTHEON_L12_EVOLUTION_AUTH_TOKEN",
+        "evolution",
+        "EVOLUTION_AUTH_TOKEN",
+        "",
+    ) in runner.SERVICE_CREDENTIALS
+    assert {"reconciliation-drift-svc", "evolution"} <= services
 
 
 def _fake_docker(
@@ -467,6 +480,8 @@ def _fake_docker(
                 "CONSULTATION_SERVICE_TOKEN": "consult-secret-1234",
                 "PANTHEON_PERSONA_SERVICE_TOKEN": "persona-secret-1234",
                 "PANTHEON_PERSONA_SERVICE_ACTOR_ID": "persona-writer-actor",
+                "RECONCILIATION_DRIFT_AUTH_TOKEN": "reconciliation-secret-1234",
+                "EVOLUTION_AUTH_TOKEN": "evolution-secret-1234",
                 "TRAINING_SESSION_WORKER_TOKEN_FILE": "/run/principals/TRAINING",
             }.get(argv[-1], "")
         elif argv[:2] == ["docker", "exec"] and argv[2] == "cid-train" and "cat" in argv:
@@ -483,7 +498,10 @@ def _fake_docker(
             json.dumps({"hosted": {"chain_id": kw["env"]["PANTHEON_L12_CROSS_LOOP_RUN_ID"], "phase_status": "paused"}}),
             encoding="utf-8",
         )
-        leaked = "stdout executor-token-abcdef agora-secret-1234"
+        leaked = (
+            "stdout executor-token-abcdef agora-secret-1234 "
+            "reconciliation-secret-1234 evolution-secret-1234"
+        )
         return type("P", (), {"returncode": 0, "stdout": leaked, "stderr": ""})()
 
     return calls, state, fake_run, fake_subprocess_run
@@ -519,13 +537,37 @@ def test_hosted_vm_runner_assembles_private_environment_and_redacts(monkeypatch,
     assert "PANTHEON_L12_CAPITAL_TOKEN" not in env
     assert env["PANTHEON_L12_PERSONA_SERVICE_TOKEN"] == "persona-secret-1234"
     assert env["PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID"] == "persona-writer-actor"
+    assert env["PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN"] == "reconciliation-secret-1234"
+    assert env["PANTHEON_L12_EVOLUTION_AUTH_TOKEN"] == "evolution-secret-1234"
+    assert [
+        "docker",
+        "exec",
+        "cid-reconciliation-drift-svc",
+        "printenv",
+        "RECONCILIATION_DRIFT_AUTH_TOKEN",
+    ] in calls
+    assert [
+        "docker",
+        "exec",
+        "cid-evolution",
+        "printenv",
+        "EVOLUTION_AUTH_TOKEN",
+    ] in calls
     assert state["argv"][-1] == runner.PARENT_NODE and state["cwd"] == str(tmp_path)
     log = (tmp_path / "phase.log").read_text(encoding="utf-8")
-    for secret in ("executor-token-abcdef", "agora-secret-1234", "persona-secret-1234"):
+    for secret in (
+        "executor-token-abcdef",
+        "agora-secret-1234",
+        "persona-secret-1234",
+        "reconciliation-secret-1234",
+        "evolution-secret-1234",
+    ):
         assert secret not in log
     meta = json.loads((tmp_path / "segment-meta.json").read_text(encoding="utf-8"))
     assert meta["pytest_exit"] == 0 and meta["capital_credential"] == "executor_session_token_no_service_token"
-    assert "executor-token-abcdef" not in json.dumps(meta)
+    assert meta["credential_gaps"] == []
+    for secret in ("executor-token-abcdef", "reconciliation-secret-1234", "evolution-secret-1234"):
+        assert secret not in json.dumps(meta)
     assert all("secret" not in " ".join(call) for call in calls)  # no credential in any argv
 
 
