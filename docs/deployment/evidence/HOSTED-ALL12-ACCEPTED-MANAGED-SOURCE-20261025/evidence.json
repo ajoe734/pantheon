@@ -1,0 +1,33 @@
+{
+  "task_id": "HOSTED-ALL12-ACCEPTED-MANAGED-SOURCE-20261025",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base_dev_sha": "c8513d2819dad3cc37b48d3f11268f7f1fb6d656",
+  "scope": "source-only; no SSH, VM checkout modification, service stop/restart, deployment, or hosted business/provider phase trigger (Root retains runtime execution)",
+  "reproduced_failure": {
+    "github_run_id": 40203361162,
+    "chain_id": "h12-01a11-20261023-9aeb",
+    "phase": "A_research",
+    "accepted_backend_sha": "4289bcb686050131522f2318a0ebb05b8d4a8886",
+    "accepted_frontend_sha": "ad31927ded9a9ebd99eb436eb7320bc7a97e4065",
+    "root_managed_worktree_sha": "55b67c49ed7b0d036df0befd72a4813404ee76db",
+    "bff_compose_working_dir_sha": "4289bcb686050131522f2318a0ebb05b8d4a8886",
+    "root_cause": "run_phase.py unconditionally checked args.worktree (dev-root at 55b67c49ed7b0d036df0befd72a4813404ee76db) before resolving the running operator-bff container's Compose working directory (dev-bff at 4289bcb686050131522f2318a0ebb05b8d4a8886)"
+  },
+  "change": "In .github/workflows/nonprod-deploy.yml (hosted-all12-chain-phase run_phase.py), resolve bff_cid = container(BFF_SERVICE) first, inspect com.docker.compose.project.working_dir on bff_cid via compose_working_dir(bff_cid) with fallback to args.worktree, validate exact HEAD == args.expected_sha and clean tracked status (git status --porcelain --untracked-files=no) on that resolved managed checkout, record worktree in segment-meta.json managed_checkout, and run the existing stimulus parent pytest node with cwd=worktree.",
+  "invariants_preserved": {
+    "exact_accepted_backend_sha_check": true,
+    "tracked_clean_source_check": true,
+    "never_relabels_55b67c49_as_4289bcb6": true,
+    "auth_tenant_and_qualification_lease_unchanged": true,
+    "preserved_chain_id": "h12-01a11-20261023-9aeb",
+    "no_vm_or_runtime_side_effects": true,
+    "source_merge_is_not_runtime_or_all12_completion": true
+  },
+  "regression_tests": [
+    "scripts/test_isolated_l12_provider_workflow.py::test_hosted_vm_runner_uses_accepted_bff_compose_working_dir_and_covers_root_served",
+    "scripts/test_isolated_l12_provider_workflow.py::test_hosted_vm_runner_refuses_dirty_or_other_checkout"
+  ],
+  "test_environment": ".venv-pantheon provisioned via python3 scripts/dev/provision_python_distribution.py",
+  "focused_suite": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_isolated_l12_provider_workflow.py scripts/test_dev_direct_ssh_workflow_contract.py: 32 passed"
+}
