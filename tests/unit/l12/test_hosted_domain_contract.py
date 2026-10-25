@@ -1293,12 +1293,18 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     binding_id = "rb-eea1cd16cf3745479f42e8b4440b3c27"
-    runtime_id = "rt-7d40a8a391ce4a109c7224fb15f87b4a"
+    runtime_id = "rt-eb295fe2"
     plan_id = f"hosted-all12-{CHAIN}-plan"
     eval_id = "rdeval-sched-scheduled-tenant-dev-2026-10-25T-rb-eea1cd16cf3745479f42e-a883ec3057a5534b"
     fill_event_id = "a4263fe2-9448-42bf-9cf2-30f28fd89fc9"
     snapshot_id = "0ff217ca-c40e-500d-8784-d38c1f7300d1"
     lifecycle_id = "8042dfe1-9cb1-5486-b6e4-aff7866cfaf6"
+    expected_gaps = [
+        "rolling_drawdown_multiple: telemetry field 'drawdown' missing or non-numeric",
+        "rolling_drawdown_multiple: telemetry field 'drawdown' has missing/mismatched provenance",
+        "rolling_drawdown_multiple: telemetry field 'drawdown' has no fresh as-of time",
+        f"rolling_drawdown_multiple: no approved 'expected_drawdown' baseline for artifact_id={EXEC_ID!r}",
+    ]
 
     predecessors = {
         "runtime_binding_id": binding_id,
@@ -1324,36 +1330,100 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
         return orig_request(service, method, path, **kw)
 
     fake.request = d402214_request  # type: ignore[assignment]
+    # Saved canonical evaluation DTO shape from D402214: counts under summary,
+    # source_fill_event_id under lifecycle_append.event.metadata (no root count/source_fill fields).
     fake.reconciliation_evaluations[eval_id] = {
+        "id": eval_id,
         "evaluation_id": eval_id,
+        "run_id": f"run-{binding_id}-929606b86c3d75d401cc4d08",
+        "tenant_id": TENANT,
         "binding_id": binding_id,
         "runtime_id": runtime_id,
         "status": "ok",
-        "reconciliation_check_count": 6,
-        "observed_metric_count": 5,
-        "telemetry_event_count": 2,
-        "baseline_metric_count": 0,
-        "drift_check_count": 0,
+        "summary": {
+            "status": "ok",
+            "drift_check_count": 0,
+            "baseline_metric_count": 0,
+            "observed_metric_count": 5,
+            "telemetry_event_count": 2,
+            "reconciliation_check_count": 6,
+        },
+        "tick_id": "scheduled:tenant-dev:2026-10-25T09:50:00Z:PT300S",
+        "trigger": "scheduled",
+        "evaluated_at": "2026-10-25T09:52:06Z",
         "snapshot_event_id": snapshot_id,
-        "source_fill_event_id": fill_event_id,
-        "lifecycle_event_id": lifecycle_id,
-        "incident_ids": [],
+        "baseline_metrics": {},
+        "observed_metrics": {
+            "cash": 104770.0,
+            "price": 2385.0,
+            "position_qty": -2.0,
+            "queue_lag_ms": 0.0,
+            "event_delivery_lag_ms": 59.133,
+        },
+        "drift_checks": [],
+        "lifecycle_append": {
+            "error": None,
+            "status": "accepted",
+            "outcome": "accepted",
+            "terminal": True,
+            "retryable": False,
+            "event_id": lifecycle_id,
+            "upstream_event_id": snapshot_id,
+            "event": {
+                "event_id": lifecycle_id,
+                "event_type": "reconciliation_completed",
+                "binding_id": binding_id,
+                "runtime_id": runtime_id,
+                "artifact_id": EXEC_ID,
+                "causal_parent_id": snapshot_id,
+                "metadata": {
+                    "source_fill_event_id": fill_event_id,
+                    "reconciliation_evaluation_id": eval_id,
+                    "reconciliation_status": "ok",
+                    "reconciliation_tick_id": "scheduled:tenant-dev:2026-10-25T09:50:00Z:PT300S",
+                },
+            },
+        },
     }
+    # Saved canonical Evolution input-coverage DTO shape from D402214:
+    # artifact_id, complete, and metrics[].evaluable (no target_id or root evaluable).
     fake.evolution_coverage = {
+        "assessed_at": "2026-10-25T18:58:17Z",
+        "eligible_stage": "paper",
+        "thresholds_considered": ["rolling_drawdown_multiple"],
+        "monitored_artifacts": 2,
+        "complete_artifacts": 0,
+        "incomplete_artifacts": 2,
+        "coverage_complete": False,
+        "diagnostics": [],
+        "thresholds_loaded": 1,
+        "approved_baseline_artifacts": [],
         "artifacts": [
             {
-                "target_id": EXEC_ID,
+                "artifact_id": EXEC_ID,
+                "artifact_version": "1.0.0",
                 "binding_id": binding_id,
-                "complete": False,
-                "evaluable": False,
-                "gaps": [
-                    "missing_incident_case",
-                    "missing_reconciliation_drift_incident",
-                    "missing_shadow_or_paper_comparative_window",
-                    "missing_sweep_candidate_set",
+                "runtime_id": runtime_id,
+                "deployment_stage": "paper",
+                "metrics": [
+                    {
+                        "metric_name": "rolling_drawdown_multiple",
+                        "summary_field": "drawdown",
+                        "has_numeric_value": False,
+                        "metric_provenance_ok": False,
+                        "metric_fresh": False,
+                        "requires_baseline": True,
+                        "baseline_key": "expected_drawdown",
+                        "approved_baseline_value": None,
+                        "has_approved_baseline": False,
+                        "evaluable": False,
+                    }
                 ],
+                "gaps": list(expected_gaps),
+                "complete": False,
             }
-        ]
+        ],
+        "ineligible_summaries": [],
     }
     chain._runtime_event = lambda rid: {
         "event": {
@@ -1417,22 +1487,29 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
     }
     rec_eval = obs["reconciliation_evaluation"]
     assert rec_eval["evaluation_id"] == eval_id
+    assert rec_eval["runtime_id"] == runtime_id
     assert rec_eval["reconciliation_check_count"] == 6
+    assert rec_eval["observed_metric_count"] == 5
+    assert rec_eval["telemetry_event_count"] == 2
     assert rec_eval["baseline_metric_count"] == 0
     assert rec_eval["drift_check_count"] == 0
     assert rec_eval["drift_evaluated"] is False
     assert rec_eval["measured_zero_drift"] is False
     assert rec_eval["drift_outcome"] == "unmeasured_no_baseline"
+    assert rec_eval["source_fill_event_id"] == fill_event_id
     assert rec_eval["same_chain_fill_cited"] is True
     assert rec_eval["snapshot_event_id"] == snapshot_id
     assert rec_eval["lifecycle_event_id"] == lifecycle_id
     assert not any(c[2] == "/api/reconciliation-drift/evaluations" for c in fake.calls)
 
     evo_cov = obs["evolution_input_coverage"]
-    assert evo_cov["target_id"] == EXEC_ID
+    assert evo_cov["artifact_id"] == EXEC_ID
     assert evo_cov["binding_id"] == binding_id
+    assert evo_cov["runtime_id"] == runtime_id
+    assert evo_cov["target_found"] is True
+    assert evo_cov["complete"] is False
     assert evo_cov["evaluable"] is False
-    assert len(evo_cov["gaps"]) == 4
+    assert evo_cov["gaps"] == expected_gaps
     assert set(receipt["resource_ids"]) == set(predecessors)
 
     # Unevaluable Evolution target pauses at evolution_decision_observation even when Incident exists.
@@ -1449,6 +1526,53 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
     assert receipt2["phase_status"] == "paused"
     assert receipt2["blocked_before"] == "evolution_decision_observation"
     assert {c["loop"] for c in receipt2["cases"].values()} == {10, 12}
+
+    # Canonical eligible Evolution target (artifact_id + complete=True + metrics[].evaluable=True,
+    # no root evaluable) is recognized as evaluable=True and proceeds past Loop 11 to H4 acceptance.
+    fake.evolution_coverage["artifacts"][0] = {
+        "artifact_id": EXEC_ID,
+        "artifact_version": "1.0.0",
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "deployment_stage": "paper",
+        "metrics": [
+            {
+                "metric_name": "rolling_drawdown_multiple",
+                "summary_field": "drawdown",
+                "has_numeric_value": True,
+                "metric_provenance_ok": True,
+                "metric_fresh": True,
+                "requires_baseline": True,
+                "baseline_key": "expected_drawdown",
+                "approved_baseline_value": 0.05,
+                "has_approved_baseline": True,
+                "evaluable": True,
+            }
+        ],
+        "gaps": [],
+        "complete": True,
+    }
+    chain3 = mod.RuntimeChain(chain.settings)
+    chain3.http = fake
+    chain3._identity = lambda service: chain3.evidence.identities.setdefault(service, {"service": service})
+    chain3._runtime_event = chain._runtime_event
+    chain3._fleet_worker = chain._fleet_worker
+    chain3._bff_health = chain._bff_health
+    chain3.run_hosted()
+    receipt3 = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt3["phase_status"] == "paused"
+    assert receipt3["blocked_before"] == "evolution_decision_acceptance"
+    assert {c["loop"] for c in receipt3["cases"].values()} == {10, 11, 12}
+    assert receipt3["observations"]["evolution_input_coverage"]["evaluable"] is True
+
+    # Missing summary counts are never coerced to 0 or inferred as unmeasured_no_baseline / measured_zero_drift.
+    fake.reconciliation_evaluations[eval_id] = {
+        "evaluation_id": eval_id,
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "status": "ok",
+    }
+    assert chain._hosted_reconciliation_evaluation(binding_id, chain._runtime_event(runtime_id)) is None
 
 
 def test_hosted_observe_h4_must_match_this_chains_target_pool_and_incident_lineage(

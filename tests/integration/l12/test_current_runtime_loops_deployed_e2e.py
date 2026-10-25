@@ -1668,29 +1668,78 @@ class RuntimeChain:
                 continue
             if str(evaluation.get("binding_id") or "") != binding_id:
                 continue
-            baseline_metric_count = int(evaluation.get("baseline_metric_count") or 0)
-            drift_check_count = int(evaluation.get("drift_check_count") or 0)
-            reconciliation_check_count = int(evaluation.get("reconciliation_check_count") or 0)
-            observed_metric_count = int(evaluation.get("observed_metric_count") or 0)
-            telemetry_event_count = int(evaluation.get("telemetry_event_count") or 0)
+            eval_summary = evaluation.get("summary")
+            if not isinstance(eval_summary, Mapping):
+                continue
+            count_keys = (
+                "reconciliation_check_count",
+                "observed_metric_count",
+                "telemetry_event_count",
+                "baseline_metric_count",
+                "drift_check_count",
+            )
+            if any(
+                isinstance(eval_summary.get(k), bool) or not isinstance(eval_summary.get(k), int)
+                for k in count_keys
+            ):
+                continue
+            reconciliation_check_count = int(eval_summary["reconciliation_check_count"])
+            observed_metric_count = int(eval_summary["observed_metric_count"])
+            telemetry_event_count = int(eval_summary["telemetry_event_count"])
+            baseline_metric_count = int(eval_summary["baseline_metric_count"])
+            drift_check_count = int(eval_summary["drift_check_count"])
+            status = str(eval_summary.get("status") or evaluation.get("status") or "")
+            drift_checks = evaluation.get("drift_checks") if isinstance(evaluation.get("drift_checks"), list) else []
             drift_evaluated = baseline_metric_count > 0 and drift_check_count > 0
             measured_zero_drift = (
                 drift_evaluated
-                and str(evaluation.get("status") or "") == "ok"
+                and status == "ok"
+                and len(drift_checks) == drift_check_count
+                and all(isinstance(chk, Mapping) and chk.get("status") == "ok" for chk in drift_checks)
                 and not (evaluation.get("incident_ids") or [])
             )
             drift_outcome = (
                 "unmeasured_no_baseline"
                 if baseline_metric_count == 0
-                else ("measured_zero_drift" if measured_zero_drift else str(evaluation.get("status") or "evaluated"))
+                else (
+                    "unmeasured_no_drift_checks"
+                    if drift_check_count == 0
+                    else ("measured_zero_drift" if measured_zero_drift else (status or "evaluated"))
+                )
+            )
+            lifecycle_append = (
+                evaluation.get("lifecycle_append")
+                if isinstance(evaluation.get("lifecycle_append"), Mapping)
+                else {}
+            )
+            append_event = (
+                lifecycle_append.get("event")
+                if isinstance(lifecycle_append.get("event"), Mapping)
+                else {}
+            )
+            append_meta = (
+                append_event.get("metadata")
+                if isinstance(append_event.get("metadata"), Mapping)
+                else {}
             )
             same_chain_fill_event_id = str(event.get("event_id") or "") or None
-            source_fill_event_id = str(evaluation.get("source_fill_event_id") or "") or None
+            source_fill_event_id = str(append_meta.get("source_fill_event_id") or "") or None
+            lifecycle_event_id = (
+                str(lifecycle_append.get("event_id") or append_event.get("event_id") or "") or None
+            )
             return {
                 "evaluation_id": evaluation_id,
                 "binding_id": binding_id,
                 "runtime_id": str(evaluation.get("runtime_id") or ""),
-                "status": str(evaluation.get("status") or ""),
+                "status": status,
+                "summary": {
+                    "status": status,
+                    "reconciliation_check_count": reconciliation_check_count,
+                    "observed_metric_count": observed_metric_count,
+                    "telemetry_event_count": telemetry_event_count,
+                    "baseline_metric_count": baseline_metric_count,
+                    "drift_check_count": drift_check_count,
+                },
                 "reconciliation_check_count": reconciliation_check_count,
                 "observed_metric_count": observed_metric_count,
                 "telemetry_event_count": telemetry_event_count,
@@ -1705,7 +1754,7 @@ class RuntimeChain:
                 "same_chain_fill_cited": bool(
                     same_chain_fill_event_id and source_fill_event_id == same_chain_fill_event_id
                 ),
-                "lifecycle_event_id": str(evaluation.get("lifecycle_event_id") or "") or None,
+                "lifecycle_event_id": lifecycle_event_id,
                 "incident_ids": list(evaluation.get("incident_ids") or []),
             }
         return None
@@ -1728,28 +1777,48 @@ class RuntimeChain:
                 item
                 for item in artifacts
                 if isinstance(item, Mapping)
-                and (
-                    (registry_id and str(item.get("target_id") or "") == registry_id)
-                    or str(item.get("binding_id") or "") == binding_id
-                )
+                and str(item.get("artifact_id") or "") == registry_id
+                and (not binding_id or str(item.get("binding_id") or "") == binding_id)
             ),
             None,
         )
         if matched is None:
+            matched = next(
+                (
+                    item
+                    for item in artifacts
+                    if isinstance(item, Mapping)
+                    and (
+                        (registry_id and str(item.get("artifact_id") or "") == registry_id)
+                        or (not registry_id and binding_id and str(item.get("binding_id") or "") == binding_id)
+                    )
+                ),
+                None,
+            )
+        if matched is None:
             return {
-                "target_id": registry_id,
+                "artifact_id": registry_id,
                 "binding_id": binding_id,
+                "runtime_id": None,
                 "target_found": False,
                 "complete": False,
                 "evaluable": False,
+                "metrics": [],
                 "gaps": [],
             }
+        metrics = [dict(m) for m in (matched.get("metrics") or []) if isinstance(m, Mapping)]
+        complete = bool(matched.get("complete") is True)
+        evaluable = bool(complete and metrics and all(m.get("evaluable") is True for m in metrics))
         return {
-            "target_id": str(matched.get("target_id") or registry_id),
+            "artifact_id": str(matched.get("artifact_id") or registry_id),
+            "artifact_version": str(matched.get("artifact_version") or "") or None,
             "binding_id": str(matched.get("binding_id") or binding_id),
+            "runtime_id": str(matched.get("runtime_id") or "") or None,
+            "deployment_stage": str(matched.get("deployment_stage") or "") or None,
             "target_found": True,
-            "complete": bool(matched.get("complete") is True),
-            "evaluable": bool(matched.get("evaluable") is True),
+            "complete": complete,
+            "evaluable": evaluable,
+            "metrics": metrics,
             "gaps": [str(gap) for gap in (matched.get("gaps") or []) if str(gap)],
         }
 
