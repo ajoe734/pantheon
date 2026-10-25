@@ -38,6 +38,9 @@ from ..governance.promotion_review import (
 
 _NUMERIC_TYPES = (int, float, Decimal)
 
+from services.execution.lean_runtime.performance_telemetry import (
+    is_portfolio_mark_fresh,
+)
 from services.rankings.snapshots import FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION
 _PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS = 3600
 _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS = 86400 * 7
@@ -1172,12 +1175,71 @@ def _management_portfolio_holding_entry(
         )
     elif position_mark_as_of:
         last_mark_at = str(position_mark_as_of)
+        raw_now = kwargs.get("snapshot_at") or _default_utc_now()
+        try:
+            now_dt = datetime.fromisoformat(str(raw_now).replace("Z", "+00:00"))
+            if now_dt.tzinfo is None:
+                now_dt = now_dt.replace(tzinfo=timezone.utc)
+            else:
+                now_dt = now_dt.astimezone(timezone.utc)
+        except ValueError:
+            now_dt = datetime.now(timezone.utc)
         try:
             quote_at = datetime.fromisoformat(last_mark_at.replace("Z", "+00:00"))
-            age = (datetime.now(timezone.utc) - quote_at).total_seconds()
+            if quote_at.tzinfo is None:
+                quote_at = None
+            else:
+                quote_at = quote_at.astimezone(timezone.utc)
         except ValueError:
-            age = None
-        if age is None or age < -300.0 or age > 172800.0:
+            quote_at = None
+
+        def _resolve_mark_provenance(
+            field_names: Tuple[str, ...],
+            *,
+            mark_field: str,
+        ) -> Any:
+            for name in field_names:
+                if name in position:
+                    return position.get(name)
+            for name in field_names:
+                if name in mark:
+                    return mark.get(name)
+            marks_by_symbol = telemetry_dict.get("_marks_by_symbol")
+            if isinstance(marks_by_symbol, dict) and symbol:
+                sym_mark = marks_by_symbol.get(symbol)
+                if isinstance(sym_mark, dict):
+                    telemetry_binding = str(telemetry_dict.get("binding_id") or "").strip()
+                    mark_binding = str(sym_mark.get("binding_id") or "").strip()
+                    if (
+                        not telemetry_binding
+                        or not mark_binding
+                        or telemetry_binding == mark_binding
+                    ) and str(sym_mark.get("as_of") or "") == last_mark_at:
+                        if mark_field in sym_mark:
+                            return sym_mark.get(mark_field)
+            return None
+
+        obs_val = _resolve_mark_provenance(
+            ("mark_observed_at", "observed_at"),
+            mark_field="observed_at",
+        )
+        lin_val = _resolve_mark_provenance(
+            ("mark_lineage", "lineage"),
+            mark_field="lineage",
+        )
+        cal_val = _resolve_mark_provenance(
+            ("mark_calendar_evidence", "calendar_evidence"),
+            mark_field="calendar_evidence",
+        )
+        if quote_at is None or not is_portfolio_mark_fresh(
+            symbol=symbol,
+            mark_as_of=quote_at,
+            now_dt=now_dt,
+            max_mark_age_seconds=172800.0,
+            observed_at=obs_val,
+            lineage=lin_val,
+            calendar_evidence=cal_val,
+        ):
             mark_status = "stale"
     elif mark_price is not None:
         last_mark_at = str(
@@ -2051,6 +2113,7 @@ def _pm12_portfolio_book_holdings_response(
                 telemetry=telemetry,
                 position_source_count=position_source_count,
                 explicit_flat=explicit_flat,
+                snapshot_at=snapshot_at,
             )
             (flat_runtime_items if explicit_flat else holding_items).append(entry)
 

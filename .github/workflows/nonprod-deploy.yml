@@ -3635,6 +3635,8 @@ jobs:
               ("PANTHEON_L12_POLICY_LEARNING_TOKEN", "policy-learning-svc", "POLICY_LEARNING_SERVICE_TOKEN", ""),
               ("PANTHEON_L12_CONSULTATION_TOKEN", "consultation-svc", "CONSULTATION_SERVICE_TOKEN", "CONSULTATION_API_TOKEN"),
               ("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "persona", "PANTHEON_PERSONA_SERVICE_TOKEN", "PERSONA_SERVICE_TOKEN"),
+              ("PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN", "reconciliation-drift-svc", "RECONCILIATION_DRIFT_AUTH_TOKEN", ""),
+              ("PANTHEON_L12_EVOLUTION_AUTH_TOKEN", "evolution", "EVOLUTION_AUTH_TOKEN", ""),
           )
           PERSONA_SERVICE = "persona"
           TRAINING_CONSUMER = "training-session-preview-worker"

@@ -683,6 +683,161 @@ class PaperRuntimeServiceTest(unittest.TestCase):
                 "performance_snapshots_emitted",
             )
 
+    def test_unchanged_sample_emits_newly_available_governed_mark_provenance_once_and_persists(self):
+        binding = self._binding()
+        now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+        as_of = (now_dt - timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+        observed_at = (now_dt - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+        source_ref = "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"
+        lineage = {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:9691b8ad1b066a80"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        }
+        calendar_evidence = {
+            "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",
+            "checksum": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+            "coverage_end": "2026-10-28",
+            "coverage_start": "2026-10-22",
+            "fetched_at": "2026-10-23T07:00:39Z",
+            "holidays": {
+                "2026-10-23": {"name": "颱風全日休市 (TWSE 臨時休市公告)"},
+                "2026-10-25": {"name": "臺灣光復暨金門古寧頭大捷紀念日"},
+                "2026-10-26": {"name": "臺灣光復暨金門古寧頭大捷紀念日"},
+            },
+            "market": "TW",
+            "source_url": "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+            "timezone": "Asia/Taipei",
+            "trading_days": ["2026-10-22", "2026-10-27", "2026-10-28"],
+            "venue": "TWSE",
+            "version": "twse-2026-emergency-closure-20261023-v2",
+        }
+
+        class _ProvenanceMarkProvider:
+            def __init__(self, mark: MarketMark):
+                self.mark = mark
+
+            def resolve(self, symbols):
+                return (
+                    {s: self.mark for s in symbols},
+                    {
+                        "source": "source_ingest",
+                        "enabled": True,
+                        "requested_symbols": list(symbols),
+                        "resolved_symbols": list(symbols),
+                        "missing_symbols": [],
+                    },
+                )
+
+            def snapshot(self, *, requested_symbols=None):
+                return {
+                    "source": "source_ingest",
+                    "enabled": True,
+                    "requested_symbols": list(requested_symbols or []),
+                }
+
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            state_path = Path(temporary_dir) / "paper-ledger.json"
+            telemetry = _DurablePairTelemetry(binding)
+            initial_signal = {
+                **self._signal(),
+                "symbol": "AAPL.US",
+            }
+            mark_without_prov = MarketMark(
+                symbol="AAPL.US",
+                price=105.0,
+                as_of=as_of,
+                source_ref=source_ref,
+            )
+            with patch.dict(
+                os.environ,
+                {"PANTHEON_PERFORMANCE_STATE_PATH": str(state_path)},
+            ):
+                first_service = PaperRuntimeService(
+                    store=InMemoryPendingSignalStore([initial_signal]),
+                    identity=self._identity(),
+                    runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+                    telemetry_emitter=telemetry,
+                    mark_provider=_ProvenanceMarkProvider(mark_without_prov),
+                    poll_interval_seconds=3600,
+                )
+                first_snap = first_service.drain_once()
+                self.assertEqual(
+                    first_snap["paper_state"]["performance_telemetry"]["code"],
+                    "performance_snapshots_emitted",
+                )
+                self.assertEqual(len(telemetry.attempts), 2)
+                self.assertNotIn(
+                    "observed_at",
+                    telemetry.attempts[0]["metadata"]["mark_refs"][0],
+                )
+
+                # Now the same mark carries newly available governed provenance without any new fill or price change.
+                mark_with_prov = MarketMark(
+                    symbol="AAPL.US",
+                    price=105.0,
+                    as_of=as_of,
+                    source_ref=source_ref,
+                    observed_at=observed_at,
+                    lineage=lineage,
+                    calendar_evidence=calendar_evidence,
+                )
+                first_service._mark_provider = _ProvenanceMarkProvider(mark_with_prov)
+                second_snap = first_service.drain_once()
+                self.assertEqual(
+                    second_snap["paper_state"]["performance_telemetry"]["code"],
+                    "performance_snapshots_emitted",
+                )
+                self.assertEqual(len(telemetry.attempts), 4)
+                enriched_pnl = telemetry.attempts[2]
+                enriched_dd = telemetry.attempts[3]
+                self.assertEqual(
+                    enriched_pnl["pnl_as_of"],
+                    telemetry.attempts[0]["pnl_as_of"],
+                )
+                self.assertEqual(
+                    enriched_dd["drawdown_as_of"],
+                    telemetry.attempts[1]["drawdown_as_of"],
+                )
+                self.assertAlmostEqual(enriched_pnl["metrics"]["pnl"], 50.0)
+                self.assertAlmostEqual(enriched_dd["metrics"]["drawdown_pct"], 0.0)
+                self.assertEqual(
+                    enriched_pnl["metadata"]["mark_refs"],
+                    [
+                        {
+                            "symbol": "AAPL.US",
+                            "price": 105.0,
+                            "as_of": as_of,
+                            "source_ref": source_ref,
+                            "observed_at": observed_at,
+                            "lineage": lineage,
+                            "calendar_evidence": calendar_evidence,
+                        }
+                    ],
+                )
+
+                # Subsequent poll and restart with identical provenance remain unchanged.
+                third_snap = first_service.drain_once()
+                self.assertEqual(
+                    third_snap["paper_state"]["performance_telemetry"]["code"],
+                    "performance_sample_unchanged",
+                )
+                self.assertEqual(len(telemetry.attempts), 4)
+
+                restarted_service = PaperRuntimeService(
+                    store=InMemoryPendingSignalStore(),
+                    identity=self._identity(),
+                    runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+                    telemetry_emitter=telemetry,
+                    mark_provider=_ProvenanceMarkProvider(mark_with_prov),
+                    poll_interval_seconds=3600,
+                )
+                fourth_snap = restarted_service.drain_once()
+                self.assertEqual(
+                    fourth_snap["paper_state"]["performance_telemetry"]["code"],
+                    "performance_sample_unchanged",
+                )
+                self.assertEqual(len(telemetry.attempts), 4)
+
     def test_drain_once_does_not_execute_when_binding_halted(self):
         """Safety gate: a paused/halted binding must not fill orders.
 
