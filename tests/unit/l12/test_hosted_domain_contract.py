@@ -446,9 +446,36 @@ def _hosted_content(human: Any, **over: Any) -> dict[str, Any]:
     return _content(human, **(kwargs | over))
 
 
+POST_EDIT_EVAL = "teval-55d5cd0fb5f8"  # the hosted chain's post-edit evaluation (validation_status failed)
+
+
+def _owner_evaluation(eval_id: str, evaluated_at: str, validation: str = "passed",
+                      metrics: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """One ``evaluations[eval_id]`` preview as the Training owner stores it (TeachingEvaluationResult.to_dict)."""
+    metrics = dict(metrics if metrics is not None else {"total_return": 0.01, "sharpe_ratio": 0.2, "max_drawdown": -0.2})
+    return {
+        "session_id": "trn-1", "persona_id": "persona-teach", "tenant_id": TENANT,
+        "candidate_snapshot_at": evaluated_at, "eval_identity": f"eid-{eval_id}",
+        "evaluation_proof": {"eval_id": eval_id, "session_id": "trn-1", "evaluated_at": evaluated_at,
+                             "status": validation, "metrics": metrics},
+        "evaluation_result": {"eval_id": eval_id, "session_id": "trn-1", "tenant_id": TENANT,
+                              "persona_id": "persona-teach", "validation_status": validation,
+                              "validation_errors": [], "metrics": metrics, "eval_identity": f"eid-{eval_id}",
+                              "evaluated_at": evaluated_at, "consultation_required": False},
+    }
+
+
+def _previews(*evaluations: dict[str, Any]) -> dict[str, Any]:
+    """``GET /api/training/previews/{session}``: the bundle keyed by eval_id."""
+    return {"session_id": "trn-1", "tenant_id": TENANT, "preview": evaluations[-1] if evaluations else {},
+            "evaluations": {e["evaluation_result"]["eval_id"]: e for e in evaluations}}
+
+
 def _teaching_http(state: dict[str, Any], calls: list[tuple[str, str]], terminal: dict[str, Any] | None = None) -> Any:
     def http(_u: str, path: str, *, method: str = "GET", payload: Any = None, headers: Any = None, **_: Any) -> Any:
         calls.append((method, path))
+        if path.startswith("/api/training/previews/"):
+            return state.get("previews", {"detail": "trainer preview not found"})
         if "/controls/" in path:
             edited = any(e.get("patch_delta") for e in state["events"])
             return {"controls": [{"parameter_key": "short_window", "current_value": 5 if edited else 7},
@@ -477,11 +504,69 @@ def test_hosted_research_reuses_existing_user_edit_without_writing(
     research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
     research._current_case = {}
     calls: list[tuple[str, str]] = []
-    research._http_json = _teaching_http({"events": [_edit(actor="executor-1")]}, calls)
+    # the edit is at 01:20; terminal-readback already shows the post-edit teval-1 (01:30)
+    previews = _previews(_owner_evaluation("teval-0", "2026-10-23T01:10:00Z"),
+                         _owner_evaluation("teval-1", "2026-10-23T01:30:00Z"))
+    research._http_json = _teaching_http({"events": [_edit(actor="executor-1")], "previews": previews}, calls)
     research._case_persona_teaching({})
     assert not [c for c in calls if c[0] == "PATCH"], "an eligible existing edit must be reused, not rewritten"
-    assert research.chain["pre_edit_eval_id"] == "teval-1"
-    assert research.chain["pre_edit_evaluated_at"] == "2026-10-23T01:30:00Z"
+    assert research.chain["pre_edit_eval_id"] == "teval-0", "the post-edit evaluation is never the pre-edit one"
+    assert research.chain["pre_edit_evaluated_at"] == "2026-10-23T01:10:00Z"
+    assert research._hosted_resource_ids()["pre_edit_eval_id"] == "teval-0"
+    _assert_scalar_ids({k: v for k, v in research._hosted_resource_ids().items() if v not in (None, "")})
+
+
+def test_hosted_research_reused_edit_with_only_post_edit_evaluations_pauses_named(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
+    research._current_case = {}
+    calls: list[tuple[str, str]] = []
+    state = {"events": [_edit(actor="executor-1")],
+             "previews": _previews(_owner_evaluation(POST_EDIT_EVAL, "2026-10-23T01:30:00Z", "failed"))}
+    research._http_json = _teaching_http(state, calls)
+    with pytest.raises(sys.modules["l12_owner_auth"].HostedPause) as paused:
+        research._case_persona_teaching({})
+    assert paused.value.blocked_before == "teaching_human_control_edit"
+    assert paused.value.detail.startswith("pre_edit_evaluation_absent:") and "tevt-1" in paused.value.detail
+    assert "pre_edit_eval_id" not in paused.value.resource_ids and "pre_edit_eval_id" not in research.chain
+    assert [c for c in calls if c[0] != "GET"] == [], "no PATCH, no new preview job"
+
+
+def test_pre_edit_lineage_takes_the_latest_finite_evaluation_strictly_before_the_edit(auth: Any) -> None:
+    edit = _edit()  # 2026-10-23T01:20:00Z
+    bundle = _previews(
+        _owner_evaluation("teval-a", "2026-10-23T01:00:00Z"),
+        _owner_evaluation("teval-c", "2026-10-23T01:19:59Z", "failed"),
+        _owner_evaluation("teval-b", "2026-10-23T01:15:00Z"),
+        _owner_evaluation("teval-nan", "2026-10-23T01:19:30Z",
+                          metrics={"total_return": None, "sharpe_ratio": 0.2, "max_drawdown": -0.2}),
+        _owner_evaluation("teval-same", "2026-10-23T01:20:00Z"),
+        _owner_evaluation(POST_EDIT_EVAL, "2026-10-23T01:30:00Z", "failed"),
+    )
+    assert auth.pre_edit_evaluation_before(bundle, edit) == {
+        "pre_edit_eval_id": "teval-c", "pre_edit_evaluated_at": "2026-10-23T01:19:59Z"}
+    # only same-instant/post-edit evaluations: nothing qualifies, nothing is synthesised
+    late = _previews(_owner_evaluation("teval-same", "2026-10-23T01:20:00Z"),
+                     _owner_evaluation(POST_EDIT_EVAL, "2026-10-23T01:30:00Z", "failed"))
+    assert auth.pre_edit_evaluation_before(late, edit) is None
+    # the anchor is the newest eligible nonzero user edit, not an older or a service one
+    older = {**_edit(event_id="tevt-old"), "timestamp": "2026-10-23T01:05:00Z"}
+    service = {**_edit(actor="operator-bff", event_id="tevt-svc"), "timestamp": "2026-10-23T01:40:00Z"}
+    zero = {**_edit(event_id="tevt-zero"), "timestamp": "2026-10-23T01:50:00Z",
+            "patch_delta": [{**d, "previous_value": d["new_value"]} for d in _edit()["patch_delta"]]}
+    got = auth.latest_teaching_control_patch([older, edit, service, zero], {"operator-bff"})
+    assert got["event_id"] == "tevt-1"
+    reads: list[str] = []
+
+    def get(path: str) -> Any:
+        reads.append(path)
+        return [older, edit, service, zero] if path.endswith("/events") else bundle
+
+    assert auth.resolve_pre_edit_lineage(get, "trn-1", {"operator-bff"}, blocked_before="x") == {
+        "pre_edit_eval_id": "teval-c", "pre_edit_evaluated_at": "2026-10-23T01:19:59Z"}
+    assert reads == ["/api/training/sessions/trn-1/events", "/api/training/previews/trn-1"]
 
 
 def test_hosted_research_restores_authorized_patch_when_no_edit_exists_and_verifies_event(
@@ -717,6 +802,44 @@ def test_human_agora_evidence_carries_the_teaching_id_registry_and_real_captured
     harness.chain.update(preds | {"teaching_eval_identity": "eid-1"})
     with pytest.raises(mod.HostedPause):
         harness._hosted_h2_consent()
+
+
+def test_b_consumes_the_pre_edit_lineage_filled_for_a_resumed_a_end_to_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Resumed A (receipt lacks pre-edit lineage) -> parent fills it by owner GETs -> B reads it back."""
+    parent = _load(monkeypatch, "test_stimulus_cross_loop_deployed_e2e.py", "hosted_parent_mod")
+    events = [_edit(actor="executor-1")]  # the executor-saved edit accepted under #6787 (01:20)
+    previews = _previews(_owner_evaluation("teval-0", "2026-10-23T01:10:00Z"),
+                         _owner_evaluation("teval-1", "2026-10-23T01:30:00Z", "failed"))
+    log: list[tuple[str, str, str]] = []
+
+    class TrainingOwner:
+        def request(self, service: str, method: str, path: str, body: Any = None, idempotency_key: Any = None) -> Any:
+            log.append((service, method, path))
+            return {"/api/training/sessions/trn-1/events": (200, events),
+                    "/api/training/previews/trn-1": (200, previews)}.get(path, (404, {}))
+
+    prior = {"hosted": {"chain_id": "chain-x-0001", "phases": {"A_research": {"phase_status": "completed"}},
+                        "resource_ids": {"teaching_session_id": "trn-1", "registry_id": "reg-1", "checksum": "sha-1",
+                                         "strategy_id": "strat-1", "eval_identity": "eid-1"}}}
+    runner = parent.HostedChainRunner(
+        parent.Settings(expected_sha=SHA, evidence_output=tmp_path / "a.json", timeout_seconds=1),
+        chain_id="chain-x-0001", phase="A_research", tenant_id=TENANT, owner=TrainingOwner(), prior_receipt=prior,
+    )
+    record = runner._fill_pre_edit_lineage({"phase_status": "completed", "reused": True})
+    assert record["phase_status"] == "completed" and log and all(m == "GET" for _s, m, _p in log)
+    assert runner.resource_ids["pre_edit_eval_id"] == "teval-0"
+
+    mod, harness, owners = _human(monkeypatch, tmp_path, predecessors=dict(runner.resource_ids))
+    harness._http_json = lambda base, path, **kw: (
+        previews if path.startswith("/api/training/previews/") else events if path.endswith("/events")
+        else _terminal("failed") if path.endswith("/terminal-readback") else owners(base, path, **kw))
+    content = harness._hosted_teaching_inputs()["content"]
+    assert content["steps"][0]["observation"] == [0.01, 0.2, -0.2, 7.0], "BC observes the pre-edit evaluation"
+    assert content["teaching"]["eval_id"] == "teval-1" and content["teaching"]["validation_status"] == "failed"
+    assert content["saving_actor_id"] == "executor-1"
+    assert content["authorization_source"] == "authorized_executor_paper_test_control_edit"
 
 
 def test_human_consultation_pauses_before_creating_the_request_without_h2(

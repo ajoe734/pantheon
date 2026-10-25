@@ -214,6 +214,7 @@ def _receipt(tmp_path: Path, name: str = "receipt.json") -> dict[str, Any]:
     return json.loads((tmp_path / name).read_text())
 
 
+PRE_EDIT_IDS = {"pre_edit_eval_id": "teval-pre", "pre_edit_evaluated_at": "2026-10-24T04:30:00Z"}
 A_LOOPS = list(parent.CANONICAL_LOOP_IDS[:4])
 A_KEYS = [c[2] for c in parent.LOOP_CASES[:4]]
 B_KEYS = [c[2] for c in parent.LOOP_CASES[4:7]]
@@ -235,7 +236,8 @@ def test_paused_phase_is_normal_progress_not_failure_or_all12(monkeypatch, tmp_p
 
 def test_separate_process_resume_reuses_completed_phase_without_redispatch(monkeypatch, tmp_path):
     reports = {
-        "A_research": _report("research", "A_research", "completed", A_KEYS, {"registry_id": "reg-1"}),
+        # a completed A carries its scalar pre-edit lineage (see the resumed-A tests below)
+        "A_research": _report("research", "A_research", "completed", A_KEYS, {"registry_id": "reg-1", **PRE_EDIT_IDS}),
         "B_learning": _report("human", "B_learning", "completed", B_KEYS, {"handoff_id": "ho-1"}),
     }
     child = FakeChild(reports)
@@ -252,10 +254,10 @@ def test_separate_process_resume_reuses_completed_phase_without_redispatch(monke
     _runner(tmp_path, "B_learning", owner, prior=first, name="b.json").run()
     assert len(child.calls) == 2
     assert child.calls[1]["input"] == {
-        "chain_id": CHAIN, "decisions": {}, "phase": "B_learning", "predecessors": {"registry_id": "reg-1"},
+        "chain_id": CHAIN, "decisions": {}, "phase": "B_learning", "predecessors": {"registry_id": "reg-1", **PRE_EDIT_IDS},
     }
     assert ("registry", "GET", "/api/registry/strategy-specs/reg-1", None) in owner.log
-    assert _receipt(tmp_path, "b.json")["hosted"]["resource_ids"] == {"registry_id": "reg-1", "handoff_id": "ho-1"}
+    assert _receipt(tmp_path, "b.json")["hosted"]["resource_ids"] == {"registry_id": "reg-1", **PRE_EDIT_IDS, "handoff_id": "ho-1"}
 
 
 def test_phase_order_is_exact(monkeypatch, tmp_path):
@@ -1067,3 +1069,78 @@ def test_hosted_d_module_cases_accept_the_recorded_incident_and_typed_health(mon
     monkeypatch.setattr(module, "hosted_chain_enabled", lambda: False)
     with pytest.raises(AssertionError):
         module.test_loop_10_runtime_event_creates_drift_and_incident(results)
+
+
+# -- resumed A without pre-edit lineage (HOSTED-ALL12-RESUMED-A-PRE-EDIT-LINEAGE-20261025) --
+
+EDIT_AT, POST_EDIT_EVAL = "2026-10-24T05:00:00Z", "teval-55d5cd0fb5f8"
+
+
+def _control_patch(event_id, timestamp, actor="exec-actor-1", actor_type="user"):
+    """A Training ``control_patch`` event as ``GET /api/training/sessions/{id}/events`` returns it."""
+    return {"event_id": event_id, "event_type": "control_patch", "session_id": SESS, "actor": actor,
+            "actor_type": actor_type, "timestamp": timestamp,
+            "patch_delta": [{"parameter_key": "short_window", "previous_value": 7, "new_value": 5},
+                            {"parameter_key": "long_window", "previous_value": 21, "new_value": 30}]}
+
+
+def _evaluation(eval_id, evaluated_at, validation="passed"):
+    metrics = {"total_return": 0.01, "sharpe_ratio": 0.2, "max_drawdown": -0.2}
+    return {"session_id": SESS, "candidate_snapshot_at": evaluated_at, "eval_identity": f"eid-{eval_id}",
+            "evaluation_proof": {"eval_id": eval_id, "evaluated_at": evaluated_at, "status": validation},
+            "evaluation_result": {"eval_id": eval_id, "session_id": SESS, "tenant_id": TENANT, "persona_id": "p",
+                                  "validation_status": validation, "validation_errors": [], "metrics": metrics,
+                                  "eval_identity": f"eid-{eval_id}", "evaluated_at": evaluated_at}}
+
+
+def _teaching_records(*evaluations):
+    events = [_control_patch("tevt-svc", "2026-10-24T04:10:00Z", actor="training-session", actor_type="service"),
+              _control_patch("tevt-edit", EDIT_AT)]
+    return {
+        **domain_records(),
+        ("training", f"/api/training/sessions/{SESS}/events"): events,
+        ("training", f"/api/training/previews/{SESS}"): {
+            "session_id": SESS, "evaluations": {e["evaluation_result"]["eval_id"]: e for e in evaluations}},
+    }
+
+
+def test_resumed_a_without_pre_edit_lineage_resolves_it_from_training_owner_reads(monkeypatch, tmp_path):
+    records = _teaching_records(_evaluation("teval-early", "2026-10-24T04:00:00Z"),
+                                _evaluation("teval-pre", "2026-10-24T04:30:00Z"),
+                                _evaluation(POST_EDIT_EVAL, "2026-10-24T05:10:00Z", "failed"))
+    child, owner, evidence, hosted = _reuse(tmp_path, monkeypatch, records, _reuse_prior("A_research"))
+    assert child.calls == [] and evidence.status == "passed", "the completed A is not re-run"
+    assert all(m == "GET" for _s, m, _p, _b in owner.log), "replay stays read-only"
+    assert ("training", "GET", f"/api/training/previews/{SESS}", None) in owner.log
+    assert hosted["phases"]["A_research"]["reused"] is True
+    assert hosted["phases"]["A_research"]["pre_edit_lineage"] == "resolved_from_training_owner"
+    assert hosted["resource_ids"]["pre_edit_eval_id"] == "teval-pre"
+    assert hosted["resource_ids"]["pre_edit_evaluated_at"] == "2026-10-24T04:30:00Z"
+
+    # the next process: B receives the filled lineage as predecessors from A's receipt
+    child = FakeChild({"B_learning": _report("human", "B_learning", "completed", B_KEYS, {"handoff_id": "ho-1"})})
+    monkeypatch.setattr(subprocess, "run", child)
+    prior = _receipt(tmp_path)
+    _runner(tmp_path, "B_learning", FakeOwner(records), prior=prior, name="b.json").run()
+    carried = child.calls[0]["input"]["predecessors"]
+    assert carried["pre_edit_eval_id"] == "teval-pre" and carried["pre_edit_evaluated_at"] == "2026-10-24T04:30:00Z"
+
+
+def test_resumed_a_with_only_post_edit_evaluations_pauses_named_and_b_waits(monkeypatch, tmp_path):
+    records = _teaching_records(_evaluation(POST_EDIT_EVAL, "2026-10-24T05:10:00Z", "failed"))
+    child, owner, evidence, hosted = _reuse(tmp_path, monkeypatch, records, _reuse_prior("A_research"))
+    assert child.calls == [] and evidence.status == "paused"
+    assert all(m == "GET" for _s, m, _p, _b in owner.log)
+    phase = hosted["phases"]["A_research"]
+    assert phase["phase_status"] == "paused" and phase["blocked_before"] == "A_research:pre_edit_evaluation_absent"
+    assert "tevt-edit" in phase["evidence"][0] and "pre_edit_eval_id" not in hosted["resource_ids"]
+    with pytest.raises(parent.StimulusProofError, match="requires completed predecessor phase A_research"):
+        _runner(tmp_path, "B_learning", FakeOwner(records), prior=_receipt(tmp_path), name="b.json").run()
+
+
+def test_resumed_a_that_already_carries_pre_edit_lineage_is_reused_without_training_reads(monkeypatch, tmp_path):
+    prior = _reuse_prior("A_research")
+    prior["hosted"]["resource_ids"].update(pre_edit_eval_id="teval-pre", pre_edit_evaluated_at="2026-10-24T04:30:00Z")
+    child, owner, evidence, hosted = _reuse(tmp_path, monkeypatch, domain_records(), prior)
+    assert child.calls == [] and evidence.status == "passed" and hosted["phases"]["A_research"]["reused"] is True
+    assert not [p for _s, _m, p, _b in owner.log if p.endswith("/events") or "/previews/" in p]

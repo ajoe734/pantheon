@@ -1202,6 +1202,41 @@ class HostedChainRunner:
             return [f"decision {exc.detail}"]
         return []
 
+    def _fill_pre_edit_lineage(self, record: dict[str, Any]) -> dict[str, Any]:
+        """A completed A receipt without pre-edit lineage is incomplete for that field only.
+
+        Fill ``pre_edit_eval_id``/``pre_edit_evaluated_at`` from Training owner GETs so B receives
+        them as predecessors; never re-run A, write, or recreate its resources. Pause otherwise.
+        """
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from l12_owner_auth import (
+            PRE_EDIT_EVALUATION_ABSENT,
+            HostedPause,
+            persona_service_subjects,
+            resolve_pre_edit_lineage,
+        )
+
+        blocked = f"A_research:{PRE_EDIT_EVALUATION_ABSENT}"
+        session_id = str(self.resource_ids.get("teaching_session_id") or "").strip() or self._loop_ref(
+            self.loops.get("persona_teaching"), ("terminal_output", "session_id"), ("authority_readback", "session_id")
+        )
+        if not session_id:
+            return self._result("paused", blocked, evidence=[f"{PRE_EDIT_EVALUATION_ABSENT}: completed A has no teaching_session_id"])
+
+        def get(path: str) -> Any:
+            status, payload = self.owner.request("training", "GET", path)
+            return payload if status == 200 else None
+
+        try:
+            lineage = resolve_pre_edit_lineage(get, session_id, persona_service_subjects(), blocked_before=blocked)
+        except HostedPause as paused:
+            return self._result("paused", paused.blocked_before, evidence=[paused.detail])
+        except (StimulusProofError, KeyError) as exc:
+            return self._result("paused", blocked, evidence=[f"Training owner unreadable for pre-edit lineage ({exc})"])
+        self.resource_ids.update({key: _typed_id(key, value) for key, value in lineage.items()})
+        record["pre_edit_lineage"] = "resolved_from_training_owner"
+        return record
+
     # -- phase ordering ---------------------------------------------------
     def _check_order(self) -> None:
         index = HOSTED_PHASES.index(self.phase)
@@ -1234,6 +1269,8 @@ class HostedChainRunner:
             if previous.get("phase_status") == "completed" and self.phase not in {"D_observe", "E_close"} and not problems:
                 record = dict(previous, reused=True)  # old receipt is a hint; owner truth just re-verified
                 self.phases[self.phase] = record
+                if self.phase == "A_research" and not self.resource_ids.get("pre_edit_eval_id"):
+                    record = self._fill_pre_edit_lineage(record)
             else:
                 if problems:
                     record = self._result("paused", f"{self.phase}:predecessor_verification", evidence=problems)
