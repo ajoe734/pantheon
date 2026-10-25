@@ -915,6 +915,10 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                 runtime_agents[:] = json.loads(args[4])
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
             if args[1:3] == ["agents", "set-identity"]:
+                if args[3] != "--agent":
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=1, stdout="", stderr="error: too many arguments"
+                    )
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
             return subprocess.CompletedProcess(
                 args=args, returncode=1, stdout="", stderr=f"unexpected command: {args}"
@@ -1103,6 +1107,10 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                 runtime_agents[:] = json.loads(args[4])
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
             if args[1:3] == ["agents", "set-identity"]:
+                if args[3] != "--agent":
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=1, stdout="", stderr="error: too many arguments"
+                    )
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
             return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 

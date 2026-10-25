@@ -2106,6 +2106,8 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                 runtime_agents[:] = json.loads(args[4])
                 return completed(stdout="ok")
             if args[1:3] == ["agents", "set-identity"]:
+                if args[3] != "--agent":
+                    return completed(returncode=1, stderr="error: too many arguments")
                 return completed(stdout="ok")
             return completed(returncode=1, stderr=f"unexpected command: {args}")
 
