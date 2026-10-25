@@ -446,42 +446,88 @@ def _hosted_content(human: Any, **over: Any) -> dict[str, Any]:
     return _content(human, **(kwargs | over))
 
 
-def test_hosted_research_never_patches_controls_and_pauses_until_a_human_edit_exists(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    _, research, _ = _research(monkeypatch, tmp_path)
-    calls: list[tuple[str, str]] = []
-    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
-    research._current_case = {}
-    state = {"events": []}
-
+def _teaching_http(state: dict[str, Any], calls: list[tuple[str, str]], terminal: dict[str, Any] | None = None) -> Any:
     def http(_u: str, path: str, *, method: str = "GET", payload: Any = None, headers: Any = None, **_: Any) -> Any:
         calls.append((method, path))
         if "/controls/" in path:
-            return {"controls": [{"parameter_key": "short_window", "current_value": 5},
-                                 {"parameter_key": "long_window", "current_value": 30}]}
+            edited = any(e.get("patch_delta") for e in state["events"])
+            return {"controls": [{"parameter_key": "short_window", "current_value": 5 if edited else 7},
+                                 {"parameter_key": "long_window", "current_value": 30 if edited else 21}]}
+        if method == "PATCH" and path.endswith("/controls"):
+            state["patched"] = True
+            state["events"] = state["events"] + state.get("after_patch", [])
+            return {"status": "accepted", "patch_delta": _edit()["patch_delta"]}
         if path.endswith("/events"):
             return state["events"]
         if path.endswith("/terminal-readback"):
-            return _terminal()
+            return terminal if terminal is not None else _terminal()
         if path.endswith("/preview-jobs"):
             return {"job_id": "job-1", "eval_id": "teval-1"}
         if "/preview-jobs/" in path:
             return {"job_id": "job-1", "session_id": "trn-1", "status": "completed", "eval_id": "teval-1"}
         raise AssertionError(f"unexpected call {method} {path}")
 
-    research._http_json = http
+    return http
+
+
+def test_hosted_research_reuses_existing_user_edit_without_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
+    research._current_case = {}
+    calls: list[tuple[str, str]] = []
+    research._http_json = _teaching_http({"events": [_edit(actor="executor-1")]}, calls)
+    research._case_persona_teaching({})
+    assert not [c for c in calls if c[0] == "PATCH"], "an eligible existing edit must be reused, not rewritten"
+    assert research.chain["pre_edit_eval_id"] == "teval-1"
+    assert research.chain["pre_edit_evaluated_at"] == "2026-10-23T01:30:00Z"
+
+
+def test_hosted_research_restores_authorized_patch_when_no_edit_exists_and_verifies_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
+    research._current_case = {}
+    calls: list[tuple[str, str]] = []
+    state: dict[str, Any] = {"events": [], "after_patch": [_edit(actor="executor-1")]}
+    research._http_json = _teaching_http(state, calls)
+    research._case_persona_teaching({})
+    assert [c for c in calls if c[0] == "PATCH"] == [("PATCH", "/api/training/sessions/trn-1/controls")]
+    assert research.chain["pre_edit_eval_id"] == "teval-1"
+    # the pre-edit observation is read before the first write
+    assert calls.index(("GET", "/api/training/sessions/trn-1/terminal-readback")) < calls.index(
+        ("PATCH", "/api/training/sessions/trn-1/controls"))
+
+
+def test_hosted_research_pauses_when_patch_leaves_no_nonzero_user_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
+    research._current_case = {}
+    research._http_json = _teaching_http({"events": [], "after_patch": []}, [])
     with pytest.raises(sys.modules["l12_owner_auth"].HostedPause) as paused:
         research._case_persona_teaching({})
     assert paused.value.blocked_before == "teaching_human_control_edit"
-    assert "awaiting_human_edit" in paused.value.detail and "Management UI" in paused.value.detail
-    assert paused.value.resource_ids["pre_edit_eval_id"] == "teval-1"
-    assert paused.value.resource_ids["pre_edit_evaluated_at"] == "2026-10-23T01:30:00Z"
+    assert "awaiting_human_edit" in paused.value.detail
     _assert_scalar_ids(paused.value.resource_ids)
-    state["events"] = [_edit(actor=HUMAN)]
-    research._case_persona_teaching({})
-    assert not [c for c in calls if c[0] == "PATCH"], "hosted mode must never write Teaching controls"
-    assert research.chain["pre_edit_eval_id"] == "teval-1"
+
+
+def test_hosted_research_pauses_without_pre_edit_eval_and_never_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
+    research._current_case = {}
+    calls: list[tuple[str, str]] = []
+    bare = {k: v for k, v in _terminal().items() if k != "evaluation_result"}
+    research._http_json = _teaching_http({"events": []}, calls, terminal=bare)
+    with pytest.raises(sys.modules["l12_owner_auth"].HostedPause) as paused:
+        research._case_persona_teaching({})
+    assert "pre_edit_evaluation_missing" in paused.value.detail
+    assert not [c for c in calls if c[0] == "PATCH"]
 
 
 def _assert_scalar_ids(ids: dict[str, Any]) -> None:
@@ -496,36 +542,18 @@ def _assert_scalar_ids(ids: dict[str, Any]) -> None:
         assert parent._typed_id(kind, value)
 
 
-def test_hosted_research_keeps_pausing_on_an_existing_executor_edit_and_picks_the_latest_human_edit(
+def test_hosted_research_ignores_service_edit_and_restores_authorized_edit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _, research, _ = _research(monkeypatch, tmp_path)
     research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
     research._current_case = {}
-    state = {"events": [_edit(actor="executor-1")]}
-
-    def http(_u: str, path: str, *, method: str = "GET", payload: Any = None, headers: Any = None, **_: Any) -> Any:
-        if "/controls/" in path:
-            return {"controls": [{"parameter_key": "short_window", "current_value": 5},
-                                 {"parameter_key": "long_window", "current_value": 30}]}
-        if path.endswith("/events"):
-            return state["events"]
-        if path.endswith("/terminal-readback"):
-            return _terminal()
-        if path.endswith("/preview-jobs"):
-            return {"job_id": "job-1", "eval_id": "teval-1"}
-        if "/preview-jobs/" in path:
-            return {"job_id": "job-1", "session_id": "trn-1", "status": "completed", "eval_id": "teval-1"}
-        raise AssertionError(f"unexpected call {method} {path}")
-
-    research._http_json = http
-    with pytest.raises(sys.modules["l12_owner_auth"].HostedPause) as paused:
-        research._case_persona_teaching({})
-    assert paused.value.blocked_before == "teaching_human_control_edit"
-    assert "awaiting_human_edit" in paused.value.detail and "ignored" in paused.value.detail
-    _assert_scalar_ids(paused.value.resource_ids)
-    state["events"] = [_edit(actor="executor-1"), _edit(actor=HUMAN, event_id="tevt-2")]
+    calls: list[tuple[str, str]] = []
+    state: dict[str, Any] = {"events": [_edit(actor="operator-bff", actor_type="service")],
+                             "after_patch": [_edit(actor="executor-1", event_id="tevt-2")]}
+    research._http_json = _teaching_http(state, calls)
     research._case_persona_teaching({})
+    assert state.get("patched") and len([c for c in calls if c[0] == "PATCH"]) == 1
 
 
 def test_isolated_research_still_patches_controls_with_the_operator_token(
@@ -560,6 +588,8 @@ def test_hosted_agora_content_accepts_a_distinct_human_edit_and_observes_pre_edi
     human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
     content = _hosted_content(human)
     assert content["actor_id"] == HUMAN and content["actor_role"] == "operator"
+    assert content["saving_actor_id"] == HUMAN
+    assert content["authorization_source"] == "issuer_authenticated_operator_control_edit"
     assert content["decision"] == "edit" and content["control_edit_event_id"] == "tevt-1"
     assert content["target"]["promotion_state"] == "candidate" and content["target"]["lineage_ref"] == "teaching-candidate:trn-1:abc"
     assert [s["action"] for s in content["steps"]] == ["set_short_window", "set_long_window"]
@@ -572,12 +602,22 @@ def test_hosted_agora_content_accepts_a_distinct_human_edit_and_observes_pre_edi
     assert prepared.included_trajectory_ids == ("t",)
 
 
-def test_hosted_agora_content_rejects_the_executors_own_and_service_edits_with_named_reasons(
+def test_hosted_agora_content_accepts_a_same_subject_authorized_executor_edit(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
+    content = _hosted_content(human, events=[_edit(actor="executor-1")])
+    assert content["actor_id"] == "executor-1" and content["control_edit_event_id"] == "tevt-1"
+    assert content["saving_actor_id"] == "executor-1"
+    assert content["authorization_source"] == "authorized_executor_paper_test_control_edit"
+    assert content["steps"][0]["observation"] == [0.01, 0.2, -0.2, 7.0]
+
+
+def test_hosted_agora_content_rejects_service_and_invalid_edits_with_named_reasons(
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
     human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
     cases = (
-        ({"events": [_edit(actor="executor-1")]}, "executor_edit_rejected"),
         ({"events": [_edit(actor="operator-bff", actor_type="service")]}, "service_identity_edit_rejected"),
         ({"events": [_edit(actor="operator-bff")]}, "service_identity_edit_rejected"),
         ({"events": []}, "awaiting_human_edit"),
@@ -1295,3 +1335,24 @@ def test_hosted_ensure_persona_pairs_service_token_with_service_actor(
     monkeypatch.delenv("PANTHEON_L12_HOSTED_CHAIN")
     monkeypatch.setenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "x")
     assert mod.persona_writer_identity() is None
+
+
+def test_hosted_agora_content_rejects_unauthenticated_or_non_operator_token(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
+    for operator in ({"sub": "", "roles": ["operator"]}, {"sub": "executor-1", "roles": ["viewer"]}):
+        with pytest.raises(human.NoGenuineControlEdit):
+            _hosted_content(human, operator=operator, events=[_edit(actor="executor-1")])
+
+
+def test_hosted_agora_content_uses_newest_bound_edit_and_records_its_actor(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
+    late = _edit(actor="executor-1", event_id="tevt-late") | {"timestamp": "2026-10-23T01:25:00Z"}
+    after_snapshot = _edit(actor="other", event_id="tevt-after") | {"timestamp": "2026-10-23T02:00:00Z"}
+    content = _hosted_content(human, events=[_edit(actor=HUMAN), late, after_snapshot])
+    assert content["control_edit_event_id"] == "tevt-late" and content["actor_id"] == "executor-1"
+    assert content["saving_actor_id"] == "executor-1"
+    assert content["authorization_source"] == "authorized_executor_paper_test_control_edit"
