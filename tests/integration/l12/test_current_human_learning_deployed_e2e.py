@@ -161,10 +161,10 @@ def teaching_agora_content(
     is not the decision. Nothing is relabelled: with no such event or candidate the
     caller pauses with the actual IDs instead of inventing a positive sample.
 
-    Hosted mode: the demonstration is the edit a human made in the Management UI. An
-    edit counts only when its actor is a ``user`` session subject that differs from the
-    hosted executor token subject and from every known service subject; the executor's
-    own (or a service's) edit is rejected with a named reason. The BC observation is the
+    Hosted mode: the demonstration is the authorised OPERATOR control edit. An
+    edit counts when its actor is an authenticated ``user`` session subject that is not a
+    known service subject; a same-subject authorised executor edit is accepted, a
+    service's edit is rejected with a named reason. The BC observation is the
     evaluation state captured *before* that edit (``pre_edit_evaluation``), never the
     post-edit metrics.
     """
@@ -193,29 +193,21 @@ def teaching_agora_content(
         executor_subject = executor_subject.strip()
         if not executor_subject:
             raise NoGenuineControlEdit("hosted executor token subject is unknown", ids, "executor_subject_unknown")
-        refused = {executor_subject, *(str(s) for s in service_subjects if s)}
+        # Only service identities and non-user actors are refused. An authorised OPERATOR
+        # session edit is accepted even when its subject equals the hosted executor.
+        refused = {str(s) for s in service_subjects if s}
         human_events = [
             e for e in events if e.get("event_type") == "control_patch" and e.get("actor_type") == "user"
             and str(e.get("actor") or "") and str(e.get("actor")) not in refused
         ]
-        own = [e for e in events if e.get("event_type") == "control_patch" and e.get("actor") == executor_subject]
-        service = [
-            e for e in events if e.get("event_type") == "control_patch"
-            and (e.get("actor_type") != "user" or str(e.get("actor")) in refused) and e.get("actor") != executor_subject
-        ]
         if not human_events:
-            if own:
+            if any(e.get("event_type") == "control_patch" for e in events):
                 raise NoGenuineControlEdit(
-                    "the only control_patch was made with the hosted executor identity, not a human session",
-                    ids, "executor_edit_rejected",
-                )
-            if service:
-                raise NoGenuineControlEdit(
-                    "the only control_patch was made by a service identity, not a human session",
+                    "the only control_patch was made by a service identity or a non-user actor",
                     ids, "service_identity_edit_rejected",
                 )
             raise NoGenuineControlEdit(
-                "waiting for the operator to edit Teaching controls in the Management UI", ids, "awaiting_human_edit"
+                "waiting for an authorised OPERATOR control edit on the Teaching session", ids, "awaiting_human_edit"
             )
         operator_id = str(human_events[0].get("actor"))
     elif not operator_id or "operator" not in operator_roles:

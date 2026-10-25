@@ -1303,8 +1303,7 @@ class DeployedResearchHarness:
         quoted = urllib.parse.quote(session_id, safe="")
         events = self._http_json(self.training_url, f"/api/training/sessions/{quoted}/events", headers=headers)
         writer = persona_writer_identity()
-        executor = token_subject(human_token("OPERATOR"))
-        refused = {executor, *([str(writer[1])] if writer and writer[1] else [])}
+        refused = {str(writer[1])} if writer and writer[1] else set()
         control_patches = [
             e for e in (events if isinstance(events, list) else [])
             if isinstance(e, Mapping) and e.get("event_type") == "control_patch" and e.get("patch_delta")
@@ -1333,13 +1332,13 @@ class DeployedResearchHarness:
         ids = {k: v for k, v in ids.items() if v not in (None, "")}
         if not patches:
             rejected = (
-                " (an existing control_patch from the hosted executor or a service identity was ignored)"
+                " (an existing control_patch from a service identity or non-user actor was ignored)"
                 if control_patches else ""
             )
             raise HostedPause(
                 "teaching_human_control_edit",
-                "awaiting_human_edit: waiting for the operator to edit short_window/long_window of "
-                f"TeachingSession {session_id} in the Management UI{rejected}; "
+                "awaiting_human_edit: waiting for an authorised OPERATOR edit of short_window/long_window of "
+                f"TeachingSession {session_id}{rejected}; "
                 "this suite never writes Teaching controls",
                 ids,
             )

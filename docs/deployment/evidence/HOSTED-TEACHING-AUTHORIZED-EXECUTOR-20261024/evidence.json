@@ -1,0 +1,7 @@
+{
+  "task_id": "HOSTED-TEACHING-AUTHORIZED-EXECUTOR-20261024",
+  "change": "Removed PR6763 hosted Teaching UI-only and actor-differs-from-executor gates; service and non-user actors remain rejected.",
+  "kept": ["pre-edit observation lineage", "nonzero two-delta check", "snapshot/candidate binding", "scalar-id and resume fixes"],
+  "validation": {"command": "pytest tests/unit/l12/test_hosted_domain_contract.py tests/unit/l12/test_hosted_stimulus_contract.py", "result": "120 passed"},
+  "no_ssh_or_product_calls": true
+}

@@ -474,7 +474,7 @@ def test_hosted_research_never_patches_controls_and_pauses_until_a_human_edit_ex
     with pytest.raises(sys.modules["l12_owner_auth"].HostedPause) as paused:
         research._case_persona_teaching({})
     assert paused.value.blocked_before == "teaching_human_control_edit"
-    assert "awaiting_human_edit" in paused.value.detail and "Management UI" in paused.value.detail
+    assert "awaiting_human_edit" in paused.value.detail and "OPERATOR" in paused.value.detail
     assert paused.value.resource_ids["pre_edit_eval_id"] == "teval-1"
     assert paused.value.resource_ids["pre_edit_evaluated_at"] == "2026-10-23T01:30:00Z"
     _assert_scalar_ids(paused.value.resource_ids)
@@ -496,13 +496,13 @@ def _assert_scalar_ids(ids: dict[str, Any]) -> None:
         assert parent._typed_id(kind, value)
 
 
-def test_hosted_research_keeps_pausing_on_an_existing_executor_edit_and_picks_the_latest_human_edit(
+def test_hosted_research_pauses_on_service_edit_and_accepts_same_subject_authorized_edit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _, research, _ = _research(monkeypatch, tmp_path)
     research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
     research._current_case = {}
-    state = {"events": [_edit(actor="executor-1")]}
+    state = {"events": [_edit(actor="operator-bff", actor_type="service")]}
 
     def http(_u: str, path: str, *, method: str = "GET", payload: Any = None, headers: Any = None, **_: Any) -> Any:
         if "/controls/" in path:
@@ -524,7 +524,7 @@ def test_hosted_research_keeps_pausing_on_an_existing_executor_edit_and_picks_th
     assert paused.value.blocked_before == "teaching_human_control_edit"
     assert "awaiting_human_edit" in paused.value.detail and "ignored" in paused.value.detail
     _assert_scalar_ids(paused.value.resource_ids)
-    state["events"] = [_edit(actor="executor-1"), _edit(actor=HUMAN, event_id="tevt-2")]
+    state["events"] = [_edit(actor="operator-bff", actor_type="service"), _edit(actor="executor-1", event_id="tevt-2")]
     research._case_persona_teaching({})
 
 
@@ -572,12 +572,20 @@ def test_hosted_agora_content_accepts_a_distinct_human_edit_and_observes_pre_edi
     assert prepared.included_trajectory_ids == ("t",)
 
 
-def test_hosted_agora_content_rejects_the_executors_own_and_service_edits_with_named_reasons(
+def test_hosted_agora_content_accepts_a_same_subject_authorized_executor_edit(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
+    content = _hosted_content(human, events=[_edit(actor="executor-1")])
+    assert content["actor_id"] == "executor-1" and content["control_edit_event_id"] == "tevt-1"
+    assert content["steps"][0]["observation"] == [0.01, 0.2, -0.2, 7.0]
+
+
+def test_hosted_agora_content_rejects_service_and_invalid_edits_with_named_reasons(
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
     human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
     cases = (
-        ({"events": [_edit(actor="executor-1")]}, "executor_edit_rejected"),
         ({"events": [_edit(actor="operator-bff", actor_type="service")]}, "service_identity_edit_rejected"),
         ({"events": [_edit(actor="operator-bff")]}, "service_identity_edit_rejected"),
         ({"events": []}, "awaiting_human_edit"),
