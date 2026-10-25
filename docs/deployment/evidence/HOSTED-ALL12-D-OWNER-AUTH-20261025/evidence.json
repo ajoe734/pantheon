@@ -12,13 +12,13 @@
       "merge_commit": "0bbf7056f04e71b9d24fc2810ee74fe4b6621bca"
     },
     "dev_base_commit": "76062f676bf4d9f34e4d587de42d403c83081cc2",
-    "deployed_dev_merge_sha_for_d40240151927": "ad31927ded9a9ebd99eb436eb7320bc7a97e4065"
+    "deployed_dev_merge_sha_for_d40240151927": "76062f676bf4d9f34e4d587de42d403c83081cc2"
   },
   "reproduction_evidence": {
     "workflow_run_id": "40240151927",
     "chain_id": "h12-01a11-20261023-9aeb",
     "phase": "D_observe",
-    "git_sha": "ad31927ded9a9ebd99eb436eb7320bc7a97e4065",
+    "git_sha": "76062f676bf4d9f34e4d587de42d403c83081cc2",
     "review_artifact": "/tmp/pantheon-codex-01a11-review-20261023/D401-owner-auth-original-scope-independent-readonly-review-20261025.json",
     "phase_log_path": "/tmp/pantheon-codex-01a11-review-20261023/h12-01a11-20261023-9aeb-D40240151927/phase.log",
     "segment_result_path": "/tmp/pantheon-codex-01a11-review-20261023/h12-01a11-20261023-9aeb-D40240151927/segment-result.json",
@@ -79,6 +79,6 @@
   "hosted_execution_truth": {
     "hosted_d_observe_executed_by_worker": false,
     "all12_passed": false,
-    "note": "Worker scope is repository code, test, and evidence repair only; live hosted D_observe re-execution requires merge, deploy to dev, and operator/chatbox workflow dispatch."
+    "note": "Worker scope is repository code, test, and evidence repair only (hosted_d_observe_executed_by_worker=false, all12_passed=false); the reviewed merged workflow and private staged harness may observe original D_observe on the existing accepted runtime (76062f676bf4d9f34e4d587de42d403c83081cc2) with exact-identity guards, so no additional product/runtime root deploy is required for this workflow/tests-only fix. Original Root01a11b73-51ee-7b52-bac2-bf1561292e00 remains the sole caller; official run D40243931212 already executed once and must not repeat."
   }
 }
