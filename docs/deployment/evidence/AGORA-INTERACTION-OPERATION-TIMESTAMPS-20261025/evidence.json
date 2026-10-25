@@ -1,0 +1,19 @@
+{
+  "task_id": "AGORA-INTERACTION-OPERATION-TIMESTAMPS-20261025",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "scope": "source-only; no SSH, VM, product login, deployment, provider call, or interaction submit/retry",
+  "preserved_source_commits": {
+    "repaired_local_commit": "f4ef772e046cece357e13e87612b0adeacdfec21",
+    "original_pr_6794_commit": "253d8d8bb22b5ad469edd48dd1f60dc853559fdb",
+    "feature_bytes_unchanged": true
+  },
+  "change": "runner.run_selected_persona_interaction and _synthesize take an injected clock (default UTC now; worker passes its _utc_now). Invocation started_at/completed_at, opinion created_at, synthesis created_at, failure/closed event created_at and card freshness use operation time. occurred_at (admission time) stays frozen for requested event, participant captured_at and prompt submitted_at fallback; human submitted_at, ids, retry/idempotency/lease semantics and adopted durable results are unchanged.",
+  "regression_test": "services/control-plane/bff/agora/interaction/test_worker.py::test_operation_timestamps_follow_actual_clock_not_admission_time",
+  "old_code_result": "fails on origin/dev (4289bcb686050131522f2318a0ebb05b8d4a8886): invocation started_at == admitted_at (AssertionError: assert ('2026-10-25T12:28:01.886720Z' > '2026-10-25T12:28:01.886720Z')) while test_idle_tick_truth_is_admitted_by_loop_inventory passes",
+  "retry_only_mutation_result": "fails when clock=lambda:occurred_at is injected only for invocation_attempt>0 (AssertionError at test_worker.py:1390: assert (2 == 2 and 1 == 2))",
+  "new_code_result": "passes deterministic advancing-clock retry coverage after old admission, verifying newly retried invocation/opinion and synthesis times, distinct provider completion times, unchanged admission/human/context/participant snapshots, and unchanged saved timestamps for adopted durable results",
+  "test_environment": ".venv-pantheon provisioned via python3 scripts/dev/provision_python_distribution.py using $PANTHEON_DEPENDENCY_PYTHON (/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 with asyncpg)",
+  "focused_suite": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/interaction/test_worker.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_agora_persona_interactions.py: 78 passed (including test_idle_tick_truth_is_admitted_by_loop_inventory and test_operation_timestamps_follow_actual_clock_not_admission_time)",
+  "historical_records_modified": false
+}
