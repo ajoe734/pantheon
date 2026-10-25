@@ -222,6 +222,26 @@
         "backend_operator_bff_image": {
           "type": "string",
           "pattern": "^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$"
+        },
+        "backend_images": {
+          "type": "object",
+          "required": [
+            "operator_bff"
+          ],
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$"
+          },
+          "properties": {
+            "operator_bff": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        "config_schema_version": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

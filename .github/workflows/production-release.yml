@@ -179,20 +179,38 @@ jobs:
             done
             printf 'export WORKFLOW_INITIATOR=%q\n' "${{ github.triggering_actor }}"
           } > "${RUNNER_TEMP}/bundle/remote.env"
+          gcloud compute ssh "${PROD_VM_NAME}" --tunnel-through-iap --quiet \
+            --project "${PROD_GCP_PROJECT_ID}" --zone "${PROD_GCP_ZONE}" \
+            --command "rm -rf /tmp/pantheon-release-${RELEASE_ID} && mkdir -p /tmp/pantheon-release-${RELEASE_ID} && chmod 0700 /tmp/pantheon-release-${RELEASE_ID}"
           gcloud compute scp --tunnel-through-iap --recurse --quiet \
             --project "${PROD_GCP_PROJECT_ID}" --zone "${PROD_GCP_ZONE}" \
             "${RUNNER_TEMP}/bundle" "${PROD_VM_NAME}:/tmp/pantheon-release-${RELEASE_ID}"
-      - name: Run atomic switch on the production control VM
+      - name: Run atomic switch on the production control VM (bootstrap + digest pre-pull + blue/green switch)
         run: |
-          # The remote shell installs the bundle, places the snapshot record, then runs the
-          # controller with PROD_OPS_CMD pointing at the VM-side prod_ops.sh adapter.
+          # The remote shell installs the bundle, runs bootstrap.sh (bare-Debian runtime check,
+          # secret validation, 503 placeholder if first release, digest-pinned image pre-acquisition,
+          # stateful services), places the snapshot record, then runs the controller with PROD_OPS_CMD
+          # pointing at the VM-side prod_ops.sh adapter.
           gcloud compute ssh "${PROD_VM_NAME}" --tunnel-through-iap --quiet \
             --project "${PROD_GCP_PROJECT_ID}" --zone "${PROD_GCP_ZONE}" --command "set -euo pipefail
             B=/tmp/pantheon-release-${RELEASE_ID}/bundle
             source \$B/remote.env
-            sudo install -d \"\$PROD_ROOT/bin\" \"\$PROD_ROOT/state/snapshots\"
-            sudo install -m 0755 \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
+            sudo install -d \"\$PROD_ROOT/bin\" \"\$PROD_ROOT/state/snapshots\" \"\$PROD_ROOT/config\" \"\$PROD_ROOT/proxy\"
+            sudo install -m 0755 \$B/bootstrap.sh \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
+            sudo install -m 0644 \$B/docker-compose.prod-control.yml \$B/Caddyfile \"\$PROD_ROOT/bin/\"
             sudo install -m 0644 \$B/snapshot.json \"\$PROD_ROOT/state/snapshots/\$RELEASE_ID.json\"
+            sudo -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true \
+              PROD_SECRETS_ENV_FILE=\"\${PROD_SECRETS_ENV_FILE:-\$PROD_ROOT/secrets/prod.secrets.env}\" \
+              PROD_POSTGRES_PASSWORD_FILE=\"\${PROD_POSTGRES_PASSWORD_FILE:-\$PROD_ROOT/secrets/postgres_password}\" \
+              PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
+              RELEASE_MANIFEST_PATH=\$B/manifest.json \
+              \"\$PROD_ROOT/bin/bootstrap.sh\"
+            sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
+              PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
+              PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
+              RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
+              APPROVALS_PATH=\$B/approvals.json ENV_POLICY_PATH=\$B/env-policy.json \
+              FE_ARTIFACT_PATH=\$B/fe.tar.gz \"\$PROD_ROOT/bin/prod_ops.sh\" prepull_images \"\$RELEASE_ID\"
             sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
               PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \

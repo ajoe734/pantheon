@@ -1,19 +1,46 @@
-# Pantheon Ephemeral Staging Compose Overlay (core profile)
-# Deploys immutable digest-pinned images from the release manifest without rebuilding.
-# Safe defaults remain strictly fail-closed: provider=false, live_broker=false, real_writes=false.
+# Pantheon Ephemeral Staging Compose Overlay (ENV-STG-EPHEMERAL-IMPL-001).
+# Deploys pre-pulled immutable digest-pinned images from the release manifest without rebuilding
+# (compose --no-build, pull_policy: never). Includes the full /bff/readyz owner closure
+# (runtime-manager, governance, deployment, lifecycle-projector) and isolated Postgres
+# password-file secrets (never trust auth, never inline passwords).
 
 name: pantheon-staging
 
+x-core-env: &core_env
+  PANTHEON_ENV: staging
+  PANTHEON_RELEASE_ID: ${PANTHEON_RELEASE_ID:?release_id required}
+  PANTHEON_PROVIDER_ENABLED: "false"
+  PANTHEON_LIVE_BROKER_ENABLED: "false"
+  PANTHEON_REAL_WRITES_ENABLED: "false"
+  PANTHEON_DEV_STUB_WRITES_ENABLED: "false"
+  PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT: "false"
+  PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED: "false"
+  PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED: "false"
+  PANTHEON_ASSISTANT_PROVIDER: "disabled"
+  PANTHEON_EXECUTION_MODE: "paper"
+  PANTHEON_BFF_JWT_ISSUER: ${STAGING_JWT_ISSUER:?staging jwt issuer required}
+  PANTHEON_BFF_JWT_AUDIENCE: ${STAGING_JWT_AUDIENCE:?staging jwt audience required}
+  PANTHEON_RUNTIME_JWT_ISSUER: ${STAGING_JWT_ISSUER:?staging jwt issuer required}
+  PANTHEON_RUNTIME_JWT_AUDIENCE: ${STAGING_JWT_AUDIENCE:?staging jwt audience required}
+
+x-secrets: &secrets
+  env_file:
+    - ${STAGING_SECRETS_ENV_FILE:?staging secrets env file required}
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${PANTHEON_POSTGRES_IMAGE:?pinned postgres image required}
+    pull_policy: never
     restart: unless-stopped
-    profiles: ["core"]
+    profiles: ["core", "stateful"]
     environment:
-      POSTGRES_USER: ${STAGING_POSTGRES_USER:-pantheon_stg}
-      POSTGRES_DB: ${STAGING_POSTGRES_DB:-pantheon_staging}
+      POSTGRES_USER: ${STAGING_POSTGRES_USER:?required}
+      POSTGRES_DB: ${STAGING_POSTGRES_DB:?required}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     volumes:
-      - /var/lib/pantheon-staging/postgres:/var/lib/postgresql/data
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/postgres:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:15432:5432"
     deploy:
@@ -23,10 +50,13 @@ services:
           memory: 1536M
 
   nats:
-    image: nats:2.10-alpine
+    image: ${PANTHEON_NATS_IMAGE:?pinned nats image required}
+    pull_policy: never
     restart: unless-stopped
-    profiles: ["core"]
-    command: ["-js", "-m", "8222"]
+    profiles: ["core", "stateful"]
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/nats:/data
     ports:
       - "127.0.0.1:14222:4222"
     deploy:
@@ -35,27 +65,96 @@ services:
           cpus: "0.25"
           memory: 384M
 
+  # Core owner closure required by BFF /bff/readyz. Images come from manifest backend.images.
+  runtime-manager:
+    image: ${PANTHEON_RUNTIME_MANAGER_IMAGE:?immutable runtime-manager digest required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core"]
+    <<: *secrets
+    environment: *core_env
+    labels: {"org.pantheon.role": "owner"}
+    depends_on:
+      - postgres
+      - nats
+
+  governance:
+    image: ${PANTHEON_GOVERNANCE_IMAGE:?immutable governance digest required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core"]
+    <<: *secrets
+    environment: *core_env
+    labels: {"org.pantheon.role": "owner"}
+    depends_on:
+      - postgres
+      - nats
+
+  deployment:
+    image: ${PANTHEON_DEPLOYMENT_IMAGE:?immutable deployment digest required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core"]
+    <<: *secrets
+    environment: *core_env
+    labels: {"org.pantheon.role": "owner"}
+    depends_on:
+      - postgres
+      - nats
+
+  lifecycle-projector:
+    image: ${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:?immutable lifecycle-projector digest required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core", "singleton"]
+    <<: *secrets
+    environment:
+      <<: *core_env
+      LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
+    labels: {"org.pantheon.role": "singleton"}
+    depends_on:
+      - postgres
+      - nats
+
   operator-bff:
     image: ${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}
     pull_policy: never
     restart: unless-stopped
     profiles: ["core"]
+    <<: *secrets
     environment:
-      PANTHEON_ENV: staging
-      PANTHEON_RELEASE_ID: ${PANTHEON_RELEASE_ID:?release_id required}
-      PANTHEON_PROVIDER_ENABLED: "false"
-      PANTHEON_LIVE_BROKER_ENABLED: "false"
-      PANTHEON_REAL_WRITES_ENABLED: "false"
-      PANTHEON_DEV_STUB_WRITES_ENABLED: "false"
-      PANTHEON_EXECUTION_MODE: "paper"
+      <<: *core_env
+      BFF_COMMIT: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
+      BFF_IMAGE_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:?operator_bff digest required}
+      PANTHEON_BFF_AUTH_MODE: strict
+      PANTHEON_BFF_AUTH_STUB: "false"
+      PANTHEON_BFF_OIDC_ISSUER: ${STAGING_IDP_ISSUER:?staging idp issuer required}
+      PANTHEON_BFF_OIDC_DISCOVERY_URL: ${STAGING_IDP_ISSUER:?staging idp issuer required}/.well-known/openid-configuration
       PANTHEON_BFF_CORS_ORIGINS: ${STAGING_BFF_CORS_ORIGINS:?staging FE origin required}
+      PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: postgres
+      LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8000
+      PANTHEON_GOVERNANCE_API_URL: http://governance:8000
+      PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8000
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8000
+      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8000
+      PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8000
+    labels: {"org.pantheon.role": "bff"}
     ports:
-      - "127.0.0.1:18001:8000"
+      - "127.0.0.1:${STAGING_BFF_PORT:-18001}:8000"
     depends_on:
       - postgres
       - nats
+      - runtime-manager
+      - governance
+      - deployment
+      - lifecycle-projector
     deploy:
       resources:
         limits:
           cpus: "0.75"
           memory: 1536M
+
+secrets:
+  postgres_password:
+    file: ${STAGING_POSTGRES_PASSWORD_FILE:?staging postgres password file required}
