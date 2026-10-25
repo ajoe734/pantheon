@@ -901,6 +901,21 @@ class _PersonaOwnerHttpTransport:
             raise RuntimeError(f"{owner} GET {path} returned a non-object receipt")
         return value
 
+    def list(self, owner: str, path: str) -> List[Dict[str, Any]]:
+        request = urllib_request.Request(
+            self._url(owner, path),
+            headers=self._headers(owner),
+            method="GET",
+        )
+        with urllib_request.urlopen(
+            request,
+            timeout=max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))),
+        ) as response:
+            value = json.loads(response.read().decode("utf-8"))
+        if not isinstance(value, list) or any(not isinstance(r, dict) for r in value):
+            raise RuntimeError(f"{owner} GET {path} returned a non-list collection")
+        return value
+
     def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         headers = self._headers(owner, payload)
         if owner == "governance":
@@ -1387,10 +1402,37 @@ def _runtime_bindings_for_case(plan_id: str, pool_id: str) -> List[Dict[str, Any
 
     client = _runtime_manager_client()
     found: Dict[str, Dict[str, Any]] = {}
-    for binding in [*client.list_by_plan(plan_id), *client.list_by_pool(pool_id)]:
+    by_plan = client.list_by_plan(plan_id) if plan_id else []
+    for binding in [*by_plan, *client.list_by_pool(pool_id)]:
         key = str(binding.get("binding_id") or binding.get("id") or "")
         found[key] = binding
     return list(found.values())
+
+
+# --- chain paper capital entry ---
+def _chain_paper_capital_coordinator(tenant_id: str) -> PersonaProvisioningCoordinator:
+    """Capital-only coordinator: the BFF service principal is the owner writer."""
+
+    return PersonaProvisioningCoordinator(
+        store=_persona_provisioning_store(),
+        transport=_PersonaOwnerHttpTransport(tenant_id=tenant_id),
+        schedule_registrar=_register_persona_cron_required,
+        lease_owner=f"chain-paper-capital:{uuid.uuid4().hex}",
+        actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        runtime_binding_reader=_runtime_bindings_for_case,
+    )
+
+
+def ensure_chain_paper_capital(tenant_id: str, persona_id: str, **kwargs: Any) -> Dict[str, Any]:
+    return _chain_paper_capital_coordinator(tenant_id).ensure_chain_paper_capital(
+        tenant_id=tenant_id, persona_id=persona_id, **kwargs
+    )
+
+
+def retire_chain_paper_capital(tenant_id: str, persona_id: str, **kwargs: Any) -> Dict[str, Any]:
+    return _chain_paper_capital_coordinator(tenant_id).retire_chain_paper_capital(
+        tenant_id=tenant_id, persona_id=persona_id, **kwargs
+    )
 
 
 # --- retire_persona_provisioning_case ---

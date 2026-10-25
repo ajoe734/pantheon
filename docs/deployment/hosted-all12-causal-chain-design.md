@@ -130,36 +130,42 @@ must show the product's provisioning identity as writer. Only the Capital-record
 the product's automated paper approvals must never replace the chain's human H1 (registry approval)
 or H3 (deployment plan release).
 
-Resulting flow in `C_promote`: `_hosted_capital` only reads the pool and binding back (GET) through the
-product's BFF read routes with the operator session (`GET /api/v1/capital-pools/{pool_id}` in
-`bff/capital/router.py`, `GET /api/v1/bindings/{binding_id}` in `bff/runtime/router.py`; the BFF reads
-Capital under its own identity, so no service header is borrowed). Both return a `{"data": ...}` envelope;
-not-found maps to the named pause. `CapitalPool` has no `created_by`, so writer provenance is the
-binding's `created_by` == `control-plane-bff` (`PERSONA_OWNER_SERVICE_ACTOR_ID`, bound to the verified
-token by Capital), plus `binding.capital_pool_id == pool_id`, `binding.persona_id`, the pool's chain
-labels/tenant and `execution_context: paper`, and an active paper-only binding; any other writer,
-including metadata-only claims, is rejected. It then persists the scalar ids. When the records are absent or unproven it pauses before
-`capital_pool_creation` with blocker `CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED` (name kept for
-continuity). There is no service-claim exception: the harness never writes Capital directly in
-hosted mode, whatever the executing token carries.
+Supported entry (BFF-PAPER-CAPITAL-PROVISIONING-ENTRY-20261024): the BFF now exposes a capital-only
+operation on the existing Persona provisioning router, built on the existing coordinator's Capital
+pool/binding logic (no new service, issuer, token store or provisioning framework):
 
-Why no existing entry qualifies (source read, no new product code added here):
+* `POST /bff/personas/{persona_id}/provisioning/paper-capital` ensures the exact `capital_pool_id` and
+  `binding_id` the caller names. The BFF validates the caller session, operator role and the Persona's
+  tenant, takes the tenant from the session (never the body), is paper-only, and rejects unknown body
+  fields. It reads the named approved StrategySpec / execution artifact back from Registry (GET only,
+  approved, same tenant, frozen checksum) and never proposes, reviews or decides an approval and never
+  derives an id. Pool and binding are read before create; an exact existing tenant-owned paper record is
+  adopted unchanged (its historical `created_by` is never rewritten), a pending binding is activated.
+  New records are written by the BFF principal (`control-plane-bff`) with the requesting subject only in
+  `metadata.requested_by`.
+* `POST .../provisioning/paper-capital/retire` revokes the named binding and then archives the named
+  pool (binding before pool; runtime dependants retire first), for that tenant's chain records only.
 
-* `PersonaProvisioningCoordinator.coordinate` (`persona_provisioning_coordinator.py`) is the whole
-  flow: it auto-approves registry/approval/plan and derives new ids
-  (`deterministic_provisioning_ids`) that differ from the chain's already-approved artifact and plan,
-  so using it would replace H1/H3. `_coordinate_capital_pool` is private to that flow and there is
-  no capital-only input.
-* `POST /bff/capital-pools` (`bff/capital/router.py`) forwards the caller's JWT to Capital, so it
-  does not establish the BFF's own service identity.
-* `_PersonaOwnerHttpTransport` (`personas/service.py`) holds product-owned service authority; the
-  harness must not copy or impersonate it.
+Resulting flow in `C_promote`: `_hosted_capital` reads the pool and binding through the product's BFF
+read routes (`GET /api/v1/capital-pools/{pool_id}`, `GET /api/v1/bindings/{binding_id}`) with the operator
+session. When they are absent, inactive or not BFF-created, it calls the entry above with the same
+session, persists the intended scalar ids first, then reads back. A binding created by the BFF is accepted
+by `created_by == control-plane-bff`; an original-history binding is accepted only when this run's entry
+receipt (`writer_actor_id == control-plane-bff`) just validated and adopted it and its creator is
+`HOSTED-ALL12-CHAIN-DESIGN-20261023`; any other writer is rejected. A refused entry (missing or unapproved
+artifact, foreign tenant, non-paper record) stays the named pause `CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED`
+(name kept for continuity) with the owner's reason. `E_close` reads Capital through the same BFF read
+routes and retires the binding then pool through the retire entry when `PANTHEON_L12_BFF_URL` and
+`PANTHEON_L12_BFF_BEARER` are set; it never signs or borrows a Capital service token, and the harness
+sends no direct Capital POST/PATCH in hosted mode. Adopting an existing pool needs no currency;
+creating a new pool needs the chain predecessor `capital_currency`, otherwise the entry fails by name.
 
-Unblocking needs new product code (a capital-only provisioning entry that keeps BFF service
-authority and the existing approved artifact/ids), which is outside this task's files; it is
-reported to the task owner for a scope decision. Once such an entry exists, `_hosted_capital`
-swaps its three writes for that call and keeps the existing read-before-create, scalar id
-persistence and retirement order (runtime binding, capital binding, pool).
+`GET /api/v1/bindings/{id}` previously returned 500 because `PersonaCapitalRuntimeDomainPort` lacked
+the `get_binding` delegate to its `CapitalPoolPort`; the delegate is now exposed (read only) with a route
+regression through the real composed ports.
+
+Source delivery is not deployment: the exact-pair release and the real business run remain with the
+release owner.
 
 ## 4. Owner writes, labels and retirement (acceptance 4)
 

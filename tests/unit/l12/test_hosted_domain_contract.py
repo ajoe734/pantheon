@@ -798,6 +798,7 @@ class FakeRuntimeHttp:
         self.binding: dict[str, Any] = {}
         self.plan: dict[str, Any] = {}
         self.dispatched = False
+        self.entry_refusal: str | None = None
 
     def request(self, service: str, method: str, path: str, *, body: Any = None, headers: Any = None,
                 query: Any = None, expected: Any = frozenset({200}), timeout: float = 20.0) -> Any:
@@ -833,6 +834,19 @@ class FakeRuntimeHttp:
                 return {"decision_id": decision, "tenant_id": TENANT, "decision_state": "decided",
                         "decision": "approved", "version": 2, **scope}
             return {"detail": "not found"}
+        if path.endswith("/provisioning/paper-capital") and method == "POST":
+            if self.entry_refusal:
+                return {"error": {"code": "PRECONDITION_FAILED", "message": self.entry_refusal}}
+            labels = body.get("labels") or {}
+            meta = {"execution_context": "paper", **labels}
+            if not self.pool:
+                self.pool = {"pool_id": body["capital_pool_id"], "tenant_id": TENANT, "metadata": meta}
+            if not self.binding:
+                self.binding = {"binding_id": body["binding_id"], "tenant_id": TENANT, "status": "active",
+                                "persona_id": path.split("/")[3], "capital_pool_id": body["capital_pool_id"],
+                                "allowed_deployment_scope": "paper", "created_by": "control-plane-bff",
+                                "metadata": meta}
+            return {"data": {"writer_actor_id": "control-plane-bff", "persona_capital_binding": self.binding}}
         if path.startswith("/api/v1/capital-pools/") and method == "GET":
             return {"data": self.pool} if self.pool else {"error": {"code": "RESOURCE_NOT_FOUND"}}
         if path.startswith("/api/v1/bindings/") and method == "GET":
@@ -1138,36 +1152,70 @@ def test_hosted_runtime_paths_never_stop_or_restart_services(
             assert forbidden not in source, (method.__name__, forbidden)
 
 
-def test_hosted_capital_sends_no_direct_write_and_pauses_when_product_records_are_absent(
+def test_hosted_capital_uses_the_bff_entry_when_product_records_are_absent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # The real hosted token shape: an operator session; nothing is minted or borrowed.
     _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", provisioned=False)
-    from l12_owner_auth import HostedPause, capital_authorization
+    from l12_owner_auth import capital_authorization
 
     assert capital_authorization() == f"Bearer {EXECUTOR_TOKEN}"
+    ids: dict[str, Any] = {}
+    result = chain._hosted_capital("persona-teach", ids)
+
+    entry = "POST /bff/personas/persona-teach/provisioning/paper-capital"
+    assert result["capital_pool_id"] == f"hosted-all12-{CHAIN}-pool" and ids["capital_binding_id"] == f"hosted-all12-{CHAIN}-pcb"
+    assert [c for c in fake.calls if c[1] != "GET"] == [("bff", "POST", "/bff/personas/persona-teach/provisioning/paper-capital")]
+    body = fake.bodies[entry]
+    assert body["labels"]["chain_id"] == CHAIN and body["capital_pool_id"] == f"hosted-all12-{CHAIN}-pool"
+    assert not {"actor_id", "tenant_id", "approval_decision_id", "approved"} & set(body)
+    assert all(c[0] == "bff" for c in fake.calls if "capital" in c[2] or "bindings" in c[2])
+    source = inspect.getsource(sys.modules["l12_owner_auth"])
+    assert "_service_jwt" not in source and not hasattr(sys.modules["l12_owner_auth"], "fresh_capital_authorization")
+
+
+def test_hosted_capital_pauses_with_named_blocker_and_persisted_ids_when_the_entry_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", provisioned=False)
+    from l12_owner_auth import HostedPause
+
+    fake.entry_refusal = "approved strategy_spec reg-x is not an approved strategy_spec of tenant"
     ids: dict[str, Any] = {}
     with pytest.raises(HostedPause) as paused:
         chain._hosted_capital("persona-teach", ids)
     assert paused.value.blocked_before == "capital_pool_creation"
-    assert "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED" in paused.value.detail
-    assert "BFF paper-provisioning entry" in paused.value.detail and "H1/H3" in paused.value.detail
-    assert [c for c in fake.calls if c[1] != "GET"] == [] and ids == {}
-    assert all(c[0] == "bff" for c in fake.calls if "capital" in c[2] or "bindings" in c[2])
-    source = inspect.getsource(sys.modules["l12_owner_auth"])
-    assert "_service_jwt" not in source and not hasattr(sys.modules["l12_owner_auth"], "fresh_capital_authorization")
+    assert "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED" in paused.value.detail and "refused" in paused.value.detail
+    # the intended resource ids are persisted before the child fails
+    assert ids == {"capital_pool_id": f"hosted-all12-{CHAIN}-pool", "capital_binding_id": f"hosted-all12-{CHAIN}-pcb"}
+    assert [c for c in fake.calls if c[1] != "GET"] == [("bff", "POST", "/bff/personas/persona-teach/provisioning/paper-capital")]
+
+
+def test_hosted_capital_adopts_original_history_only_through_the_bff_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote")
+    from l12_owner_auth import HOSTED_TASK_ID, HostedPause
+
+    fake.binding["created_by"] = HOSTED_TASK_ID  # original chain-design writer is preserved, never rewritten
+    assert chain._hosted_capital("persona-teach", {})["capital_binding_id"] == f"hosted-all12-{CHAIN}-pcb"
+    assert fake.binding["created_by"] == HOSTED_TASK_ID
+    assert [c[1:] for c in fake.calls if c[1] != "GET"] == [("POST", "/bff/personas/persona-teach/provisioning/paper-capital")]
+
+    fake.binding["created_by"] = "unrelated-service"  # no other writer is ever accepted
+    with pytest.raises(HostedPause):
+        chain._hosted_capital("persona-teach", {})
 
 
 def test_hosted_capital_rejects_records_not_written_by_product_provisioning(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote")
-    from l12_owner_auth import HOSTED_TASK_ID, HostedPause
+    from l12_owner_auth import HostedPause
 
-    for wrong in (HOSTED_TASK_ID, "unrelated-service"):  # not the product BFF identity
-        fake.binding["created_by"] = wrong
-        with pytest.raises(HostedPause):
-            chain._hosted_capital("persona-teach", {})
+    fake.binding["created_by"] = "unrelated-service"  # not the product BFF identity
+    with pytest.raises(HostedPause):
+        chain._hosted_capital("persona-teach", {})
     fake.binding["created_by"] = "control-plane-bff"
     fake.binding["capital_pool_id"] = "other-pool"
     with pytest.raises(HostedPause):
@@ -1180,7 +1228,7 @@ def test_hosted_capital_rejects_records_not_written_by_product_provisioning(
     fake.binding["status"] = "pending"
     with pytest.raises(HostedPause):
         chain._hosted_capital("persona-teach", {})
-    assert [c for c in fake.calls if c[1] != "GET"] == []
+    assert not [c for c in fake.calls if c[1] != "GET" and c[0] != "bff"]
 
 
 def test_capital_identity_reads_service_claims_of_a_token_that_has_them(auth: Any) -> None:
