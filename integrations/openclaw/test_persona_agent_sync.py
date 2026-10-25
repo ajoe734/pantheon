@@ -392,6 +392,8 @@ def test_sync_persists_and_updates_model_policy_in_agents_list_for_new_and_exist
             agents_list[:] = json.loads(args[4])
             return _cp("ok")
         if args[:3] == ["openclaw", "agents", "set-identity"]:
+            if args[3] != "--agent":
+                return _cp("", returncode=1, stderr="error: too many arguments for 'set-identity'")
             return _cp("ok")
         return _cp("", returncode=1, stderr=f"unexpected command: {args}")
 
@@ -472,6 +474,8 @@ def test_sync_fails_closed_when_config_get_or_set_fails_on_existing_or_new_agent
                 )
             )
         if args[:3] == ["openclaw", "agents", "set-identity"]:
+            if args[3] != "--agent":
+                return _cp("", returncode=1, stderr="error: too many arguments for 'set-identity'")
             return _cp("ok")
         if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
             return _cp("", returncode=1, stderr="config read failed")
