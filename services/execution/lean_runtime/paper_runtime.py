@@ -3425,6 +3425,10 @@ class PaperRuntimeService:
                     ledger.get("first_fill_at") or ledger.get("ledger_started_at")
                 ),
             )
+            if drawdown_metrics is None:
+                drawdown_metrics = (
+                    self._drawdown_tracker.observe_unchanged_provenance(sample)
+                )
         except ValueError as exc:
             self._drawdown_tracker.restore(tracker_checkpoint)
             self._performance_telemetry.update(

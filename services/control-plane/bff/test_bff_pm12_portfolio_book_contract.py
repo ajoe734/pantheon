@@ -30,12 +30,15 @@ def _build_pm12_app(store: "ReadSurfacePorts") -> Any:
     app = build_bff_app()
     read_surface = lambda: store  # noqa: E731
 
+    from services.control_plane.bff.pm12 import service as pm12_service
+
     app.include_router(
         create_capital_router(
             read_surface=read_surface,
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,
             require_operator_role=auth_policy.require_operator_role,
+            utc_now=lambda: pm12_service._default_utc_now(),
             bff_error=auth_policy.bff_error,
         )
     )
@@ -1763,10 +1766,74 @@ def test_portfolio_projections_use_one_owner_snapshot_with_identical_results() -
         assert summaries == original
 
 
+_DEFAULT_TW_LINEAGE_2330 = {
+    "source_ids": ["tw-official:tw_price_daily:TWSE:2330:9691b8ad1b066a80"],
+    "connector_ids": ["tw-twse-tpex-official-market"],
+}
+
+_RECORDED_2330_CALENDAR_EVIDENCE = {
+    "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",
+    "checksum": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+    "coverage_end": "2026-10-28",
+    "coverage_start": "2026-10-22",
+    "fetched_at": "2026-10-23T07:00:39Z",
+    "holidays": {
+        "2026-10-23": {
+            "name": "颱風全日休市 (TWSE 臨時休市公告)",
+        },
+        "2026-10-25": {
+            "name": "臺灣光復暨金門古寧頭大捷紀念日",
+        },
+        "2026-10-26": {
+            "name": "臺灣光復暨金門古寧頭大捷紀念日",
+        },
+    },
+    "market": "TW",
+    "source_url": "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+    "timezone": "Asia/Taipei",
+    "trading_days": [
+        "2026-10-22",
+        "2026-10-27",
+        "2026-10-28",
+    ],
+    "venue": "TWSE",
+    "version": "twse-2026-emergency-closure-20261023-v2",
+}
+
+
 def _recent_as_of(hours_ago=1):
     from datetime import datetime, timedelta, timezone
 
-    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    anchor = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    return (anchor - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _with_default_tw_provenance(marks):
+    if marks is None:
+        return None
+    normalized = []
+    for item in marks:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+        ref = dict(item)
+        symbol = str(ref.get("symbol") or "").strip()
+        as_of = str(ref.get("as_of") or "").strip()
+        if symbol.upper().endswith((".TW", ".TWO")):
+            if "observed_at" not in ref and as_of:
+                ref["observed_at"] = (
+                    f"{as_of[:10]}T06:00:00Z"
+                    if len(as_of) >= 10 and as_of.endswith("T00:00:00Z")
+                    else as_of
+                )
+            if "lineage" not in ref:
+                base_sym = symbol.split(".", 1)[0]
+                ref["lineage"] = {
+                    "source_ids": [f"tw-official:tw_price_daily:TWSE:{base_sym}:test"],
+                    "connector_ids": ["tw-twse-tpex-official-market"],
+                }
+        normalized.append(ref)
+    return normalized
 
 
 def _projected_paper_summary(*, marks, binding_id="rb-alpha", extra_events=()):
@@ -1804,11 +1871,20 @@ def _projected_paper_summary(*, marks, binding_id="rb-alpha", extra_events=()):
                 "event_type": "pnl_snapshot",
                 "created_at": "2026-10-21T02:36:09Z",
                 "metrics": {"pnl": -5.0},
-                "metadata": {"valuation_as_of": "2026-10-20T00:00:00Z", "mark_refs": marks},
+                "metadata": {
+                    "valuation_as_of": "2026-10-20T00:00:00Z",
+                    "mark_refs": _with_default_tw_provenance(marks),
+                },
             }
         )
     for extra in extra_events:
-        store.project_event({**base, **extra})
+        ev = dict(extra)
+        if isinstance(ev.get("metadata"), dict) and "mark_refs" in ev["metadata"]:
+            ev["metadata"] = {
+                **ev["metadata"],
+                "mark_refs": _with_default_tw_provenance(ev["metadata"]["mark_refs"]),
+            }
+        store.project_event({**base, **ev})
     # A later heartbeat must not make the mark look fresh.
     summary = store.project_event(
         {
@@ -1823,7 +1899,10 @@ def _projected_paper_summary(*, marks, binding_id="rb-alpha", extra_events=()):
     return summary
 
 
-def _alpha_holdings(monkeypatch, summary):
+def _alpha_holdings(monkeypatch, summary, *, now_iso="2026-10-21T05:05:00Z"):
+    from services.control_plane.bff.pm12 import service as pm12_service
+
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: now_iso)
     client = _portfolio_store(monkeypatch, telemetry={"runtime-alpha": summary})
     response = client.get(
         "/bff/management/portfolio-book/holdings",
@@ -2146,3 +2225,285 @@ def test_portfolio_holdings_canonical_active_status_wins_over_lower_priority_ter
     body = _holdings_for(monkeypatch, [runtime], {})
     assert [i["runtime_id"] for i in body["data"]["items"]] == ["rt-conflict"]
     assert body["data"]["summary"]["incident_count"] == 1
+
+
+def test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar_projection(monkeypatch) -> None:
+    import json
+    from datetime import datetime, timezone
+    from services.control_plane.bff.pm12 import service as pm12_service
+    from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
+    from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+    from services.execution.lean_runtime.performance_telemetry import SourceIngestMarkProvider
+    from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    h12_runtime_id = "rt-eb295fe2"
+    h12_binding_id = "rb-eea1cd16cf3745479f42e8b4440b3c27"
+    source_ref = "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"
+    h12_runtime = {
+        "id": h12_binding_id,
+        "binding_id": h12_binding_id,
+        "runtime_id": h12_runtime_id,
+        "capital_pool_id": "pool-tw-equities-core",
+        "artifact_id": "artifact-tw-equities",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "persona_id": "persona-tw-swing-trader",
+        "strategy_id": "strat-tw-swing-breakout",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+
+    # 1. Exact saved 76062 owner DTO before governed calendar provenance was carried:
+    # mark_stale is True and _marks_by_symbol lacks observed_at/lineage/calendar_evidence.
+    saved_76062_owner_dto = {
+        "runtime_id": h12_runtime_id,
+        "binding_id": h12_binding_id,
+        "deployment_stage": "paper",
+        "environment": "paper",
+        "status": "running",
+        "last_event_at": "2026-10-25T21:41:42Z",
+        "updated_at": "2026-10-25T21:41:42Z",
+        "collected_at": "2026-10-25T21:41:42Z",
+        "_binding_latest_event_at": "2026-10-25T21:41:42Z",
+        "_positions_by_symbol": {"2330.TW": -2.0},
+        "_marks_by_symbol": {
+            "2330.TW": {
+                "as_of": "2026-10-22T00:00:00Z",
+                "binding_id": h12_binding_id,
+                "price": 2385.0,
+                "source_ref": source_ref,
+            }
+        },
+        "positions": [
+            {
+                "symbol": "2330.TW",
+                "quantity": -2.0,
+                "mark_stale": True,
+                "last_known_mark_price": 2385.0,
+                "last_known_mark_as_of": "2026-10-22T00:00:00Z",
+                "last_known_mark_source_ref": source_ref,
+            }
+        ],
+        "position_count": 1,
+    }
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-10-25T21:48:43Z")
+    pre_body = _holdings_for(monkeypatch, [h12_runtime], {h12_runtime_id: saved_76062_owner_dto})
+    (pre_item,) = pre_body["data"]["items"]
+    assert pre_item["holding_id"] == "rt-eb295fe2:2330.TW"
+    assert pre_item["symbol"] == "2330.TW"
+    assert pre_item["side"] == "short"
+    assert pre_item["quantity"] == -2.0
+    assert pre_item["mark_status"] == "stale"
+    assert pre_item["telemetry_stale"] is True
+    assert pre_item["mark_price"] is None
+    assert pre_item["market_value"] is None
+    assert pre_item["notional"] is None
+    assert pre_item["last_mark_at"] == "2026-10-22T00:00:00Z"
+    assert pre_item["mark_source_ref"] == source_ref
+
+    # 2. Drive the actual producer (SourceIngestMarkProvider + PaperRuntimeService)
+    # starting from an already-committed unchanged performance_window (the exact 76062
+    # unchanged-sample transport gap), into RuntimeSummaryProjectionStore and BFF holdings.
+    recorded_snapshot = {
+        "schema_version": "source_ingest_latest_market_snapshot.v1",
+        "snapshot_id": "mss-ff49b0e9e567bba38063946a",
+        "symbol": "2330.TW",
+        "event_time": "2026-10-22T00:00:00Z",
+        "observed_at": "2026-10-23T12:29:54Z",
+        "closes": [2405.0, 2420.0, 2385.0],
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:9691b8ad1b066a80"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+            "content_refs": ["tw-official://tw_price_daily/TWSE/2330/2026-10-22/9691b8ad1b066a80"],
+            "ingest_run_ids": ["ingest-e53a86463995"],
+        },
+        "source_ref": source_ref,
+        "calendar_evidence": json.loads(json.dumps(_RECORDED_2330_CALENDAR_EVIDENCE)),
+        "market": "TW",
+    }
+    now_oct25 = datetime.fromisoformat("2026-10-25T21:41:44+00:00")
+
+    class _CapturingEmitter:
+        def __init__(self):
+            self.enabled = True
+            self.events = []
+
+        def build_event(self, event_type, metrics, metadata=None, *, event_id=None, created_at=None):
+            m = dict(metrics)
+            stamp_key = "pnl_as_of" if event_type == "pnl_snapshot" else "drawdown_as_of"
+            stamp = m.pop(stamp_key, None)
+            return {
+                "event_id": event_id,
+                "event_type": event_type,
+                "created_at": created_at,
+                "runtime_id": h12_runtime_id,
+                "binding_id": h12_binding_id,
+                "deployment_stage": "paper",
+                "environment": "paper",
+                stamp_key: stamp,
+                "metrics": m,
+                "metadata": dict(metadata or {}),
+            }
+
+        def emit_payload(self, payload):
+            self.events.append(json.loads(json.dumps(dict(payload))))
+            return True
+
+        def emit(self, event_type, metrics, metadata=None):
+            return True
+
+        def emit_heartbeat(self, metadata=None):
+            return True
+
+        def snapshot(self):
+            return {"enabled": True, "sent": len(self.events), "failed": 0, "last_error": None}
+
+    identity = RuntimeIdentity.from_env(
+        {
+            "PANTHEON_RUNTIME_ROLE": "pantheon-paper-execution-runtime",
+            "PANTHEON_RUNTIME_MODE": "paper",
+            "PANTHEON_RUNTIME_ID": h12_runtime_id,
+            "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+            "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+            "PANTHEON_WORKSPACE_REF": "workspace-paper",
+            "PANTHEON_AUTH_PROFILE_REF": "auth-profile-paper",
+            "PANTHEON_PERSONA_ID": "persona-tw-swing-trader",
+            "PANTHEON_SESSION_ID": "session-h12",
+            "PANTHEON_TRACE_ID": "11111111-2222-3333-4444-555555555555",
+            "PANTHEON_REQUEST_ID": "request-h12",
+        }
+    )
+    provider = SourceIngestMarkProvider(
+        "http://source-ingest:8097",
+        cache_ttl_seconds=0,
+        max_mark_age_seconds=172800,
+        fetch_json=lambda _url, _timeout: recorded_snapshot,
+        now=lambda: now_oct25,
+    )
+    emitter = _CapturingEmitter()
+
+    class _RMClient:
+        def list_all(self):
+            return [dict(h12_runtime)]
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        monkeypatch.setenv("PANTHEON_LIFECYCLE_OUTBOX_DIR", f"{tmp_dir}/outbox")
+        monkeypatch.setenv("PANTHEON_PERFORMANCE_STATE_PATH", f"{tmp_dir}/paper-ledger.json")
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=identity,
+            runtime_manager_client=_RMClient(),
+            telemetry_emitter=emitter,
+            mark_provider=provider,
+            poll_interval_seconds=3600,
+        )
+        assert service._algo.BindPerformanceBinding(h12_binding_id)
+        service._algo._initial_cash = 100000.0
+        service._algo._cash = 104800.0
+        service._algo._holding("2330.TW").Quantity = -2.0
+        service._algo._fill_count = 2
+        service._algo._first_fill_at = "2026-10-20T02:27:49Z"
+        service._algo._last_fill_at = "2026-10-21T02:35:58Z"
+        # Pre-seed performance_window with the exact same sample fingerprint (as recorded before provenance).
+        service._algo.save_performance_window(
+            {
+                "schema_version": "rolling_drawdown.v1",
+                "window_days": 20,
+                "values": [
+                    {"as_of": "2026-10-20T02:27:49Z", "portfolio_value": 100000.0},
+                    {"as_of": "2026-10-22T00:00:00Z", "portfolio_value": 100030.0},
+                ],
+                "last_fingerprint": [
+                    "2026-10-22T00:00:00Z",
+                    30.0,
+                    100030.0,
+                    2,
+                    [["2330.TW", 2385.0, "2026-10-22T00:00:00Z", source_ref, None]],
+                ],
+                "latest_as_of": "2026-10-22T00:00:00Z",
+                "latest_sample_shared_with_seed": False,
+            }
+        )
+
+        first_drain = service.drain_once()
+        assert first_drain["paper_state"]["performance_telemetry"]["code"] == "performance_snapshots_emitted"
+        assert len(emitter.events) == 2
+
+        # Second drain with identical evidence is idempotent and does not re-emit.
+        second_drain = service.drain_once()
+        assert second_drain["paper_state"]["performance_telemetry"]["code"] == "performance_sample_unchanged"
+        assert len(emitter.events) == 2
+
+    # Project the emitted unchanged-sample events onto the saved 76062 DTO.
+    from services.telemetry.runtime_summary import _summary_key
+
+    store = RuntimeSummaryProjectionStore(path=None)
+    store._summaries[_summary_key(saved_76062_owner_dto)] = json.loads(json.dumps(saved_76062_owner_dto))
+    for ev in emitter.events:
+        projected_76062 = store.project_event(ev)
+
+    post_body = _holdings_for(monkeypatch, [h12_runtime], {h12_runtime_id: projected_76062})
+    (post_item,) = post_body["data"]["items"]
+    assert post_item["holding_id"] == "rt-eb295fe2:2330.TW"
+    assert post_item["symbol"] == "2330.TW"
+    assert post_item["side"] == "short"
+    assert post_item["quantity"] == -2.0
+    assert post_item["mark_status"] == "available"
+    assert post_item["telemetry_stale"] is False
+    assert post_item["mark_price"] == 2385.0
+    assert post_item["market_value"] == -4770.0
+    assert post_item["notional"] == 4770.0
+    assert post_item["last_mark_at"] == "2026-10-22T00:00:00Z"
+    assert post_item["mark_source_ref"] == source_ref
+
+    # 3. Negatives through BFF holdings projection:
+    # (a) Missed trading session on 2026-10-27 after 13:30 Asia/Taipei close (05:31Z) -> stale.
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-10-27T05:31:00Z")
+    missed_session_body = _holdings_for(monkeypatch, [h12_runtime], {h12_runtime_id: projected_76062})
+    (missed_item,) = missed_session_body["data"]["items"]
+    assert missed_item["mark_status"] == "stale"
+    assert missed_item["telemetry_stale"] is True
+    assert missed_item["mark_price"] is None
+    assert missed_item["market_value"] is None
+    assert missed_item["notional"] is None
+    assert missed_item["last_mark_at"] == "2026-10-22T00:00:00Z"
+
+    # (b) Untrusted pin, malformed calendar, missing calendar, non-official lineage, or missing observed_at -> stale.
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-10-25T21:48:43Z")
+    for mutation in (
+        {"mark_calendar_evidence": None},
+        {"mark_calendar_evidence": "not-a-dict"},
+        {
+            "mark_calendar_evidence": {
+                **_RECORDED_2330_CALENDAR_EVIDENCE,
+                "version": "twse-2026-untrusted-v99",
+            }
+        },
+        {"mark_lineage": {"source_ids": ["yahoo:2330"], "connector_ids": ["yahoo"]}},
+        {"mark_observed_at": None},
+        {"mark_observed_at": "2026-10-22T05:00:00Z"},
+        {"mark_observed_at": "2026-10-26T00:00:00Z"},
+    ):
+        mutated_dto = json.loads(json.dumps(projected_76062))
+        mutated_dto["positions"][0].update(mutation)
+        bad_body = _holdings_for(monkeypatch, [h12_runtime], {h12_runtime_id: mutated_dto})
+        (bad_item,) = bad_body["data"]["items"]
+        assert bad_item["mark_status"] == "stale", mutation
+        assert bad_item["mark_price"] is None, mutation
+        assert bad_item["market_value"] is None, mutation
+        assert bad_item["notional"] is None, mutation
+
+    # (c) Non-Taiwan symbol preserves 172800s raw max age even if Taiwan calendar evidence is attached.
+    non_tw_dto = json.loads(json.dumps(projected_76062))
+    non_tw_dto["positions"][0]["symbol"] = "AAPL.US"
+    non_tw_dto["_marks_by_symbol"]["AAPL.US"] = non_tw_dto["_marks_by_symbol"].pop("2330.TW")
+    non_tw_body = _holdings_for(monkeypatch, [h12_runtime], {h12_runtime_id: non_tw_dto})
+    (non_tw_item,) = non_tw_body["data"]["items"]
+    assert non_tw_item["symbol"] == "AAPL.US"
+    assert non_tw_item["mark_status"] == "stale"
+    assert non_tw_item["mark_price"] is None
+    assert non_tw_item["market_value"] is None
+    assert non_tw_item["notional"] is None
