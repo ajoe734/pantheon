@@ -265,7 +265,7 @@ def test_performance_attribution_common_filters(monkeypatch) -> None:
     monkeypatch.setattr(
         agora_perf_service,
         "pm12_performance_attribution_facts",
-        lambda sources, period: dummy_facts,
+        lambda sources: dummy_facts,
     )
 
     mock_store = MgmtCommonFiltersTestReadPorts()
