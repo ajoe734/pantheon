@@ -1,8 +1,11 @@
 """Local controller and contract tests for production blue/green delivery (`ENV-PROD-CONTROL-IMPL-001`).
 
-NOTE: These tests use a fake ops adapter and a temporary state tree. They prove controller
-behavior (preflight, atomic switch, rollback, failure injection) only. They do NOT constitute
-hosted production drill evidence, and no cloud or GitHub resource is touched.
+NOTE: These tests use constrained host binaries (`docker`, `curl`, `mountpoint`, `sudo`) and a
+temporary state tree to exercise both the controller (`prod_atomic_switch.sh`, `prod_rollback.sh`)
+and the real VM adapter (`prod_ops.sh`, `bootstrap.sh`). They prove script and controller behavior
+(preflight, bootstrap, digest-pinned image pre-acquisition, atomic switch, rollback, failure
+injection) only. They do NOT constitute hosted production drill evidence, and no cloud or GitHub
+resource is touched.
 """
 from __future__ import annotations
 
@@ -46,36 +49,174 @@ exit 0
 OPS = REPO_ROOT / "scripts" / "deploy" / "prod_ops.sh"
 BOOTSTRAP = REPO_ROOT / "deploy" / "production" / "bootstrap.sh"
 
-# Fake docker/curl/mountpoint binaries exercise the REAL prod_ops.sh/bootstrap.sh code paths.
+# Fake docker/curl/mountpoint/sudo binaries exercise the REAL prod_ops.sh/bootstrap.sh code paths.
 FAKE_BIN = r"""#!/usr/bin/env bash
 tool="$(basename "$0")"
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
+  sudo)
+    if [[ "$1" == "-E" ]]; then shift; fi
+    exec "$@"
+    ;;
   mountpoint) [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
   docker)
     args="$*"
+    if [[ "$args" == "login "* ]]; then
+      [[ "${FAKE_DOCKER_FAIL:-}" == *"login"* ]] && exit 1
+      cat >/dev/null
+      echo "$args" >> "$FAKE_STATE/docker_logins"
+      exit 0
+    fi
+    if [[ "$args" == "pull "* ]]; then
+      [[ "${FAKE_DOCKER_FAIL:-}" == *"pull"* ]] && exit 1
+      img="${2:-}"
+      echo "$img" >> "$FAKE_STATE/pulled_images"
+      exit 0
+    fi
     if [[ "$args" == *"compose"*" ps -q "* ]]; then
       svc="${args##* ps -q }"
       if [[ "$svc" == lifecycle-projector ]]; then
-        if [[ -f "$FAKE_STATE/singleton_up" ]]; then for _ in $(seq 1 "${FAKE_SINGLETON_COUNT:-1}"); do echo "cid-$_"; done; fi
+        if [[ -f "$FAKE_STATE/singleton_up" ]]; then for _ in $(seq 1 "${FAKE_SINGLETON_COUNT:-1}"); do echo "cid-lifecycle-projector-$_"; done; fi
+      elif [[ "$svc" == operator-bff-blue || "$svc" == operator-bff-green ]]; then
+        if [[ -f "$FAKE_STATE/stopped_$svc" ]]; then exit 0; fi
+        echo "cid-$svc"
       else echo "cid-$svc"; fi
       exit 0
     fi
-    if [[ "$args" == *"compose"*"up -d"*lifecycle-projector* ]]; then touch "$FAKE_STATE/singleton_up"; fi
-    if [[ "$args" == *"compose"*"rm -fsv lifecycle-projector"* ]]; then rm -f "$FAKE_STATE/singleton_up"; fi
+    if [[ "$args" == *"compose"*"up -d"*lifecycle-projector* ]]; then
+      [[ "${FAKE_DOCKER_FAIL:-}" == *"compose"* ]] && exit 1
+      touch "$FAKE_STATE/singleton_up"
+      if [[ -n "${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:-}" ]]; then
+        printf '%s' "${FAKE_SINGLETON_IMAGE_OVERRIDE:-$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}" > "$FAKE_STATE/image_cid-lifecycle-projector-1"
+      fi
+      if [[ -n "${PANTHEON_RELEASE_ID:-}" ]]; then
+        printf '%s' "$PANTHEON_RELEASE_ID" > "$FAKE_STATE/singleton_release_id"
+      fi
+    fi
+    if [[ "$args" == *"compose"*"up -d"*operator-bff-blue* ]]; then
+      [[ "${FAKE_DOCKER_FAIL:-}" == *"compose"* ]] && exit 1
+      rm -f "$FAKE_STATE/stopped_operator-bff-blue"
+      if [[ -n "${PANTHEON_OPERATOR_BFF_IMAGE:-}" ]]; then
+        printf '%s' "$PANTHEON_OPERATOR_BFF_IMAGE" > "$FAKE_STATE/image_cid-operator-bff-blue"
+        python3 - "${PANTHEON_RELEASE_ID:-}" "${PANTHEON_BACKEND_COMMIT:-}" "${PANTHEON_OPERATOR_BFF_IMAGE}" "${PANTHEON_OPERATOR_BFF_DIGEST:-}" > "$FAKE_STATE/bff_version_${PROD_BLUE_PORT:-8001}" <<'PY'
+import json, sys
+rel_id, commit, img, digest = sys.argv[1:5]
+if not digest and "@sha256:" in img:
+    digest = "sha256:" + img.split("@sha256:", 1)[1]
+print(json.dumps({"environment": "production", "release_id": rel_id, "source_commit_sha": commit, "image_digest": digest, "operator_bff_image": img}))
+PY
+      fi
+    fi
+    if [[ "$args" == *"compose"*"up -d"*operator-bff-green* ]]; then
+      [[ "${FAKE_DOCKER_FAIL:-}" == *"compose"* ]] && exit 1
+      rm -f "$FAKE_STATE/stopped_operator-bff-green"
+      if [[ -n "${PANTHEON_OPERATOR_BFF_IMAGE:-}" ]]; then
+        printf '%s' "$PANTHEON_OPERATOR_BFF_IMAGE" > "$FAKE_STATE/image_cid-operator-bff-green"
+        python3 - "${PANTHEON_RELEASE_ID:-}" "${PANTHEON_BACKEND_COMMIT:-}" "${PANTHEON_OPERATOR_BFF_IMAGE}" "${PANTHEON_OPERATOR_BFF_DIGEST:-}" > "$FAKE_STATE/bff_version_${PROD_GREEN_PORT:-8002}" <<'PY'
+import json, sys
+rel_id, commit, img, digest = sys.argv[1:5]
+if not digest and "@sha256:" in img:
+    digest = "sha256:" + img.split("@sha256:", 1)[1]
+print(json.dumps({"environment": "production", "release_id": rel_id, "source_commit_sha": commit, "image_digest": digest, "operator_bff_image": img}))
+PY
+      fi
+    fi
+    if [[ "$args" == *"compose"*"rm -fsv lifecycle-projector"* ]]; then
+      rm -f "$FAKE_STATE/singleton_up" "$FAKE_STATE/image_cid-lifecycle-projector-1"
+    fi
+    if [[ "$args" == *"compose"*"rm -fsv operator-bff-blue"* ]]; then
+      touch "$FAKE_STATE/stopped_operator-bff-blue"
+    fi
+    if [[ "$args" == *"compose"*"rm -fsv operator-bff-green"* ]]; then
+      touch "$FAKE_STATE/stopped_operator-bff-green"
+    fi
     if [[ "$args" == "inspect -f {{range .Config.Env}}"* ]]; then cat "$FAKE_STATE/container_env"; exit 0; fi
-    if [[ "$args" == "inspect -f {{.Config.Image}}"* ]]; then cat "$FAKE_STATE/container_image"; exit 0; fi
-    if [[ "$args" == "image inspect"*migration* ]]; then printf '%s' "${FAKE_MIGRATION_LABEL:-}"; exit 0; fi
-    if [[ "$args" == "image inspect"*compat* ]]; then printf '%s' "${FAKE_COMPAT_LABEL:-}"; exit 0; fi
+    if [[ "$args" == "inspect -f {{.Config.Image}}"* ]]; then
+      cid="${@: -1}"
+      if [[ -n "${FAKE_CONTAINER_IMAGE_OVERRIDE:-}" ]]; then
+        printf '%s' "$FAKE_CONTAINER_IMAGE_OVERRIDE"; exit 0
+      fi
+      if [[ -f "$FAKE_STATE/image_${cid}" ]]; then
+        cat "$FAKE_STATE/image_${cid}"; exit 0
+      fi
+      cat "$FAKE_STATE/container_image"; exit 0
+    fi
+    if [[ "$args" == "image inspect -f"*migration* ]]; then printf '%s' "${FAKE_MIGRATION_LABEL:-}"; exit 0; fi
+    if [[ "$args" == "image inspect -f"*compat* ]]; then printf '%s' "${FAKE_COMPAT_LABEL:-}"; exit 0; fi
+    if [[ "$args" == "image inspect "* ]]; then
+      [[ "${FAKE_DOCKER_FAIL:-}" == *"image_inspect"* ]] && exit 1
+      exit 0
+    fi
     [[ "${FAKE_DOCKER_FAIL:-}" == *"$(echo "$args" | awk '{print $1}')"* ]] && exit 1
     exit 0 ;;
   curl)
-    url="${@: -1}"; all="$*"; port="$(sed -n 's#.*127.0.0.1:\([0-9]*\)/.*#\1#p' <<<"$url")"
+    url="${@: -1}"; all="$*"; port="$(sed -n 's#.*127\.0\.0\.1:\([0-9]*\)/.*#\1#p' <<<"$url")"
     out=""; prev=""; for a in "$@"; do [[ "$prev" == "-o" ]] && out="$a"; prev="$a"; done
-    if [[ "$url" == */bff/readyz ]]; then [[ " ${FAKE_READY_PORTS:-} " == *" $port "* ]] && printf 200 || printf 503; exit 0; fi
+    if [[ "$url" == *computeMetadata/v1/instance/service-accounts* ]]; then
+      [[ "${FAKE_METADATA_FAIL:-}" == "true" ]] && exit 22
+      printf '{"access_token":"ya29.fake-prod-runtime-token"}'
+      exit 0
+    fi
     if [[ "$url" == */runtime-config.js ]]; then
-      [[ -n "$out" && "$out" != /dev/null ]] && cat "$FAKE_STATE/served_runtime_config" > "$out"
+      [[ "${FAKE_RC_FETCH_FAIL:-}" == "true" ]] && exit 22
+      if [[ -n "$out" && "$out" != /dev/null ]]; then
+        if [[ -f "$FAKE_STATE/served_runtime_config_override" ]]; then
+          cat "$FAKE_STATE/served_runtime_config_override" > "$out"
+        elif [[ -f "$PROD_ROOT/config/runtime-config.js" ]]; then
+          cat "$PROD_ROOT/config/runtime-config.js" > "$out"
+        else
+          cat "$FAKE_STATE/served_runtime_config" > "$out"
+        fi
+      fi
       printf 'HTTP/2 200\r\ncache-control: %s\r\n\r\n' "${FAKE_RC_CACHE:-no-store, no-cache}"; exit 0
+    fi
+    if [[ "$url" == */deployment.json ]]; then
+      [[ "${FAKE_FE_DEPLOYMENT_FAIL:-}" == "true" ]] && exit 22
+      dep_src="${FAKE_FE_DEPLOYMENT_FILE:-}"
+      if [[ -z "$dep_src" ]]; then
+        if [[ -f "$FAKE_STATE/served_deployment_json" ]]; then
+          dep_src="$FAKE_STATE/served_deployment_json"
+        elif [[ -f "$PROD_ROOT/fe/current/deployment.json" ]]; then
+          dep_src="$PROD_ROOT/fe/current/deployment.json"
+        fi
+      fi
+      [[ -n "$dep_src" && -f "$dep_src" ]] || exit 22
+      [[ -n "$out" && "$out" != /dev/null ]] && cat "$dep_src" > "$out"
+      printf 'HTTP/2 200\r\ncache-control: %s\r\n\r\n' "${FAKE_FE_DEPLOYMENT_CACHE:-no-store, no-cache}"; exit 0
+    fi
+    if [[ "$url" == */bff/readyz ]]; then
+      if [[ -z "$port" ]]; then
+        if [[ -n "${FAKE_PUBLIC_BFF_READYZ_CODE:-}" ]]; then
+          printf '%s' "$FAKE_PUBLIC_BFF_READYZ_CODE"; exit 0
+        fi
+        if [[ -f "$PROD_ROOT/proxy/bff_upstream.caddy" ]]; then
+          if grep -q '503' "$PROD_ROOT/proxy/bff_upstream.caddy"; then printf 503; exit 0; fi
+          port="$(sed -n 's#.*127\.0\.0\.1:\([0-9]*\).*#\1#p' "$PROD_ROOT/proxy/bff_upstream.caddy" | head -n1)"
+        else
+          port="${PROD_TARGET_PORT:-8002}"
+        fi
+      fi
+      [[ " ${FAKE_READY_PORTS:-} " == *" $port "* ]] && printf 200 || printf 503
+      exit 0
+    fi
+    if [[ "$url" == */bff/version ]]; then
+      [[ "${FAKE_PUBLIC_BFF_VERSION_FAIL:-}" == "true" ]] && exit 22
+      if [[ -n "${FAKE_PUBLIC_BFF_VERSION_JSON:-}" ]]; then
+        printf '%s' "$FAKE_PUBLIC_BFF_VERSION_JSON"; exit 0
+      fi
+      uport="$port"
+      if [[ -z "$uport" ]]; then
+        if [[ -f "$PROD_ROOT/proxy/bff_upstream.caddy" ]]; then
+          if grep -q '503' "$PROD_ROOT/proxy/bff_upstream.caddy"; then exit 22; fi
+          uport="$(sed -n 's#.*127\.0\.0\.1:\([0-9]*\).*#\1#p' "$PROD_ROOT/proxy/bff_upstream.caddy" | head -n1)"
+        else
+          uport="${PROD_TARGET_PORT:-8002}"
+        fi
+      fi
+      if [[ -f "$FAKE_STATE/bff_version_${uport}" ]]; then
+        cat "$FAKE_STATE/bff_version_${uport}"; exit 0
+      fi
+      cat "$FAKE_STATE/container_version"; exit 0
     fi
     if [[ "$all" == *"-D -"* ]]; then
       if [[ "$all" == *"evil.invalid"* ]]; then printf 'HTTP/1.1 400\r\n\r\n'; else printf 'HTTP/1.1 200\r\naccess-control-allow-origin: %s\r\n\r\n' "${FAKE_CORS_ALLOW:-https://app.trading.acme-prod.net}"; fi
@@ -95,7 +236,7 @@ class OpsHarness(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        for tool in ("docker", "curl", "mountpoint"):
+        for tool in ("docker", "curl", "mountpoint", "sudo"):
             (self.bin / tool).write_text(FAKE_BIN)
             (self.bin / tool).chmod(0o755)
         self.state = self.tmp / "fake_state"
@@ -115,7 +256,15 @@ class OpsHarness(unittest.TestCase):
         (self.state / "container_env").write_text("\n".join([
             "PANTHEON_LIVE_BROKER_ENABLED=false", "PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED=false",
             "PANTHEON_BFF_AUTH_STUB=false", "PANTHEON_BFF_AUTH_MODE=strict"]) + "\n")
-        (self.state / "container_image").write_text(self.manifest["backend"]["images"]["operator_bff"])
+        bff_img = self.manifest["backend"]["images"]["operator_bff"]
+        (self.state / "container_image").write_text(bff_img)
+        (self.state / "container_version").write_text(json.dumps({
+            "environment": "production",
+            "release_id": self.manifest["release_id"],
+            "source_commit_sha": self.manifest["backend"]["commit"],
+            "image_digest": "sha256:" + bff_img.split("@sha256:", 1)[1],
+            "operator_bff_image": bff_img,
+        }))
         self.token = self.tmp / "token"
         self.token.write_text("synthetic-readonly-token")
 
@@ -200,6 +349,23 @@ class ProdOpsTests(OpsHarness):
         self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertIn("UNKNOWN_GATE", self.ops("gate", "rel-1", "bogus", "8002").stderr)
 
+    def test_bootstrap_first_release_old_new_compat_passes_without_prior_app(self):
+        # Counterexample regression: PROD_BOOTSTRAP_FIRST_RELEASE=true with only candidate 8002 ready
+        # and no prior baseline must pass old_new_compat without inventing a healthy old app on 8001.
+        r = self.ops("gate", "rel-1", "old_new_compat", "8002",
+                     PROD_BOOTSTRAP_FIRST_RELEASE="true", FAKE_READY_PORTS="8002")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # If candidate 8002 itself is not ready, bootstrap old_new_compat still fails closed.
+        r_not_ready = self.ops("gate", "rel-1", "old_new_compat", "8002",
+                               PROD_BOOTSTRAP_FIRST_RELEASE="true", FAKE_READY_PORTS="")
+        self.assertNotEqual(r_not_ready.returncode, 0)
+        # If a retained baseline.json exists on disk, claiming bootstrap fails closed.
+        (self.root / "state" / "baseline.json").write_text('{"healthy":true}')
+        r_has_base = self.ops("gate", "rel-1", "old_new_compat", "8002",
+                              PROD_BOOTSTRAP_FIRST_RELEASE="true", FAKE_READY_PORTS="8002")
+        self.assertNotEqual(r_has_base.returncode, 0)
+        self.assertIn("GATE_COMPAT", r_has_base.stderr)
+
     def test_tenant_gate_is_never_skipped_without_identity(self):
         self.token.unlink()
         self.assertNotEqual(self.ops("gate", "rel-1", "tenant", "8002").returncode, 0)
@@ -208,11 +374,18 @@ class ProdOpsTests(OpsHarness):
         (self.state / "container_env").write_text("PANTHEON_LIVE_BROKER_ENABLED=true\n")
         self.assertIn("GATE_READ_ONLY", self.ops("gate", "rel-1", "read_only", "8002").stderr)
 
-    def test_singleton_handoff_keeps_exactly_one_owner(self):
+    def test_singleton_handoff_keeps_exactly_one_owner_and_restores_baseline_image(self):
+        cand_proj = self.manifest["backend"]["images"]["lifecycle_projector"]
+        base_proj = self.manifest["rollback_baseline"]["backend_images"]["lifecycle_projector"]
         self.assertEqual(self.ops("activate_singletons", "rel-1").returncode, 0)
+        self.assertEqual((self.state / "image_cid-lifecycle-projector-1").read_text(), cand_proj)
         self.assertEqual(self.ops("drain_singletons", "rel-1").returncode, 0)
         self.assertFalse((self.state / "singleton_up").exists())
+        # resume_baseline_singletons must use retained baseline image, NEVER candidate release_env!
         self.assertEqual(self.ops("resume_baseline_singletons", "rel-1").returncode, 0)
+        restored_proj = (self.state / "image_cid-lifecycle-projector-1").read_text()
+        self.assertNotEqual(restored_proj, cand_proj)
+        self.assertEqual(restored_proj, base_proj)
         dup = self.ops("activate_singletons", "rel-1", FAKE_SINGLETON_COUNT="2")
         self.assertNotEqual(dup.returncode, 0)
         self.assertIn("expected exactly 1", dup.stderr)
@@ -222,23 +395,53 @@ class ProdOpsTests(OpsHarness):
         os.symlink(self.root / "fe" / "releases" / "r1", self.root / "fe" / "current")
         self.assertEqual(self.ops("verify_runtime_config", "rel-1").returncode, 0)
         self.assertIn("RUNTIME_CONFIG_CACHEABLE", self.ops("verify_runtime_config", "rel-1", FAKE_RC_CACHE="public, max-age=60").stderr)
-        (self.state / "served_runtime_config").write_text("tampered")
+        (self.state / "served_runtime_config_override").write_text("tampered")
         self.assertIn("RUNTIME_CONFIG_DRIFT", self.ops("verify_runtime_config", "rel-1").stderr)
+        (self.state / "served_runtime_config_override").unlink()
         self.rc.unlink()
         self.assertIn("RUNTIME_CONFIG_MISSING", self.ops("verify_runtime_config", "rel-1").stderr)
 
-    def test_post_identity_reads_back_real_values_and_missing_fe_fails(self):
+    def test_post_identity_reads_back_real_public_and_local_values_and_fails_closed(self):
         cur = self.root / "fe" / "releases" / "r1"
         cur.mkdir()
-        (cur / ".artifact_sha256").write_text("sha256:" + "1" * 64)
+        fe_sha = "sha256:" + "1" * 64
+        bff_img = self.manifest["backend"]["images"]["operator_bff"]
+        (cur / ".artifact_sha256").write_text(fe_sha)
+        (cur / "deployment.json").write_text(json.dumps({
+            "release_id": self.manifest["release_id"],
+            "frontend_commit": self.manifest["frontend"]["commit"],
+            "frontend_artifact_sha256": fe_sha,
+            "backend_commit": self.manifest["backend"]["commit"],
+            "operator_bff_image": bff_img,
+        }))
         os.symlink(cur, self.root / "fe" / "current")
         r = self.ops("post_identity", "rel-1")
         self.assertEqual(r.returncode, 0, r.stderr)
         got = json.loads(r.stdout)
-        self.assertEqual(got["frontend_artifact_sha256"], "sha256:" + "1" * 64)
-        self.assertEqual(got["operator_bff_image"], self.manifest["backend"]["images"]["operator_bff"])
+        self.assertEqual(got["frontend_artifact_sha256"], fe_sha)
+        self.assertEqual(got["operator_bff_image"], bff_img)
+        self.assertEqual(got["frontend_commit"], self.manifest["frontend"]["commit"])
+        self.assertEqual(got["backend_commit"], self.manifest["backend"]["commit"])
+        self.assertTrue(got["public_fe_deployment_verified"])
+        self.assertTrue(got["public_bff_version_verified"])
+        # Public FE /deployment.json cacheable or mismatched fails closed
+        self.assertNotEqual(self.ops("post_identity", "rel-1", FAKE_FE_DEPLOYMENT_CACHE="public, max-age=60").returncode, 0)
+        self.assertNotEqual(self.ops("post_identity", "rel-1", FAKE_FE_DEPLOYMENT_FAIL="true").returncode, 0)
+        # Public BFF /bff/version mismatch or /bff/readyz failure fails closed
+        wrong_ver = json.dumps({"source_commit_sha": "0" * 40, "image_digest": "sha256:" + "9" * 64})
+        self.assertNotEqual(self.ops("post_identity", "rel-1", FAKE_PUBLIC_BFF_VERSION_JSON=wrong_ver).returncode, 0)
+        self.assertNotEqual(self.ops("post_identity", "rel-1", FAKE_PUBLIC_BFF_READYZ_CODE="503").returncode, 0)
         (cur / ".artifact_sha256").unlink()
         self.assertNotEqual(self.ops("post_identity", "rel-1").returncode, 0)
+
+    def test_prepull_images_pulls_and_inspects_only_digest_pinned_images(self):
+        r = self.ops("prepull_images", "rel-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        self.assertIn(self.manifest["backend"]["images"]["operator_bff"], pulled)
+        self.assertIn(self.manifest["backend"]["images"]["lifecycle_projector"], pulled)
+        self.assertNotIn("docker build", self.log.read_text())
+        self.assertIn("IMAGE_PULL_FAILED", self.ops("prepull_images", "rel-1", FAKE_DOCKER_FAIL="pull").stderr)
 
     def test_missing_input_unknown_step_and_proxy_failures(self):
         self.assertNotEqual(self.ops("bogus", "rel-1").returncode, 0)
@@ -252,14 +455,15 @@ class BootstrapTests(OpsHarness):
     def _env(self, **extra):
         secrets = self.tmp / "secrets.env"; pw = self.tmp / "pgpw"
         for f in (secrets, pw):
-            f.write_text("x"); f.chmod(0o600)
+            f.write_text("PANTHEON_BFF_JWT_SECRET=s1\nPANTHEON_RUNTIME_JWT_SECRET=s2\nPANTHEON_DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db\n")
+            f.chmod(0o600)
         (self.tmp / "data").mkdir(exist_ok=True)
         return self.env(PROD_SECRETS_ENV_FILE=str(secrets), PROD_POSTGRES_PASSWORD_FILE=str(pw), **extra)
 
     def _run(self, **extra):
         return subprocess.run([str(BOOTSTRAP)], env=self._env(**extra), capture_output=True, text=True, timeout=60)
 
-    def test_bootstrap_installs_503_placeholder_and_no_invented_release(self):
+    def test_bootstrap_installs_503_placeholder_prepulls_digests_and_no_invented_release(self):
         r = self._run()
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(json.loads(r.stdout)["rollback_target"])
@@ -268,6 +472,18 @@ class BootstrapTests(OpsHarness):
         rc = (self.root / "config" / "runtime-config.js").read_text()
         self.assertIn("https://api.trading.acme-prod.net", rc)
         self.assertIn("--profile stateful", self.log.read_text())
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        self.assertIn(self.manifest["backend"]["images"]["operator_bff"], pulled)
+        self.assertIn(self.manifest["backend"]["images"]["lifecycle_projector"], pulled)
+
+    def test_bootstrap_rejects_unpinned_images_and_supports_oslogin_sudo(self):
+        r_unpinned = self._run(PANTHEON_POSTGRES_IMAGE="postgres:16-alpine")
+        self.assertNotEqual(r_unpinned.returncode, 0)
+        self.assertIn("IMAGE_NOT_DIGEST_PINNED", r_unpinned.stderr)
+        r_sudo = self._run(FAKE_OSLOGIN_NONROOT="true", PROD_REGISTRY_AUTH="true")
+        self.assertEqual(r_sudo.returncode, 0, r_sudo.stderr)
+        self.assertIn("sudo ", self.log.read_text())
+        self.assertTrue((self.state / "docker_logins").exists())
 
     def test_bootstrap_never_mounts_or_formats_and_rejects_bad_secrets(self):
         r = self._run(FAKE_MOUNTED="no")
@@ -281,9 +497,17 @@ class BootstrapTests(OpsHarness):
         self.assertIn("SECRET_MODE", subprocess.run([str(BOOTSTRAP)], env=self.env(
             PROD_SECRETS_ENV_FILE=str(self.tmp / "secrets.env"), PROD_POSTGRES_PASSWORD_FILE=str(pw)),
             capture_output=True, text=True).stderr)
+        pw.chmod(0o600)
         pw.write_text("")
         self.assertIn("SECRET_MISSING", subprocess.run([str(BOOTSTRAP)], env=self.env(
             PROD_SECRETS_ENV_FILE=str(self.tmp / "secrets.env"), PROD_POSTGRES_PASSWORD_FILE=str(pw)),
+            capture_output=True, text=True).stderr)
+        # Forbidden live broker secret on control VM is rejected
+        sec = self.tmp / "secrets.env"
+        sec.write_text("BROKER_API_KEY=live-secret\n")
+        pw.write_text("validpw\n")
+        self.assertIn("SECRET_CONTENT_INVALID", subprocess.run([str(BOOTSTRAP)], env=self.env(
+            PROD_SECRETS_ENV_FILE=str(sec), PROD_POSTGRES_PASSWORD_FILE=str(pw)),
             capture_output=True, text=True).stderr)
 
     def test_bootstrap_does_not_clobber_existing_upstream(self):
@@ -471,8 +695,14 @@ class SwitchHarness(unittest.TestCase):
         apath = self.tmp / "approvals.json"
         apath.write_text(json.dumps(APPROVALS))
         self.identity_file.write_text(json.dumps({
+            "release_id": manifest["release_id"],
+            "frontend_commit": manifest["frontend"]["commit"],
             "frontend_artifact_sha256": fe_sha,
-            "operator_bff_image": manifest["backend"]["images"]["operator_bff"]}))
+            "backend_commit": manifest["backend"]["commit"],
+            "operator_bff_image": manifest["backend"]["images"]["operator_bff"],
+            "public_fe_deployment_verified": True,
+            "public_bff_version_verified": True,
+        }))
         if not bootstrap:
             old = self.root / "fe" / "releases" / "old"
             old.mkdir(parents=True, exist_ok=True)
@@ -525,6 +755,10 @@ class SwitchTests(SwitchHarness):
         state = json.loads((self.root / "state" / f"{rid}.json").read_text())
         self.assertEqual(state["release_state"], "prod_active")
         self.assertNotIn("release_complete", json.dumps(state))
+        # Immutable FE archive and manifest are retained on disk
+        self.assertTrue((self.root / "fe" / "artifacts" / f"{rid}.tar.gz").is_file())
+        self.assertTrue((self.root / "fe" / "artifacts" / f"{rid}.tar.gz.sha256").is_file())
+        self.assertTrue((self.root / "manifests" / f"{rid}.json").is_file())
 
     def test_preflight_failures_mutate_nothing(self):
         self._prepare()
@@ -643,6 +877,11 @@ class SwitchTests(SwitchHarness):
         self.assertEqual(r.returncode, 4)
         self.assertIn("no_rollback_target", r.stdout)
         self.assertNotIn("resume_baseline_singletons", self._steps())
+        self.assertIn("drain_singletons", self._steps())
+        self.assertIn("stop_green", self._steps())
+        self.assertIn("reload_proxy", self._steps())
+        self.assertFalse((self.root / "fe" / "current").exists())
+        self.assertIn("503", self._upstream())
         state = json.loads((self.root / "state" / f"{self.manifest['release_id']}.json").read_text())
         self.assertEqual(state["release_state"], "prod_aborted")
 
@@ -656,6 +895,216 @@ class SwitchTests(SwitchHarness):
         self._prepare()
         r = self._run(extra_env={"PROD_GREEN_PORT": "8001"})
         self.assertIn("PORT_COLLISION", r.stderr)
+
+
+class RealControllerAndOpsIntegrationTests(OpsHarness):
+    """Executes the REAL bootstrap.sh, prod_atomic_switch.sh, prod_rollback.sh, and prod_ops.sh
+    together under constrained host binaries (no FAKE_OPS shortcut)."""
+
+    def _prepare_release(self, *, release_id: str, fe_marker: str, fe_commit: str, bff_commit: str,
+                         digest_char: str, bootstrap: bool = False, rollback_baseline: dict | None = None):
+        manifest = _sample_manifest(release_id=release_id, state="staging_verified")
+        artifact = self.tmp / f"fe-{release_id}.tar.gz"
+        fe_sha = _fe_tarball(artifact, fe_marker)
+        manifest["frontend"]["commit"] = fe_commit
+        manifest["frontend"]["artifact_sha256"] = fe_sha
+        manifest["backend"]["commit"] = bff_commit
+        manifest["dev_verification"]["frontend_commit"] = fe_commit
+        manifest["dev_verification"]["bff_version_commit"] = bff_commit
+        for owner in ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector"):
+            manifest["backend"]["images"][owner] = (
+                f"asia-east1-docker.pkg.dev/pantheon-prod-20260902/pantheon/{owner}@sha256:" + digest_char * 64
+            )
+        if bootstrap:
+            manifest.pop("rollback_baseline", None)
+        elif rollback_baseline is not None:
+            manifest["rollback_baseline"] = rollback_baseline
+        sha = release_manifest.compute_manifest_sha256(manifest)
+        mpath = self.tmp / f"manifest-{release_id}.json"
+        mpath.write_text(json.dumps(manifest))
+        epath = self.tmp / f"evidence-{release_id}.json"
+        epath.write_text(json.dumps(_evidence(manifest, sha)))
+        apath = self.tmp / "approvals.json"
+        apath.write_text(json.dumps(APPROVALS))
+        self.snapshot(release_id=release_id)
+        (self.root / "state" / "snapshots" / f"{release_id}.json").write_text(json.dumps({
+            "release_id": release_id,
+            "status": "READY",
+            "disk": PROD_ENV["PROD_DATA_DISK"],
+            "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }))
+        return manifest, sha, artifact, mpath, epath, apath
+
+    def _run_bootstrap(self, mpath: Path):
+        secrets = self.tmp / "secrets.env"
+        pw = self.tmp / "pgpw"
+        secrets.write_text("PANTHEON_BFF_JWT_SECRET=s1\nPANTHEON_RUNTIME_JWT_SECRET=s2\nPANTHEON_DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db\n")
+        pw.write_text("prod-db-pw\n")
+        secrets.chmod(0o600)
+        pw.chmod(0o600)
+        (self.tmp / "data").mkdir(exist_ok=True)
+        env = self.env(
+            PROD_SECRETS_ENV_FILE=str(secrets),
+            PROD_POSTGRES_PASSWORD_FILE=str(pw),
+            RELEASE_MANIFEST_PATH=str(mpath),
+        )
+        return subprocess.run([str(BOOTSTRAP)], env=env, capture_output=True, text=True, timeout=60)
+
+    def _run_switch(self, manifest: dict, sha: str, artifact: Path, mpath: Path, epath: Path, apath: Path,
+                    *, bootstrap: bool = False, **extra_env):
+        env = self.env(
+            PROD_OPS_CMD=str(OPS),
+            RELEASE_ID=manifest["release_id"],
+            RELEASE_MANIFEST_PATH=str(mpath),
+            EXPECTED_MANIFEST_SHA256=sha,
+            STAGING_EVIDENCE_PATH=str(epath),
+            APPROVALS_PATH=str(apath),
+            WORKFLOW_INITIATOR="initiator-a",
+            FE_ARTIFACT_PATH=str(artifact),
+            PROD_BOOTSTRAP_FIRST_RELEASE="true" if bootstrap else "false",
+            FAKE_MIGRATION_LABEL=manifest["migration_set_sha256"],
+            FAKE_COMPAT_LABEL=manifest["compatibility_manifest_sha256"],
+            **extra_env,
+        )
+        return subprocess.run([str(SWITCH)], env=env, capture_output=True, text=True, timeout=60)
+
+    def test_real_first_release_bootstrap_and_switch_with_only_green_ready(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001",
+            fe_marker="fe-v1",
+            fe_commit="1" * 40,
+            bff_commit="2" * 40,
+            digest_char="1",
+            bootstrap=True,
+        )
+        boot = self._run_bootstrap(mpath1)
+        self.assertEqual(boot.returncode, 0, boot.stderr)
+        self.assertIn("503", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        self.assertFalse((self.root / "fe" / "current").exists())
+
+        # Only candidate port 8002 is ready; no old 8001 exists on first release!
+        sw = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw.returncode, 0, sw.stderr)
+        self.assertIn("127.0.0.1:8002", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        self.assertTrue(os.readlink(self.root / "fe" / "current").endswith("/pantheon-20261025-001"))
+        self.assertTrue((self.root / " state").exists() or (self.root / "state" / "baseline.json").is_file())
+        baseline = json.loads((self.root / "state" / "baseline.json").read_text())
+        self.assertEqual(baseline["release_id"], "pantheon-20261025-001")
+        self.assertEqual(baseline["active_port"], "8002")
+        self.assertEqual((self.state / "image_cid-lifecycle-projector-1").read_text(),
+                         m1["backend"]["images"]["lifecycle_projector"])
+
+    def test_real_bootstrap_abort_after_partial_switch_stops_candidate_and_restores_503(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001",
+            fe_marker="fe-v1",
+            fe_commit="1" * 40,
+            bff_commit="2" * 40,
+            digest_char="1",
+            bootstrap=True,
+        )
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        # Inject failure at post_identity (after singletons_drained, bff_switched, activate_singletons, fe_switched)
+        sw = self._run_switch(
+            m1, sha1, art1, mpath1, epath1, apath1,
+            bootstrap=True,
+            FAKE_READY_PORTS="8002",
+            FAKE_PUBLIC_BFF_VERSION_JSON=json.dumps({"source_commit_sha": "f" * 40, "image_digest": "sha256:" + "f" * 64}),
+        )
+        self.assertEqual(sw.returncode, 4, sw.stderr)
+        self.assertIn("no_rollback_target", sw.stdout)
+        # Candidate and singleton must be stopped; FE symlink removed; proxy restored to 503
+        self.assertFalse((self.state / "singleton_up").exists())
+        self.assertTrue((self.state / "stopped_operator-bff-green").exists())
+        self.assertFalse((self.root / "fe" / "current").exists())
+        self.assertIn("503", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        state = json.loads((self.root / "state" / "pantheon-20261025-001.json").read_text())
+        self.assertEqual(state["release_state"], "prod_aborted")
+
+    def test_real_two_release_rollback_restores_exact_baseline_config_and_singleton_owner(self):
+        # 1. Establish release 1 on port 8002 via bootstrap
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001",
+            fe_marker="fe-v1",
+            fe_commit="1" * 40,
+            bff_commit="2" * 40,
+            digest_char="1",
+            bootstrap=True,
+        )
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        r1_rc = (self.root / "config" / "runtime-config.js").read_text()
+
+        # 2. Prepare release 2 (targets alternate port 8001) with rollback_baseline pointing to release 1
+        rb = {
+            "previous_release_id": "pantheon-20261025-001",
+            "frontend_commit": m1["frontend"]["commit"],
+            "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"],
+            "backend_commit": m1["backend"]["commit"],
+            "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+            "backend_images": m1["backend"]["images"],
+            "config_schema_version": m1["config_schema_version"],
+        }
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002",
+            fe_marker="fe-v2",
+            fe_commit="3" * 40,
+            bff_commit="4" * 40,
+            digest_char="2",
+            bootstrap=False,
+            rollback_baseline=rb,
+        )
+        # Corrupt only port 8001's public /bff/version after start_green by overriding served_deployment_json
+        # so switch fails at post_identity AFTER activating candidate singletons and switching FE/BFF.
+        (self.state / "served_deployment_json").write_text(json.dumps({
+            "release_id": "pantheon-20261025-002",
+            "frontend_commit": "f" * 40,  # mismatch triggers post_identity failure -> rollback!
+            "frontend_artifact_sha256": m2["frontend"]["artifact_sha256"],
+            "backend_commit": m2["backend"]["commit"],
+            "operator_bff_image": m2["backend"]["images"]["operator_bff"],
+        }))
+        # Wait: during rollback, baseline_health also checks public /deployment.json, so let's fail
+        # post_identity via a one-shot curl failure on /bff/version instead, or let's test verify_runtime_config failure!
+        (self.state / "served_deployment_json").unlink()
+        (self.state / "served_runtime_config_override").write_text("tampered-during-switch")
+        # Wait: if served_runtime_config_override is set, baseline_health during rollback would also see it unless
+        # we inject failure in post_identity when port 8001 is active!
+        (self.state / "served_runtime_config_override").unlink()
+        # Let's make port 8001's bff_version report a mismatched commit by overriding bff_version_8001 after start_green?
+        # Even simpler: in FAKE_BIN, if FAKE_SINGLETON_IMAGE_OVERRIDE is set during activate_singletons? No, let's check:
+        # When bff_upstream.caddy routes to 8001 (during post_identity), curl /bff/version reads bff_version_8001!
+        # When rollback restores bff_upstream.caddy to 8002, curl /bff/version reads bff_version_8002!
+        # So if we corrupt bff_version_8001 (or pass wrong backend_commit in m2's container_env), post_identity on 8001 fails,
+        # while rollback to 8002 reads bff_version_8002 (which has release 1's valid version) and succeeds!
+        # Let's trigger that by setting FAKE_FE_DEPLOYMENT_FILE only while fe/current points to pantheon-20261025-002:
+        # Actually, if we pre-create fe/releases/pantheon-20261025-002 with a tampered deployment.json (and matching .artifact_sha256),
+        # Step 5 keeps the existing dir, Step 9 switches fe/current to it, Step 10 post_identity reads fe/current/deployment.json,
+        # sees the wrong frontend_commit and fails! Then rollback switches fe/current back to pantheon-20261025-001 (whose deployment.json is valid)!
+        rel2_dir = self.root / "fe" / "releases" / "pantheon-20261025-002"
+        rel2_dir.mkdir(parents=True)
+        (rel2_dir / ".artifact_sha256").write_text(m2["frontend"]["artifact_sha256"])
+        (rel2_dir / "deployment.json").write_text(json.dumps({
+            "release_id": "pantheon-20261025-002",
+            "frontend_commit": "deadbeef" * 5,  # mismatch vs m2["frontend"]["commit"]
+            "frontend_artifact_sha256": m2["frontend"]["artifact_sha256"],
+            "backend_commit": m2["backend"]["commit"],
+            "operator_bff_image": m2["backend"]["images"]["operator_bff"],
+        }))
+
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 2, f"stdout={sw2.stdout}\nstderr={sw2.stderr}")
+        # Verify FE symlink, BFF upstream, runtime-config, active_manifest, and singleton image all restored to release 1!
+        self.assertTrue(os.readlink(self.root / "fe" / "current").endswith("/pantheon-20261025-001"))
+        self.assertIn("127.0.0.1:8002", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        self.assertEqual((self.root / "config" / "runtime-config.js").read_text(), r1_rc)
+        active_m = json.loads((self.root / "state" / "active_manifest.json").read_text())
+        self.assertEqual(active_m["release_id"], "pantheon-20261025-001")
+        # Singleton must be running release 1's baseline projector image, NOT release 2's candidate image!
+        self.assertTrue((self.state / "singleton_up").exists())
+        self.assertEqual((self.state / "image_cid-lifecycle-projector-1").read_text(),
+                         m1["backend"]["images"]["lifecycle_projector"])
+        self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-001")
 
 
 class StaticContractTests(unittest.TestCase):
@@ -705,7 +1154,8 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("compute scp", text)
         self.assertIn("--tunnel-through-iap", text)
         for needed in ("PROD_OPS_CMD", "PROD_ROOT", "PROD_BLUE_PORT", "PROD_GREEN_PORT", "FE_ARTIFACT_PATH",
-                       "staging_evidence.json", "approvals.json", "env-policy.json", "prod_ops.sh"):
+                       "staging_evidence.json", "approvals.json", "env-policy.json", "prod_ops.sh",
+                       "bootstrap.sh", "prepull_images"):
             self.assertIn(needed, text)
         self.assertNotIn("./scripts/deploy/prod_atomic_switch.sh", text)  # never on the GitHub runner
         self.assertNotIn("PROD_OPS_CMD }}", text)
@@ -735,6 +1185,16 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("fe/current", text)
         for retired in release_manifest.RETIRED_IDENTIFIERS:
             self.assertNotIn(retired, text)
+
+    def test_runbook_is_compact_and_honest_about_external_wait(self):
+        rb = REPO_ROOT / "docs" / "deployment" / "production-control-runbook.md"
+        text = rb.read_text()
+        self.assertLessEqual(len(text.splitlines()), 180)
+        self.assertIn("external_wait", text)
+        self.assertIn("release_complete", text)
+        self.assertIn("prod_ops.sh", text)
+        self.assertIn("bootstrap.sh", text)
+        self.assertIn("lifecycle-projector", text)
 
 
 if __name__ == "__main__":

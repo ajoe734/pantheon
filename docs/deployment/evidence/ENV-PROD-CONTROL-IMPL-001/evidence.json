@@ -4,10 +4,47 @@
   "evidence_kind": "local_source_validation",
   "hosted_drill_evidence": false,
   "release_complete_claimed": false,
+  "prior_merged_source_deliveries": [
+    {
+      "pr": 6759,
+      "head_sha": "fdfcb5c418649f8328409039a52b468e057971fa",
+      "merge_commit": "7a5cefd475ae25df75e0bd4480f13c5796b0a1e5",
+      "scope": "Initial production control plane blue/green delivery, preflight, bootstrap, ops adapter, workflow, runbook, and local test suite"
+    },
+    {
+      "pr": 6773,
+      "head_sha": "fc2eb326e7db2e756abdb34e1bd172f4bc1c115b",
+      "merge_commit": "5ead7084e590afc9694d4d9cb73808bcc3c2c7cc",
+      "scope": "Same-account production GitHub Environment approval policy alignment (prevent_self_review=false when explicitly configured in Environment policy)"
+    }
+  ],
+  "rework_fixes_verified": [
+    {
+      "id": "first_release_old_new_compat",
+      "summary": "Explicit PROD_BOOTSTRAP_FIRST_RELEASE=true passes gate old_new_compat when no state/baseline.json exists and candidate port 8002 + postgres + schema label are ready, without requiring a nonexistent old baseline on port 8001; fails closed if state/baseline.json already exists; retains concurrent old+new readiness check for two-release paths."
+    },
+    {
+      "id": "rollback_baseline_closure_and_singleton_owner",
+      "summary": "prod_atomic_switch.sh journals full baseline_release.json closure (including backend_images for operator_bff, runtime_manager, governance, deployment, lifecycle_projector), prev_runtime_config.js, prev_manifest.json, and prev_compose.env; prod_rollback.sh and prod_ops.sh resume_baseline_singletons use baseline_env (never candidate release_env) and verify the restored lifecycle-projector container runs the retained baseline image."
+    },
+    {
+      "id": "bootstrap_abort_503_and_singleton_drain",
+      "summary": "When a first-release bootstrap aborts after partial switch mutations, prod_rollback.sh drains any started singletons (drain_singletons), stops green (stop_green), removes fe/current and active_manifest.json, restores the explicit 503 no-active-release upstream placeholder, reloads Caddy, and exits 4 (no_rollback_target)."
+    },
+    {
+      "id": "public_hosted_fe_bff_identity_and_artifact_retention",
+      "summary": "prod_atomic_switch.sh retains immutable FE archives/checksums in fe/artifacts/ and manifests in manifests/, renders deployment.json into fe/releases/<id>/, and prod_ops.sh post_identity + post-rollback baseline_health verify public hosted FE /deployment.json (Cache-Control: no-store) and public BFF /bff/version + /bff/readyz alongside local .artifact_sha256 and BFF/singleton Config.Image."
+    },
+    {
+      "id": "host_bootstrap_and_digest_pinned_prepull_wiring",
+      "summary": "production-release.yml creates /tmp/pantheon-release-<id> over IAP SSH before SCP, installs and invokes deploy/production/bootstrap.sh and prod_ops.sh prepull_images on the control VM before prod_atomic_switch.sh; bootstrap.sh and prod_ops.sh support non-root OS Login (run_priv), validate runtime binaries and secret content, and pre-acquire only @sha256:... digest-pinned images."
+    }
+  ],
   "validation": {
     "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
-    "result": "60 tests OK (local)",
-    "scope": "real prod_ops.sh/bootstrap.sh/controller scripts with fake docker/curl/mountpoint binaries and temp state tree; script behavior only, not hosted drill evidence"
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
+    "result": "73 tests OK (49 in test_production_release, 24 in test_staging_release)",
+    "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
   },
   "hosted_acceptance": {
     "status": "external_wait",
