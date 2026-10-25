@@ -24,6 +24,11 @@ on:
         required: false
         default: ""
         type: string
+      fe_baseline_artifact_uri:
+        description: "Immutable baseline FE bundle GCS URI (gs://...) or path matching manifest.rollback_baseline.frontend_artifact_sha256"
+        required: false
+        default: ""
+        type: string
       ttl_seconds:
         description: "Bounded staging TTL in seconds (default 7200, max 86400)"
         required: false
@@ -54,15 +59,18 @@ jobs:
       RELEASE_MANIFEST_PATH: ${{ inputs.release_manifest_path }}
       EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
       STAGING_FE_ARTIFACT_URI: ${{ inputs.fe_artifact_uri || vars.STAGING_FE_ARTIFACT_URI || '' }}
+      STAGING_FE_BASELINE_ARTIFACT_URI: ${{ inputs.fe_baseline_artifact_uri || vars.STAGING_FE_BASELINE_ARTIFACT_URI || '' }}
       STAGING_TTL_SECONDS: ${{ inputs.ttl_seconds || '7200' }}
       STAGING_DRY_RUN: ${{ inputs.dry_run || 'true' }}
       WORKFLOW_RUN_ID: ${{ github.run_id }}
       STAGING_EPHEMERAL_ENABLED: ${{ vars.STAGING_EPHEMERAL_ENABLED || 'false' }}
       STAGING_GCP_PROJECT_ID: ${{ vars.STAGING_GCP_PROJECT_ID || '' }}
       STAGING_GCP_ZONE: ${{ vars.STAGING_GCP_ZONE || '' }}
-      STAGING_WIF_PROVIDER: ${{ vars.STAGING_WIF_PROVIDER || '' }}
+      STAGING_WIF_PROVIDER: ${{ vars.STAGING_GCP_WIF_PROVIDER || vars.STAGING_WIF_PROVIDER || '' }}
+      STAGING_DEPLOY_SERVICE_ACCOUNT: ${{ vars.STAGING_GCP_DEPLOY_SERVICE_ACCOUNT || vars.STAGING_DEPLOY_SERVICE_ACCOUNT || '' }}
+      STAGING_RUNTIME_SERVICE_ACCOUNT: ${{ vars.STAGING_RUNTIME_SERVICE_ACCOUNT || vars.STAGING_SERVICE_ACCOUNT || '' }}
       STAGING_INSTANCE_TEMPLATE: ${{ vars.STAGING_INSTANCE_TEMPLATE || '' }}
-      STAGING_SERVICE_ACCOUNT: ${{ vars.STAGING_SERVICE_ACCOUNT || '' }}
+      STAGING_SERVICE_ACCOUNT: ${{ vars.STAGING_RUNTIME_SERVICE_ACCOUNT || vars.STAGING_SERVICE_ACCOUNT || '' }}
       STAGING_SANITIZED_SNAPSHOT: ${{ vars.STAGING_SANITIZED_SNAPSHOT || '' }}
       GCLOUD_BIN: gcloud
       PANTHEON_PROVIDER_ENABLED: "false"
@@ -70,6 +78,11 @@ jobs:
       PANTHEON_REAL_WRITES_ENABLED: "false"
       PANTHEON_DEV_STUB_WRITES_ENABLED: "false"
       PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT: "false"
+      PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED: "false"
+      PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED: "false"
+      PANTHEON_ASSISTANT_PROVIDER: "disabled"
+      PANTHEON_BFF_AUTH_MODE: "strict"
+      PANTHEON_BFF_AUTH_STUB: "false"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -85,27 +98,31 @@ jobs:
             echo "Staging ephemeral execution is held (STAGING_EPHEMERAL_ENABLED != true)." >&2
             exit 1
           fi
-          for req in STAGING_GCP_PROJECT_ID STAGING_GCP_ZONE STAGING_INSTANCE_TEMPLATE STAGING_SERVICE_ACCOUNT STAGING_SANITIZED_SNAPSHOT; do
+          for req in STAGING_GCP_PROJECT_ID STAGING_GCP_ZONE STAGING_INSTANCE_TEMPLATE STAGING_RUNTIME_SERVICE_ACCOUNT STAGING_SANITIZED_SNAPSHOT; do
             if [[ -z "${!req:-}" ]]; then
               echo "Missing required staging variable: ${req}" >&2
               exit 1
             fi
           done
           if [[ "${STAGING_DRY_RUN}" != "true" ]]; then
-            for live_req in STAGING_WIF_PROVIDER STAGING_FE_ARTIFACT_URI; do
+            for live_req in STAGING_WIF_PROVIDER STAGING_DEPLOY_SERVICE_ACCOUNT STAGING_FE_ARTIFACT_URI STAGING_FE_BASELINE_ARTIFACT_URI; do
               if [[ -z "${!live_req:-}" ]]; then
                 echo "Missing required live staging variable: ${live_req}" >&2
                 exit 1
               fi
             done
+            if [[ "${STAGING_DEPLOY_SERVICE_ACCOUNT}" == "${STAGING_RUNTIME_SERVICE_ACCOUNT}" ]]; then
+              echo "STAGING_DEPLOY_SERVICE_ACCOUNT and STAGING_RUNTIME_SERVICE_ACCOUNT must be distinct identities." >&2
+              exit 1
+            fi
           fi
 
       - name: Authenticate to staging GCP project via Workload Identity Federation
         if: ${{ (inputs.dry_run || 'true') != 'true' }}
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
-          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
-          service_account: ${{ vars.STAGING_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ vars.STAGING_GCP_WIF_PROVIDER || vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_GCP_DEPLOY_SERVICE_ACCOUNT || vars.STAGING_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud SDK
         if: ${{ (inputs.dry_run || 'true') != 'true' }}

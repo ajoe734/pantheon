@@ -1,30 +1,39 @@
 # Ephemeral Staging Runbook (`ENV-STG-EPHEMERAL-IMPL-001`)
 
-- Status: Source implementation & local controller validation complete; hosted execution `external_wait`
+- Status: Source implementation & local controller/host-bootstrap/gate-collector validation complete; hosted execution `external_wait`
 - Canonical Design: [`docs/deployment/vm-dev-staging-prod-management-plan.md`](vm-dev-staging-prod-management-plan.md) § 9 & [`docs/04/pantheon_environment_closure_sa_sd_2026-09/SD.md`](../04/pantheon_environment_closure_sa_sd_2026-09/SD.md)
 - Readiness Baseline: [`docs/deployment/first-production-release-readiness.md`](first-production-release-readiness.md)
 
 > [!IMPORTANT]
-> **Functional vs. Hosted Boundary**: Merging these scripts, schemas, templates, and GitHub Actions workflows does **not** mutate any cloud resource or GitHub Environment, and local/mocked controller tests do **not** count as hosted staging drill evidence. Historical PR `#6758` (`63155c0feecec77873b4623b029d137042a42c16` -> `5dc101e9d1b943d9411a2c5156f7163f0f36bf01`) is preserved as historical source evidence only. Hosted acceptance (`completion_tracks.hosted`) remains `external_wait` until infrastructure bootstrap, an accepted `dev_verified` release manifest from `Root01a11`, and two consecutive zero-to-zero live staging drills pass.
+> **Functional vs. Hosted Boundary**: Merging these scripts, schemas, templates, and GitHub Actions workflows does **not** mutate any cloud resource or GitHub Environment, and local/simulated controller tests do **not** count as hosted staging drill evidence. Historical PRs `#6758` (`5dc101e9d1b943d9411a2c5156f7163f0f36bf01`) and `#6764` (`e15d6390b7d72638641fc314bc48a105a4be1a0e`) are preserved as source history only. Hosted acceptance (`completion_tracks.hosted`) remains `external_wait` until an accepted `dev_verified` release manifest from `Root01a11`, refreshed GCP operator authentication, and two consecutive zero-to-zero live staging drills pass.
 
 ---
 
 ## 1. Architecture & Safety Invariants
 
-1. **Zero Idle Staging VMs**: Staging exists only during release validation. Every GCE resource (`address`, `disk`, `instance`) carries valid GCP cloud labels (`^[a-z0-9_-]{1,63}$`: `environment=staging`, `release_id`, `owner`, `workflow_run_id`, compact UTC `created_at`/`expires_at`, `created_at_epoch`, `expires_at_epoch`, `cleanup_policy=automatic`) and a bounded 2-hour TTL (`7200s` default, `86400s` absolute cap). Standard Debian 12 `e2-standard-2` non-Spot VM sizing remains the target pending measured staging sizing confirmation during live drills.
-2. **Build Once, Promote by Digest**: Ephemeral Staging never rebuilds `execute-plans` FE or `pantheon` BFF (`pull_policy: never` and `--no-build` in [`deploy/staging/docker-compose.staging.yml`](../../deploy/staging/docker-compose.staging.yml)). [`scripts/deploy/staging_ops.sh`](../../scripts/deploy/staging_ops.sh) retrieves the FE artifact bundle, computes its actual SHA-256, queries Artifact Registry for the `operator_bff@sha256:...` digest, and validates both against [`scripts/deploy/release_manifest.py`](../../scripts/deploy/release_manifest.py) and [`schemas/release-manifest.schema.json`](../../schemas/release-manifest.schema.json) before provisioning.
-3. **No Relabeling Failed Dev Chains or Dry-Run Outputs**:
-   - `release_manifest.py` explicitly rejects `candidate_built`/`dev_failed` manifests and refuses to relabel the unaccepted hosted all12 chain `h12-01a11-20261023-9aeb` or any non-`passed` all12 status as `dev_verified`.
-   - `staging_provision.sh`, `staging_ops.sh`, `staging_verify.sh`, and `staging_destroy.sh` fail closed (`GCLOUD_BIN_REQUIRED`) when `STAGING_DRY_RUN=false` and `GCLOUD_BIN` is unset/unexecutable, and require real observed cloud resource identities (`id`, `selfLink`, `address`, attached boot/data disks) outside explicit `--dry-run`.
-   - `staging_verify.sh` refuses to produce `status=staging_verified` from any dry-run lease or static/unobserved fixture (`DRY_RUN_LEASE_REJECTED` / `UNOBSERVED_FIXTURE_REJECTED`). Dry-run mode emits `status=dry_run_validated`, which `scripts/deploy/prod_preflight.py` rejects fail-closed.
-4. **Fail-Closed Safe Defaults**:
+1. **Zero Idle Staging VMs**: Staging exists only during release validation. Every GCE resource (`address`, `disk`, `instance`) carries valid GCP cloud labels (`^[a-z0-9_-]{1,63}$`: `environment=staging`, `release_id`, `owner`, `workflow_run_id`, compact UTC `created_at`/`expires_at`, `created_at_epoch`, `expires_at_epoch`, `cleanup_policy=automatic`) and a bounded 2-hour TTL (`7200s` default, `86400s` absolute cap). Standard Debian 12 `e2-standard-2` non-Spot VM sizing (`debian-12-bookworm-v20261023`, `application_installed=false`) matches the provisioned instance template `pantheon-stg-template-20261024`.
+2. **IAP-Only SSH/SCP & Safe Remote Staging**: The staging VPC (`pantheon-staging` / `pantheon-staging-asia-east1`) permits SSH (`tcp:22`) exclusively from Google IAP (`35.235.240.0/20`) to target tag `pantheon-iap`. [`scripts/deploy/staging_ops.sh`](../../scripts/deploy/staging_ops.sh) passes `--tunnel-through-iap` on every `gcloud compute ssh` and `gcloud compute scp` invocation, and creates `/tmp/pantheon-staging-bundle` (`0700`) over IAP SSH before transferring the release bundle via IAP SCP.
+3. **Separate WIF Deploy Identity vs. VM Runtime Identity (Zero Project-IAM Mutation)**:
+   - GitHub Actions Workload Identity Federation authenticates as the deployer service account `pantheon-stg-github-deploy@pantheon-stg-20260902.iam.gserviceaccount.com` (`STAGING_GCP_DEPLOY_SERVICE_ACCOUNT` / `STAGING_DEPLOY_SERVICE_ACCOUNT`).
+   - Ephemeral staging VMs run as the least-privilege runtime service account `pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com` (`STAGING_RUNTIME_SERVICE_ACCOUNT` / `STAGING_SERVICE_ACCOUNT`).
+   - [`scripts/deploy/staging_provision.sh`](../../scripts/deploy/staging_provision.sh) rejects attaching any deployer identity to the VM (`DEPLOYER_SA_FORBIDDEN_ON_VM`), verifies `serviceAccounts` on the created VM, and performs zero project-level IAM mutations (`projects add-iam-policy-binding` is never called).
+4. **Bare-Debian Bootstrap, Non-Root OS Login Privilege Elevation, Digest-Pinned Image Acquisition, & Full `/bff/readyz` Owner Closure**:
+   - [`deploy/staging/bootstrap.sh`](../../deploy/staging/bootstrap.sh) runs safely over IAP SSH under non-root OS Login (`run_priv` / `sudo -n`), stages rendered configuration files in a user-owned local work directory before installing them into root-owned paths (`/var/lib/pantheon-staging-root`, `/var/www/pantheon-staging-fe`, `/etc/caddy/Caddyfile`, `/usr/local/bin/pantheon-staging-collect-gates`), bootstraps bare Debian 12 (`docker.io`, `docker-compose-plugin` with `docker-compose` fallback, `caddy`, `postgresql-client`, `curl`, `util-linux`), mounts the sanitized data disk, and validates `0400`/`0600` isolated secrets (`STAGING_SECRETS_ENV_FILE` and `STAGING_POSTGRES_PASSWORD_FILE` via Secret Manager CLI or GCE metadata-token REST API fallback).
+   - `bootstrap.sh` acquires an OAuth2 access token from the GCE metadata server (`http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token`, `Metadata-Flavor: Google`) for the attached runtime SA (`pantheon-stg-runtime@...`), authenticates `docker login -u oauth2accesstoken --password-stdin https://asia-east1-docker.pkg.dev`, pre-pulls all digest-pinned (`@sha256:...`) candidate and `rollback_baseline` owner-closure images (`operator-bff`, `runtime-manager`, `governance`, `deployment`, `lifecycle-projector`, `postgres`, `nats`), and verifies each via `docker image inspect` before starting [`deploy/staging/docker-compose.staging.yml`](../../deploy/staging/docker-compose.staging.yml) with `--no-build` and `pull_policy: never`.
+   - Both the candidate FE archive (`fe-dist.tar.gz`) and the retained baseline FE archive (`fe-baseline-dist.tar.gz`, verified against `rollback_baseline.frontend_artifact_sha256`) are transferred over IAP SCP, checksum-verified on-host, preserved under `/var/lib/pantheon-staging-root/state/`, and unpacked into `/var/www/pantheon-staging-fe/releases/<release_id>` and `/var/www/pantheon-staging-fe/releases/<previous_release_id>`. No placeholder `index.html` is ever fabricated.
+   - External `/runtime-config.js` (`runtime-config.candidate.js` and `runtime-config.baseline.js`) is rendered to `/var/lib/pantheon-staging-root/config/runtime-config.js` outside the sealed FE release directory (`/var/www/pantheon-staging-fe/current`) and served by [`deploy/staging/Caddyfile.staging.tmpl`](../../deploy/staging/Caddyfile.staging.tmpl) with `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`.
+   - After `docker compose ... up -d --no-build`, `bootstrap.sh` polls `/bff/readyz` (`200`) and executes real on-host queries (`docker inspect`, `curl /bff/readyz`, `curl /bff/version`, `deployment.json`, `.artifact_sha256`, `mountpoint`) to emit the observed deploy identity JSON on stdout.
+5. **Fail-Closed Safe Defaults**:
    - `PANTHEON_PROVIDER_ENABLED=false`
    - `PANTHEON_LIVE_BROKER_ENABLED=false`
    - `PANTHEON_REAL_WRITES_ENABLED=false`
    - `PANTHEON_DEV_STUB_WRITES_ENABLED=false`
    - `PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT=false`
+   - `PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED=false`
+   - `PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED=false`
+   - `PANTHEON_ASSISTANT_PROVIDER=disabled`
+   - `PANTHEON_BFF_AUTH_MODE=strict`, `PANTHEON_BFF_AUTH_STUB=false`
    - `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`
-5. **No Retired Project or Host Fallback**: Retired projects (`pantheon-lupin-dev-20260719`, `pantheon-benjamin-20260528`) and retired IPs (`35.201.204.12`, `35.201.239.38`, `34.81.75.241`, `104.155.223.192`) are rejected fail-closed across all scripts and manifests.
 
 ---
 
@@ -34,58 +43,29 @@ Orchestrated by [`.github/workflows/staging-ephemeral-deploy.yml`](../../.github
 
 | Stage | Script / Entry Point | Responsibility |
 | --- | --- | --- |
-| **1. PROVISION** | `scripts/deploy/staging_provision.sh` + `scripts/deploy/staging_ops.sh verify-artifacts` | Validates explicit GCP inputs, verifies `dev_verified` manifest & immutable FE/BFF digests, checks global cloud + local lease conflict/idempotency, allocates labeled regional external IP (`--address`), restored sanitized data disk (`device-name=staging-data,auto-delete=no`), labeled Debian 12 boot disk (`boot=yes,auto-delete=no`), VM (`e2-standard-2` standard non-Spot) with verified disk/IP attachment readback, and IAM binding (recording `preexisting` status). |
-| **2. DEPLOY** | `scripts/deploy/staging_ops.sh deploy-host` | Transfers verified FE tarball, manifest, Compose overlay, and Caddy template via `gcloud compute scp`; mounts sanitized data disk at `/var/lib/pantheon-staging`; extracts FE release and switches `/var/www/pantheon-staging-fe/current` symlink; starts `core` profile with `docker compose --profile core up -d --no-build`; records live observed VM deployment readback. Compensates partial-create/deploy failures via `staging_destroy.sh --reason partial_create_failure`. |
-| **3. VERIFY** | `scripts/deploy/staging_verify.sh` + `scripts/deploy/staging_ops.sh collect-verify-gates` + `scripts/deploy/staging_sanitize.py` | Collects live gate outputs from the staging VM over SSH (`pantheon-staging-collect-gates`), verifies live observed FE/BFF digests against the manifest, validates sanitized dataset PII/secret exclusion, expand-phase forward migration & old-app/new-schema compatibility, backup restore readability, exact-pair rollback (`<= 120s`), tenant/RBAC & safe-off readbacks, and orphan cleanup dry-run. Emits `staging_verified` evidence aligned with `scripts/deploy/prod_preflight.py`. |
+| **1. PROVISION** | `scripts/deploy/staging_provision.sh` + `scripts/deploy/staging_ops.sh verify-artifacts` | Validates explicit GCP inputs, enforces deployer/runtime SA separation (`DEPLOYER_SA_FORBIDDEN_ON_VM`), verifies `dev_verified` manifest plus both candidate (`STAGING_FE_ARTIFACT_PATH` / `STAGING_FE_ARTIFACT_URI`) and `rollback_baseline` (`STAGING_FE_BASELINE_ARTIFACT_PATH` / `STAGING_FE_BASELINE_ARTIFACT_URI`) FE archives and Artifact Registry digests, checks global cloud + local lease conflict/idempotency, allocates labeled regional external IP (`--address`), restored sanitized data disk (`device-name=staging-data,auto-delete=no`), labeled Debian 12 boot disk (`boot=yes,auto-delete=no`), and VM (`e2-standard-2` standard non-Spot with runtime SA `pantheon-stg-runtime@...`). |
+| **2. DEPLOY** | `scripts/deploy/staging_ops.sh deploy-host` + `deploy/staging/bootstrap.sh` | Creates `/tmp/pantheon-staging-bundle` over IAP SSH (`--tunnel-through-iap`), transfers both verified FE tarballs (`fe-dist.tar.gz` and `fe-baseline-dist.tar.gz`), manifest, Compose overlay, Caddy template, `bootstrap.sh`, and `pantheon-staging-collect-gates` over IAP SCP (`--tunnel-through-iap`), executes `bootstrap.sh` over IAP SSH (with `sudo -n` under non-root OS Login) to bootstrap bare Debian, authenticate `docker login` to Artifact Registry via GCE metadata token, `docker pull` all digest-pinned candidate and baseline owner-closure images, unpack both FE releases, render external `/runtime-config.js` (`no-store`), start Compose `--no-build`, and emit live on-host deploy identity readbacks. Compensates partial-create/deploy failures via `staging_destroy.sh --reason partial_create_failure`. |
+| **3. VERIFY** | `scripts/deploy/staging_verify.sh` + `scripts/deploy/staging_ops.sh collect-verify-gates` + `deploy/staging/pantheon-staging-collect-gates` + `scripts/deploy/staging_sanitize.py` | Invokes `/usr/local/bin/pantheon-staging-collect-gates` on the live VM over IAP SSH (`--tunnel-through-iap`, auto-elevating via `sudo -E`) to execute live Postgres sanitized dataset queries (`psql`), live `information_schema.columns` pre/post migration catalog diffs (`psql`, no fallback to static spec), live old-app (`rollback_baseline.backend_operator_bff_image`) execution against the migrated schema, backup creation & restore verification (`pg_dump`, separate single-command `DROP DATABASE` / `CREATE DATABASE` `psql -c` calls, `pg_restore`), live exact-pair rollback rehearsal across all 5 owner services (`operator-bff`, `runtime-manager`, `governance`, `deployment`, `lifecycle-projector`, `<= 120s`) and restoration, and real HS256-authenticated positive (`200`) and negative (`401 AUTH_REQUIRED`, `403 FORBIDDEN tenant_scope`, `403 FORBIDDEN role_check`) probes against `/bff/me`, `/bff/switch-tenant`, and `/bff/command-confirmations`. Emits `staging_verified` evidence aligned with `scripts/deploy/prod_preflight.py`. |
 | **4. COLLECT** | `scripts/deploy/staging_destroy.sh` | Preserves bounded evidence (`<release_id>-teardown-evidence.json` and verification summary) before any resource deletion, with retry recovery on delayed upload. |
-| **5. DESTROY** | `scripts/deploy/staging_destroy.sh --mode teardown` | Queries live cloud + local inventory, deletes owned IAM (only if not `preexisting`) -> VM -> boot/data disks -> regional IP on success (or retains up to 2h TTL on test failure, capped at 24h), and performs post-delete cloud readback to verify `lingering_owned_resources == 0`. |
+| **5. DESTROY** | `scripts/deploy/staging_destroy.sh --mode teardown` | Queries live cloud + local inventory, deletes owned VM -> boot/data disks -> regional IP on success (or retains up to 2h TTL on test failure, capped at 24h), and performs post-delete cloud readback to verify `lingering_owned_resources == 0`. |
 
 ---
 
-## 3. Sanitized Data & Migration Rehearsal (`staging_sanitize.py`)
-
-[`scripts/deploy/staging_sanitize.py`](../../scripts/deploy/staging_sanitize.py) enforces:
-- **Non-Production Provenance**: Only `dev_sanitized_seed`, `staging_synthetic`, or `nonprod_seed` sources are accepted; `production`/`prod` or unknown sources fail closed immediately.
-- **Explicit Schema Allowlist**: Unknown tables or columns outside `ALLOWED_TABLE_COLUMNS` fail closed.
-- **Deterministic Masking & Secret Exclusion**:
-  - Truncates `broker_credentials`, `exchange_api_keys`, and `user_sessions`.
-  - Rewrites user emails to `staging-user-<id>@pantheon.internal`, names to `Staging Persona <id>`, and password hashes to the dummy verification hash; clears `phone` and `national_id`.
-  - Strips sensitive keys (`token`, `auth`, `secret`, `api_key`, `private_key`, `password`, `cookie`, `authorization`, `broker_secret`, `tws_password`) recursively from `telemetry_events.raw_payload`.
-  - Forces `system_settings` to `live_broker_enabled=false`, `provider_enabled=false`, `real_writes_enabled=false`, `safe_write_strict=true`, `execution_mode=paper`.
-
----
-
-## 4. Independent Orphan Cleanup (`staging-orphan-cleanup.yml`)
-
-[`.github/workflows/staging-orphan-cleanup.yml`](../../.github/workflows/staging-orphan-cleanup.yml) runs every 30 minutes (`*/30 * * * *`):
-
-```bash
-./scripts/deploy/staging_destroy.sh --mode orphan-sweep
-```
-
-- **Inert Until Configured**: While `STAGING_ORPHAN_CLEANUP_ENABLED != true`, the `preflight` job (which binds no GitHub Environment so scheduled runs never auto-create or mutate `staging`) outputs `{"status":"inert_disabled","mutated_resources":0}` and exits `0` without cloud calls, and the `orphan-sweep` job (`environment: staging`) is skipped.
-- **Stateless Cross-Run Cloud Discovery & Ownership Protection**: When enabled, `staging_destroy.sh --mode orphan-sweep` queries GCP (`compute instances list`, `compute disks list`, `compute addresses list`) directly via `GCLOUD_BIN` so expired resources are discovered and deleted even on a fresh runner with empty local state. Only resources carrying `environment=staging`, `cleanup_policy=automatic`, valid `release_id`/`owner`, and `now_epoch >= expires_at_epoch` are deleted, followed by post-delete cloud readback. Unlabeled resources, preexisting IAM bindings, and `environment=dev` (`pantheon-dev-deploy`) or `environment=production` resources are never touched and are reported in `skipped_unowned_resources`.
-
----
-
-## 5. Local Validation Commands
+## 3. Local Validation Commands
 
 ```bash
 PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
-"$PANTHEON_PY" -m pytest -q tests/deployment/test_staging_release.py
+"$PANTHEON_PY" -m pytest -q tests/deployment/test_staging_release.py tests/deployment/test_production_release.py
 /tmp/pantheon-env-current-20261024/tools/actionlint .github/workflows/staging-ephemeral-deploy.yml .github/workflows/staging-orphan-cleanup.yml
+bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_ops.sh scripts/deploy/staging_verify.sh scripts/deploy/staging_destroy.sh deploy/staging/bootstrap.sh
 ```
 
 ---
 
-## 6. Current Cloud/Project Baseline & Remaining Hosted Prerequisites (`external_wait`)
+## 4. Current Cloud/Project Baseline & Remaining Hosted Prerequisites (`external_wait`)
 
-1. **Resolved GCP Project, Billing & API Baseline (2026-10-24)**:
-   - Projects `pantheon-stg-20260902` and `pantheon-prod-20260902` have verified project owner permissions and active billing relinked at `2026-10-24T12:14Z` to `017011-E5B441-28904B` (`billingEnabled=true`, Dev unchanged; evidence `/tmp/pantheon-billing-relink-20261024/20261024T121443Z/summary.json`).
-   - Compute, IAM, IAMCredentials, STS, ArtifactRegistry, SecretManager, DNS, Logging, and Monitoring APIs are enabled on both projects; `asia-east1` quota is verified (`CPUS=32`, `DISKS_TOTAL_GB=2048`, `STATIC_ADDRESSES=8`, `INSTANCES=8`, current usage `0`, 0 VMs present).
-2. **Remaining Infrastructure Bootstrap & GitHub `staging` Environment Configuration**:
-   - Provision the staging Workload Identity Federation provider (`STAGING_WIF_PROVIDER`), staging deployer service account (`STAGING_SERVICE_ACCOUNT`), GCE instance template (`STAGING_INSTANCE_TEMPLATE`), and initial non-production sanitized snapshot (`STAGING_SANITIZED_SNAPSHOT`) in `pantheon-stg-20260902`.
-   - Create the `staging` GitHub Environment in `ajoe734/pantheon` (concurrency `1`) and configure `STAGING_GCP_PROJECT_ID=pantheon-stg-20260902`, `STAGING_GCP_ZONE=asia-east1-b`, `STAGING_WIF_PROVIDER`, `STAGING_INSTANCE_TEMPLATE`, `STAGING_SERVICE_ACCOUNT`, `STAGING_SANITIZED_SNAPSHOT`, `STAGING_FE_ARTIFACT_URI`, `STAGING_EPHEMERAL_ENABLED=true`, and `STAGING_ORPHAN_CLEANUP_ENABLED=true`.
-3. **Accepted `dev_verified` Release Manifest & Two Consecutive Zero-to-Zero Drills**:
-   - Wait for `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (`Root01a11`) to produce a genuinely `dev_verified` release manifest.
-   - Execute two consecutive live ephemeral staging releases starting from zero staging resources, passing all live verification gates, and destroying all owned VM/disks/IP/IAM bindings with verified zero lingering inventory.
+1. **Provisioned GCP Staging Foundation & GitHub `staging` Environment (2026-10-25)**:
+   - Project `pantheon-stg-20260902` (`58603439583`, billing `017011-E5B441-28904B` active) has VPC `pantheon-staging`, subnet `pantheon-staging-asia-east1` (`10.71.0.0/24`), firewall rules `pantheon-staging-iap-ssh` (`35.235.240.0/20` -> `pantheon-iap`) and `pantheon-staging-https` (`tcp:80,443` -> `pantheon-https`), WIF pool/provider `pantheon-github-pool`/`pantheon-github-provider`, deployer SA `pantheon-stg-github-deploy@pantheon-stg-20260902.iam.gserviceaccount.com`, runtime SA `pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com`, Artifact Registry `pantheon-releases`, private regional GCS artifact store `gs://pantheon-stg-20260902-release-artifacts` (`ASIA-EAST1`, public access prevention `enforced`, uniform bucket-level access `true`, versioning `true`, bucket-only `roles/storage.objectViewer` for staging + prod CI deployers, zero objects/secrets uploaded), instance template `pantheon-stg-template-20261024`, and GitHub `staging` Environment variables including `STAGING_RUNTIME_SERVICE_ACCOUNT` configured (evidence `/tmp/pantheon-launch-resume-20261025/cloud-1554/summary.json`, `/tmp/pantheon-launch-resume-20261025/cloud-1554/artifact-store/summary.json`, and `/tmp/pantheon-launch-resume-20261025/cloud-1554/github-environment-variables-full-after.json`).
+2. **Remaining Hosted Prerequisites (`external_wait`)**:
+   - Wait for `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (`Root01a11`) to produce a genuinely `dev_verified` release manifest and populate the sanitized non-production snapshot `pantheon-stg-sanitized-seed-20261024`.
+   - Execute two consecutive live ephemeral staging releases starting from zero staging resources, passing all live verification gates, and destroying all owned VM/disks/IP resources with verified zero lingering inventory.

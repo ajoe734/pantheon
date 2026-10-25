@@ -56,8 +56,10 @@ jobs:
       STAGING_ORPHAN_CLEANUP_ENABLED: ${{ vars.STAGING_ORPHAN_CLEANUP_ENABLED || 'false' }}
       STAGING_GCP_PROJECT_ID: ${{ vars.STAGING_GCP_PROJECT_ID || '' }}
       STAGING_GCP_ZONE: ${{ vars.STAGING_GCP_ZONE || '' }}
-      STAGING_WIF_PROVIDER: ${{ vars.STAGING_WIF_PROVIDER || '' }}
-      STAGING_SERVICE_ACCOUNT: ${{ vars.STAGING_SERVICE_ACCOUNT || '' }}
+      STAGING_WIF_PROVIDER: ${{ vars.STAGING_GCP_WIF_PROVIDER || vars.STAGING_WIF_PROVIDER || '' }}
+      STAGING_DEPLOY_SERVICE_ACCOUNT: ${{ vars.STAGING_GCP_DEPLOY_SERVICE_ACCOUNT || vars.STAGING_DEPLOY_SERVICE_ACCOUNT || '' }}
+      STAGING_RUNTIME_SERVICE_ACCOUNT: ${{ vars.STAGING_RUNTIME_SERVICE_ACCOUNT || vars.STAGING_SERVICE_ACCOUNT || '' }}
+      STAGING_SERVICE_ACCOUNT: ${{ vars.STAGING_RUNTIME_SERVICE_ACCOUNT || vars.STAGING_SERVICE_ACCOUNT || '' }}
       STAGING_DRY_RUN: ${{ inputs.dry_run || 'false' }}
       GCLOUD_BIN: gcloud
     steps:
@@ -72,8 +74,8 @@ jobs:
       - name: Authenticate to staging GCP project via Workload Identity Federation
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
-          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
-          service_account: ${{ vars.STAGING_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ vars.STAGING_GCP_WIF_PROVIDER || vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_GCP_DEPLOY_SERVICE_ACCOUNT || vars.STAGING_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f

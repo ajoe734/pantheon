@@ -437,10 +437,41 @@ def verify_migration_and_compatibility(plan: dict[str, Any]) -> dict[str, Any]:
                         f"nullable nor defaulted, which breaks old application writes"
                     )
 
+    add_col_re = re.compile(
+        r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+        re.IGNORECASE,
+    )
+    for stmt in statements:
+        for match in add_col_re.finditer(stmt):
+            target_table, target_col = match.group(1), match.group(2)
+            if target_table not in new_schema or target_col not in new_schema.get(target_table, {}):
+                raise SanitizationError(
+                    f"migration statement added column {target_table}.{target_col}, "
+                    f"but post-migration catalog new_schema does not contain it"
+                )
+
     if plan.get("forward_migration_applied") is not True:
         raise SanitizationError("forward_migration_applied must be True")
     if plan.get("old_app_smoke_against_new_schema_passed") is not True:
         raise SanitizationError("old_app_smoke_against_new_schema_passed must be True")
+
+    if plan.get("observed_from_live_vm") is True:
+        if plan.get("catalog_observed") is not True:
+            raise SanitizationError("live migration verification requires catalog_observed=True")
+        if plan.get("old_app_readyz_status") != 200:
+            raise SanitizationError(
+                f"old-app /bff/readyz against migrated schema must return 200 (got {plan.get('old_app_readyz_status')!r})"
+            )
+        if plan.get("old_app_me_read_status") != 200:
+            raise SanitizationError(
+                f"old-app authenticated GET /bff/me against migrated schema must return 200 (got {plan.get('old_app_me_read_status')!r})"
+            )
+        old_app_commit = plan.get("old_app_version_commit_observed")
+        if not isinstance(old_app_commit, str) or not COMMIT_SHA_RE.fullmatch(old_app_commit):
+            raise SanitizationError("old_app_version_commit_observed must be a 40-hex commit SHA")
+        old_app_img = plan.get("old_app_image_observed")
+        if not isinstance(old_app_img, str) or not IMAGE_DIGEST_RE.fullmatch(old_app_img):
+            raise SanitizationError("old_app_image_observed must be a digest-pinned image reference")
 
     return {
         "migration_verified": True,
@@ -506,7 +537,14 @@ def verify_exact_pair_rollback(
         "backend_commit",
         "backend_operator_bff_image",
     }
-    if set(rollback_baseline.keys()) != required_baseline:
+    optional_baseline = {
+        "backend_images",
+        "config_schema_version",
+    }
+    baseline_keys = set(rollback_baseline.keys())
+    if not required_baseline.issubset(baseline_keys) or not baseline_keys.issubset(
+        required_baseline | optional_baseline
+    ):
         raise SanitizationError("invalid rollback_baseline keys")
 
     if rollback_readback.get("served_release_id") != rollback_baseline["previous_release_id"]:
@@ -517,12 +555,60 @@ def verify_exact_pair_rollback(
         raise SanitizationError(
             "rollback served_frontend_artifact_sha256 does not match baseline frontend_artifact_sha256"
         )
+    if (
+        rollback_readback.get("observed_from_live_vm") is True
+        or "verified_baseline_archive_sha256" in rollback_readback
+    ):
+        if (
+            rollback_readback.get("verified_baseline_archive_sha256")
+            != rollback_baseline["frontend_artifact_sha256"]
+        ):
+            raise SanitizationError(
+                "rollback verified_baseline_archive_sha256 does not match baseline frontend_artifact_sha256"
+            )
     if rollback_readback.get("served_backend_commit") != rollback_baseline["backend_commit"]:
         raise SanitizationError("rollback served_backend_commit does not match baseline backend_commit")
     if rollback_readback.get("fe_manifest_paired_backend_commit") != rollback_baseline["backend_commit"]:
         raise SanitizationError("rollback FE deployment.json paired backend commit mismatch (hybrid state)")
     if rollback_readback.get("served_operator_bff_image") != rollback_baseline["backend_operator_bff_image"]:
         raise SanitizationError("rollback served_operator_bff_image does not match baseline image digest")
+
+    required_owner_keys = {
+        "operator_bff",
+        "runtime_manager",
+        "governance",
+        "deployment",
+        "lifecycle_projector",
+    }
+    if (
+        rollback_readback.get("observed_from_live_vm") is True
+        or "served_backend_images" in rollback_readback
+        or "backend_images" in rollback_baseline
+    ):
+        served_imgs = rollback_readback.get("served_backend_images")
+        if served_imgs is not None or rollback_readback.get("observed_from_live_vm") is True:
+            if not isinstance(served_imgs, dict) or set(served_imgs.keys()) != required_owner_keys:
+                raise SanitizationError(
+                    "rollback served_backend_images must report all 5 owner services: "
+                    "operator_bff, runtime_manager, governance, deployment, lifecycle_projector"
+                )
+            for svc_key, img_val in served_imgs.items():
+                if not isinstance(img_val, str) or not IMAGE_DIGEST_RE.fullmatch(img_val):
+                    raise SanitizationError(
+                        f"rollback served_backend_images[{svc_key!r}] is not a digest-pinned image"
+                    )
+            if served_imgs["operator_bff"] != rollback_baseline["backend_operator_bff_image"]:
+                raise SanitizationError(
+                    "rollback served_backend_images['operator_bff'] does not match backend_operator_bff_image"
+                )
+            baseline_imgs = rollback_baseline.get("backend_images")
+            if isinstance(baseline_imgs, dict):
+                for svc_key, expected_img in baseline_imgs.items():
+                    if served_imgs.get(svc_key) != expected_img:
+                        raise SanitizationError(
+                            f"rollback served_backend_images[{svc_key!r}] does not match baseline image {expected_img!r}"
+                        )
+
     if rollback_readback.get("bff_healthy") is not True:
         raise SanitizationError("rollback BFF health check is not healthy")
     if rollback_readback.get("singleton_worker_owner_unique") is not True:
@@ -564,6 +650,73 @@ def verify_security_and_safety_readbacks(readback: dict[str, Any]) -> dict[str, 
         if type(actual) is not bool or actual is not expected:
             raise SanitizationError(
                 f"security/safety readback failed for {key}: expected {expected!r}, got {actual!r}"
+            )
+
+    status_control_keys = {
+        "same_tenant_operator_read_status",
+        "same_tenant_operator_read_allowed",
+        "same_tenant_viewer_read_status",
+        "same_tenant_viewer_read_allowed",
+        "same_tenant_operator_write_status",
+        "same_tenant_operator_write_allowed",
+        "unauthenticated_status",
+        "unauthenticated_error_code",
+        "cross_tenant_read_status",
+        "cross_tenant_read_error_code",
+        "cross_tenant_read_precondition",
+        "cross_tenant_write_status",
+        "cross_tenant_write_error_code",
+        "cross_tenant_write_precondition",
+        "viewer_mutation_status",
+        "viewer_mutation_error_code",
+        "viewer_mutation_precondition",
+    }
+    if readback.get("observed_from_live_vm") is True or bool(status_control_keys & set(readback.keys())):
+        if readback.get("same_tenant_operator_read_allowed") is not True or readback.get("same_tenant_operator_read_status") != 200:
+            raise SanitizationError(
+                "positive control failed: same-tenant operator GET /bff/me must return HTTP 200"
+            )
+        if readback.get("same_tenant_viewer_read_allowed") is not True or readback.get("same_tenant_viewer_read_status") != 200:
+            raise SanitizationError(
+                "positive control failed: same-tenant viewer GET /bff/me must return HTTP 200"
+            )
+        if readback.get("same_tenant_operator_write_allowed") is not True or readback.get("same_tenant_operator_write_status") != 200:
+            raise SanitizationError(
+                "positive control failed: same-tenant operator POST /bff/switch-tenant must return HTTP 200"
+            )
+        if readback.get("unauthenticated_status") != 401 or readback.get("unauthenticated_error_code") != "AUTH_REQUIRED":
+            raise SanitizationError(
+                f"unauthenticated GET /bff/me must return 401 AUTH_REQUIRED (got status={readback.get('unauthenticated_status')!r}, code={readback.get('unauthenticated_error_code')!r})"
+            )
+        if (
+            readback.get("cross_tenant_read_status") != 403
+            or readback.get("cross_tenant_read_error_code") != "FORBIDDEN"
+            or readback.get("cross_tenant_read_precondition") != "tenant_scope"
+        ):
+            raise SanitizationError(
+                f"cross-tenant read must return 403 FORBIDDEN (precondition_failed='tenant_scope'); "
+                f"got status={readback.get('cross_tenant_read_status')!r}, code={readback.get('cross_tenant_read_error_code')!r}, "
+                f"precondition={readback.get('cross_tenant_read_precondition')!r}"
+            )
+        if (
+            readback.get("cross_tenant_write_status") != 403
+            or readback.get("cross_tenant_write_error_code") != "FORBIDDEN"
+            or readback.get("cross_tenant_write_precondition") != "tenant_scope"
+        ):
+            raise SanitizationError(
+                f"cross-tenant write must return 403 FORBIDDEN (precondition_failed='tenant_scope'); "
+                f"got status={readback.get('cross_tenant_write_status')!r}, code={readback.get('cross_tenant_write_error_code')!r}, "
+                f"precondition={readback.get('cross_tenant_write_precondition')!r}"
+            )
+        if (
+            readback.get("viewer_mutation_status") != 403
+            or readback.get("viewer_mutation_error_code") != "FORBIDDEN"
+            or readback.get("viewer_mutation_precondition") != "role_check"
+        ):
+            raise SanitizationError(
+                f"viewer mutation must return 403 FORBIDDEN (precondition_failed='role_check'); "
+                f"got status={readback.get('viewer_mutation_status')!r}, code={readback.get('viewer_mutation_error_code')!r}, "
+                f"precondition={readback.get('viewer_mutation_precondition')!r}"
             )
 
     if readback.get("vite_bff_mode") != "live":

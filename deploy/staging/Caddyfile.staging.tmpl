@@ -1,6 +1,8 @@
-# Pantheon Ephemeral Staging — Caddy Reverse Proxy + Static FE Bundle
+# Pantheon Ephemeral Staging — Caddy Reverse Proxy + Static FE Bundle + External Runtime Config
 # Rendered per ephemeral release (`__STAGING_BFF_HOST__`, `__STAGING_FE_HOST__`,
-# `__STAGING_FE_ROOT__`, `__STAGING_BFF_UPSTREAM__`).
+# `__STAGING_FE_ROOT__`, `__STAGING_CONFIG_DIR__`, `__STAGING_BFF_UPSTREAM__`).
+# /runtime-config.js is served from __STAGING_CONFIG_DIR__ outside the sealed FE release
+# directory with Cache-Control: no-store.
 
 __STAGING_BFF_HOST__ {
 	header {
@@ -15,7 +17,7 @@ __STAGING_BFF_HOST__ {
 }
 
 __STAGING_FE_HOST__ {
-	root * __STAGING_FE_ROOT__
+	root * __STAGING_FE_ROOT__/current
 	header {
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY
@@ -23,6 +25,13 @@ __STAGING_FE_HOST__ {
 		Strict-Transport-Security "max-age=31536000"
 		X-Pantheon-Environment "staging"
 		-Server
+	}
+
+	handle /runtime-config.js {
+		root * __STAGING_CONFIG_DIR__
+		header Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+		header Content-Type "application/javascript; charset=utf-8"
+		file_server
 	}
 
 	handle /deployment.json {
@@ -36,6 +45,7 @@ __STAGING_FE_HOST__ {
 	@spa_shell {
 		not path /assets/*
 		not path /deployment.json
+		not path /runtime-config.js
 	}
 	header @spa_shell Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
 

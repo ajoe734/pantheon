@@ -28,9 +28,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DEFAULTS_FILE="${REPO_ROOT}/deploy/staging/staging-env.defaults"
 
+# Load defaults without overwriting caller/test environment overrides.
 if [[ -f "${DEFAULTS_FILE}" ]]; then
-  # shellcheck disable=SC1090
-  source "${DEFAULTS_FILE}"
+  while IFS='=' read -r k v; do
+    [[ -z "$k" || "$k" =~ ^[[:space:]]*# ]] && continue
+    k="$(echo "$k" | xargs)"
+    if [[ -n "$k" && -z "${!k+x}" ]]; then
+      export "$k=$v"
+    fi
+  done < "${DEFAULTS_FILE}"
 fi
 
 die_json() {
@@ -73,6 +79,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+STAGING_RUNTIME_SERVICE_ACCOUNT="${STAGING_RUNTIME_SERVICE_ACCOUNT:-${STAGING_SERVICE_ACCOUNT:-}}"
+STAGING_SERVICE_ACCOUNT="${STAGING_RUNTIME_SERVICE_ACCOUNT}"
+STAGING_DEPLOY_SERVICE_ACCOUNT="${STAGING_DEPLOY_SERVICE_ACCOUNT:-${STAGING_GCP_DEPLOY_SERVICE_ACCOUNT:-}}"
+
 REQUIRED_VARS=(
   "STAGING_GCP_PROJECT_ID"
   "STAGING_GCP_ZONE"
@@ -91,6 +101,17 @@ for var_name in "${REQUIRED_VARS[@]}"; do
   fi
   check_retired_identifiers "$val" "$var_name"
 done
+
+if [[ -n "${STAGING_DEPLOY_SERVICE_ACCOUNT}" ]]; then
+  check_retired_identifiers "${STAGING_DEPLOY_SERVICE_ACCOUNT}" "STAGING_DEPLOY_SERVICE_ACCOUNT"
+  if [[ "${STAGING_RUNTIME_SERVICE_ACCOUNT}" == "${STAGING_DEPLOY_SERVICE_ACCOUNT}" ]]; then
+    die_json "DEPLOYER_SA_FORBIDDEN_ON_VM" "Deployer service account (${STAGING_DEPLOY_SERVICE_ACCOUNT}) must not be attached to the staging VM; use the dedicated runtime service account"
+  fi
+fi
+
+if [[ "${STAGING_RUNTIME_SERVICE_ACCOUNT}" == *"github-deploy"* || "${STAGING_RUNTIME_SERVICE_ACCOUNT}" == *"-deploy@"* || "${STAGING_RUNTIME_SERVICE_ACCOUNT}" == *"deployer"* ]]; then
+  die_json "DEPLOYER_SA_FORBIDDEN_ON_VM" "Service account ${STAGING_RUNTIME_SERVICE_ACCOUNT} is a deployer identity and must not be attached to the staging VM"
+fi
 
 if [[ "${DRY_RUN}" != "true" ]]; then
   if [[ -z "${GCLOUD_BIN:-}" ]]; then
@@ -385,6 +406,7 @@ run_gcloud_resource_create() {
   EXPECTED_BOOT_DISK="$BOOT_DISK_NAME" \
   EXPECTED_DATA_DISK="$DATA_DISK_NAME" \
   EXPECTED_RESERVED_IP="${RESERVED_IP:-}" \
+  EXPECTED_RUNTIME_SA="${STAGING_RUNTIME_SERVICE_ACCOUNT}" \
   python3 - <<'PY'
 import json
 import os
@@ -442,6 +464,7 @@ if not dry_run:
         expected_boot = os.environ["EXPECTED_BOOT_DISK"]
         expected_data = os.environ["EXPECTED_DATA_DISK"]
         expected_ip = os.environ["EXPECTED_RESERVED_IP"]
+        expected_sa = os.environ["EXPECTED_RUNTIME_SA"]
         disks = parsed.get("disks") or []
         boot_attached = any(
             isinstance(d, dict)
@@ -483,9 +506,18 @@ if not dry_run:
                 file=sys.stderr,
             )
             raise SystemExit(1)
+        sas = parsed.get("serviceAccounts") or []
+        sa_emails = [sa.get("email") for sa in sas if isinstance(sa, dict) and sa.get("email")]
+        if sa_emails and expected_sa not in sa_emails:
+            print(
+                f"Instance {r_name} serviceAccounts {sa_emails} does not match runtime SA {expected_sa!r}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
         entry["attached_boot_disk"] = expected_boot
         entry["attached_data_disk"] = expected_data
         entry["nat_ip"] = expected_ip
+        entry["service_account"] = expected_sa
 else:
     if r_type == "address":
         entry["address"] = "198.51.100.10"
@@ -493,6 +525,7 @@ else:
         entry["attached_boot_disk"] = os.environ["EXPECTED_BOOT_DISK"]
         entry["attached_data_disk"] = os.environ["EXPECTED_DATA_DISK"]
         entry["nat_ip"] = os.environ["EXPECTED_RESERVED_IP"]
+        entry["service_account"] = os.environ["EXPECTED_RUNTIME_SA"]
 
 data["resources"].append(entry)
 inv_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -538,7 +571,7 @@ if [[ "${STAGING_INJECT_FAIL_STAGE:-}" == "after_data_disk" ]]; then
   false
 fi
 
-# Step 3: Create labeled boot disk (Debian 12 standard)
+# Step 3: Create labeled boot disk (Debian 12 bookworm)
 run_gcloud_resource_create "disk" "${BOOT_DISK_NAME}" \
   compute disks create "${BOOT_DISK_NAME}" \
   --project="${STAGING_GCP_PROJECT_ID}" \
@@ -553,110 +586,26 @@ if [[ "${STAGING_INJECT_FAIL_STAGE:-}" == "create_vm" ]]; then
   false
 fi
 
-# Step 4: Create ephemeral VM from template attaching reserved IP, boot disk, and sanitized data disk
+# Step 4: Create ephemeral VM from template attaching reserved IP, boot disk, sanitized data disk, and runtime SA.
+# Note: Project-level IAM is pre-provisioned in the staging foundation; the deploy SA only uses
+# iam.serviceAccountUser on the runtime SA and never mutates project IAM bindings at provision time.
 run_gcloud_resource_create "instance" "${VM_NAME}" \
   compute instances create "${VM_NAME}" \
   --project="${STAGING_GCP_PROJECT_ID}" \
   --zone="${STAGING_GCP_ZONE}" \
   --source-instance-template="${STAGING_INSTANCE_TEMPLATE}" \
   --machine-type="${STAGING_MACHINE_TYPE:-e2-standard-2}" \
-  --service-account="${STAGING_SERVICE_ACCOUNT}" \
+  --service-account="${STAGING_RUNTIME_SERVICE_ACCOUNT}" \
   --address="${RESERVED_IP}" \
   --disk="name=${BOOT_DISK_NAME},device-name=${BOOT_DISK_NAME},boot=yes,mode=rw,auto-delete=no" \
   --disk="name=${DATA_DISK_NAME},device-name=staging-data,mode=rw,auto-delete=no" \
   --labels="${GCP_LABELS_CSV}"
 
-# Step 5: Check preexisting IAM policy before binding release-scoped IAM role
-IAM_MEMBER="serviceAccount:${STAGING_SERVICE_ACCOUNT}"
-IAM_ROLE="roles/compute.viewer"
-IAM_PREEXISTING="false"
-IAM_POLICY_OUT=""
-
-if [[ "${DRY_RUN}" != "true" ]]; then
-  CURRENT_IAM_JSON="$("${GCLOUD_BIN}" projects get-iam-policy "${STAGING_GCP_PROJECT_ID}" --format=json)"
-  IAM_PREEXISTING="$(
-    CURRENT_IAM_JSON="$CURRENT_IAM_JSON" IAM_MEMBER="$IAM_MEMBER" IAM_ROLE="$IAM_ROLE" python3 - <<'PY'
-import json
-import os
-
-policy = json.loads(os.environ["CURRENT_IAM_JSON"] or "{}")
-member = os.environ["IAM_MEMBER"]
-role = os.environ["IAM_ROLE"]
-preexisting = any(
-    isinstance(b, dict)
-    and b.get("role") == role
-    and member in (b.get("members") or [])
-    and not b.get("condition")
-    for b in (policy.get("bindings") or [])
-)
-print("true" if preexisting else "false")
-PY
-  )"
-  if [[ "${IAM_PREEXISTING}" != "true" ]]; then
-    IAM_POLICY_OUT="$(
-      "${GCLOUD_BIN}" projects add-iam-policy-binding "${STAGING_GCP_PROJECT_ID}" \
-        --member="${IAM_MEMBER}" \
-        --role="${IAM_ROLE}" \
-        --format=json
-    )"
-  else
-    IAM_POLICY_OUT="${CURRENT_IAM_JSON}"
-  fi
-fi
-
-INVENTORY_FILE="$INVENTORY_FILE" \
-IAM_BINDING_ID="$IAM_BINDING_ID" \
-IAM_MEMBER="$IAM_MEMBER" \
-IAM_ROLE="$IAM_ROLE" \
-IAM_PREEXISTING="$IAM_PREEXISTING" \
-DRY_RUN="$DRY_RUN" \
-IAM_POLICY_OUT="$IAM_POLICY_OUT" \
-python3 - <<'PY'
-import json
-import os
-import sys
-from pathlib import Path
-
-inv_path = Path(os.environ["INVENTORY_FILE"])
-data = json.loads(inv_path.read_text(encoding="utf-8"))
-dry_run = os.environ["DRY_RUN"] == "true"
-member = os.environ["IAM_MEMBER"]
-role = os.environ["IAM_ROLE"]
-preexisting = os.environ["IAM_PREEXISTING"] == "true"
-
-if not dry_run:
-    policy = json.loads(os.environ["IAM_POLICY_OUT"] or "{}")
-    bound = any(
-        isinstance(b, dict)
-        and b.get("role") == role
-        and member in (b.get("members") or [])
-        for b in (policy.get("bindings") or [])
-    )
-    if not bound:
-        print(f"IAM policy readback missing binding ({role}, {member})", file=sys.stderr)
-        raise SystemExit(1)
-
-data["resources"].append({
-    "type": "iam_binding",
-    "name": os.environ["IAM_BINDING_ID"],
-    "project_id": data["project_id"],
-    "zone": data["zone"],
-    "region": data["region"],
-    "member": member,
-    "role": role,
-    "preexisting": preexisting,
-    "labels": dict(data["labels"]),
-    "state": "dry_run_simulated" if dry_run else ("retained_preexisting" if preexisting else "provisioned"),
-    "observed": not dry_run,
-})
-inv_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-
 if [[ "${STAGING_INJECT_FAIL_STAGE:-}" == "deploy_host" ]]; then
   false
 fi
 
-# Step 6: Stage 2 DEPLOY — Transfer immutable FE/BFF artifacts, mount data disk, and start Compose core
+# Step 5: Stage 2 DEPLOY — Transfer immutable FE/BFF artifacts, bootstrap bare Debian, mount data disk, and start Compose core
 DEPLOY_HOST_ARGS=("deploy-host")
 if [[ "${DRY_RUN}" == "true" ]]; then
   DEPLOY_HOST_ARGS+=("--dry-run")
