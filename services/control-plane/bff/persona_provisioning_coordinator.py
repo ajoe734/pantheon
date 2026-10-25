@@ -1469,6 +1469,13 @@ class PersonaProvisioningCoordinator:
                 pool_id=capital_pool_id,
                 binding_id=binding_id,
             )
+        if chain_id and binding is not None:
+            binding_meta = binding.get("metadata")
+            label = binding_meta.get("chain_id") if isinstance(binding_meta, Mapping) else None
+            if label and label != chain_id:
+                raise PersonaProvisioningCoordinationError(
+                    "PersonaCapitalBinding belongs to another chain; refusing to retire it"
+                )
         if pool is not None:
             metadata = pool.get("metadata")
             metadata = metadata if isinstance(metadata, Mapping) else {}
@@ -1482,6 +1489,11 @@ class PersonaProvisioningCoordinator:
             ):
                 raise PersonaProvisioningCoordinationError(
                     "CapitalPool is not a paper pool; refusing to retire it"
+                )
+            if chain_id and metadata.get("chain_id") not in (None, "", chain_id):
+                # A present binding or a matching persona never authorizes another chain's pool.
+                raise PersonaProvisioningCoordinationError(
+                    "CapitalPool belongs to another chain; refusing to retire it"
                 )
             if binding is None and not self._pool_owned_by_chain(
                 metadata, persona_id=persona_id, chain_id=chain_id
