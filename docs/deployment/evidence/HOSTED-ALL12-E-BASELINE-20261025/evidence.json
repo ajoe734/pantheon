@@ -7,7 +7,7 @@
   "evidence_classification": "source_and_unit_regression_only_not_hosted_runtime_acceptance",
   "hosted_e_close_executed_by_worker": false,
   "all12_passed": false,
-  "recorded_at_utc": "2026-10-25T22:43:00Z",
+  "recorded_at_utc": "2026-10-25T23:20:00Z",
   "approved_design": {
     "pr_number": 6736,
     "merge_commit": "43473d1512dbb094074ec575ac1128be9b02e634",
@@ -84,12 +84,12 @@
     "criterion_2_e_close_baseline_comparison_and_immutable_history": {
       "source_contract_verified": true,
       "hosted_runtime_acceptance_claimed": false,
-      "summary": "HostedChainRunner._close captures active non-chain binding IDs, meaningful owner state, and exposed versions (Runtime artifact_version and Registry strategy-artifact version) at E_close start and compares them at E_close end. Original hosted.baseline_fleet remains immutable; proven pre-E external replacements are reported separately in phases.E_close.baseline_external_replacement alongside phases.E_close.nonchain_fleet_preservation. Original active_count restoration and zero active chain bindings remain mandatory."
+      "summary": "HostedChainRunner._close captures active non-chain binding IDs, necessary Runtime owner identity/tenant/stable state, and genuinely exposed versions (Runtime artifact_version and Registry strategy-artifact version) at E_close start and compares them at E_close end. Only records belonging to THIS chain are excluded/retired; other chains are preserved as non-chain records. Normal create-before-retire replacements predating E_close are allowed without all-pairs historical ordering gates, and optional plan/capital/Persona/saga/Registry/telemetry metadata is retained as diagnostics rather than mandatory gates. Original hosted.baseline_fleet remains immutable; proven pre-E external replacements are reported separately in phases.E_close.baseline_external_replacement alongside phases.E_close.nonchain_fleet_preservation. Original active_count restoration and zero active chain bindings remain mandatory."
     },
     "criterion_3_unknown_replacement_and_e_window_drift_honestly_paused": {
       "source_contract_verified": true,
       "hosted_runtime_acceptance_claimed": false,
-      "summary": "Unknown replacement bindings, missing/unretired historical bindings, missing retirement telemetry or release correlation, missing/unapproved Registry artifacts, version/checksum mismatches, foreign-tenant or chain-tagged records, and any non-chain ID or meaningful owner-state/version change during E_close remain paused with baseline_fleet_check='mismatch' (or 'chain_binding_still_active') and blocked_before='E_close:cleanup_incomplete'. Volatile diagnostic timestamps (such as metadata.session_admission.observed_at) are excluded from meaningful owner state comparison."
+      "summary": "Unknown replacement bindings, missing/unretired historical bindings, missing pre-E accepted-release or authoritative_loader_attestation evidence (showing correlation string difference alone is not accepted-release proof), missing Registry artifacts, exposed version mismatches, foreign-tenant or this-chain-tagged records, and any non-chain ID or comparable owner-state/version change during E_close remain paused with baseline_fleet_check='mismatch' (or 'chain_binding_still_active') and blocked_before='E_close:cleanup_incomplete'. Volatile diagnostic fields are excluded from pre/post E_close owner state comparison."
     },
     "criterion_4_focused_regression_coverage_and_h4_semantics_preserved": {
       "source_contract_verified": true,

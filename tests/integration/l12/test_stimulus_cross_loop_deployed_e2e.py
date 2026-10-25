@@ -906,6 +906,15 @@ class HostedChainRunner:
         }
         self.decisions: dict[str, Any] = {**dict(hosted.get("decisions") or {}), **dict(decision_refs or {})}
         self.baseline_fleet: dict[str, Any] | None = hosted.get("baseline_fleet") or None
+        self.accepted_release_retire: Mapping[str, Any] | None = (
+            hosted.get("accepted_release_retire")
+            if isinstance(hosted.get("accepted_release_retire"), Mapping)
+            else (
+                (prior_receipt or {}).get("accepted_release_retire")
+                if isinstance((prior_receipt or {}).get("accepted_release_retire"), Mapping)
+                else None
+            )
+        )
         self.loops: dict[str, dict[str, Any]] = {
             item["loop_id"]: item for item in hosted.get("loops") or []
         }
@@ -1605,6 +1614,30 @@ class HostedChainRunner:
             "note": "executed plan is immutable; retained as history, not retired",
         })
 
+    def _is_this_chain_record(
+        self, record_id: str, record: Mapping[str, Any] | None = None
+    ) -> bool:
+        """True only for records owned by this chain; other chains are unrelated non-chain records."""
+
+        rid = str(record_id or "").strip()
+        chain_ids = {
+            str(self.resource_ids.get(k) or "").strip()
+            for k in ("runtime_binding_id", "execution_artifact_id", "registry_id")
+        } - {""}
+        if rid and (rid in chain_ids or rid.startswith(f"hosted-all12-{self.chain_id}-")):
+            return True
+        if isinstance(record, Mapping):
+            chain = str(record.get("chain_id") or "").strip() or _record_chain(record)
+            if chain == self.chain_id:
+                return True
+        return False
+
+    @staticmethod
+    def _comparable_nonchain_state(state: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(state, Mapping):
+            return None
+        return {k: v for k, v in state.items() if k != "diagnostics"}
+
     def _capture_pre_close_nonchain(self) -> dict[str, Any] | None:
         """Capture active non-chain bindings, owner state, and exposed versions at E_close start."""
 
@@ -1619,16 +1652,15 @@ class HostedChainRunner:
             for item in (payload.get("bindings") or [])
             if isinstance(item, Mapping) and item.get("binding_id")
         }
-        chain_binding_id = str(self.resource_ids.get("runtime_binding_id") or "").strip()
         nonchain_ids = [
             bid
             for bid in snapshot["binding_ids"]
-            if bid != chain_binding_id and _record_chain(fleet_items.get(bid, {})) != self.chain_id
+            if not self._is_this_chain_record(bid, fleet_items.get(bid, {}))
         ]
         bindings: dict[str, dict[str, Any]] = {}
         for bid in nonchain_ids:
             state = self._read_nonchain_binding_state(bid, fleet_items.get(bid, {}))
-            if state.get("chain_id") == self.chain_id:
+            if self._is_this_chain_record(bid, state):
                 continue
             bindings[bid] = state
         return {
@@ -1645,6 +1677,11 @@ class HostedChainRunner:
         rec = _unwrap(raw) if status == 200 else {}
         source = rec if (status == 200 and rec) else fleet_item
         meta = source.get("metadata") if isinstance(source.get("metadata"), Mapping) else {}
+        att = (
+            meta.get("authoritative_loader_attestation")
+            if isinstance(meta.get("authoritative_loader_attestation"), Mapping)
+            else None
+        )
         artifact_id = str(source.get("artifact_id") or fleet_item.get("artifact_id") or "").strip()
         reg_status: int | None = None
         reg_state: dict[str, Any] | None = None
@@ -1665,6 +1702,8 @@ class HostedChainRunner:
                     "version": str(art.get("version") or ""),
                     "checksum": str(art.get("checksum") or ""),
                     "approval_decision_id": str(art.get("approval_decision_id") or ""),
+                    "approved_at": str(art.get("approved_at") or ""),
+                    "created_at": str(art.get("created_at") or ""),
                     "retired_at": art.get("retired_at"),
                 }
         return {
@@ -1676,64 +1715,58 @@ class HostedChainRunner:
             "deployment_mode": str(source.get("deployment_mode") or ""),
             "execution_mode": str(source.get("execution_mode") or ""),
             "runtime_id": str(source.get("runtime_id") or ""),
-            "plan_id": str(source.get("plan_id") or ""),
-            "capital_pool_id": str(source.get("capital_pool_id") or ""),
-            "persona_capital_binding_id": str(source.get("persona_capital_binding_id") or ""),
-            "persona_id": str(
-                meta.get("persona_id") or source.get("persona_id") or fleet_item.get("persona_id") or ""
-            ),
             "artifact_id": artifact_id,
             "artifact_version": str(source.get("artifact_version") or fleet_item.get("artifact_version") or ""),
-            "artifact_checksum": str(meta.get("artifact_checksum") or ""),
-            "deployment_correlation_id": str(meta.get("deployment_correlation_id") or ""),
-            "deployment_saga_id": str(meta.get("deployment_saga_id") or ""),
-            "deployment_trace_id": str(meta.get("deployment_trace_id") or ""),
             "effective_at": str(source.get("effective_at") or fleet_item.get("effective_at") or ""),
             "retired_at": source.get("retired_at") if "retired_at" in source else fleet_item.get("retired_at"),
             "registry_artifact_status": reg_status,
-            "registry_artifact": reg_state,
+            "registry_version": str((reg_state or {}).get("version") or ""),
+            "registry_tenant_id": str((reg_state or {}).get("tenant_id") or ""),
+            "registry_chain_id": str((reg_state or {}).get("chain_id") or ""),
+            "registry_retired_at": (reg_state or {}).get("retired_at"),
+            "diagnostics": {
+                "plan_id": str(source.get("plan_id") or ""),
+                "capital_pool_id": str(source.get("capital_pool_id") or ""),
+                "persona_capital_binding_id": str(source.get("persona_capital_binding_id") or ""),
+                "persona_id": str(
+                    meta.get("persona_id") or source.get("persona_id") or fleet_item.get("persona_id") or ""
+                ),
+                "artifact_checksum": str(meta.get("artifact_checksum") or ""),
+                "deployment_correlation_id": str(meta.get("deployment_correlation_id") or ""),
+                "deployment_saga_id": str(meta.get("deployment_saga_id") or ""),
+                "deployment_trace_id": str(meta.get("deployment_trace_id") or ""),
+                "authoritative_loader_attestation": dict(att) if isinstance(att, Mapping) else None,
+                "registry_artifact": reg_state,
+            },
         }
 
     def _verify_nonchain_binding_state(
-        self, binding_id: str, state: Mapping[str, Any], *, require_full_owner: bool
+        self, binding_id: str, state: Mapping[str, Any], *, require_owner_get: bool
     ) -> str | None:
         owner_status = state.get("owner_get_status")
-        if require_full_owner and owner_status != 200:
+        if require_owner_get and owner_status != 200:
             return f"non-chain binding {binding_id}: Runtime owner GET returned {owner_status}"
         if owner_status not in (200, 404):
             return f"non-chain binding {binding_id}: Runtime owner GET returned {owner_status}"
         tenant = str(state.get("tenant_id") or "")
         if (owner_status == 200 or tenant) and tenant != self.tenant_id:
             return f"non-chain binding {binding_id}: tenant {tenant!r} != {self.tenant_id!r}"
-        chain = str(state.get("chain_id") or "")
-        if chain or binding_id.startswith("hosted-all12-"):
-            return f"non-chain binding {binding_id}: carries chain identity {chain or binding_id!r}"
+        if self._is_this_chain_record(binding_id, state):
+            return f"non-chain binding {binding_id}: carries this chain identity {self.chain_id!r}"
         status = str(state.get("status") or "")
         if (owner_status == 200 or status) and status != "active":
             return f"non-chain binding {binding_id}: status is {status!r}, expected 'active'"
         if state.get("retired_at") is not None:
             return f"non-chain binding {binding_id}: retired_at is {state.get('retired_at')!r}, expected None"
         mode = str(state.get("deployment_mode") or "")
-        if (require_full_owner or mode) and mode != "paper":
+        if mode and mode != "paper":
             return f"non-chain binding {binding_id}: deployment_mode is {mode!r}, expected 'paper'"
-        if require_full_owner:
-            for field in (
-                "runtime_id",
-                "plan_id",
-                "capital_pool_id",
-                "persona_capital_binding_id",
-                "persona_id",
-                "artifact_id",
-                "artifact_version",
-                "effective_at",
-                "deployment_correlation_id",
-                "deployment_saga_id",
-            ):
+        if owner_status == 200 or require_owner_get:
+            for field in ("runtime_id", "artifact_id", "artifact_version"):
                 if not str(state.get(field) or "").strip():
                     return f"non-chain binding {binding_id}: missing required owner field {field}"
         reg_status = state.get("registry_artifact_status")
-        art = state.get("registry_artifact")
-        if require_full_owner and (reg_status != 200 or not isinstance(art, Mapping)):
+        if require_owner_get and reg_status != 200:
             return (
                 f"non-chain binding {binding_id} artifact {state.get('artifact_id')!r}: "
                 f"Registry owner GET returned {reg_status}"
@@ -1743,42 +1776,128 @@ class HostedChainRunner:
                 f"non-chain binding {binding_id} artifact {state.get('artifact_id')!r}: "
                 f"Registry owner GET returned {reg_status}"
             )
-        if isinstance(art, Mapping):
-            if art.get("tenant_id") != self.tenant_id:
+        if reg_status == 200:
+            reg_tenant = str(state.get("registry_tenant_id") or "")
+            if reg_tenant and reg_tenant != self.tenant_id:
                 return (
-                    f"non-chain binding {binding_id} artifact {art.get('registry_id')}: "
-                    f"tenant {art.get('tenant_id')!r} != {self.tenant_id!r}"
+                    f"non-chain binding {binding_id} artifact {state.get('artifact_id')}: "
+                    f"tenant {reg_tenant!r} != {self.tenant_id!r}"
                 )
-            if art.get("chain_id") or str(art.get("registry_id") or "").startswith("hosted-all12-"):
-                return (
-                    f"non-chain binding {binding_id} artifact {art.get('registry_id')}: "
-                    f"carries chain identity {art.get('chain_id') or art.get('registry_id')!r}"
-                )
-            if art.get("artifact_state") != "approved" or art.get("retired_at") is not None:
-                return (
-                    f"non-chain binding {binding_id} artifact {art.get('registry_id')}: "
-                    f"state is {art.get('artifact_state')!r} (retired_at={art.get('retired_at')!r}), expected 'approved'"
-                )
-            art_ver = str(state.get("artifact_version") or "")
-            if art_ver and str(art.get("version") or "") != art_ver:
-                return (
-                    f"non-chain binding {binding_id} artifact {art.get('registry_id')}: "
-                    f"Registry version {art.get('version')!r} != binding artifact_version {art_ver!r}"
-                )
-            art_sum = str(state.get("artifact_checksum") or "")
-            if (require_full_owner or art_sum) and (
-                not str(art.get("checksum") or "").strip()
-                or (art_sum and str(art.get("checksum") or "") != art_sum)
+            if self._is_this_chain_record(
+                str(state.get("artifact_id") or ""),
+                {"chain_id": state.get("registry_chain_id")},
             ):
                 return (
-                    f"non-chain binding {binding_id} artifact {art.get('registry_id')}: "
-                    f"Registry checksum {art.get('checksum')!r} != binding artifact_checksum {art_sum!r}"
+                    f"non-chain binding {binding_id} artifact {state.get('artifact_id')}: "
+                    f"carries this chain identity {self.chain_id!r}"
                 )
-            if require_full_owner and not str(art.get("approval_decision_id") or "").strip():
+            if state.get("registry_retired_at") is not None:
                 return (
-                    f"non-chain binding {binding_id} artifact {art.get('registry_id')}: "
-                    "missing approval_decision_id"
+                    f"non-chain binding {binding_id} artifact {state.get('artifact_id')}: "
+                    f"retired_at is {state.get('registry_retired_at')!r}, expected None"
                 )
+            art_ver = str(state.get("artifact_version") or "")
+            reg_ver = str(state.get("registry_version") or "")
+            if not reg_ver or (art_ver and reg_ver != art_ver):
+                return (
+                    f"non-chain binding {binding_id} artifact {state.get('artifact_id')}: "
+                    f"Registry version {reg_ver!r} != binding artifact_version {art_ver!r}"
+                )
+        return None
+
+    def _verify_replacement_acceptance_proof(
+        self,
+        new_id: str,
+        new_state: Mapping[str, Any],
+        retired_baseline_records: list[dict[str, Any]],
+        e_started_at: datetime | None,
+    ) -> str | None:
+        diag = new_state.get("diagnostics") if isinstance(new_state.get("diagnostics"), Mapping) else {}
+        new_corr = str(diag.get("deployment_correlation_id") or "").strip()
+        att = diag.get("authoritative_loader_attestation")
+        reg_art = diag.get("registry_artifact") if isinstance(diag.get("registry_artifact"), Mapping) else {}
+
+        has_release_retire_proof = False
+        if isinstance(self.accepted_release_retire, Mapping):
+            outcome = str(self.accepted_release_retire.get("outcome") or "").strip()
+            if outcome != "accepted":
+                return (
+                    f"replacement binding {new_id}: release retirement evidence outcome is "
+                    f"{outcome!r}, expected 'accepted'"
+                )
+            new_case_key = str(self.accepted_release_retire.get("new_case_key") or "").strip()
+            if not new_case_key:
+                return f"replacement binding {new_id}: release retirement evidence missing new_case_key"
+            if new_corr and new_corr != new_case_key:
+                return (
+                    f"replacement binding {new_id}: deployment_correlation_id {new_corr!r} "
+                    f"!= accepted release new_case_key {new_case_key!r}"
+                )
+            case_states = self.accepted_release_retire.get("case_states") or {}
+            results = self.accepted_release_retire.get("results") or {}
+            already_retired = set(self.accepted_release_retire.get("already_retired") or [])
+            for old_entry in retired_baseline_records:
+                old_c = str(old_entry.get("deployment_correlation_id") or "").strip()
+                if old_c and (case_states or results or already_retired):
+                    converged = (
+                        old_c in already_retired
+                        or results.get(old_c) == "retired"
+                        or case_states.get(old_c) == "retired"
+                    )
+                    if not converged:
+                        return (
+                            f"historical baseline binding {old_entry['binding_id']}: "
+                            f"case {old_c!r} not retired in release retirement evidence"
+                        )
+            has_release_retire_proof = True
+
+        has_loader_attestation_proof = False
+        if isinstance(att, Mapping):
+            if str(att.get("status") or "").lower() != "passed":
+                return (
+                    f"replacement binding {new_id}: authoritative_loader_attestation status is "
+                    f"{att.get('status')!r}, expected 'passed'"
+                )
+            if att.get("tenant_id") and str(att.get("tenant_id")) != self.tenant_id:
+                return (
+                    f"replacement binding {new_id}: authoritative_loader_attestation tenant "
+                    f"{att.get('tenant_id')!r} != {self.tenant_id!r}"
+                )
+            if att.get("artifact_id") and str(att.get("artifact_id")) != new_state.get("artifact_id"):
+                return (
+                    f"replacement binding {new_id}: authoritative_loader_attestation artifact_id "
+                    f"{att.get('artifact_id')!r} != {new_state.get('artifact_id')!r}"
+                )
+            if att.get("artifact_version") and str(att.get("artifact_version")) != new_state.get("artifact_version"):
+                return (
+                    f"replacement binding {new_id}: authoritative_loader_attestation artifact_version "
+                    f"{att.get('artifact_version')!r} != {new_state.get('artifact_version')!r}"
+                )
+            verified_at_str = str(att.get("verified_at") or "").strip()
+            if verified_at_str:
+                verified_dt = _parse_iso_utc(verified_at_str)
+                if verified_dt is None or (e_started_at is not None and verified_dt > e_started_at):
+                    return (
+                        f"replacement binding {new_id}: authoritative_loader_attestation verified_at "
+                        f"{verified_at_str!r} is invalid or after E_close start"
+                    )
+            has_loader_attestation_proof = True
+
+        for ts_key in ("approved_at", "created_at"):
+            ts_val = str(reg_art.get(ts_key) or "").strip()
+            if ts_val:
+                ts_dt = _parse_iso_utc(ts_val)
+                if ts_dt is None or (e_started_at is not None and ts_dt > e_started_at):
+                    return (
+                        f"replacement binding {new_id}: Registry artifact {ts_key} "
+                        f"{ts_val!r} is invalid or after E_close start"
+                    )
+
+        if not (has_release_retire_proof or has_loader_attestation_proof):
+            return (
+                f"replacement binding {new_id}: missing pre-E accepted-release or "
+                "authoritative_loader_attestation evidence"
+            )
         return None
 
     def _verify_pre_close_replacement(
@@ -1792,8 +1911,6 @@ class HostedChainRunner:
         baseline_recorded_at = _parse_iso_utc((self.baseline_fleet or {}).get("recorded_at"))
         e_started_at = _parse_iso_utc(pre_close_fleet.get("captured_at"))
         retired_baseline_records: list[dict[str, Any]] = []
-        retired_correlations: set[str] = set()
-        retired_timestamps: list[datetime] = []
 
         for old_id in removed_ids:
             quoted = urllib.parse.quote(old_id, safe="")
@@ -1804,16 +1921,16 @@ class HostedChainRunner:
             tenant = _record_tenant(old_rec)
             if tenant != self.tenant_id:
                 return None, f"historical baseline binding {old_id}: tenant {tenant!r} != {self.tenant_id!r}"
-            chain = _record_chain(old_rec)
-            if chain or old_id.startswith("hosted-all12-"):
-                return None, f"historical baseline binding {old_id}: carries chain identity {chain or old_id!r}"
+            if self._is_this_chain_record(old_id, old_rec):
+                return None, f"historical baseline binding {old_id}: carries this chain identity {self.chain_id!r}"
             state = _record_state(old_rec)
             if state != "retired":
                 return None, f"historical baseline binding {old_id}: status is {state!r}, expected 'retired'"
-            if str(old_rec.get("deployment_mode") or "") != "paper":
+            old_mode = str(old_rec.get("deployment_mode") or "")
+            if old_mode and old_mode != "paper":
                 return (
                     None,
-                    f"historical baseline binding {old_id}: deployment_mode is {old_rec.get('deployment_mode')!r}",
+                    f"historical baseline binding {old_id}: deployment_mode is {old_mode!r}",
                 )
             retired_at_str = str(old_rec.get("retired_at") or "").strip()
             retired_dt = _parse_iso_utc(retired_at_str)
@@ -1838,76 +1955,54 @@ class HostedChainRunner:
                     None,
                     f"historical baseline binding {old_id}: effective_at {effective_str} is after retired_at {retired_at_str}",
                 )
-            old_meta = old_rec.get("metadata") if isinstance(old_rec.get("metadata"), Mapping) else {}
-            old_corr = str(old_meta.get("deployment_correlation_id") or "").strip()
-            retire_evt = str(old_meta.get("retirement_telemetry_event_id") or "").strip()
-            retire_ack = str(old_meta.get("retirement_telemetry_acked_at") or "").strip()
-            if not old_corr or not (retire_evt or retire_ack):
-                return (
-                    None,
-                    f"historical baseline binding {old_id}: missing accepted-release correlation or retirement telemetry evidence",
-                )
-            for field in (
-                "runtime_id",
-                "plan_id",
-                "capital_pool_id",
-                "persona_capital_binding_id",
-                "artifact_id",
-                "artifact_version",
-            ):
+            for field in ("runtime_id", "artifact_id", "artifact_version"):
                 if not str(old_rec.get(field) or "").strip():
                     return None, f"historical baseline binding {old_id}: missing owner field {field}"
             old_art_id = str(old_rec.get("artifact_id") or "").strip()
             art_status, raw_art = self.owner.request(
                 "registry", "GET", f"/api/registry/strategy-artifacts/{urllib.parse.quote(old_art_id, safe='')}"
             )
-            old_art = _unwrap(raw_art) if art_status == 200 else {}
-            if art_status != 200 or not old_art:
+            if art_status not in (200, 404):
                 return (
                     None,
                     f"historical baseline binding {old_id} artifact {old_art_id}: Registry owner GET returned {art_status}",
                 )
-            if _record_tenant(old_art) != self.tenant_id or _record_chain(old_art):
-                return (
-                    None,
-                    f"historical baseline binding {old_id} artifact {old_art_id}: invalid tenant or chain label",
-                )
-            if str(old_art.get("version") or "") != str(old_rec.get("artifact_version") or ""):
-                return (
-                    None,
-                    f"historical baseline binding {old_id} artifact {old_art_id}: "
-                    f"Registry version {old_art.get('version')!r} != binding artifact_version {old_rec.get('artifact_version')!r}",
-                )
-            old_checksum = str(old_meta.get("artifact_checksum") or "").strip()
-            if old_checksum and str(old_art.get("checksum") or "") != old_checksum:
-                return (
-                    None,
-                    f"historical baseline binding {old_id} artifact {old_art_id}: "
-                    f"Registry checksum {old_art.get('checksum')!r} != binding artifact_checksum {old_checksum!r}",
-                )
-            retired_correlations.add(old_corr)
-            retired_timestamps.append(retired_dt)
+            old_art = _unwrap(raw_art) if art_status == 200 else {}
+            if art_status == 200 and old_art:
+                art_tenant = _record_tenant(old_art)
+                if (art_tenant and art_tenant != self.tenant_id) or self._is_this_chain_record(old_art_id, old_art):
+                    return (
+                        None,
+                        f"historical baseline binding {old_id} artifact {old_art_id}: invalid tenant or chain label",
+                    )
+                if str(old_art.get("version") or "") != str(old_rec.get("artifact_version") or ""):
+                    return (
+                        None,
+                        f"historical baseline binding {old_id} artifact {old_art_id}: "
+                        f"Registry version {old_art.get('version')!r} != binding artifact_version {old_rec.get('artifact_version')!r}",
+                    )
+            old_meta = old_rec.get("metadata") if isinstance(old_rec.get("metadata"), Mapping) else {}
             retired_baseline_records.append(
                 {
                     "binding_id": old_id,
                     "status": state,
                     "effective_at": effective_str,
                     "retired_at": retired_at_str,
-                    "deployment_correlation_id": old_corr,
-                    "deployment_saga_id": str(old_meta.get("deployment_saga_id") or ""),
-                    "deployment_trace_id": str(old_meta.get("deployment_trace_id") or ""),
-                    "retirement_telemetry_event_id": retire_evt,
-                    "retirement_telemetry_acked_at": retire_ack,
-                    "persona_id": str(old_meta.get("persona_id") or old_rec.get("persona_id") or ""),
                     "runtime_id": str(old_rec.get("runtime_id") or ""),
-                    "plan_id": str(old_rec.get("plan_id") or ""),
-                    "capital_pool_id": str(old_rec.get("capital_pool_id") or ""),
-                    "persona_capital_binding_id": str(old_rec.get("persona_capital_binding_id") or ""),
                     "artifact_id": old_art_id,
                     "artifact_version": str(old_rec.get("artifact_version") or ""),
                     "registry_version": str(old_art.get("version") or ""),
-                    "artifact_state": _record_state(old_art),
-                    "artifact_checksum": str(old_art.get("checksum") or ""),
+                    "deployment_correlation_id": str(old_meta.get("deployment_correlation_id") or ""),
+                    "deployment_saga_id": str(old_meta.get("deployment_saga_id") or ""),
+                    "deployment_trace_id": str(old_meta.get("deployment_trace_id") or ""),
+                    "retirement_telemetry_event_id": str(old_meta.get("retirement_telemetry_event_id") or ""),
+                    "retirement_telemetry_acked_at": str(old_meta.get("retirement_telemetry_acked_at") or ""),
+                    "persona_id": str(old_meta.get("persona_id") or old_rec.get("persona_id") or ""),
+                    "plan_id": str(old_rec.get("plan_id") or ""),
+                    "capital_pool_id": str(old_rec.get("capital_pool_id") or ""),
+                    "persona_capital_binding_id": str(old_rec.get("persona_capital_binding_id") or ""),
+                    "artifact_state": _record_state(old_art) if old_art else "",
+                    "artifact_checksum": str(old_art.get("checksum") or old_meta.get("artifact_checksum") or ""),
                     "approval_decision_id": str(old_art.get("approval_decision_id") or ""),
                 }
             )
@@ -1917,56 +2012,47 @@ class HostedChainRunner:
             new_state = post_close_bindings.get(new_id)
             if new_state is None:
                 return None, f"replacement binding {new_id}: not present in post-close non-chain bindings"
-            problem = self._verify_nonchain_binding_state(new_id, new_state, require_full_owner=True)
+            problem = self._verify_nonchain_binding_state(new_id, new_state, require_owner_get=True)
             if problem:
                 return None, f"replacement {problem}"
             effective_str = str(new_state.get("effective_at") or "").strip()
             effective_dt = _parse_iso_utc(effective_str)
             if effective_dt is None:
                 return None, f"replacement binding {new_id}: missing or invalid effective_at {effective_str!r}"
-            if baseline_recorded_at is not None and effective_dt < baseline_recorded_at:
-                return (
-                    None,
-                    f"replacement binding {new_id}: effective_at {effective_str} precedes "
-                    f"baseline recorded_at {(self.baseline_fleet or {}).get('recorded_at')}",
-                )
             if e_started_at is not None and effective_dt > e_started_at:
                 return (
                     None,
                     f"replacement binding {new_id}: effective_at {effective_str} is after "
                     f"E_close start {pre_close_fleet.get('captured_at')}",
                 )
-            if any(effective_dt < r_dt for r_dt in retired_timestamps):
-                return (
-                    None,
-                    f"replacement binding {new_id}: effective_at {effective_str} precedes historical baseline retirement",
-                )
-            new_corr = str(new_state.get("deployment_correlation_id") or "").strip()
-            if not new_corr or new_corr in retired_correlations:
-                return (
-                    None,
-                    f"replacement binding {new_id}: deployment_correlation_id {new_corr!r} must be a distinct accepted release",
-                )
-            art = new_state.get("registry_artifact") or {}
+            proof_error = self._verify_replacement_acceptance_proof(
+                new_id, new_state, retired_baseline_records, e_started_at
+            )
+            if proof_error:
+                return None, proof_error
+            diag = new_state.get("diagnostics") if isinstance(new_state.get("diagnostics"), Mapping) else {}
+            art = diag.get("registry_artifact") if isinstance(diag.get("registry_artifact"), Mapping) else {}
+            att = diag.get("authoritative_loader_attestation") if isinstance(diag.get("authoritative_loader_attestation"), Mapping) else {}
             replacement_active_records.append(
                 {
                     "binding_id": new_id,
                     "status": new_state["status"],
                     "effective_at": effective_str,
-                    "deployment_correlation_id": new_corr,
-                    "deployment_saga_id": new_state["deployment_saga_id"],
-                    "deployment_trace_id": new_state["deployment_trace_id"],
-                    "persona_id": new_state["persona_id"],
                     "runtime_id": new_state["runtime_id"],
-                    "plan_id": new_state["plan_id"],
-                    "capital_pool_id": new_state["capital_pool_id"],
-                    "persona_capital_binding_id": new_state["persona_capital_binding_id"],
                     "artifact_id": new_state["artifact_id"],
                     "artifact_version": new_state["artifact_version"],
-                    "registry_version": str(art.get("version") or ""),
+                    "registry_version": new_state["registry_version"],
+                    "deployment_correlation_id": str(diag.get("deployment_correlation_id") or ""),
+                    "deployment_saga_id": str(diag.get("deployment_saga_id") or ""),
+                    "deployment_trace_id": str(diag.get("deployment_trace_id") or ""),
+                    "persona_id": str(diag.get("persona_id") or ""),
+                    "plan_id": str(diag.get("plan_id") or ""),
+                    "capital_pool_id": str(diag.get("capital_pool_id") or ""),
+                    "persona_capital_binding_id": str(diag.get("persona_capital_binding_id") or ""),
                     "artifact_state": str(art.get("artifact_state") or ""),
-                    "artifact_checksum": str(art.get("checksum") or ""),
-                    "approval_decision_id": str(art.get("approval_decision_id") or ""),
+                    "artifact_checksum": str(art.get("checksum") or diag.get("artifact_checksum") or ""),
+                    "approval_decision_id": str(art.get("approval_decision_id") or att.get("approval_decision_id") or ""),
+                    "loader_attestation_verified_at": str(att.get("verified_at") or ""),
                 }
             )
 
@@ -1999,12 +2085,11 @@ class HostedChainRunner:
             for item in (payload.get("bindings") or [])
             if isinstance(item, Mapping) and item.get("binding_id")
         }
-        chain_binding_id = str(self.resource_ids.get("runtime_binding_id") or "").strip()
         chain_active = sorted(
             {
                 bid
                 for bid in now["binding_ids"]
-                if bid == chain_binding_id or _record_chain(fleet_items.get(bid, {})) == self.chain_id
+                if self._is_this_chain_record(bid, fleet_items.get(bid, {}))
             }
         )
         if chain_active:
@@ -2018,7 +2103,7 @@ class HostedChainRunner:
             for bid in now["binding_ids"]
         }
         chain_owned_after = sorted(
-            bid for bid, state in post_close_bindings.items() if state.get("chain_id") == self.chain_id
+            bid for bid, state in post_close_bindings.items() if self._is_this_chain_record(bid, state)
         )
         if chain_owned_after:
             return "chain_binding_still_active", f"chain binding still desired: {chain_owned_after}", {}
@@ -2036,15 +2121,19 @@ class HostedChainRunner:
         is_replaced = now["binding_ids"] != baseline_ids
         for bid in now["binding_ids"]:
             post_state = post_close_bindings[bid]
-            if pre_close_fleet is not None and pre_bindings.get(bid) != post_state:
+            if pre_close_fleet is not None and (
+                self._comparable_nonchain_state(pre_bindings.get(bid))
+                != self._comparable_nonchain_state(post_state)
+            ):
                 return (
                     "mismatch",
                     f"non-chain binding {bid} owner state changed during E_close: "
-                    f"before={pre_bindings.get(bid)}, after={post_state}",
+                    f"before={self._comparable_nonchain_state(pre_bindings.get(bid))}, "
+                    f"after={self._comparable_nonchain_state(post_state)}",
                     {},
                 )
             problem = self._verify_nonchain_binding_state(
-                bid, post_state, require_full_owner=is_replaced
+                bid, post_state, require_owner_get=is_replaced
             )
             if problem:
                 return "mismatch", problem, {}
@@ -2059,10 +2148,10 @@ class HostedChainRunner:
                     "status": post_close_bindings[bid]["status"] or "active",
                     "artifact_id": post_close_bindings[bid]["artifact_id"],
                     "artifact_version": post_close_bindings[bid]["artifact_version"],
-                    "registry_version": str(
-                        (post_close_bindings[bid].get("registry_artifact") or {}).get("version") or ""
+                    "registry_version": post_close_bindings[bid]["registry_version"],
+                    "deployment_correlation_id": str(
+                        (post_close_bindings[bid].get("diagnostics") or {}).get("deployment_correlation_id") or ""
                     ),
-                    "deployment_correlation_id": post_close_bindings[bid]["deployment_correlation_id"],
                 }
                 for bid in now["binding_ids"]
             ],
