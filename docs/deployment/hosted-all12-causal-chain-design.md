@@ -278,6 +278,18 @@ rule and no same-subject rule applies (section 0). The harness never invents an 
   (`GET /api/training/previews/{session}` → `evaluations[pre_edit_eval_id]`) (it must predate the edit and differ from the post-edit
   evaluation); the post-edit metrics are only the reward/outcome. Missing it pauses with
   `pre_edit_evaluation_missing`.
+- **Resumed or reused A without pre-edit lineage** (`HOSTED-ALL12-RESUMED-A-PRE-EDIT-LINEAGE-20261025`). A
+  completed prior `A_research` receipt that lacks `pre_edit_eval_id` counts as incomplete for that field only. When
+  the parent's `HostedChainRunner.run()` reuses it (the replay short-circuit), and when `A_research` reuses an
+  existing eligible `control_patch` without a carried id, the id is derived from Training owner truth with GETs
+  only: `GET /api/training/sessions/{id}/events` selects the newest eligible nonzero user `control_patch` (the edit
+  accepted above), and `GET /api/training/previews/{id}` supplies the latest evaluation with finite metrics whose
+  `evaluation_result.evaluated_at` is **strictly before** that event. The scalar `pre_edit_eval_id` /
+  `pre_edit_evaluated_at` are persisted into A's resource ids and receipt, so `B_learning` receives them as
+  predecessors. The terminal readback is never used on this path because it may already show the post-edit
+  evaluation. Without such an evaluation the phase pauses with `pre_edit_evaluation_absent` (parent:
+  `A_research:pre_edit_evaluation_absent`). A post-edit evaluation is never used, no metric is synthesised, no
+  event is relabelled, and the replay issues no PATCH or preview job and does not recreate A resources.
 
 ## 6. Genuine Persona Pattern positives (acceptance 6)
 

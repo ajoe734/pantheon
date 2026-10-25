@@ -38,6 +38,7 @@ from l12_owner_auth import (
     approve_registry_entry,
     bearer,
     compose_file_args,
+    eligible_teaching_control_patches,
     hosted_chain_enabled,
     hosted_receipt_fields,
     human_token,
@@ -46,6 +47,7 @@ from l12_owner_auth import (
     persona_writer_identity,
     registry_advance_body,
     require_decided_approval,
+    resolve_pre_edit_lineage,
     token_subject,
 )
 
@@ -1308,16 +1310,22 @@ class DeployedResearchHarness:
             e for e in (events if isinstance(events, list) else [])
             if isinstance(e, Mapping) and e.get("event_type") == "control_patch" and e.get("patch_delta")
         ]
-        patches = [
-            e for e in control_patches
-            if e.get("actor_type") == "user" and str(e.get("actor") or "") and str(e.get("actor")) not in refused
-            and {d.get("parameter_key") for d in e["patch_delta"] if d.get("previous_value") != d.get("new_value")}
-            >= {"short_window", "long_window"}
-        ]
+        patches = eligible_teaching_control_patches(control_patches, refused)
         carried = self.hosted_input.predecessors if self.hosted_input else {}
         pre_id = str(carried.get("pre_edit_eval_id") or "").strip()
         pre_at = str(carried.get("pre_edit_evaluated_at") or "").strip()
-        if not pre_id:
+        if not pre_id and patches:
+            # Reusing an existing edit: the current terminal evaluation may already be the
+            # post-edit one, so take the latest owner evaluation strictly before that edit.
+            lineage = resolve_pre_edit_lineage(
+                lambda path: self._http_json(self.training_url, path, headers=headers, expected=(200, 404)),
+                session_id,
+                refused,
+                blocked_before="teaching_human_control_edit",
+                resource_ids={k: v for k, v in self._hosted_resource_ids().items() if v not in (None, "")},
+            )
+            pre_id, pre_at = lineage["pre_edit_eval_id"], lineage["pre_edit_evaluated_at"]
+        elif not pre_id:
             terminal = self._http_json(
                 self.training_url, f"/api/training/sessions/{quoted}/terminal-readback", headers=headers
             )
@@ -1348,13 +1356,7 @@ class DeployedResearchHarness:
             # control operation through the Training owner API (OPERATOR token), then verify its event.
             self._operator_teaching_patch(session_id, by_key)
             events = self._http_json(self.training_url, f"/api/training/sessions/{quoted}/events", headers=headers)
-            patches = [
-                e for e in (events if isinstance(events, list) else [])
-                if isinstance(e, Mapping) and e.get("event_type") == "control_patch" and e.get("patch_delta")
-                and e.get("actor_type") == "user" and str(e.get("actor") or "") and str(e.get("actor")) not in refused
-                and {d.get("parameter_key") for d in e["patch_delta"] if d.get("previous_value") != d.get("new_value")}
-                >= {"short_window", "long_window"}
-            ]
+            patches = eligible_teaching_control_patches(events, refused)
             if not patches:
                 raise HostedPause(
                     "teaching_human_control_edit",
