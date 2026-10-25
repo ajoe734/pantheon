@@ -1,0 +1,20 @@
+{
+  "task_id": "BFF-CHAIN-CAPITAL-RETIRE-SCOPE-20261025",
+  "source_only": true,
+  "fix": {
+    "coordinator": "retire_chain_paper_capital refuses a pool or binding whose chain label differs from the supplied chain_id before any write, even when a matching binding is present",
+    "caller": "E_close validates both the Capital binding and pool (scope plus persona/pool linkage) before the compound BFF retire call and forwards chain_id",
+    "legacy": "pool without metadata.persona_id still retires binding-then-pool via binding linkage; created_by is not rewritten"
+  },
+  "tests": {
+    "command": "pytest tests/unit/l12/test_hosted_stimulus_contract.py services/control-plane/bff/test_persona_provisioning_coordinator.py",
+    "result": "all passed",
+    "new_cases": [
+      "test_chain_paper_capital_retire_refuses_other_chain_pool_despite_matching_binding",
+      "test_chain_paper_capital_retire_refuses_other_chain_binding_before_any_write",
+      "test_chain_paper_capital_retire_keeps_legacy_pool_without_persona_metadata",
+      "test_e_close_sends_no_bff_capital_retire_when_pool_is_another_chain"
+    ]
+  },
+  "not_run": ["SSH", "VM", "deployment", "hosted business mutation", "provider/model calls"]
+}

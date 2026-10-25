@@ -870,12 +870,12 @@ def test_owner_client_routes_hosted_capital_only_through_the_bff_entry(monkeypat
     )
     status, payload = client.request("capital", "GET", "/api/bindings/b")
     assert status == 200 and payload == {"binding": {"binding_id": "b", "status": "active"}}
-    assert client.retire_chain_paper_capital("persona-1", "pool-1", "b") == 200
+    assert client.retire_chain_paper_capital("persona-1", "pool-1", "b", "chain-1") == 200
     assert [(m, u) for m, u, _h, _d in seen] == [
         ("GET", "http://bff/api/v1/bindings/b"),
         ("POST", "http://bff/bff/personas/persona-1/provisioning/paper-capital/retire")]
     assert all(h["Authorization"] == "Bearer session-token" for _m, _u, h, _d in seen)
-    assert json.loads(seen[1][3]) == {"binding_id": "b", "capital_pool_id": "pool-1"}
+    assert json.loads(seen[1][3]) == {"binding_id": "b", "capital_pool_id": "pool-1", "chain_id": "chain-1"}
     with pytest.raises(parent.StimulusProofError, match="only through the BFF"):
         client.request("capital", "PATCH", "/api/bindings/b/status", {"status": "revoked"})
     assert len(seen) == 2
@@ -886,10 +886,11 @@ def test_e_close_retires_hosted_capital_via_bff_entry_binding_before_pool(monkey
                          runtime_binding_id="rt-1")
     owner = FakeOwner({
         ("capital", "/api/capital-pools/pool-1"): _owned(status="active"),
-        ("capital", "/api/bindings/bnd-1"): {"binding": _owned(status="active")},
+        ("capital", "/api/bindings/bnd-1"): {"binding": _owned(
+            status="active", persona_id="persona-1", capital_pool_id="pool-1")},
         ("runtime", "/api/runtime-bindings/rt-1"): {"binding": _owned(status="active")},
     })
-    def retire(persona_id, pool_id, binding_id):
+    def retire(persona_id, pool_id, binding_id, chain_id=None):
         owner.log.append(("bff", "POST", f"retire:{persona_id}:{binding_id}:{pool_id}", None))
         owner.records[("capital", "/api/bindings/bnd-1")]["binding"]["status"] = "revoked"
         owner.records[("capital", "/api/capital-pools/pool-1")]["status"] = "archived"
@@ -900,6 +901,23 @@ def test_e_close_retires_hosted_capital_via_bff_entry_binding_before_pool(monkey
         "/api/runtime-bindings/rt-1/retire", "retire:persona-1:bnd-1:pool-1"]
     kinds = [r["kind"] for r in _receipt(tmp_path)["hosted"]["phases"]["E_close"]["retired"]]
     assert kinds == ["runtime_binding_id", "capital_binding_id", "capital_pool_id"]
+
+
+def test_e_close_sends_no_bff_capital_retire_when_pool_is_another_chain(monkeypatch, tmp_path):
+    prior = _close_prior(capital_pool_id="pool-1", capital_binding_id="bnd-1", persona_id="persona-1")
+    other_pool = {"tenant_id": TENANT, "metadata": {"chain_id": "someone-else"}, "status": "active"}
+    owner = FakeOwner({
+        ("capital", "/api/capital-pools/pool-1"): other_pool,
+        ("capital", "/api/bindings/bnd-1"): {"binding": _owned(
+            status="active", persona_id="persona-1", capital_pool_id="pool-1")},
+    })
+    sent = []
+    owner.retire_chain_paper_capital = lambda *a: sent.append(a) or 200
+    owner._bff_capital = lambda: True
+    _runner(tmp_path, "E_close", owner, prior=prior).run()
+    assert sent == [] and [p for _s, m, p, _b in owner.log if m != "GET"] == []
+    assert owner.records[("capital", "/api/capital-pools/pool-1")]["status"] == "active"
+    assert owner.records[("capital", "/api/bindings/bnd-1")]["binding"]["status"] == "active"
 
 
 def test_fake_owner_uses_the_real_plan_transition_table():

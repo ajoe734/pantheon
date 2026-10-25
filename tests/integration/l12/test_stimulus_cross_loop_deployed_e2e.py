@@ -589,13 +589,15 @@ class UrllibOwnerClient:
             headers["X-Tenant-Id"] = self.tenant_id
         return headers
 
-    def retire_chain_paper_capital(self, persona_id: str, pool_id: str, binding_id: str) -> int:
+    def retire_chain_paper_capital(
+        self, persona_id: str, pool_id: str, binding_id: str, chain_id: str | None = None
+    ) -> int:
         """Retire only the chain's Capital binding then pool via the BFF capital-only entry."""
         status, _ = self._send(
             "bff",
             "POST",
             f"/bff/personas/{urllib.parse.quote(persona_id, safe='')}/provisioning/paper-capital/retire",
-            {"capital_pool_id": pool_id, "binding_id": binding_id},
+            {"capital_pool_id": pool_id, "binding_id": binding_id, **({"chain_id": chain_id} if chain_id else {})},
             self._bff_headers(),
             None,
         )
@@ -899,6 +901,22 @@ class HostedChainRunner:
             return f"{kind} {record_id}: chain label {chain!r} != {self.chain_id!r}"
         if kind == "execution_artifact_id":
             return self._check_execution_artifact(record_id, record)
+        return None
+
+    def _capital_pair_mismatch(self, persona_id: str, pool_id: str, binding_id: str) -> str | None:
+        """Both Capital resources one BFF call can mutate must be this chain's before it is sent."""
+        pair = {"capital_binding_id": binding_id, "capital_pool_id": pool_id}
+        records: dict[str, Mapping[str, Any]] = {}
+        for kind, record_id in pair.items():
+            spec = RECORD_SPECS[kind]
+            status, record = self._read(spec, spec.read_path.format(id=urllib.parse.quote(record_id, safe="")))
+            mismatch = self._check_scope(kind, record_id, record) if status == 200 else f"{kind} {record_id}: GET {status}"
+            if mismatch:
+                return mismatch
+            records[kind] = record
+        binding = records["capital_binding_id"]
+        if binding.get("persona_id") != persona_id or binding.get("capital_pool_id") != pool_id:
+            return f"capital_binding_id {binding_id}: not linked to persona {persona_id!r} and pool {pool_id!r}"
         return None
 
     def _check_execution_artifact(self, record_id: str, record: Mapping[str, Any]) -> str | None:
@@ -1450,7 +1468,12 @@ class HostedChainRunner:
                 if not (persona_id and pool_id and binding_id):
                     incomplete.append(f"{kind} {record_id}: BFF capital retirement needs persona, pool and binding ids")
                     continue
-                code = bff_retire(persona_id, pool_id, binding_id)
+                pair_problem = self._capital_pair_mismatch(persona_id, pool_id, binding_id)
+                if pair_problem:
+                    if pair_problem not in rejected:
+                        rejected.append(pair_problem)  # the compound call can change both: nothing is sent
+                    continue
+                code = bff_retire(persona_id, pool_id, binding_id, self.chain_id)
             else:
                 identity = getattr(self.owner, "identity_for", None)
                 body_actor, body_roles = identity(spec.service) if callable(identity) else (actor, roles)

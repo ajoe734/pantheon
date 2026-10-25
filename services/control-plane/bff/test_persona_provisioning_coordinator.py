@@ -2713,6 +2713,54 @@ def test_chain_paper_capital_retire_refuses_unproven_or_non_paper_pool(
     assert [c for c in transport.calls if c[0] != "GET"] == []
 
 
+def test_chain_paper_capital_retire_refuses_other_chain_pool_despite_matching_binding() -> None:
+    transport = FakeOwnerTransport()
+    _seed_pool(
+        transport,
+        metadata={"execution_context": "paper", "persona_id": "persona-chain", "chain_id": "chain-other"},
+    )
+    _seed_pcb(transport, _CHAIN["binding_id"])
+
+    with pytest.raises(PersonaProvisioningCoordinationError, match="another chain"):
+        _chain_coordinator(transport).retire_chain_paper_capital(**_RETIRE, chain_id="chain-1")
+
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+    assert transport.objects[("capital", f"/api/bindings/{_CHAIN['binding_id']}")]["status"] == "active"
+    assert transport.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")]["status"] == "active"
+
+
+def test_chain_paper_capital_retire_refuses_other_chain_binding_before_any_write() -> None:
+    transport = FakeOwnerTransport()
+    _seed_pool(transport, metadata={"execution_context": "paper", "chain_id": "chain-1"})
+    _seed_pcb(transport, _CHAIN["binding_id"], metadata={"chain_id": "chain-other"})
+
+    with pytest.raises(PersonaProvisioningCoordinationError, match="PersonaCapitalBinding belongs to another chain"):
+        _chain_coordinator(transport).retire_chain_paper_capital(**_RETIRE, chain_id="chain-1")
+
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+
+
+def test_chain_paper_capital_retire_keeps_legacy_pool_without_persona_metadata() -> None:
+    transport = FakeOwnerTransport()
+    _seed_pool(
+        transport,
+        metadata={"execution_context": "paper", "chain_id": "chain-1"},
+        created_by="HOSTED-ALL12-CHAIN-DESIGN-20261023",
+    )
+    _seed_pcb(transport, _CHAIN["binding_id"], metadata={"chain_id": "chain-1"})
+
+    retired = _chain_coordinator(transport).retire_chain_paper_capital(**_RETIRE, chain_id="chain-1")
+
+    patches = [(p, b["status"]) for m, _, p, b in transport.calls if m == "PATCH"]
+    assert patches == [
+        (f"/api/bindings/{_CHAIN['binding_id']}/status", "revoked"),
+        (f"/api/capital-pools/{_CHAIN['capital_pool_id']}/status", "archived"),
+    ]
+    assert retired["capital_pool"]["status"] == "archived"
+    pool = transport.objects[("capital", f"/api/capital-pools/{_CHAIN['capital_pool_id']}")]
+    assert pool["created_by"] == "HOSTED-ALL12-CHAIN-DESIGN-20261023"
+
+
 def test_chain_paper_capital_retire_refuses_live_runtime_dependants() -> None:
     transport = FakeOwnerTransport()
     _seed_pool(transport, metadata={"execution_context": "paper", "persona_id": "persona-chain"})
