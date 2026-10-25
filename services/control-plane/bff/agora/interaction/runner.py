@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
@@ -178,10 +179,13 @@ def _validated_synthesis(result: Any, ids: List[str], opinions: List[Dict[str, A
     return {**result, "evidence_refs": [supplied[key] for key in supplied if key in picked]}
 
 
+def _operation_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _synthesize(
     client: Any,
     opinions: List[Dict[str, Any]],
-    created_at: str,
     *,
     operator_id: str,
     trace_id: str,
@@ -189,6 +193,7 @@ def _synthesize(
     attempt: int,
     lifecycle_store: Optional[InteractionLifecycleStore],
     lease_owner: Optional[str],
+    clock: Callable[[], str] = _operation_now,
 ) -> Optional[Dict[str, Any]]:
     """One structured provider judgment over the persisted opinions; never assembled locally.
 
@@ -210,13 +215,14 @@ def _synthesize(
         "Reference only evidence supplied in the opinions. Answer with one JSON object only that satisfies the schema.\n\n"
         + json.dumps(opinions, sort_keys=True, default=str)
     )
+    started_at = clock()  # operation time, not the immutable admission time
     invocation = {
         "invocation_id": invocation_id, "interaction_id": interaction_id, "provider_kind": "openclaw",
         "participant": {"persona_id": "synthesis", "persona_version": "1", "session_persona_id": "synthesis",
                         "provider_agent_id": "openclaw-structured", "workspace_id": "synthesis",
-                        "environment_ceiling": "analysis", "capability_snapshot": ["synthesis"], "captured_at": created_at},
+                        "environment_ceiling": "analysis", "capability_snapshot": ["synthesis"], "captured_at": started_at},
         "request_correlation_id": correlation_id, "request_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        "status": "running", "started_at": created_at, "authority": authority_boundary(),
+        "status": "running", "started_at": started_at, "authority": authority_boundary(),
     }
     ambiguous = False
     if lifecycle_store is not None:
@@ -226,7 +232,7 @@ def _synthesize(
             return durable["invocation"].get("synthesis")  # adopt the saved result; None while still running
         ambiguous = durable["attempt"] > 1  # an earlier claim died; the adapter does not dedupe on the key
     synthesis = {
-        "synthesis_id": synthesis_id, "opinion_ids": ids, "created_at": created_at, "authority": authority_boundary(),
+        "synthesis_id": synthesis_id, "opinion_ids": ids, "created_at": started_at, "authority": authority_boundary(),
         "risk_notes": [risk for opinion in opinions for risk in opinion.get("risks") or []],
         "conditions": [c for opinion in opinions for c in opinion.get("invalidation_conditions") or []],
     }
@@ -250,8 +256,10 @@ def _synthesize(
         synthesis.update({"status": "degraded", "summary": "Synthesis unavailable.", "agreements": [],
                           "disagreements": [], "evidence_refs": []})
         invocation["error"] = error
+    completed_at = clock()
+    synthesis["created_at"] = completed_at
     if lifecycle_store is not None:
-        invocation.update({"status": "failed" if error else "succeeded", "completed_at": created_at, "synthesis": synthesis})
+        invocation.update({"status": "failed" if error else "succeeded", "completed_at": completed_at, "synthesis": synthesis})
         lifecycle_store.finish_invocation(interaction_id, invocation=invocation, opinion=None, error=error,
                                           outbox=[], lease_owner=lease_owner)
     return synthesis
@@ -282,6 +290,7 @@ def run_selected_persona_interaction(
     invocation_attempt: int = 0,
     lease_owner: Optional[str] = None,
     lease_duration_seconds: int = 300,
+    clock: Callable[[], str] = _operation_now,
 ) -> Dict[str, Any]:
     from services.control_plane.bff.agora.strategy_workshop.events import ws_publish
 
@@ -427,7 +436,7 @@ def run_selected_persona_interaction(
             "request_correlation_id": request_correlation_id,
             "request_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "status": "running",
-            "started_at": occurred_at,
+            "started_at": clock(),
             "authority": authority_boundary(),
         }
         if lifecycle_store is not None:
@@ -481,11 +490,12 @@ def run_selected_persona_interaction(
                 provider_payload,
                 expected_agent_id=admission["agent_id"],
             )
+            completed_at = clock()
             invocation.update({
                 "status": "succeeded",
                 "response_correlation_id": response_correlation_id,
                 "response_sha256": response_sha,
-                "completed_at": occurred_at,
+                "completed_at": completed_at,
                 "error": None,
             })
             opinion_id = "opn-" + hashlib.sha256(
@@ -507,7 +517,7 @@ def run_selected_persona_interaction(
                     "magic_topic_trigger": False,
                     "simulation": False,
                 },
-                "created_at": occurred_at,
+                "created_at": completed_at,
                 "authority": authority_boundary(),
             }
             opinions.append(opinion)
@@ -532,7 +542,7 @@ def run_selected_persona_interaction(
                     "provider_invocation": invocation,
                     "opinion": opinion,
                     "trace_id": trace_id,
-                    "created_at": occurred_at,
+                    "created_at": completed_at,
                     "authority": authority_boundary(),
                 },
                 "trace_id": trace_id,
@@ -554,9 +564,10 @@ def run_selected_persona_interaction(
                 workshop_store.create_event(opinion_event)
         except Exception as exc:  # noqa: BLE001
             error = _provider_error(exc)
+            failed_at = clock()
             invocation.update({
                 "status": "failed",
-                "completed_at": occurred_at,
+                "completed_at": failed_at,
                 "error": error,
             })
             failed_persona_ids.append(participant["persona_id"])
@@ -576,7 +587,7 @@ def run_selected_persona_interaction(
                     "provider_invocation": invocation,
                     "opinion": None,
                     "trace_id": trace_id,
-                    "created_at": occurred_at,
+                    "created_at": failed_at,
                     "authority": authority_boundary(),
                 },
                 "trace_id": trace_id,
@@ -626,14 +637,15 @@ def run_selected_persona_interaction(
         }
 
     synthesis = _synthesize(
-        client, opinions, occurred_at, operator_id=operator_id, trace_id=trace_id, interaction_id=interaction_id,
-        attempt=invocation_attempt, lifecycle_store=lifecycle_store, lease_owner=lease_owner,
+        client, opinions, operator_id=operator_id, trace_id=trace_id, interaction_id=interaction_id,
+        attempt=invocation_attempt, lifecycle_store=lifecycle_store, lease_owner=lease_owner, clock=clock,
     )
     if opinions and synthesis is None:  # another worker holds the synthesis claim
         return {"status": "running", "opinions": opinions, "invocations": invocations, "synthesis": None,
                 "missing_participant_ids": [], "in_progress_participant_ids": ["synthesis"]}
     unavailable = (synthesis or {}).get("status") == "degraded"
     final_status = "completed" if opinions and not failed_persona_ids and not unavailable else ("degraded" if opinions else "failed")
+    closed_at = clock()
     closed_event_id = _event_id(tenant_id, user_id, interaction_id, attempt_event("closed"))
     closed_event = {
         "event_id": closed_event_id,
@@ -652,7 +664,7 @@ def run_selected_persona_interaction(
             "missing_participant_ids": failed_persona_ids,
             "synthesis": synthesis,
             "trace_id": trace_id,
-            "created_at": occurred_at,
+            "created_at": closed_at,
             "authority": authority_boundary(),
         },
         "trace_id": trace_id,
@@ -668,7 +680,7 @@ def run_selected_persona_interaction(
         "provider_invocations": invocations,
         "synthesis": synthesis,
         "missing_participant_ids": failed_persona_ids,
-        "freshness": occurred_at,
+        "freshness": closed_at,
         "authority": authority_boundary(),
     }
     if mode == "propose_action" and proposal_snapshot:
