@@ -107,10 +107,14 @@ services:
     pull_policy: never
     restart: unless-stopped
     profiles: ["core", "singleton"]
+    # Existing loop-run-projector-scheduler telemetry image; command selects the lifecycle projector.
+    command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
     <<: *secrets
     environment:
       <<: *core_env
       LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
+      # Isolated staging DSNs come from the secrets env file (validated by bootstrap.sh).
+      GIT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
     labels: {"org.pantheon.role": "singleton"}
     depends_on:
       - postgres
@@ -133,15 +137,15 @@ services:
       PANTHEON_BFF_CORS_ORIGINS: ${STAGING_BFF_CORS_ORIGINS:?staging FE origin required}
       PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: postgres
       LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
-      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8000
-      PANTHEON_GOVERNANCE_API_URL: http://governance:8000
-      PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8000
-      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8000
-      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8000
-      PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8000
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8080
+      PANTHEON_GOVERNANCE_API_URL: http://governance:8082
+      PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8082
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
+      PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8095
     labels: {"org.pantheon.role": "bff"}
     ports:
-      - "127.0.0.1:${STAGING_BFF_PORT:-18001}:8000"
+      - "127.0.0.1:${STAGING_BFF_PORT:-18001}:8001"
     depends_on:
       - postgres
       - nats
