@@ -345,7 +345,14 @@ def test_hosted_credentials_stay_out_of_inputs_argv_and_uploads() -> None:
         assert not re.search(r"token|secret|password|credential", name)
     run = HOSTED_PHASE_STEP["run"]
     env = HOSTED_PHASE_STEP["env"]
-    assert env["DEV_BFF_DEV_LOGIN_CLIENT_SECRET"] == "${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
+    assert env["DEV_BFF_DEV_LOGIN_CLIENT_SECRET"] == (
+        "${{ secrets[inputs.chain_phase == 'E_close' && 'DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET'"
+        " || 'DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET'] }}"
+    )
+    assert env["DEV_BFF_DEV_LOGIN_CLIENT_ID"] == (
+        "${{ inputs.chain_phase == 'E_close' && (vars.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID"
+        " || 'pantheon-dev-admin-test') || vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID }}"
+    )
     # Secret values only leave the runner through the ssh stdin bundle.
     assert '< "${bundle}"' in run
     assert not re.search(r"\$\{?DEV_BFF_DEV_LOGIN_CLIENT_SECRET", run.split("<<'PY'")[0])
