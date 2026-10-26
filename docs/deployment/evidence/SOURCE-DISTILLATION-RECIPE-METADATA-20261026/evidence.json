@@ -1,0 +1,11 @@
+{
+  "task_id": "SOURCE-DISTILLATION-RECIPE-METADATA-20261026",
+  "scope": "source-only",
+  "change": "_synthesize_evidence_item copies Source.metadata deeply and omits strategy_seed.execution_recipe, so recipe authority stays only on Source.metadata.strategy_seed",
+  "unchanged": ["strategy_seed_builder Source-only authority checks", "Source.metadata (not mutated)"],
+  "validation": {
+    "command": "pytest services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_strategy_seed_builder.py",
+    "result": "63 passed"
+  },
+  "hosted_actions": "none"
+}

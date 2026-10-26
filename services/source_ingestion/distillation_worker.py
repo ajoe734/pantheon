@@ -17,6 +17,7 @@ Invariants:
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -1499,6 +1500,19 @@ class DistillationJobQueue:
         return [dict(row) for row in rows]
 
 
+def _evidence_metadata_without_recipe_authority(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy Source metadata for an EvidenceItem without mirroring recipe authority.
+
+    Only ``Source.metadata.strategy_seed.execution_recipe`` may supply a recipe;
+    the Source itself is left untouched and the nested mapping is copied.
+    """
+    copied = copy.deepcopy(dict(metadata))
+    nested = copied.get("strategy_seed")
+    if isinstance(nested, dict):
+        nested.pop("execution_recipe", None)
+    return copied
+
+
 def _synthesize_evidence_item(
     source: SourceRecord,
     source_digest: str | None = None,
@@ -1527,7 +1541,10 @@ def _synthesize_evidence_item(
         body=body,
         confidence=float(source.metadata.get("trust_score") or 0.7),
         access_scope=list(source.metadata.get("access_scope") or ("public",)),
-        metadata={"evidence_dedupe_key": item_id, **dict(source.metadata)},
+        metadata={
+            "evidence_dedupe_key": item_id,
+            **_evidence_metadata_without_recipe_authority(source.metadata),
+        },
     )
 
 
