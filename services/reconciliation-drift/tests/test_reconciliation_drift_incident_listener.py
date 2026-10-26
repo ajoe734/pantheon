@@ -482,8 +482,11 @@ def test_two_distinct_full_orders_for_one_decision_store_duplicate_report_and_re
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
         client = TestClient(svc.app)
-        first = _post_duplicate_trigger(client, svc, events)
-        second = _post_duplicate_trigger(client, svc, events)
+        with mock.patch.dict("os.environ", {"PANTHEON_INCIDENTS_API_URL": "http://incidents"}), mock.patch.object(
+            svc, "_post_json", return_value={"incident_id": "inc-x"}
+        ):
+            first = _post_duplicate_trigger(client, svc, events)
+            second = _post_duplicate_trigger(client, svc, events)
         assert first.status_code == 201 and first.json()["created"] is True
         assert second.json()["skipped"] is True
 
@@ -640,3 +643,51 @@ def test_missing_ledger_commit_and_plan_scope_are_not_silently_measured() -> Non
         _post_duplicate_trigger(client, svc, events)
         _, check = _duplicate_check(client)
         assert not check.get("duplicate_detected") and _reports(svc) == []
+
+
+def test_ambiguous_fill_evidence_is_unmeasured_not_healthy() -> None:
+    bad_meta = dict(_fill_event("x", "ord-3", "t")["metadata"])
+    del bad_meta["broker_submission_status"]
+    for name, extra in {
+        "no_status": _fill_event("evt-c", "ord-3", "2026-10-25T09:52:00Z", metadata=bad_meta),
+        "no_order": _fill_event("evt-c", "", "2026-10-25T09:52:00Z", metadata={
+            **{k: v for k, v in _fill_event("x", "o", "t")["metadata"].items() if k != "broker_order_id"}}),
+    }.items():
+        with tempfile.TemporaryDirectory() as data_dir:
+            svc = _load_service_module(data_dir)
+            client = TestClient(svc.app)
+            _post_duplicate_trigger(client, svc, [*_two_orders()[:1], extra])
+            _, check = _duplicate_check(client)
+            assert check["measurement"] == "unmeasured", name
+            assert not check.get("duplicate_detected"), name
+
+
+def test_top_level_fill_id_replay_is_not_double_counted() -> None:
+    events = [
+        _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z", qty=0.6, fill_id="fill-1"),
+        _fill_event("evt-a2", "ord-1", "2026-10-24T09:50:14Z", qty=0.6, fill_id="fill-1"),
+        _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", qty=0.4, fill_id="fill-2"),
+    ]
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        _post_duplicate_trigger(client, svc, events)
+        _, check = _duplicate_check(client)
+        assert check["measurement"] == "measured" and check["duplicate_detected"] is False
+        assert _reports(svc) == []
+
+
+def test_not_configured_handoff_is_retried_after_incidents_restored() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        with mock.patch.dict("os.environ", {"PANTHEON_INCIDENTS_API_URL": ""}):
+            assert _post_duplicate_trigger(client, svc, _two_orders()).status_code == 201
+        assert _reports(svc)[0]["handoff_state"] == "not_configured"
+        delivered = []
+        with mock.patch.dict("os.environ", {"PANTHEON_INCIDENTS_API_URL": "http://incidents"}), mock.patch.object(
+            svc, "_post_json", side_effect=lambda url, payload, **kw: delivered.append(payload) or {"incident_id": "inc-x"}
+        ):
+            _post_duplicate_trigger(client, svc, _two_orders())
+        assert len(delivered) == 1 and len(_reports(svc)) == 1
+        assert _reports(svc)[0]["handoff_state"] == "delivered"

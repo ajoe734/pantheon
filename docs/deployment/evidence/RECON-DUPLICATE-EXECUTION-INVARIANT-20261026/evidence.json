@@ -1,9 +1,9 @@
 {
   "task_id": "RECON-DUPLICATE-EXECUTION-INVARIANT-20261026",
   "scope": "source-only; local tests; not hosted/all12 acceptance",
-  "change": "incident-triggers/consume now resolves tenant-scoped accepted events via fetch_accepted_event and stores a duplicate_execution_invariant reconciliation check; a detected duplicate also stores one idempotent derived drift report preserving both event ids and the predecessor incident; rework: handoff report links exactly one telemetry event (latest) with both ids in duplicate_event_ids, carries deployment_stage/persona_capital_binding_id/trace_id and is delivered via existing incidents consume path (failure leaves report durable, evaluation unwritten, retry redelivers); telemetry fetch failure returns 503 without persisting; missing ledger/submit evidence or plan/capital identity is unmeasured; scope key includes plan_id/checksum/capital_pool",
+  "change": "incident-triggers/consume now resolves tenant-scoped accepted events via fetch_accepted_event and stores a duplicate_execution_invariant reconciliation check; a detected duplicate also stores one idempotent derived drift report preserving both event ids and the predecessor incident; rework: handoff report links exactly one telemetry event (latest) with both ids in duplicate_event_ids, carries deployment_stage/persona_capital_binding_id/trace_id and is delivered via existing incidents consume path (failure leaves report durable, evaluation unwritten, retry redelivers); telemetry fetch failure returns 503 without persisting; missing ledger/submit evidence or plan/capital identity is unmeasured; scope key includes plan_id/checksum/capital_pool; rework 2: fill evidence lacking order id/status is unmeasured (ambiguous_fill_evidence); canonical top-level fill_id dedupes replayed fills; not_configured/undelivered owner handoff stays retryable on replay via existing store",
   "validation": {
-    "focused": "pytest incident_listener + consumer tests: 34 passed",
+    "focused": "pytest incident_listener + consumer tests: 37 passed",
     "service_suite": "pytest services/reconciliation-drift --continue-on-collection-errors: 153 passed, 1 skipped, 4 collection errors (missing optional deps in local venv; same 4 files error on unmodified dev)"
   },
   "not_done": [

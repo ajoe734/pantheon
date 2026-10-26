@@ -3526,6 +3526,14 @@ def _duplicate_execution_analysis(
         m, mt = meta(dto), metrics(dto)
         broker_order_id = str(m.get("broker_order_id") or dto.get("order_id") or "").strip()
         status = str(m.get("broker_submission_status") or "").strip().lower()
+        is_reversal = (
+            event_id in reversed_ids
+            or any(meta(dto).get(k) or dto.get(k) for k in _REVERSAL_REF_KEYS)
+            or status in _REVERSAL_STATUSES
+        )
+        if not is_reversal and mt.get("fill_quantity") is not None and (not broker_order_id or not status):
+            # Fill evidence without order identity or status is ambiguous, not "no duplicate".
+            return unmeasured("ambiguous_fill_evidence", event_id=event_id)
         if (
             not broker_order_id
             or event_id in reversed_ids
@@ -3583,7 +3591,7 @@ def _duplicate_execution_analysis(
         group["events"].append(event_id)
         fills = group["orders"].setdefault(broker_order_id, {})
         # Replay of one fill (same fill id or same event) is not a second fill.
-        fills[str(m.get("fill_id") or event_id)] = abs(fill)
+        fills[str(dto.get("fill_id") or m.get("fill_id") or event_id)] = abs(fill)
 
     groups = {key: value for key, value in groups.items() if value["orders"]}
     if not groups:
@@ -3767,6 +3775,13 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
         for check in existing.get("reconciliation_checks") or []
     ):
         # Evidence was not yet accepted when first evaluated: replay re-measures.
+        existing = None
+    if existing is not None and any(
+        (stored_report := store.get_drift_report(str(report_id), tenant_id=tenant_id)) is not None
+        and stored_report.get("handoff_state") != "delivered"
+        for report_id in existing.get("drift_report_ids") or []
+    ):
+        # Owner handoff never completed (e.g. Incidents not configured): replay retries it.
         existing = None
     if is_infra or existing is not None:
         return {
