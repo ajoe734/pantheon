@@ -677,6 +677,22 @@ def test_top_level_fill_id_replay_is_not_double_counted() -> None:
         assert _reports(svc) == []
 
 
+def test_same_order_events_without_fill_id_are_unmeasured_not_fabricated_breach() -> None:
+    events = [
+        _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z", qty=0.6),
+        _fill_event("evt-a2", "ord-1", "2026-10-24T09:50:14Z", qty=0.6),
+        _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", qty=0.4),
+    ]
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        _post_duplicate_trigger(client, svc, events)
+        _, check = _duplicate_check(client)
+        assert check["measurement"] == "unmeasured"
+        assert check["reason"] == "ambiguous_fill_evidence"
+        assert not check.get("duplicate_detected") and _reports(svc) == []
+
+
 def test_not_configured_handoff_is_retried_after_incidents_restored() -> None:
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)

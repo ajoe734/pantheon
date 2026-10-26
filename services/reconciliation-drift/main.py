@@ -3591,7 +3591,14 @@ def _duplicate_execution_analysis(
         group["events"].append(event_id)
         fills = group["orders"].setdefault(broker_order_id, {})
         # Replay of one fill (same fill id or same event) is not a second fill.
-        fills[str(dto.get("fill_id") or m.get("fill_id") or event_id)] = abs(fill)
+        canonical_fill_id = str(dto.get("fill_id") or m.get("fill_id") or "").strip()
+        if not canonical_fill_id and fills:
+            # Several events for one order without a canonical fill id cannot be
+            # told apart as replay versus incremental partial fill: unmeasured.
+            return unmeasured("ambiguous_fill_evidence", event_id=event_id, broker_order_id=broker_order_id)
+        if canonical_fill_id and any(k.startswith("event:") for k in fills):
+            return unmeasured("ambiguous_fill_evidence", event_id=event_id, broker_order_id=broker_order_id)
+        fills[canonical_fill_id or f"event:{event_id}"] = abs(fill)
 
     groups = {key: value for key, value in groups.items() if value["orders"]}
     if not groups:
