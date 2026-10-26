@@ -539,3 +539,114 @@ def test_write_paths_use_keyed_reads_and_keep_generated_ids() -> None:
     )
     assert consumed.status_code == 201, consumed.text
     assert consumed.json()["drift_report_count"] == 1
+
+
+def test_postgres_backed_health_and_readyz_preserve_evaluation_count_and_fail_closed_semantics(
+    tmp_path: Path,
+) -> None:
+    import re
+    from types import SimpleNamespace
+
+    module = _load_service_module()
+
+    class _Cursor:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
+        def fetchone(self):
+            return self._rows[0] if self._rows else None
+
+    class _Conn:
+        rows: dict[str, dict[str, object]] = {}
+        statements: list[str] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params=()):
+            self.statements.append(sql)
+            norm = " ".join(sql.split()).upper()
+            match = re.search(
+                r"(?:FROM|INTO|UPDATE)\s+((?:\"[^\"]+\"\.)?\"[^\"]+\")",
+                sql,
+                re.IGNORECASE,
+            )
+            table = match.group(1) if match else "<unknown>"
+            if norm.startswith(("CREATE", "SELECT PG_ADVISORY_XACT_LOCK")):
+                return _Cursor([])
+            if norm.startswith("INSERT INTO"):
+                payload = json.loads(params[1]) if isinstance(params[1], str) else params[1]
+                self.rows.setdefault(table, {})[str(params[0])] = payload
+                return _Cursor([])
+            if norm.startswith("SELECT COUNT(*)"):
+                count = 0
+                for payload in self.rows.get(table, {}).values():
+                    if isinstance(payload, str):
+                        decoded = json.loads(payload)
+                        if isinstance(decoded, dict):
+                            count += 1
+                    elif isinstance(payload, dict):
+                        count += 1
+                return _Cursor([(count,)])
+            return _Cursor([])
+
+    conn = _Conn()
+    fake_psycopg = SimpleNamespace(connect=lambda dsn: conn)
+    with (
+        mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}),
+        mock.patch.dict(
+            "os.environ",
+            {
+                "RECONCILIATION_DRIFT_STORE_BACKEND": "postgres",
+                "DATABASE_URL": "postgresql://test:test@localhost:5432/test",
+            },
+        ),
+    ):
+        pg_store = module.build_reconciliation_drift_store(tmp_path)
+        module.store = pg_store
+        pg_store.put_evaluation({"evaluation_id": "eval-pg-1", "status": "ok"})
+        eval_table = pg_store._evaluation_records.table
+        conn.rows[eval_table]["eval-pg-str"] = '{"evaluation_id": "eval-pg-str", "status": "ok"}'
+        conn.rows[eval_table]["eval-pg-arr"] = [1, 2]
+        pg_store.put_alert_handoff({"alert_id": "alert-pg-1", "status": "sent"})
+        pg_store.put_reconciliation_record({"record_id": "rec-pg-1", "severity": "low"})
+        pg_store.put_drift_report({"drift_report_id": "rep-pg-1", "status": "open"})
+        pg_store.put_worker_state({"state_id": "state-pg-1", "status": "healthy"})
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+                "PANTHEON_LINEAGE_READ_URL": "http://lineage-read:8094",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+            },
+        ):
+            client = TestClient(module.app)
+            conn.statements.clear()
+            readyz = client.get("/readyz")
+            assert readyz.status_code == 200
+            metrics = readyz.json()["metrics"]
+            assert metrics["evaluation_count"] == 2
+            assert metrics["alert_count"] == 1
+            assert metrics["reconciliation_record_count"] == 1
+            assert metrics["drift_report_count"] == 1
+            assert metrics["worker_state_count"] == 1
+            assert any(
+                "WHERE jsonb_typeof(payload) IN ('object', 'string')" in " ".join(s.split())
+                for s in conn.statements
+            )
+
+            health = client.get("/health")
+            assert health.status_code == 200
+            assert health.json()["evaluation_count"] == 2
+
+            conn.rows[eval_table]["eval-pg-bad"] = "not-json"
+            failing_client = TestClient(module.app, raise_server_exceptions=False)
+            assert failing_client.get("/readyz").status_code == 500
+            assert failing_client.get("/health").status_code == 500

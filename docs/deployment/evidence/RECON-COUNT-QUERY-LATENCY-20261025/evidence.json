@@ -1,0 +1,152 @@
+{
+  "task_id": "RECON-COUNT-QUERY-LATENCY-20261025",
+  "title": "Reduce observed reconciliation aggregate query latency",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "source_only": true,
+  "canonical_dependency_truth": {
+    "RECON-HEALTH-COUNTS-20261015": {
+      "status": "done",
+      "satisfied": true,
+      "preserved_contract": "Five count_* methods on ReconciliationDriftStore and PostgresReconciliationDriftStore remain intact and used by /readyz and /health."
+    },
+    "RECON-SVC-KEYED-READS-20261019": {
+      "status": "done",
+      "satisfied": true,
+      "preserved_contract": "Keyed existence and binding-scoped reads remain intact."
+    }
+  },
+  "immutable_source_evidence_inputs": [
+    {
+      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402146-official-readonly/actual-reconciliation-container-five-file-bytes-exact-a1-readonly.json",
+      "sha256": "9fd9ee0409b9f92e447a1c2fe8b5fe24584955e9451426d3eedd07499da944df",
+      "summary": "Proves live pantheon-reconciliation-drift container matches merge commit a1b80a026650148bfa85044514e464e6c8303792 byte-for-byte across all five service/foundation files."
+    },
+    {
+      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402146-official-readonly/actual-existing-five-aggregate-SQL-vs-plain-count-readonly-profile.json",
+      "sha256": "16f79a962a15baea942ee005189c94716bfcabe24a165bd60394131a17286921",
+      "summary": "Proves reconciliation_drift.drift_evaluations existing jsonb_typeof(CASE ...) count took 2500.647ms vs 798.855ms plain COUNT(*), while the other four tables' existing valid-count queries totaled 203.549ms (3.277ms + 3.541ms + 185.854ms + 10.877ms) and five connection opens totaled 85.727ms (< 100ms)."
+    },
+    {
+      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402146-official-readonly/actual-existing-evaluation-aggregate-query-plan-and-table-statistics-readonly.json",
+      "sha256": "24dec45020871da973d5c8ae25a1a51076d5fe6ea0b55c1693a33b3537583ee2",
+      "summary": "Proves EXPLAIN (ANALYZE, BUFFERS) on reconciliation_drift.drift_evaluations (63,846 live rows, 2,510 dead tuples, only drift_evaluations_pkey index) executed a Seq Scan with 101,666 shared hit + 9,611 read = 111,277 blocks in 2405.370ms due to TOASTed payload detoasting."
+    },
+    {
+      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402146-official-readonly/observer-correction-stale-health-source-citation-withdrawn-actual6s-remains.json",
+      "sha256": "539e6c6f4bed6b5f141cc8a2c962455d9c898dea3e99a5f53620d097f1624f7e",
+      "summary": "Withdraws stale old-checkout list_all health citation while preserving the actual hosted 5978ms (~6s) /readyz timeout observation under the unchanged 3s deadline."
+    }
+  ],
+  "hosted_observation_vs_local_verification_separation": {
+    "actual_hosted_readyz_observation_ms": 5978,
+    "actual_hosted_readyz_deadline_ms": 3000,
+    "actual_hosted_drift_evaluations_count_query_ms": 2500.647,
+    "actual_hosted_drift_evaluations_plain_count_ms": 798.855,
+    "actual_hosted_other_four_valid_count_queries_total_ms": 203.549,
+    "actual_hosted_drift_evaluations_explain_analyze_ms": 2405.37,
+    "actual_hosted_drift_evaluations_live_rows": 63846,
+    "actual_hosted_drift_evaluations_shared_blocks": {
+      "shared_hit": 101666,
+      "shared_read": 9611,
+      "total_blocks": 111277
+    },
+    "actual_hosted_five_connections_total_ms": 85.727,
+    "hosted_latency_claimed_fixed": false,
+    "separation_note": "The 5978ms hosted /readyz observation and 2500.647ms/2405.370ms hosted SQL measurements (with 798.855ms evaluation plain COUNT(*), 203.549ms total across the other four valid-count queries, and 85.727ms across five connection opens) are historical read-only evidence from the frozen accepted deployment (BE a1b80a026650148bfa85044514e464e6c8303792). Local PostgreSQL 16 plan measurements (3535.467ms -> 10.191ms/10.391ms) below are isolated local verification only and do not claim hosted readiness latency is resolved until originalRoot01a11 deploys and verifies hosted /readyz under the unchanged 3s deadline."
+  },
+  "scoped_solution": {
+    "production_files_modified": [
+      "services/foundation/postgres_json_store.py",
+      "services/reconciliation-drift/store.py"
+    ],
+    "net_production_lines_delta": 29,
+    "net_production_line_budget": 120,
+    "diff_stat_production": "2 files changed, 38 insertions(+), 9 deletions(-)",
+    "owner_store_index_ddl": "CREATE INDEX IF NOT EXISTS \"drift_evaluations_count_idx\" ON \"reconciliation_drift\".\"drift_evaluations\" ((jsonb_typeof(payload))) WHERE jsonb_typeof(payload) IN ('object', 'string')",
+    "owner_store_indexed_count_sql": "SELECT COUNT(*) - (SELECT COUNT(*) FROM \"reconciliation_drift\".\"drift_evaluations\" WHERE jsonb_typeof(payload) IN ('object', 'string') AND jsonb_typeof(payload) = 'string' AND jsonb_typeof((payload #>> '{}')::jsonb) <> 'object') AS count FROM \"reconciliation_drift\".\"drift_evaluations\" WHERE jsonb_typeof(payload) IN ('object', 'string')",
+    "scope_isolation": "count_index=True is enabled exclusively on PostgresReconciliationDriftStore._evaluation_records (reconciliation_drift.drift_evaluations). All other owner-store tables keep count_index=False (default) with no extra index DDL and the existing single-pass count query.",
+    "preserved_semantics": {
+      "json_objects_counted": true,
+      "legacy_string_encoded_objects_counted": true,
+      "non_object_jsonb_and_string_non_objects_excluded": true,
+      "malformed_string_payload_fails_closed_on_count": true,
+      "missing_aggregate_row_or_db_error_fails_closed": true,
+      "bootstrap_false_and_read_only_skip_ddl": true,
+      "backward_compatible_rollback": "Additive partial expression index created with CREATE INDEX IF NOT EXISTS under existing table advisory transaction lock and (23505, 42P07) duplicate-DDL guard; zero heap/column/row rewrites."
+    }
+  },
+  "bounded_local_postgresql_16_plan_evidence": {
+    "environment": "Ephemeral isolated local container (docker run --rm --network none postgres:16-alpine) with 63,846 TOASTed ~12KB JSONB rows and 2,510 non-all-visible updated tuples matching live table statistics (reltuples=63846, relpages=1145, relallvisible=1056).",
+    "unindexed_baseline_plan": {
+      "plan_node": "Seq Scan on drift_evaluations",
+      "filter": "(jsonb_typeof(CASE WHEN (jsonb_typeof(payload) = 'string'::text) THEN ((payload #>> '{}'::text[]))::jsonb ELSE payload END) = 'object'::text)",
+      "rows_removed_by_filter": 0,
+      "actual_rows": 63846,
+      "buffers": {
+        "shared_hit": 351274,
+        "shared_read": 32955,
+        "written": 14221,
+        "total_shared_hit_plus_read": 384229
+      },
+      "planning_time_ms": 0.448,
+      "execution_time_ms": 3535.467
+    },
+    "indexed_plan_before_analyze": {
+      "outer_plan_node": "Index Only Scan using drift_evaluations_count_idx on drift_evaluations",
+      "initplan_1_node": "Bitmap Heap Scan on drift_evaluations -> Bitmap Index Scan on drift_evaluations_count_idx (Index Cond: (jsonb_typeof(payload) = 'string'::text))",
+      "heap_fetches": 2598,
+      "actual_rows": 63846,
+      "buffers": {
+        "shared_hit": 48,
+        "shared_read": 56,
+        "initplan_1_shared_hit": 2,
+        "total_shared_hit_plus_read": 104
+      },
+      "planning_time_ms": 0.653,
+      "execution_time_ms": 10.191
+    },
+    "indexed_plan_after_analyze": {
+      "outer_plan_node": "Index Only Scan using drift_evaluations_count_idx on drift_evaluations",
+      "initplan_1_node": "Index Scan using drift_evaluations_count_idx on drift_evaluations (Index Cond: (jsonb_typeof(payload) = 'string'::text), Filter: (jsonb_typeof(((payload #>> '{}'::text[]))::jsonb) <> 'object'::text))",
+      "heap_fetches": 2598,
+      "actual_rows": 63846,
+      "buffers": {
+        "shared_hit": 3,
+        "shared_read": 101,
+        "initplan_1_shared_hit": 2,
+        "total_shared_hit_plus_read": 104
+      },
+      "planning_time_ms": 0.359,
+      "execution_time_ms": 10.391
+    }
+  },
+  "validation_commands": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "summary": "Provisioned worktree test interpreter at .venv-pantheon/bin/python3."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/foundation/tests/test_control_plane_postgres_owner_stores.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py",
+      "exit_code": 0,
+      "summary": "53 passed, 1 skipped in 19.74s (the 1 skip in default mode is test_live_postgres_reconciliation_drift_store_loopback when TEST_DATABASE_URL is unset)."
+    },
+    {
+      "command": "TEST_DATABASE_URL=\"postgresql://postgres@/postgres?host=$SOCK_DIR\" .venv-pantheon/bin/python3 -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_store.py -k \"test_live_postgres_reconciliation_drift_store_loopback or test_postgres_store_owns_records_reports_worker_state_and_work_claims\"",
+      "exit_code": 0,
+      "summary": "2 passed, 28 deselected in 1.23s against an ephemeral network-isolated (--network none) postgres:16-alpine unix-socket instance, verifying drift_evaluations_count_idx creation, legacy string-encoded object count, non-object exclusion, and fail-closed error on malformed string payload."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "summary": "Clean whitespace and patch check across all modified files."
+    }
+  ],
+  "frozen_hosted_release_boundary": {
+    "accepted_backend_sha": "a1b80a026650148bfa85044514e464e6c8303792",
+    "accepted_frontend_sha": "ad31927ded9a9ebd99eb436eb7320bc7a97e4065",
+    "live_vm_or_db_touched": false,
+    "next_release_verification_owner": "originalRoot01a11"
+  }
+}

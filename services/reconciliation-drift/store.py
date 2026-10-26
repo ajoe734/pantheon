@@ -768,6 +768,7 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
             table=evaluations_table,
             owner_service="reconciliation-drift-svc",
             bootstrap=bootstrap,
+            count_index=True,
         )
         self._alert_records = PostgresJsonOwnerStore(
             dsn=dsn,

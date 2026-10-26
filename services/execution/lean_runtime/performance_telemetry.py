@@ -25,9 +25,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
+
+from services.execution.market_snapshot_admission import (
+    evaluate_taiwan_market_freshness,
+    is_taiwan_symbol,
+    parse_rfc3339,
+)
 
 
 def utc_now_rfc3339() -> str:
@@ -144,6 +150,9 @@ class MarketMark:
     as_of: str
     source_ref: str
     quote_currency: str | None = None
+    observed_at: str | None = field(default=None, repr=False, compare=False)
+    lineage: Any = field(default=None, repr=False, compare=False)
+    calendar_evidence: Any = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -155,6 +164,44 @@ class MarketMark:
         if self.quote_currency:
             payload["quote_currency"] = self.quote_currency
         return payload
+
+
+def _is_mark_fresh(
+    mark: MarketMark,
+    *,
+    reference_time: datetime,
+    max_mark_age_seconds: float,
+    future_tolerance_seconds: float,
+    symbol: str | None = None,
+) -> bool:
+    now_utc = reference_time.astimezone(timezone.utc)
+    if is_taiwan_symbol(mark.symbol) or is_taiwan_symbol(symbol):
+        event_time_dt, event_err = parse_rfc3339(mark.as_of, field_name="event_time")
+        if event_err or event_time_dt is None:
+            return False
+        refresh_receipt_dt: datetime | None = None
+        if isinstance(mark.observed_at, str) and mark.observed_at.strip():
+            refresh_receipt_dt, refresh_err = parse_rfc3339(
+                mark.observed_at, field_name="observed_at"
+            )
+            if refresh_err:
+                return False
+        ok, _reason_code, _detail = evaluate_taiwan_market_freshness(
+            event_time_dt=event_time_dt,
+            now_dt=now_utc,
+            refresh_receipt_dt=refresh_receipt_dt,
+            lineage=mark.lineage,
+            max_refresh_age_seconds=int(max(float(max_mark_age_seconds), 0.0)),
+            calendar_evidence=mark.calendar_evidence,
+        )
+        return ok
+    observed = _parse_rfc3339(mark.as_of)
+    if observed is None:
+        return False
+    age = (now_utc - observed).total_seconds()
+    return -max(float(future_tolerance_seconds), 0.0) <= age <= max(
+        float(max_mark_age_seconds), 0.0
+    )
 
 
 @dataclass(frozen=True)
@@ -302,11 +349,12 @@ class SourceIngestMarkProvider:
         }
 
     def _mark_is_fresh(self, mark: MarketMark) -> bool:
-        observed = _parse_rfc3339(mark.as_of)
-        if observed is None:
-            return False
-        age = (self._now().astimezone(timezone.utc) - observed).total_seconds()
-        return -self._future_tolerance <= age <= self._max_mark_age
+        return _is_mark_fresh(
+            mark,
+            reference_time=self._now(),
+            max_mark_age_seconds=self._max_mark_age,
+            future_tolerance_seconds=self._future_tolerance,
+        )
 
     def _refresh_symbol_if_needed(self, symbol: str) -> None:
         now_monotonic = time.monotonic()
@@ -349,17 +397,38 @@ class SourceIngestMarkProvider:
         price = _finite(closes[-1]) if isinstance(closes, list) and closes else None
         if price is None or price <= 0:
             raise ValueError("snapshot has no finite positive latest close")
-        observed = _parse_rfc3339(payload.get("event_time"))
-        if observed is None:
-            raise ValueError("snapshot event_time is missing or invalid")
+        raw_event_time = payload.get("event_time")
+        if is_taiwan_symbol(symbol) or is_taiwan_symbol(snapshot_symbol):
+            if not isinstance(raw_event_time, str):
+                raise ValueError("snapshot event_time is missing or invalid")
+            observed, event_err = parse_rfc3339(raw_event_time, field_name="event_time")
+            if event_err or observed is None:
+                raise ValueError("snapshot event_time is missing or invalid")
+        else:
+            observed = _parse_rfc3339(raw_event_time)
+            if observed is None:
+                raise ValueError("snapshot event_time is missing or invalid")
         source_ref = str(payload.get("source_ref") or "").strip()
         if not source_ref:
             raise ValueError("snapshot source_ref is missing")
+        raw_observed_at = payload.get("observed_at")
+        observed_at = (
+            raw_observed_at.strip()
+            if isinstance(raw_observed_at, str) and raw_observed_at.strip()
+            else None
+        )
+        lineage = payload.get("lineage")
+        calendar_evidence = payload.get("calendar_evidence")
+        if calendar_evidence is None and isinstance(lineage, Mapping):
+            calendar_evidence = lineage.get("calendar_evidence")
         return MarketMark(
             symbol=symbol,
             price=price,
             as_of=_iso(observed),
             source_ref=source_ref,
+            observed_at=observed_at,
+            lineage=lineage,
+            calendar_evidence=calendar_evidence,
         )
 
 
@@ -443,9 +512,12 @@ def value_portfolio(
                     "missing_symbols": [symbol],
                 },
             )
-        age_seconds = (reference_time - observed).total_seconds()
-        if age_seconds < -max(float(future_tolerance_seconds), 0.0) or age_seconds > max(
-            float(max_mark_age_seconds), 0.0
+        if not _is_mark_fresh(
+            mark,
+            reference_time=reference_time,
+            max_mark_age_seconds=max_mark_age_seconds,
+            future_tolerance_seconds=future_tolerance_seconds,
+            symbol=symbol,
         ):
             stale.append(symbol)
             continue

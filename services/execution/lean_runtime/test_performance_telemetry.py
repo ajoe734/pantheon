@@ -17,9 +17,72 @@ from services.execution.lean_runtime.performance_telemetry import (
     SourceIngestMarkProvider,
     value_portfolio,
 )
+from services.execution.market_snapshot_admission import (
+    TW_GOVERNED_CALENDAR_PINS,
+    evaluate_taiwan_market_freshness,
+    is_taiwan_symbol,
+)
 
 
 _NOW = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+_UNSET = object()
+
+_RECORDED_2330_CALENDAR_EVIDENCE = {
+    "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",
+    "checksum": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+    "coverage_end": "2026-10-28",
+    "coverage_start": "2026-10-22",
+    "fetched_at": "2026-10-23T07:00:39Z",
+    "holidays": {
+        "2026-10-23": {
+            "name": "颱風全日休市 (TWSE 臨時休市公告)",
+        },
+        "2026-10-25": {
+            "name": "臺灣光復暨金門古寧頭大捷紀念日",
+        },
+        "2026-10-26": {
+            "name": "臺灣光復暨金門古寧頭大捷紀念日",
+        },
+    },
+    "market": "TW",
+    "source_url": "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+    "timezone": "Asia/Taipei",
+    "trading_days": [
+        "2026-10-22",
+        "2026-10-27",
+        "2026-10-28",
+    ],
+    "venue": "TWSE",
+    "version": "twse-2026-emergency-closure-20261023-v2",
+}
+
+
+def _recorded_2330_oct22_snapshot() -> dict:
+    return {
+        "schema_version": "source_ingest_latest_market_snapshot.v1",
+        "snapshot_id": "mss-ff49b0e9e567bba38063946a",
+        "symbol": "2330.TW",
+        "event_time": "2026-10-22T00:00:00Z",
+        "observed_at": "2026-10-23T12:29:54Z",
+        "closes": [2405.0, 2420.0, 2385.0],
+        "lineage": {
+            "source_ids": [
+                "tw-official:tw_price_daily:TWSE:2330:9691b8ad1b066a80",
+            ],
+            "connector_ids": [
+                "tw-twse-tpex-official-market",
+            ],
+            "content_refs": [
+                "tw-official://tw_price_daily/TWSE/2330/2026-10-22/9691b8ad1b066a80",
+            ],
+            "ingest_run_ids": [
+                "ingest-e53a86463995",
+            ],
+        },
+        "source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a",
+        "calendar_evidence": json.loads(json.dumps(_RECORDED_2330_CALENDAR_EVIDENCE)),
+        "market": "TW",
+    }
 
 
 def _snapshot(
@@ -27,18 +90,34 @@ def _snapshot(
     price: float,
     event_time: str = "2026-07-14T11:00:00Z",
     *,
+    observed_at: object = _UNSET,
+    lineage: object = _UNSET,
+    calendar_evidence: object = _UNSET,
     source_ref: str | None = None,
 ) -> dict:
-    return {
+    default_lineage = (
+        {
+            "source_ids": [
+                f"tw-official:tw_price_daily:TWSE:{symbol.split('.', 1)[0]}:test"
+            ],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        }
+        if is_taiwan_symbol(symbol)
+        else {}
+    )
+    payload = {
         "schema_version": "market-snapshot/v1",
         "snapshot_id": f"mss-{symbol}",
         "symbol": symbol,
         "event_time": event_time,
-        "observed_at": event_time,
+        "observed_at": event_time if observed_at is _UNSET else observed_at,
         "closes": [price - 1.0, price],
-        "lineage": {},
+        "lineage": default_lineage if lineage is _UNSET else lineage,
         "source_ref": source_ref or f"source-ingest://snapshots/mss-{symbol}",
     }
+    if calendar_evidence is not _UNSET:
+        payload["calendar_evidence"] = calendar_evidence
+    return payload
 
 
 def _http_error(url: str, code: int) -> urllib.error.HTTPError:
@@ -221,6 +300,239 @@ class SourceIngestMarkProviderTest(unittest.TestCase):
         self.assertEqual(second, {})
         self.assertEqual(diagnostic["missing_symbols"], ["AAPL.US"])
         self.assertIn("source-ingest unavailable", diagnostic["last_error"])
+
+    def test_taiwan_governed_emergency_closure_calendar_admits_oct22_mark_on_oct25_without_relabeling_time(self):
+        now_oct25 = datetime.fromisoformat("2026-10-25T19:19:42+00:00")
+        recorded_snapshot = _recorded_2330_oct22_snapshot()
+        event_dt = datetime.fromisoformat("2026-10-22T00:00:00+00:00")
+        observed_dt = datetime.fromisoformat("2026-10-23T12:29:54+00:00")
+
+        # Raw 48h (172800s) filter rejected this snapshot on 2026-10-25T19:19:42Z
+        # even though evaluate_taiwan_market_freshness accepts the governed closure calendar.
+        raw_age_seconds = (now_oct25 - event_dt).total_seconds()
+        self.assertGreater(raw_age_seconds, 172800.0)
+        self.assertEqual(
+            TW_GOVERNED_CALENDAR_PINS["twse-2026-emergency-closure-20261023-v2"],
+            "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+        )
+        self.assertEqual(
+            evaluate_taiwan_market_freshness(
+                event_time_dt=event_dt,
+                now_dt=now_oct25,
+                refresh_receipt_dt=observed_dt,
+                lineage=recorded_snapshot["lineage"],
+                max_refresh_age_seconds=172800,
+                calendar_evidence=recorded_snapshot["calendar_evidence"],
+            ),
+            (True, None, None),
+        )
+
+        provider = SourceIngestMarkProvider(
+            "http://source-ingest:8097",
+            cache_ttl_seconds=0,
+            max_mark_age_seconds=172800,
+            future_tolerance_seconds=300,
+            fetch_json=lambda _url, _timeout: recorded_snapshot,
+            now=lambda: now_oct25,
+        )
+        marks, diagnostic = provider.resolve(["2330.TW"])
+
+        self.assertEqual(diagnostic["indexed_mark_count"], 1)
+        self.assertEqual(diagnostic["max_mark_age_seconds"], 172800.0)
+        self.assertEqual(diagnostic["resolved_symbols"], ["2330.TW"])
+        self.assertEqual(diagnostic["missing_symbols"], [])
+        self.assertIsNone(diagnostic["last_error"])
+
+        mark = marks["2330.TW"]
+        self.assertEqual(mark.symbol, "2330.TW")
+        self.assertEqual(mark.price, 2385.0)
+        # Retain true mark as_of and source_ref; never relabel now or observed_at as market time.
+        self.assertEqual(mark.as_of, "2026-10-22T00:00:00Z")
+        self.assertEqual(
+            mark.source_ref,
+            "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a",
+        )
+        self.assertEqual(
+            mark.to_dict(),
+            {
+                "symbol": "2330.TW",
+                "price": 2385.0,
+                "as_of": "2026-10-22T00:00:00Z",
+                "source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a",
+            },
+        )
+
+        # Portfolio valuation on the same open 2330.TW book also reuses the session rule.
+        valuation = value_portfolio(
+            initial_cash=100_000.0,
+            cash=104_800.0,
+            positions=[{"symbol": "2330.TW", "quantity": -2.0}],
+            marks=marks,
+            fill_count=2,
+            last_fill_at="2026-10-22T06:00:00Z",
+            mark_diagnostic=diagnostic,
+            max_mark_age_seconds=172800.0,
+            now=now_oct25,
+        )
+        self.assertEqual(valuation.status, "valued")
+        self.assertIsNotNone(valuation.sample)
+        self.assertAlmostEqual(valuation.sample.portfolio_value, 100_030.0)
+        self.assertAlmostEqual(valuation.sample.pnl, 30.0)
+        self.assertEqual(valuation.sample.as_of, "2026-10-22T06:00:00Z")
+        self.assertEqual(valuation.sample.marks[0].as_of, "2026-10-22T00:00:00Z")
+        self.assertEqual(
+            valuation.sample.marks[0].source_ref,
+            "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a",
+        )
+
+        # Also accepts governed calendar evidence carried inside lineage.calendar_evidence.
+        lineage_embedded = _recorded_2330_oct22_snapshot()
+        embedded_cal = lineage_embedded.pop("calendar_evidence")
+        lineage_embedded["lineage"] = {
+            **lineage_embedded["lineage"],
+            "calendar_evidence": embedded_cal,
+        }
+        embedded_provider = SourceIngestMarkProvider(
+            "http://source-ingest:8097",
+            cache_ttl_seconds=0,
+            max_mark_age_seconds=172800,
+            fetch_json=lambda _url, _timeout: lineage_embedded,
+            now=lambda: now_oct25,
+        )
+        embedded_marks, embedded_diag = embedded_provider.resolve(["2330.TW"])
+        self.assertIn("2330.TW", embedded_marks)
+        self.assertEqual(embedded_diag["missing_symbols"], [])
+
+    def test_taiwan_mark_refuses_missed_trading_session_stale_untrusted_malformed_and_future_snapshots(self):
+        now_oct25 = datetime.fromisoformat("2026-10-25T19:19:42+00:00")
+
+        # 1. Genuine missed trading session: after 2026-10-27 13:30 Asia/Taipei (05:30Z) closes,
+        # the 2026-10-22 close is rejected even if observed_at was refreshed 15 minutes ago.
+        now_after_oct27_close = datetime.fromisoformat("2026-10-27T06:00:00+00:00")
+        missed_session_snap = _recorded_2330_oct22_snapshot()
+        missed_session_snap["observed_at"] = "2026-10-27T05:45:00Z"
+        missed_provider = SourceIngestMarkProvider(
+            "http://source-ingest:8097",
+            cache_ttl_seconds=0,
+            max_mark_age_seconds=172800,
+            fetch_json=lambda _url, _timeout: missed_session_snap,
+            now=lambda: now_after_oct27_close,
+        )
+        missed_marks, missed_diag = missed_provider.resolve(["2330.TW"])
+        self.assertEqual(missed_marks, {})
+        self.assertEqual(missed_diag["missing_symbols"], ["2330.TW"])
+
+        # Value portfolio also rejects a mark that became stale after the 2026-10-27 session closed.
+        oct25_provider = SourceIngestMarkProvider(
+            "http://source-ingest:8097",
+            cache_ttl_seconds=0,
+            max_mark_age_seconds=172800,
+            fetch_json=lambda _url, _timeout: _recorded_2330_oct22_snapshot(),
+            now=lambda: now_oct25,
+        )
+        admitted_on_oct25, _ = oct25_provider.resolve(["2330.TW"])
+        stale_on_oct27 = value_portfolio(
+            initial_cash=100_000.0,
+            cash=104_800.0,
+            positions=[{"symbol": "2330.TW", "quantity": -2.0}],
+            marks=admitted_on_oct25,
+            fill_count=2,
+            last_fill_at="2026-10-22T06:00:00Z",
+            max_mark_age_seconds=172800.0,
+            now=now_after_oct27_close,
+        )
+        self.assertEqual(stale_on_oct27.status, "marks_unavailable")
+        self.assertIsNone(stale_on_oct27.sample)
+        self.assertEqual(stale_on_oct27.diagnostic["code"], "stale_or_future_market_marks")
+
+        # 2. Missing calendar evidence across a completed weekday (2026-10-23) fails closed.
+        no_calendar_snap = _recorded_2330_oct22_snapshot()
+        no_calendar_snap.pop("calendar_evidence")
+        # 3. Tampered calendar evidence (holiday injected without matching trusted pin) fails closed.
+        tampered_calendar_snap = _recorded_2330_oct22_snapshot()
+        tampered_calendar_snap["calendar_evidence"]["holidays"]["2026-10-27"] = {"name": "Fake"}
+        # 4. Untrusted calendar version pin fails closed.
+        untrusted_pin_snap = _recorded_2330_oct22_snapshot()
+        untrusted_pin_snap["calendar_evidence"]["version"] = "twse-2026-untrusted-v99"
+        # 5. Malformed calendar evidence (non-object) fails closed.
+        malformed_calendar_snap = _recorded_2330_oct22_snapshot()
+        malformed_calendar_snap["calendar_evidence"] = "not-a-mapping"
+        # 6. Untrusted / non-official lineage fails closed even within flat age window.
+        untrusted_lineage_snap = _recorded_2330_oct22_snapshot()
+        untrusted_lineage_snap["lineage"] = {
+            "source_ids": ["yahoo:2330"],
+            "connector_ids": ["untrusted-connector"],
+        }
+        # 7. Missing or pre-close refresh receipt (observed_at) fails closed.
+        missing_receipt_snap = _recorded_2330_oct22_snapshot()
+        missing_receipt_snap["observed_at"] = None
+        pre_close_receipt_snap = _recorded_2330_oct22_snapshot()
+        pre_close_receipt_snap["observed_at"] = "2026-10-22T05:00:00Z"
+        # 8. Future event_time or future observed_at fails closed.
+        future_event_snap = _recorded_2330_oct22_snapshot()
+        future_event_snap["event_time"] = "2026-10-25T19:20:00Z"
+        future_observed_snap = _recorded_2330_oct22_snapshot()
+        future_observed_snap["observed_at"] = "2026-10-25T19:20:00Z"
+
+        for case_name, bad_snap in (
+            ("no_calendar", no_calendar_snap),
+            ("tampered_calendar", tampered_calendar_snap),
+            ("untrusted_pin", untrusted_pin_snap),
+            ("malformed_calendar", malformed_calendar_snap),
+            ("untrusted_lineage", untrusted_lineage_snap),
+            ("missing_receipt", missing_receipt_snap),
+            ("pre_close_receipt", pre_close_receipt_snap),
+            ("future_event", future_event_snap),
+            ("future_observed", future_observed_snap),
+        ):
+            with self.subTest(case=case_name):
+                provider = SourceIngestMarkProvider(
+                    "http://source-ingest:8097",
+                    cache_ttl_seconds=0,
+                    max_mark_age_seconds=172800,
+                    fetch_json=lambda _url, _timeout, s=bad_snap: s,
+                    now=lambda: now_oct25,
+                )
+                marks, diag = provider.resolve(["2330.TW"])
+                self.assertEqual(marks, {})
+                self.assertEqual(diag["missing_symbols"], ["2330.TW"])
+
+        # 9. Non-Taiwan symbol behavior is preserved: AAPL.US older than 172800s is rejected
+        # even if its snapshot carries valid Taiwan calendar evidence and lineage.
+        non_tw_old = _recorded_2330_oct22_snapshot()
+        non_tw_old["symbol"] = "AAPL.US"
+        non_tw_provider = SourceIngestMarkProvider(
+            "http://source-ingest:8097",
+            cache_ttl_seconds=0,
+            max_mark_age_seconds=172800,
+            fetch_json=lambda _url, _timeout: non_tw_old,
+            now=lambda: now_oct25,
+        )
+        non_tw_marks, non_tw_diag = non_tw_provider.resolve(["AAPL.US"])
+        self.assertEqual(non_tw_marks, {})
+        self.assertEqual(non_tw_diag["missing_symbols"], ["AAPL.US"])
+
+        # 10. Cached-failure behavior is preserved for Taiwan symbols on subsequent refresh errors.
+        tw_responses = iter(
+            [_recorded_2330_oct22_snapshot(), OSError("source-ingest timeout")]
+        )
+        tw_fail_provider = SourceIngestMarkProvider(
+            "http://source-ingest:8097",
+            cache_ttl_seconds=0,
+            max_mark_age_seconds=172800,
+            fetch_json=lambda _url, _timeout: (
+                (_ for _ in ()).throw(r)
+                if isinstance((r := next(tw_responses)), Exception)
+                else r
+            ),
+            now=lambda: now_oct25,
+        )
+        first_tw, _ = tw_fail_provider.resolve(["2330.TW"])
+        second_tw, second_tw_diag = tw_fail_provider.resolve(["2330.TW"])
+        self.assertIn("2330.TW", first_tw)
+        self.assertEqual(second_tw, {})
+        self.assertEqual(second_tw_diag["missing_symbols"], ["2330.TW"])
+        self.assertIn("source-ingest timeout", second_tw_diag["last_error"])
 
 
 class PortfolioValuationTest(unittest.TestCase):

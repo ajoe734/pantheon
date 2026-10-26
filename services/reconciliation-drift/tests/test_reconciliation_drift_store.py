@@ -624,10 +624,12 @@ def test_postgres_store_owns_records_reports_worker_state_and_work_claims(
     class FakeOwnerStore:
         tables: dict[str, dict[str, dict]] = {}
         calls: list[tuple[str, str]] = []
+        init_kwargs: dict[str, dict[str, object]] = {}
 
-        def __init__(self, *, table, **_kwargs):
+        def __init__(self, *, table, **kwargs):
             self.table = table
             self.records = self.tables.setdefault(table, {})
+            self.init_kwargs[table] = dict(kwargs)
 
         def list_all(self):
             self.calls.append((self.table, "list_all"))
@@ -653,11 +655,21 @@ def test_postgres_store_owns_records_reports_worker_state_and_work_claims(
 
     FakeOwnerStore.tables = {}
     FakeOwnerStore.calls = []
+    FakeOwnerStore.init_kwargs = {}
     with mock.patch.object(module, "PostgresJsonOwnerStore", FakeOwnerStore):
         store = module.PostgresReconciliationDriftStore(
             tmp_path,
             dsn="postgresql://unused",
         )
+    assert FakeOwnerStore.init_kwargs["reconciliation_drift.drift_evaluations"].get("count_index") is True
+    for non_eval_table in (
+        "reconciliation_drift.alert_handoffs",
+        "reconciliation_drift.reconciliation_records",
+        "reconciliation_drift.drift_reports",
+        "reconciliation_drift.work_claims",
+        "reconciliation_drift.worker_states",
+    ):
+        assert not FakeOwnerStore.init_kwargs[non_eval_table].get("count_index", False)
 
     record = store.put_reconciliation_record(
         {"record_id": "record-1", "tenant_id": "tenant-a"}
@@ -740,6 +752,49 @@ def test_live_postgres_reconciliation_drift_store_loopback(tmp_path: Path) -> No
         assert store.get_evaluation("eval-live-1", tenant_id="tenant-live") == eval_rec
         assert store.count_evaluations() == 1
         assert store.count_alert_handoffs() == 0
+
+        import psycopg
+
+        with psycopg.connect(dsn) as conn:
+            indexes = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT indexname FROM pg_indexes WHERE schemaname = %s AND indexname LIKE %s",
+                    (schema, "%_count_idx"),
+                ).fetchall()
+            ]
+            assert indexes == ["drift_evaluations_count_idx"]
+
+            conn.execute(
+                f"INSERT INTO {store._evaluation_records.table} (record_id, payload) VALUES (%s, %s::jsonb)",
+                (
+                    "eval-str-obj",
+                    json.dumps('{"evaluation_id": "eval-str-obj", "tenant_id": "tenant-live", "status": "ok"}'),
+                ),
+            )
+            conn.execute(
+                f"INSERT INTO {store._evaluation_records.table} (record_id, payload) VALUES (%s, %s::jsonb)",
+                ("eval-str-arr", json.dumps("[1, 2]")),
+            )
+            conn.execute(
+                f"INSERT INTO {store._evaluation_records.table} (record_id, payload) VALUES (%s, %s::jsonb)",
+                ("eval-arr", "[1, 2]"),
+            )
+        assert store.count_evaluations() == 2
+
+        with psycopg.connect(dsn) as conn:
+            conn.execute(
+                f"INSERT INTO {store._evaluation_records.table} (record_id, payload) VALUES (%s, %s::jsonb)",
+                ("eval-bad-str", json.dumps("not-json")),
+            )
+        with pytest.raises(Exception):
+            store.count_evaluations()
+        with psycopg.connect(dsn) as conn:
+            conn.execute(
+                f"DELETE FROM {store._evaluation_records.table} WHERE record_id = %s",
+                ("eval-bad-str",),
+            )
+        assert store.count_evaluations() == 2
 
         claim = store.claim_work(
             tenant_id="tenant-live",

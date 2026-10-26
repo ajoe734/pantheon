@@ -14,6 +14,10 @@
     "artifact-persona-paper-00400aa279b49774cde4": {
       "expected_drawdown": 0.0027,
       "policy_source": "docs/deployment/evidence/PAPER-DRAWDOWN-CURRENT0040-CONFIG-20261021/policy.md#reviewer-decision"
+    },
+    "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact": {
+      "expected_drawdown": 0.0325,
+      "policy_source": "docs/deployment/evidence/H12-DRAWDOWN-POLICY-CONFIG-20261025/policy.md#reviewer-decision"
     }
   }
 }
