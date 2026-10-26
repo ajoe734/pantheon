@@ -1,0 +1,31 @@
+{
+  "task_id": "H12-NATURAL-CHAIN-PLAN-20261026",
+  "status": "planning_source_delivered_only",
+  "scope": "docs-only; not hosted approval, not all12 proof, not an authorization artifact",
+  "artifacts": [
+    "docs/deployment/hosted-all12-natural-chain-execution-plan.md",
+    "docs/deployment/hosted-all12-causal-chain-design.md",
+    "docs/deployment/evidence/H12-NATURAL-CHAIN-PLAN-20261026/evidence.json"
+  ],
+  "cutoff": {
+    "at": "2026-10-26T07:21:00Z",
+    "dev_head": "7adfefbbc0b17e756229e751a298f9570a6c7e10"
+  },
+  "source_prs_read_from_github_metadata": {
+    "6819": {"state": "MERGED", "merged_at": "2026-10-26T07:05:24Z", "merge_commit": "7adfefbbc0b17e756229e751a298f9570a6c7e10", "hosted": false},
+    "6821": {"state": "MERGED", "merged_at": "2026-10-26T07:00:25Z", "merge_commit": "a65520039d67f5fbde3ffd8ffb79c9d6d0f37fde", "hosted": false}
+  },
+  "refs": [
+    "docs/deployment/evidence/INCIDENT-LATE-DISCOVERY-WINDOW-20261026/evidence.json",
+    "docs/deployment/evidence/SOURCE-DISTILLATION-RECIPE-METADATA-20261026/evidence.json"
+  ],
+  "open_items": {
+    "fence_version_cause": "unknown",
+    "financial_comparator": "unavailable",
+    "hosted_l10_incident": "not_observed",
+    "l11_h4_same_chain_decision": "not_observed",
+    "source_http_redrive_route": "not_found_at_cutoff",
+    "full_all12": false
+  },
+  "validation": "markdown links, JSON parse, git diff --check; no functional/hosted suites rerun"
+}
