@@ -1,0 +1,95 @@
+{
+  "task_id": "H12-NATURAL-CHAIN-PLAN-20261026",
+  "status": "planning_source_delivered_only",
+  "scope": "docs-only; not hosted approval, not all12 proof, not an authorization artifact",
+  "artifacts": [
+    "docs/deployment/hosted-all12-natural-chain-execution-plan.md",
+    "docs/deployment/hosted-all12-causal-chain-design.md",
+    "docs/deployment/evidence/H12-NATURAL-CHAIN-PLAN-20261026/evidence.json"
+  ],
+  "cutoff": {
+    "at": "2026-10-26T07:21:00Z",
+    "dev_head": "7adfefbbc0b17e756229e751a298f9570a6c7e10"
+  },
+  "source_prs_read_from_github_metadata": {
+    "6819": {
+      "state": "MERGED",
+      "merged_at": "2026-10-26T07:05:24Z",
+      "merge_commit": "7adfefbbc0b17e756229e751a298f9570a6c7e10",
+      "hosted": false
+    },
+    "6821": {
+      "state": "MERGED",
+      "merged_at": "2026-10-26T07:00:25Z",
+      "merge_commit": "a65520039d67f5fbde3ffd8ffb79c9d6d0f37fde",
+      "hosted": false
+    },
+    "6822": {
+      "state": "IN_REVIEW_AT_REWORK",
+      "hosted": false,
+      "task": "PAPER-COMPLETED-FENCE-TTL-20261026"
+    }
+  },
+  "refs": [
+    "docs/deployment/evidence/INCIDENT-LATE-DISCOVERY-WINDOW-20261026/evidence.json",
+    "docs/deployment/evidence/SOURCE-DISTILLATION-RECIPE-METADATA-20261026/evidence.json",
+    "docs/deployment/evidence/HOSTED-ALL12-D-OWNER-AUTH-20261025/evidence.json",
+    "docs/deployment/evidence/HOSTED-ALL12-E-EXECUTOR-ROLE-20261026/evidence.json"
+  ],
+  "open_items": {
+    "fence_version_cause": "current completed-fence TTL defect reproduced (isolated); per-execution historical attribution pending S1",
+    "financial_comparator": "unavailable",
+    "hosted_l10_incident": "not_observed",
+    "l11_h4_same_chain_decision": "not_observed",
+    "full_all12": false,
+    "completed_marker_preservation": "applied 2026-10-26T07:24:57Z (two existing markers); not repeated",
+    "historical_driver_gap": "_hosted_observe requires active RuntimeBinding; original binding retired; bounded historical-window observation in existing driver is conditional follow-up S4a, not claimed to exist",
+    "l10_closure_rule": "recorded in plan 6.1: Incident (a) + Reconciliation owner output (b) + consumption (c); else partial",
+    "source_reset": "existing controller processes single reset job; no broad run_pending"
+  },
+  "validation": "markdown links, JSON parse, git diff --check; no functional/hosted suites rerun",
+  "rework": {
+    "for": "head 603df3d62 final same-docs rework",
+    "kind": "DocSourceReview feedback; no product authority"
+  },
+  "private_sanitized_refs_sha256": {
+    "accepted-f9-real-Redis-three-cold-process-TTL-reproduction-20261026.json": "c207aa18f45b781a07c39330e98189919eee731e708d4f8a5a18310e527feee1",
+    "original-paper-two-existing-completed-markers-preserved-actual-owner-receipt-20261026.json": "8a506348f6a9d5fc21fe9f40e113cdb9efa9b01ae4ffe35210343186ed2a4b29",
+    "current-dev-paper-completed-marker-upgrade-readonly-preflight-20261026.json": "e0d144c449a24643a6fef6d2ee705415c007c9dc580cd097524d0a88ed309ecf",
+    "original-marker-preservation-first-attempt-short-container-ID-guard-failure-and-no-mutation-readback-20261026.json": "295695b38998bb2ef25e83b77ec7db8226c1d783981e209ab942c7576e44d423",
+    "D402439-auth-repair-actual-owner-readback-and-original-chain-preservation.json": "41eb99626b6ec18439b74b43abbab960891e6b68500407fac6403130f013c686",
+    "D402214-same-binding-natural-processing-owner-GET-only-observation-20261025.json": "d461132fe4358326df8e0ed9dc13211f353aee510139ca62619157b90302f0eb",
+    "E40263493681-own-bounded-offline-preservation-and-cleanup-audit-20261026.json": "d539eee0036c15d37d862398e4ae0804fbc3dd6a24541d9086eb754a6755e6d3",
+    "E40274396263-original-chain-preservation-and-actual-completed-cleanup-bounded-audit-20261026.json": "c18a2fdf7f1b06389ae8fdec8be1cdad804e67b0c40f79fb56d56c3aa5cbc882",
+    "FE889-currency-single-necessary-product-root-20261026-result.json": "e7ec72d22dc7a1da3166229a9f5351140f73c60b374f6bd4083a97eff6dd6c2e",
+    "FE889-currency-pair-fresh-readonly-inspection-20261026.json": "3c7d3882e593955534f2cafc13ab5a0e17062340f1ca514a33fb2dda69c2fdad",
+    "original-h12-duplicate-signal-incident-single-owner-POST-actual-response-20261026.json": "4015fdc53aa6764edadd391430ab47790c5623bdf801f905cc8854231f2eb894",
+    "current-paper-completed-decision-fence-bounded-offline-diagnosis-20261026.json": "d6e18d174f7c826ae5e11ddbcdc93a0b5a178dd19a838df82c471531e8cc38de"
+  },
+  "publisher_pause": {
+    "workflow_id": 278206785,
+    "disabled_by_support_at": "2026-10-26T07:19:28Z",
+    "before": "active",
+    "no_run_cancelled": true,
+    "receipt": "/tmp/pantheon-natural-chain-plan-20261026/publisher-pause-receipt.json"
+  },
+  "validation_commands": [
+    {
+      "cmd": "git diff --check",
+      "exit": 0
+    },
+    {
+      "cmd": "python3 -m json.tool evidence.json",
+      "exit": 0
+    },
+    {
+      "cmd": "markdown relative-link resolution script",
+      "exit": 0
+    }
+  ],
+  "reviewer": {
+    "assigned": "Codex2",
+    "previous": "Codex",
+    "reason": "native reassignment after repeated Codex auth-probe timeouts/capacity_retryable; owner unchanged"
+  }
+}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import hmac
 import json
 import logging
@@ -3436,6 +3437,288 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
         raise
 
 
+_EXECUTION_EPSILON = 1e-9
+_REVERSAL_REF_KEYS = (
+    "corrects_event_id",
+    "corrected_event_id",
+    "reverses_event_id",
+    "reversed_event_id",
+    "reversal_of",
+    "correction_of",
+)
+_REVERSAL_STATUSES = {"reversed", "corrected", "cancelled", "canceled", "rejected", "voided"}
+
+
+def _event_dto(body: Any) -> Dict[str, Any] | None:
+    if not isinstance(body, dict):
+        return None
+    nested = body.get("event")
+    return nested if isinstance(nested, dict) else body
+
+
+def _duplicate_execution_analysis(
+    *,
+    tenant_id: str,
+    event_ids: List[str],
+    discovered_at: str,
+    deployment_stage: str = "",
+) -> Dict[str, Any] | None:
+    """Same-decision cross-event duplicate full-execution analysis.
+
+    Resolves tenant-scoped accepted telemetry events and checks that one
+    decision (signal/run/binding/runtime/artifact/bar) did not commit two
+    distinct broker orders beyond the canonical order-intent requested quantity.
+    Returns None when fewer than two events were referenced (nothing to compare).
+    Unresolvable or incomparable evidence is reported as measurement
+    "unmeasured", never as duplicate detected or measured healthy.
+    """
+    if len(event_ids) < 2:
+        return None
+    base: Dict[str, Any] = {
+        "check": "duplicate_execution_invariant",
+        "telemetry_event_ids": list(event_ids),
+        "discovered_at": discovered_at,
+    }
+
+    def unmeasured(reason: str, **extra: Any) -> Dict[str, Any]:
+        return {**base, "status": "degraded", "measurement": "unmeasured", "reason": reason,
+                "detail": f"duplicate execution invariant not measured: {reason}", **extra}
+
+    telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
+    if not telemetry_url:
+        return unmeasured("telemetry_api_not_configured")
+    from telemetry_client import fetch_accepted_event
+
+    events: Dict[str, Dict[str, Any]] = {}
+    unresolved: List[str] = []
+    for event_id in event_ids:
+        try:
+            dto = _event_dto(
+                fetch_accepted_event(telemetry_url, event_id, tenant_id=tenant_id, timeout_seconds=5.0)
+            )
+        except Exception:  # noqa: BLE001 - uncertain evidence is unmeasured
+            # Transient acquisition failure: retryable, never persisted as complete.
+            return unmeasured("telemetry_fetch_failed", failed_event_id=event_id, retryable=True)
+        if dto is None or str(dto.get("tenant_id") or "").strip() != tenant_id:
+            unresolved.append(event_id)
+            continue
+        events[event_id] = dto
+    if unresolved:
+        return unmeasured("accepted_event_unresolved", unresolved_event_ids=unresolved)
+
+    def meta(dto: Dict[str, Any]) -> Dict[str, Any]:
+        value = dto.get("metadata")
+        return value if isinstance(value, dict) else {}
+
+    def metrics(dto: Dict[str, Any]) -> Dict[str, Any]:
+        value = dto.get("metrics")
+        return value if isinstance(value, dict) else {}
+
+    reversed_ids: set[str] = set()
+    for dto in events.values():
+        for key in _REVERSAL_REF_KEYS:
+            ref = meta(dto).get(key) or dto.get(key)
+            if isinstance(ref, str) and ref.strip():
+                reversed_ids.add(ref.strip())
+
+    groups: Dict[tuple, Dict[str, Any]] = {}
+    for event_id, dto in events.items():
+        m, mt = meta(dto), metrics(dto)
+        broker_order_id = str(m.get("broker_order_id") or dto.get("order_id") or "").strip()
+        status = str(m.get("broker_submission_status") or "").strip().lower()
+        is_reversal = (
+            event_id in reversed_ids
+            or any(meta(dto).get(k) or dto.get(k) for k in _REVERSAL_REF_KEYS)
+            or status in _REVERSAL_STATUSES
+        )
+        if not is_reversal and mt.get("fill_quantity") is not None and (not broker_order_id or not status):
+            # Fill evidence without order identity or status is ambiguous, not "no duplicate".
+            return unmeasured("ambiguous_fill_evidence", event_id=event_id)
+        if (
+            not broker_order_id
+            or event_id in reversed_ids
+            or any(meta(dto).get(k) or dto.get(k) for k in _REVERSAL_REF_KEYS)
+            or status in _REVERSAL_STATUSES
+            or status not in {"filled", "partially_filled", "partial_fill", "partial"}
+            or mt.get("submitted_to_broker") is False
+            or m.get("ledger_committed") is False
+        ):
+            continue
+        # Owner evidence for an accepted fill must be explicit; absence is not "no duplicate".
+        if mt.get("submitted_to_broker") is not True or m.get("ledger_committed") is not True:
+            return unmeasured("incomplete_owner_evidence", event_id=event_id)
+        fill = _numeric(mt.get("fill_quantity"))
+        requested = _numeric(m.get("requested_quantity"))
+        identity = {
+            "binding_id": dto.get("binding_id"),
+            "runtime_id": dto.get("runtime_id"),
+            "artifact_id": dto.get("artifact_id"),
+            "artifact_version": dto.get("artifact_version"),
+            "signal_id": dto.get("signal_id"),
+            "run_id": dto.get("run_id"),
+            "plan_id": dto.get("plan_id"),
+            "capital_pool_id": dto.get("capital_pool_id"),
+            "symbol": dto.get("symbol"),
+            "action": mt.get("action"),
+            "bar": m.get("bar_id") or m.get("bar_time") or m.get("market_price_as_of"),
+        }
+        missing = [k for k, v in identity.items() if not str(v or "").strip()]
+        if missing:
+            return unmeasured("incomplete_decision_identity", event_id=event_id, missing_fields=missing)
+        checksum = str(
+            m.get("plan_checksum") or dto.get("plan_checksum")
+            or m.get("deployment_plan_checksum") or dto.get("deployment_plan_checksum") or ""
+        ).strip()
+        decision = (
+            tenant_id,
+            str(identity["binding_id"]).strip(),
+            str(identity["runtime_id"]).strip(),
+            str(identity["artifact_id"]).strip(),
+            str(identity["artifact_version"]).strip(),
+            str(identity["signal_id"]).strip(),
+            str(identity["run_id"]).strip(),
+            str(identity["symbol"]).strip(),
+            str(identity["action"]).strip().upper(),
+            str(identity["bar"]).strip(),
+            str(identity["plan_id"]).strip(),
+            checksum,
+            str(identity["capital_pool_id"]).strip(),
+        )
+        if fill is None or requested is None or requested <= 0:
+            return unmeasured("incomparable_execution_evidence", event_id=event_id)
+        group = groups.setdefault(decision, {"orders": {}, "requested": set(), "events": []})
+        group["requested"].add(requested)
+        group["events"].append(event_id)
+        fills = group["orders"].setdefault(broker_order_id, {})
+        # Replay of one fill (same fill id or same event) is not a second fill.
+        canonical_fill_id = str(dto.get("fill_id") or m.get("fill_id") or "").strip()
+        if not canonical_fill_id and fills:
+            # Several events for one order without a canonical fill id cannot be
+            # told apart as replay versus incremental partial fill: unmeasured.
+            return unmeasured("ambiguous_fill_evidence", event_id=event_id, broker_order_id=broker_order_id)
+        if canonical_fill_id and any(k.startswith("event:") for k in fills):
+            return unmeasured("ambiguous_fill_evidence", event_id=event_id, broker_order_id=broker_order_id)
+        fills[canonical_fill_id or f"event:{event_id}"] = abs(fill)
+
+    groups = {key: value for key, value in groups.items() if value["orders"]}
+    if not groups:
+        return unmeasured("fewer_than_two_comparable_execution_events")
+    duplicates = []
+    for decision, group in groups.items():
+        if len(group["requested"]) != 1:
+            return unmeasured("incomparable_requested_quantity", event_ids=group["events"])
+        requested = next(iter(group["requested"]))
+        orders = {oid: sum(fills.values()) for oid, fills in group["orders"].items()}
+        total = sum(orders.values())
+        if len(orders) >= 2 and total > requested + _EXECUTION_EPSILON:
+            duplicates.append((decision, requested, orders, group["events"]))
+    if not duplicates:
+        return {**base, "status": "ok", "measurement": "measured", "duplicate_detected": False,
+                "detail": "no distinct broker orders beyond canonical requested quantity"}
+    decision, requested, orders, group_events = duplicates[0]
+    created = sorted(str(events[e].get("created_at") or "") for e in group_events)
+    ordered = sorted(group_events, key=lambda e: (str(events[e].get("created_at") or ""), e))
+    linked = events[ordered[-1]]
+    handoff = {
+        "deployment_stage": str(linked.get("deployment_stage") or deployment_stage or "").strip(),
+        "persona_capital_binding_id": str(
+            linked.get("persona_capital_binding_id") or meta(linked).get("persona_capital_binding_id") or ""
+        ).strip(),
+        "trace_id": str(linked.get("trace_id") or meta(linked).get("trace_id") or "").strip(),
+    }
+    missing_handoff = [k for k, v in handoff.items() if not v]
+    if missing_handoff:
+        return unmeasured(
+            "incomplete_handoff_identity",
+            missing_fields=missing_handoff,
+            duplicate_event_ids=[e for e in event_ids if e in group_events],
+        )
+    return {
+        **base,
+        "status": "critical",
+        "measurement": "measured",
+        "duplicate_detected": True,
+        "detail": "distinct broker orders committed beyond canonical requested quantity for one decision",
+        "decision": {
+            "tenant_id": decision[0], "binding_id": decision[1], "runtime_id": decision[2],
+            "artifact_id": decision[3], "artifact_version": decision[4], "signal_id": decision[5],
+            "run_id": decision[6], "symbol": decision[7], "action": decision[8], "bar": decision[9],
+            "plan_id": decision[10], "plan_checksum": decision[11], "capital_pool_id": decision[12],
+        },
+        "plan_id": decision[10],
+        "capital_pool_id": decision[12],
+        "requested_quantity": requested,
+        "distinct_broker_order_ids": sorted(orders),
+        "committed_quantity": sum(orders.values()),
+        "duplicate_event_ids": [e for e in event_ids if e in group_events],
+        "linked_telemetry_event_id": ordered[-1],
+        "handoff": handoff,
+        "occurrence_window": {"first_created_at": created[0], "last_created_at": created[-1]},
+    }
+
+
+def _duplicate_execution_report(
+    *,
+    analysis: Dict[str, Any],
+    evaluation_id: str,
+    incident_id: str,
+) -> Dict[str, Any]:
+    decision = analysis["decision"]
+    ids = analysis["duplicate_event_ids"]
+    digest = hashlib.sha256(
+        json.dumps([decision, analysis["distinct_broker_order_ids"]], sort_keys=True).encode()
+    ).hexdigest()[:16]
+    report_id = f"drift-duplicate-execution-{digest}"
+    return {
+        "id": report_id,
+        "drift_report_id": report_id,
+        "recon_run_id": evaluation_id,
+        "evaluation_id": evaluation_id,
+        "tenant_id": decision["tenant_id"],
+        "drift_type": "execution",
+        "incident_cluster_id": "drift:duplicate_execution",
+        "scope_ref": decision["binding_id"],
+        "binding_id": decision["binding_id"],
+        "runtime_id": decision["runtime_id"],
+        "artifact_id": decision["artifact_id"],
+        "artifact_version": decision["artifact_version"],
+        "signal_id": decision["signal_id"],
+        "run_id": decision["run_id"],
+        "plan_id": analysis.get("plan_id"),
+        "deployment_plan_id": analysis.get("plan_id"),
+        "capital_pool_id": analysis.get("capital_pool_id"),
+        **analysis["handoff"],
+        # The existing incident consumer links exactly one telemetry event; the
+        # other duplicate event stays preserved in the fields below.
+        "telemetry_event_id": analysis["linked_telemetry_event_id"],
+        "telemetry_event_ids": [analysis["linked_telemetry_event_id"]],
+        "duplicate_event_ids": ids,
+        "handoff_state": "pending",
+        "predecessor_incident_id": incident_id or None,
+        "severity": "critical",
+        "status": "open",
+        "recommended_action": "open_incident",
+        "metrics": {"duplicate_execution": analysis},
+        "evidence_refs": [
+            f"telemetry_event:{analysis['linked_telemetry_event_id']}",
+            *[f"duplicate_execution_event:{event_id}" for event_id in ids],
+            *([f"incident:{incident_id}"] if incident_id else []),
+            f"runtime_binding:{decision['binding_id']}",
+            f"drift_evaluation:{evaluation_id}",
+            f"drift_report:{report_id}",
+        ],
+        "occurrence_window": analysis["occurrence_window"],
+        "generated_at": analysis["discovered_at"],
+        "source_contract": {
+            "telemetry_truth_owner": "telemetry-ingest",
+            "incident_truth_owner": "incidents",
+            "runtime_truth_owner": "runtime-manager",
+            "derived_only": True,
+            "emergency_control_chain_affected": False,
+        },
+    }
+
+
 @app.post("/api/reconciliation-drift/incident-triggers/consume", status_code=201)
 def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     """Consume an incident/anomaly trigger and immediately create a reconciliation evaluation.
@@ -3492,6 +3775,21 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     evidence_summary = str(incident.get("evidence_summary") or anomaly_event.get("evidence_summary") or "")
     is_infra = binding_id.startswith("infra-subject-") or "non_trading_infrastructure_incident=true" in evidence_summary
     existing = None if is_infra else store.get_evaluation(evaluation_id, tenant_id=tenant_id)
+    if existing is not None and any(
+        isinstance(check, dict)
+        and check.get("check") == "duplicate_execution_invariant"
+        and check.get("reason") == "accepted_event_unresolved"
+        for check in existing.get("reconciliation_checks") or []
+    ):
+        # Evidence was not yet accepted when first evaluated: replay re-measures.
+        existing = None
+    if existing is not None and any(
+        (stored_report := store.get_drift_report(str(report_id), tenant_id=tenant_id)) is not None
+        and stored_report.get("handoff_state") != "delivered"
+        for report_id in existing.get("drift_report_ids") or []
+    ):
+        # Owner handoff never completed (e.g. Incidents not configured): replay retries it.
+        existing = None
     if is_infra or existing is not None:
         return {
             "status": "ok",
@@ -3530,7 +3828,29 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     }
     baseline_metrics = raw_baseline_metrics
     drift_checks = _drift_checks(baseline_metrics, observed_metrics, thresholds)
-    status = _worst_status([trigger_status, *[check["status"] for check in drift_checks]])
+    duplicate_analysis = _duplicate_execution_analysis(
+        tenant_id=tenant_id,
+        event_ids=telemetry_event_ids,
+        discovered_at=timestamp,
+        deployment_stage=str(
+            body.deployment_stage
+            or _first_trigger_value(incident, anomaly_event, keys=("deployment_stage", "deployment_mode"))
+            or ""
+        ).strip(),
+    )
+    if duplicate_analysis and duplicate_analysis.get("retryable"):
+        # Nothing durable is written: a retry after recovery re-acquires evidence.
+        raise HTTPException(
+            status_code=503,
+            detail=f"duplicate execution evidence not yet available: {duplicate_analysis['reason']}",
+        )
+    status = _worst_status(
+        [
+            trigger_status,
+            *[check["status"] for check in drift_checks],
+            *([duplicate_analysis["status"]] if duplicate_analysis else []),
+        ]
+    )
     evidence_refs = [
         {"type": "runtime_binding", "id": binding_id},
         *([{"type": "runtime_session", "id": runtime_id}] if runtime_id else []),
@@ -3566,7 +3886,8 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
                 "source_event_id": source_event_id or None,
                 "reason": reason,
                 "telemetry_event_ids": telemetry_event_ids,
-            }
+            },
+            *([duplicate_analysis] if duplicate_analysis else []),
         ],
         "evidence_refs": evidence_refs,
         "trigger": "incident",
@@ -3587,6 +3908,28 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
         },
         "evaluated_at": timestamp,
     }
+    if duplicate_analysis and duplicate_analysis.get("duplicate_detected"):
+        # Idempotent derived owner output keyed by the decision; written before
+        # the evaluation so a retry after a partial failure converges.
+        report = _duplicate_execution_report(
+            analysis=duplicate_analysis,
+            evaluation_id=evaluation_id,
+            incident_id=incident_id,
+        )
+        existing_report = store.get_drift_report(report["drift_report_id"], tenant_id=tenant_id)
+        stored_report = existing_report or store.put_drift_report(report)
+        # Deliver through the existing incidents owner path. A failure raises
+        # before the evaluation is stored, so the retry re-enters here, finds
+        # the stored report, and redelivers (incident ids are deterministic).
+        delivered = _classify_drift_report_incident(stored_report)
+        stored_report["handoff_state"] = "delivered" if delivered is not None else "not_configured"
+        if delivered is not None:
+            stored_report["incident_id"] = delivered.get("incident_id") or delivered.get("id")
+        store.put_drift_report(stored_report)
+        evaluation["drift_report_ids"] = [stored_report["drift_report_id"]]
+        evaluation["evidence_refs"].append(
+            {"type": "drift_report", "id": stored_report["drift_report_id"]}
+        )
     stored = store.put_evaluation(evaluation)
     return {
         "status": "ok",

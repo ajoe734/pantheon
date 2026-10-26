@@ -1041,6 +1041,26 @@ class TestRedisPendingSignalStoreClaimVisibility(_RealRedisDockerTestCase):
         self.assertEqual(worker_b.inflight_depth(), 0)
 
 
+    def test_completed_execution_fence_survives_processed_cache_expiry(self):
+        worker = self._store("worker-ttl")
+        worker._processed_ttl_seconds = 1
+        sig = _signal("sig-completed-fence-ttl", binding_id="b-001")
+        worker.enqueue(sig)
+        claimed = worker.get_pending(limit=1)[0]
+        fence = worker.begin_execution(claimed)
+        self.assertEqual(fence.status, "acquired")
+        self.assertTrue(worker.complete_execution(sig["signal_id"], fence.token))
+        worker.ack(claimed)
+        self.assertEqual(self.redis.ttl(worker._execution_key(sig["signal_id"])), -1)
+
+        time.sleep(1.3)
+        self.assertFalse(worker.is_processed(sig["signal_id"]))
+        restored = self._store("worker-ttl-restart")
+        worker.enqueue(sig)
+        replay = restored.get_pending(limit=1)[0]
+        self.assertEqual(restored.begin_execution(replay).status, "completed")
+
+
 # ---------------------------------------------------------------------------
 # Cross-process leader lease tests (B2)
 # ---------------------------------------------------------------------------

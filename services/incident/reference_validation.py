@@ -134,6 +134,10 @@ class _TelemetryLineageLookup:
     def runtime_binding_projection(self, binding_id: str) -> Optional[dict[str, Any]]:
         return self._query("runtime_binding_projection", binding_id=binding_id)
 
+    def accepted_event(self, event_id: str) -> Optional[dict[str, Any]]:
+        """Read the immutable owner-accepted event (carries top-level ``created_at``)."""
+        return self._query("accepted_event", event_id=event_id)
+
     def forensic_plan_trace(self, plan_id: str) -> Optional[dict[str, Any]]:
         return self._query("forensic_plan_trace", plan_id=plan_id)
 
@@ -169,6 +173,8 @@ class _TelemetryLineageLookup:
             ) from exc
 
     def _query_local(self, query_family: str, **params: str) -> Optional[dict[str, Any]]:
+        if query_family == "accepted_event":
+            return None  # the lineage corpus has no authoritative event time
         service = self._get_local_service()
         if service is None:
             return None
@@ -192,6 +198,8 @@ class _TelemetryLineageLookup:
     def _route_for(query_family: str, **params: str) -> str:
         if query_family == "telemetry_event_trace":
             return f"/api/telemetry/lineage/events/{params['event_id']}/trace"
+        if query_family == "accepted_event":
+            return f"/api/telemetry/events/{params['event_id']}"
         if query_family == "runtime_binding_projection":
             return f"/api/telemetry/lineage/runtime-bindings/{params['binding_id']}/projection"
         if query_family == "forensic_plan_trace":
@@ -229,7 +237,9 @@ class CanonicalReferenceValidator:
             )
         else:
             errors.extend(_binding_mismatch_errors(incident, binding))
-            errors.extend(_binding_window_errors(incident, binding))
+            errors.extend(
+                _binding_window_errors(incident, binding, self._accepted_events)
+            )
 
         artifact_ref = f"{incident.artifact_id}@{incident.artifact_version}"
         if incident.lineage_ref:
@@ -276,6 +286,13 @@ class CanonicalReferenceValidator:
             raise CanonicalReferenceError(errors)
 
 
+    def _accepted_events(self, event_ids: list[str]) -> list[Optional[dict[str, Any]]]:
+        lookup = getattr(self.telemetry_lookup, "accepted_event", None)
+        if lookup is None:
+            return [None] * len(event_ids)
+        return [lookup(event_id) for event_id in event_ids]
+
+
 def _binding_mismatch_errors(incident: IncidentCase, binding: Mapping[str, Any]) -> list[str]:
     comparisons = (
         ("deployment_stage", incident.deployment_stage, binding.get("deployment_mode")),
@@ -304,7 +321,11 @@ def _binding_mismatch_errors(incident: IncidentCase, binding: Mapping[str, Any])
     return errors
 
 
-def _binding_window_errors(incident: IncidentCase, binding: Mapping[str, Any]) -> list[str]:
+def _binding_window_errors(
+    incident: IncidentCase,
+    binding: Mapping[str, Any],
+    accepted_events: Any | None = None,
+) -> list[str]:
     created_at = _parse_rfc3339(incident.created_at)
     if created_at is None:
         return [f"incident created_at {incident.created_at!r} is not valid RFC3339 UTC"]
@@ -317,10 +338,36 @@ def _binding_window_errors(incident: IncidentCase, binding: Mapping[str, Any]) -
             f"incident created_at {incident.created_at!r} is before RuntimeBinding {incident.binding_id!r} effective_at {binding.get('effective_at')!r}"
         )
     if retired_at and created_at > retired_at:
-        errors.append(
-            f"incident created_at {incident.created_at!r} is after RuntimeBinding {incident.binding_id!r} retired_at {binding.get('retired_at')!r}"
-        )
+        # A late-discovered incident is qualified by when the referenced
+        # events actually occurred, never by the report time.
+        if not _events_occurred_in_window(
+            incident, accepted_events, effective_at, retired_at
+        ):
+            errors.append(
+                f"incident created_at {incident.created_at!r} is after RuntimeBinding {incident.binding_id!r} retired_at {binding.get('retired_at')!r}"
+            )
     return errors
+
+
+def _events_occurred_in_window(
+    incident: IncidentCase,
+    accepted_events: Any | None,
+    effective_at: datetime | None,
+    retired_at: datetime,
+) -> bool:
+    """True only if every referenced event has verified canonical created_at (runtime generation time) in the window."""
+    event_ids = list(incident.telemetry_event_ids)
+    if not event_ids or accepted_events is None:
+        return False
+    for event_id, event in zip(event_ids, accepted_events(event_ids)):
+        if not isinstance(event, Mapping) or event.get("event_id") != event_id:
+            return False
+        occurred_at = _parse_rfc3339(event.get("created_at"))
+        if occurred_at is None or occurred_at > retired_at:
+            return False
+        if effective_at and occurred_at < effective_at:
+            return False
+    return True
 
 
 def _telemetry_trace_mismatch_errors(

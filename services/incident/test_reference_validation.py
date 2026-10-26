@@ -63,9 +63,12 @@ class _FakeTelemetryLookup:
         *,
         event_trace: dict | None = None,
         binding_projection: dict | None = None,
+        accepted_events: dict[str, dict] | None = None,
     ) -> None:
         self._event_trace = event_trace
         self._binding_projection = binding_projection
+        if accepted_events is not None:
+            self.accepted_event = accepted_events.get
 
     def telemetry_event_trace(self, event_id: str):
         if self._event_trace is None:
@@ -227,6 +230,42 @@ class TestCanonicalReferenceValidator(unittest.TestCase):
         with self.assertRaises(CanonicalReferenceError) as ctx:
             validator.validate_incident(_make_incident())
         self.assertIn("is before RuntimeBinding 'binding-001' effective_at", str(ctx.exception))
+
+    def _late_validator(self, event_time):
+        accepted = {"evt-001": {"event_id": "evt-001", "created_at": event_time}}
+        return CanonicalReferenceValidator(
+            binding_lookup=_FakeBindingLookup(
+                _binding_record(retired_at="2026-04-14T00:00:00Z")
+            ),
+            telemetry_lookup=_FakeTelemetryLookup(
+                event_trace=_event_trace(),
+                binding_projection=_binding_projection(),
+                accepted_events=accepted if event_time is not None else {},
+            ),
+        )
+
+    def test_late_discovery_accepted_when_event_time_inside_window(self):
+        incident = _make_incident()  # created_at is after binding retired_at
+        self._late_validator("2026-04-13T12:00:00Z").validate_incident(incident)
+        self.assertEqual(incident.created_at, "2026-04-15T12:00:00Z")
+
+    def test_late_discovery_rejected_when_event_time_outside_or_unverifiable(self):
+        for event_time in ("2026-04-14T00:00:01Z", "2026-04-09T00:00:00Z", "garbage", None):
+            with self.subTest(event_time=event_time):
+                with self.assertRaises(CanonicalReferenceError) as ctx:
+                    self._late_validator(event_time).validate_incident(_make_incident())
+                self.assertIn("is after RuntimeBinding 'binding-001' retired_at", str(ctx.exception))
+
+    def test_late_report_without_event_time_lookup_still_rejected(self):
+        validator = CanonicalReferenceValidator(
+            binding_lookup=_FakeBindingLookup(_binding_record(retired_at="2026-04-14T00:00:00Z")),
+            telemetry_lookup=_FakeTelemetryLookup(
+                event_trace=_event_trace(), binding_projection=_binding_projection()
+            ),
+        )
+        with self.assertRaises(CanonicalReferenceError) as ctx:
+            validator.validate_incident(_make_incident())
+        self.assertIn("is after RuntimeBinding", str(ctx.exception))
 
     def test_telemetry_event_limit_rejects_before_owner_lookups(self):
         class _NeverCalledLookup:
