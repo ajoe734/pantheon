@@ -1,0 +1,91 @@
+{
+  "task_id": "DEV-CLOSEOUT-REPORT-PUBLISH-BOUNDARY-20261026",
+  "parent_task_id": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "title": "Prevent the three closeout reports from requesting another product release",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "ready_for_review",
+  "task_class": "implementation",
+  "scope": "existing_dev_publisher_literal_three_closeout_reports_boundary_only",
+  "evidence_classification": "source_and_unit_regression_only_not_hosted_runtime_acceptance",
+  "not_a_product_release_dependency": true,
+  "runtime_dispatch_owner": "Root01a11b73-51ee-7b52-bac2-bf1561292e00",
+  "recorded_at_utc": "2026-10-26T00:35:00Z",
+  "scoped_artifacts": [
+    "scripts/auto_deploy_dev_pair.py",
+    "scripts/test_auto_deploy_dev_pair.py",
+    "docs/deployment/evidence/DEV-CLOSEOUT-REPORT-PUBLISH-BOUNDARY-20261026/evidence.json"
+  ],
+  "literal_three_closeout_report_paths": [
+    "docs/deployment/latest-dev-six-area-closure.md",
+    "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
+    "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json"
+  ],
+  "control_boundary_reproduction": {
+    "hourly_workflow_entry": {
+      "file": ".github/workflows/nightly-publish-cut.yml",
+      "schedule_lines": "19-27",
+      "dev_pair_job_lines": "117-138",
+      "behavior": "The independent dev-pair job checks out ref: dev and runs `python3 scripts/auto_deploy_dev_pair.py --fe-url \"$DEV_FE_URL\" --bff-url \"$DEV_BFF_URL\" --apply` on every hourly tick regardless of steps.check.outputs.should_cut."
+    },
+    "branch_ci_entry": {
+      "file": ".github/workflows/branch-ci.yml",
+      "trigger_lines": "12-22",
+      "behavior": "Runs Branch CI Gate on every push to dev, producing the completed push workflow run queried by ci_passed()."
+    },
+    "pre_fix_inspector_behavior": {
+      "file": "scripts/auto_deploy_dev_pair.py",
+      "behavior": "inspect_pair() read both protected dev tips (backend.get_ref('dev'), frontend.get_ref('dev')) and compared only exact SHA equality against manifest/BFF/releaseAdmission before checking failed_pair_run() and ci_passed(). Merging a PR that modified only the three closeout report paths advanced dev past the served BFF SHA and, after push CI succeeded, caused the next hourly dev-pair tick to return state='ready' and dispatch nonprod-deploy.yml (component=root). This is a conditional feedback path when closeout reports are merged after an accepted Root release, not an autonomous report writer or proven multi-Root loop."
+    },
+    "identical_pre_fix_revisions_verified": [
+      "c8513d2819dad3cc37b48d3f11268f7f1fb6d656",
+      "a34a6956384ce8d9afd7e060bfce9d7a23082c90",
+      "c28fff38eeadccfdebba41731feda8c64e11023e"
+    ],
+    "withdrawn_broad_runtime_classifier_revived": false
+  },
+  "implemented_boundary_and_honest_limits": {
+    "closeout_reports_only_helper": "closeout_reports_only(backend, base_sha, head_sha) queries GET /repos/{backend.repository}/compare/{base_sha}...{head_sha} via the existing GitHubClient and returns True only when status == 'ahead', behind_by == 0, ahead_by == total_commits > 0, commits (if present) is un-truncated, files is a non-empty un-truncated list (1 <= len(files) < 300 and total_files in (None, len(files))), and every file entry has status in {'added', 'modified', 'removed', 'renamed'}, filename in CLOSEOUT_REPORT_PATHS, and any previous_filename (mandatory when status == 'renamed') also in CLOSEOUT_REPORT_PATHS.",
+    "inspect_pair_behavior": "After verifying accepted baseline, persistent profile ('read-only' or 'operator-live'), and strict live auth/write posture, inspect_pair() requires full served identity coherence (manifest.bffCommit == version.source_commit_sha == manifest.releaseAdmission.backend.commitSha == served_backend and manifest.frontendSha == manifest.releaseAdmission.frontend.commitSha == frontend_sha). When served_backend != backend_sha and closeout_reports_only(backend, served_backend, backend_sha) holds, inspect_pair() returns {'backend_sha': backend_sha, 'frontend_sha': frontend_sha, 'frontend_profile': profile, 'served_backend_sha': served_backend, 'state': 'report_only_no_deploy'}. reconcile(..., apply=True) returns this result without dispatching nonprod-deploy.yml and never relabels the unserved dev tip as 'up_to_date'.",
+    "honest_scope_limits": {
+      "covers_only_literal_three_report_paths": true,
+      "covers_a34a69563_to_c28fff38e_harness_and_evidence_delta": false,
+      "a34a69563_to_c28fff38e_changed_paths": [
+        "docs/deployment/evidence/HOSTED-ALL12-D-OWNER-AUTH-20261025/evidence.json",
+        "docs/deployment/evidence/HOSTED-ALL12-E-BASELINE-20261025/evidence.json",
+        "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+        "tests/unit/l12/test_hosted_stimulus_contract.py"
+      ],
+      "edits_closeout_reports_directly": false,
+      "separate_closeout_reports_pr": 6668
+    },
+    "activation_mechanism": {
+      "workflow_file": ".github/workflows/nightly-publish-cut.yml",
+      "job": "dev-pair",
+      "checkout_ref": "dev",
+      "entrypoint": "python3 scripts/auto_deploy_dev_pair.py --fe-url \"$DEV_FE_URL\" --bff-url \"$DEV_BFF_URL\" --apply",
+      "requires_product_root_deploy": false,
+      "requires_supervisor_command_runtime_promotion": false
+    }
+  },
+  "verification": {
+    "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_deploy_dev_pair.py",
+    "passed": 51,
+    "failed": 0,
+    "new_regression_tests": [
+      "scripts/test_auto_deploy_dev_pair.py::test_three_closeout_reports_only_with_unchanged_fe_and_coherent_served_be_never_dispatches",
+      "scripts/test_auto_deploy_dev_pair.py::test_closeout_reports_plus_other_backend_path_still_dispatches",
+      "scripts/test_auto_deploy_dev_pair.py::test_changed_frontend_still_dispatches_even_when_backend_is_closeout_reports_only",
+      "scripts/test_auto_deploy_dev_pair.py::test_unknown_truncated_or_rename_outside_report_paths_cannot_suppress_real_change",
+      "scripts/test_auto_deploy_dev_pair.py::test_inconsistent_served_identity_cannot_masquerade_as_report_only"
+    ]
+  },
+  "worker_execution_boundaries": {
+    "vm_or_ssh_used": false,
+    "real_github_or_hosted_api_called": false,
+    "workflow_dispatched_or_toggled": false,
+    "github_secrets_or_vars_mutated": false,
+    "canonical_task_json_hand_edited": false,
+    "all12_or_product_closeout_claimed": false
+  }
+}
