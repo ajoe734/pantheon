@@ -1,24 +1,33 @@
 # Pantheon 原六區交付與完整十二環驗收
 
-最近核對：2026-10-25T15:26:41.111787+00:00。**正式接受 BE `4289bcb686050131522f2318a0ebb05b8d4a8886`／FE `ad31927ded9a9ebd99eb436eb7320bc7a97e4065`（Root40193136811）；原49 checkpoint全部完成。原H2兩意見＋一綜合、同owner UI及跨實際服務替換的完整保存也完成。整體L1–L12、父任務6AC與指定Antigravity TOTAL仍未完成。**
+最近核對：**2026-10-26T01:06:57.503029+00:00**。**Root40245443101 已於00:42:36正式接受 BE `a34a6956384ce8d9afd7e060bfce9d7a23082c90`／FE `ad31927ded9a9ebd99eb436eb7320bc7a97e4065`。原同持倉數值與來源恢復，真UI卻把未知幣別硬標USD；原FE889修正已來源結案但還待真正部署。原49完成，完整L1–L12／父6AC／指定Antigravity TOTAL仍未完成。**
 
-本次只更新原三份文件，Zero production delta。原紙上測試保持 `is_real=false` 邊界；不授權實盤或資金操作。
+本次只更新原PR6668同三份文件，Zero production delta，父任務與TOTAL維持未完成。原123歷史身份表與原36筆來源保持原樣；新增11筆核實來源共47筆，只表示來源紀錄。00:04:48初稿不倒填，本checkpoint明列後續結案、正式接受與實際UI結果。紙上測試保持`is_real=false`。
 
-| 範圍 | 真實結果與界線 |
+| 範圍 | 本次真實讀回與仍欠界線 |
 |---|---|
-| 正式配對 | Root401931、FEgate40194064032、FEdeploy40195902514成功；官方final29與public10核對一致。FULL／hosted segment／兩段往返在此run為skipped，不能寫成pass，也不新增每次換版重跑gate。 |
-| 原49條 | 原六組43archive未變，Pattern原6經真正A2 review、PR6796 merge67d8及native／hosted DONE完成。原條文不變，不再重開Pattern或要求新自然樣本。 |
-| 原H2與保存 | 同v2的2意見、1綜合及原2失敗／3成功invocation完整保留。11:37完成讀回後，worker12:34:49／BFF12:35:49真程序替換，14:11同OP_A full data逐值相同，hash `eb33fd0c27a3af74786260c96113e7762cf9430b89983ef8662c23cebf3a61ac`。只完成原AC4的H2保存子項，不是整個AC4／TOTAL。 |
-| 限定真UI | 一個真實admintest session回傳六個角色；七筆頁面觀察含兩次重載，login／logout／舊JWT撤銷通過。不是六個獨立身分或七個不同頁面。原Capital pool19欄、binding20欄完整資料相同。 |
-| 真正阻礙 | 原A唯讀續接402033於前置檢查失敗：預期accepted4289，runner選到舊root55，pytest_exit2且沒有chain receipt。實際BFF／worker使用乾淨dev-bff/4289；adapter沿原root55有效。這是runner選取來源的交付基建錯誤，並非線上4289部署失敗。 |
-| 唯一修正與執行者 | 原HOSTED-ALL12-ACCEPTED-MANAGED-SOURCE-20261025由supervisor派原worker修正既有來源選擇，保留SHA／clean／lease；不改VM root掩蓋。e2下線後Root01a11已原生承接唯一A–E，舊等待e2註記過期；Root0只維護本PR6668三文件。 |
-| 接續 | 真review／CI／merge後，Root1單次續原A prior401676取得真pre-edit scalar；保留已完成B400808，不重跑B。以既有predecessors承接真scalar至原C prior400845，再D／H4→E與適用L11；原IDs、H1/H3v2、frozen artifact、真natural fill及負結果保留。 |
+| 正式接受配對 | Root402454／FEgate40247457767／FEdeploy40249112259均SUCCESS；00:42:36 accepted a34/ad319。Root0兩公開GET／16checks與Root153實際publicpair逐值相符。這是實際配對／metadata，不冒稱全57images或所有artifact；原optional FULL／hosted／roundtrip SKIPPED不是PASS，不加每版重跑gate。 |
+| 原A/B/C已完成 | 6800 source選取修正已g7 review／CI／merge a1b80／nativeDONE；原runner55錯選已是歷史，不能再列當前阻礙。A402136真唯讀補pre-edit scalar完成，B400808既有完成不重跑，C402211真9loops；原H1/H3v2／frozenfa3／plan／saga／pool／binding／真fill保留。 |
+| D修好401仍非業務完成 | D402401 failed401保留；6810/0e18→a34已真sourceDONE，private harness a34在accepted runtime76062上執行D402439，workflowSUCCESS／pytest0且401消失，但business仍PAUSED/noIncident。原39IDs／ABC／9loopobjects完整reference保存，只增一BFFtypedhealth成10records；不是Loop10／11／H4／全12或全39owner-data跨restart。Reconbaseline0、driftchecks0是unmeasured，不是已測零金融drift。 |
+| 同持倉數值已恢復 | 原h12／rt-eb295fe2 qty−2，真Source2385=Telemetry/BFF，市值−4770／notional4770；原Oct22asof／Oct23observed_at／ref／整份lineage/calendar與identity保留。新BFF／Telemetry程序後原holding仍在。正式接受後同holding真UI顯示數值與source ok；價格／asof／ref是API證據，不聲稱是畫面欄位。 |
+| 幣別顯示仍錯 | 真UI把currency=null的−4770顯示成`-$4,770`，沒有USD或FX依據，故units仍FAIL，不升格全L9金融。原FE889/a19→24534489已review／CI／merge／nativeDONE：有幣別按原幣、未知中性數字＋「幣別未提供」，不改值或建FX服務；真正paired部署／同持倉unitUI仍欠。原holding保留到這步後再E。 |
+| 6811證據修正已完成 | 原6810兩BE欄誤填FE和多餘先deploy文字，已由唯一followup6811/000946→4f38426改原同file三欄，真Antigravity2 review、10CI全成功、nativeDONE23:58:43。它不再是sourcepending，也沒有新增errata副本／產品Root／78functional tests重跑。 |
+| E來源已交付，實際操作仍欠 | 原E6808同Taskg2 exactbe0經指定審查與CI，00:05:18合併c28fff38，00:06:46 nativeDONE。多加的accepted_release_retire／attestation門檻已刪，原owner／prior-E／stable-state／實際versions／count1／this-chain-zero保留。它是private harness修正，不需另一產品Root；真E操作、H4與全12仍未完成。 |
+| 有界UI／保存完成 | 採原Root153真admintest的一個session、六個回傳roles、七筆觀察含兩reload、saved pool/Persona/F12/loginlogout，並非所有business／finance或全角色矩陣。H2真2意見＋1綜合與完整owner結果跨實際程序替換已完成；B同h12兩owner完整JSON跨實際process保存是新增partialAC4，不把抄舊C receipt當全chain保存。原49/Pattern不重開。 |
 
-根因有兩個不同邊界：Capital曾把業務owner當tenant，真DTO的獨立formal tenant被測試資料掩蓋；PR6793已在4289交付。這次A失敗則是假設所有component共用root checkout；bff換版後BFF與adapter本來就可使用不同checkout，runner必須追實際BFF來源。不能以再部署、關閉identity檢查或重跑模型處理。
+目前缺漏的原因與修正不能只用commit數描述。原runner把不同component當成同一root checkout，是交付來源選取錯誤，6800與真A/C讀回已解除。D的401則是caller對既有owner credential／tenant契約接錯；harness source a34、runtime76062、FE ad319是三個不同權威身分，修caller不等於改產品auth政策，也不能把FE SHA填進BE欄或要求tests-only修正先部署產品。6811完成的是這筆證據返工。
 
-主證據在 [evidence.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json) 的 `proofs`；來源與當前待辦在 [source-delivery-ledger.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json)。既有H2-H4紙上測試決定沿用，H2有限模型操作已耗用，不重送。原財務／0.0027與未觸發L11正例的N/A保留，不加費用完整度、盈利、新真人或全角色重跑gate。
+Portfolio從provider恢復DD到金融持倉可用之間仍有真資料流缺口：MarketMark序列化丟calendar／receipt／lineage，下游各自raw48h重判，unchanged-sample與same-asof去重又在真provenance抵達前return。6809在既有四seams／單一writer修正這條路，現在a34候選API已實證恢復原price/value；沒有提高172800、重造marketdata／fill、加cache／calendar service／第二writer或新route/FE。**同finalaccepted pair真UI已證數值與source，仍有USD錯標；不能升格完整金融／units驗收。**
 
-原43及Pattern6條文、父g17／6AC／21依賴／3產物保持。49個checkpoint DONE不等於完整父任務：原同鏈C–D/H4–E、適用L11、其他原條款判定與指定Antigravity TOTAL仍待完成。本PR維持draft，all12／goal／TOTAL均false；文件CI或來源commit數不代替產品驗收。前版錯誤刪去的原來源身份表於下方恢復為歷史追溯，沒有新增功能或聲稱其等於上線驗收。
+E返工則是把原「E不改非本chain資料」擴成歷史全配對排序、完整外部deployment再准入及新proof/schema要求，拒絕原本合法的pre-E外部替換；新be0回到原owner真身分、可靠prior-E時間、相關stable state／實際exposed versions與原count／chain-zero。未知或矛盾真owner證據仍保留未驗，optional deployment欄位缺少本身不是新gate。這不是cleanup waiver，不補GitHub verifier／MFA／grant，也不假造H4或自然Incident。
+
+主證據與精確SHA在[evidence.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json)的`proofs`；新增十一筆逐項canonical來源身份及原E的sourceDONE界線在[source-delivery-ledger.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json)。舊proof保留日期界線；00:04:48初稿不變，後續事實在本次較新的checkpoint明列。原Root1唯一runtime/business caller，Root0只原三正式報告／指定TOTAL及Portfolio/evidencecoordination，不重送已耗用的模型、Research／Agora／L6/L7／CPU／控制操作。
+
+原parentg17／ownerHumanOps／reviewerAntigravity／6AC／21依賴／3產物、原43＋Pattern6 literal條款、123source rows、H2real2+1與named partialAC4完整保留。原finance `.0027`僅舊0040，與frozenfa3真AG2 ROD `.0325`分開；原datedFULL400055 exact9aeb與rollback/reactivation400078及其當時acknowledged-data範圍保留，後完成H2／新A–E資料的coverage差異仍欠指定TOTAL原義判定。不能把舊往返冒稱76062/a34，也不新增每owner39GET、全角色、每版FULL／roundtrip或forcedpositive/provider gate。
+
+另查明一個交付控制邊界：publisher只比dev SHA，三報告在CI成功後可令nexttick再Root；publisher不自己寫報告，所以只證條件式回饋，不能說已證多輪自主循環。唯一DEV-CLOSEOUT-REPORT-PUBLISH-BOUNDARY-20261026／PR6813/e1e9→f9abe36已正常review／CI／merge／nativeDONE：完整差異恰限原3report paths且真pair一致時回report-only/no-deploy，保留真正servedSHA。只含此精確範圍，不涵蓋其他harness/docs、不是新平台或父依賴；51個puretests不是live no-deploy觀察。
+
+本PR仍draft；原same-chain D/H4/E、適用L11、幣別修正後同持倉UI、其他原條款及真Antigravity TOTAL／最後repo integration未完成。all12／goal／TOTAL均false；本checkpoint只是原三檔證據更新，不是ready、批准或完成交付。
 
 ## 歷史行為稽核（2026-10-21）
 
