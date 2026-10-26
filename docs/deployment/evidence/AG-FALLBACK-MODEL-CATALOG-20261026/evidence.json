@@ -1,0 +1,20 @@
+{
+  "task": "AG-FALLBACK-MODEL-CATALOG-20261026",
+  "change": "model_rotation.fallback claude-sonnet-4-6 -> claude-sonnet-5-5-medium for antigravity and antigravity2",
+  "result": {
+    "antigravity": {
+      "enabled": true,
+      "primary": "gemini-4-argon-high",
+      "fallback": "claude-sonnet-5-5-medium",
+      "cooldown_seconds": 900
+    },
+    "antigravity2": {
+      "enabled": true,
+      "primary": "gemini-4-argon-high",
+      "fallback": "claude-sonnet-5-5-medium",
+      "cooldown_seconds": 900
+    }
+  },
+  "catalog_receipt": "/tmp/pantheon-codex-01a11-review-20261023/AG-actual-provider-model-catalog-20261026.json",
+  "validation": "config.json parses; primary unchanged, fallback updated"
+}

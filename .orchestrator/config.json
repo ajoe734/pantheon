@@ -499,7 +499,7 @@
       "model_rotation": {
         "enabled": true,
         "primary": "gemini-4-argon-high",
-        "fallback": "claude-sonnet-4-6",
+        "fallback": "claude-sonnet-5-5-medium",
         "cooldown_seconds": 900
       },
       "approval": {
@@ -536,7 +536,7 @@
       "model_rotation": {
         "enabled": true,
         "primary": "gemini-4-argon-high",
-        "fallback": "claude-sonnet-4-6",
+        "fallback": "claude-sonnet-5-5-medium",
         "cooldown_seconds": 900
       },
       "approval": {
