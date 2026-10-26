@@ -1,0 +1,10 @@
+{
+  "task_id": "RECON-DUPLICATE-EXECUTION-INVARIANT-20261026",
+  "scope": "source-only; local tests; not hosted/all12 acceptance",
+  "change": "incident-triggers/consume now resolves tenant-scoped accepted events via fetch_accepted_event and stores a duplicate_execution_invariant reconciliation check; a detected duplicate also stores one idempotent derived drift report preserving both event ids and the predecessor incident",
+  "validation": {
+    "focused": "pytest services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py: 12 passed (3 new fail on pre-change main.py)",
+    "service_suite": "pytest services/reconciliation-drift --continue-on-collection-errors: 153 passed, 1 skipped, 4 collection errors (missing optional deps in local venv; same 4 files error on unmodified dev)"
+  },
+  "not_done": ["no deploy, VM, live API, provider, order or restart actions"]
+}

@@ -406,3 +406,146 @@ def test_delivered_record_drops_incidents_no_longer_open(tmp_path: Path) -> None
         with mock.patch.object(listener, "fetch_open_incidents", return_value=[]):
             listener.run_tick(**kwargs)
     assert json.loads(state_path.read_text())["delivered"] == {}
+
+
+def _fill_event(event_id: str, order_id: str, created_at: str, *, qty: float = 1.0, status: str = "filled", **overrides):
+    event = {
+        "event_id": event_id,
+        "created_at": created_at,
+        "tenant_id": "tenant-a",
+        "binding_id": "rb-dup",
+        "runtime_id": "rt-dup",
+        "artifact_id": "art-1",
+        "artifact_version": "v1",
+        "plan_id": "plan-1",
+        "capital_pool_id": "pool-1",
+        "signal_id": "sig-1",
+        "run_id": "run-1",
+        "order_id": order_id,
+        "symbol": "AAPL",
+        "metrics": {"action": "SELL", "fill_quantity": -qty, "submitted_to_broker": True},
+        "metadata": {
+            "requested_quantity": 1.0,
+            "broker_submission_status": status,
+            "ledger_committed": True,
+            "broker_order_id": order_id,
+            "market_price_as_of": "2026-10-23T20:00:00Z",
+        },
+    }
+    event.update(overrides)
+    return event
+
+
+def _post_duplicate_trigger(client, svc, events, incident_id="inc-dup-001"):
+    by_id = {event["event_id"]: event for event in events}
+    with mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry", "PANTHEON_TENANT_ID": "tenant-a"}), mock.patch(
+        "telemetry_client.fetch_accepted_event",
+        side_effect=lambda url, event_id, **kwargs: by_id.get(event_id),
+    ):
+        return client.post(
+            "/api/reconciliation-drift/incident-triggers/consume",
+            json={
+                "incident": {
+                    "incident_id": incident_id,
+                    "binding_id": "rb-dup",
+                    "runtime_id": "rt-dup",
+                    "severity": "medium",
+                    "telemetry_event_ids": list(by_id),
+                },
+            },
+        )
+
+
+def _reports(svc):
+    return [r for r in svc.store.list_drift_reports() if r.get("tenant_id") == "tenant-a"]
+
+
+def _duplicate_check(client):
+    with mock.patch.dict("os.environ", {"PANTHEON_TENANT_ID": "tenant-a"}):
+        evaluation = client.get(
+            "/api/reconciliation-drift/evaluations", params={"binding_id": "rb-dup"}
+        ).json()[0]
+    check = next(
+        c for c in evaluation["reconciliation_checks"] if c["check"] == "duplicate_execution_invariant"
+    )
+    return evaluation, check
+
+
+def test_two_distinct_full_orders_for_one_decision_store_duplicate_report_and_replay_is_idempotent() -> None:
+    events = [
+        _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+        _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z"),
+    ]
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        first = _post_duplicate_trigger(client, svc, events)
+        second = _post_duplicate_trigger(client, svc, events)
+        assert first.status_code == 201 and first.json()["created"] is True
+        assert second.json()["skipped"] is True
+
+        evaluation, check = _duplicate_check(client)
+        assert evaluation["status"] == "critical"
+        assert check["duplicate_detected"] is True and check["measurement"] == "measured"
+        assert check["requested_quantity"] == 1.0 and check["committed_quantity"] == 2.0
+        assert check["occurrence_window"] == {
+            "first_created_at": "2026-10-24T09:50:13Z",
+            "last_created_at": "2026-10-25T09:51:15Z",
+        }
+        reports = _reports(svc)
+        assert len(reports) == 1
+        report = reports[0]
+        assert report["telemetry_event_ids"] == ["evt-a", "evt-b"]
+        assert report["predecessor_incident_id"] == "inc-dup-001"
+        assert "incident:inc-dup-001" in report["evidence_refs"]
+        assert evaluation["drift_report_ids"] == [report["drift_report_id"]]
+        assert "threshold_metric" not in json.dumps(report)
+
+
+def test_partial_fills_same_order_and_replayed_order_are_not_duplicates() -> None:
+    cases = {
+        "partial": [
+            _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z", qty=0.4, status="partially_filled"),
+            _fill_event("evt-b", "ord-1", "2026-10-24T09:50:14Z", qty=0.6),
+        ],
+        "replay": [
+            _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+            _fill_event("evt-b", "ord-1", "2026-10-24T09:50:13Z", **{"metadata": {**_fill_event("x", "ord-1", "t")["metadata"], "fill_id": "f-1"}}),
+        ],
+        "different_bar": [
+            _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+            _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", **{"metadata": {**_fill_event("x", "ord-2", "t")["metadata"], "market_price_as_of": "2026-10-24T20:00:00Z"}}),
+        ],
+        "different_signal": [
+            _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+            _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", signal_id="sig-2"),
+        ],
+        "reversed": [
+            _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+            _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", **{"metadata": {**_fill_event("x", "ord-2", "t")["metadata"], "reverses_event_id": "evt-a"}}),
+        ],
+    }
+    for name, events in cases.items():
+        with tempfile.TemporaryDirectory() as data_dir:
+            svc = _load_service_module(data_dir)
+            client = TestClient(svc.app)
+            assert _post_duplicate_trigger(client, svc, events).status_code == 201, name
+            _, check = _duplicate_check(client)
+            assert check["status"] != "critical" and not check.get("duplicate_detected"), name
+            assert _reports(svc) == [], name
+
+
+def test_unresolved_or_cross_tenant_evidence_is_unmeasured_not_healthy() -> None:
+    events = [
+        _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+        _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", tenant_id="tenant-b"),
+    ]
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        _post_duplicate_trigger(client, svc, events)
+        evaluation, check = _duplicate_check(client)
+        assert check["measurement"] == "unmeasured"
+        assert check["status"] == "degraded"
+        assert "duplicate_detected" not in check
+        assert _reports(svc) == []
