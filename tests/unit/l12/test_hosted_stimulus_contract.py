@@ -176,6 +176,8 @@ class FakeOwner:
         self.log.append((service, method, path, body))
         if method == "GET":
             record = self.records.get((service, path))
+            if callable(record):
+                record = record()
             return (200, record) if record is not None else (404, {})
         base = path.rsplit("/", 1)[0]
         record = self.records.get((service, base))
@@ -1162,3 +1164,341 @@ def test_resumed_a_that_already_carries_pre_edit_lineage_is_reused_without_train
     child, owner, evidence, hosted = _reuse(tmp_path, monkeypatch, domain_records(), prior)
     assert child.calls == [] and evidence.status == "passed" and hosted["phases"]["A_research"]["reused"] is True
     assert not [p for _s, _m, p, _b in owner.log if p.endswith("/events") or "/previews/" in p]
+
+
+# -- E_close baseline preservation and proven pre-E external replacement (HOSTED-ALL12-E-BASELINE-20261025) --
+
+HIST_BINDING_ID = "rb-3a7f9d9682ff4e359d9b8a8d352a9831"
+HIST_ART_ID = "artifact-persona-paper-dc6635f5ed831403403c"
+HIST_CHECKSUM = "sha256:bdb5ce82dbd0e4db0e5788159ccaeebda6113aefe395744a39bd6dfee42f617a"
+REPL_BINDING_ID = "rb-b74c4828c4454ffcbca07b82d31f4ee7"
+REPL_ART_ID = "artifact-persona-paper-9f758ef3a51f3923073f"
+REPL_CHECKSUM = "sha256:73ad1b619847a55912cf446303dffb6497657f093cf83b8bcfae5d1bbad6e5ad"
+CHAIN_RB_ID = "rb-eea1cd16cf3745479f42e8b4440b3c27"
+ORIG_BASELINE = {
+    "active_count": 1,
+    "binding_ids": [HIST_BINDING_ID],
+    "recorded_at": "2026-10-24T09:19:29Z",
+}
+
+
+def _nonchain_binding_record(
+    binding_id: str,
+    *,
+    status: str,
+    artifact_id: str,
+    checksum: str,
+    correlation_id: str,
+    persona_id: str,
+    runtime_id: str,
+    plan_id: str,
+    pool_id: str,
+    pcb_id: str,
+    effective_at: str,
+    retired_at: str | None = None,
+    retire_event_id: str | None = None,
+) -> dict[str, Any]:
+    meta: dict[str, Any] = {
+        "tenant_id": TENANT,
+        "persona_id": persona_id,
+        "deployment_correlation_id": correlation_id,
+        "deployment_trace_id": f"persona-provisioning:{persona_id[-8:]}",
+        "deployment_saga_id": f"deployment-saga-{plan_id}",
+        "artifact_checksum": checksum,
+        "execution_context": "paper",
+        "session_admission": {"observed_at": "2026-10-25T20:00:00Z"},
+    }
+    if retire_event_id:
+        meta["retirement_telemetry_event_id"] = retire_event_id
+        meta["retirement_telemetry_acked_at"] = retired_at
+    return {
+        "binding": {
+            "binding_id": binding_id,
+            "runtime_id": runtime_id,
+            "capital_pool_id": pool_id,
+            "deployment_mode": "paper",
+            "execution_mode": "paper",
+            "status": status,
+            "plan_id": plan_id,
+            "artifact_id": artifact_id,
+            "artifact_version": "1.0.0",
+            "persona_capital_binding_id": pcb_id,
+            "effective_at": effective_at,
+            "retired_at": retired_at,
+            "metadata": meta,
+        }
+    }
+
+
+def _nonchain_artifact_record(artifact_id: str, checksum: str, approval_id: str) -> dict[str, Any]:
+    return {
+        "entry": {
+            "registry_id": artifact_id,
+            "artifact_type": "execution_bundle",
+            "strategy_id": f"strategy-{artifact_id[-12:]}",
+            "version": "1.0.0",
+            "artifact_state": "approved",
+            "checksum": checksum,
+            "approval_decision_id": approval_id,
+            "owner_tenant": TENANT,
+            "retired_at": None,
+            "metadata": {"tenant_id": TENANT},
+        }
+    }
+
+
+def _replacement_owner_records(*, old_retired: bool = True) -> dict[tuple[str, str], Any]:
+    records: dict[tuple[str, str], Any] = {
+        ("capital", "/api/bindings/cb-1"): {"binding": _owned(status="active")},
+        ("capital", "/api/capital-pools/cp-1"): {"pool": _owned(status="active")},
+        ("runtime", f"/api/runtime-bindings/{CHAIN_RB_ID}"): {
+            "binding": _owned(binding_id=CHAIN_RB_ID, status="active", deployment_mode="paper")
+        },
+        ("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}"): _nonchain_binding_record(
+            HIST_BINDING_ID,
+            status="retired" if old_retired else "active",
+            artifact_id=HIST_ART_ID,
+            checksum=HIST_CHECKSUM,
+            correlation_id="dev-paper-release-40035859151-1",
+            persona_id="persona-bd0a3cfbf3851700744f",
+            runtime_id="rt-8634a4c8",
+            plan_id="plan-persona-paper-dc6635f5ed831403403c",
+            pool_id="pool-persona-paper-dc6635f5ed831403403c",
+            pcb_id="pcb-persona-paper-dc6635f5ed831403403c",
+            effective_at="2026-10-23T23:07:47Z",
+            retired_at="2026-10-25T03:32:15Z" if old_retired else None,
+            retire_event_id="45be23b3-d14d-5637-916e-1183a8451383" if old_retired else None,
+        ),
+        ("registry", f"/api/registry/strategy-artifacts/{HIST_ART_ID}"): _nonchain_artifact_record(
+            HIST_ART_ID, HIST_CHECKSUM, "apv-persona-paper-artifact-dc6635f5ed831403403c"
+        ),
+        ("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}"): _nonchain_binding_record(
+            REPL_BINDING_ID,
+            status="active",
+            artifact_id=REPL_ART_ID,
+            checksum=REPL_CHECKSUM,
+            correlation_id="dev-paper-release-40226368878-1",
+            persona_id="persona-3d47ba698b04bd04dd63",
+            runtime_id="rt-8e8a30ed",
+            plan_id="plan-persona-paper-9f758ef3a51f3923073f",
+            pool_id="pool-persona-paper-9f758ef3a51f3923073f",
+            pcb_id="pcb-persona-paper-9f758ef3a51f3923073f",
+            effective_at="2026-10-25T19:54:46Z",
+        ),
+        ("registry", f"/api/registry/strategy-artifacts/{REPL_ART_ID}"): _nonchain_artifact_record(
+            REPL_ART_ID, REPL_CHECKSUM, "apv-persona-paper-artifact-9f758ef3a51f3923073f"
+        ),
+    }
+
+    def dynamic_fleet() -> dict[str, Any]:
+        active = []
+        for bid in (HIST_BINDING_ID, REPL_BINDING_ID, CHAIN_RB_ID):
+            entry = records.get(("runtime", f"/api/runtime-bindings/{bid}"))
+            rec = entry.get("binding") if isinstance(entry, dict) else None
+            if isinstance(rec, dict) and rec.get("status") == "active":
+                active.append(dict(rec))
+        return {"active_count": len(active), "bindings": active}
+
+    records[("runtime", FLEET)] = dynamic_fleet
+    return records
+
+
+def _baseline_close_prior(*, d_status: str = "completed") -> dict[str, Any]:
+    phases = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:3]}
+    phases["D_observe"] = {"phase_status": d_status}
+    return {
+        "hosted": {
+            "chain_id": CHAIN,
+            "baseline_fleet": copy.deepcopy(ORIG_BASELINE),
+            "phases": phases,
+            "resource_ids": {
+                "capital_pool_id": "cp-1",
+                "capital_binding_id": "cb-1",
+                "runtime_binding_id": CHAIN_RB_ID,
+            },
+        }
+    }
+
+
+def test_e_close_unchanged_baseline_verifies_owner_state_and_ignores_volatile_diagnostics(tmp_path):
+    records = _replacement_owner_records(old_retired=False)
+    del records[("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}")]
+    # Other chains are unrelated non-chain records and must be protected, never rejected or retired
+    records[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"]["metadata"][
+        "chain_id"
+    ] = "other-chain"
+    owner = FakeOwner(records)
+    orig_req = owner.request
+
+    def ticking_request(service, method, path, body=None, idempotency_key=None):
+        if method != "GET" and path.endswith("/retire"):
+            # Volatile diagnostic timestamp ticks during E_close while meaningful owner state is unchanged
+            records[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"]["metadata"][
+                "session_admission"
+            ]["observed_at"] = "2026-10-25T21:59:59Z"
+        return orig_req(service, method, path, body, idempotency_key)
+
+    owner.request = ticking_request
+    _runner(tmp_path, "E_close", owner, prior=_baseline_close_prior()).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    phase = hosted["phases"]["E_close"]
+    assert hosted["baseline_fleet"] == ORIG_BASELINE
+    assert phase["baseline_fleet_check"] == "verified" and phase["phase_status"] == "completed"
+    assert "observed_external_replacement" not in phase and "baseline_external_replacement" not in phase
+    assert phase["nonchain_fleet_preservation"]["pre_close_binding_ids"] == [HIST_BINDING_ID]
+    assert phase["nonchain_fleet_preservation"]["post_close_binding_ids"] == [HIST_BINDING_ID]
+    assert all(HIST_BINDING_ID not in p for _s, m, p, _b in owner.log if m != "GET")
+
+
+def test_e_close_proven_pre_e_external_replacement_keeps_baseline_immutable_and_respects_h4(tmp_path):
+    records = _replacement_owner_records(old_retired=True)
+    # Normal gate-before-switch / create-before-retire: new effective_at precedes old retired_at (both before E_close)
+    repl_rec = records[("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}")]["binding"]
+    repl_rec["effective_at"] = "2026-10-25T03:31:50Z"
+    # Optional unrelated plan/capital/Persona/telemetry fields do not gate cleanup when core owner identity/version are valid
+    for field in ("plan_id", "capital_pool_id", "persona_capital_binding_id"):
+        repl_rec.pop(field, None)
+    hist_meta = records[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"]["metadata"]
+    hist_meta.pop("retirement_telemetry_event_id", None)
+    hist_meta.pop("retirement_telemetry_acked_at", None)
+    owner = FakeOwner(records)
+    # D_observe paused (e.g. awaiting H4 / unobserved EvolutionDecision): cleanup succeeds, all12_passed stays False
+    prior = _baseline_close_prior(d_status="paused")
+    prior["hosted"]["phases"]["D_observe"]["blocked_before"] = "evolution_decision_h4"
+    _runner(tmp_path, "E_close", owner, prior=prior).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    phase = hosted["phases"]["E_close"]
+    assert hosted["baseline_fleet"] == ORIG_BASELINE
+    assert phase["baseline_fleet_check"] == "verified" and phase["phase_status"] == "completed"
+    assert hosted["all12_passed"] is False, "cleanup completion never satisfies missing H4 / D_observe"
+    writes = [p for _s, m, p, _b in owner.log if m != "GET"]
+    assert all(HIST_BINDING_ID not in p and REPL_BINDING_ID not in p for p in writes)
+    repl = phase["observed_external_replacement"]
+    assert phase["baseline_external_replacement"] == repl
+    assert repl["classification"] == "observed_external_replacement"
+    assert repl["original_baseline_fleet"] == ORIG_BASELINE
+    assert repl["active_count_restored"] == 1 and repl["chain_active_bindings"] == []
+    assert repl["retired_baseline_bindings"][0]["binding_id"] == HIST_BINDING_ID
+    assert repl["retired_baseline_bindings"][0]["deployment_correlation_id"] == "dev-paper-release-40035859151-1"
+    assert repl["replacement_active_bindings"][0]["binding_id"] == REPL_BINDING_ID
+    assert repl["replacement_active_bindings"][0]["deployment_correlation_id"] == "dev-paper-release-40226368878-1"
+    assert repl["replacement_active_bindings"][0]["artifact_version"] == "1.0.0"
+    assert repl["replacement_active_bindings"][0]["registry_version"] == "1.0.0"
+    assert phase["nonchain_fleet_preservation"]["pre_close_binding_ids"] == [REPL_BINDING_ID]
+    assert phase["nonchain_fleet_preservation"]["post_close_binding_ids"] == [REPL_BINDING_ID]
+
+    # Missing optional deployment metadata alone is not treated as unknown when owner identity/status/versions/timestamps hold
+    records_no_meta = _replacement_owner_records(old_retired=True)
+    for bid in (HIST_BINDING_ID, REPL_BINDING_ID):
+        b_meta = records_no_meta[("runtime", f"/api/runtime-bindings/{bid}")]["binding"]["metadata"]
+        for opt_key in (
+            "deployment_correlation_id",
+            "deployment_saga_id",
+            "deployment_trace_id",
+            "persona_id",
+            "artifact_checksum",
+        ):
+            b_meta.pop(opt_key, None)
+    _runner(tmp_path, "E_close", FakeOwner(records_no_meta), prior=prior, name="no-opt-meta.json").run()
+    phase_no_meta = _receipt(tmp_path, "no-opt-meta.json")["hosted"]["phases"]["E_close"]
+    assert phase_no_meta["baseline_fleet_check"] == "verified" and phase_no_meta["phase_status"] == "completed"
+    assert phase_no_meta["observed_external_replacement"]["classification"] == "observed_external_replacement"
+
+
+@pytest.mark.parametrize(
+    "mutate,needle",
+    [
+        (
+            lambda r: r.__setitem__(
+                ("runtime", FLEET),
+                lambda: {
+                    "active_count": 1,
+                    "bindings": [{"binding_id": "rb-unknown-replacement"}],
+                },
+            ),
+            "Runtime owner GET returned 404",
+        ),
+        (
+            lambda r: r[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"].__setitem__(
+                "retired_at", None
+            ),
+            "missing or invalid retired_at",
+        ),
+        (
+            lambda r: r[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"].__setitem__(
+                "retired_at", "2099-01-01T00:00:00Z"
+            ),
+            "is after E_close start",
+        ),
+        (
+            lambda r: r.pop(("registry", f"/api/registry/strategy-artifacts/{REPL_ART_ID}")),
+            "Registry owner GET returned 404",
+        ),
+        (
+            lambda r: r[("registry", f"/api/registry/strategy-artifacts/{REPL_ART_ID}")]["entry"].__setitem__(
+                "version", "2.0.0"
+            ),
+            "Registry version '2.0.0' != binding artifact_version '1.0.0'",
+        ),
+        (
+            lambda r: r[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"][
+                "metadata"
+            ].__setitem__("chain_id", CHAIN),
+            "carries this chain identity",
+        ),
+    ],
+)
+def test_e_close_unknown_or_unproven_replacement_stays_paused(tmp_path, mutate, needle):
+    records = _replacement_owner_records(old_retired=True)
+    mutate(records)
+    _runner(tmp_path, "E_close", FakeOwner(records), prior=_baseline_close_prior()).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    phase = hosted["phases"]["E_close"]
+    assert hosted["baseline_fleet"] == ORIG_BASELINE
+    assert phase["baseline_fleet_check"] == "mismatch" and phase["phase_status"] == "paused"
+    assert phase["blocked_before"] == "E_close:cleanup_incomplete" and hosted["all12_passed"] is False
+    assert needle in " ".join(phase["incomplete_cleanup"])
+
+
+@pytest.mark.parametrize("change_kind", ["version_drift", "id_swap", "post_e_start_timestamp"])
+def test_e_close_nonchain_change_during_e_window_pauses(tmp_path, change_kind):
+    records = _replacement_owner_records(old_retired=True)
+    if change_kind == "post_e_start_timestamp":
+        records[("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}")]["binding"][
+            "effective_at"
+        ] = "2099-01-01T00:00:00Z"
+    owner = FakeOwner(records)
+    orig_req = owner.request
+
+    def mutating_request(service, method, path, body=None, idempotency_key=None):
+        res = orig_req(service, method, path, body, idempotency_key)
+        if method != "GET" and path.endswith("/retire"):
+            if change_kind == "version_drift":
+                records[("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}")]["binding"][
+                    "artifact_version"
+                ] = "1.0.1"
+            elif change_kind == "id_swap":
+                records[("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}")]["binding"]["status"] = "retired"
+                records[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"]["status"] = "active"
+                records[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"]["retired_at"] = None
+        return res
+
+    owner.request = mutating_request
+    _runner(tmp_path, "E_close", owner, prior=_baseline_close_prior()).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    phase = hosted["phases"]["E_close"]
+    assert phase["baseline_fleet_check"] == "mismatch" and phase["phase_status"] == "paused"
+    assert phase["blocked_before"] == "E_close:cleanup_incomplete" and hosted["all12_passed"] is False
+
+
+def test_e_close_remaining_chain_active_binding_pauses(tmp_path):
+    records = _replacement_owner_records(old_retired=True)
+    # Fleet still reports the chain binding as desired even after retire is called
+    records[("runtime", FLEET)] = _fleet(2, [REPL_BINDING_ID, CHAIN_RB_ID])
+    _runner(tmp_path, "E_close", FakeOwner(records), prior=_baseline_close_prior()).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    phase = hosted["phases"]["E_close"]
+    assert phase["baseline_fleet_check"] == "chain_binding_still_active"
+    assert phase["phase_status"] == "paused" and phase["blocked_before"] == "E_close:cleanup_incomplete"
+    assert hosted["all12_passed"] is False
+

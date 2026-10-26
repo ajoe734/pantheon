@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from services.execution.lean_runtime.performance_telemetry import (
+    is_portfolio_mark_fresh,
+)
+from services.execution.market_snapshot_admission import is_taiwan_symbol
+
 
 RUNTIME_RETIRED_EVENT_TYPE = "runtime_retired"
 
@@ -187,6 +192,45 @@ def _finite_number(value: Any) -> Optional[float]:
     return number if number == number and abs(number) != float("inf") else None
 
 
+def _extract_mark_ref_provenance(
+    ref: dict[str, Any],
+) -> tuple[
+    Optional[str],
+    Optional[datetime],
+    Optional[dict[str, Any]],
+    Optional[dict[str, Any]],
+    bool,
+]:
+    has_malformed = False
+    obs_text: Optional[str] = None
+    obs_dt: Optional[datetime] = None
+    if "observed_at" in ref and ref.get("observed_at") is not None:
+        obs_text, obs_dt = _strict_rfc3339(ref.get("observed_at"))
+        if obs_text is None or obs_dt is None:
+            has_malformed = True
+    lineage_obj: Optional[dict[str, Any]] = None
+    if "lineage" in ref and ref.get("lineage") is not None:
+        raw_lin = ref.get("lineage")
+        if isinstance(raw_lin, dict) and raw_lin:
+            try:
+                lineage_obj = json.loads(json.dumps(raw_lin, allow_nan=False))
+            except (TypeError, ValueError):
+                has_malformed = True
+        else:
+            has_malformed = True
+    calendar_obj: Optional[dict[str, Any]] = None
+    if "calendar_evidence" in ref and ref.get("calendar_evidence") is not None:
+        raw_cal = ref.get("calendar_evidence")
+        if isinstance(raw_cal, dict) and raw_cal:
+            try:
+                calendar_obj = json.loads(json.dumps(raw_cal, allow_nan=False))
+            except (TypeError, ValueError):
+                has_malformed = True
+        else:
+            has_malformed = True
+    return obs_text, obs_dt, lineage_obj, calendar_obj, has_malformed
+
+
 def _rebuild_positions(
     current: dict[str, Any],
     *,
@@ -223,20 +267,57 @@ def _rebuild_positions(
                 row["last_known_mark_price"] = mark["price"]
                 row["last_known_mark_as_of"] = mark["as_of"]
                 row["last_known_mark_source_ref"] = mark["source_ref"]
+                if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
+                    row["last_known_mark_observed_at"] = mark["observed_at"]
+                if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
+                    row["last_known_mark_lineage"] = json.loads(
+                        json.dumps(mark["lineage"])
+                    )
+                if (
+                    isinstance(mark.get("calendar_evidence"), dict)
+                    and mark["calendar_evidence"]
+                ):
+                    row["last_known_mark_calendar_evidence"] = json.loads(
+                        json.dumps(mark["calendar_evidence"])
+                    )
                 if mark.get("quote_currency"):
                     row["currency"] = mark["quote_currency"]
                 rows.append(row)
                 continue
             mark_as_of = _parse_rfc3339(mark.get("as_of"))
+            symbol_stale = mark_as_of is None or bool(mark.get("provenance_invalid"))
             if (
-                latest_event_at is not None
+                not symbol_stale
+                and latest_event_at is not None
                 and mark_as_of is not None
-                and (latest_event_at - mark_as_of).total_seconds() > 172800.0
             ):
+                symbol_stale = not is_portfolio_mark_fresh(
+                    symbol=symbol,
+                    mark_as_of=mark_as_of,
+                    now_dt=latest_event_at,
+                    max_mark_age_seconds=172800.0,
+                    observed_at=mark.get("observed_at"),
+                    lineage=mark.get("lineage"),
+                    calendar_evidence=mark.get("calendar_evidence"),
+                )
+            if symbol_stale:
                 row["mark_stale"] = True
                 row["last_known_mark_price"] = mark["price"]
                 row["last_known_mark_as_of"] = mark["as_of"]
                 row["last_known_mark_source_ref"] = mark["source_ref"]
+                if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
+                    row["last_known_mark_observed_at"] = mark["observed_at"]
+                if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
+                    row["last_known_mark_lineage"] = json.loads(
+                        json.dumps(mark["lineage"])
+                    )
+                if (
+                    isinstance(mark.get("calendar_evidence"), dict)
+                    and mark["calendar_evidence"]
+                ):
+                    row["last_known_mark_calendar_evidence"] = json.loads(
+                        json.dumps(mark["calendar_evidence"])
+                    )
                 if mark.get("quote_currency"):
                     row["currency"] = mark["quote_currency"]
                 rows.append(row)
@@ -245,6 +326,17 @@ def _rebuild_positions(
             row["mark_as_of"] = mark["as_of"]
             row["mark_source_ref"] = mark["source_ref"]
             row["market_value"] = round(float(quantity) * float(mark["price"]), 6)
+            if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
+                row["mark_observed_at"] = mark["observed_at"]
+            if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
+                row["mark_lineage"] = json.loads(json.dumps(mark["lineage"]))
+            if (
+                isinstance(mark.get("calendar_evidence"), dict)
+                and mark["calendar_evidence"]
+            ):
+                row["mark_calendar_evidence"] = json.loads(
+                    json.dumps(mark["calendar_evidence"])
+                )
             if mark.get("quote_currency"):
                 row["currency"] = mark["quote_currency"]
         rows.append(row)
@@ -767,6 +859,19 @@ class RuntimeSummaryProjectionStore:
                         or ref_as_of is None
                     ):
                         continue
+                    (
+                        obs_text,
+                        obs_dt,
+                        lineage_obj,
+                        calendar_obj,
+                        has_malformed_prov,
+                    ) = _extract_mark_ref_provenance(ref)
+                    quote_currency = ref.get("quote_currency")
+                    cand_currency = (
+                        quote_currency.strip()
+                        if isinstance(quote_currency, str) and quote_currency.strip()
+                        else ""
+                    )
                     previous = marks.get(ref_symbol)
                     if isinstance(previous, dict) and str(previous.get("binding_id") or "") == binding_id:
                         previous_as_of = _parse_rfc3339(previous.get("as_of"))
@@ -774,17 +879,92 @@ class RuntimeSummaryProjectionStore:
                             if ref_as_of < previous_as_of:
                                 continue
                             if ref_as_of == previous_as_of:
+                                prev_price = _finite_number(previous.get("price"))
+                                prev_source_ref = str(previous.get("source_ref") or "").strip()
+                                prev_currency = str(previous.get("quote_currency") or "").strip()
+                                if (
+                                    prev_price is None
+                                    or round(price, 8) != round(prev_price, 8)
+                                    or source_ref.strip() != prev_source_ref
+                                    or (
+                                        prev_currency
+                                        and cand_currency
+                                        and cand_currency != prev_currency
+                                    )
+                                    or has_malformed_prov
+                                ):
+                                    continue
+                                _, prev_obs_dt = _strict_rfc3339(previous.get("observed_at"))
+                                prev_lineage = (
+                                    previous.get("lineage")
+                                    if isinstance(previous.get("lineage"), dict)
+                                    and previous.get("lineage")
+                                    else None
+                                )
+                                prev_calendar = (
+                                    previous.get("calendar_evidence")
+                                    if isinstance(previous.get("calendar_evidence"), dict)
+                                    and previous.get("calendar_evidence")
+                                    else None
+                                )
+                                if prev_obs_dt is not None and (
+                                    obs_dt is None or obs_dt < prev_obs_dt
+                                ):
+                                    continue
+                                if prev_lineage is not None and lineage_obj is None:
+                                    continue
+                                if prev_calendar is not None and calendar_obj is None:
+                                    continue
+                                check_dt = obs_dt or event_boundary_at or ref_as_of
+                                if (
+                                    is_taiwan_symbol(ref_symbol)
+                                    and (
+                                        obs_text is not None
+                                        or lineage_obj is not None
+                                        or calendar_obj is not None
+                                    )
+                                    and not is_portfolio_mark_fresh(
+                                        symbol=ref_symbol,
+                                        mark_as_of=ref_as_of,
+                                        now_dt=check_dt,
+                                        max_mark_age_seconds=172800.0,
+                                        observed_at=obs_text,
+                                        lineage=lineage_obj,
+                                        calendar_evidence=calendar_obj,
+                                    )
+                                ):
+                                    continue
+                                enriched = dict(previous)
+                                enriched.pop("provenance_invalid", None)
+                                if cand_currency and not prev_currency:
+                                    enriched["quote_currency"] = cand_currency
+                                if obs_text is not None:
+                                    enriched["observed_at"] = obs_text
+                                if lineage_obj is not None:
+                                    enriched["lineage"] = lineage_obj
+                                if calendar_obj is not None:
+                                    enriched["calendar_evidence"] = calendar_obj
+                                if enriched != previous:
+                                    marks[ref_symbol] = enriched
+                                    changed = True
                                 valid_ref_seen = True
                                 continue
-                    entry = {
+                    entry: dict[str, Any] = {
                         "price": price,
                         "as_of": ref_as_of_text,
                         "source_ref": source_ref,
                         "binding_id": binding_id,
                     }
-                    quote_currency = ref.get("quote_currency")
-                    if isinstance(quote_currency, str) and quote_currency.strip():
-                        entry["quote_currency"] = quote_currency.strip()
+                    if cand_currency:
+                        entry["quote_currency"] = cand_currency
+                    if obs_text is not None:
+                        entry["observed_at"] = obs_text
+                    if lineage_obj is not None:
+                        entry["lineage"] = lineage_obj
+                    if calendar_obj is not None:
+                        entry["calendar_evidence"] = calendar_obj
+                    if has_malformed_prov:
+                        entry["provenance_invalid"] = True
                     marks[ref_symbol] = entry
                     changed = True
                     valid_ref_seen = True

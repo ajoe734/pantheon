@@ -1437,13 +1437,71 @@ def _valuation_event(
     return ev
 
 
+_RECORDED_2330_CALENDAR_EVIDENCE = {
+    "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",
+    "checksum": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+    "coverage_end": "2026-10-28",
+    "coverage_start": "2026-10-22",
+    "fetched_at": "2026-10-23T07:00:39Z",
+    "holidays": {
+        "2026-10-23": {
+            "name": "颱風全日休市 (TWSE 臨時休市公告)",
+        },
+        "2026-10-25": {
+            "name": "臺灣光復暨金門古寧頭大捷紀念日",
+        },
+        "2026-10-26": {
+            "name": "臺灣光復暨金門古寧頭大捷紀念日",
+        },
+    },
+    "market": "TW",
+    "source_url": "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+    "timezone": "Asia/Taipei",
+    "trading_days": [
+        "2026-10-22",
+        "2026-10-27",
+        "2026-10-28",
+    ],
+    "venue": "TWSE",
+    "version": "twse-2026-emergency-closure-20261023-v2",
+}
+
+_RECORDED_2330_LINEAGE = {
+    "source_ids": [
+        "tw-official:tw_price_daily:TWSE:2330:9691b8ad1b066a80",
+    ],
+    "connector_ids": [
+        "tw-twse-tpex-official-market",
+    ],
+    "content_refs": [
+        "tw-official://tw_price_daily/TWSE/2330/2026-10-22/9691b8ad1b066a80",
+    ],
+    "ingest_run_ids": [
+        "ingest-e53a86463995",
+    ],
+}
+
+
+def _default_tw_observed_at(as_of: str) -> str:
+    if isinstance(as_of, str) and len(as_of) >= 10 and as_of.endswith("T00:00:00Z"):
+        return f"{as_of[:10]}T06:00:00Z"
+    return str(as_of)
+
+
 def _mark(symbol="2330.TW", price=2405.0, as_of="2026-10-20T00:00:00Z", **extra):
+    base_symbol = str(symbol or "").split(".", 1)[0]
     ref = {
         "symbol": symbol,
         "price": price,
         "as_of": as_of,
         "source_ref": "source-ingest://snapshots/mss-44f01ca7b8891e2be3fb721f",
     }
+    if str(symbol or "").upper().endswith((".TW", ".TWO")):
+        ref["observed_at"] = _default_tw_observed_at(as_of)
+        ref["lineage"] = {
+            "source_ids": [f"tw-official:tw_price_daily:TWSE:{base_symbol}:test"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        }
     ref.update(extra)
     return ref
 
@@ -1474,6 +1532,11 @@ class TestValuationMarkProjection(unittest.TestCase):
                     "mark_as_of": "2026-10-20T00:00:00Z",
                     "mark_source_ref": "source-ingest://snapshots/mss-44f01ca7b8891e2be3fb721f",
                     "market_value": -2405.0,
+                    "mark_observed_at": "2026-10-20T06:00:00Z",
+                    "mark_lineage": {
+                        "source_ids": ["tw-official:tw_price_daily:TWSE:2330:test"],
+                        "connector_ids": ["tw-twse-tpex-official-market"],
+                    },
                 }
             ],
         )
@@ -1489,7 +1552,7 @@ class TestValuationMarkProjection(unittest.TestCase):
         store = self._store()
         self._short_fill(store)
         store.project_event(_valuation_event([_mark()]))
-        hb = _event("heartbeat", created_at="2026-10-21T09:00:00Z")
+        hb = _event("heartbeat", created_at="2026-10-21T05:00:00Z")
         summary = store.project_event(hb)
         self.assertEqual(summary["positions"][0]["mark_as_of"], "2026-10-20T00:00:00Z")
 
@@ -1509,7 +1572,11 @@ class TestValuationMarkProjection(unittest.TestCase):
         )
         self.assertEqual(summary["positions"][0]["mark_price"], 2405.0)
         summary = store.project_event(
-            _valuation_event([_mark(price=2410.0, as_of="2026-10-21T00:00:00Z")], event_id="d")
+            _valuation_event(
+                [_mark(price=2410.0, as_of="2026-10-21T00:00:00Z")],
+                created_at="2026-10-21T06:30:00Z",
+                event_id="d",
+            )
         )
         self.assertEqual(summary["positions"][0]["mark_price"], 2410.0)
         self.assertEqual(summary["positions"][0]["mark_as_of"], "2026-10-21T00:00:00Z")
@@ -1578,7 +1645,7 @@ class TestValuationFailureProjection(unittest.TestCase):
 
     def test_failed_valuation_heartbeat_withdraws_mark_but_keeps_last_known(self):
         store = self._store()
-        summary = store.project_event(self._perf_heartbeat("2026-10-21T09:00:00Z"))
+        summary = store.project_event(self._perf_heartbeat("2026-10-21T04:00:00Z"))
         (row,) = summary["positions"]
         self.assertNotIn("mark_price", row)
         self.assertNotIn("market_value", row)
@@ -1588,9 +1655,9 @@ class TestValuationFailureProjection(unittest.TestCase):
 
     def test_older_failure_heartbeat_after_recovery_is_ignored(self):
         store = self._store()
-        store.project_event(self._perf_heartbeat("2026-10-21T09:00:00Z"))
-        store.project_event(self._perf_heartbeat("2026-10-21T10:00:00Z", status="valued"))
-        summary = store.project_event(self._perf_heartbeat("2026-10-21T09:30:00Z"))
+        store.project_event(self._perf_heartbeat("2026-10-21T04:00:00Z"))
+        store.project_event(self._perf_heartbeat("2026-10-21T05:00:00Z", status="valued"))
+        summary = store.project_event(self._perf_heartbeat("2026-10-21T04:30:00Z"))
         self.assertEqual(summary["positions"][0]["mark_price"], 2405.0)
 
     def test_later_snapshot_clears_failure_but_older_event_does_not(self):
@@ -1618,7 +1685,7 @@ class TestValuationFailureProjection(unittest.TestCase):
         store.project_event(_fill_event(symbol="2317.TW", qty=1.0, price=100.0))
         store.project_event(_valuation_event([_mark(symbol="2317.TW", price=101.0)], event_id="o"))
         summary = store.project_event(
-            self._perf_heartbeat("2026-10-21T09:00:00Z", missing_symbols=["2330.TW"])
+            self._perf_heartbeat("2026-10-21T04:00:00Z", missing_symbols=["2330.TW"])
         )
         by_symbol = {row["symbol"]: row for row in summary["positions"]}
         self.assertNotIn("mark_price", by_symbol["2330.TW"])
@@ -1631,7 +1698,7 @@ class TestValuationFailureProjection(unittest.TestCase):
         store.project_event(
             _valuation_event(
                 [_mark(price=2405.0, as_of="2026-10-15T00:00:00Z")],
-                created_at="2026-10-15T00:05:00Z",
+                created_at="2026-10-15T06:05:00Z",
             )
         )
         hb = _event("heartbeat", created_at="2026-10-21T06:00:00Z")
@@ -1659,3 +1726,235 @@ class TestValuationFailureProjection(unittest.TestCase):
         )
         summary = store.project_event(self._perf_heartbeat("2026-10-21T09:30:00Z"))
         self.assertEqual(summary["positions"][0]["mark_price"], 2420.0)
+
+    def test_h12_76062_owner_dto_governed_calendar_enrichment_and_negatives(self):
+        tmp = tempfile.mkdtemp()
+        store = RuntimeSummaryProjectionStore(path=str(Path(tmp) / "summaries.json"))
+        binding_id = "rb-eea1cd16cf3745479f42e8b4440b3c27"
+        runtime_id = "rt-eb295fe2"
+        source_ref = "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"
+
+        def _h12_event(event_type, created_at, *, event_id, metrics=None, metadata=None, b_id=binding_id, r_id=runtime_id):
+            ev = _event(event_type=event_type, created_at=created_at)
+            ev["event_id"] = event_id
+            ev["runtime_id"] = r_id
+            ev["binding_id"] = b_id
+            ev["metrics"] = dict(metrics or {})
+            ev["metadata"].update(metadata or {})
+            return ev
+
+        # 1. Reproduce pre-fix 76062 state: fill of -2.0 on 2330.TW, mark_refs without provenance,
+        # and later heartbeat on 2026-10-25T21:41:42Z results in mark_stale=True.
+        store.project_event(
+            _h12_event(
+                "paper_fill_simulated",
+                "2026-10-20T02:27:49Z",
+                event_id="evt-h12-fill-1",
+                metrics={"fill_quantity": -2.0, "fill_price": 2400.0, "action": "market_order"},
+                metadata={"symbol": "2330.TW", "sim_fill_flag": True},
+            )
+        )
+        store.project_event(
+            _h12_event(
+                "pnl_snapshot",
+                "2026-10-22T06:00:00Z",
+                event_id="evt-h12-pnl-legacy",
+                metrics={"pnl": 30.0, "portfolio_value": 100030.0},
+                metadata={
+                    "valuation_method": "fill_cash_ledger_mark_to_market",
+                    "valuation_as_of": "2026-10-22T00:00:00Z",
+                    "mark_refs": [
+                        {
+                            "symbol": "2330.TW",
+                            "price": 2385.0,
+                            "as_of": "2026-10-22T00:00:00Z",
+                            "source_ref": source_ref,
+                        }
+                    ],
+                },
+            )
+        )
+        legacy_summary = store.project_event(
+            _h12_event(
+                "heartbeat",
+                "2026-10-25T21:41:42Z",
+                event_id="evt-h12-hb-oct25",
+                metrics={"heartbeat": 1},
+            )
+        )
+        self.assertEqual(
+            legacy_summary["positions"],
+            [
+                {
+                    "symbol": "2330.TW",
+                    "quantity": -2.0,
+                    "mark_stale": True,
+                    "last_known_mark_price": 2385.0,
+                    "last_known_mark_as_of": "2026-10-22T00:00:00Z",
+                    "last_known_mark_source_ref": source_ref,
+                }
+            ],
+        )
+
+        # 2. Reject invalid same-as_of enrichment attempts (different price, different source_ref,
+        # untrusted pin, non-official lineage, malformed calendar).
+        for bad_case, bad_ref in (
+            (
+                "different_price",
+                {
+                    "symbol": "2330.TW",
+                    "price": 9999.0,
+                    "as_of": "2026-10-22T00:00:00Z",
+                    "source_ref": source_ref,
+                    "observed_at": "2026-10-23T12:29:54Z",
+                    "lineage": _RECORDED_2330_LINEAGE,
+                    "calendar_evidence": _RECORDED_2330_CALENDAR_EVIDENCE,
+                },
+            ),
+            (
+                "different_source",
+                {
+                    "symbol": "2330.TW",
+                    "price": 2385.0,
+                    "as_of": "2026-10-22T00:00:00Z",
+                    "source_ref": "source-ingest://snapshots/other",
+                    "observed_at": "2026-10-23T12:29:54Z",
+                    "lineage": _RECORDED_2330_LINEAGE,
+                    "calendar_evidence": _RECORDED_2330_CALENDAR_EVIDENCE,
+                },
+            ),
+            (
+                "untrusted_pin",
+                {
+                    "symbol": "2330.TW",
+                    "price": 2385.0,
+                    "as_of": "2026-10-22T00:00:00Z",
+                    "source_ref": source_ref,
+                    "observed_at": "2026-10-23T12:29:54Z",
+                    "lineage": _RECORDED_2330_LINEAGE,
+                    "calendar_evidence": {
+                        **_RECORDED_2330_CALENDAR_EVIDENCE,
+                        "version": "twse-2026-untrusted-v99",
+                    },
+                },
+            ),
+            (
+                "non_official_lineage",
+                {
+                    "symbol": "2330.TW",
+                    "price": 2385.0,
+                    "as_of": "2026-10-22T00:00:00Z",
+                    "source_ref": source_ref,
+                    "observed_at": "2026-10-23T12:29:54Z",
+                    "lineage": {"source_ids": ["yahoo:2330"], "connector_ids": ["yahoo"]},
+                    "calendar_evidence": _RECORDED_2330_CALENDAR_EVIDENCE,
+                },
+            ),
+            (
+                "malformed_calendar",
+                {
+                    "symbol": "2330.TW",
+                    "price": 2385.0,
+                    "as_of": "2026-10-22T00:00:00Z",
+                    "source_ref": source_ref,
+                    "observed_at": "2026-10-23T12:29:54Z",
+                    "lineage": _RECORDED_2330_LINEAGE,
+                    "calendar_evidence": "not-a-dict",
+                },
+            ),
+        ):
+            with self.subTest(bad_case=bad_case):
+                rejected_summary = store.project_event(
+                    _h12_event(
+                        "pnl_snapshot",
+                        "2026-10-25T21:42:00Z",
+                        event_id=f"evt-h12-bad-{bad_case}",
+                        metrics={"pnl": 30.0, "portfolio_value": 100030.0},
+                        metadata={"mark_refs": [bad_ref]},
+                    )
+                )
+                self.assertTrue(rejected_summary["positions"][0].get("mark_stale"))
+                self.assertNotIn("mark_price", rejected_summary["positions"][0])
+
+        # 3. Same-as_of unchanged-sample snapshot carrying genuine governed calendar evidence
+        # enriches _marks_by_symbol and projects active mark_price/market_value without changing as_of.
+        valid_gov_ref = {
+            "symbol": "2330.TW",
+            "price": 2385.0,
+            "as_of": "2026-10-22T00:00:00Z",
+            "source_ref": source_ref,
+            "observed_at": "2026-10-23T12:29:54Z",
+            "lineage": _RECORDED_2330_LINEAGE,
+            "calendar_evidence": _RECORDED_2330_CALENDAR_EVIDENCE,
+        }
+        enriched_summary = store.project_event(
+            _h12_event(
+                "pnl_snapshot",
+                "2026-10-25T21:43:00Z",
+                event_id="evt-h12-pnl-gov",
+                metrics={"pnl": 30.0, "portfolio_value": 100030.0},
+                metadata={
+                    "valuation_method": "fill_cash_ledger_mark_to_market",
+                    "valuation_as_of": "2026-10-22T00:00:00Z",
+                    "mark_refs": [valid_gov_ref],
+                },
+            )
+        )
+        (pos,) = enriched_summary["positions"]
+        self.assertNotIn("mark_stale", pos)
+        self.assertEqual(pos["symbol"], "2330.TW")
+        self.assertEqual(pos["quantity"], -2.0)
+        self.assertEqual(pos["mark_price"], 2385.0)
+        self.assertEqual(pos["market_value"], -4770.0)
+        self.assertEqual(pos["mark_as_of"], "2026-10-22T00:00:00Z")
+        self.assertEqual(pos["mark_source_ref"], source_ref)
+        self.assertEqual(pos["mark_observed_at"], "2026-10-23T12:29:54Z")
+        self.assertEqual(pos["mark_lineage"], _RECORDED_2330_LINEAGE)
+        self.assertEqual(pos["mark_calendar_evidence"], _RECORDED_2330_CALENDAR_EVIDENCE)
+
+        # 4. Subsequent drawdown_snapshot with identical evidence is idempotent;
+        # regression attempts (older observed_at or dropped calendar_evidence) do not regress it.
+        dup_summary = store.project_event(
+            _h12_event(
+                "drawdown_snapshot",
+                "2026-10-25T21:43:00Z",
+                event_id="evt-h12-dd-gov",
+                metrics={"drawdown_pct": 0.0, "portfolio_value": 100030.0},
+                metadata={"mark_refs": [valid_gov_ref]},
+            )
+        )
+        self.assertEqual(dup_summary["positions"], enriched_summary["positions"])
+
+        regress_no_cal = dict(valid_gov_ref)
+        regress_no_cal.pop("calendar_evidence")
+        after_regress = store.project_event(
+            _h12_event(
+                "pnl_snapshot",
+                "2026-10-25T21:44:00Z",
+                event_id="evt-h12-regress-no-cal",
+                metrics={"pnl": 30.0},
+                metadata={"mark_refs": [regress_no_cal]},
+            )
+        )
+        self.assertEqual(after_regress["positions"][0]["mark_price"], 2385.0)
+        self.assertEqual(
+            after_regress["positions"][0]["mark_calendar_evidence"]["version"],
+            "twse-2026-emergency-closure-20261023-v2",
+        )
+
+        # 5. Missed trading session after Tuesday 2026-10-27 13:30 Asia/Taipei close (05:30Z)
+        # marks the Oct 22 quote stale even with governed holiday calendar.
+        after_tuesday_close = store.project_event(
+            _h12_event(
+                "heartbeat",
+                "2026-10-27T05:31:00Z",
+                event_id="evt-h12-hb-oct27-after-close",
+                metrics={"heartbeat": 1},
+            )
+        )
+        (stale_pos,) = after_tuesday_close["positions"]
+        self.assertTrue(stale_pos["mark_stale"])
+        self.assertNotIn("mark_price", stale_pos)
+        self.assertNotIn("market_value", stale_pos)
+        self.assertEqual(stale_pos["last_known_mark_as_of"], "2026-10-22T00:00:00Z")
+        self.assertEqual(stale_pos["last_known_mark_observed_at"], "2026-10-23T12:29:54Z")

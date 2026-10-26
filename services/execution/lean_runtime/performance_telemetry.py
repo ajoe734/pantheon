@@ -155,7 +155,7 @@ class MarketMark:
     calendar_evidence: Any = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
-        payload = {
+        payload: dict[str, Any] = {
             "symbol": self.symbol,
             "price": self.price,
             "as_of": self.as_of,
@@ -163,7 +163,69 @@ class MarketMark:
         }
         if self.quote_currency:
             payload["quote_currency"] = self.quote_currency
+        if (
+            isinstance(self.observed_at, str)
+            and _parse_rfc3339(self.observed_at.strip()) is not None
+        ):
+            payload["observed_at"] = self.observed_at.strip()
+        if isinstance(self.lineage, Mapping) and self.lineage:
+            payload["lineage"] = json.loads(
+                json.dumps(dict(self.lineage), allow_nan=False)
+            )
+        if isinstance(self.calendar_evidence, Mapping) and self.calendar_evidence:
+            payload["calendar_evidence"] = json.loads(
+                json.dumps(dict(self.calendar_evidence), allow_nan=False)
+            )
         return payload
+
+
+def is_portfolio_mark_fresh(
+    *,
+    symbol: str,
+    mark_as_of: datetime,
+    now_dt: datetime,
+    max_mark_age_seconds: float = 172800.0,
+    future_tolerance_seconds: float = 300.0,
+    observed_at: Any = None,
+    lineage: Any = None,
+    calendar_evidence: Any = None,
+) -> bool:
+    now_utc = now_dt.astimezone(timezone.utc)
+    mark_utc = mark_as_of.astimezone(timezone.utc)
+    if is_taiwan_symbol(symbol):
+        refresh_receipt_dt: datetime | None = None
+        if observed_at is not None:
+            if not isinstance(observed_at, str) or not observed_at.strip():
+                return False
+            refresh_receipt_dt, refresh_err = parse_rfc3339(
+                observed_at.strip(), field_name="observed_at"
+            )
+            if refresh_err or refresh_receipt_dt is None:
+                return False
+        resolved_calendar = calendar_evidence
+        if (
+            resolved_calendar is None
+            and isinstance(lineage, Mapping)
+            and lineage.get("calendar_evidence") is not None
+        ):
+            resolved_calendar = lineage.get("calendar_evidence")
+        ok, _reason_code, _detail = evaluate_taiwan_market_freshness(
+            event_time_dt=mark_utc,
+            now_dt=now_utc,
+            refresh_receipt_dt=(
+                refresh_receipt_dt.astimezone(timezone.utc)
+                if refresh_receipt_dt is not None
+                else None
+            ),
+            lineage=lineage,
+            max_refresh_age_seconds=int(max(float(max_mark_age_seconds), 0.0)),
+            calendar_evidence=resolved_calendar,
+        )
+        return ok
+    age = (now_utc - mark_utc).total_seconds()
+    return -max(float(future_tolerance_seconds), 0.0) <= age <= max(
+        float(max_mark_age_seconds), 0.0
+    )
 
 
 def _is_mark_fresh(
@@ -174,33 +236,19 @@ def _is_mark_fresh(
     future_tolerance_seconds: float,
     symbol: str | None = None,
 ) -> bool:
-    now_utc = reference_time.astimezone(timezone.utc)
-    if is_taiwan_symbol(mark.symbol) or is_taiwan_symbol(symbol):
-        event_time_dt, event_err = parse_rfc3339(mark.as_of, field_name="event_time")
-        if event_err or event_time_dt is None:
-            return False
-        refresh_receipt_dt: datetime | None = None
-        if isinstance(mark.observed_at, str) and mark.observed_at.strip():
-            refresh_receipt_dt, refresh_err = parse_rfc3339(
-                mark.observed_at, field_name="observed_at"
-            )
-            if refresh_err:
-                return False
-        ok, _reason_code, _detail = evaluate_taiwan_market_freshness(
-            event_time_dt=event_time_dt,
-            now_dt=now_utc,
-            refresh_receipt_dt=refresh_receipt_dt,
-            lineage=mark.lineage,
-            max_refresh_age_seconds=int(max(float(max_mark_age_seconds), 0.0)),
-            calendar_evidence=mark.calendar_evidence,
-        )
-        return ok
     observed = _parse_rfc3339(mark.as_of)
     if observed is None:
         return False
-    age = (now_utc - observed).total_seconds()
-    return -max(float(future_tolerance_seconds), 0.0) <= age <= max(
-        float(max_mark_age_seconds), 0.0
+    check_symbol = symbol if is_taiwan_symbol(symbol) else mark.symbol
+    return is_portfolio_mark_fresh(
+        symbol=check_symbol,
+        mark_as_of=observed,
+        now_dt=reference_time,
+        max_mark_age_seconds=max_mark_age_seconds,
+        future_tolerance_seconds=future_tolerance_seconds,
+        observed_at=mark.observed_at,
+        lineage=mark.lineage,
+        calendar_evidence=mark.calendar_evidence,
     )
 
 
@@ -583,9 +631,69 @@ class RollingDrawdownTracker:
         self._last_fingerprint: tuple[Any, ...] | None = None
         self._latest_as_of: datetime | None = None
         self._latest_sample_shared_with_seed = False
+        self._last_mark_provenance: dict[str, dict[str, Any]] = {}
+
+    @staticmethod
+    def _extract_mark_provenance(
+        marks: Sequence[MarketMark],
+        *,
+        strict: bool = False,
+    ) -> dict[str, dict[str, Any]] | None:
+        extracted: dict[str, dict[str, Any]] = {}
+        for mark in marks:
+            prov: dict[str, Any] = {}
+            if mark.observed_at is not None:
+                if not isinstance(mark.observed_at, str) or not mark.observed_at.strip():
+                    if strict:
+                        return None
+                else:
+                    obs_str = mark.observed_at.strip()
+                    if _parse_rfc3339(obs_str) is None:
+                        if strict:
+                            return None
+                    else:
+                        prov["observed_at"] = obs_str
+            if mark.lineage is not None:
+                if not isinstance(mark.lineage, Mapping) or not mark.lineage:
+                    if strict:
+                        return None
+                else:
+                    try:
+                        prov["lineage"] = json.loads(
+                            json.dumps(
+                                dict(mark.lineage),
+                                allow_nan=False,
+                                sort_keys=True,
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        if strict:
+                            return None
+            if mark.calendar_evidence is not None:
+                if (
+                    not isinstance(mark.calendar_evidence, Mapping)
+                    or not mark.calendar_evidence
+                ):
+                    if strict:
+                        return None
+                else:
+                    try:
+                        prov["calendar_evidence"] = json.loads(
+                            json.dumps(
+                                dict(mark.calendar_evidence),
+                                allow_nan=False,
+                                sort_keys=True,
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        if strict:
+                            return None
+            if prov:
+                extracted[mark.symbol] = prov
+        return extracted
 
     def export_state(self) -> dict[str, Any]:
-        return {
+        state: dict[str, Any] = {
             "schema_version": "rolling_drawdown.v1",
             "window_days": self._window_days,
             "values": [
@@ -596,12 +704,18 @@ class RollingDrawdownTracker:
             "latest_as_of": _iso(self._latest_as_of) if self._latest_as_of else None,
             "latest_sample_shared_with_seed": self._latest_sample_shared_with_seed,
         }
+        if self._last_mark_provenance:
+            state["last_mark_provenance"] = json.loads(
+                json.dumps(self._last_mark_provenance, allow_nan=False)
+            )
+        return state
 
     def restore(self, payload: Mapping[str, Any] | None) -> None:
         self._values.clear()
         self._last_fingerprint = None
         self._latest_as_of = None
         self._latest_sample_shared_with_seed = False
+        self._last_mark_provenance = {}
         if not payload:
             return
         if payload.get("schema_version") != "rolling_drawdown.v1":
@@ -627,6 +741,46 @@ class RollingDrawdownTracker:
             raise ValueError("rolling drawdown latest timestamp has no window sample")
         if latest is not None and restored and latest != restored[-1][0]:
             raise ValueError("rolling drawdown latest timestamp must match its last sample")
+        raw_provenance = payload.get("last_mark_provenance")
+        restored_provenance: dict[str, dict[str, Any]] = {}
+        if raw_provenance is not None:
+            if not isinstance(raw_provenance, Mapping):
+                raise ValueError("rolling drawdown last_mark_provenance must be an object")
+            if raw_provenance and not restored:
+                raise ValueError("rolling drawdown last_mark_provenance has no window sample")
+            for sym, raw_entry in raw_provenance.items():
+                if (
+                    not isinstance(sym, str)
+                    or not sym.strip()
+                    or not isinstance(raw_entry, Mapping)
+                    or not raw_entry
+                ):
+                    raise ValueError("rolling drawdown mark provenance entry must be an object")
+                entry: dict[str, Any] = {}
+                if "observed_at" in raw_entry and raw_entry["observed_at"] is not None:
+                    obs_val = raw_entry["observed_at"]
+                    if not isinstance(obs_val, str) or _parse_rfc3339(obs_val.strip()) is None:
+                        raise ValueError("rolling drawdown mark provenance observed_at is invalid")
+                    entry["observed_at"] = obs_val.strip()
+                if "lineage" in raw_entry and raw_entry["lineage"] is not None:
+                    lin_val = raw_entry["lineage"]
+                    if not isinstance(lin_val, Mapping) or not lin_val:
+                        raise ValueError("rolling drawdown mark provenance lineage must be an object")
+                    entry["lineage"] = json.loads(
+                        json.dumps(dict(lin_val), allow_nan=False, sort_keys=True)
+                    )
+                if "calendar_evidence" in raw_entry and raw_entry["calendar_evidence"] is not None:
+                    cal_val = raw_entry["calendar_evidence"]
+                    if not isinstance(cal_val, Mapping) or not cal_val:
+                        raise ValueError(
+                            "rolling drawdown mark provenance calendar_evidence must be an object"
+                        )
+                    entry["calendar_evidence"] = json.loads(
+                        json.dumps(dict(cal_val), allow_nan=False, sort_keys=True)
+                    )
+                if not entry:
+                    raise ValueError("rolling drawdown mark provenance entry is empty")
+                restored_provenance[sym.strip()] = entry
         fingerprint = payload.get("last_fingerprint")
         self._values = restored
         self._last_fingerprint = (
@@ -637,6 +791,7 @@ class RollingDrawdownTracker:
         if not isinstance(shared_with_seed, bool):
             raise ValueError("rolling drawdown seed-sharing flag must be boolean")
         self._latest_sample_shared_with_seed = shared_with_seed
+        self._last_mark_provenance = restored_provenance
 
     def observe(
         self,
@@ -689,6 +844,69 @@ class RollingDrawdownTracker:
         self._last_fingerprint = sample.fingerprint
         self._latest_as_of = as_of
         self._latest_sample_shared_with_seed = sample_shared_with_seed
+        self._last_mark_provenance = (
+            self._extract_mark_provenance(sample.marks) or {}
+        )
+        return {
+            "drawdown_pct": float(drawdown),
+            "peak_portfolio_value": float(peak),
+            "portfolio_value": float(sample.portfolio_value),
+            "window_observations": len(self._values),
+            "window_days": self._window_days,
+            "drawdown_as_of": sample.as_of,
+        }
+
+    def observe_unchanged_provenance(
+        self,
+        sample: PerformanceSample,
+    ) -> dict[str, Any] | None:
+        if self._last_fingerprint is None or sample.fingerprint != self._last_fingerprint:
+            return None
+        as_of = _parse_rfc3339(sample.as_of)
+        if (
+            as_of is None
+            or not self._values
+            or self._latest_as_of is None
+            or as_of != self._latest_as_of
+        ):
+            return None
+        candidate = self._extract_mark_provenance(sample.marks, strict=True)
+        if not candidate:
+            return None
+        for mark in sample.marks:
+            if is_taiwan_symbol(mark.symbol):
+                ref_dt = _parse_rfc3339(mark.observed_at or "") or _parse_rfc3339(
+                    mark.as_of
+                )
+                if ref_dt is None or not _is_mark_fresh(
+                    mark,
+                    reference_time=ref_dt,
+                    max_mark_age_seconds=172800.0,
+                    future_tolerance_seconds=300.0,
+                ):
+                    return None
+        for sym, prev_prov in self._last_mark_provenance.items():
+            cand_prov = candidate.get(sym)
+            if cand_prov is None:
+                return None
+            if "observed_at" in prev_prov:
+                if "observed_at" not in cand_prov:
+                    return None
+                prev_dt = _parse_rfc3339(prev_prov["observed_at"])
+                cand_dt = _parse_rfc3339(cand_prov["observed_at"])
+                if cand_dt is None or (prev_dt is not None and cand_dt < prev_dt):
+                    return None
+            if "lineage" in prev_prov and "lineage" not in cand_prov:
+                return None
+            if "calendar_evidence" in prev_prov and "calendar_evidence" not in cand_prov:
+                return None
+        if candidate == self._last_mark_provenance:
+            return None
+        peak = max(value for _, value in self._values)
+        if not math.isfinite(peak) or peak <= 0:
+            raise ValueError("rolling drawdown high-water mark must be finite and positive")
+        drawdown = min(max((peak - sample.portfolio_value) / peak, 0.0), 1.0)
+        self._last_mark_provenance = candidate
         return {
             "drawdown_pct": float(drawdown),
             "peak_portfolio_value": float(peak),

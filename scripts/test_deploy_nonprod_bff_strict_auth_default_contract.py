@@ -479,8 +479,11 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
             # The strict bootstrap predecessor deploy also needs the dedicated
             # operator credential, in addition to the regular deploy and
             # hosted probe wiring, and the all-12 hosted chain phase job
-            # authenticates its segment driver with the same credential.
-            assert workflow.count(secret_ref) == 7
+            # authenticates its segment driver with the same credential. The
+            # chain phase job selects it through an indexed secrets[...]
+            # expression (E_close uses the admin-test principal), so that
+            # site is not a literal secrets.<NAME> reference.
+            assert workflow.count(secret_ref) == 6
         elif identity == "VIEWER":
             # Exact artifact readback uses only the dedicated viewer login to
             # prove strict authenticated tenant/session behavior after restore;
