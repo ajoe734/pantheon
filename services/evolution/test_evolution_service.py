@@ -2811,6 +2811,15 @@ def test_active_owner_freeze_order_executes_and_starts_cooldown(freeze_owner):
     reloaded = evo_main.store.get(did)
     assert reloaded.decision_state == "executed"
     assert reloaded.cooldown_ends_at == body["cooldown_ends_at"]
+    # Fresh durable store instance (no cached state) reads the same terminal state.
+    fresh = evo_main.EvolutionDecisionStore(
+        storage_path=os.path.join(evo_main.EVOLUTION_DATA_DIR, "decisions.json"),
+        backend=evo_main.EVOLUTION_STORE_BACKEND,
+        dsn=evo_main.EVOLUTION_STORE_DSN,
+    )
+    durable = fresh.get(did)
+    assert durable.decision_state == "executed"
+    assert durable.cooldown_ends_at == body["cooldown_ends_at"]
     # No duplicate effect on replay.
     assert _execute_freeze(did).status_code == 422
     assert evo_main.store.get(did).cooldown_ends_at == body["cooldown_ends_at"]
@@ -2828,6 +2837,10 @@ def test_active_owner_freeze_order_executes_and_starts_cooldown(freeze_owner):
     {"status": "canceled"},
     {"status": "requested"},
     {"status": "bogus"},
+    {"scope": "unrelated_scope"},
+    {"scope": "persona"},
+    {"scope": None},
+    {"scope": ""},
 ])
 def test_freeze_receipt_rejects_unbound_or_nonterminal_orders(freeze_owner, override):
     did = _approved_freeze_decision()["decision_id"]
@@ -2863,3 +2876,30 @@ def test_governance_manual_receipt_is_not_advertised_as_auto_dispatch(freeze_own
     assert "governance" not in supported_planes(evo_main.receipt_registry)
     result = evo_main.receipt_registry["governance"].submit({"decision_id": "x"})
     assert result.outcome == "unsupported"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("action_type", "reduce_budget"),
+    ("action_type", "rollback"),
+    ("target_stage", "live"),
+    ("target_stage", "canary"),
+    ("target_type", "persona"),
+])
+def test_freeze_adapter_rejects_other_action_type_or_stage(freeze_owner, field, value):
+    from services.evolution.dispatch_receipts import GovernanceFreezeOrderAdapter
+
+    did = _approved_freeze_decision()["decision_id"]
+    freeze_owner.orders[f"freeze-{did}"] = _owner_order(did)
+    binding = {
+        **evo_main._receipt_binding(evo_main.store.get(did)),
+        "tenant_id": "pantheon-default",
+        "decision_id": did,
+        field: value,
+    }
+    adapter = GovernanceFreezeOrderAdapter(api_url="http://governance.test", http_json=freeze_owner)
+    receipt = adapter.read_receipt(f"freeze-{did}", expected_intent=binding)
+    assert receipt.outcome == "unsupported"
+    assert not receipt.is_terminal
+    # Control: the genuine paper freeze binding succeeds.
+    binding.update(action_type="freeze", target_type="candidate_artifact", target_stage="paper")
+    assert adapter.read_receipt(f"freeze-{did}", expected_intent=binding).outcome == "succeeded"

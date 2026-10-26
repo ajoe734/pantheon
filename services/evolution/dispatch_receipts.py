@@ -358,6 +358,13 @@ class GovernanceFreezeOrderAdapter:
     plane = "governance"
     auto_dispatch = False
 
+    _SUPPORTED_CAPABILITY = (
+        ("action_type", "freeze"),
+        ("target_type", "candidate_artifact"),
+        ("target_stage", "paper"),
+    )
+    _ARTIFACT_SCOPE = "artifact"
+
     _BOUND_FIELDS = (
         ("tenant_id", "tenant_id"),
         ("target_id", "target_id"),
@@ -431,6 +438,25 @@ class GovernanceFreezeOrderAdapter:
         record_id = str(body.get("freeze_order_id") or body.get("id") or "").strip()
         if record_id != downstream_ref_id:
             return self._refuse(downstream_ref_id, body, "freeze order id does not match the requested reference")
+        # Only the selected paper freeze of a candidate artifact is supported;
+        # every other action/target/stage stays unsupported (never executed).
+        for field, supported in self._SUPPORTED_CAPABILITY:
+            if str(expected.get(field) or "").strip().lower() != supported:
+                return DispatchReceipt(
+                    outcome=OUTCOME_UNSUPPORTED,
+                    downstream_kind=self.kind,
+                    downstream_ref_id=downstream_ref_id,
+                    detail=(
+                        "governance freeze-order receipts support only a paper "
+                        f"freeze of a candidate artifact ({field} must be {supported!r})"
+                    ),
+                )
+        # The owner scope must be bound to the selected artifact effect.
+        if str(body.get("scope") or "").strip().lower() != self._ARTIFACT_SCOPE:
+            return self._refuse(
+                downstream_ref_id, body,
+                f"freeze order scope must be {self._ARTIFACT_SCOPE!r} for the selected artifact",
+            )
         decision_id = str(expected.get("decision_id") or "").strip()
         bound_decision = str(
             body.get("evolution_decision_id") or body.get("decision_id") or ""

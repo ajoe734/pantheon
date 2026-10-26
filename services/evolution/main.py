@@ -528,6 +528,9 @@ def _receipt_binding(decision: EvolutionDecision) -> Dict[str, Any]:
     """Exact approved-decision identity an owner receipt must be bound to."""
     data = decision.to_dict()
     return {
+        "action_type": str(_enum_value(data.get("action_type")) or ""),
+        "target_type": str(_enum_value(data.get("target_type")) or ""),
+        "target_stage": str(_enum_value(data.get("target_stage")) or ""),
         "target_id": data.get("target_id"),
         "target_version": data.get("target_version"),
         "proposal_content_digest": immutable_decision_fingerprint(data),
