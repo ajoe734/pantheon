@@ -1,0 +1,7 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-AG-FALLBACK-MODEL-CATALOG-20261026-CI-RED-24BEE8C04489",
+  "pr": 6815,
+  "root_cause": "PR #6815 changed antigravity model_rotation.fallback in .orchestrator/config.json to claude-sonnet-5-5-medium, but scripts/test_provision_live_supervisor_config.py::test_build_live_config_pins_high_reasoning_antigravity_models still asserted claude-sonnet-4-6, failing Smoke acceptance (1 failed, 377 passed).",
+  "resolution": "Updated the test expectation; pushed commit 0e25c152c to task/AG-FALLBACK-MODEL-CATALOG-20261026 (PR #6815 updated, not superseded). CI rerun pending at handoff.",
+  "local_validation": "pytest unavailable locally; one-line expectation change only."
+}
