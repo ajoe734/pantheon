@@ -563,9 +563,21 @@ class RuntimeChain:
         self.runtime_headers = dict(executor)
         self.deployment_headers = dict(executor)
         self.telemetry_headers = dict(executor)
-        self.reconciliation_headers = dict(executor)
-        self.evolution_headers = dict(executor)
         self.source_ingest_headers = dict(executor)
+        if self.hosted_input is not None and self.hosted_input.phase == "D_observe":
+            reconciliation_token = _require_env("PANTHEON_L12_RECONCILIATION_DRIFT_AUTH_TOKEN")
+            evolution_token = _require_env("PANTHEON_L12_EVOLUTION_AUTH_TOKEN")
+            self.reconciliation_headers = {
+                "Authorization": f"Bearer {reconciliation_token}",
+                "X-Tenant-Id": TENANT_ID,
+            }
+            self.evolution_headers = {
+                "Authorization": f"Bearer {evolution_token}",
+                "X-Tenant-Id": TENANT_ID,
+            }
+        else:
+            self.reconciliation_headers = {}
+            self.evolution_headers = {}
         bff_bearer = _require_env("PANTHEON_L12_BFF_BEARER")
         self.bff_headers = {"Authorization": f"Bearer {bff_bearer}", "X-Tenant-Id": TENANT_ID}
 
@@ -1662,6 +1674,7 @@ class RuntimeChain:
                 "reconciliation",
                 "GET",
                 f"/api/reconciliation-drift/evaluations/{urllib.parse.quote(evaluation_id, safe='')}",
+                headers=self.reconciliation_headers,
                 expected={200, 404},
             )
             if not isinstance(evaluation, Mapping) or evaluation.get("evaluation_id") != evaluation_id:

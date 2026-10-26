@@ -359,6 +359,9 @@ class SourceIngestMarkProviderTest(unittest.TestCase):
                 "price": 2385.0,
                 "as_of": "2026-10-22T00:00:00Z",
                 "source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a",
+                "observed_at": "2026-10-23T12:29:54Z",
+                "lineage": recorded_snapshot["lineage"],
+                "calendar_evidence": recorded_snapshot["calendar_evidence"],
             },
         )
 
@@ -1186,6 +1189,112 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         self.assertEqual(sample_marks["2330.TW"].source_ref, "source-ingest://snapshots/mss-2330")
         self.assertEqual(sample_marks["2454.TW"].as_of, "2026-07-14T07:30:00Z")
         self.assertEqual(sample_marks["2454.TW"].source_ref, "source-ingest://snapshots/mss-2454-afternoon")
+
+    def test_unchanged_sample_provenance_enrichment_and_idempotence(self):
+        snap = _recorded_2330_oct22_snapshot()
+        mark_without_prov = MarketMark(
+            symbol="2330.TW",
+            price=2385.0,
+            as_of="2026-10-22T00:00:00Z",
+            source_ref=snap["source_ref"],
+        )
+        mark_with_prov = MarketMark(
+            symbol="2330.TW",
+            price=2385.0,
+            as_of="2026-10-22T00:00:00Z",
+            source_ref=snap["source_ref"],
+            observed_at=snap["observed_at"],
+            lineage=snap["lineage"],
+            calendar_evidence=snap["calendar_evidence"],
+        )
+        sample_without_prov = PerformanceSample(
+            pnl=-4770.0,
+            portfolio_value=95230.0,
+            initial_cash=100000.0,
+            cash=100000.0,
+            as_of="2026-10-22T00:00:00Z",
+            fill_count=2,
+            marks=(mark_without_prov,),
+        )
+        sample_with_prov = PerformanceSample(
+            pnl=-4770.0,
+            portfolio_value=95230.0,
+            initial_cash=100000.0,
+            cash=100000.0,
+            as_of="2026-10-22T00:00:00Z",
+            fill_count=2,
+            marks=(mark_with_prov,),
+        )
+        self.assertEqual(sample_without_prov.fingerprint, sample_with_prov.fingerprint)
+
+        tracker = RollingDrawdownTracker()
+        first_metrics = tracker.observe(
+            sample_without_prov,
+            initial_equity_as_of="2026-10-20T00:00:00Z",
+        )
+        self.assertIsNotNone(first_metrics)
+        self.assertEqual(first_metrics["drawdown_as_of"], "2026-10-22T00:00:00Z")
+        self.assertEqual(first_metrics["window_observations"], 2)
+
+        # Standard observe returns None because value fingerprint is unchanged.
+        self.assertIsNone(tracker.observe(sample_with_prov))
+        # Newly available governed provenance on the same sample returns metrics once
+        # without adding duplicate window observations or changing drawdown_pct/as_of.
+        enriched_metrics = tracker.observe_unchanged_provenance(sample_with_prov)
+        self.assertEqual(enriched_metrics, first_metrics)
+
+        # Repeated identical provenance is idempotent, including across state restore.
+        self.assertIsNone(tracker.observe_unchanged_provenance(sample_with_prov))
+        exported = tracker.export_state()
+        self.assertIn("last_mark_provenance", exported)
+        restored = RollingDrawdownTracker()
+        restored.restore(exported)
+        self.assertIsNone(restored.observe(sample_with_prov))
+        self.assertIsNone(restored.observe_unchanged_provenance(sample_with_prov))
+
+        # Regression attempts (dropping provenance, older observed_at, or invalid pin) are rejected.
+        self.assertIsNone(restored.observe_unchanged_provenance(sample_without_prov))
+        older_receipt_mark = MarketMark(
+            symbol="2330.TW",
+            price=2385.0,
+            as_of="2026-10-22T00:00:00Z",
+            source_ref=snap["source_ref"],
+            observed_at="2026-10-23T08:00:00Z",
+            lineage=snap["lineage"],
+            calendar_evidence=snap["calendar_evidence"],
+        )
+        older_sample = PerformanceSample(
+            pnl=-4770.0,
+            portfolio_value=95230.0,
+            initial_cash=100000.0,
+            cash=100000.0,
+            as_of="2026-10-22T00:00:00Z",
+            fill_count=2,
+            marks=(older_receipt_mark,),
+        )
+        self.assertIsNone(restored.observe_unchanged_provenance(older_sample))
+
+        bad_pin_cal = json.loads(json.dumps(snap["calendar_evidence"]))
+        bad_pin_cal["version"] = "twse-2026-untrusted-v99"
+        bad_pin_mark = MarketMark(
+            symbol="2330.TW",
+            price=2385.0,
+            as_of="2026-10-22T00:00:00Z",
+            source_ref=snap["source_ref"],
+            observed_at="2026-10-24T08:00:00Z",
+            lineage=snap["lineage"],
+            calendar_evidence=bad_pin_cal,
+        )
+        bad_pin_sample = PerformanceSample(
+            pnl=-4770.0,
+            portfolio_value=95230.0,
+            initial_cash=100000.0,
+            cash=100000.0,
+            as_of="2026-10-22T00:00:00Z",
+            fill_count=2,
+            marks=(bad_pin_mark,),
+        )
+        self.assertIsNone(restored.observe_unchanged_provenance(bad_pin_sample))
 
 
 if __name__ == "__main__":

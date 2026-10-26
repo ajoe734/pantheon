@@ -1,0 +1,10 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-HOSTED-ALL12-E-EXECUTOR-ROLE-20261026-CI-RED-FBC27F7FFB4D",
+  "blocked_pr": 6814,
+  "blocked_head": "d081c10f1f4c2db03a5081b9f4cace0f007c2b91",
+  "failing_check": "Run baseline stage-0 gate",
+  "root_cause": "PR 6814 replaced the literal secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET reference in the hosted chain phase job with an indexed secrets[...] expression (E_close uses the admin-test principal). scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py still asserted 7 literal references; only 6 remain.",
+  "fix": "Update the contract count to 6 with an explanatory comment; workflow unchanged.",
+  "verification": "pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_isolated_l12_provider_workflow.py: 58 passed",
+  "resolution": "PR 6814 branch could not be written by this worker (git refused ref update); superseded by a PR from the integration-unblock branch containing the PR 6814 commits plus the test fix."
+}

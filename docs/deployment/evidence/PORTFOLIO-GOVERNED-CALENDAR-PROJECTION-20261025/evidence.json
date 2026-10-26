@@ -1,0 +1,130 @@
+{
+  "task_id": "PORTFOLIO-GOVERNED-CALENDAR-PROJECTION-20261025",
+  "title": "Preserve governed calendar evidence in existing portfolio marks",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base_branch": "dev",
+  "base_commit_sha": "76062f676bf4d9f34e4d587de42d403c83081cc2",
+  "scope": "source_only_existing_portfolio_mark_governed_calendar_provenance_and_projection",
+  "artifacts": [
+    "services/execution/lean_runtime/performance_telemetry.py",
+    "services/execution/lean_runtime/test_performance_telemetry.py",
+    "services/execution/lean_runtime/paper_runtime.py",
+    "services/execution/lean_runtime/test_paper_runtime.py",
+    "services/telemetry/runtime_summary.py",
+    "services/telemetry/test_runtime_summary_projection.py",
+    "services/control-plane/bff/pm12/service.py",
+    "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+    "docs/deployment/evidence/PORTFOLIO-GOVERNED-CALENDAR-PROJECTION-20261025/evidence.json"
+  ],
+  "reproduction_and_diagnosis": {
+    "target_runtime_id": "rt-eb295fe2",
+    "target_binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+    "symbol": "2330.TW",
+    "quantity": -2.0,
+    "source_snapshot": {
+      "snapshot_id": "mss-ff49b0e9e567bba38063946a",
+      "source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a",
+      "event_time": "2026-10-22T00:00:00Z",
+      "observed_at": "2026-10-23T12:29:54Z",
+      "latest_close": 2385.0,
+      "calendar_version": "twse-2026-emergency-closure-20261023-v2",
+      "calendar_checksum": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+      "coverage_start": "2026-10-22",
+      "coverage_end": "2026-10-28"
+    },
+    "saved_76062_owner_dto_before": {
+      "last_event_at": "2026-10-25T21:41:42Z",
+      "mark_in_marks_by_symbol": {
+        "as_of": "2026-10-22T00:00:00Z",
+        "binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+        "price": 2385.0,
+        "source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"
+      },
+      "position_row": {
+        "symbol": "2330.TW",
+        "quantity": -2.0,
+        "mark_stale": true,
+        "last_known_mark_price": 2385.0,
+        "last_known_mark_as_of": "2026-10-22T00:00:00Z",
+        "last_known_mark_source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"
+      },
+      "bff_holding_before": {
+        "holding_id": "rt-eb295fe2:2330.TW",
+        "symbol": "2330.TW",
+        "side": "short",
+        "quantity": -2.0,
+        "mark_status": "stale",
+        "telemetry_stale": true,
+        "mark_price": null,
+        "market_value": null,
+        "notional": null,
+        "last_mark_at": "2026-10-22T00:00:00Z",
+        "mark_source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"
+      }
+    },
+    "root_causes": [
+      "MarketMark.to_dict() omitted observed_at, lineage, and calendar_evidence when serializing mark_refs into pnl_snapshot and drawdown_snapshot metadata.",
+      "PaperRuntimeService._maybe_emit_performance_snapshots() returned early with performance_sample_unchanged when RollingDrawdownTracker.observe() saw an unchanged numeric sample fingerprint, preventing newly available governed provenance on the same sample from being emitted once through mark_refs.",
+      "RuntimeSummaryProjectionStore._rebuild_positions() and BFF _management_portfolio_holding_entry() used raw 48-hour (172800s) wall-clock age checks instead of delegating Taiwan symbols to the shared evaluate_taiwan_market_freshness rule, and RuntimeSummaryProjectionStore did not persist or enrich mark provenance on same-as_of snapshots."
+    ],
+    "read_only_proof_digests_sha256": {
+      "/tmp/pantheon-assist-20261013/Current402342-runtime-QA-and-original-L9-projection-source-inflight-20261025/Root402342-original-h12-portfolio-holdings-real-OPA-GET-only-20261025T214843Z.json": "861601d80a1b1dc0c1f3ee8386f75ce925ed1e8c0bef192d6222a0bd50f7735a",
+      "/tmp/pantheon-codex-01a11-review-20261023/D402214-real-snapshot-calendar-vs-MTM-mark-exact-A1-pure-reproduction-20261025.json": "f151806a58fbac3e98d8d7d94610f64c872832183a5094242f3a50a7fcd5330f",
+      "/tmp/pantheon-codex-01a11-review-20261023/D402214-actual-2330-source-snapshot-and-mark-resolver-GET-only-20261025.json": "364984baaa95222139e3ca51df41fd2f99052757476588b6e899e8ee3ff49657",
+      "/tmp/pantheon-codex-01a11-review-20261023/four-reviewed-source-76062-final-fresh-release-preflight-20261025.json": "61b7e323f3804e376ff5e309bf172a5c2ca43095aa0d1bfeb125e43b01e12e76",
+      "docs/deployment/evidence/PAPER-MTM-GOVERNED-CALENDAR-20261025/evidence.json": "f0cfec4db43e737799a9ef44841f0f167a1e23c4350988abc98e24a72b03c855",
+      "services/execution/market_snapshot_admission.py": "77573bd9a902d8177eb4faa0358377c2fe43809786c59f9a43a7d36d6f4f90b7"
+    }
+  },
+  "remediation": {
+    "summary": "1) MarketMark.to_dict() now serializes genuine observed_at, lineage, and calendar_evidence into mark_refs while keeping MarketMark equality/fingerprint unchanged. 2) RollingDrawdownTracker tracks last_mark_provenance across observe/export_state/restore and provides observe_unchanged_provenance(sample) so PaperRuntimeService._maybe_emit_performance_snapshots() emits pnl_snapshot and drawdown_snapshot once when an unchanged sample gains non-regressing mark provenance, then remains idempotent on subsequent polls and restarts. 3) Exported lightweight is_portfolio_mark_fresh in performance_telemetry.py, delegating Taiwan symbols to unchanged evaluate_taiwan_market_freshness and preserving flat [-300s, 172800s] bounds for non-Taiwan symbols. 4) RuntimeSummaryProjectionStore carries observed_at, lineage, and calendar_evidence into _marks_by_symbol and position rows, supports guarded same-as_of provenance enrichment (requiring identical binding_id, price, source_ref, compatible quote_currency, non-regressing provenance, and valid Taiwan calendar freshness), and evaluates position mark freshness via is_portfolio_mark_fresh. 5) BFF _management_portfolio_holding_entry resolves mark provenance from position, mark, or matching binding/as_of _marks_by_symbol and evaluates freshness via is_portfolio_mark_fresh.",
+    "projected_76062_after": {
+      "holding_id": "rt-eb295fe2:2330.TW",
+      "symbol": "2330.TW",
+      "side": "short",
+      "quantity": -2.0,
+      "mark_status": "available",
+      "telemetry_stale": false,
+      "mark_price": 2385.0,
+      "market_value": -4770.0,
+      "notional": 4770.0,
+      "last_mark_at": "2026-10-22T00:00:00Z",
+      "mark_source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"
+    },
+    "modified_file_digests_sha256": {
+      "services/execution/lean_runtime/performance_telemetry.py": "fc16cffc6dde42563130dfb93ae3f740e26f51d4e7f166b3a189597acec7ad9c",
+      "services/execution/lean_runtime/test_performance_telemetry.py": "05bfbb0265538e11d03d9fdc59e664cfde460b95b34b032d1d6fb66915532d78",
+      "services/execution/lean_runtime/paper_runtime.py": "e9161262a9490321a19a614391469a33b8558f2a2928b6e3f1d5a93397425160",
+      "services/execution/lean_runtime/test_paper_runtime.py": "875ea3fea2298382627be4222c132d6cfa095a3c756a7322a505caa92a331c15",
+      "services/telemetry/runtime_summary.py": "1905f7693b48529feb943ddd067ff46490de395c389db9dec89f96f06781fada",
+      "services/telemetry/test_runtime_summary_projection.py": "e53a3b29d2d581dc291518aae31cb2b88e6000f4d681ff668b61e684f1a7579d",
+      "services/control-plane/bff/pm12/service.py": "0a8416f94dae2052e82e00fd82dcda5000e7167d2b3b8268e6bf3d74554e062a",
+      "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py": "fd8bce675c990cb47dd32e0002b26c124c212b2f5f51cce9c382058da199ed10"
+    },
+    "invariants_preserved": [
+      "Unchanged evaluate_taiwan_market_freshness and TW_GOVERNED_CALENDAR_PINS in services/execution/market_snapshot_admission.py",
+      "True quote as_of (2026-10-22T00:00:00Z), source_ref, and max_mark_age_seconds (172800s) preserved; heartbeat/collected_at/observed_at never relabeled as quote as_of",
+      "Failed valuation precedence (_valuation_failure / mark_unavailable_reason) preserved over last-known provenance",
+      "Missing, malformed, future, untrusted/tampered calendar, or missed trading session (e.g. after 2026-10-27 13:30 Asia/Taipei close) remain stale/unavailable",
+      "Exact tenant, binding_id, runtime_id, and symbol isolation preserved; same-as_of provenance enrichment rejects different price, different source_ref, older observed_at, or regressed provenance",
+      "Unchanged-sample provenance emission fires once when governed provenance first appears and remains idempotent on subsequent polls and restarts"
+    ]
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_performance_telemetry.py services/telemetry/test_runtime_summary_projection.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+      ".venv-pantheon/bin/python3 -m unittest services.execution.lean_runtime.test_performance_telemetry services.execution.lean_runtime.test_paper_runtime services.telemetry.test_runtime_summary_projection"
+    ],
+    "results": {
+      "pytest_scoped_suites": "165 passed, 1 warning, 16 subtests passed in 73.70s (exit 0)",
+      "unittest_scoped_suites": "Ran 186 tests in 6.291s, OK (exit 0)"
+    }
+  },
+  "boundaries_and_non_claims": {
+    "source_only_delivery": true,
+    "no_vm_ssh_or_live_service_calls": true,
+    "no_manual_replay_or_source_refresh": true,
+    "coordinated_release_owner": "Root01a11"
+  }
+}
