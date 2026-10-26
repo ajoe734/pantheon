@@ -1,6 +1,6 @@
 # Hosted All-12 Natural Chain: Executable Completion Plan (addendum)
 
-- Task: `H12-NATURAL-CHAIN-PLAN-20261026` (docs-only; owner Antigravity, reviewer Codex)
+- Task: `H12-NATURAL-CHAIN-PLAN-20261026` (docs-only; owner Antigravity, reviewer Codex2 — natively reassigned from Codex after repeated Codex auth-probe timeouts/`capacity_retryable`; owner unchanged)
 - Dated: 2026-10-26. Source/cutoff: protected `dev` at `7adfefbbc0b17e756229e751a298f9570a6c7e10`
   (PR #6819 merge). Facts below are as of 2026-10-26T07:21Z, with the same-task rework facts of 07:24–07:41Z
   (completed-marker receipt, PR #6822 task) labelled where used.
@@ -68,8 +68,10 @@ added by this plan.
 | Completed-fence TTL defect | **reproduced current defect** (isolated real Redis, exact f9 code, three cold processes, production TTL 86400 shortened to 1 s in fixture: enqueue 1/0/1, side effects 1/1/2). Not a third real hosted order; not attribution of each historical execution/version | `/tmp/pantheon-continue-20261023/duplicate-signal-ttl-repro/accepted-f9-real-Redis-three-cold-process-TTL-reproduction-20261026.json` sha256 `c207aa18f45b781a07c39330e98189919eee731e708d4f8a5a18310e527feee1`; task `PAPER-COMPLETED-FENCE-TTL-20261026` |
 | PR #6822 (completed-fence TTL source fix) | in review at this rework; **not merged, not hosted** | task `PAPER-COMPLETED-FENCE-TTL-20261026`; re-read GitHub metadata at S2 |
 | Existing completed markers (two owner-verified PAPER bindings) | preservation **applied** by one temporary live owner action 2026-10-26T07:24:57Z: `PERSIST` returned 1, PTTL -1, value sha unchanged, no new key/marker/order; expired markers not recovered. Does not replace #6822 for future completions | receipt sha256 `8a506348f6a9d5fc21fe9f40e113cdb9efa9b01ae4ffe35210343186ed2a4b29`; preflight sha256 `e0d144c449a24643a6fef6d2ee705415c007c9dc580cd097524d0a88ed309ecf`; first-attempt guard failure (short container ID, no mutation) sha256 `295695b38998bb2ef25e83b77ec7db8226c1d783981e209ab942c7576e44d423` |
+| Existing D driver vs retired binding | **verified current-source gap**: `tests/integration/l12/test_current_runtime_loops_deployed_e2e.py::_hosted_observe` (~L1853) raises unless the RuntimeBinding `status == "active"`; the original binding is retired (E/AC5 completed). #6819 accepting a late-discovery Incident does **not** make replaying the D driver valid. A historical-window observer mode is **not claimed to exist** | source read at cutoff; follow-up S4a |
 | Full financial comparator | **unavailable** (§3.2) | feasibility `NOT_PUBLISHED_NOT_AUTHORITY_ACCEPTED` |
 | Hosted L10 Incident, L11/H4 same-chain decision | **not yet observed** | – |
+| Reconciliation duplicate-execution output for L10 | **unverified/unimplemented gap** (§6.1) | – |
 | Full all12 and independent TOTAL | **false** | – |
 
 Keep separate in any report: observer/harness commit, served commit, historical event-producer version, and
@@ -160,13 +162,20 @@ Conceptual unless noted; existing DTO fields only, no new mandatory field.
   `/incident-triggers/consume`, `/scheduled-reconcile`) as read at the cutoff. **Unverified gap**; to be
   re-confirmed in S2.
 - Actually supported today: operator-discovered `POST /api/incidents` (`create_incident`). This is
-  **operator discovery, not automatic Reconciliation detection**, and is never presented as such. Whether it
-  satisfies original L10 is decided **now** by the assigned doc review against the original contract; S6 only
-  applies the recorded criteria through the existing sequencer/verifier. No runtime reviewer-decides-scope gate
-  is added.
-- If a human-discovered Incident alone does not establish Reconciliation detection/consumption, the exact
-  missing owner output (a Reconciliation duplicate-execution result consumable by `consume-drift-report`) is
-  stated and the smallest follow-up named; it is never relabelled as automatic detection.
+  **operator discovery, not automatic Reconciliation detection**, and is never presented as such.
+- **Selected route and recorded closure rule (fixed by this document, not left to a later discretionary gate).**
+  The supported route is an incident-triggered reconciliation (LOOP_TRIGGER_AND_CONCURRENCY_POLICY §3.10) on the
+  Incident created from canonical events. L10 for the original duplicate-execution case closes **only when all
+  hold**: (a) an owner-stored Incident whose references resolve to the two canonical fill events with `created_at`
+  in the original binding window (§5); (b) an actual Reconciliation-owner output for that same case (evaluation
+  / DriftReport or the owner's recorded analysis/handoff) produced by the existing Reconciliation route, not
+  hand-written; (c) its recorded consumption by the Incident/Evolution consumer with the predecessor ID. A
+  human-discovered Incident alone satisfies (a) only; without (b)+(c) L10 is reported **partial**, never
+  relabelled automatic detection. The assigned doc review confirms this text conforms to the original
+  contract before merge; S6 only applies these recorded criteria.
+- If (b) is unimplemented/unproven, the smallest same-owner gap is: a Reconciliation duplicate-execution result
+  consumable by `consume-drift-report` for the scope key in §3.3; success evidence = that owner's stored output
+  plus the Incident consumption readback. No new runtime reviewer step, API or fabricated DriftReport.
 - If a duplicate-execution check/delivery contract is absent, the smallest follow-up is an existing-owner
   source task (Reconciliation owner) through the normal supervisor flow. No fabricated DriftReport, report
   refs or API.
@@ -203,12 +212,12 @@ After an accepted fixed runtime, **one** administrative retry (reset + redispatc
    Source is non-rejected, delegates to `DistillationJobQueue.reset_to_pending(source_id, requested_by=...)`,
    ~L1320; idempotent while pending). Failed/DLQ history is preserved through this owner method, never SQL/file/
    queue JSON edits.
-3. Processing: the existing worker/controller route for the existing processing method
-   (`DistillationWorker.run_pending`); no HTTP route is invented and no broad drain of other jobs. `limit=1`
-   is not assumed to target this Source; confirm the processed job's `source_id` in readback.
+3. Processing: the existing Source controller naturally processes the single reset job; this plan does **not**
+   invoke a shared broad `run_pending` just to target one Source, and invents no HTTP route. Confirm the
+   processed job's `source_id` in readback.
 4. Readback: job + draft materialized; the new case stays parked (no H1/Alpha/Teaching/model/new case).
 
-If the existing invocation path cannot be named at S5, that is a named blocker, not an invented route.
+If the reset invocation cannot be run at S5, that is a specific owner-bootstrap/invocation gap, not a claim that no primitive exists.
 
 ## 8. Ordered execution checklist (after this doc is reviewed and merged)
 
@@ -219,7 +228,8 @@ If the existing invocation path cannot be named at S5, that is a named blocker, 
 | S2 | Confirm #6819/#6821/#6822 review/CI/integration; recheck L10 gap | GitHub metadata read | merge SHAs, dev head | refs | merged ⇒ proceed; else pause | none |
 | S3 | One grouped exact-pair dev delivery (#6819+#6821+#6822) | existing publisher/lease only, docs-first publisher ownership (§11) | hosted manifest identities | manifest + workflow | pair accepted; failed gate ⇒ no switch | existing rollback; no second dispatcher |
 | S4 | One late-discovery Incident retry after accepted runtime | Incident owner | served commit includes #6819; event `created_at` in window | owner POST response + GET readback | 201 + stored Incident; 422 ⇒ record exact reason | no backdating; no repeat loop |
-| S5 | Parked Source job one administrative retry, draft-only | §7 (`redispatch` → `run_pending`) | job still failed; runtime includes #6821 | job + draft readback | draft materialized; failure ⇒ keep DLQ history | no second redrive |
+| S4a | **Conditional**: historical-window observation/finalization in the *existing* D driver/parent (only if S4/S6 need a D/final receipt for the retired binding) | existing read-only observer, via normal source task | current auth/Git/OCI/tenant checks stay; binding status stays `retired`; original IDs/E history unchanged | new retrospective D/final receipt | supported ⇒ receipt records occurrence-window evidence from event `created_at`; unsupported ⇒ named gap | no reactivation, no hand-added loop records/all12 flags, no E/rollback replay, no new schema/entrypoint. If owner-only readback suffices for a named original criterion, cite exactly that criterion; it is **not** a successful unexecuted D run |
+| S5 | Parked Source job one administrative retry, draft-only | §7 (`redispatch`, then existing controller) | job still failed; runtime includes #6821 | job + draft readback | draft materialized; failure ⇒ keep DLQ history | no second redrive |
 | S6 | L10 conformance readback against criteria already recorded by the doc review | existing sequencer/verifier | Incident links to canonical events | owner refs | closed per §6.1 or named gap | smallest existing-owner task |
 | S7 | L11/H4 proposal/decision readback (`from-incident`, GET; review/approve only if the branch claims it) | Evolution owner | Incident ref, standing consent | decision record | per §6.2 | residual if unsupported |
 | S8 | Completed E/AC5 | – | cite completed E40263493681 / E40274396263 | refs | **no replay** | – |
@@ -236,7 +246,7 @@ Source changes needed later stay in the supervisor/task/PR flow; queues and cano
 | measured healthy/zero | comparator ran on valid inputs | that comparator only | other loops |
 | eligible no-op/zero candidates | actually recorded producer tick/result for the same target shows zero candidates (reuse the real tick, no manual sweep) | evaluable no-op | action; an eligible coverage read alone is not this |
 | real anomaly | §3.3 invariant violated on canonical records | L10 input | Incident stored |
-| proposal recorded | owner stored proposal | L11 | decision |
+| proposal recorded | owner stored a *proposed* `EvolutionDecision` record | L11 | H4 approval or execution |
 | decision accepted | `approved` | H4 | `executed` |
 | actually executed | downstream ack + immutable ref (+cooldown origin) | execution branch | other branches |
 | cleanup complete | E retirement done | retirement only | dated rollback: rollback/ack-data legs are separate evidence |
@@ -266,9 +276,30 @@ No "12/12" from CI, UI, source merge, normal heartbeat, generic Incident POST, o
 - No new product/domain action runs before the docs-first barrier except a separately evidenced minimal safety
   rescue (e.g. the 07:24Z marker preservation, §4); no retrospective cancellation, no new operator/MFA gate.
 
-## 12. Validation record
+## 12. Reference index (exact existing refs; sanitized, no raw payloads/credentials)
+
+Private root (location only): `/tmp/pantheon-codex-01a11-review-20261023/`. Repo manifests: the four
+`docs/deployment/evidence/*/evidence.json` files linked in §2.
+
+| Proof | Exact ref | sha256 |
+|---|---|---|
+| D (owner-auth repair readback, original-chain preservation) | root `D402439-auth-repair-actual-owner-readback-and-original-chain-preservation.json`; workflow run 40243931212 | `41eb99626b6ec18439b74b43abbab960891e6b68500407fac6403130f013c686` |
+| D same-binding processing GET observation | root `D402214-same-binding-natural-processing-owner-GET-only-observation-20261025.json` | `d461132fe4358326df8e0ed9dc13211f353aee510139ca62619157b90302f0eb` |
+| E cleanup audit (E40263493681) | root `E40263493681-own-bounded-offline-preservation-and-cleanup-audit-20261026.json` | `d539eee0036c15d37d862398e4ae0804fbc3dd6a24541d9086eb754a6755e6d3` |
+| E/AC5 completed (E40274396263) | root `E40274396263-original-chain-preservation-and-actual-completed-cleanup-bounded-audit-20261026.json` | `c18a2fdf7f1b06389ae8fdec8be1cdad804e67b0c40f79fb56d56c3aa5cbc882` |
+| Holding-currency UI (FE24534489 / run 40253695959, head `f9abe36e`) | root `FE889-currency-single-necessary-product-root-20261026-result.json`; `FE889-currency-pair-fresh-readonly-inspection-20261026.json`; run https://github.com/ajoe734/pantheon/actions/runs/40253695959 | `e7ec72d22dc7a1da3166229a9f5351140f73c60b374f6bd4083a97eff6dd6c2e`; `3c7d3882e593955534f2cafc13ab5a0e17062340f1ca514a33fb2dda69c2fdad` |
+| Late-discovery Incident POST (HTTP 422) | root `original-h12-duplicate-signal-incident-single-owner-POST-actual-response-20261026.json` | `4015fdc53aa6764edadd391430ab47790c5623bdf801f905cc8854231f2eb894` |
+| Completed-fence diagnosis | root `current-paper-completed-decision-fence-bounded-offline-diagnosis-20261026.json` | `d6e18d174f7c826ae5e11ddbcdc93a0b5a178dd19a838df82c471531e8cc38de` |
+| TTL reproduction | `/tmp/pantheon-continue-20261023/duplicate-signal-ttl-repro/accepted-f9-real-Redis-three-cold-process-TTL-reproduction-20261026.json` | `c207aa18f45b781a07c39330e98189919eee731e708d4f8a5a18310e527feee1` |
+| Marker preservation / preflight / first-attempt guard failure | see §2 marker row | `8a506348…2b4`, `e0d144c4…9ed`, `295695b3…d44` (full values in §2) |
+
+Rows citing "private audit root"/"binding record" in §2 resolve through this index; the binding record and
+10-receipt hashes are in the D/E rows above and the linked repo manifests. Where an official workflow/artifact ID
+is not recorded above it is stated unknown rather than inferred.
+
+## 13. Validation record
 
 `git diff --check`, JSON parse of the evidence file, and Markdown link/reference resolution were run locally;
 exit statuses are recorded in the evidence file. No functional/hosted/model suites were rerun. This doc rework
-is DocSourceReview feedback only; it grants no product authority. The original assigned review must bind the new
+is DocSourceReview feedback only; it grants no product authority. The assigned reviewer (Codex2) must bind the new
 exact head and required CI; the earlier head `2e26ac269` is not deliverable.
