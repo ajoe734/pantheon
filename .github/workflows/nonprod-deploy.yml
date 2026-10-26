@@ -3554,8 +3554,10 @@ jobs:
         timeout-minutes: 150
         env:
           PATH: ${{ steps.runtime.outputs.safe_path }}
-          DEV_BFF_DEV_LOGIN_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID }}
-          DEV_BFF_DEV_LOGIN_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          # E_close revokes H1 and needs the existing admintest principal, which
+          # already holds operator and risk_owner. Other phases keep operator A.
+          DEV_BFF_DEV_LOGIN_CLIENT_ID: ${{ inputs.chain_phase == 'E_close' && (vars.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID || 'pantheon-dev-admin-test') || vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID }}
+          DEV_BFF_DEV_LOGIN_CLIENT_SECRET: ${{ secrets[inputs.chain_phase == 'E_close' && 'DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET' || 'DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET'] }}
           HOSTED_CHAIN_TENANT_ID: ${{ vars.DEV_HOSTED_CHAIN_TENANT_ID }}
           ACCEPTED_BACKEND_SHA: ${{ steps.identity.outputs.backend_sha }}
           EVIDENCE_DIR: ${{ steps.validate.outputs.evidence_dir }}
