@@ -77,6 +77,7 @@ class PostgresJsonOwnerStore:
         owner_service: str,
         bootstrap: bool = True,
         read_only: bool = False,
+        count_index: bool = False,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required")
@@ -86,6 +87,10 @@ class PostgresJsonOwnerStore:
         self.schema = table.split(".", 1)[0] if "." in table else ""
         self.owner_service = owner_service
         self.read_only = read_only
+        self.count_index = bool(count_index)
+        self.count_index_name = quote_pg_identifier(
+            f"{table.split('.')[-1][:48]}_count_idx"
+        )
         if bootstrap and not read_only:
             self.bootstrap()
 
@@ -159,6 +164,18 @@ class PostgresJsonOwnerStore:
                     raise
                 if hasattr(conn, "rollback"):
                     conn.rollback()
+            if self.count_index:
+                try:
+                    conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS {self.count_index_name} "
+                        f"ON {self.table} ((jsonb_typeof(payload))) "
+                        "WHERE jsonb_typeof(payload) IN ('object', 'string')"
+                    )
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", "") not in ("23505", "42P07"):
+                        raise
+                    if hasattr(conn, "rollback"):
+                        conn.rollback()
 
     def put(self, record_id: str, payload: Dict[str, Any]) -> None:
         if not record_id:
@@ -375,15 +392,26 @@ class PostgresJsonOwnerStore:
 
     def count(self, *, conn: Optional[Any] = None) -> int:
         """Count the number of rows in this owner-store table without hydrating payloads."""
-        sql = (
-            f"SELECT COUNT(*) FROM {self.table} "
-            "WHERE jsonb_typeof("
-            "CASE "
-            "WHEN jsonb_typeof(payload) = 'string' THEN (payload #>> '{}')::jsonb "
-            "ELSE payload "
-            "END"
-            ") = 'object'"
-        )
+        if self.count_index:
+            sql = (
+                f"SELECT COUNT(*) - ("
+                f"SELECT COUNT(*) FROM {self.table} "
+                "WHERE jsonb_typeof(payload) IN ('object', 'string') "
+                "AND jsonb_typeof(payload) = 'string' "
+                "AND jsonb_typeof((payload #>> '{}')::jsonb) <> 'object'"
+                f") AS count FROM {self.table} "
+                "WHERE jsonb_typeof(payload) IN ('object', 'string')"
+            )
+        else:
+            sql = (
+                f"SELECT COUNT(*) FROM {self.table} "
+                "WHERE jsonb_typeof("
+                "CASE "
+                "WHEN jsonb_typeof(payload) = 'string' THEN (payload #>> '{}')::jsonb "
+                "ELSE payload "
+                "END"
+                ") = 'object'"
+            )
         with self._use_conn(conn) as conn:
             cursor = conn.execute(sql)
             row = self._fetch_one(cursor)

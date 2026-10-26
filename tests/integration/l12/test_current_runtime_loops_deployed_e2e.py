@@ -1122,6 +1122,7 @@ class RuntimeChain:
         if "error" in summary:
             return None
         event_ids = list(summary.get("recent_lifecycle_event_ids") or [])
+        lifecycle_events: list[dict[str, Any]] = []
         for event_id in reversed(event_ids):
             event = self.http.request(
                 "telemetry",
@@ -1130,8 +1131,10 @@ class RuntimeChain:
                 headers=self.telemetry_headers,
                 expected={200, 404},
             )
+            if isinstance(event, dict) and event.get("event_id"):
+                lifecycle_events.append(event)
             if event.get("event_type") == "paper_fill_simulated" and event.get("metrics"):
-                return {"event": event, "summary": summary}
+                return {"event": event, "summary": summary, "lifecycle_events": lifecycle_events}
         return None
 
     def _bff_health(self) -> dict[str, Any]:
@@ -1633,6 +1636,192 @@ class RuntimeChain:
             )
         return observed
 
+    def _hosted_reconciliation_evaluation(
+        self, binding_id: str, observed: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        event = observed.get("event") if isinstance(observed.get("event"), Mapping) else {}
+        summary = observed.get("summary") if isinstance(observed.get("summary"), Mapping) else {}
+        lifecycle_events = (
+            observed.get("lifecycle_events") if isinstance(observed.get("lifecycle_events"), list) else []
+        )
+        candidate_ids: list[str] = []
+        last_lifecycle = summary.get("last_lifecycle_identity")
+        if isinstance(last_lifecycle, Mapping):
+            meta = last_lifecycle.get("metadata")
+            if isinstance(meta, Mapping) and str(meta.get("reconciliation_evaluation_id") or "").strip():
+                candidate_ids.append(str(meta["reconciliation_evaluation_id"]).strip())
+        for item in lifecycle_events:
+            if not isinstance(item, Mapping) or item.get("event_type") != "reconciliation_completed":
+                continue
+            meta = item.get("metadata")
+            eval_id = str((meta or {}).get("reconciliation_evaluation_id") or "").strip() if isinstance(meta, Mapping) else ""
+            if eval_id and eval_id not in candidate_ids:
+                candidate_ids.append(eval_id)
+        for evaluation_id in candidate_ids:
+            evaluation = self.http.request(
+                "reconciliation",
+                "GET",
+                f"/api/reconciliation-drift/evaluations/{urllib.parse.quote(evaluation_id, safe='')}",
+                expected={200, 404},
+            )
+            if not isinstance(evaluation, Mapping) or evaluation.get("evaluation_id") != evaluation_id:
+                continue
+            if str(evaluation.get("binding_id") or "") != binding_id:
+                continue
+            eval_summary = evaluation.get("summary")
+            if not isinstance(eval_summary, Mapping):
+                continue
+            count_keys = (
+                "reconciliation_check_count",
+                "observed_metric_count",
+                "telemetry_event_count",
+                "baseline_metric_count",
+                "drift_check_count",
+            )
+            if any(
+                isinstance(eval_summary.get(k), bool) or not isinstance(eval_summary.get(k), int)
+                for k in count_keys
+            ):
+                continue
+            reconciliation_check_count = int(eval_summary["reconciliation_check_count"])
+            observed_metric_count = int(eval_summary["observed_metric_count"])
+            telemetry_event_count = int(eval_summary["telemetry_event_count"])
+            baseline_metric_count = int(eval_summary["baseline_metric_count"])
+            drift_check_count = int(eval_summary["drift_check_count"])
+            status = str(eval_summary.get("status") or evaluation.get("status") or "")
+            drift_checks = evaluation.get("drift_checks") if isinstance(evaluation.get("drift_checks"), list) else []
+            drift_evaluated = baseline_metric_count > 0 and drift_check_count > 0
+            measured_zero_drift = (
+                drift_evaluated
+                and status == "ok"
+                and len(drift_checks) == drift_check_count
+                and all(isinstance(chk, Mapping) and chk.get("status") == "ok" for chk in drift_checks)
+                and not (evaluation.get("incident_ids") or [])
+            )
+            drift_outcome = (
+                "unmeasured_no_baseline"
+                if baseline_metric_count == 0
+                else (
+                    "unmeasured_no_drift_checks"
+                    if drift_check_count == 0
+                    else ("measured_zero_drift" if measured_zero_drift else (status or "evaluated"))
+                )
+            )
+            lifecycle_append = (
+                evaluation.get("lifecycle_append")
+                if isinstance(evaluation.get("lifecycle_append"), Mapping)
+                else {}
+            )
+            append_event = (
+                lifecycle_append.get("event")
+                if isinstance(lifecycle_append.get("event"), Mapping)
+                else {}
+            )
+            append_meta = (
+                append_event.get("metadata")
+                if isinstance(append_event.get("metadata"), Mapping)
+                else {}
+            )
+            same_chain_fill_event_id = str(event.get("event_id") or "") or None
+            source_fill_event_id = str(append_meta.get("source_fill_event_id") or "") or None
+            lifecycle_event_id = (
+                str(lifecycle_append.get("event_id") or append_event.get("event_id") or "") or None
+            )
+            return {
+                "evaluation_id": evaluation_id,
+                "binding_id": binding_id,
+                "runtime_id": str(evaluation.get("runtime_id") or ""),
+                "status": status,
+                "summary": {
+                    "status": status,
+                    "reconciliation_check_count": reconciliation_check_count,
+                    "observed_metric_count": observed_metric_count,
+                    "telemetry_event_count": telemetry_event_count,
+                    "baseline_metric_count": baseline_metric_count,
+                    "drift_check_count": drift_check_count,
+                },
+                "reconciliation_check_count": reconciliation_check_count,
+                "observed_metric_count": observed_metric_count,
+                "telemetry_event_count": telemetry_event_count,
+                "baseline_metric_count": baseline_metric_count,
+                "drift_check_count": drift_check_count,
+                "drift_evaluated": drift_evaluated,
+                "measured_zero_drift": measured_zero_drift,
+                "drift_outcome": drift_outcome,
+                "snapshot_event_id": str(evaluation.get("snapshot_event_id") or "") or None,
+                "source_fill_event_id": source_fill_event_id,
+                "same_chain_fill_event_id": same_chain_fill_event_id,
+                "same_chain_fill_cited": bool(
+                    same_chain_fill_event_id and source_fill_event_id == same_chain_fill_event_id
+                ),
+                "lifecycle_event_id": lifecycle_event_id,
+                "incident_ids": list(evaluation.get("incident_ids") or []),
+            }
+        return None
+
+    def _hosted_evolution_input_coverage(self, registry_id: str, binding_id: str) -> dict[str, Any] | None:
+        coverage = self.http.request(
+            "evolution",
+            "GET",
+            "/api/evolution/input-coverage",
+            headers=self.evolution_headers,
+            expected={200, 404},
+        )
+        if not isinstance(coverage, Mapping):
+            return None
+        artifacts = coverage.get("artifacts")
+        if not isinstance(artifacts, list):
+            return None
+        matched = next(
+            (
+                item
+                for item in artifacts
+                if isinstance(item, Mapping)
+                and str(item.get("artifact_id") or "") == registry_id
+                and (not binding_id or str(item.get("binding_id") or "") == binding_id)
+            ),
+            None,
+        )
+        if matched is None:
+            matched = next(
+                (
+                    item
+                    for item in artifacts
+                    if isinstance(item, Mapping)
+                    and (
+                        (registry_id and str(item.get("artifact_id") or "") == registry_id)
+                        or (not registry_id and binding_id and str(item.get("binding_id") or "") == binding_id)
+                    )
+                ),
+                None,
+            )
+        if matched is None:
+            return {
+                "artifact_id": registry_id,
+                "binding_id": binding_id,
+                "runtime_id": None,
+                "target_found": False,
+                "complete": False,
+                "evaluable": False,
+                "metrics": [],
+                "gaps": [],
+            }
+        metrics = [dict(m) for m in (matched.get("metrics") or []) if isinstance(m, Mapping)]
+        complete = bool(matched.get("complete") is True)
+        evaluable = bool(complete and metrics and all(m.get("evaluable") is True for m in metrics))
+        return {
+            "artifact_id": str(matched.get("artifact_id") or registry_id),
+            "artifact_version": str(matched.get("artifact_version") or "") or None,
+            "binding_id": str(matched.get("binding_id") or binding_id),
+            "runtime_id": str(matched.get("runtime_id") or "") or None,
+            "deployment_stage": str(matched.get("deployment_stage") or "") or None,
+            "target_found": True,
+            "complete": complete,
+            "evaluable": evaluable,
+            "metrics": metrics,
+            "gaps": [str(gap) for gap in (matched.get("gaps") or []) if str(gap)],
+        }
+
     def _hosted_observe(self, chain: Any, ids: dict[str, Any]) -> None:
         keys = ("runtime_binding_id", "runtime_id", "plan_id")
         wanted = {key: chain.predecessor(key) for key in keys}
@@ -1656,6 +1845,43 @@ class RuntimeChain:
         started = _utc_now()
         observed = self._hosted_paper_fill(binding, started, ids)
         event = observed["event"]
+        event_meta = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+        self.evidence.hosted["observations"]["same_chain_fill"] = {
+            "event_id": str(event.get("event_id") or ""),
+            "runtime_id": str(event.get("runtime_id") or wanted["runtime_id"]),
+            "artifact_id": str(event.get("artifact_id") or registry_id),
+            "source_snapshot_id": str(event_meta.get("source_snapshot_id") or "") or None,
+        }
+
+        # Loop 12: BFF typed health is an independent owner probe of runtime-manager and
+        # paper-fleet-reconciler readiness. Per approved design 6736 §5A and §10 T7, it runs
+        # independently even when same-chain Loop 10 Incident or Loop 11 Evolution is absent,
+        # preserving its own trigger/output/consumer evidence and no L11-to-L12 edge.
+        health = self._bff_health()
+        targets = health.get("data", {}).get("targets", {})
+        typed = {name: (targets.get(name) or {}).get("ok") for name in ("runtime-manager", "paper-fleet-reconciler")}
+        if not all(value is True for value in typed.values()):
+            raise DeployedProofError(f"BFF typed health does not report the runtime owners ready: {typed!r}")
+        self.evidence.hosted["observations"]["typed_health"] = typed
+        self.evidence.add_case(
+            "loop_12_bff_typed_health",
+            loop=12,
+            trigger_id=f"bff-typed-health-{chain.chain_id}",
+            owner_worker=self.evidence.identities["operator-bff"],
+            terminal_output_id=binding_id,
+            authority_readback={"targets": typed},
+            next_consumer_readback={"typed_health": typed},
+            started_at=started,
+            compose_services=["operator-bff", "runtime-manager", "paper-fleet-reconciler"],
+            assertions={"typed_targets_ready": True},
+        )
+
+        reconciliation_eval = self._hosted_reconciliation_evaluation(binding_id, observed)
+        if reconciliation_eval is not None:
+            self.evidence.hosted["observations"]["reconciliation_evaluation"] = reconciliation_eval
+        evolution_coverage = self._hosted_evolution_input_coverage(registry_id, binding_id)
+        if evolution_coverage is not None:
+            self.evidence.hosted["observations"]["evolution_input_coverage"] = evolution_coverage
 
         # Loop 10/11 are natural owner outputs of the real runtime event: read them, never inject
         # a baseline or run a sweep here. Absent evidence keeps the phase paused.
@@ -1672,10 +1898,19 @@ class RuntimeChain:
             None,
         )
         if incident is None:
+            eval_note = ""
+            if reconciliation_eval is not None:
+                eval_note = (
+                    f" (reconciliation evaluation {reconciliation_eval['evaluation_id']} status={reconciliation_eval['status']!r}, "
+                    f"reconciliation_check_count={reconciliation_eval['reconciliation_check_count']}, "
+                    f"baseline_metric_count={reconciliation_eval['baseline_metric_count']}, "
+                    f"drift_check_count={reconciliation_eval['drift_check_count']}, "
+                    f"drift_outcome={reconciliation_eval['drift_outcome']!r})"
+                )
             raise HostedPause(
                 "drift_incident_observation",
-                f"no IncidentCase cites runtime telemetry event {event['event_id']} for binding {binding_id}; "
-                "loops 10-12 are not observed",
+                f"no IncidentCase cites runtime telemetry event {event['event_id']} for binding {binding_id}{eval_note}; "
+                "loops 10-11 are not observed",
                 ids,
             )
         incident_id = str(incident.get("incident_id") or incident.get("id"))
@@ -1693,6 +1928,13 @@ class RuntimeChain:
             assertions={"incident_id": incident_id, "real_runtime_event_preserved": True},
         )
 
+        if evolution_coverage is not None and evolution_coverage.get("target_found") and not evolution_coverage.get("evaluable"):
+            raise HostedPause(
+                "evolution_decision_observation",
+                f"Evolution target {registry_id} is not evaluable (gaps={evolution_coverage.get('gaps')!r}); "
+                "loop 11 not observed",
+                ids,
+            )
         decisions = self.http.request(
             "evolution", "GET", "/api/evolution/proposals", query={"target_id": registry_id},
             headers=self.evolution_headers,
@@ -1719,26 +1961,6 @@ class RuntimeChain:
             started_at=started,
             compose_services=["incidents", "evolution"],
             assertions={"incident_lineage_exact": True, "proposal_only": True, "runtime_mutation": False},
-        )
-
-        # Loop 12: BFF typed health only; it keeps its own trigger path.
-        health = self._bff_health()
-        targets = health.get("data", {}).get("targets", {})
-        typed = {name: (targets.get(name) or {}).get("ok") for name in ("runtime-manager", "paper-fleet-reconciler")}
-        if not all(value is True for value in typed.values()):
-            raise DeployedProofError(f"BFF typed health does not report the runtime owners ready: {typed!r}")
-        self.evidence.hosted["observations"]["typed_health"] = typed
-        self.evidence.add_case(
-            "loop_12_bff_typed_health",
-            loop=12,
-            trigger_id=f"bff-typed-health-{chain.chain_id}",
-            owner_worker=self.evidence.identities["operator-bff"],
-            terminal_output_id=binding_id,
-            authority_readback={"targets": typed},
-            next_consumer_readback={"typed_health": typed},
-            started_at=started,
-            compose_services=["operator-bff", "runtime-manager", "paper-fleet-reconciler"],
-            assertions={"typed_targets_ready": True},
         )
 
         # H4 accepts the decision of THIS chain: same target, pool and incident lineage.

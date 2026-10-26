@@ -1,0 +1,163 @@
+{
+  "task_id": "H12-DRAWDOWN-POLICY-CONFIG-20261025",
+  "kind": "low_risk_paper_policy_config",
+  "status": "proposed_pending_reviewer_decision",
+  "authored_by": "Antigravity",
+  "reviewer": "Antigravity2",
+  "approved_by": null,
+  "approval_recorded": false,
+  "authoritative_decision_source": "canonical exact-head reviewer decision (review_notes_zh / approve on frozen delivery_binding head of H12-DRAWDOWN-POLICY-CONFIG-20261025 by assigned Reviewer on Duty Antigravity2 under EVOLUTION_REVIEW_AND_THRESHOLDS.md section 6.1)",
+  "policy_path": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 6.1 low-risk, Reviewer on Duty",
+  "research_input_directory": "/tmp/pantheon-codex-01a11-review-20261023/h12-drawdown-research-20261025",
+  "subject": {
+    "artifact_id": "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact",
+    "version": "1.0.0",
+    "strategy_id": "strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
+    "artifact_object_key": "openclaw/registry/strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8/1.0.0/artifact.bin",
+    "frozen_artifact_sha256": "fa3a3cdf56c61c8ada5cf29863a89204e13aafa89845b98fe60bff419c6aed75",
+    "symbol": "2330.TW",
+    "stage": "paper",
+    "runtime_id": "rt-eb295fe2",
+    "binding_id": "rb-eea1cd16cf3745479f42e8b4440b3c27",
+    "initial_cash_twd": 100000.0,
+    "parameters": {
+      "bar_frequency": "1d",
+      "data_source": "source-ingest:normalized/taiwanstockprice/finmind-daily",
+      "lookback_bars": 2,
+      "momentum_threshold": 0.01,
+      "order_quantity": 1,
+      "quantity_type": "SHARES",
+      "symbols": [
+        "2330.TW"
+      ],
+      "zero_momentum_action": "SELL"
+    }
+  },
+  "config": {
+    "file": "services/evolution/config/threshold_sweep_baselines.json",
+    "expected_drawdown": 0.0325,
+    "policy_source": "docs/deployment/evidence/H12-DRAWDOWN-POLICY-CONFIG-20261025/policy.md#reviewer-decision",
+    "breach_multiplier_unchanged": 1.25,
+    "implied_breach_trigger": 0.040625,
+    "unchanged": [
+      "artifact-tw-session-momentum-v1 0.0303",
+      "artifact-persona-paper-00400aa279b49774cde4 0.0027",
+      "rolling_pnl_floor disabled placeholder",
+      "threshold 1.25",
+      "existing threshold_sweep_baselines.json schema"
+    ]
+  },
+  "archived_inputs_sha256": {
+    "frozen_artifact_bin": "fa3a3cdf56c61c8ada5cf29863a89204e13aafa89845b98fe60bff419c6aed75",
+    "source_exact_checksummed_dated_points_readonly_json": "0ee3b9ddf6cef4b3bd3d39be97ffd44f36419512e5a68a71850fe795d8d3ffc0",
+    "source_snapshot_state_checksum": "fc0d5b2375e622a44d723d67cd1b66085f7273a96265dbde8ae20596ee3fb146",
+    "source_store_sha256_at_read": "e2b298b598d2c0dc724291468f88f3155a72a4cbc9a4146e3cd756418b7c0aa1",
+    "sanitized_input_indent2_json": "97399386b32b4da4a7f6a09078d36a548732f1e4013a104ff96dc7b32da5f727",
+    "committed_input_json": "25dfdcb23840e39451fe2208fd524df7b7d3342013be37e571ce8fb23454cc74",
+    "calc_py": "966b31ed2b7ad006bdc31361321351e728c4e5f5ae1b4e68ce0f0a45875f3d55",
+    "frozen_source_and_method_json": "9af37b32d8586f1dbe1e3e1c78249b295a1e86c0f49f8791919946dc2f914341",
+    "replay_execution_json": "93d0881ea6c459e75bc9d98d7792de7394481627915ab7007758a19c74e591ee",
+    "result_json": "c498cdd1dc85db32270cf02d2d764a1ad19845e3a7dde3066ea43e614e498f0f",
+    "series_json_file": "4ae0c58bbad6d4a53114e1d8bc4d2605adc110bf749d2a5c42eb834dc73292c4",
+    "series_canonical_sha256": "50d27a43f8083c214e8b7b6b7b21d9183cab94ef1e28092ae8f41d95c1184783",
+    "proposal_for_independent_review_md": "d782e75a1336ff2f3a0b23b9b69178f115302574b0992b636f56105025a3ce41",
+    "input_evidence_hashes_json": "7ac7beab55da1f8b6ed2730453a06531afd94e26c9b76d5513d679b66994e19a",
+    "independent_source_compatibility_advice_json": "c15cf6856c2d67a641f46e5cce70162cb6c62ba1389c1c27f8c938fd6bcb6ae1",
+    "latest_admission_vs_unchanged_numeric_code_handoff_json": "07304a6c0a59f20be69f93c85734d52a624f157879e938dc2d732bbf651debfd",
+    "d402214_evolution_input_coverage_receipt_json": "e40489be1d13329d3877b932165c7f7c91f9ef18007cb6d1601b4232258a4ef3"
+  },
+  "production_code_comparison": {
+    "accepted_production_a1": "a1b80a026650148bfa85044514e464e6c8303792",
+    "current_merged_dev_and_bff_source": "82001a8659940e433db177d003469462de535ec8",
+    "command_runtime_tree": "c8513d2819dad3cc37b48d3f11268f7f1fb6d656",
+    "method_commit": "c3cc35862cf66e45b6dff419d6a0b3e0eb77ab90",
+    "inflight_root_deploy_run": "40226368878",
+    "four_code_hashes_at_a1_and_82001a": {
+      "services/registry/strategy_artifact.py": "f64918b2fb5d1794c8125caa1a2be3f81ee2b9e549f5c909a0b96654a16b7601",
+      "services/execution/lean_runtime/performance_telemetry.py": "664f6aa766e1ed5526e1c3dbb22480d7622c853c52b83989e7d8117bb5df6ebb",
+      "services/execution/lean_runtime/paper_runtime.py": "9d0d7dccfc2ebbbccccd09d3e16c128aeac6b4bb6a59d56caab961b49779b89b",
+      "services/broker/paper_simulation.py": "ae42327cf999993166ca2e6efd0beb124b0624111a0d26cb88617893e7f09300"
+    },
+    "disjoint_mtm_pr_6805_comparison": {
+      "task_id": "PAPER-MTM-GOVERNED-CALENDAR-20261025",
+      "pr": 6805,
+      "head_sha": "4b11f6b1dc4c3e5d70b93f9d5c0227f2d48a999d",
+      "numeric_functions_unchanged": [
+        "evaluate_strategy_action",
+        "PerformanceSample",
+        "ValuationResult",
+        "RollingDrawdownTracker(window_days=20)",
+        "value_portfolio cash + position * price and PnL arithmetic"
+      ],
+      "changed_scope_in_6805": "Taiwan market-session freshness/admission guard (_is_mark_fresh -> evaluate_taiwan_market_freshness requiring observed_at/lineage)",
+      "historical_replay_boundary": "Verbatim calc.py constructs synthetic historical MarketMark rows without per-point observed_at refresh receipts or lineage, which 4b11f6b1 rightly rejects; no historical observed_at is fabricated and numeric baseline stays bound to exact A1 / c8513d28 calculation functions."
+    }
+  },
+  "basis": {
+    "snapshot_id": "mss-ff49b0e9e567bba38063946a",
+    "bars": 49,
+    "first_bar": "2026-08-12",
+    "last_bar": "2026-10-22",
+    "observations": 48,
+    "first_obs": "2026-08-13",
+    "last_obs": "2026-10-22",
+    "simulated_fills": 48,
+    "actions": {
+      "BUY": 10,
+      "SELL": 38
+    },
+    "final_simulated_position_shares": -28.0,
+    "max_pnl_twd": 1375.0,
+    "min_pnl_twd": -2935.0,
+    "final_pnl_twd": 1375.0,
+    "max_observed_drawdown": 0.032494393222028406,
+    "max_drawdown_date": "2026-10-06",
+    "rounding": "ceil(max_observed * 10000) / 10000",
+    "proposed_expected_drawdown": 0.0325,
+    "as_of_time_utc_assumption": "05:30:00",
+    "rolling_window_calendar_days": 20,
+    "gross_ledger": true,
+    "fee_tax_slippage_modelled": false,
+    "short_allowed_by_original_interpreter": true,
+    "learning_eligible": false,
+    "market_data_only_offline_simulation": true
+  },
+  "validation": {
+    "reproduced_offline_replay": {
+      "command": "python3 -I docs/deployment/evidence/H12-DRAWDOWN-POLICY-CONFIG-20261025/calc.py /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/c8513d2819dad3cc37b48d3f11268f7f1fb6d656 docs/deployment/evidence/H12-DRAWDOWN-POLICY-CONFIG-20261025/input.json 05:30:00",
+      "max_drawdown": 0.032494393222028406,
+      "ceil_bp": 0.0325,
+      "series_sha256": "50d27a43f8083c214e8b7b6b7b21d9183cab94ef1e28092ae8f41d95c1184783",
+      "latest_market_snapshot_checksum_verified": true,
+      "all_49_points_provenance_verified": true
+    },
+    "baseline_loader_and_worker_checks": {
+      "loaded_keys": [
+        "artifact-tw-session-momentum-v1",
+        "artifact-persona-paper-00400aa279b49774cde4",
+        "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact"
+      ],
+      "with_baseline": {
+        "approved_baseline_value": 0.0325,
+        "payloads": 0,
+        "diagnostics": 0,
+        "input_coverage_has_approved_baseline": true
+      },
+      "missing_baseline": "fail-closed diagnostic, 0 payloads",
+      "non_paper_stage": "ineligible diagnostic, 0 payloads",
+      "stale_metric": "fail-closed diagnostic, 0 payloads",
+      "pytest_suite": "services/evolution/test_threshold_sweep_worker.py passed"
+    }
+  },
+  "not_claimed": [
+    "policy approval from Root research proposal or generic code review",
+    "net-of-fee or zero-fee policy",
+    "hosted fills or hosted -28 share position",
+    "Research-owner API backtest",
+    "20 observed hosted trading days",
+    "live profit or alpha quality acceptance",
+    "reuse of 0040 (0.0027) or EVOLOOP-005 (0.0303) baseline or approval",
+    "all12 or D402214/H4/E/TOTAL completion"
+  ],
+  "delivery": "Root01a11 sole later runtime config publisher via existing bind-mount and natural producer input-coverage proof after canonical Reviewer on Duty section 6.1 approval and normal merge; source worker performs no VM, SSH, runtime, provider, model, or business POST action."
+}

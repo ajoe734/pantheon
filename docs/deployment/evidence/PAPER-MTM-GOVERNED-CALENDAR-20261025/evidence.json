@@ -1,0 +1,88 @@
+{
+  "task_id": "PAPER-MTM-GOVERNED-CALENDAR-20261025",
+  "title": "Use existing session freshness for paper valuation marks",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "scope": "source_only_existing_mark_provider_calendar_wiring",
+  "artifacts": [
+    "services/execution/lean_runtime/performance_telemetry.py",
+    "services/execution/lean_runtime/test_performance_telemetry.py",
+    "docs/deployment/evidence/PAPER-MTM-GOVERNED-CALENDAR-20261025/evidence.json"
+  ],
+  "reproduction_and_diagnosis": {
+    "actual_paused_run": 40221474310,
+    "source_base_sha_a1": "a1b80a026650148bfa85044514e464e6c8303792",
+    "running_container_id": "35e209c67702def71816cf7dd35e59adc2b5de52e56714430e98e5fda74fdc2b",
+    "running_paper_provider_file": "/workspace/services/execution/lean_runtime/performance_telemetry.py",
+    "running_paper_provider_sha256_before": "664f6aa766e1ed5526e1c3dbb22480d7622c853c52b83989e7d8117bb5df6ebb",
+    "unchanged_market_snapshot_admission_sha256": "77573bd9a902d8177eb4faa0358377c2fe43809786c59f9a43a7d36d6f4f90b7",
+    "recorded_snapshot": {
+      "snapshot_id": "mss-ff49b0e9e567bba38063946a",
+      "symbol": "2330.TW",
+      "event_time": "2026-10-22T00:00:00Z",
+      "observed_at": "2026-10-23T12:29:54Z",
+      "latest_close": 2385.0,
+      "source_ref": "source-ingest://snapshots/mss-ff49b0e9e567bba38063946a",
+      "calendar_version": "twse-2026-emergency-closure-20261023-v2",
+      "calendar_checksum": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+      "coverage_start": "2026-10-22",
+      "coverage_end": "2026-10-28"
+    },
+    "observation_clock": "2026-10-25T19:19:42+00:00",
+    "configured_max_mark_age_seconds": 172800,
+    "exact_a1_provider_behavior": {
+      "indexed_mark_count": 1,
+      "resolved_symbols": [],
+      "missing_symbols": [
+        "2330.TW"
+      ],
+      "valuation_status": "marks_unavailable",
+      "valuation_code": "missing_market_marks",
+      "reason": "SourceIngestMarkProvider cached the 2330.TW mark from mss-ff49b0e9e567bba38063946a, but its raw 48h (172800s) age check rejected event_time 2026-10-22T00:00:00Z at 2026-10-25T19:19:42Z (328782s > 172800s), while unchanged shared evaluate_taiwan_market_freshness with the same payload, max_refresh_age_seconds=172800, and clock returned (True, None, None)."
+    },
+    "recorded_evidence_paths": [
+      "/tmp/pantheon-codex-01a11-review-20261023/D402214-real-snapshot-calendar-vs-MTM-mark-exact-A1-pure-reproduction-20261025.json",
+      "/tmp/pantheon-codex-01a11-review-20261023/D402214-actual-paper-provider-source-bytes-readonly-20261025.json",
+      "/tmp/pantheon-codex-01a11-review-20261023/D402214-actual-2330-source-snapshot-and-mark-resolver-GET-only-20261025.json"
+    ],
+    "official_primary_sources": [
+      "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+      "https://wwwc.twse.com.tw/zh/trading/holiday.html"
+    ]
+  },
+  "remediation": {
+    "summary": "Reused the existing evaluate_taiwan_market_freshness rule from services.execution.market_snapshot_admission inside performance_telemetry.py for Taiwan symbols (in both SourceIngestMarkProvider._mark_is_fresh and value_portfolio via _is_mark_fresh). MarketMark preserves the Source snapshot's observed_at, lineage, and calendar_evidence (from top-level calendar_evidence or lineage.calendar_evidence) as non-serialized, non-comparison fields while keeping mark.as_of equal to the true snapshot event_time and mark.source_ref unchanged.",
+    "performance_telemetry_sha256_after": "48c24aa3967f68d88a6f98d829211f9d7c2d6cca631bd905743995092cd53355",
+    "test_performance_telemetry_sha256_after": "869b7ffe9dcccd6abccb0735d61f1f58c52dbeea8973f68db4d64fc7c029cae1",
+    "invariants_preserved": [
+      "Configured max_mark_age_seconds (172800s) and trusted calendar pins (TW_GOVERNED_CALENDAR_PINS) are unchanged",
+      "MarketMark.as_of retains true snapshot event_time (2026-10-22T00:00:00Z) and source_ref; current time or observed_at is never relabeled as market time",
+      "Genuine missed trading sessions (e.g. evaluating 2026-10-22 close after 2026-10-27 13:30 Asia/Taipei session close) fail closed",
+      "Missing/pre-close/stale refresh receipts (observed_at), non-official lineage, missing/tampered/untrusted/malformed calendar evidence, and future event_time/observed_at fail closed",
+      "Failed snapshot refresh evicts any previously cached mark (cached-failure behavior preserved)",
+      "Non-Taiwan symbols preserve existing flat max_mark_age_seconds (172800s) and future_tolerance_seconds (300s) behavior"
+    ]
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_performance_telemetry.py services/execution/test_market_snapshot_admission.py",
+      ".venv-pantheon/bin/python3 -m unittest services.execution.lean_runtime.test_performance_telemetry services.execution.lean_runtime.test_paper_signal_producer",
+      ".venv-pantheon/bin/python3 -m unittest services.execution.lean_runtime.test_paper_runtime",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -k value_portfolio"
+    ],
+    "results": {
+      "pytest_telemetry_and_admission": "57 passed, 9 subtests passed in 10.67s",
+      "unittest_telemetry_and_signal_producer": "107 tests ran in 1.049s, OK",
+      "unittest_paper_runtime": "86 tests ran in 5.739s, OK",
+      "pytest_bff_pm12_value_portfolio": "1 passed in 4.09s"
+    }
+  },
+  "boundaries_and_non_claims": {
+    "source_only_delivery": true,
+    "no_vm_ssh_or_live_patch": true,
+    "no_source_refresh_or_calendar_pin_or_config_edits": true,
+    "separate_harness_task_untouched": "HOSTED-ALL12-INDEPENDENT-D-OBSERVATION-20261025",
+    "missing_approved_expected_drawdown": "separate and unsolved; no baseline or zero drawdown invented and no all-12 claim made",
+    "coordinated_release_owner": "Root01a11"
+  }
+}

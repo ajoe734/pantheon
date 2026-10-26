@@ -38,7 +38,12 @@ import pytest
 
 
 TASK_ID = "PFG-L12-TRUTH-CROSSLOOP-20260820"
-REPO_ROOT = Path(__file__).resolve().parents[3]
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = (
+    HARNESS_ROOT
+    if (HARNESS_ROOT / ".git").exists() or not (Path.cwd() / ".git").exists()
+    else Path.cwd().resolve()
+)
 LEGACY_VERIFIER = "tests/integration/l12/test_current_cross_loop_deployed_e2e.py"
 DOMAIN_SUITES = {
     "research": "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
@@ -297,9 +302,16 @@ class StimulusDrivenClosureGate:
             raise StimulusProofError(f"unknown domain suite {domain!r}")
 
         env.update(extra_env or {})
+        harness_root_raw = os.getenv("PANTHEON_L12_HARNESS_ROOT", "").strip()
+        harness_root = Path(harness_root_raw).resolve() if harness_root_raw else HARNESS_ROOT
+        staged_suite = harness_root / DOMAIN_SUITES[domain]
+        if harness_root != REPO_ROOT and staged_suite.is_file():
+            pytest_cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(staged_suite)]
+        else:
+            pytest_cmd = [sys.executable, "-m", "pytest", "-q", DOMAIN_SUITES[domain]]
         started_at = _utc_now()
         completed = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", DOMAIN_SUITES[domain]],
+            pytest_cmd,
             cwd=REPO_ROOT,
             env=env,
             check=False,
@@ -1409,11 +1421,20 @@ class HostedChainRunner:
             missing = [loop_id for loop_id in wanted if loop_id not in self.loops]
             if missing:
                 raise StimulusProofError(f"{self.phase} completed without loop evidence for {missing}")
+        extra_result: dict[str, Any] = {
+            "partial_cases": partial,
+            "report_sha256": self.gate.evidence.domain_suites[domain]["report_sha256"],
+        }
+        observations = report.get("observations")
+        if isinstance(observations, Mapping) and observations:
+            extra_result["observations"] = dict(observations)
+        detail = report.get("detail")
+        if status == "paused" and isinstance(detail, str) and detail.strip():
+            extra_result["detail"] = detail.strip()
         return self._result(
             status,
             report.get("blocked_before"),
-            partial_cases=partial,
-            report_sha256=self.gate.evidence.domain_suites[domain]["report_sha256"],
+            **extra_result,
         )
 
     def _merge_created_ids(self, ids_path: Path) -> None:
