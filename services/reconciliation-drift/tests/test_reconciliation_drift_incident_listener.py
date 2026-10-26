@@ -421,6 +421,9 @@ def _fill_event(event_id: str, order_id: str, created_at: str, *, qty: float = 1
         "capital_pool_id": "pool-1",
         "signal_id": "sig-1",
         "run_id": "run-1",
+        "deployment_stage": "paper",
+        "persona_capital_binding_id": "pcb-1",
+        "trace_id": f"trace-{event_id}",
         "order_id": order_id,
         "symbol": "AAPL",
         "metrics": {"action": "SELL", "fill_quantity": -qty, "submitted_to_broker": True},
@@ -495,7 +498,8 @@ def test_two_distinct_full_orders_for_one_decision_store_duplicate_report_and_re
         reports = _reports(svc)
         assert len(reports) == 1
         report = reports[0]
-        assert report["telemetry_event_ids"] == ["evt-a", "evt-b"]
+        assert report["telemetry_event_ids"] == ["evt-b"]
+        assert report["duplicate_event_ids"] == ["evt-a", "evt-b"]
         assert report["predecessor_incident_id"] == "inc-dup-001"
         assert "incident:inc-dup-001" in report["evidence_refs"]
         assert evaluation["drift_report_ids"] == [report["drift_report_id"]]
@@ -549,3 +553,90 @@ def test_unresolved_or_cross_tenant_evidence_is_unmeasured_not_healthy() -> None
         assert check["status"] == "degraded"
         assert "duplicate_detected" not in check
         assert _reports(svc) == []
+
+
+def _two_orders():
+    return [
+        _fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+        _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z"),
+    ]
+
+
+def test_duplicate_report_is_consumable_by_incident_owner_and_delivery_retries() -> None:
+    from services.incidents.consumer import build_incident_from_drift_report
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app, raise_server_exceptions=False)
+        env = {"PANTHEON_INCIDENTS_API_URL": "http://incidents"}
+        with mock.patch.dict("os.environ", env), mock.patch.object(
+            svc, "_post_json", side_effect=svc.HTTPException(status_code=502, detail="down")
+        ):
+            failed = _post_duplicate_trigger(client, svc, _two_orders())
+        assert failed.status_code == 502
+        assert len(_reports(svc)) == 1  # durable report survives, evaluation not complete
+        delivered = []
+        with mock.patch.dict("os.environ", env), mock.patch.object(
+            svc, "_post_json", side_effect=lambda url, payload, **kw: delivered.append(payload) or {"incident_id": "inc-x"}
+        ):
+            ok = _post_duplicate_trigger(client, svc, _two_orders())
+            again = _post_duplicate_trigger(client, svc, _two_orders())
+        assert ok.status_code == 201 and again.json()["skipped"] is True
+        assert len(delivered) == 1 and len(_reports(svc)) == 1
+        report = delivered[0]["drift_report"]
+        case = build_incident_from_drift_report(report)
+        assert case.telemetry_event_ids == ["evt-b"]
+        assert report["duplicate_event_ids"] == ["evt-a", "evt-b"]
+        assert report["predecessor_incident_id"] == "inc-dup-001"
+        assert (case.deployment_stage, case.persona_capital_binding_id) == ("paper", "pcb-1")
+        assert case.trace_id == "trace-evt-b"
+        assert _reports(svc)[0]["handoff_state"] == "delivered"
+
+
+def test_telemetry_timeout_is_retryable_and_converges_after_recovery() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app, raise_server_exceptions=False)
+        with mock.patch.dict(
+            "os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry", "PANTHEON_TENANT_ID": "tenant-a"}
+        ), mock.patch("telemetry_client.fetch_accepted_event", side_effect=TimeoutError("t")):
+            resp = client.post(
+                "/api/reconciliation-drift/incident-triggers/consume",
+                json={"incident": {"incident_id": "inc-dup-001", "binding_id": "rb-dup",
+                                   "runtime_id": "rt-dup", "telemetry_event_ids": ["evt-a", "evt-b"]}},
+            )
+        assert resp.status_code == 503
+        assert _reports(svc) == []
+        recovered = _post_duplicate_trigger(client, svc, _two_orders())
+        assert recovered.status_code == 201 and recovered.json()["created"] is True
+        assert len(_reports(svc)) == 1
+
+
+def test_missing_ledger_commit_and_plan_scope_are_not_silently_measured() -> None:
+    def meta_without_ledger():
+        meta = dict(_fill_event("x", "ord-2", "t")["metadata"])
+        del meta["ledger_committed"]
+        return {"metadata": meta}
+
+    cases = {
+        "no_ledger": [_fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+                      _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", **meta_without_ledger())],
+        "no_plan": [_fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+                    _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", plan_id="")],
+    }
+    for name, events in cases.items():
+        with tempfile.TemporaryDirectory() as data_dir:
+            svc = _load_service_module(data_dir)
+            client = TestClient(svc.app)
+            assert _post_duplicate_trigger(client, svc, events).status_code == 201, name
+            _, check = _duplicate_check(client)
+            assert check["measurement"] == "unmeasured" and not check.get("duplicate_detected"), name
+            assert _reports(svc) == [], name
+    events = [_fill_event("evt-a", "ord-1", "2026-10-24T09:50:13Z"),
+              _fill_event("evt-b", "ord-2", "2026-10-25T09:51:15Z", plan_id="plan-B")]
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        _post_duplicate_trigger(client, svc, events)
+        _, check = _duplicate_check(client)
+        assert not check.get("duplicate_detected") and _reports(svc) == []

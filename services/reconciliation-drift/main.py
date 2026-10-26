@@ -3461,6 +3461,7 @@ def _duplicate_execution_analysis(
     tenant_id: str,
     event_ids: List[str],
     discovered_at: str,
+    deployment_stage: str = "",
 ) -> Dict[str, Any] | None:
     """Same-decision cross-event duplicate full-execution analysis.
 
@@ -3496,7 +3497,8 @@ def _duplicate_execution_analysis(
                 fetch_accepted_event(telemetry_url, event_id, tenant_id=tenant_id, timeout_seconds=5.0)
             )
         except Exception:  # noqa: BLE001 - uncertain evidence is unmeasured
-            return unmeasured("telemetry_fetch_failed", failed_event_id=event_id)
+            # Transient acquisition failure: retryable, never persisted as complete.
+            return unmeasured("telemetry_fetch_failed", failed_event_id=event_id, retryable=True)
         if dto is None or str(dto.get("tenant_id") or "").strip() != tenant_id:
             unresolved.append(event_id)
             continue
@@ -3523,33 +3525,58 @@ def _duplicate_execution_analysis(
     for event_id, dto in events.items():
         m, mt = meta(dto), metrics(dto)
         broker_order_id = str(m.get("broker_order_id") or dto.get("order_id") or "").strip()
+        status = str(m.get("broker_submission_status") or "").strip().lower()
         if (
             not broker_order_id
             or event_id in reversed_ids
             or any(meta(dto).get(k) or dto.get(k) for k in _REVERSAL_REF_KEYS)
-            or str(m.get("broker_submission_status") or "").strip().lower() in _REVERSAL_STATUSES
-            or mt.get("submitted_to_broker") is not True
-            or m.get("ledger_committed") is not True
+            or status in _REVERSAL_STATUSES
+            or status not in {"filled", "partially_filled", "partial_fill", "partial"}
+            or mt.get("submitted_to_broker") is False
+            or m.get("ledger_committed") is False
         ):
             continue
-        status = str(m.get("broker_submission_status") or "").strip().lower()
-        if status not in {"filled", "partially_filled", "partial_fill", "partial"}:
-            continue
+        # Owner evidence for an accepted fill must be explicit; absence is not "no duplicate".
+        if mt.get("submitted_to_broker") is not True or m.get("ledger_committed") is not True:
+            return unmeasured("incomplete_owner_evidence", event_id=event_id)
         fill = _numeric(mt.get("fill_quantity"))
         requested = _numeric(m.get("requested_quantity"))
+        identity = {
+            "binding_id": dto.get("binding_id"),
+            "runtime_id": dto.get("runtime_id"),
+            "artifact_id": dto.get("artifact_id"),
+            "artifact_version": dto.get("artifact_version"),
+            "signal_id": dto.get("signal_id"),
+            "run_id": dto.get("run_id"),
+            "plan_id": dto.get("plan_id"),
+            "capital_pool_id": dto.get("capital_pool_id"),
+            "symbol": dto.get("symbol"),
+            "action": mt.get("action"),
+            "bar": m.get("bar_id") or m.get("bar_time") or m.get("market_price_as_of"),
+        }
+        missing = [k for k, v in identity.items() if not str(v or "").strip()]
+        if missing:
+            return unmeasured("incomplete_decision_identity", event_id=event_id, missing_fields=missing)
+        checksum = str(
+            m.get("plan_checksum") or dto.get("plan_checksum")
+            or m.get("deployment_plan_checksum") or dto.get("deployment_plan_checksum") or ""
+        ).strip()
         decision = (
             tenant_id,
-            str(dto.get("binding_id") or ""),
-            str(dto.get("runtime_id") or ""),
-            str(dto.get("artifact_id") or ""),
-            str(dto.get("artifact_version") or ""),
-            str(dto.get("signal_id") or ""),
-            str(dto.get("run_id") or ""),
-            str(dto.get("symbol") or ""),
-            str(mt.get("action") or "").strip().upper(),
-            str(m.get("bar_id") or m.get("bar_time") or m.get("market_price_as_of") or ""),
+            str(identity["binding_id"]).strip(),
+            str(identity["runtime_id"]).strip(),
+            str(identity["artifact_id"]).strip(),
+            str(identity["artifact_version"]).strip(),
+            str(identity["signal_id"]).strip(),
+            str(identity["run_id"]).strip(),
+            str(identity["symbol"]).strip(),
+            str(identity["action"]).strip().upper(),
+            str(identity["bar"]).strip(),
+            str(identity["plan_id"]).strip(),
+            checksum,
+            str(identity["capital_pool_id"]).strip(),
         )
-        if not decision[5] or fill is None or requested is None or requested <= 0:
+        if fill is None or requested is None or requested <= 0:
             return unmeasured("incomparable_execution_evidence", event_id=event_id)
         group = groups.setdefault(decision, {"orders": {}, "requested": set(), "events": []})
         group["requested"].add(requested)
@@ -3575,6 +3602,22 @@ def _duplicate_execution_analysis(
                 "detail": "no distinct broker orders beyond canonical requested quantity"}
     decision, requested, orders, group_events = duplicates[0]
     created = sorted(str(events[e].get("created_at") or "") for e in group_events)
+    ordered = sorted(group_events, key=lambda e: (str(events[e].get("created_at") or ""), e))
+    linked = events[ordered[-1]]
+    handoff = {
+        "deployment_stage": str(linked.get("deployment_stage") or deployment_stage or "").strip(),
+        "persona_capital_binding_id": str(
+            linked.get("persona_capital_binding_id") or meta(linked).get("persona_capital_binding_id") or ""
+        ).strip(),
+        "trace_id": str(linked.get("trace_id") or meta(linked).get("trace_id") or "").strip(),
+    }
+    missing_handoff = [k for k, v in handoff.items() if not v]
+    if missing_handoff:
+        return unmeasured(
+            "incomplete_handoff_identity",
+            missing_fields=missing_handoff,
+            duplicate_event_ids=[e for e in event_ids if e in group_events],
+        )
     return {
         **base,
         "status": "critical",
@@ -3585,13 +3628,16 @@ def _duplicate_execution_analysis(
             "tenant_id": decision[0], "binding_id": decision[1], "runtime_id": decision[2],
             "artifact_id": decision[3], "artifact_version": decision[4], "signal_id": decision[5],
             "run_id": decision[6], "symbol": decision[7], "action": decision[8], "bar": decision[9],
+            "plan_id": decision[10], "plan_checksum": decision[11], "capital_pool_id": decision[12],
         },
-        "plan_id": events[group_events[0]].get("plan_id"),
-        "capital_pool_id": events[group_events[0]].get("capital_pool_id"),
+        "plan_id": decision[10],
+        "capital_pool_id": decision[12],
         "requested_quantity": requested,
         "distinct_broker_order_ids": sorted(orders),
         "committed_quantity": sum(orders.values()),
         "duplicate_event_ids": [e for e in event_ids if e in group_events],
+        "linked_telemetry_event_id": ordered[-1],
+        "handoff": handoff,
         "occurrence_window": {"first_created_at": created[0], "last_created_at": created[-1]},
     }
 
@@ -3624,15 +3670,23 @@ def _duplicate_execution_report(
         "signal_id": decision["signal_id"],
         "run_id": decision["run_id"],
         "plan_id": analysis.get("plan_id"),
+        "deployment_plan_id": analysis.get("plan_id"),
         "capital_pool_id": analysis.get("capital_pool_id"),
-        "telemetry_event_ids": ids,
+        **analysis["handoff"],
+        # The existing incident consumer links exactly one telemetry event; the
+        # other duplicate event stays preserved in the fields below.
+        "telemetry_event_id": analysis["linked_telemetry_event_id"],
+        "telemetry_event_ids": [analysis["linked_telemetry_event_id"]],
+        "duplicate_event_ids": ids,
+        "handoff_state": "pending",
         "predecessor_incident_id": incident_id or None,
         "severity": "critical",
         "status": "open",
         "recommended_action": "open_incident",
         "metrics": {"duplicate_execution": analysis},
         "evidence_refs": [
-            *[f"telemetry_event:{event_id}" for event_id in ids],
+            f"telemetry_event:{analysis['linked_telemetry_event_id']}",
+            *[f"duplicate_execution_event:{event_id}" for event_id in ids],
             *([f"incident:{incident_id}"] if incident_id else []),
             f"runtime_binding:{decision['binding_id']}",
             f"drift_evaluation:{evaluation_id}",
@@ -3706,6 +3760,14 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     evidence_summary = str(incident.get("evidence_summary") or anomaly_event.get("evidence_summary") or "")
     is_infra = binding_id.startswith("infra-subject-") or "non_trading_infrastructure_incident=true" in evidence_summary
     existing = None if is_infra else store.get_evaluation(evaluation_id, tenant_id=tenant_id)
+    if existing is not None and any(
+        isinstance(check, dict)
+        and check.get("check") == "duplicate_execution_invariant"
+        and check.get("reason") == "accepted_event_unresolved"
+        for check in existing.get("reconciliation_checks") or []
+    ):
+        # Evidence was not yet accepted when first evaluated: replay re-measures.
+        existing = None
     if is_infra or existing is not None:
         return {
             "status": "ok",
@@ -3748,7 +3810,18 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
         tenant_id=tenant_id,
         event_ids=telemetry_event_ids,
         discovered_at=timestamp,
+        deployment_stage=str(
+            body.deployment_stage
+            or _first_trigger_value(incident, anomaly_event, keys=("deployment_stage", "deployment_mode"))
+            or ""
+        ).strip(),
     )
+    if duplicate_analysis and duplicate_analysis.get("retryable"):
+        # Nothing durable is written: a retry after recovery re-acquires evidence.
+        raise HTTPException(
+            status_code=503,
+            detail=f"duplicate execution evidence not yet available: {duplicate_analysis['reason']}",
+        )
     status = _worst_status(
         [
             trigger_status,
@@ -3823,6 +3896,14 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
         )
         existing_report = store.get_drift_report(report["drift_report_id"], tenant_id=tenant_id)
         stored_report = existing_report or store.put_drift_report(report)
+        # Deliver through the existing incidents owner path. A failure raises
+        # before the evaluation is stored, so the retry re-enters here, finds
+        # the stored report, and redelivers (incident ids are deterministic).
+        delivered = _classify_drift_report_incident(stored_report)
+        stored_report["handoff_state"] = "delivered" if delivered is not None else "not_configured"
+        if delivered is not None:
+            stored_report["incident_id"] = delivered.get("incident_id") or delivered.get("id")
+        store.put_drift_report(stored_report)
         evaluation["drift_report_ids"] = [stored_report["drift_report_id"]]
         evaluation["evidence_refs"].append(
             {"type": "drift_report", "id": stored_report["drift_report_id"]}

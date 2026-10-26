@@ -1,10 +1,12 @@
 {
   "task_id": "RECON-DUPLICATE-EXECUTION-INVARIANT-20261026",
   "scope": "source-only; local tests; not hosted/all12 acceptance",
-  "change": "incident-triggers/consume now resolves tenant-scoped accepted events via fetch_accepted_event and stores a duplicate_execution_invariant reconciliation check; a detected duplicate also stores one idempotent derived drift report preserving both event ids and the predecessor incident",
+  "change": "incident-triggers/consume now resolves tenant-scoped accepted events via fetch_accepted_event and stores a duplicate_execution_invariant reconciliation check; a detected duplicate also stores one idempotent derived drift report preserving both event ids and the predecessor incident; rework: handoff report links exactly one telemetry event (latest) with both ids in duplicate_event_ids, carries deployment_stage/persona_capital_binding_id/trace_id and is delivered via existing incidents consume path (failure leaves report durable, evaluation unwritten, retry redelivers); telemetry fetch failure returns 503 without persisting; missing ledger/submit evidence or plan/capital identity is unmeasured; scope key includes plan_id/checksum/capital_pool",
   "validation": {
-    "focused": "pytest services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py: 12 passed (3 new fail on pre-change main.py)",
+    "focused": "pytest incident_listener + consumer tests: 34 passed",
     "service_suite": "pytest services/reconciliation-drift --continue-on-collection-errors: 153 passed, 1 skipped, 4 collection errors (missing optional deps in local venv; same 4 files error on unmodified dev)"
   },
-  "not_done": ["no deploy, VM, live API, provider, order or restart actions"]
+  "not_done": [
+    "no deploy, VM, live API, provider, order or restart actions"
+  ]
 }
