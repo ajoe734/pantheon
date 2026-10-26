@@ -1,11 +1,11 @@
 {
   "task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
   "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-  "checkpoint_timestamp": "2026-10-26T02:36:45Z",
+  "checkpoint_timestamp": "2026-10-26T06:33:03Z",
   "status": "in_progress",
   "documentation_only": true,
   "production_delta": 0,
-  "overall": "Draft original3reports evidence update. Accepted402536 and narrowholdingUI proven; current_phase_authority is currenttruth. OriginalD/H4/E/applicableL11/fullfinancial/parent6AC/designatedTOTAL incomplete.",
+  "overall": "Draft original3reportupdate:accepted402536 and actualE/currentAC5done; source49distinctcheckpoint49. Newrealduplicatefullorderscausepending, originalD/H4/L11/qualificationmapping/TOTALunproven. Withdrawnfullfinancegatenotpending.",
   "all12_complete": false,
   "goal_complete": false,
   "parent_governance": {
@@ -18,26 +18,29 @@
     "no_scope_reduction": true
   },
   "current_phase_authority": {
-    "observed_at": "2026-10-26T02:36:45Z",
-    "observation_scope": "402536 exactf9/245 formallyaccepted; originalsameholdingnumeric and truthfulnullablecurrency UI PASS. Baselinepremise/producerdelivery unproven; D/H4/E/applicableL11/fullfinancial/6AC/TOTALincomplete",
+    "observed_at": "2026-10-26T06:33:03Z",
+    "observation_scope": "Currentaccepted402536seals/UI retained; actualE402743andlocalAC5laterACKcomplete. Newhistoricalsame-signal2fullorderanomalycause/versionpending. TrueDfillcausalIncident/Evolution/H4/applicableL11/TOTALunproven; withdrawnfullfinancegateisnotpending.",
     "sole_serial_owner_thread": "01a11b73-51ee-7b52-bac2-bf1561292e00",
     "report_owner": "Root01a10 maintains only original draftPR6668 three reports; no parallel A-E/source/VM executor.",
-    "accepted": {"BE":"f9abe36ee6fb1e8a79fbf78d67bfeaf030f90d22","FE":"24534489030770f9e7a52cb893e97efa14b53cc4","Root":40253695959,"deploymentState":"accepted","accepted_at":"2026-10-26T02:22:36Z","candidate_id":"5cb48e7c1214c6d7cf1203766a4ac2825f898519477fbbb910ca7c6130d859ae","pair_id":"af8be633f8d1974837cea2140a8717a688e47ec74f7ede0034a40101becde7f3","proof":"#/proofs/current_public_pair","FEgate":40255662874,"FEdeploy":40257251834,"official_final_ZIP_seal":"Root1 pending at fixedcutoff; no completefinalZIPaudit claim"},
+    "accepted": {"BE":"f9abe36ee6fb1e8a79fbf78d67bfeaf030f90d22","FE":"24534489030770f9e7a52cb893e97efa14b53cc4","Root":40253695959,"deploymentState":"accepted","accepted_at":"2026-10-26T02:22:36Z","candidate_id":"5cb48e7c1214c6d7cf1203766a4ac2825f898519477fbbb910ca7c6130d859ae","pair_id":"af8be633f8d1974837cea2140a8717a688e47ec74f7ede0034a40101becde7f3","proof":"#/proofs/current_public_pair","FEgate":40255662874,"FEdeploy":40257251834,"official_final_ZIP_seal":"#/proofs/current402536_final_seal"},
     "parent_contract": "#/parent_governance",
     "original_checkpoint_status": "source-delivery-ledger.json#/checkpoint_delivery",
-    "same_chain": {"chain_id":"h12-01a11-20261023-9aeb","last_completed_A":40213659041,"A_resume_prior":40167609172,"B_completed":40080895910,"B_replay_allowed":false,"C_prior":40084529601,"C_status":"completed","C_completed_loops":9,"latest_A_attempt":{"run":40213659041,"status":"completed","actual_readonly_pre_edit_scalars":true,"proof":"#/proofs/A402136"},"preserve":"True pre-edit36190/control004/post55d5, original H1/H3v2/frozen artifact/plan/saga/runtime/pool/bindings/natural fill; no new case or model/CPU/eval/control/DLQ replay.","historical_A402033":{"run":40203361162,"status":"failure","meaning":"Oldmanagedsourcepreflightfailure fixedby6800; no longercurrentblocker","proof":"#/proofs/A402033_preflight_failure"},"B_proof":"#/proofs/B400808","C_run":40221198494,"C_proof":"#/proofs/C402211","D_latest":{"run":40243931212,"workflow_conclusion":"success","business_phase":"paused","blocked_before":"drift_incident_observation","Incident":null,"private_harness_source":"a34a6956384ce8d9afd7e060bfce9d7a23082c90","accepted_runtime_source":"76062f676bf4d9f34e4d587de42d403c83081cc2","record_count":10,"original9objects_39IDs_ABC_preserved":{"39_ID_refs_equal":true,"ID_refs_count":39,"originalABC_receipts_equal":{"A_research":true,"B_learning":true,"C_promote":true},"original_historical_baseline_equal":true,"original_nine_loop_receipts_equal":true,"limit":"reference/receipt preservation; notwhole39ownerdata ornew processrestart proof"},"new_record":"bff_health_monitoring","Recon_baseline_count":0,"financial_drift":"unmeasured_no_baseline, notmeasuredzero","Evolution_target_complete":true,"approved_baseline":0.0325,"positive10to11_H4_proven":false,"proof":"#/proofs/D402439","official_scope":"#/proofs/D402439_scope"},"historical_D402401":{"run":40240151927,"result":"failed401; preservedhistoricalfailure, actual6810fixdoesnotrewriteit"},"H4_E_complete":false},
+    "same_chain": {"chain_id":"h12-01a11-20261023-9aeb","last_completed_A":40213659041,"A_resume_prior":40167609172,"B_completed":40080895910,"B_replay_allowed":false,"C_prior":40084529601,"C_status":"completed","C_completed_loops":9,"latest_A_attempt":{"run":40213659041,"status":"completed","actual_readonly_pre_edit_scalars":true,"proof":"#/proofs/A402136"},"preserve":"True pre-edit36190/control004/post55d5, original H1/H3v2/frozen artifact/plan/saga/runtime/pool/bindings/natural fill; no new case or model/CPU/eval/control/DLQ replay.","historical_A402033":{"run":40203361162,"status":"failure","meaning":"Oldmanagedsourcepreflightfailure fixedby6800; no longercurrentblocker","proof":"#/proofs/A402033_preflight_failure"},"B_proof":"#/proofs/B400808","C_run":40221198494,"C_proof":"#/proofs/C402211","D_latest":{"run":40243931212,"workflow_conclusion":"success","business_phase":"paused","blocked_before":"drift_incident_observation","Incident":null,"private_harness_source":"a34a6956384ce8d9afd7e060bfce9d7a23082c90","accepted_runtime_source":"76062f676bf4d9f34e4d587de42d403c83081cc2","record_count":10,"original9objects_39IDs_ABC_preserved":{"39_ID_refs_equal":true,"ID_refs_count":39,"originalABC_receipts_equal":{"A_research":true,"B_learning":true,"C_promote":true},"original_historical_baseline_equal":true,"original_nine_loop_receipts_equal":true,"limit":"reference/receipt preservation; notwhole39ownerdata ornew processrestart proof"},"new_record":"bff_health_monitoring","Recon_baseline_count":0,"financial_drift":"unmeasured_no_baseline, notmeasuredzero","Evolution_target_complete":true,"approved_baseline":0.0325,"positive10to11_H4_proven":false,"proof":"#/proofs/D402439","official_scope":"#/proofs/D402439_scope"},"historical_D402401":{"run":40240151927,"result":"failed401; preservedhistoricalfailure, actual6810fixdoesnotrewriteit"},"actual_E_completed":{"run":40274396263,"phase":"E_close","phase_status":"completed","harness_source":"d834f080470951c955ff5c856f5ccfd81976966d","runtime_BE":"f9abe36ee6fb1e8a79fbf78d67bfeaf030f90d22","FE":"24534489030770f9e7a52cb893e97efa14b53cc4","H1_revoke_HTTP":200,"H1_owner_state":"revoked","H1_owner_version":3,"five_other_retirements_adopted":true,"fleet_active_count":1,"chain_active_count":0,"nonchain_binding_preserved":"rb-b74c4828c4454ffcbca07b82d31f4ee7","original39refs_10records_ABC_D_3decisions_Oct24baseline_preserved":true,"governed_early_exit_not_positive_D_H4":true,"proof":"#/proofs/E_completed_cleanup","H1_owner_proof":"#/proofs/H1_revoked_v3"},"H4_complete":false,"E_complete":true},
     "current_source_followup": "source-delivery-ledger.json#/pending_hosted_source_delivery",
     "authority": "Existing H2-H4 paper-test user decision retained; finite H2 model retry already consumed. No second human/MFA/issuer/grant, live trading or real capital.",
     "paper_consent": "#/proofs/existing_H2_H3_H4_paper_consent",
     "all12_complete": false,
     "independent_TOTAL_complete": false,
     "fresh_fa3_policy_scope": {"artifact":"hosted-all12-h12-01a11-20261023-9aeb-execution-artifact@1.0.0","frozen_checksum_prefix":"fa3a3cdf","approved_expected_drawdown":0.0325,"reviewer_on_duty":"Antigravity2","proof":"#/proofs/policy0325","scope":"Same49datedpoints/maxDD.032494393222028406/100000TWDgross/1SHARES/lookback2/.01 PAPER; notold0040/.0027 or anotherartifact9f. NaturalzeroCandidate/evaluabletargetisnotpositive10to11/H4."},
-    "original_rollback_acknowledged_data_scope": {"proof":"#/proofs/original9aeb_roundtrip","FULL_run":40005552528,"rollback_run":40007877094,"exact_version_scope":"Dated9aeb/c067 software/priorbaseline, notf9/245 orDB/fullstackrollback.","acknowledged_data":"Original22+extra19/113events113receipts3links andseparatelyread0040 retain datedcoverage. LatercompletedH2/newA-E objects were notretroactively included.","later_ack_coverage_gap_acknowledged":true,"designated_TOTAL_must_judge_original_scope":true,"new_per_release_roundtrip_or_FULL_gate":false},
-    "holding_UI_current": {"proof":"#/proofs/holding402536_numeric_and_truthful_currency_PASS","original_holding":"rt-eb295fe2:2330.TW","numeric_scope":"PASS","truthful_nullable_currency_display_scope":"PASS","actual_UI_attempts":1,"scoped_checks":13,"market_value_cell":"-4,770 (幣別未提供)","currency":null,"unrealized_PnL_cell":"—","full_target_API_dict_equal_prior_a34":true,"core":{"qty":-2,"mark":2385,"market_value":-4770,"notional":4770,"last_mark_at":"2026-10-22T00:00:00Z","source_ref":"source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"},"price_asof_source_ref_scope":"Actual API evidence; not claimed as visibleUIcolumns","visual_inspection":"OriginalRoot0 read five raw hashes and viewed real PNG; thisstage does not repeat or impersonate the observation","full_financial_acceptance":false,"same_resource_preserved_before_E":true},
+    "original_rollback_acknowledged_data_scope": {"proof":"#/proofs/original9aeb_roundtrip","FULL_run":40005552528,"rollback_run":40007877094,"exact_version_scope":"Historical9aeb/c067 kept; separatecurrentoriginal402536a34/ad319→samef9/245 localexactrollbackdone, notDB/fullstack.","acknowledged_data":"Original400078dated22/19/113and0040 retained. NewlocalcurrentAC5currentf9/245 selectedlaterACK effective20/baseline20/final22 complete; exactcurrentproofscopebelow, nownotpending.","later_ack_coverage_gap_acknowledged":false,"designated_TOTAL_must_judge_original_scope":true,"new_per_release_roundtrip_or_FULL_gate":false,"later_ack_current_completion_ref":"#/current_phase_authority/current_AC5"},
+    "holding_UI_current": {"proof":"#/proofs/holding402536_numeric_and_truthful_currency_PASS","original_holding":"rt-eb295fe2:2330.TW","numeric_scope":"PASS","truthful_nullable_currency_display_scope":"PASS","actual_UI_attempts":1,"scoped_checks":13,"market_value_cell":"-4,770 (幣別未提供)","currency":null,"unrealized_PnL_cell":"—","full_target_API_dict_equal_prior_a34":true,"core":{"qty":-2,"mark":2385,"market_value":-4770,"notional":4770,"last_mark_at":"2026-10-22T00:00:00Z","source_ref":"source-ingest://snapshots/mss-ff49b0e9e567bba38063946a"},"price_asof_source_ref_scope":"Actual API evidence; not claimed as visibleUIcolumns","visual_inspection":"OriginalRoot0 read five raw hashes and viewed real PNG; thisstage does not repeat or impersonate the observation","same_resource_preserved_before_E":true,"scope_date":"Original02:28accepted40253613PASS beforeE; no newpostEUI","financial_claim_limit":"Unknowncurrency/PnL/FXnotproved, notadditionalmandatorygate"},
     "same_version_FULL": {"retained_run":40005552528,"qualified_backend":"9aebcf24436aba057f30fcd267d91562dbca14af","retained_conclusion":"success","current_normal_release_FULL_job":"skipped","scope":"Retain original exact9aeb scope; no new per-normal-release FULL/roundtrip gate.","proof":"#/proofs/qualified_exact9aeb","meaning":"Only dated400055 exact9aeb retained; optionalcurrentrelease job skipped is not newperreleaseFULL/roundtrip gate.","current_f9_matching_FULL_executed":false},
-    "Reconciliation_baseline_premise": {"finding":"Same-case Reconciliation comparison baseline production/delivery is not established by selected saved owner records and source contracts. No legitimate producer event lost in transport is established; no claim of absence across unread owner state.","Alpha018":{"run":"rrun-20261024-018","backend_id":"replication_gate","configured_mode":"handoff_only","artifact_refs":[],"financial_metrics_or_baseline_proven":false,"proof":"#/proofs/full_Alpha018"},"same_fa3_artifact":{"checksum":"fa3a3cdf56c61c8ada5cf29863a89204e13aafa89845b98fe60bff419c6aed75","bytes":1696,"A_spec_recipe_equal":true,"comparator_baseline_present":false},"B_distinct_imitation_artifact":{"checksum":"626e3379178d8de050cc49a0367e928393ef1f1ad64910653b199296a98cd26e","metrics":["action_match_rate","return_gap","kl_divergence"],"same_fa3_financial_comparator":false},"formal_contract":"paper-runs/reconcile accepts caller baseline_ref/metrics; it does not auto-resolve/validate a governed research baseline. Scheduler reads Telemetry summary.baseline_metrics; no proven producer/delivery receipt. SD-09 v0.1 draft resolver is not implemented functionality.","current_saved_input":{"baseline_metrics":{},"baseline_ref_present":false,"drift":"unmeasured, not measuredzero"},"proofs":["#/proofs/governed_comparison_baseline_records","#/proofs/baseline_producer_contract_audit"],"next_original_scope":"Identify applicable samebinding governed comparator/producer and actualbaseline_ref/evidence_refsdelivery; selectedrecords do not establishproducerloss/globalabsence. No new backtest/service/model/CPU/fill/case, no injected.0325/breach/heartbeatcure orweakenedcriteria; originalL3 scope unchanged."},
+    "Reconciliation_baseline_premise": {"date_scope":"D402439and02:36selectedrecords only, notglobalabsence/currentDpositive","proofs":["#/proofs/full_Alpha018","#/proofs/governed_comparison_baseline_records","#/proofs/baseline_producer_contract_audit"],"limit":"Alpha018handoff_only/fa3recipe/B626e didnotprovefinancialcomparator. ExistingcanonicalIncident→Evolutionmanual_review neednotrequireone; actualsamefillcausalreceipt stillunproven. Seestatehealthandnewexecutionanomalyseparately."},
     "source_delivery_ref": "source-delivery-ledger.json#/source_delivery_rows_snapshot",
-    "remaining_original_execution_ref": "#/remaining_original_obligations"
+    "remaining_original_execution_ref": "#/remaining_original_obligations",
+    "current_AC5": {"status":"PASS_SCOPED_ORIGINAL_AC5","execution":"Authorized localHumanOps/pinnedoriginalhelper; notGHAjob/notretroactive402536workflowleg","artifact_admission_run":40253695959,"baseline_completed_at":"2026-10-26T05:50:07Z","final_completed_at":"2026-10-26T05:52:53Z","both_exits":0,"baseline_pair":"a34/ad319","final_pair":"f9/245344","exact_original3images_wholeFE_seals_and7protectedowners":true,"strict_auth_and_real_viewer":true,"effective_fixed_before_records":20,"baseline_records":20,"final_records":22,"fixed20_business_equal_all3points":true,"whole_decoded_body_equal_records":17,"only_remaining3_metadata_differences":{"H2_completed_result":[["meta","snapshot_at"]],"capital_binding":[["meta","snapshot_at"]],"capital_pool":[["meta","snapshot_at"],["meta","surfaces","capital_pool","snapshot_at"]]},"raw_failures_preserved":"before-main twoTeaching400; separatebefore-training two real200 before switch completeeffective20. Firstguardgroupwrite0775 rejection happenedbeforeSSH; onlyown2worktree permissions restored, nosourcechanges/guardbypass, recordedretryafteroriginalleaseTTL.","D_extra2_scope":"Actual05:53:40 afterfinalonly, wholebodies equalexistingpre-roundtrip D evaluation/snapshot; no baseline22/no secondGETorroundtrip","Root0_verification_limit":"Root0 independently checked7sourceSHA/wholeFE/3images/7owners/20raw; D2 adopts existingboundedcomparison, no claimedRoot0GET","proof":"#/proofs/current_AC5_roundtrip","not_claimed":"No wholeDB/all57images/allownerrestart/fullfinancial/Dpositive/H4/all12/TOTAL."},
+    "original_finance_scope_correction": {"native_correction_at":"2026-10-23T19:21:06.902741Z","native_exit":0,"withdrawn_added_gates":["full financial reconciliation","fee completeness","FX","finance joined UI","trade count"],"retained_original_scope":"CapitalU02/U06 alreadydone; parentAC4namedrefresh/processpreservation andAC5exactrollback/ackdata unchanged. UnknownnetPnL/FX notprovedPASS and notnewmandatorydelivery.","currency_limit":"fill.metadata.currency=TWD; pool.currency=USD; position.currency=null. None substitutesforanother; noFXsum. UI13PASS onlynumeric/truthfulunknowncurrencydisplay.","proof":"#/proofs/original_finance_scope_correction"},
+    "new_D_execution_anomaly": {"observed_at":"2026-10-26T06:14:40.075206Z","classification":"Two distinct committed full SELL1 brokerorders for sameexactdecision, notpartialfills","signal_id":"sig-929606b86c3d75d401cc4d0883a89b89","first_fill":"4f1e0f1b-f167-4b7f-9673-7f7f9a71c3a8","second_fill":"a4263fe2-9448-42bf-9cf2-30f28fd89fc9","exact_shared_binding_runtime_fa3_symbol_mssff49_Oct22bar":true,"position_effect":"-1 then-2","saved_facts_true":14,"cause_and_current_version":"OriginalRoot153 stillexamines fence/persistence/source/config/version. Do notclaimcurrenttipbug orprovenrootcause. Root1ownsproperoriginalsource/Incident/Evolutiondisposition.","causal_boundary":"OldD402439asof remainsunmeasured/noIncident/10records. Scheduledruntime/lagwarnings citeheartbeatoneevent; independenthealthIncident cannotstandinforfillcausalIncident. ExistingcanonicalIncident→Evolutionmanual_review canexistwithoutfinancialbaseline, butactualfill-linkeddecision/H4 remainsunproven. No inventedbaseline/threshold/severity/newprovider stimulus.","new_A1_attempt":{"run":40278697937,"official_conclusion":"failure","adopted_business_receipt":false,"partial_business_write_count":"unknown; do notclaimzero","Root1_followups":"H1/Alpha/Teaching/provider/runtime/trades stoppedafternewfact"},"method_question_state":"Threeownactualquestionaudits didnotfindisolatedmethodquestion; sharedpending isnotusernonresponse/authorization. Engineeringproposal/disposition toform, nofifthgate.","proof":"#/proofs/new_same_signal_execution_anomaly"}
   },
   "clause_numbering": "Original literal six groups43 plus original Pattern6 unchanged; all49 scoped checkpoints independently/native/hosted done. Overall parent6AC and all12/TOTAL remain incomplete.",
   "independent_final_acceptance_count": 49,
@@ -160,10 +163,10 @@
     },
     "current_formal_Root": {
       "phase_ref": "#/current_phase_authority/accepted",
-      "qualification_ref": "#/current_phase_authority/same_version_FULL",
-      "rollback_scope_ref": "#/current_phase_authority/original_rollback_acknowledged_data_scope"
+      "current_AC5_ref": "#/current_phase_authority/current_AC5",
+      "FULL_scope_ref": "#/current_phase_authority/same_version_FULL"
     },
-    "limits": "Current accepted software and dated FULL/roundtrip scope are distinct. Original49 closure is separately proven; full causal all12 and parentTOTAL are not complete.",
+    "limits": "Dated9aebFULL isnotf9FULL; originalsame-versionqualificationclause mappingneedsTOTAL, notautomaticperreleasegate. CurrentseparatelocalAC5done, original402536workflowSKIPPEDunchanged; noall12/TOTALorFX/netclaim.",
     "historical_e231_matching_FULL": {
       "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/FULL39652836395-official12370942315-exacte231-twelve-receipts-and-cleanup-independent-bounded-audit-20261021.json",
       "sha256": "566b873f52aa07541bbb69face29dec3783da01decdd4d5fdd1b19c69fb252bc"
@@ -185,39 +188,29 @@
       "scope_ref": "#/current_phase_authority/original_rollback_acknowledged_data_scope"
     },
     "dated_candidate402454": {
-      "Root": 40245443101,
-      "accepted_at": "2026-10-26T00:42:36Z",
-      "result": "Dateda34/ad319 accepted/numericPASS/currencynull-mislabeledUSD FAIL; resolvedbycurrent402536 narrowUI",
-      "API_ref": "#/proofs/candidate402454",
-      "accepted_ref": "#/proofs/dated_accepted402454",
-      "UI_ref": "#/proofs/holding402454_numeric_PASS_currency_FAIL"
+      "history_ref": "#/historical_checkpoint/previous_report_epoch",
+      "proofs": [
+        "#/proofs/candidate402454",
+        "#/proofs/dated_accepted402454",
+        "#/proofs/holding402454_numeric_PASS_currency_FAIL"
+      ]
     }
   },
   "remaining_original_obligations": [
     {
-      "id": "same_chain_A_C_D_H4_E",
-      "state": "A_B_C_done_D_businesspaused_H4_E_and_applicableL11_pending",
-      "requirement": "See current_phase_authority.same_chain and Reconciliation_baseline_premise. Originalsamefill Incident→proposal→H4, actualE andapplicableL11 remain; no replay/newcase/model/forcedpositive."
+      "id": "original_samefill_D_H4_applicableL11",
+      "state": "unproven",
+      "requirement": "See current_phase_authority.same_chain andnew_D_execution_anomaly. Etruecompleted doesnotproveoldDpositive; requiresactualsamefill Incident→EvolutionDecision/H4andapplicableL11, no borrowedorforcedpositive."
     },
     {
-      "id": "original_parent_AC4_remaining",
-      "state": "H2_persistence_done_other_original_scoped_evidence_retained_for_TOTAL",
-      "requirement": "Retain H2 andsameh12B namedpartialAC4, original22/extra19/113 proofs; designatedTOTAL maps remaining originalauth/tenant/idempotency/version/provider and acknowledged-data coverage. No39ownerGET/allrole/perversiongate."
-    },
-    {
-      "id": "L11_applicable_scope",
-      "state": "old0040_negative_dated_fa3_target_evaluable_no_positiveconsumer",
-      "requirement": "Old0040/.0027datednegative/NAnotfreshfa3approval. Genuinefa3.0325targetcomplete/naturalzeroCandidate isnotEvolutionDecision/10to11/H4. Preserveapplicableconsumercriteriawithoutforcedbreach."
-    },
-    {
-      "id": "finance_original_scope",
-      "state": "dated_finance_retained_original_acceptance_incomplete",
-      "requirement": "See current_phase_authority.holding_UI_current: narrownumeric/truthfulnullablecurrency nowPASS, notfullfinancialacceptance. Retainoriginaldatedfinance/gross/unknownfee/old0040 and originalapplicablefinancialscope; no FX/net/feeclaim/newgate."
+      "id": "original_parent_scope_mapping",
+      "state": "TOTAL_pending",
+      "requirement": "Original43+Pattern6 and6AC/21deps/3files literalunchanged. H2/AC4namedpersistence, currentAC5scopedlaterACK andCapitalU02/U06done; no fee/FX/financejoinedUI/tradecount/newhuman/restartmatrix gate. Dated9aebFULLnotf9FULL; originalclausemappingunresolvedwithoutnewperreleasegate."
     },
     {
       "id": "original_TOTAL_and_documents",
       "state": "incomplete",
-      "requirement": "Original49 scopedDONE is not parent6AC completion. Original three reports remain draftPR6668; designated AntigravityTOTAL and actual original same-chain applicable boundaries must pass before merge/closure."
+      "requirement": "OriginalPR6668same3files newcheckpointsourceflow/review/CI/merge/nativeDONE andassignedAntigravityTOTAL stillpending. RemotepriorCI/localrebase/preparationnotnewdelivery."
     }
   ],
   "proofs": {
@@ -292,7 +285,14 @@
     "full_Alpha018": {"path":"/tmp/pantheon-codex-01a11-review-20261023/same-h12-Alpha018-full-existing-owner-GET-only-20261026.json","sha256":"53d42fd15adf089045db921b03777db36b047d0dc0b6ff4c874b36044b7530a5"},
     "governed_comparison_baseline_records": {"path":"/tmp/pantheon-codex-01a11-review-20261023/same-h12-existing-governed-comparison-baseline-records-readonly-20261026.json","sha256":"bd99b7c4a15d9b7515eb17f88ba83649111095932eb5a0ade895e3987b4cbb5e"},
     "baseline_producer_contract_audit": {"path":"/tmp/pantheon-codex-01a11-review-20261023/Original-h12-D-governed-baseline-preparation-vs-natural-trigger-source-only-audit-20261026.json","sha256":"462a1d9f4a382fd5e92b7b8983bc821b90ea362ca592dbef87a02356902b7d92"},
-    "epoch402536_frozen_handoff": {"path":"/tmp/pantheon-assist-20261013/Current402536-accepted-original-holding-UI-PASS-baseline-gap-stage-20261026/Root0-current-handoff-frozen-20261026T023645Z.json","sha256":"640f3feb96ded3f64b04d5e278df848e37d1125563c4e21f9b5c69c315193eb1"}
+    "epoch402536_frozen_handoff": {"path":"/tmp/pantheon-assist-20261013/Current402536-accepted-original-holding-UI-PASS-baseline-gap-stage-20261026/Root0-current-handoff-frozen-20261026T023645Z.json","sha256":"640f3feb96ded3f64b04d5e278df848e37d1125563c4e21f9b5c69c315193eb1"},
+    "current_frozen_handoff": {"path":"/tmp/pantheon-assist-20261013/Current-E402743-AC5-and-scope-correction-stage-20261026/Root0-current-handoff-frozen-20261026T063303Z.json","sha256":"d2eab9c151c1dcc2dd60e8deae0b627bd40d1fe86c01004b93c73d2ef2c2b37c"},
+    "E_completed_cleanup": {"path":"/tmp/pantheon-codex-01a11-review-20261023/E40274396263-original-chain-preservation-and-actual-completed-cleanup-bounded-audit-20261026.json","sha256":"c18a2fdf7f1b06389ae8fdec8be1cdad804e67b0c40f79fb56d56c3aa5cbc882"},
+    "H1_revoked_v3": {"path":"/tmp/pantheon-codex-01a11-review-20261023/E40274396263-H1-actual-governance-owner-GET-only-20261026.json","sha256":"8dca63044514f590079a574dae765c28fddeeab2d74bcda4614c5bc62868a20e"},
+    "current_AC5_roundtrip": {"path":"/tmp/pantheon-codex-01a11-review-20261023/original-AC5-later-ack-exact402536-roundtrip-completed-20261026.json","sha256":"d1018eb442cc6105d1724ac0ef2d187c1852e35b42ffadbac69a1327ad3b505a"},
+    "original_finance_scope_correction": {"path":"/tmp/pantheon-codex-01a11-review-20261023/parent-original-finance-scope-correction-native-note.json","sha256":"4d4566cff3251ed42ea8b95dbfba68efe70e77e8b6fcf4741afa5ecea6c2fc78"},
+    "new_same_signal_execution_anomaly": {"path":"/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/original-D-real-same-signal-two-committed-full-orders-new-fact-20261026.json","sha256":"d189baad4daa9d9bcd85083121cea8b340f67a27c48fcced1bcc27dbbb422167"},
+    "current402536_final_seal": {"path":"/tmp/pantheon-codex-01a11-review-20261023/root40253695959/official-accepted-release-final-seal-bounded-audit.json","sha256":"49655b2109f47f4712e1f8654a4c612392117a850c935fed627afdc6cc1a778c"}
   },
   "current_paper": {
     "origin_Root": 39498776317,
@@ -361,41 +361,25 @@
     "previous_report_scope": "Exact Oct24 04:07 accepted26c7, A/Teaching negative and original B failure/PR6755 rejection snapshot retained in immutable Git; not current source authority.",
     "previous_report_epoch": {
       "repository": "ajoe734/pantheon",
-      "commit": "b7bce9a39e6091e8cef3cb304ee7e058b363777e",
+      "commit": "d5817209a35f5d518fbb7ffe5ece21d60cc3a9e2",
       "path": "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
-      "scope": "Completeprevious402454/a34ad319 numericPASS/unitsFAIL and prior402342 aliases retained in immutableGit."
+      "scope": "Exactprior02:36/02:53 snapshot/EandAC5thenpending; notcurrentstatus."
     }
   },
   "independent_TOTAL_complete": false,
   "historical_proofs": "Prior release/qualification/UI proofs are retained at complete_checkpoint_metadata path /evidence/proofs. Use current_accepted_root and current_phase_authority for current delivery.",
   "checkpoint_kind": "draft_evidence_update_not_final_TOTAL",
   "report_preparation_provenance": {
-    "initial_stage": "/tmp/pantheon-assist-20261013/PR6668-original-three-files-draft-evidence-20261026T000448Z",
-    "initial_cutoff": "2026-10-26T00:04:48Z",
-    "initial_three_hashes": {
-      "docs/deployment/latest-dev-six-area-closure.md": "bb22a4e266a289335cb47d20a00a1fbdd715286f3f2610f3dc21254eb8435975",
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json": "7e9f170b40e283f93391074796a11a155722f1f7e7bc335f50a093adbbc2d4f3",
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json": "d665f035aee33b2d3e4cd61f2973cc35bfda255c78f4010ab6f386b7f8ec209d"
+    "initial_preparations_ref": {
+      "path": "/tmp/pantheon-assist-20261013/PR6668-original-three-files-epoch402536-20261026T023645Z/docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
+      "sha256": "47b280bb7f1dc48f1b126852460c8cb61f2513768d28516baa4f9eabec97d928",
+      "pointer": "/report_preparation_provenance"
     },
-    "explicit_reconciliation_at": "2026-10-26T00:37:29.023245+00:00",
-    "post_initial_cutoff_facts": "Emerged00:05:18/DONE00:06:46; literalreportboundaryTasknativeactualworker; FEgateSUCCESS andFEdeploylive. Originalstage unchanged and notbackfilled.",
-    "epoch402536_update": {
-      "cutoff": "2026-10-26T02:36:45Z",
-      "base_PR6668_head": "b7bce9a39e6091e8cef3cb304ee7e058b363777e",
-      "frozen_handoff": {
-        "path": "/tmp/pantheon-assist-20261013/Current402536-accepted-original-holding-UI-PASS-baseline-gap-stage-20261026/Root0-current-handoff-frozen-20261026T023645Z.json",
-        "sha256": "640f3feb96ded3f64b04d5e278df848e37d1125563c4e21f9b5c69c315193eb1"
-      },
-      "kind": "Prepared3filesonly, notapplied/committed/pushed/TOTAL",
-      "previous_checkpoint": "2026-10-26T01:06:57.503029+00:00; old402454 unitsFAIL isdatedhistory"
-    }
-  },
-  "post_cutoff_semantic_clarification": {
-    "noted_at": "2026-10-26T02:53:55Z",
-    "snapshot_cutoff_unchanged": "2026-10-26T02:36:45Z",
-    "kind": "Explicitpostcutoffsourcehypothesis/semanticboundary, not backfilledfrozenproductevidence",
-    "source_mechanisms": "Root0 postcutoff source reading: exactf9 services/broker/paper_simulation.py148-153,165-188 has MARKET fill from originalsuppliedpositive market_price/fullqty; reconciliation main.py382-425 supports finitezerobaseline withdenom1 andexisting.2/.5 defaults. These are possiblefunctionalconsistency expectations iforiginalsameorder/admittedquote isretained, not proof ofactualsamecaseinput/aggregatedavg_slippagebaselineproducer.",
-    "limit": "No requirement for newfinancialbacktest/policygate/baselineservice and no claim producer globallyabsent. FormalREADME/production mapping and applicablemetric remainunproven; do not injectsummary0. Financialperformanceexpectation isnot supplied. SixstatechecksOK andEvolutionnatural0 remain independentlyvalidnegativeoutcomes; baseline alone doesnot guaranteeIncident.",
-    "original_remaining_edge": "Originalsamefill Incident→proposal→actualH4 causalreceipt stillunproven, not a newtoolingpromise. Existing broadH2/H3/H4 papertestconsent isalreadygiven; actualH4decisioncontent doesnotyetexist, notoperatorauthorizationdebt."
+    "current_cutoff": "2026-10-26T06:33:03Z",
+    "frozen_primary_ref": "#/proofs/current_frozen_handoff",
+    "local_base_head": "48e55b1a332fb147bb95730dd648a9c35cd9f802",
+    "origin_dev_base": "d834f080470951c955ff5c856f5ccfd81976966d",
+    "remote_prior_report": "d5817209a35f5d518fbb7ffe5ece21d60cc3a9e2",
+    "preparation_only": true
   }
 }

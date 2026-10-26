@@ -1,7 +1,7 @@
 {
   "task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-  "at": "2026-10-26T02:36:45Z",
-  "phase": "截至2026-10-26T02:36:45Z：Root402536正式accepted02:22:36，exactBEf9abe36／FE2453448，Root／FEgate402556／FEdeploy402572成功及真publicpair已證。原同h12持倉真UI一attempt／13scopedchecks通過，數值與中性未知幣別顯示「-4,770 (幣別未提供)」，整份API targetdict與前輪a34逐值相等，currency仍null、未知PnL為—。原402454 USD錯標是datedfailure，現在不再列換版或此窄UI欠件；不升格全部金融／FX／all12。Root1 finalZIPseal在cutoff仍pending。47source／21原依賴全部DONE，原123身份、43+Pattern6=49與H2完整保存。原A/B/C完成；D402439workflowSUCCESS但businessPAUSED/noIncident，39IDs/原9objects保留加typedhealth共10records，H4/E/適用L11/完整6AC/指定AntigravityTOTAL未完成。完整Alpha018僅replication_gate/handoff_only，fa3無comparator，B626e imitation非同基準；Reconciliation正式producer／baseline_ref交付尚未證實，不說合法event被丟失或等heartbeat會好。datedFULL400055／rollback400078與laterackdata gap保留原TOTAL判定，沒有新增每版FULL/roundtrip/真人/restartmatrix門檻。本輪僅報告暫存，API/VM/model/Task/dispatch/repo寫入/發布均0。",
+  "at": "2026-10-26T06:33:03Z",
+  "phase": "Draft original3reportupdate:accepted402536 and actualE/currentAC5done; source49distinctcheckpoint49. Newrealduplicatefullorderscausepending, originalD/H4/L11/qualificationmapping/TOTALunproven. Withdrawnfullfinancegatenotpending.",
   "candidate_BE": "f9abe36ee6fb1e8a79fbf78d67bfeaf030f90d22",
   "candidate_FE": "24534489030770f9e7a52cb893e97efa14b53cc4",
   "accepted_pair": {
@@ -18,34 +18,9 @@
     }
   },
   "current_candidate": {
-    "Root": 40253695959,
-    "BE": "f9abe36ee6fb1e8a79fbf78d67bfeaf030f90d22",
-    "FE": "24534489030770f9e7a52cb893e97efa14b53cc4",
-    "source_merged": true,
-    "formal_Root_accepted": true,
-    "source_deployed": true,
-    "FE_gate": {
-      "run": 40255662874,
-      "conclusion": "success"
-    },
-    "FE_deploy": {
-      "run": 40257251834,
-      "conclusion": "success"
-    },
-    "official_current_serving": {
-      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402536-official-readonly/official-final-and-public-pair-before-UI-20261026T022425Z.json",
-      "sha256": "b8d7d426bf00b54d84d92af5a7457eb343cb448d01ef7b3d28434d07ef0687c3"
-    },
-    "original_holding_UI": {
-      "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402536-official-readonly/accepted402536-real-admintest-original-holding-currency-and-numeric-UI-PASS-bounded-audit.json",
-      "sha256": "61aa29624a55218ec8c45a9c2dc1e075d4e4f44ef7be168e386def6edb9fe8bc"
-    },
-    "numeric_UI_pass": true,
-    "truthful_nullable_currency_UI_pass": true,
-    "same_version_FULL_passed": false,
-    "exact18_roundtrip_passed": false,
-    "all_product_acceptance_complete": false,
-    "scope": "Current402536accepted and narroworiginalholdingUI proven; officialfinalZIPsealpending atcutoff, allfinancial/D/H4/E/TOTALnotcomplete. No newnormalreleaseFULL/roundtripgate."
+    "phase_ref": "evidence.json#/current_phase_authority/accepted",
+    "current_AC5_ref": "evidence.json#/current_phase_authority/current_AC5",
+    "scope": "Accepted402536f9/245 unchanged; d834isprivateE/toolingsource. PriorworkflowroundtripSKIPPED preserved; actualseparatelocalAC5done."
   },
   "source_deliveries": [
     {"task":"BFF-DATASOURCE-SECRET-CHECK-DUP-20261020","PR":6684,"merge":"a598cfe6a99e3a3233ece02144960ca99136c3b8","native_status":"done","source_merged":true},
@@ -89,18 +64,20 @@
     {"task":"RECON-COUNT-QUERY-LATENCY-20261025","repository":"ajoe734/pantheon","PR":6804,"head":"19ccccbe8ebdc780e1a70a40929b1868ab9e9288","merge":"a9eecf428d82f2704d70c6b777394fcf795dece6","native_status":"done","terminal_outcome":"completed","generation":1,"owner":"Antigravity2","reviewer":"Antigravity","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/RECON-COUNT-QUERY-LATENCY-20261025.json","sha256":"26621a6c7b5c71c4c6b2d38daed9997b0aa228b3314303001952e3c48e53aa33"},"archived_at":"2026-10-25T20:47:59Z","source_merged":true,"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":true,"hosted_whole_business_acceptance_claimed":false,"scope":"Existing valid-count/index owner correction; same76062 component QA retained, not wholeL12."},
     {"task":"PAPER-MTM-GOVERNED-CALENDAR-20261025","repository":"ajoe734/pantheon","PR":6805,"head":"4b11f6b1dc4c3e5d70b93f9d5c0227f2d48a999d","merge":"feeceac98e651641fe91e0b0f6684e297e98a8ab","native_status":"done","terminal_outcome":"completed","generation":1,"owner":"Antigravity","reviewer":"Antigravity2","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/PAPER-MTM-GOVERNED-CALENDAR-20261025.json","sha256":"36811ace0c852736d5424a66350c49a97e0b8e1ea81dda3ee4255d8949c10152"},"archived_at":"2026-10-25T20:43:33Z","source_merged":true,"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":true,"hosted_whole_business_acceptance_claimed":false,"scope":"Shared governed MTM provider admission; Portfolio downstream serialization was a separate originalL9 gap."},
     {"task":"H12-DRAWDOWN-POLICY-CONFIG-20261025","repository":"ajoe734/pantheon","PR":6806,"head":"231b972429adc18b05865b2bb774f70ff5264dcb","merge":"76062f676bf4d9f34e4d587de42d403c83081cc2","native_status":"done","terminal_outcome":"completed","generation":1,"owner":"Antigravity","reviewer":"Antigravity2","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/H12-DRAWDOWN-POLICY-CONFIG-20261025.json","sha256":"ccae79bd06ec68b83e86e00f97e3ee77a0cf6307c93b1fd2ace7f450cc8e5dd6"},"archived_at":"2026-10-25T20:53:05Z","source_merged":true,"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":true,"hosted_whole_business_acceptance_claimed":false,"scope":"Actual independent ReviewerOnDuty .0325 fa3 PAPER policy; not old0040/.0027 or approval of allstrategies."},
-    {"task":"PORTFOLIO-GOVERNED-CALENDAR-PROJECTION-20261025","repository":"ajoe734/pantheon","PR":6809,"head":"3844878ddd3fb6650f4e735d2d39fce2de96a6fc","merge":"1f363cd1f0e182e91fc3901ce458f318a1369fcc","native_status":"done","terminal_outcome":"completed","generation":1,"owner":"Antigravity","reviewer":"Antigravity2","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/PORTFOLIO-GOVERNED-CALENDAR-PROJECTION-20261025.json","sha256":"9db2c7f1b3910c697fa3cb4666893b228c47e20d9a5d8892e6b8b4a851b3180c"},"archived_at":"2026-10-25T23:11:17Z","source_merged":true,"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":true,"hosted_whole_business_acceptance_claimed":false,"scope":"Originalsameh12holdingprojection sourceDONE. Currentaccepted402536 originalholdingAPI/numeric/truthfulnullablecurrencyUI PASS; broaderfinancial/E/TOTALnotcomplete."},
+    {"task":"PORTFOLIO-GOVERNED-CALENDAR-PROJECTION-20261025","repository":"ajoe734/pantheon","PR":6809,"head":"3844878ddd3fb6650f4e735d2d39fce2de96a6fc","merge":"1f363cd1f0e182e91fc3901ce458f318a1369fcc","native_status":"done","terminal_outcome":"completed","generation":1,"owner":"Antigravity","reviewer":"Antigravity2","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/PORTFOLIO-GOVERNED-CALENDAR-PROJECTION-20261025.json","sha256":"9db2c7f1b3910c697fa3cb4666893b228c47e20d9a5d8892e6b8b4a851b3180c"},"archived_at":"2026-10-25T23:11:17Z","source_merged":true,"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":true,"hosted_whole_business_acceptance_claimed":false,"scope":"Originalsameh12holdingprojection sourceDONE andaccepted402536 originalAPI/numeric/truthfulnullablecurrencyUI PASS. ActualE nowcompleted; unknownfinancevalues notpassed andwithdrawnfullfinancegatenotpending, originalH4/TOTALremain."},
     {"task":"HOSTED-ALL12-D-OWNER-AUTH-20261025","repository":"ajoe734/pantheon","PR":6810,"head":"0e183345fac8f856dbb17a464bcdce87a8100453","merge":"a34a6956384ce8d9afd7e060bfce9d7a23082c90","native_status":"done","terminal_outcome":"completed","generation":1,"owner":"Antigravity","reviewer":"Antigravity2","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/HOSTED-ALL12-D-OWNER-AUTH-20261025.json","sha256":"9410c0d3edc745124556ef293e3e02a92a7772e4871c2ed156bb6e62bf441629"},"archived_at":"2026-10-25T23:15:14Z","source_merged":true,"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":true,"hosted_whole_business_acceptance_claimed":false,"scope":"Private harness owner-auth correction; actual D401gone on76062 witha34harness; tests-only doesnotneed separate productRoot."},
     {"task":"HOSTED-ALL12-D-AUTH-EVIDENCE-CORRECTION-20261025","repository":"ajoe734/pantheon","PR":6811,"head":"000946857712ac2bf40b579720455a4b9a43003f","merge":"4f38426a6ca2a7d2f602c80dffb3044877daff86","native_status":"done","terminal_outcome":"completed","generation":1,"owner":"Antigravity","reviewer":"Antigravity2","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/HOSTED-ALL12-D-AUTH-EVIDENCE-CORRECTION-20261025.json","sha256":"4b68bf8c0f5123fc9a6aa0822495f3366b9ebcad8d4f785c5034ce6106b5e77a"},"archived_at":"2026-10-25T23:58:43Z","source_merged":true,"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":false,"hosted_whole_business_acceptance_claimed":false,"scope":"One originalevidencefile three factualfields corrected; actualAG2review/10CI/nativeDONE; no runtimeRoot or functionalrerun."},
-    {"owner":"Antigravity2","reviewer":"Antigravity","generation":2,"terminal_outcome":"completed","task":"HOSTED-ALL12-E-BASELINE-20261025","repository":"ajoe734/pantheon","PR":6808,"head":"be0c7bf15b5cda9254cec0fae9f4072b599da663","merge":"c28fff38eeadccfdebba41731feda8c64e11023e","native_status":"done","source_merged":true,"archived_at":"2026-10-26T00:06:46Z","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/HOSTED-ALL12-E-BASELINE-20261025.json","sha256":"ad62d1cf1ff8a85dfd1d687e5151becdede276607cacb563da055384d208b916"},"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":false,"hosted_whole_business_acceptance_claimed":false,"runtime_deploy_required":false,"scope":"Private existingE harness only; remove inventedaccepted_release_retire/attestationruntimegate. ActualE andH4 stillunproven; no additional productRoot."},
+    {"owner":"Antigravity2","reviewer":"Antigravity","generation":2,"terminal_outcome":"completed","task":"HOSTED-ALL12-E-BASELINE-20261025","repository":"ajoe734/pantheon","PR":6808,"head":"be0c7bf15b5cda9254cec0fae9f4072b599da663","merge":"c28fff38eeadccfdebba41731feda8c64e11023e","native_status":"done","source_merged":true,"archived_at":"2026-10-26T00:06:46Z","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/HOSTED-ALL12-E-BASELINE-20261025.json","sha256":"ad62d1cf1ff8a85dfd1d687e5151becdede276607cacb563da055384d208b916"},"present_in_last_accepted_BE":true,"present_in_candidate_a34_source":false,"hosted_whole_business_acceptance_claimed":false,"runtime_deploy_required":false,"scope":"PrivateexistingE harness sourceDONE, inventedaccepted_release_retire/attestationruntimegate removed. ActualE402743 nowcompleted with6816executorrolefix; H4 remainsunproven. No additionalproductRoot."},
     {"owner":"Antigravity","reviewer":"Antigravity2","generation":1,"terminal_outcome":"completed","task":"DEV-CLOSEOUT-REPORT-PUBLISH-BOUNDARY-20261026","repository":"ajoe734/pantheon","PR":6813,"head":"e1e9dd8a70d517ed81f644f4e59a8e06abce035d","merge":"f9abe36ee6fb1e8a79fbf78d67bfeaf030f90d22","native_status":"done","source_merged":true,"archived_at":"2026-10-26T00:56:49Z","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/DEV-CLOSEOUT-REPORT-PUBLISH-BOUNDARY-20261026.json","sha256":"f263db0bd16393a1092df1dc6fc5925e55e0b7b6542be5a57eb42d5a7493c414"},"hosted_whole_business_acceptance_claimed":false,"scope":"Onlyexistingauto publisher3reportpathboundary; 51purefocusedtests andnormalCI, sourceDONE notliveReportOnlyobservation. No productRoot requiredfor owncodeactivation.","present_in_last_accepted_BE":true,"present_in_last_accepted_FE":false,"present_in_current_accepted_BE":true},
-    {"owner":"Antigravity","reviewer":"Antigravity2","generation":1,"terminal_outcome":"completed","task":"FE-PORTFOLIO-CURRENCY-DISPLAY-20261026","repository":"ajoe734/execute-plans","PR":889,"head":"a19db091f8cb292314fef5384b97b3bf7b9eb829","merge":"24534489030770f9e7a52cb893e97efa14b53cc4","native_status":"done","source_merged":true,"archived_at":"2026-10-26T00:58:04Z","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/FE-PORTFOLIO-CURRENCY-DISPLAY-20261026.json","sha256":"7d69237a06ad0dd803707445068c656d57e48a38d54541c3a6efdb5d626d469d"},"hosted_whole_business_acceptance_claimed":false,"scope":"OriginalFEnullablecurrencyformatter sourceDONE and servedFE245 inaccepted402536; oneactualsameholdingUI numeric/truthfulunknownunitsPASS. No newcurrencydata/FX/businessoperation.","present_in_last_accepted_BE":false,"present_in_last_accepted_FE":true,"present_in_current_accepted_FE":true}
+    {"owner":"Antigravity","reviewer":"Antigravity2","generation":1,"terminal_outcome":"completed","task":"FE-PORTFOLIO-CURRENCY-DISPLAY-20261026","repository":"ajoe734/execute-plans","PR":889,"head":"a19db091f8cb292314fef5384b97b3bf7b9eb829","merge":"24534489030770f9e7a52cb893e97efa14b53cc4","native_status":"done","source_merged":true,"archived_at":"2026-10-26T00:58:04Z","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/FE-PORTFOLIO-CURRENCY-DISPLAY-20261026.json","sha256":"7d69237a06ad0dd803707445068c656d57e48a38d54541c3a6efdb5d626d469d"},"hosted_whole_business_acceptance_claimed":false,"scope":"OriginalFEnullablecurrencyformatter sourceDONE and servedFE245 inaccepted402536; oneactualsameholdingUI numeric/truthfulunknownunitsPASS. No newcurrencydata/FX/businessoperation.","present_in_last_accepted_BE":false,"present_in_last_accepted_FE":true,"present_in_current_accepted_FE":true},
+    {"task":"INTEGRATION-UNBLOCK-HOSTED-ALL12-E-EXECUTOR-ROLE-20261026-CI-RED-FBC27F7FFB4D","repository":"ajoe734/pantheon","PR":6816,"head":"69fdc88ce64f07e651dc2f75d95609cfd1905fc1","merge":"6e8cb03de3022ffd98e95e262b1e691784cbfc8c","native_status":"done","terminal_outcome":"completed","generation":1,"owner":"Antigravity2","reviewer":"Codex","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/INTEGRATION-UNBLOCK-HOSTED-ALL12-E-EXECUTOR-ROLE-20261026-CI-RED-FBC27F7FFB4D.json","sha256":"0284533615d510193053274bbf0ce43f6de870c149cebbee3d7dbadedfdc9601"},"archived_at":"2026-10-26T05:23:00Z","source_merged":true,"required_CI":"4required/10jobs SUCCESS at exactreviewedhead","present_in_accepted_f9_runtime":false,"hosted_whole_business_acceptance_claimed":false,"scope":"ExistingE executorrole/strictsecretselector count correction; adopted6814 superseded, notcompleted."},
+    {"task":"AG-FALLBACK-MODEL-CATALOG-20261026","repository":"ajoe734/pantheon","PR":6815,"head":"9ca12908a33bc9272bd8aa17bf9055e88e10baad","merge":"d834f080470951c955ff5c856f5ccfd81976966d","native_status":"done","terminal_outcome":"completed","generation":10,"owner":"Antigravity2","reviewer":"Codex","archive":{"path":"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/AG-FALLBACK-MODEL-CATALOG-20261026.json","sha256":"b11074ca0e66b545a41f05d0830d43fc3218d841b78b2c54507ab19c5f31b466"},"archived_at":"2026-10-26T05:26:51Z","source_merged":true,"required_CI":"4required/10jobs SUCCESS at exactreviewedhead","present_in_accepted_f9_runtime":false,"hosted_whole_business_acceptance_claimed":false,"scope":"ExistingAntigravity fallback catalog alignment only; no new productprovider/quota orprimary/authpolicy capability."}
   ],
   "count_meaning": "Source/CI/commit counts describe engineering corrections, not feature growth or all12 acceptance. Original49 checkpoints are now independently closed; full parent/TOTAL remain incomplete.",
   "current_source_implementation_writers": {
     "chatbox_product_runtime": 0,
-    "supervisor": "All11newsourceitemsarchivedDONE, no worker livenessclaim. No newsourceTask; actualnarrowPortfolio/FE889hostedUI nowcomplete.",
-    "report": "OriginalHumanOps PR6668same3files draftcheckpoint; thisstagedcopy no repochange/TOTAL/parentcloseout."
+    "supervisor": "Deliveredsource49=prior47plus6816/6815;6814supersedednotcompleted, no newSourceTask/workerclaim.",
+    "report": "OriginalPR6668same3files localrebase48e/base d834; thisstage no repochange/TOTAL/nativecloseout."
   },
   "pending_native_source_tasks": [],
   "original_mistaken_reopen_withdrawal": {
@@ -191,13 +168,13 @@
     },
     "previous_report_epoch": {
       "repository": "ajoe734/pantheon",
-      "commit": "b7bce9a39e6091e8cef3cb304ee7e058b363777e",
+      "commit": "d5817209a35f5d518fbb7ffe5ece21d60cc3a9e2",
       "path": "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
-      "scope": "Exactprior402454candidate/accepted/currentaliases aredatedhistory, not currentidentity"
+      "scope": "Original47rows andpriorcurrentaliases retained at exactGitcommit; new49currentdescriptiongoverns."
     }
   },
   "evidence_file": "evidence.json",
-  "source_scope": "Existing source-delivery ledger records engineering corrections and source receipts; counts do not represent product feature growth or hosted acceptance.",
+  "source_scope": "49deliveredcanonicalsourceentries. Original36historyexact; source/supersede/hostedruntime/businesscompletion keptseparate.",
   "evidence_schema": "Original43+Pattern6 literalclauses preserved;49scopedDONE isnotparent6AC/21deps/3artifacts orTOTAL.",
   "checkpoint_delivery": {
     "CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001": {
@@ -266,29 +243,25 @@
   "source_delivery_rows_snapshot": {
     "original36_retained_as_prefix": true,
     "original36_prefix_rows": 36,
-    "new_canonical_source_rows": 11,
-    "total_rows": 47,
-    "source_cutoff": "2026-10-26T02:36:45Z",
-    "scope": "Original36objects unchanged asdatedprefix. New11 lastaccepted booleans verified offline against exactcurrentf9 BE and245 FE; explicit candidate_a34 fields remaindatedhistory. Sourceidentities/head/merge/roles/archive unchanged; no extraSourceTask."
+    "prior47_identity_rows_preserved": true,
+    "new_rows_this_batch": 2,
+    "new_canonical_source_rows_since_original36": 13,
+    "total_rows": 49,
+    "source_cutoff": "2026-10-26T06:33:03Z",
+    "scope": "49sourceentries distinctoriginal49checkpoints=43+Pattern6. New6816/6815 archivedcompleted;6814onlysupersedednotappenddelivered. Runtimef9/245unchanged."
   },
   "checkpoint_delivery_preexisting_7_groups_unchanged": true,
   "draft_evidence_update": {
     "kind": "not_final_TOTAL",
     "PR": 6668,
-    "base_branch_head": "b7bce9a39e6091e8cef3cb304ee7e058b363777e",
+    "base_local_head": "48e55b1a332fb147bb95730dd648a9c35cd9f802",
+    "base_origin_dev": "d834f080470951c955ff5c856f5ccfd81976966d",
+    "remote_prior_head": "d5817209a35f5d518fbb7ffe5ece21d60cc3a9e2",
     "files": 3,
     "stage_only": true,
-    "stage_cutoff": "2026-10-26T02:36:45Z",
-    "repo_commit_push_ready_or_parentstate_mutations_this_preparation": 0
+    "stage_cutoff": "2026-10-26T06:33:03Z",
+    "repo_git_ready_parentstate_mutations_this_preparation": 0
   },
   "pending_hosted_source_delivery": [],
-  "detail_authority": "Each source row keeps exact task/repo/PR/head/merge/roles and archive digest. Full frozen review/delivery/integration bindings remain in that canonical archive; this ledger does not clone them.",
-  "post_cutoff_semantic_clarification": {
-    "noted_at": "2026-10-26T02:53:55Z",
-    "snapshot_cutoff_unchanged": "2026-10-26T02:36:45Z",
-    "kind": "Explicitpostcutoffsourcehypothesis/semanticboundary, not backfilledfrozenproductevidence",
-    "source_mechanisms": "Root0 postcutoff source reading: exactf9 services/broker/paper_simulation.py148-153,165-188 has MARKET fill from originalsuppliedpositive market_price/fullqty; reconciliation main.py382-425 supports finitezerobaseline withdenom1 andexisting.2/.5 defaults. These are possiblefunctionalconsistency expectations iforiginalsameorder/admittedquote isretained, not proof ofactualsamecaseinput/aggregatedavg_slippagebaselineproducer.",
-    "limit": "No requirement for newfinancialbacktest/policygate/baselineservice and no claim producer globallyabsent. FormalREADME/production mapping and applicablemetric remainunproven; do not injectsummary0. Financialperformanceexpectation isnot supplied. SixstatechecksOK andEvolutionnatural0 remain independentlyvalidnegativeoutcomes; baseline alone doesnot guaranteeIncident.",
-    "original_remaining_edge": "Originalsamefill Incident→proposal→actualH4 causalreceipt stillunproven, not a newtoolingpromise. Existing broadH2/H3/H4 papertestconsent isalreadygiven; actualH4decisioncontent doesnotyetexist, notoperatorauthorizationdebt."
-  }
+  "detail_authority": "Each source row keeps exact task/repo/PR/head/merge/roles and archive digest. Full frozen review/delivery/integration bindings remain in that canonical archive; this ledger does not clone them."
 }
