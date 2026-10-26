@@ -1,0 +1,19 @@
+{
+  "task_id": "HOSTED-ALL12-E-EXECUTOR-ROLE-20261026",
+  "kind": "source_validation",
+  "adopted_prior_receipt": {
+    "run": "E40263493681",
+    "official_artifact": "12625721598",
+    "sha256": "d77f8e809569ff76266b9dc1bed85bba376a488ba0ea0e91f952413d6028dfbc",
+    "note": "Adopted unchanged; hosted E is not rerun."
+  },
+  "change": {
+    "file": ".github/workflows/nonprod-deploy.yml",
+    "job": "hosted-all12-chain-phase",
+    "summary": "DEV_BFF_DEV_LOGIN_CLIENT_ID/SECRET select the existing DEV_BFF_DEV_LOGIN_TEST_ADMIN credential only when chain_phase == E_close; A_research, B_learning, C_promote, D_observe keep operator A. No new account, secret, role grant, header/token injection or fallback."
+  },
+  "validation": [
+    "scripts/test_isolated_l12_provider_workflow.py: 15 parameterless tests pass via direct invocation (pytest unavailable in worker env); test_hosted_credentials_stay_out_of_inputs_argv_and_uploads asserts the selector expressions",
+    "Remaining test needs pytest fixtures and is covered by ordinary required CI"
+  ]
+}
