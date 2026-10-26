@@ -481,3 +481,9 @@ or secret access is requested.
 H1 before Alpha admission; H2–H4 with decision-maker versus executing actor recorded separately; no
 paper Capital approval; no second-human requirement; no L11→L12 edge; original Pattern six conditions
 and independent process-restart proof unchanged.
+
+## Addendum (2026-10-26): executable natural-chain plan
+
+The executable continuation plan for the original single natural chain is
+[hosted-all12-natural-chain-execution-plan.md](hosted-all12-natural-chain-execution-plan.md)
+(`H12-NATURAL-CHAIN-PLAN-20261026`). It is a planning addendum only; it does not rewrite or waive this design.
