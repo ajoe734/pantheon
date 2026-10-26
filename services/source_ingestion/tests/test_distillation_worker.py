@@ -167,6 +167,32 @@ class TestEnqueueFromSourceRecord:
         assert seed.status == StrategySpecSeedStatus.DRAFT
         assert "momentum" in seed.feature_hints or "lightgbm" in " ".join(seed.feature_hints).lower()
 
+    def test_source_only_execution_recipe_materializes_without_evidence_authority(
+        self, tmp_path: Path
+    ) -> None:
+        worker, queue, seed_store = _make_worker(tmp_path)
+        recipe = {"entry": {"signal": "momentum_up"}, "exit": {"hold_days": 5}}
+        source = _normalized_source(
+            strategy_seed={"execution_recipe": recipe, "note": "keep"}
+        )
+        original = json.loads(json.dumps(source.metadata))
+
+        item = _synthesize_evidence_item(source)
+        assert "execution_recipe" not in item.metadata
+        assert "execution_recipe" not in item.metadata["strategy_seed"]
+        assert item.metadata["strategy_seed"]["note"] == "keep"
+        assert source.metadata == original
+
+        worker.enqueue_from_source_record(source)
+        result = worker.run_pending({source.source_id: source})
+
+        assert result.failed == 0
+        seeds = seed_store.list_by_bundle(_versioned_bundle_id(source))
+        assert len(seeds) == 1
+        assert seeds[0].status == StrategySpecSeedStatus.DRAFT
+        assert seeds[0].metadata["execution_recipe"] == recipe
+        assert source.metadata == original
+
     def test_legacy_run_pending_missing_source_marks_failed(self, tmp_path: Path) -> None:
         worker, queue, _ = _make_worker(tmp_path)
         source = _normalized_source()
