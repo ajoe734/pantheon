@@ -1,0 +1,13 @@
+{
+  "task": "INCIDENT-LATE-DISCOVERY-WINDOW-20261026",
+  "scope": "source-only; not a statement that any hosted runtime is deployed or that all12 is complete",
+  "adopted_actual_evidence": {
+    "private_receipt_dir": "/tmp/pantheon-codex-01a11-review-20261023",
+    "response_file": "original-h12-duplicate-signal-incident-single-owner-POST-actual-response-20261026.json",
+    "observed": "hosted POST 422; sole rejection: incident created_at 2026-10-26T06:28:42Z is after binding retired_at 2026-10-26T03:20:29Z; no Incident created",
+    "note": "raw DTOs and credentials stay in private receipts, not committed"
+  },
+  "finding": "services/incident/reference_validation.py _binding_window_errors gated only on incident created_at. The lineage trace DTO (GET /api/telemetry/lineage/events/<id>/trace) does not expose the target event's occurrence time; the existing owner GET /api/telemetry/events/<id> returns the immutable accepted event whose authoritative time field is event_time.",
+  "change": "When created_at is after binding retired_at, the incident qualifies only if every referenced telemetry event is resolved via GET /api/telemetry/events/<id> (event_id must match) and its event_time is a valid RFC3339 UTC time within [effective_at, retired_at]. created_at is preserved unchanged; caller-supplied occurrence times are not used. Missing/unverifiable/outside-window event time, no event ids, or no lookup keeps the existing rejection. Before-effective, malformed created_at, identity, and lineage checks are unchanged. No new API, schema, store, clock or gate.",
+  "validation": "python3 -m unittest services.incident.test_reference_validation: 16 tests OK (adds late-discovery positive, outside-window/unverifiable negatives, no-lookup negative)"
+}
