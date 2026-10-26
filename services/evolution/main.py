@@ -518,8 +518,21 @@ dispatch_outbox = EvolutionDispatchOutbox(
 )
 compensation_ledger = CompensationLedger(data_dir=EVOLUTION_DATA_DIR)
 receipt_registry = build_adapter_registry(
-    research_api_url=RESEARCH_API_URL, timeout=DOWNSTREAM_TIMEOUT_SECONDS
+    research_api_url=RESEARCH_API_URL,
+    timeout=DOWNSTREAM_TIMEOUT_SECONDS,
+    governance_api_url=(os.getenv("EVOLUTION_GOVERNANCE_BASE_URL") or "").strip() or None,
 )
+
+
+def _receipt_binding(decision: EvolutionDecision) -> Dict[str, Any]:
+    """Exact approved-decision identity an owner receipt must be bound to."""
+    data = decision.to_dict()
+    return {
+        "target_id": data.get("target_id"),
+        "target_version": data.get("target_version"),
+        "proposal_content_digest": immutable_decision_fingerprint(data),
+        "approval_decision_id": data.get("approval_decision_id"),
+    }
 
 # ---------------------------------------------------------------------------
 # Sweep state — updated on every POST /api/evolution/daily-sweep call.
@@ -2089,6 +2102,7 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
             downstream_ref_id=body.execution_receipt.downstream_ref_id,
             tenant_id=tenant,
             decision_id=decision.decision_id,
+            expected_binding=_receipt_binding(decision),
         )
     except DispatchReceiptError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2259,6 +2273,7 @@ def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest)
             downstream_ref_id=body.execution_receipt.downstream_ref_id,
             tenant_id=tenant,
             decision_id=decision.decision_id,
+            expected_binding=_receipt_binding(decision),
         )
     except DispatchReceiptError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

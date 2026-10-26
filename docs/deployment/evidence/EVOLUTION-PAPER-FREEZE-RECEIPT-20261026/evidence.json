@@ -1,0 +1,19 @@
+{
+  "task_id": "EVOLUTION-PAPER-FREEZE-RECEIPT-20261026",
+  "kind": "source_only",
+  "capability": "manual governance freeze-order owner-receipt readback for Evolution /execute",
+  "automatic_governance_dispatch": false,
+  "owner_contract": "GET /api/governance/freeze-orders/{id} (existing)",
+  "success_status": "active",
+  "failure_status": "rejected",
+  "pending_status": "requested",
+  "refused_statuses": ["released", "canceled", "unknown"],
+  "bound_fields": ["tenant_id", "evolution_decision_id", "target_id", "target_version", "proposal_content_digest", "approval_decision_id"],
+  "activation": "adapter installed only when EVOLUTION_GOVERNANCE_BASE_URL is set; otherwise governance stays unsupported",
+  "validation": {
+    "new_focused_tests": "16 passed (test_evolution_service.py freeze receipt tests)",
+    "services_evolution_suites": "287 passed (test_evolution_service, test_dispatch_worker, test_threshold_sweep_worker); remaining files in services/evolution passed in the full run (361 passed; 6 failures/errors were missing asyncpg/flask in local venv and passed after install)"
+  },
+  "not_done_by_worker": ["real grant", "hosted owner/VM calls", "freeze execute", "readback", "deployment"],
+  "actual_execution_owner": "Root01a10"
+}
