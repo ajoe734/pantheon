@@ -135,7 +135,7 @@ class _TelemetryLineageLookup:
         return self._query("runtime_binding_projection", binding_id=binding_id)
 
     def accepted_event(self, event_id: str) -> Optional[dict[str, Any]]:
-        """Read the immutable owner-accepted event (carries ``event_time``)."""
+        """Read the immutable owner-accepted event (carries top-level ``created_at``)."""
         return self._query("accepted_event", event_id=event_id)
 
     def forensic_plan_trace(self, plan_id: str) -> Optional[dict[str, Any]]:
@@ -355,14 +355,14 @@ def _events_occurred_in_window(
     effective_at: datetime | None,
     retired_at: datetime,
 ) -> bool:
-    """True only if every referenced event has verified canonical event_time in the window."""
+    """True only if every referenced event has verified canonical created_at (runtime generation time) in the window."""
     event_ids = list(incident.telemetry_event_ids)
     if not event_ids or accepted_events is None:
         return False
     for event_id, event in zip(event_ids, accepted_events(event_ids)):
         if not isinstance(event, Mapping) or event.get("event_id") != event_id:
             return False
-        occurred_at = _parse_rfc3339(event.get("event_time"))
+        occurred_at = _parse_rfc3339(event.get("created_at"))
         if occurred_at is None or occurred_at > retired_at:
             return False
         if effective_at and occurred_at < effective_at:

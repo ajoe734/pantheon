@@ -232,7 +232,7 @@ class TestCanonicalReferenceValidator(unittest.TestCase):
         self.assertIn("is before RuntimeBinding 'binding-001' effective_at", str(ctx.exception))
 
     def _late_validator(self, event_time):
-        accepted = {"evt-001": {"event_id": "evt-001", "event_time": event_time}}
+        accepted = {"evt-001": {"event_id": "evt-001", "created_at": event_time}}
         return CanonicalReferenceValidator(
             binding_lookup=_FakeBindingLookup(
                 _binding_record(retired_at="2026-04-14T00:00:00Z")
