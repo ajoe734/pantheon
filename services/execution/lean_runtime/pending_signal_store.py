@@ -300,7 +300,8 @@ if existing ~= started and existing ~= completed then
   return 0
 end
 redis.call('SETEX', KEYS[2], tonumber(ARGV[2]), '1')
-redis.call('SETEX', KEYS[1], tonumber(ARGV[2]), completed)
+-- Completed execution authority is durable: only the processed cache expires.
+redis.call('SET', KEYS[1], completed)
 return 1
 """
 
