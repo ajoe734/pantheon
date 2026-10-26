@@ -1,30 +1,33 @@
 # Pantheon 原六區交付與架構根因盤點
 
-固定資料截止：**2026-10-26T06:33:03Z**。**E402743 與本輪原AC5回滾往返／有界laterACK保存已完成；產品仍是正式accepted Root402536 BE f9／FE245。原同訊號兩筆各完整成交的新異常已證實，原因與版本仍查。真正同fill Incident→EvolutionDecision／H4、適用L11、原條款scope覆核與指定Antigravity TOTAL仍未完成。**
+固定資料截止：**2026-10-26T11:56:04Z**。**正式產品已接受 BFF adedb5d／FE245；同版本 FULL、原案例自然 Recon 報告與下游 Incident、H4 真實批准及原 Source 草稿恢復都有保存證據。** 原49個檢查點與21依賴已完成。本報告是原指定 Antigravity TOTAL 的輸入；截至此快照尚未自投 all12／goal／TOTAL 通過票，最終結論以原 Task 與 PR6668 的實際獨立審查為準。
 
-| 範圍 | 本輪已證實與限制 |
+| 範圍 | 真正交付與精確限制 |
 |---|---|
-| 產品與UI | 原402536 f9／245 accepted、official17及原holding UI13 numeric／誠實未知幣別顯示通過。這是有日期的原UI，不冒稱E後新UI。fill.metadata.currency=TWD、pool.currency=USD、position.currency仍null，三者不能互代或做未證FX加總；不把未知netPnL／fee／FX說PASS。 |
-| 真E完成 | E402743 private harness source d834／產品runtime f9／FE245，phasecompleted。H1 revoke200＋postGETrevoked，另真Governance GET revoked v3；原39refs／10records／ABC-D／3decisions／Oct24baseline及非本chain b74保存，fleet1／chain0。原E402634五項清理但H1pending是歷史；目前不再欠E，不以earlyexit冒稱positiveD/H4。 |
-| 真AC5完成 | 05:50:07 baseline a34/ad319、05:52:53回同f9/245，兩腿exit0，原402536封存3images／wholeFE／7protectedowners及strict／真viewer通過。這是local HumanOps原helper／lease操作，不是GitHub Actions job，不倒填原402536 workflow的roundtrip SKIPPED。 |
-| laterACK邊界 | raw before-main兩筆Teaching400保留；切版前另兩筆真training GET200形成effective20。before／baseline20／final20業務相同，其中17整份decodedbody相同；其餘3僅明列4個meta query timestamp路徑差，不泛化忽略timestamps。額外D evaluation／snapshot兩筆於05:53:40真final後補讀，wholebody保留；baseline20／final22不同，不稱baseline22或重往返。 |
-| 來源與原checkpoint分開 | 原47來源追加6816／6815＝49 delivered entries，兩者真Codex review／4required10CI／merge6e8cb03、d834／nativecompleted。原6814 superseded不是完成。原49checkpoints＝43＋Pattern6照原條款完成，與49sourceentries不是同一指標。21原依賴DONE。PR6668仍draft，remote d581前輪CI通過；local48e只rebase到d834而三report bytes未變，本批仍未commit/push。 |
+| 正式換版 | FULL403025 source AD 通過；Root403069、FEgate403102、FEdeploy403127 成功。線上 manifest 與 BFF 讀回一致，11:29:03Z accepted；pair 10c1d1fb。實際受影響 owner 檔案 bytes／images 與 AD 核對，兩個既有 completed marker 值不變且 TTL=-1。不是只看 BFF version 或 source commit。 |
+| 原自然案例 L10 | 原4f1e／a426同一 sig929606、run／binding／fa3／mssff49／Oct22bar，兩個不同 broker order 各完整 committed SELL1。人工如實發現後建立原 Incident，既有 listener 於11:35:48自然分析：requested1／committed2、critical／measured。報告 drift-duplicate-execution-44b129a26d0fe598 真 delivered，下游 inc-drift-994a6db8a4bb GET200 引用真 report＋evaluation；report 保兩事件及人工前驅，既有 consumer 主欄只連最新 a426。不是自動發現、手動 Incident echo 或倒填舊D成功。 |
+| H4／L11 | evo-h12-01a11-20261023-9aeb-duplicate-execution 真 reviewed／approved，risk_owner 用既有執行身分記錄真使用者10/24紙上測試同意；一筆decision經3個原生POST，另新client GET200。原runtime已退役、boundary followthrough=[]。批准不等於凍結或冷卻：11:43:48 outbox 實讀 failed／attempt2／Governance denied exact decision read，無執行結果、無manual redrive。此同意引用不是 canonical evolution_execute Governance approval，原TOTAL須判讀適用範圍。 |
+| Source 原工作恢復 | 同一 distill-f1d4ced550481c2ebf8c3120、同 digest，只重送一次，原自然controller成功attempt4。原DLQ attempts3／redrive1歷史保留；Registry GET200真draft／research_only／route none／approval null。沒有新A、H1、Alpha、模型、runtime或資金進展。 |
+| 獨立 L12 | 採原10/25T18:05自然 interval event infra-health-890a2e74dbda90f4253fccdd3e064c6b，canonical seq8243248與Incident infra-bff-291be97b0d19f7fc033a8db9。producer→Telemetry→consumer有真引用；D第十筆typed-health GET不能取代它。這只證該自然路徑，不證所有target、目前恢復，也不造11→12或借補fill L10。 |
+| 原E與AC5 | E402743真completed／H1 revoked v3；原39refs／10records／ABC-D／3decisions／Oct24baseline與nonchain b74保存。原AC5 a34/ad319↔f9/245兩腿真exit0、baseline20／final22，三images／wholeFE／7protectedowners及有界laterACK已核。本次AD Root往返兩步真SKIPPED，舊proof明不含新Incident／Decision／H4，不能移標；原六條適用範圍由TOTAL判讀，不另加每版gate或重E。 |
+| 計數與原契約 | Source54＝原49＋4產品修正＋1執行計畫文件，並非54項新功能；原49 checkpoints＝43＋Pattern6不變，與source數分開。原g17／HumanOps owner／Antigravity reviewer／6AC／21deps／3reports、123歷史身份與36source前綴保留。 |
 
-**新異常是同一確切decision出現兩個完整broker order。** 首fill4f1e（10/24）與次fill a426（10/25）同sig929606、run／binding／runtime／fa3／symbol／mssff49／Oct22bar，兩個不同order及brokerorder各fullSELL1、committed，position−1→−2；不是同order partialfill。14項保存事實已證。Root153仍查source／config／版本及持久fence，不能先叫currenttip bug；Root1負責原source／Incident／Evolution處置。沒有造新行情、baseline、threshold、severity、providercase或強迫正例。
+這四個修正處理的是責任與資料生命週期錯置：
 
-架構上，舊D402439當時6statechecks有效、baseline0／drift未測、自然Evolution0candidate、noIncident／10records的結果仍是dated真negative，不能被新發現倒填成positive/H4。f9 scheduled runtime／lag warning報告只引heartbeat單event，獨立healthIncident不能借來補同fill因果。既有canonical Incident→Evolution有manual_review分支，不必先造financialbaseline；但需要真實適用owner／policy／evidence及decision，新的重複成交也不自動完成這條鏈或所有金融假說。完整Alpha018只是replication_gate／handoff_only、fa3 recipe無金融comparator、B626e是別的imitation評估，這些舊基準觀察保留為有界歷史，不再寫成所有Incident都必須新backtest／baseline服務。
+1. **事件發生時間與異常發現時間混用。** 原驗證用新 Incident 的建立時間檢查舊 binding 有效窗口，令退役後才發現的真成交被422拒絕。PR6819改讀原不可變 canonical EventDTO.created_at 判斷事件當時是否有效，保留實際較晚的發現時間；沒有回填日期、復活binding或放寬引用檢查。首錯用event_time的實作已在同PR退回修正。
+2. **Source 與 EvidenceItem 的權威範圍混用。** Distillation 複製 metadata 時把 Source 專屬 execution_recipe 鏡像到 EvidenceItem；下游 guard 正確拒絕，重試三次也不會變合法。PR6821只在深拷貝後刪除這個越界副本，Source 原recipe、其他metadata與guard都保留；實際原job成功到draft才算解除阻礙。
+3. **已成交事實被短期快取期限決定。** 舊completed execution fence隨processed cache到期，冷程序會再把同一decision當新工作。真Redis、同production Lua、三獨立程序反例：舊碼副作用1／1／2；修正後1／1／1，cache已過期但existing completed key仍TTL=-1。PR6822延續既有key，不加第二個去重store。這證明可重現缺陷與修正；原歷史服務究竟哪次expiry／版本造成兩單仍未獨立還原，不把推測寫成歷史定論。
+4. **Recon 只收到通知，沒有完成可消費的業務分析。** 空金融baseline不代表可忽略「同decision只要求1卻commit2」這個獨立執行不變量。PR6824沿原 incident-triggered 路徑取canonical DTO、區分partial fill與重播，量化異常並透過既有durable store交付既有Incident consumer。早期只存report、consumer shape錯、瞬斷被cache成終結與缺證據被判healthy等版本均真拒絕；最後exact7636經Codex2獨審38測試、真consumer與outage／reload／replay證據、required CI後merge AD。本次真owner與consumer讀回才補成因果，不以測試數替代產品結果。
 
-E返工原因是原caller統一用OP_A而缺revoke角色，6816改為既有TEST_ADMIN secret名稱先選再lookup，保留JWT／tenant／版本／idempotency／revoke契約；舊測試把directsecret literal數量硬編7，條件選key後為6，令Smoke失敗，最後沿原整合修正而非放寬auth。6814 superseded、6816才真交付。6815只對齊實際CLI catalog的既有fallback，不是新增產品模型能力或provider額度成功證明。
+金融比較仍如實區分：原D402439當時paused／6statechecks、baseline0／drift未測保持原樣；現有quantity invariant有可比較的canonical requested／committed量，沒有因此取得netPnL／fee／FX／金融baseline。fill.currency=TWD、pool.currency=USD、position.currency=null不能互代。原holding UI13 numeric與誠實未知幣別顯示重用；不重做已完成UI，也不復活10/23已撤回的full-finance新增gate。
 
-AC5首attempt因ownworktree0775被guard在SSH前拒絕；Root1只還原自己兩個worktree權限、無source diff，待原leaseTTL後才作有紀錄重試。這是遵守guard的修復，失敗保留；不可報成0attempt／0failure，也不需新gate。Root0獨立核7sourceSHA及wholeFE／3images／7owners／20raw，D2只採既有比較，不冒稱Root0重GET。
+H4的真使用者同意、實際risk_owner身分與保存結果可核；沒有假裝第二位真人或捏造execution grant。批准API與執行worker是不同邊界：前者保存review／approved，後者另要求精確Governance執行權威。目前outbox拒絕是事實，不等於provider額度耗盡，也沒有走到凍結／冷卻成功；不可用調低severity、換Research分支或再加授權平台掩飾。原非active-runtime分支的必要輸出／consumer是否足夠，交給原TOTAL依原契約核對。
 
-**先前把「fullfinancial／fee／FX／financejoinedUI／tradecount未完成」當父任務新增必交付，是報告scope錯誤。** 原生10/23更正已exit0撤回，現在明確採用；Capital原U02/U06早已done，parentAC4保存／跨實際process與AC5 acknowledged-data範圍不變。未知財務數值仍不宣稱通過，也不另建fee/FX服務或保留為新gate。原datedFULL400055仍只證9aeb，未有f9新FULL；原同版本FULL條款的scope由指定TOTAL覆核，不拿歷史當f9PASS，也不新增每版FULL／roundtrip／wholeDB／39ownerrestart門檻。
+驗證本身的返工也保留：原AC5首attempt在SSH前因ownworktree0775被guard拒絕，正確修復自己兩個worktree權限、等原leaseTTL後唯一重試；before-main兩Teaching400保留，另before-training兩真200形成effective20。17份whole decoded body全等，其餘3只排除明列4個query-time meta path。額外D eval／snapshot於05:53:40已返回final才補讀，只是final-only、不能稱baseline22。這次Source／Recon首讀誤查不存在result_ref失敗，修正查詢後成功，未新增資料欄位或重做業務操作。
 
-最新另筆A1草稿attempt40278697937官方failure，沒有已採業務receipt，不能稱草稿成功或0partialwrites；Root1已停H1／Alpha／Teaching／provider／runtime等後續。三個Root自己的真question audit未找回isolatedmethod原問，sharedpending不能寫成user未答；後續是待形成工程提案／處置，不推導授權或第五gate。H2/H3/H4原紙上測試同意保留，不重問；H4仍缺真decision內容。
+同版本FULL403025只證AD隔離資格、三suite／12receipts與clean0；child raw reports不在ZIP，不能把parent宣告的hash當已重算。Teaching負結果、Evolution proposal與typed7/33 unhealthy均保留，不說全健康或自然全12。真正原鏈A／B／C、後來L10／H4與獨立L12各有時間及owner／consumer引用，不拼接別個case、0040／.0027或隔離financial baseline。
 
-原g17／HumanOps owner／Antigravity reviewer／6AC／21deps／3reports、原43＋Pattern6 literal條款、123歷史身份全文、36source前綴、H2真2＋1及named保存證據、fa3 `.0325`與舊0040 `.0027`的差別全部保留。原9aeb FULL／400078往返歷史不被改寫；current AC5已補上述有界laterACK，不再把該缺口列成未做。all12／goal／指定TOTAL仍false；原Antigravity TOTAL未發動／未pass，本stage只供Root0真覆核，沒有ACK、發布、repo/source交付或產品操作。
-
-主證據與SHA在[evidence.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json)的`proofs`；逐筆49source身份見[source-delivery-ledger.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json)。本批從Root0已rebase的local48e／remoteprior d581三檔bytes準備，base是origin/dev d834，尚未套用／commit／push。
+主證據與SHA見[evidence.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json)；source54逐筆身份見[source-delivery-ledger.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json)。本次只更新原PR6668三檔；source review／CI／merge、實際部署、owner驗收與指定TOTAL仍是不同證據。原已完成49／21依賴、E／AC5／UI／Pattern／有限provider操作不重播，stage／prod仍STOP。
 
 ## 歷史行為稽核（2026-10-21）
 
