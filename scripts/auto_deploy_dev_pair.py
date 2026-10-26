@@ -21,6 +21,52 @@ DEPLOY = "nonprod-deploy.yml"
 ACTIVE = ("in_progress", "queued", "waiting", "pending", "requested")
 FAILED = ("failure", "timed_out")
 LEASE_STEP = "Acquire shared dev environment lease"
+CLOSEOUT_REPORT_PATHS = frozenset({
+    "docs/deployment/latest-dev-six-area-closure.md",
+    "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
+    "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
+})
+
+
+def closeout_reports_only(backend, base_sha, head_sha):
+    if not base_sha or not head_sha or base_sha == head_sha:
+        return False
+    try:
+        comparison = backend.request("GET", f"/repos/{backend.repository}/compare/{base_sha}...{head_sha}")
+    except Exception:
+        return False
+    if not isinstance(comparison, dict) or comparison.get("truncated"):
+        return False
+    if comparison.get("status") != "ahead" or comparison.get("behind_by", 0) != 0:
+        return False
+    ahead_by = comparison.get("ahead_by", comparison.get("total_commits"))
+    total_commits = comparison.get("total_commits", ahead_by)
+    if (type(ahead_by) is not int or type(total_commits) is not int
+            or ahead_by <= 0 or total_commits != ahead_by):
+        return False
+    commits = comparison.get("commits")
+    if commits is not None and (not isinstance(commits, list) or len(commits) != total_commits):
+        return False
+    files = comparison.get("files")
+    if not isinstance(files, list) or not (1 <= len(files) < 300):
+        return False
+    if comparison.get("total_files") not in (None, len(files)):
+        return False
+    for item in files:
+        if not isinstance(item, dict) or item.get("truncated"):
+            return False
+        status = item.get("status")
+        if status not in {"added", "modified", "removed", "renamed"}:
+            return False
+        filename = item.get("filename")
+        previous = item.get("previous_filename")
+        if filename not in CLOSEOUT_REPORT_PATHS:
+            return False
+        if status == "renamed" and not previous:
+            return False
+        if previous is not None and previous not in CLOSEOUT_REPORT_PATHS:
+            return False
+    return True
 
 
 def pair_title(backend_sha, frontend_sha):
@@ -102,12 +148,24 @@ def inspect_pair(backend, frontend, *, fe_url, bff_url, fetch=fetch_url_json):
             or mode.get("VITE_BFF_EMBEDDED_BEARER_TOKEN") != "false"
             or posture.get("auth_mode") != "strict" or posture.get("auth_stub") is not False):
         raise ControllerError("hosted profile/auth posture is inconsistent; automatic deployment cannot authorize new write modes")
-    if (manifest.get("frontendSha") == frontend_sha
-            and manifest.get("bffCommit") == backend_sha
-            and version.get("source_commit_sha") == backend_sha
-            and manifest["releaseAdmission"].get("frontend", {}).get("commitSha") == frontend_sha
-            and manifest["releaseAdmission"].get("backend", {}).get("commitSha") == backend_sha):
+    served_backend = manifest.get("bffCommit")
+    served_frontend = manifest.get("frontendSha")
+    coherent_served = (
+        isinstance(served_backend, str) and bool(served_backend)
+        and isinstance(served_frontend, str) and bool(served_frontend)
+        and version.get("source_commit_sha") == served_backend
+        and (manifest["releaseAdmission"].get("backend") or {}).get("commitSha") == served_backend
+        and (manifest["releaseAdmission"].get("frontend") or {}).get("commitSha") == served_frontend
+    )
+    if coherent_served and served_frontend == frontend_sha and served_backend == backend_sha:
         return {**result, "state": "up_to_date"}
+    if (coherent_served and served_frontend == frontend_sha
+            and closeout_reports_only(backend, served_backend, backend_sha)):
+        return {
+            **result,
+            "served_backend_sha": served_backend,
+            "state": "report_only_no_deploy",
+        }
     failed_url = failed_pair_run(backend, backend_sha, frontend_sha)
     if failed_url:
         return {**result, "state": "failed_pair_not_retried", "run_url": failed_url}
