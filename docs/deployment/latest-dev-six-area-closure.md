@@ -1,33 +1,28 @@
 # Pantheon 原六區交付與完整十二環驗收
 
-最近核對：**2026-10-26T01:06:57.503029+00:00**。**Root40245443101 已於00:42:36正式接受 BE `a34a6956384ce8d9afd7e060bfce9d7a23082c90`／FE `ad31927ded9a9ebd99eb436eb7320bc7a97e4065`。原同持倉數值與來源恢復，真UI卻把未知幣別硬標USD；原FE889修正已來源結案但還待真正部署。原49完成，完整L1–L12／父6AC／指定Antigravity TOTAL仍未完成。**
+固定資料截止：**2026-10-26T02:36:45Z**。**Root402536 已正式接受 BE `f9abe36ee6fb1e8a79fbf78d67bfeaf030f90d22`／FE `24534489030770f9e7a52cb893e97efa14b53cc4`；原同持倉的數值及未知幣別顯示已實際通過。原49條完成，D／H4／E、適用L11、完整父6AC與指定Antigravity TOTAL仍未完成。**
 
-本次只更新原PR6668同三份文件，Zero production delta，父任務與TOTAL維持未完成。原123歷史身份表與原36筆來源保持原樣；新增11筆核實來源共47筆，只表示來源紀錄。00:04:48初稿不倒填，本checkpoint明列後續結案、正式接受與實際UI結果。紙上測試保持`is_real=false`。
-
-| 範圍 | 本次真實讀回與仍欠界線 |
+| 範圍 | 已證實與實際界線 |
 |---|---|
-| 正式接受配對 | Root402454／FEgate40247457767／FEdeploy40249112259均SUCCESS；00:42:36 accepted a34/ad319。Root0兩公開GET／16checks與Root153實際publicpair逐值相符。這是實際配對／metadata，不冒稱全57images或所有artifact；原optional FULL／hosted／roundtrip SKIPPED不是PASS，不加每版重跑gate。 |
-| 原A/B/C已完成 | 6800 source選取修正已g7 review／CI／merge a1b80／nativeDONE；原runner55錯選已是歷史，不能再列當前阻礙。A402136真唯讀補pre-edit scalar完成，B400808既有完成不重跑，C402211真9loops；原H1/H3v2／frozenfa3／plan／saga／pool／binding／真fill保留。 |
-| D修好401仍非業務完成 | D402401 failed401保留；6810/0e18→a34已真sourceDONE，private harness a34在accepted runtime76062上執行D402439，workflowSUCCESS／pytest0且401消失，但business仍PAUSED/noIncident。原39IDs／ABC／9loopobjects完整reference保存，只增一BFFtypedhealth成10records；不是Loop10／11／H4／全12或全39owner-data跨restart。Reconbaseline0、driftchecks0是unmeasured，不是已測零金融drift。 |
-| 同持倉數值已恢復 | 原h12／rt-eb295fe2 qty−2，真Source2385=Telemetry/BFF，市值−4770／notional4770；原Oct22asof／Oct23observed_at／ref／整份lineage/calendar與identity保留。新BFF／Telemetry程序後原holding仍在。正式接受後同holding真UI顯示數值與source ok；價格／asof／ref是API證據，不聲稱是畫面欄位。 |
-| 幣別顯示仍錯 | 真UI把currency=null的−4770顯示成`-$4,770`，沒有USD或FX依據，故units仍FAIL，不升格全L9金融。原FE889/a19→24534489已review／CI／merge／nativeDONE：有幣別按原幣、未知中性數字＋「幣別未提供」，不改值或建FX服務；真正paired部署／同持倉unitUI仍欠。原holding保留到這步後再E。 |
-| 6811證據修正已完成 | 原6810兩BE欄誤填FE和多餘先deploy文字，已由唯一followup6811/000946→4f38426改原同file三欄，真Antigravity2 review、10CI全成功、nativeDONE23:58:43。它不再是sourcepending，也沒有新增errata副本／產品Root／78functional tests重跑。 |
-| E來源已交付，實際操作仍欠 | 原E6808同Taskg2 exactbe0經指定審查與CI，00:05:18合併c28fff38，00:06:46 nativeDONE。多加的accepted_release_retire／attestation門檻已刪，原owner／prior-E／stable-state／實際versions／count1／this-chain-zero保留。它是private harness修正，不需另一產品Root；真E操作、H4與全12仍未完成。 |
-| 有界UI／保存完成 | 採原Root153真admintest的一個session、六個回傳roles、七筆觀察含兩reload、saved pool/Persona/F12/loginlogout，並非所有business／finance或全角色矩陣。H2真2意見＋1綜合與完整owner結果跨實際程序替換已完成；B同h12兩owner完整JSON跨實際process保存是新增partialAC4，不把抄舊C receipt當全chain保存。原49/Pattern不重開。 |
+| 換版與窄UI | 402536／FEgate402556／FEdeploy402572均SUCCESS，02:22:36 accepted，正式public pair相符。同一rt-eb295fe2:2330.TW真UI一attempt／13 scopedchecks，顯示`-4,770 (幣別未提供)`；currency仍null、未知PnL為`—`。整份target API dict與前輪a34逐值相等：qty−2／Source2385／市值−4770／notional4770及原Oct22 asof／sourceRef／lineage保留。價格、asof、ref是API證據，不冒稱畫面欄位。Root0已核rawhash並看真PNG；本暫存不重複觀察。 |
+| 範圍界線 | 402454/a34/ad319原numericPASS／USD錯標FAIL為有日期歷史；當前窄UI欠件已解除，不再要求另一次換版。這不補出幣別、FX、未知fee或完整L9金融驗收。Root1官方finalZIPseal於cutoff仍pending，不能把public metadata當全artifact檢查。 |
+| 來源與治理 | 原36＋11＝47筆來源、原21依賴全部DONE。6800、6803/4/5/6、6809、6810/11、E6808及tooling6813／FE889均保留真review／CI／merge／nativeDONE；來源數不是功能數。PR6668 b7bce9a四requiredCI／10jobs成功，仍draft。原g17／HumanOps owner／Antigravity reviewer／6AC／21deps／3reports未變。 |
+| 真因果鏈 | A402136／B400808／C402211完成，原39IDs／A-C／9objects完整reference保留；D402439 auth已修、workflowSUCCESS，但businessPAUSED/noIncident。新增BFFtypedhealth後10records不是Loop10→11/H4。Reconbaseline0為unmeasured，不是金融drift已測零；Evolution `.0325` target complete／自然0candidate不是正例。 |
 
-目前缺漏的原因與修正不能只用commit數描述。原runner把不同component當成同一root checkout，是交付來源選取錯誤，6800與真A/C讀回已解除。D的401則是caller對既有owner credential／tenant契約接錯；harness source a34、runtime76062、FE ad319是三個不同權威身分，修caller不等於改產品auth政策，也不能把FE SHA填進BE欄或要求tests-only修正先部署產品。6811完成的是這筆證據返工。
+**新確認的根因是比較基準前提與交付接線未被證實。** 完整Alpha018 owner紀錄是`replication_gate`／`handoff_only`，artifact_refs空，沒有金融metrics或baseline。與A spec相同的frozen fa3 JSON只有1696 bytes recipe，沒有comparator；B的626e artifact是action_match_rate／return_gap／KL imitation評估，並非同fa3財務比較基準。不能把它們的「completed」推成scheduler已收到合法baseline。
 
-Portfolio從provider恢復DD到金融持倉可用之間仍有真資料流缺口：MarketMark序列化丟calendar／receipt／lineage，下游各自raw48h重判，unchanged-sample與same-asof去重又在真provenance抵達前return。6809在既有四seams／單一writer修正這條路，現在a34候選API已實證恢復原price/value；沒有提高172800、重造marketdata／fill、加cache／calendar service／第二writer或新route/FE。**同finalaccepted pair真UI已證數值與source，仍有USD錯標；不能升格完整金融／units驗收。**
+正式Reconciliation `paper-runs/reconcile`接受caller帶入baseline_ref／metrics，沒有自動resolve／validate研究基準；scheduler只讀Telemetry summary.baseline_metrics，當前saved input是空map且沒有baseline_ref，尚無已證的正式producer／交付收據。SD-09 v0.1 draft中的resolver不能當現成功能。現在可說case前提／接線尚未證實，不能說已證合法event遭丟失，也不能說等heartbeat會自然好。下一步須辨認原同binding governed comparator及真baseline_ref／evidence_refs交付；不硬塞Evolution `.0325`、人工breach、新model／CPU／fill／case，也不更改原L3已證scope。
 
-E返工則是把原「E不改非本chain資料」擴成歷史全配對排序、完整外部deployment再准入及新proof/schema要求，拒絕原本合法的pre-E外部替換；新be0回到原owner真身分、可靠prior-E時間、相關stable state／實際exposed versions與原count／chain-zero。未知或矛盾真owner證據仍保留未驗，optional deployment欄位缺少本身不是新gate。這不是cleanup waiver，不補GitHub verifier／MFA／grant，也不假造H4或自然Incident。
+既有修正仍各有邊界：6800修runner的component/root選取；D401修caller的owner credential／tenant契約，privateharness a34與當時runtime76062不同。6811修原同file三個錯identity／先deploy欄位，真審查不等於身分偽造。Portfolio原問題是MarketMark序列化丟calendar／receipt／lineage、下游raw48h重判與提前去重；6809沿既有單一writer修到原holding，FE889修未知幣別錯標。現在用真hostedUI確認窄修復，沒有提高TTL、新cache／calendar服務／writer／FX平台。E6808原unsupported accepted_release_retire／attestation gate已同Task刪回原owner／prior-E／stable-state／exposedversions／count1／this-chain-zero；sourceDONE不是實際E。Publisher6813只處理原三report path差異，puretests不冒稱live report-only tick。
 
-主證據與精確SHA在[evidence.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json)的`proofs`；新增十一筆逐項canonical來源身份及原E的sourceDONE界線在[source-delivery-ledger.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json)。舊proof保留日期界線；00:04:48初稿不變，後續事實在本次較新的checkpoint明列。原Root1唯一runtime/business caller，Root0只原三正式報告／指定TOTAL及Portfolio/evidencecoordination，不重送已耗用的模型、Research／Agora／L6/L7／CPU／控制操作。
+原43＋Pattern6＝49完成與H2真2＋1跨process、B兩owner完整JSON的named partialAC4不重開；123歷史身份、原finance `.0027`僅舊0040、fa3真 `.0325`批准分開。datedFULL400055 exact9aeb與rollback400078的9aeb/c067往返及當時acknowledged-data範圍保留；後來H2／新A–E資料不被舊proof追認，版本／laterack-data gap留原TOTAL判定。不能把舊往返寫成f9/245已做，也不新增每版FULL／roundtrip／39owner restart／全角色或第二真人gate。
 
-原parentg17／ownerHumanOps／reviewerAntigravity／6AC／21依賴／3產物、原43＋Pattern6 literal條款、123source rows、H2real2+1與named partialAC4完整保留。原finance `.0027`僅舊0040，與frozenfa3真AG2 ROD `.0325`分開；原datedFULL400055 exact9aeb與rollback/reactivation400078及其當時acknowledged-data範圍保留，後完成H2／新A–E資料的coverage差異仍欠指定TOTAL原義判定。不能把舊往返冒稱76062/a34，也不新增每owner39GET、全角色、每版FULL／roundtrip或forcedpositive/provider gate。
+原Root1維持唯一runtime/business caller，原holding留到既有E順序；Root0只同PR三報告及指定TOTAL協作。真正same-fill Incident／EvolutionDecision／H4、原E前後owner state、適用L11、其他原條款與指定Antigravity TOTAL仍欠。all12／goal／TOTAL皆false；此輪只準備報告，不代表ready／審查批准／merge／nativeDONE。
 
-另查明一個交付控制邊界：publisher只比dev SHA，三報告在CI成功後可令nexttick再Root；publisher不自己寫報告，所以只證條件式回饋，不能說已證多輪自主循環。唯一DEV-CLOSEOUT-REPORT-PUBLISH-BOUNDARY-20261026／PR6813/e1e9→f9abe36已正常review／CI／merge／nativeDONE：完整差異恰限原3report paths且真pair一致時回report-only/no-deploy，保留真正servedSHA。只含此精確範圍，不涵蓋其他harness/docs、不是新平台或父依賴；51個puretests不是live no-deploy觀察。
+主證據與精確SHA在[evidence.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json)的`proofs`，原47逐筆canonical來源身份在[source-delivery-ledger.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json)。本稿以PR6668 b7bce9a為base，固定cutoff凍結currentR；先前00:04:48初稿及01:06:57 checkpoint為有日期歷史。Root0後續獨立審查／commit／push；這份stagedcopy未更動repo，不是指定Antigravity審查。
 
-本PR仍draft；原same-chain D/H4/E、適用L11、幣別修正後同持倉UI、其他原條款及真Antigravity TOTAL／最後repo integration未完成。all12／goal／TOTAL均false；本checkpoint只是原三檔證據更新，不是ready、批准或完成交付。
+
+截止後語義補註（2026-10-26T02:53:55Z；不回填02:36:45凍結快照）：Root0另查exactf9 `services/broker/paper_simulation.py:148–188`的MARKET原正market_price／full qty，以及Reconciliation `main.py:382–425`有限zero baseline／denom1與既有.2/.5，可能提供功能一致性預期；仍需核同次order／admitted quote和適用metric，不能直接塞summary0。這不要求新財務backtest／policygate／baseline服務，也不供應金融績效預期。正式聚合producer交付尚未證實；原6statechecks OK與Evolution自然0是獨立真negative，不能把原因只歸為缺baseline或保證補後會有Incident。真正未證仍是同fill Incident→proposal→H4因果邊。使用者H2/H3/H4紙上測試已廣泛同意，缺的是實際H4決策內容，不是再要授權。
 
 ## 歷史行為稽核（2026-10-21）
 
