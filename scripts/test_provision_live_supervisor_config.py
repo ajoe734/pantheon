@@ -334,7 +334,7 @@ def test_build_live_config_pins_high_reasoning_antigravity_models(tmp_path: Path
         assert provider["model_rotation"] == {
             "enabled": True,
             "primary": "gemini-4-argon-high",
-            "fallback": "claude-sonnet-4-6",
+            "fallback": "claude-sonnet-5-5-medium",
             "cooldown_seconds": 900,
         }
 

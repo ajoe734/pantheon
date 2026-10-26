@@ -16,5 +16,5 @@
     }
   },
   "catalog_receipt": "/tmp/pantheon-codex-01a11-review-20261023/AG-actual-provider-model-catalog-20261026.json",
-  "validation": "config.json parses; primary unchanged, fallback updated"
+  "validation": "config.json parses; primary unchanged, fallback updated; scripts/test_provision_live_supervisor_config.py expected fallback updated to claude-sonnet-5-5-medium, 73 passed"
 }
