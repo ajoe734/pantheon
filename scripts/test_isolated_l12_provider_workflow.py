@@ -346,8 +346,8 @@ def test_hosted_credentials_stay_out_of_inputs_argv_and_uploads() -> None:
     run = HOSTED_PHASE_STEP["run"]
     env = HOSTED_PHASE_STEP["env"]
     assert env["DEV_BFF_DEV_LOGIN_CLIENT_SECRET"] == (
-        "${{ inputs.chain_phase == 'E_close' && secrets.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET"
-        " || secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
+        "${{ secrets[inputs.chain_phase == 'E_close' && 'DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET'"
+        " || 'DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET'] }}"
     )
     assert env["DEV_BFF_DEV_LOGIN_CLIENT_ID"] == (
         "${{ inputs.chain_phase == 'E_close' && (vars.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID"

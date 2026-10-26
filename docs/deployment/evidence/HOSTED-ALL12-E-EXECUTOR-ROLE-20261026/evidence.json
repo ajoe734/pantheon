@@ -10,7 +10,7 @@
   "change": {
     "file": ".github/workflows/nonprod-deploy.yml",
     "job": "hosted-all12-chain-phase",
-    "summary": "DEV_BFF_DEV_LOGIN_CLIENT_ID/SECRET select the existing DEV_BFF_DEV_LOGIN_TEST_ADMIN credential only when chain_phase == E_close; A_research, B_learning, C_promote, D_observe keep operator A. No new account, secret, role grant, header/token injection or fallback."
+    "summary": "DEV_BFF_DEV_LOGIN_CLIENT_ID/SECRET select the existing DEV_BFF_DEV_LOGIN_TEST_ADMIN credential only when chain_phase == E_close; A_research, B_learning, C_promote, D_observe keep operator A. The secret is chosen by selecting a nonempty secret name by phase before lookup, so E_close never falls back to operator A when the admin secret is missing. No new account, secret, role grant, header/token injection or fallback."
   },
   "validation": [
     "scripts/test_isolated_l12_provider_workflow.py: 15 parameterless tests pass via direct invocation (pytest unavailable in worker env); test_hosted_credentials_stay_out_of_inputs_argv_and_uploads asserts the selector expressions",
