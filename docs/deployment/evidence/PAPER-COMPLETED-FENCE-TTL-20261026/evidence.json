@@ -1,0 +1,11 @@
+{
+  "task_id": "PAPER-COMPLETED-FENCE-TTL-20261026",
+  "scope": "source-only; no VM/Redis business data/provider/broker action",
+  "change": "_COMPLETE_EXECUTION_LUA now SETs the completed execution fence without expiry; only the processed cache keeps SETEX ttl (86400s).",
+  "validation": {
+    "real_redis_docker_isolated": "services/execution/lean_runtime/test_signal_isolation.py: 45 passed (real Redis 7 container tests included, none skipped)",
+    "new_regression": "test_completed_execution_fence_survives_processed_cache_expiry fails on old Lua (fence TTL expires with processed cache) and passes on fixed source; after expiry a restored store begin_execution returns 'completed' so side effect count stays 1"
+  },
+  "existing_completed_values": "Source change does not resurrect already-expired markers and does not rewrite still-present completed:* values carrying the old 24h TTL. A repeat complete_execution on such a key (state == completed) would SET it persistent, but producer skip may not call it. Any PERSIST of genuine existing completed keys is a Root1-owned operation; no migration or startup scan is added here.",
+  "not_done": ["no deletion/reset of execution authority", "no live Redis mutation", "no deploy"]
+}
