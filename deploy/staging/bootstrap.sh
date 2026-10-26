@@ -116,13 +116,7 @@ run_priv() {
 }
 
 run_compose() {
-  if run_priv "$DOCKER_BIN" compose version >/dev/null 2>&1; then
-    run_priv "$DOCKER_BIN" compose "$@"
-  elif command -v docker-compose >/dev/null 2>&1; then
-    run_priv docker-compose "$@"
-  else
-    return 1
-  fi
+  run_priv "$DOCKER_BIN" compose "$@"
 }
 
 check_binaries() {
@@ -130,9 +124,7 @@ check_binaries() {
   for bin in "$DOCKER_BIN" "$CURL_BIN" "$CADDY_BIN" "$MOUNTPOINT_BIN" "$PSQL_BIN" "$PG_DUMP_BIN" "$PG_RESTORE_BIN"; do
     command -v "$bin" >/dev/null 2>&1 || return 1
   done
-  if ! run_priv "$DOCKER_BIN" compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
-    return 1
-  fi
+  run_priv "$DOCKER_BIN" compose version >/dev/null 2>&1 || return 1
   return 0
 }
 
@@ -151,11 +143,6 @@ PY
       return 0
     fi
   fi
-  if [[ -n "${GCLOUD_BIN:-}" ]] && command -v "${GCLOUD_BIN}" >/dev/null 2>&1; then
-    "${GCLOUD_BIN}" auth print-access-token 2>/dev/null && return 0
-  elif command -v gcloud >/dev/null 2>&1; then
-    gcloud auth print-access-token 2>/dev/null && return 0
-  fi
   return 1
 }
 
@@ -164,13 +151,6 @@ fetch_gsm_secret_to_file() {
   local dest_path="$2"
   local tmp_sec="${LOCAL_WORK_DIR}/secret-$(basename "${dest_path}")"
   rm -f "${tmp_sec}"
-  if [[ -n "${GCLOUD_BIN:-}" ]] && command -v "${GCLOUD_BIN}" >/dev/null 2>&1; then
-    if (umask 077 && "${GCLOUD_BIN}" secrets versions access latest --project="${STAGING_GCP_PROJECT_ID}" --secret="${secret_name}" > "${tmp_sec}" 2>/dev/null) && [[ -s "${tmp_sec}" ]]; then
-      run_priv install -m 0600 "${tmp_sec}" "${dest_path}"
-      rm -f "${tmp_sec}"
-      return 0
-    fi
-  fi
   local access_token=""
   access_token="$(fetch_runtime_access_token)" || return 1
   local sm_url="https://secretmanager.googleapis.com/v1/projects/${STAGING_GCP_PROJECT_ID}/secrets/${secret_name}/versions/latest:access"
@@ -198,13 +178,17 @@ if ! check_binaries; then
   if [[ "${STAGING_ALLOW_APT_INSTALL:-true}" == "true" ]] && command -v apt-get >/dev/null 2>&1; then
     run_priv env DEBIAN_FRONTEND=noninteractive apt-get update -y >&2 || fail "APT_UPDATE_FAILED" "apt-get update failed on bare Debian host"
     run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      ca-certificates curl gnupg caddy docker.io postgresql-client util-linux python3 >&2 \
+      ca-certificates curl gnupg caddy postgresql-client util-linux python3 >&2 \
       || fail "APT_INSTALL_FAILED" "apt-get install of bare-Debian runtime dependencies failed"
-    if ! run_priv "$DOCKER_BIN" compose version >/dev/null 2>&1; then
-      run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin >&2 \
-        || run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose >&2 \
-        || fail "APT_COMPOSE_INSTALL_FAILED" "Failed to install docker-compose-plugin or docker-compose on Debian 12"
-    fi
+    run_priv install -m 0755 -d /etc/apt/keyrings
+    "$CURL_BIN" -fsSL https://download.docker.com/linux/debian/gpg | run_priv gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg \
+      || fail "DOCKER_REPO_KEY_FAILED" "Failed to fetch the official Docker apt repository key"
+    run_priv chmod a+r /etc/apt/keyrings/docker.gpg
+    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable\n' "$(dpkg --print-architecture)" \
+      | run_priv tee /etc/apt/sources.list.d/docker.list >/dev/null
+    run_priv env DEBIAN_FRONTEND=noninteractive apt-get update -y >&2 || fail "APT_UPDATE_FAILED" "apt-get update failed after adding the Docker repository"
+    run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin >&2 \
+      || fail "APT_DOCKER_INSTALL_FAILED" "Failed to install Docker Engine and docker-compose-plugin from the official Docker Debian 12 repository"
     if command -v systemctl >/dev/null 2>&1; then
       run_priv systemctl enable --now docker >/dev/null 2>&1 || true
     fi
@@ -364,9 +348,14 @@ if not DIGEST_RE.match(rb_bff_image):
     raise SystemExit(f"ROLLBACK_IMAGE_UNPINNED: {rb_bff_image!r}")
 
 rb_images_map = dict(rb.get("backend_images") or {})
-rb_images_map["operator_bff"] = rb_bff_image
+if not rb_images_map:
+    raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images is required")
+if str(rb_images_map.get("operator_bff") or "").strip() != rb_bff_image:
+    raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.operator_bff must equal backend_operator_bff_image")
 for key in required_owners:
-    rb_val = str(rb_images_map.get(key) or images[key]).strip()
+    rb_val = str(rb_images_map.get(key) or "").strip()
+    if not rb_val:
+        raise SystemExit(f"ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.{key} is required")
     if not DIGEST_RE.match(rb_val):
         raise SystemExit(f"ROLLBACK_OWNER_IMAGE_UNPINNED: {key}={rb_val!r}")
     rb_images_map[key] = rb_val
@@ -374,7 +363,9 @@ for key in required_owners:
 frontend_commit = str(manifest.get("frontend", {}).get("commit") or manifest.get("frontend", {}).get("commit_sha") or "")
 backend_commit = str(manifest.get("backend", {}).get("commit") or manifest.get("backend", {}).get("commit_sha") or "")
 config_schema_version = str(manifest.get("config_schema_version") or "pantheon.env-config.v1")
-rb_config_schema_version = str(rb.get("config_schema_version") or config_schema_version)
+rb_config_schema_version = str(rb.get("config_schema_version") or "").strip()
+if not rb_config_schema_version:
+    raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.config_schema_version is required")
 bff_digest = "sha256:" + images["operator_bff"].split("@sha256:", 1)[1]
 rb_bff_digest = "sha256:" + rb_bff_image.split("@sha256:", 1)[1]
 reg_host = images["operator_bff"].split("/", 1)[0] if "/" in images["operator_bff"] else ""

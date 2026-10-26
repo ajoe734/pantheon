@@ -1201,12 +1201,18 @@ class ReleaseManifestContractTests(unittest.TestCase):
 
         relabeled = _sample_manifest()
         relabeled["dev_verification"]["all12_chain_id"] = "h12-01a11-20261023-9aeb"
-        with self.assertRaisesRegex(release_manifest.ReleaseManifestError, "h12-01a11-20261023-9aeb"):
+        relabeled["dev_verification"].pop("all12_status", None)
+        with self.assertRaisesRegex(release_manifest.ReleaseManifestError, "requires all12_status 'passed'"):
             release_manifest.validate_manifest(relabeled)
+        relabeled["dev_verification"]["all12_status"] = "failed"
+        with self.assertRaisesRegex(release_manifest.ReleaseManifestError, "all12_status 'passed'"):
+            release_manifest.validate_manifest(relabeled)
+        relabeled["dev_verification"]["all12_status"] = "passed"
+        release_manifest.validate_manifest(relabeled)
 
         failed_all12 = _sample_manifest()
         failed_all12["dev_verification"]["all12_status"] = "failed"
-        with self.assertRaisesRegex(release_manifest.ReleaseManifestError, "all12_status must be 'passed'"):
+        with self.assertRaisesRegex(release_manifest.ReleaseManifestError, "all12_status 'passed'"):
             release_manifest.validate_manifest(failed_all12)
 
     def test_rejects_unsafe_defaults_and_retired_identifiers(self) -> None:
