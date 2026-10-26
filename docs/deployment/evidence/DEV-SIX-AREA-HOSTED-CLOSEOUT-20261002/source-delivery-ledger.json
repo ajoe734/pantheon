@@ -37,7 +37,7 @@
       "path": "/tmp/pantheon-continue-20261023/H1-actual-user-choice-20261023/root402454-official-readonly/candidate-a34-original-holding-actual-Source-Telemetry-price-value-provenance-bounded-audit.json",
       "sha256": "97905534bf2cbea5b4cb240477a02bff9b05f31d24a0c8db03e3b77aeab852e9"
     },
-    "scope": "Candidatebackend actualprojectionresolved; no finalacceptedpair/realUI/all12 claim. ExistingRoot1onePOST, norepeatRoot.",
+    "scope": "Root402454 exacta34/ad319 formally accepted; original holding numerical UI passed, missing-currency USD label failed. This does not complete financial/all12 acceptance. Root1 remains sole publisher; no repeat Root for this report.",
     "official_current_serving": {
       "path": "/tmp/pantheon-release399295-readonly-20261023/Root402454-public-exact-pair-after-terminal-SUCCESS-GET-only-20261026.json",
       "sha256": "ee70ca1bee9b69a5433e47705d397d773132c06725b9078182c567e9c02b72aa",
@@ -54,7 +54,6 @@
       "run": 40249112259,
       "job": 121336904877,
       "status": "completed",
-      "last_verified_step": "Run target-runner controller regression harness",
       "conclusion": "success"
     }
   },

@@ -19,7 +19,7 @@
   },
   "current_phase_authority": {
   "observed_at": "2026-10-26T01:06:57.503029+00:00",
-  "observation_scope": "Root0 explicit reconciliation after original00:04:48 preparation. SourceE postcutoffmerge andnewboundedtoolingTask are nowprimaryread; productpair/UI stillunproven. No finalTOTAL ornewrequirement.",
+  "observation_scope": "Root402454 exacta34/ad319 formally accepted; original holding owner/API and numerical UI proven; unknown currency falsely shown as USD remains FAIL. D/H4/E/applicable L11/full all12/TOTAL remain unproven.",
   "sole_serial_owner_thread": "01a11b73-51ee-7b52-bac2-bf1561292e00",
   "report_owner": "Root01a10 maintains only original draftPR6668 three reports; no parallel A-E/source/VM executor.",
   "accepted": {"BE": "a34a6956384ce8d9afd7e060bfce9d7a23082c90", "FE": "ad31927ded9a9ebd99eb436eb7320bc7a97e4065", "Root": 40245443101, "deploymentState": "accepted", "accepted_at": "2026-10-26T00:42:36Z", "candidate_id": "503394a930c00fbd2447b67676389ec9242e3751af513cdf8805a853423808d4", "pair_id": "ba3f9252ced010f839b55678f957c01b15a737d66d4142fb8e4255b285e4b1f7", "proof": "#/proofs/current_accepted_root", "public_proof": "#/proofs/current_public_pair"},
@@ -160,18 +160,17 @@
       "phase_ref": "#/current_phase_authority/same_version_FULL"
     },
     "current_formal_Root": {
-      "run": 40234250414,
+      "run": 40245443101,
       "conclusion": "success",
-      "FEgate": 40236102977,
-      "FEdeploy": 40237637365,
-      "same_sealed_candidate": "648755194999f5ea621ab95878631871f158e3db85fb971db875e0b236940b68",
+      "FEgate": 40247457767,
+      "FEdeploy": 40249112259,
+      "same_sealed_candidate": "503394a930c00fbd2447b67676389ec9242e3751af513cdf8805a853423808d4",
       "optional_exact_roundtrip": "skipped",
       "new_exact_roundtrip_completed": false,
       "normal_release_requires_optional_roundtrip": false,
       "whole_stack_or_database_rollback_claimed": false,
       "proof": "#/proofs/current_accepted_root",
-      "observer_validator_calls_total": 3,
-      "prior_observer_format_failures": 2
+      "scope": "Official accepted pair/public identity proof; no new FULL/rollback or whole all12 claim. Prior402342 validator attempts remain dated history."
     },
     "limits": "Current accepted software and dated FULL/roundtrip scope are distinct. Original49 closure is separately proven; full causal all12 and parentTOTAL are not complete.",
     "historical_e231_matching_FULL": {
@@ -196,12 +195,17 @@
       "scope": "Originalexact9aeb/c067softwareandthenacknowledgeddata only; no new76062/a34/fullDBrollbackclaim. Laterackcoveragegap remains explicit."
     },
     "candidate402454": {
-      "formal_accepted": false,
+      "formal_accepted": true,
       "backend": "success",
-      "admit": "queued_as_pre_cutoff_update",
+      "admit": "success",
       "component_API_pass": true,
       "real_UI_pass": false,
-      "proof": "#/proofs/candidate402454"
+      "real_UI_numerical_pass": true,
+      "real_UI_currency_units_pass": false,
+      "proof": "#/proofs/candidate402454",
+      "accepted_pair_proof": "#/proofs/current_accepted_root",
+      "real_UI_proof": "#/proofs/holding402454_numeric_PASS_currency_FAIL",
+      "scope": "Candidate API proof retained; formal pair and numerical UI later passed. Unknown-currency USD label is still a real failure; all-product UI is not passed."
     }
   },
   "remaining_original_obligations": [
