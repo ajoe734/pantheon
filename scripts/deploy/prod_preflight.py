@@ -220,8 +220,13 @@ def check_baseline(manifest: dict[str, Any], *, bootstrap: bool, baseline_state:
             raise PreflightError(
                 "no retained production baseline; first release must explicitly declare bootstrap"
             )
-        if "rollback_baseline" in manifest:
-            raise PreflightError("bootstrap release must not invent a rollback_baseline")
+        # The staging-qualified manifest carries rollback_baseline as retained/tested rollback ARTIFACT
+        # metadata (staging requires it for promotion eligibility). It is not a production incumbent:
+        # incumbent posture comes only from genuine on-host baseline state, which is absent here, so
+        # bootstrap never treats this reference as a healthy or switchable rollback target.
+        rb = manifest.get("rollback_baseline")
+        if rb is not None and not isinstance(rb, dict):
+            raise PreflightError("manifest rollback_baseline must be an object when present")
         return "bootstrap"
     if bootstrap:
         raise PreflightError("bootstrap declared but a retained baseline exists")

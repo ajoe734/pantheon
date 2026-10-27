@@ -827,8 +827,11 @@ class PreflightTests(unittest.TestCase):
             prod_preflight.check_baseline(manifest, bootstrap=True, baseline_state=good)
         no_rb = {k: v for k, v in manifest.items() if k != "rollback_baseline"}
         self.assertEqual(prod_preflight.check_baseline(no_rb, bootstrap=True, baseline_state=None), "bootstrap")
+        # Unmodified staging manifest (carries rollback_baseline artifact metadata) is consumable by
+        # first-release bootstrap; the reference is never treated as an incumbent.
+        self.assertEqual(prod_preflight.check_baseline(manifest, bootstrap=True, baseline_state=None), "bootstrap")
         with self.assertRaises(prod_preflight.PreflightError):
-            prod_preflight.check_baseline(manifest, bootstrap=True, baseline_state=None)
+            prod_preflight.check_baseline({**manifest, "rollback_baseline": "x"}, bootstrap=True, baseline_state=None)
 
 
 class SwitchHarness(unittest.TestCase):
@@ -846,9 +849,9 @@ class SwitchHarness(unittest.TestCase):
         self.log = self.tmp / "ops.log"
         self.identity_file = self.tmp / "identity.json"
 
-    def _prepare(self, *, bootstrap=False, mutate_manifest=None):
+    def _prepare(self, *, bootstrap=False, mutate_manifest=None, keep_rollback_artifact=False):
         manifest = _sample_manifest(state="staging_verified")
-        if bootstrap:
+        if bootstrap and not keep_rollback_artifact:
             manifest = {k: v for k, v in manifest.items() if k != "rollback_baseline"}
         artifact = self.tmp / "fe.tar.gz"
         fe_sha = _fe_tarball(artifact, "new")
@@ -1052,6 +1055,27 @@ class SwitchTests(SwitchHarness):
         self.assertIn("503", self._upstream())
         state = json.loads((self.root / "state" / f"{self.manifest['release_id']}.json").read_text())
         self.assertEqual(state["release_state"], "prod_aborted")
+
+    def test_bootstrap_consumes_unmodified_staging_manifest_without_switching_to_artifact_baseline(self):
+        # Staging requires rollback_baseline for promotion; first-release must accept it as artifact
+        # metadata only, never as a healthy incumbent or rollback target.
+        manifest = self._prepare(bootstrap=True, keep_rollback_artifact=True)
+        self.assertIn("rollback_baseline", manifest)
+        r = self._run(bootstrap=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("baseline_health", self._steps())
+        self.assertNotIn("resume_baseline_singletons", self._steps())
+        self.setUp()
+        self._prepare(bootstrap=True, keep_rollback_artifact=True)
+        r = self._run(bootstrap=True, extra_env={"IDENTITY_OVERRIDE": "{}"})
+        self.assertEqual(r.returncode, 4)
+        self.assertNotIn("resume_baseline_singletons", self._steps())
+        self.assertFalse((self.root / "fe" / "current").exists())
+        self.assertIn("503", self._upstream())
+        # Without bootstrap declaration or with a real incumbent the same manifest is still governed.
+        self.setUp()
+        self._prepare(bootstrap=True, keep_rollback_artifact=True)
+        self.assertEqual(self._run(bootstrap=False).returncode, 1)
 
     def test_first_release_without_bootstrap_declaration_refused(self):
         self._prepare(bootstrap=True)
