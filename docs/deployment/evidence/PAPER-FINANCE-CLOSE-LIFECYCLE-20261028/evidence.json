@@ -76,5 +76,9 @@
     "no hosted deployment",
     "Sharpe remains absent and no approved drawdown baseline fabricated"
   ],
-  "unmet_acceptance": "Acceptance 1/3/6 original-cause: the original hosted exception is NOT proven and cannot be from available artifacts (original stderr unavailable; saved outbox only shows chain stopping at risk_evaluation). Injected-failure scenarios are regression coverage, not original-cause proof. Requires operator resolution or hosted log readback by Root."
+  "unmet_acceptance": "Acceptance 1/3/6 original-cause: the original hosted exception is NOT proven and cannot be from available artifacts (original stderr unavailable; saved outbox only shows chain stopping at risk_evaluation). Injected-failure scenarios are regression coverage, not original-cause proof. Requires operator resolution or hosted log readback by Root.",
+  "review_round_2_response": {
+    "p2_eviction_horizon": "test_replay_after_many_batches_{same_process,restart} now perform 520 genuine distinct LifecycleTelemetryOutbox.admit_many batch admissions (via _LifecycleBatch + _admit_lifecycle_batch) while the fill ack is held, assert >512 retained batch ids, then prove once-only fill replay with unchanged sequence_no. Mutation check: restoring admitted_batches[-512:] makes both tests fail (AssertionError 512 not greater than 512); reverted afterwards.",
+    "p1_original_cause": "Unchanged and still unproven: not reproducible from available artifacts. Needs authorized Root hosted readback of the original exception/broker metadata, or an explicit operator acceptance revision. Inferred cause is not represented as proven."
+  }
 }

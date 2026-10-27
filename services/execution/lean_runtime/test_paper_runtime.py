@@ -18,6 +18,7 @@ from services.execution.lean_runtime.paper_runtime import (
     LifecycleTelemetryOutbox,
     LifecycleTelemetryOutboxError,
     OrderEvent,
+    _LifecycleBatch,
     PaperExecutionAlgorithm,
     PaperRuntimeService,
     RuntimeBindingResolver,
@@ -4055,13 +4056,19 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
             )
             metadata = dict(fill["metadata"])
             metadata["correlation_envelope"] = dict(chain["correlation_envelope"])
+            batch = _LifecycleBatch(service._lifecycle_chains)
             service._emit_lifecycle_telemetry(
                 "paper_order_simulated",
                 {"action": "noop"},
                 metadata,
                 event_id=str(uuid.uuid4()),
                 created_at="2026-10-27T01:00:05Z",
+                batch=batch,
             )
+            service._admit_lifecycle_batch(batch, batch_id=str(uuid.uuid4()))
+        self.assertGreater(
+            len(service._lifecycle_outbox._state["admitted_batches"]), 512
+        )
         runtime = self._service() if restart else service
         runtime.drain_once()
         fills = [
