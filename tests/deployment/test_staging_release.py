@@ -1743,6 +1743,27 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("PUBLIC_IDENTITY_CONFIG_MISSING", res.stderr + res.stdout)
 
+    def test_dsn_query_routing_override_rejected(self) -> None:
+        self._unlock_vm_env_dir()
+        original = self.secrets_env_file.read_text(encoding="utf-8")
+        for override in ("dbname=pantheon_prod", "host=prod-db.internal", "port=6543"):
+            with self.subTest(override=override):
+                self.secrets_env_file.write_text(
+                    original.replace(
+                        "TELEMETRY_DB_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging",
+                        f"TELEMETRY_DB_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging?{override}",
+                    ),
+                    encoding="utf-8",
+                )
+                res = subprocess.run(
+                    [str(PROVISION_SCRIPT)],
+                    env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res.returncode, 0)
+                self.assertIn("routing override", res.stderr + res.stdout)
+
     def test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates(self) -> None:
         # 1. Missing runtime binary when apt install is disabled fails closed with RUNTIME_BINARY_MISSING
         bad_bin_env = self._base_env(CADDY_BIN="/nonexistent/caddy-binary", STAGING_ALLOW_APT_INSTALL="false")
@@ -2397,6 +2418,17 @@ class StagingControllerLifecycleTests(unittest.TestCase):
 
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
+    def test_ephemeral_workflow_wires_public_identity_vars_to_host(self) -> None:
+        raw = EPHEMERAL_WORKFLOW.read_text(encoding="utf-8")
+        ops = (REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh").read_text(encoding="utf-8")
+        for name in ("API_KEY", "PROJECT_ID", "AUTH_DOMAIN", "ISSUER", "AUDIENCE"):
+            var = f"STAGING_PUBLIC_GCP_IDENTITY_{name}"
+            self.assertIn(f"{var}: ${{{{ vars.{var}", raw)
+            self.assertIn(f'"{var}"', ops)
+        gate = raw.split("Gate staging authority", 1)[1].split("Authenticate to staging", 1)[0]
+        for name in ("API_KEY", "PROJECT_ID", "AUTH_DOMAIN"):
+            self.assertIn(f"STAGING_PUBLIC_GCP_IDENTITY_{name}", gate)
+
     def test_workflows_and_templates_parse_and_pass_actionlint(self) -> None:
         disallowed_job_env_ctx = re.compile(r"\$\{\{\s*(?:runner|steps|job)\.")
         for wf_path in (EPHEMERAL_WORKFLOW, ORPHAN_WORKFLOW):

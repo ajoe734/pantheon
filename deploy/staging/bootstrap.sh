@@ -291,7 +291,14 @@ for req in (
     if not kv.get(req):
         raise SystemExit(f"missing required secret key {req}")
 for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN"):
-    dsn_path = kv[dsn_key].split("?", 1)[0].rstrip("/")
+    dsn_base, _, dsn_query = kv[dsn_key].partition("?")
+    dsn_path = dsn_base.rstrip("/")
+    if dsn_query:
+        from urllib.parse import parse_qs
+        override_keys = {"dbname", "host", "hostaddr", "port", "user", "service", "options"}
+        bad = override_keys & {k.lower() for k in parse_qs(dsn_query, keep_blank_values=True)}
+        if bad:
+            raise SystemExit(f"{dsn_key} must not carry routing override parameters: {sorted(bad)}")
     if not kv[dsn_key].startswith(("postgresql://", "postgres://")) or dsn_path.rsplit("/", 1)[-1] != pg_db:
         raise SystemExit(f"{dsn_key} must be a postgres DSN for isolated staging db {pg_db}")
 
