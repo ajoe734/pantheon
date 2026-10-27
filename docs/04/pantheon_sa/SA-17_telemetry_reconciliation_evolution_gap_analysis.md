@@ -441,6 +441,13 @@ DRIFT-GAP-003: drift severity policy 未驗證。
 DRIFT-GAP-004: drift → incident / evolution handoff 未驗證。
 ```
 
+**DRIFT-GAP-001 operator decision（2026-10-27，DRIFT-BASELINE-APPROVED-ARTIFACT-20261027）**：
+選擇「已核准 artifact 的回測指標」。L10 drift 的 baseline 即已核准 artifact 的 baseline，
+與 Evolution threshold sweep 共用同一份受治理的 `services/evolution/config/threshold_sweep_baselines.json`
+（以 `threshold_sweep_worker.load_baselines` / `approved_baseline_value` 單一 reader 讀取，不複製檔案）。
+`drawdown` 對應 `expected_drawdown` 且為單向（僅高於 baseline 才算 drift）；沒有核准 baseline 的 artifact 仍 fail closed
+（`unmeasured_no_baseline`）。Critical drift 走既有 DriftReport / IncidentCase 路徑，`baseline_ref` 帶 policy_source 與 artifact_id。
+
 ---
 
 ## 10. Incident Pipeline Gap

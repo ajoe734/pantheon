@@ -51,6 +51,11 @@ from telemetry_client import (
 
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
 DEFAULT_CRITICAL_RELATIVE_DELTA = 0.5
+# Risk metrics where only an adverse (higher) excursion is drift; observed at or
+# below the approved baseline is healthy and never raises an incident.
+ONE_SIDED_HIGHER_IS_WORSE_METRICS = frozenset({"drawdown"})
+# observed metric -> key in the governed Evolution threshold-sweep baselines.
+APPROVED_BASELINE_KEYS = {"drawdown": "expected_drawdown"}
 RECONCILIATION_ERROR_SEVERITIES = {"critical", "error"}
 _LIFECYCLE_APPEND_PRODUCER = "reconciliation-drift.scheduled"
 _RETRYABLE_HTTP_STATUSES = {408, 425, 429}
@@ -380,10 +385,65 @@ def _threshold_for(metric: str, thresholds: Dict[str, Any]) -> tuple[float, floa
     return DEFAULT_WARNING_RELATIVE_DELTA, DEFAULT_CRITICAL_RELATIVE_DELTA
 
 
+def _approved_baselines_path() -> str | None:
+    return (
+        os.getenv("RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH")
+        or os.getenv("EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH")
+        or None
+    )
+
+
+def _load_approved_baselines() -> Dict[str, Dict[str, Any]]:
+    try:
+        from services.evolution import threshold_sweep_worker as sweep
+    except ImportError:  # pragma: no cover - image always ships services/evolution
+        return {}
+    return sweep.load_baselines(_approved_baselines_path())
+
+
+def _approved_artifact_baselines(
+    artifact_id: Any,
+    all_baselines: Dict[str, Dict[str, Any]] | None = None,
+) -> tuple[Dict[str, float], Dict[str, Dict[str, str]]]:
+    """Resolve approved baselines for one artifact from the Evolution-governed file.
+
+    Uses the Evolution threshold sweep's own reader so both consumers share one
+    source of truth. Fails closed: no artifact, no approved positive finite
+    value, or an unreadable file yields no baseline (never a fabricated one).
+    """
+
+    aid = str(artifact_id or "").strip()
+    if not aid:
+        return {}, {}
+    try:
+        from services.evolution import threshold_sweep_worker as sweep
+    except ImportError:  # pragma: no cover - image always ships services/evolution
+        return {}, {}
+    if all_baselines is None:
+        all_baselines = sweep.load_baselines(_approved_baselines_path())
+    entry = all_baselines.get(aid)
+    if entry is None:
+        return {}, {}
+    metrics: Dict[str, float] = {}
+    sources: Dict[str, Dict[str, str]] = {}
+    for metric, key in APPROVED_BASELINE_KEYS.items():
+        value = sweep.approved_baseline_value(all_baselines, aid, key)
+        if value is None:
+            continue
+        metrics[metric] = value
+        sources[metric] = {
+            "artifact_id": aid,
+            "baseline_key": key,
+            "policy_source": str(entry["policy_source"]).strip(),
+        }
+    return metrics, sources
+
+
 def _drift_checks(
     baseline_metrics: Dict[str, Any],
     observed_metrics: Dict[str, float],
     thresholds: Dict[str, Any],
+    baseline_sources: Dict[str, Dict[str, str]] | None = None,
 ) -> List[Dict[str, Any]]:
     checks: List[Dict[str, Any]] = []
     for metric, baseline_raw in sorted(baseline_metrics.items()):
@@ -404,7 +464,11 @@ def _drift_checks(
             )
             continue
         denominator = abs(baseline) if baseline != 0 else 1.0
-        relative_delta = abs(observed - baseline) / denominator
+        signed_delta = (observed - baseline) / denominator
+        if metric in ONE_SIDED_HIGHER_IS_WORSE_METRICS:
+            relative_delta = max(signed_delta, 0.0)
+        else:
+            relative_delta = abs(signed_delta)
         warning_threshold, critical_threshold = _threshold_for(metric, thresholds)
         if relative_delta >= critical_threshold:
             status = "critical"
@@ -421,6 +485,19 @@ def _drift_checks(
                 "relative_delta": relative_delta,
                 "warning_relative_delta": warning_threshold,
                 "critical_relative_delta": critical_threshold,
+                **(
+                    {
+                        "one_sided": True,
+                        "signed_relative_delta": signed_delta,
+                    }
+                    if metric in ONE_SIDED_HIGHER_IS_WORSE_METRICS
+                    else {}
+                ),
+                **(
+                    {"baseline_source": (baseline_sources or {})[metric]}
+                    if metric in (baseline_sources or {})
+                    else {}
+                ),
             }
         )
     return checks
@@ -1772,6 +1849,24 @@ def _summary_observed_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
     return observed
 
 
+def _summary_risk_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
+    """Risk telemetry aggregates (drawdown) read with runtime-summary provenance.
+
+    Kept apart from the snapshot-grain observed metrics: a committed position
+    snapshot only carries qty/price/cash, so drawdown must not be dropped, nor
+    transplanted onto the snapshot.
+    """
+    nested = summary.get("observed_metrics") or summary.get("metrics") or {}
+    risk: Dict[str, float] = {}
+    for key in ONE_SIDED_HIGHER_IS_WORSE_METRICS:
+        number = _numeric(summary.get(key))
+        if number is None and isinstance(nested, dict):
+            number = _numeric(nested.get(key))
+        if number is not None and math.isfinite(number):
+            risk[key] = number
+    return risk
+
+
 def _resolve_scheduled_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
     committed_snapshot = summary.get("committed_position_snapshot")
     if isinstance(committed_snapshot, dict):
@@ -2676,6 +2771,8 @@ def _scheduled_drift_report(
         check
         for check in [*evaluation.get("drift_checks", []), *evaluation.get("reconciliation_checks", [])]
         if check.get("status") in {"warning", "critical"}
+        # Governed approved-baseline drift is observe-only at warning level.
+        and not (check.get("status") == "warning" and check.get("baseline_source"))
     ]
     if not failing_checks:
         return None
@@ -2694,6 +2791,9 @@ def _scheduled_drift_report(
         return None
     worst = max(failing_checks, key=lambda item: _status_rank(str(item.get("status") or "ok")))
     metric = str(worst.get("metric") or worst.get("check") or "runtime_health")
+    worst_source = worst.get("baseline_source")
+    if not isinstance(worst_source, dict):
+        worst_source = None
     is_health = "lag" in metric or "runtime" in metric
     causal_anchor = (
         summary.get("last_heartbeat_event_id")
@@ -2722,7 +2822,12 @@ def _scheduled_drift_report(
         "scope_ref": required["binding_id"],
         **required,
         "telemetry_event_ids": [causal_event_id],
-        "baseline_ref": str(summary.get("baseline_ref") or "governed-runtime-health-policy"),
+        "baseline_ref": (
+            f"approved-artifact-baseline:{worst_source['artifact_id']}:"
+            f"{worst_source['policy_source']}"
+            if worst_source
+            else str(summary.get("baseline_ref") or "governed-runtime-health-policy")
+        ),
         "current_ref": f"telemetry-runtime-summary:{required['runtime_id']}:{causal_event_id}",
         "severity": severity,
         "status": "open",
@@ -3020,6 +3125,7 @@ def _execute_scheduled_reconcile(
         elif receipt["status"] == "not_eligible":
             lifecycle_ineligible_binding_ids.append(binding_id)
 
+    approved_baselines = _load_approved_baselines()
     for summary in summaries:
         binding_id = _summary_binding_id(summary)
         runtime_id = str(summary.get("runtime_id") or "").strip()
@@ -3037,9 +3143,27 @@ def _execute_scheduled_reconcile(
         baseline_metrics: Dict[str, Any] = (
             raw_baseline_metrics if isinstance(raw_baseline_metrics, dict) else {}
         )
+        approved_metrics, baseline_sources = _approved_artifact_baselines(
+            summary.get("artifact_id"), approved_baselines
+        )
+        # Governed metrics are judged only against the approved artifact baseline;
+        # a raw summary baseline never substitutes for a missing approval.
+        baseline_metrics = {
+            metric: value
+            for metric, value in baseline_metrics.items()
+            if metric not in APPROVED_BASELINE_KEYS
+        }
+        baseline_metrics.update(approved_metrics)
         raw_thresholds = summary.get("thresholds") or summary.get("drift_thresholds") or {}
         thresholds: Dict[str, Any] = raw_thresholds if isinstance(raw_thresholds, dict) else {}
-        drift_checks = _drift_checks(baseline_metrics, observed_metrics, thresholds)
+        drift_checks = _drift_checks(
+            baseline_metrics,
+            {**_summary_risk_metrics(summary), **observed_metrics}
+            if "drawdown" not in observed_metrics
+            else observed_metrics,
+            thresholds,
+            baseline_sources,
+        )
         reconciliation_checks = _summary_actual_state_checks(
             summary,
             binding_id=binding_id,

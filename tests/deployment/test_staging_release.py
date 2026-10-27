@@ -49,6 +49,14 @@ ACTIONLINT_CANDIDATES = (
 
 
 FAKE_HOST_BIN_SCRIPT = r"""#!/usr/bin/env python3
+FAKE_NATIVE_ENV = {
+    "runtime-manager": {
+        "PANTHEON_RUNTIME_BINDING_STORE_PATH": "/data/runtime/runtime_bindings.json",
+        "PANTHEON_COMMAND_STATE_FILE": "/data/runtime/internal_api_commands.json",
+    },
+    "governance": {"GOVERNANCE_DATA_DIR": "/data/governance"},
+    "operator-bff": {"BFF_DATA_DIR": "/data/bff"},
+}
 import base64
 import hashlib
 import hmac
@@ -107,7 +115,7 @@ def _root_owned_dirs() -> list[Path]:
         if val:
             b = Path(val)
             dirs.append(b)
-            for sub in ("secrets", "state", "config", "lib", "releases", "backups", "sanitized"):
+            for sub in ("secrets", "state", "config", "lib", "releases", "backups", "sanitized", "bff", "runtime", "governance"):
                 sd = b / sub
                 if sd.exists() and sd.is_dir():
                     dirs.append(sd)
@@ -244,21 +252,48 @@ if tool == "docker":
         print(f"Pulled {img}")
         raise SystemExit(0)
 
+    if args[:1] == ["exec"]:
+        # Runs the collector's native-store snippet against the real repo store classes, with the
+        # container's own env and its /data/<owner> mounts mapped onto the fake data disk.
+        cinfo = next((i for i in st.get("containers", {}).values() if i.get("cid") == args[1]), None)
+        if not cinfo or not cinfo.get("running"):
+            print(f"Error response from daemon: container {args[1]} is not running", file=sys.stderr)
+            raise SystemExit(1)
+        c_idx = args.index("-c")
+        code, rest = args[c_idx + 1], args[c_idx + 2:]
+        data_mount = os.environ["STAGING_DATA_MOUNT"]
+        exec_env = {k: v for k, v in os.environ.items() if not k.startswith(("GOVERNANCE_", "BFF_", "DATABASE_URL"))}
+        exec_env.update({
+            k: (data_mount + v[len("/data"):] if v.startswith("/data/") else v)
+            for k, v in cinfo.get("env", {}).items()
+        })
+        exec_env["PYTHONPATH"] = os.environ["FAKE_REPO_ROOT"]
+        if cinfo["env"].get("GOVERNANCE_STORE_BACKEND") == "postgres":
+            # No PostgreSQL in unit tests: the PG store class persists to a sim dir outside the data disk.
+            code = (
+                "import os,sys,pathlib,services.governance as _g\n"
+                "sys.path.insert(0,str(pathlib.Path(_g.__file__).resolve().parent.parent/'control-plane'/'governance'))\n"
+                "from approval_decision import ApprovalDecisionStore as _S\n"
+                "import services.governance.pg_store as _pg\n"
+                "class _Sim(_S):\n"
+                "    def __init__(self, dsn, table, bootstrap):\n"
+                "        super().__init__(os.path.join(os.environ['FAKE_PG_SIM_DIR'], 'approval_decisions.json'))\n"
+                "_pg.PostgresApprovalDecisionStore=_Sim\n"
+            ) + code
+        proc = subprocess.run(
+            [sys.executable, "-c", code, *rest], env=exec_env, cwd=os.environ["FAKE_REPO_ROOT"],
+            capture_output=True, text=True,
+        )
+        sys.stdout.write(proc.stdout)
+        sys.stderr.write(proc.stderr)
+        raise SystemExit(proc.returncode)
+
     if args[:2] == ["image", "inspect"]:
         img = args[-1]
         if img not in st.get("pulled_images", []):
             print(f"image not pulled locally: {img}", file=sys.stderr)
             raise SystemExit(1)
-        fmt = ""
-        for i, a in enumerate(args):
-            if a == "-f" and i + 1 < len(args):
-                fmt = args[i + 1]
-        if "migration_set_sha256" in fmt:
-            print(os.environ.get("FAKE_IMAGE_MIGRATION_LABEL", st.get("migration_set_sha256", "")))
-        elif "compatibility_manifest_sha256" in fmt:
-            print(os.environ.get("FAKE_IMAGE_COMPAT_LABEL", st.get("compatibility_manifest_sha256", "")))
-        else:
-            print(json.dumps([{"Id": img}]))
+        print(json.dumps([{"Id": img}]))
         raise SystemExit(0)
 
     if args[:1] == ["inspect"]:
@@ -302,6 +337,8 @@ if tool == "docker":
 
         if "rm" in args and "-fsv" in args:
             svc = args[-1]
+            if os.environ.get("FAKE_WIPE_OWNER_ON_RECREATE") == "true" and svc == "operator-bff":
+                (Path(os.environ["STAGING_DATA_MOUNT"]) / "bff" / "session_lifecycle.json").unlink(missing_ok=True)
             if svc in st.get("containers", {}):
                 st["containers"][svc]["running"] = False
                 save_state(st)
@@ -323,6 +360,10 @@ if tool == "docker":
             }
             explicit_svcs = [a for a in args if a in svc_image_keys]
             target_svcs = explicit_svcs if explicit_svcs else list(svc_image_keys.keys())
+            # Compose reconciles an explicit service's dependencies too; runtime-manager's
+            # PANTHEON_RELEASE_ID changes with the release, so it is recreated with a new ID.
+            if "operator-bff" in target_svcs and "runtime-manager" not in target_svcs:
+                target_svcs.append("runtime-manager")
             omit_svc = os.environ.get("FAKE_OMIT_SERVICE", "").strip()
 
             secrets_env = {}
@@ -355,14 +396,22 @@ if tool == "docker":
                     "PANTHEON_BFF_JWT_AUDIENCE": c_env.get("PANTHEON_BFF_JWT_AUDIENCE", "pantheon-operator-bff"),
                     "BFF_COMMIT": c_env.get("PANTHEON_BACKEND_COMMIT", ""),
                     "BFF_IMAGE_DIGEST": c_env.get("PANTHEON_OPERATOR_BFF_DIGEST", ""),
+                    **FAKE_NATIVE_ENV.get(svc, {}),
                     **secrets_env,
                 }
+                if svc == "governance" and os.environ.get("FAKE_GOVERNANCE_BACKEND") == "postgres":
+                    merged_svc_env.update({
+                        "GOVERNANCE_STORE_BACKEND": "postgres",
+                        "GOVERNANCE_AUDIT_BACKEND": "postgres",
+                        "DATABASE_URL": "postgresql://pantheon_stg@postgres:5432/pantheon_staging",
+                    })
                 st.setdefault("containers", {})[svc] = {
-                    "cid": f"cid-{svc}",
+                    "cid": f"cid-{svc}-{st.setdefault('cid_gen', 0) + 1}",
                     "image": img_ref,
                     "running": True,
                     "env": merged_svc_env,
                 }
+            st["cid_gen"] = st.get("cid_gen", 0) + 1
             save_state(st)
             # Emit ordinary Docker Compose stdout to prove deploy-host does not rely on compose printing JSON.
             print("Container pantheon-staging-operator-bff-1 Started")
@@ -631,84 +680,50 @@ if tool in ("psql", "pg_dump", "pg_restore"):
 
     db_entry = st.setdefault("databases", {}).setdefault(db_name, {})
     db_tables = db_entry.setdefault("tables", {})
+
+    def _cols(*names):
+        return {n: {"type": "text", "nullable": True, "has_default": False} for n in names}
+
     default_catalog = {
-        "users": {
-            "id": {"type": "text", "nullable": False, "has_default": False},
-            "email": {"type": "text", "nullable": False, "has_default": False},
-            "full_name": {"type": "text", "nullable": False, "has_default": False},
-            "password_hash": {"type": "text", "nullable": False, "has_default": False},
-            "phone": {"type": "text", "nullable": True, "has_default": False},
-            "national_id": {"type": "text", "nullable": True, "has_default": False},
-            "tenant_id": {"type": "text", "nullable": False, "has_default": False},
-            "role": {"type": "text", "nullable": False, "has_default": False},
-        },
-        "tenants": {
-            "id": {"type": "text", "nullable": False, "has_default": False},
-            "name": {"type": "text", "nullable": False, "has_default": False},
-            "status": {"type": "text", "nullable": False, "has_default": False},
-        },
-        "schema_migrations": {
-            "version": {"type": "text", "nullable": False, "has_default": False},
-            "applied_at": {"type": "text", "nullable": False, "has_default": False},
-            "checksum_sha256": {"type": "text", "nullable": False, "has_default": False},
-        },
+        "public.telemetry_events": _cols("event_id", "event_type", "payload", "created_at", "ingested_at", "ingested_seq"),
+        "public.loop_controller_records": _cols("controller_id", "loop_id", "payload", "evidence_refs", "tenant_id", "updated_at"),
+        "public.trade_journey_action_ledger": _cols("idempotency_key", "request_hash", "receipt", "state"),
+        "agora.agora_dataset_records": _cols("evidence_id", "tenant_id", "user_id", "content", "lease_token"),
+        "governance.governance_records": _cols("record_id", "payload"),
     }
     db_schema = db_entry.setdefault("schema", default_catalog)
+
+    sql_file = ""
+    for i, a in enumerate(args):
+        if a == "-f" and i + 1 < len(args):
+            sql_file = args[i + 1]
+    if sql_file:
+        if os.environ.get("FAKE_FAIL_MIGRATION_SQL") == "true":
+            print("ERROR: syntax or lock error executing migration SQL", file=sys.stderr)
+            raise SystemExit(1)
+        if os.environ.get("FAKE_SKIP_SCHEMA_MUTATION") != "true":
+            applied = Path(sql_file).read_text(encoding="utf-8")
+            if "trade_journey_projection.controller" in applied:
+                db_schema["trade_journey_projection.controller"] = _cols("controller_id", "tenant_scope", "environment_scope")
+        st.setdefault("applied_migration_files", []).append(Path(sql_file).name)
+        st["migration_applied"] = True
+        save_state(st)
+        print("CREATE TABLE")
+        raise SystemExit(0)
 
     if "FROM information_schema.columns" in sql:
         print(json.dumps(db_schema, sort_keys=True))
         raise SystemExit(0)
 
-    if "json_build_object('migration_set_sha256'" in sql:
-        migs = db_tables.get("schema_migrations") or []
-        summary = {
-            "migration_set_sha256": migs[0]["checksum_sha256"] if migs else "",
-            "counts": {
-                "users": len(db_tables.get("users") or []),
-                "tenants": len(db_tables.get("tenants") or []),
-                "broker_credentials": len(db_tables.get("broker_credentials") or []),
-                "exchange_api_keys": len(db_tables.get("exchange_api_keys") or []),
-                "user_sessions": len(db_tables.get("user_sessions") or []),
-            },
-        }
-        print(json.dumps(summary, sort_keys=True))
+    if "json_object_agg(k, v)" in sql:
+        # One entry per owned relation of every schema in the live catalog (not just public).
+        if "count(*)" in sql:
+            print(json.dumps({t: len(db_tables.get(t) or []) for t in db_schema}, sort_keys=True))
+        else:
+            print(json.dumps({t: db_tables.get(t) or [] for t in db_schema}, sort_keys=True))
         raise SystemExit(0)
-    if "json_build_object('users'" in sql:
-        print(json.dumps(db_tables, sort_keys=True))
-        raise SystemExit(0)
-    if "ALTER TABLE" in sql:
-        if os.environ.get("FAKE_FAIL_MIGRATION_SQL") == "true":
-            print("ERROR: syntax or lock error executing migration SQL", file=sys.stderr)
-            raise SystemExit(1)
-        if os.environ.get("FAKE_SKIP_SCHEMA_MUTATION") != "true":
-            m = re.search(
-                r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z0-9_]+)(.*)",
-                sql,
-                re.IGNORECASE,
-            )
-            if m:
-                tbl, col, ctype, tail = m.group(1), m.group(2), m.group(3).lower(), m.group(4).upper()
-                has_def = "DEFAULT" in tail
-                is_null = "NOT NULL" not in tail
-                db_schema.setdefault(tbl, {})[col] = {
-                    "type": ctype,
-                    "nullable": is_null,
-                    "has_default": has_def,
-                }
-        st["migration_applied"] = True
-        save_state(st)
-        print("ALTER TABLE")
-        raise SystemExit(0)
-    if "FROM schema_migrations" in sql and "json_build_object" not in sql:
-        migs = db_tables.get("schema_migrations") or []
-        print(migs[0]["checksum_sha256"] if migs else "")
-        raise SystemExit(0)
-    if "SELECT id, email, tenant_id, role FROM users" in sql:
-        users = db_tables.get("users") or []
-        if not users:
-            raise SystemExit(1)
-        u = users[0]
-        print(f"{u['id']}|{u['email']}|{u['tenant_id']}|{u['role']}")
+    if sql.strip().upper().startswith("SELECT COUNT(*) FROM PUBLIC.TELEMETRY_EVENTS"):
+        print(len(db_tables.get("public.telemetry_events") or []))
         raise SystemExit(0)
 
     print("OK")
@@ -1011,6 +1026,7 @@ def _sample_manifest(
     state: str = "dev_verified",
     fe_sha: str | None = None,
     prev_fe_sha: str | None = None,
+    mig_sha: str = "sha256:" + ("4" * 64),
 ) -> dict:
     fe_commit = "a" * 40
     bff_commit = "b" * 40
@@ -1018,7 +1034,6 @@ def _sample_manifest(
     reg = "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases"
     bff_img = f"{reg}/operator-bff@sha256:" + ("2" * 64)
     compat_sha = "sha256:" + ("3" * 64)
-    mig_sha = "sha256:" + ("4" * 64)
     prev_fe_sha_val = prev_fe_sha or ("sha256:" + ("5" * 64))
     prev_bff_img = f"{reg}/operator-bff@sha256:" + ("6" * 64)
     return release_manifest.build_manifest(
@@ -1067,6 +1082,33 @@ def _sample_manifest(
     )
 
 
+MIGRATIONS_SRC_DIR = REPO_ROOT / "services" / "trade_journey" / "migrations"
+
+
+def _real_migration_set() -> tuple[list[dict], str]:
+    """Actual versioned SQL files and their set digest (sorted `<sha256>  <name>\\n` lines)."""
+    files = []
+    lines = []
+    for path in sorted(MIGRATIONS_SRC_DIR.glob("*.sql")):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        files.append({"name": path.name, "sha256": "sha256:" + digest})
+        lines.append(f"{digest}  {path.name}\n")
+    return files, "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def _sample_catalog() -> dict:
+    def cols(*names: str) -> dict:
+        return {n: {"type": "text", "nullable": True, "has_default": False} for n in names}
+
+    return {
+        "public.telemetry_events": cols("event_id", "event_type", "payload", "created_at", "ingested_at", "ingested_seq"),
+        "public.loop_controller_records": cols("controller_id", "loop_id", "payload", "evidence_refs", "tenant_id", "updated_at"),
+        "public.trade_journey_action_ledger": cols("idempotency_key", "request_hash", "receipt", "state"),
+        "agora.agora_dataset_records": cols("evidence_id", "tenant_id", "user_id", "content", "lease_token"),
+        "governance.governance_records": cols("record_id", "payload"),
+    }
+
+
 def _sample_raw_dataset(mig_sha: str = "sha256:" + ("4" * 64)) -> dict:
     return {
         "metadata": {
@@ -1077,73 +1119,72 @@ def _sample_raw_dataset(mig_sha: str = "sha256:" + ("4" * 64)) -> dict:
             "pii_masked": False,
             "secrets_excluded": False,
         },
+        "catalog": _sample_catalog(),
         "tables": {
-            "users": [
+            "agora.agora_dataset_records": [
                 {
-                    "id": "usr-101",
-                    "email": "alice.operator@real-domain.example.com",
-                    "full_name": "Alice Realname",
-                    "password_hash": "$2b$12$realProductionOrDevHashValue",
-                    "phone": "+886-912-345-678",
-                    "national_id": "A123456789",
+                    "evidence_id": "ev-1",
                     "tenant_id": "tenant-alpha",
-                    "role": "operator",
+                    "user_id": "real.person@example.com",
+                    "content": {"note": "contact real.person@example.com", "api_key": "drop-me"},
+                    "lease_token": "lease-secret-value",
                 }
             ],
-            "broker_credentials": [
-                {
-                    "id": "cred-1",
-                    "account_id": "DU123456",
-                    "broker_name": "ibkr",
-                    "encrypted_secret": "sk-secretbrokercredential1234567890",
-                    "api_key": "AIzaSySecretKey12345678901234567890",
-                }
+            "governance.governance_records": [
+                {"record_id": "gov-1", "payload": {"ok": True, "refresh_token": "drop-me"}}
             ],
-            "exchange_api_keys": [
+            "public.telemetry_events": [
                 {
-                    "id": "ex-1",
-                    "exchange": "binance",
-                    "key_id": "k1",
-                    "secret_ciphertext": "cipher-secret",
-                }
-            ],
-            "user_sessions": [
-                {
-                    "id": "sess-1",
-                    "user_id": "usr-101",
-                    "session_token": "ghp_1234567890abcdefghijklmnopqrstuv",
-                    "refresh_token": "refresh-tok",
-                    "expires_at": "2026-10-25T00:00:00Z",
-                }
-            ],
-            "system_settings": [
-                {
-                    "id": "default",
-                    "live_broker_enabled": True,
-                    "provider_enabled": True,
-                    "real_writes_enabled": True,
-                    "safe_write_strict": False,
-                    "execution_mode": "live",
-                }
-            ],
-            "telemetry_events": [
-                {
-                    "id": "evt-1",
+                    "event_id": "evt-1",
                     "event_type": "loop_tick",
-                    "tenant_id": "tenant-alpha",
-                    "raw_payload": {
+                    "payload": {
                         "correlation_id": "corr-001",
                         "token": "secret-jwt-token",
                         "auth": "Bearer secret",
                         "nested": {"broker_secret": "drop-me", "latency_ms": 42},
                     },
                     "created_at": "2026-10-24T07:00:00Z",
+                    "ingested_at": "2026-10-24T07:00:01Z",
+                    "ingested_seq": 1,
                 }
             ],
-            "tenants": [{"id": "tenant-alpha", "name": "Alpha Tenant", "status": "active"}],
-            "rbac_bindings": [{"id": "rb-1", "user_id": "usr-101", "tenant_id": "tenant-alpha", "role": "operator"}],
-            "schema_migrations": [{"version": "20261024_01", "applied_at": "2026-10-24T06:00:00Z", "checksum_sha256": mig_sha}],
+            "public.loop_controller_records": [
+                {
+                    "controller_id": "tj-projector",
+                    "loop_id": "loop-1",
+                    "tenant_id": "tenant-alpha",
+                    "payload": {"state": "ok", "api_key": "drop-me"},
+                    "evidence_refs": [{"ref": "e1", "access_token": "drop-me"}],
+                }
+            ],
+            "public.trade_journey_action_ledger": [
+                {
+                    "idempotency_key": "idem-1",
+                    "request_hash": "h1",
+                    "state": "completed",
+                    "receipt": {"ok": True, "client_secret": "drop-me"},
+                }
+            ],
         },
+    }
+
+
+def _sample_backup_record(owner_sha: str = "sha256:" + ("9" * 64)) -> dict:
+    counts = {name: 1 for name in _sample_catalog()}
+    return {
+        "backup_id": "stg-backup-20261024-001",
+        "backup_sha256": "sha256:" + ("8" * 64),
+        "expected_catalog_sha256": "sha256:" + ("5" * 64),
+        "restored_catalog_sha256": "sha256:" + ("5" * 64),
+        "restore_completed": True,
+        "read_query_verified": True,
+        "live_row_counts": dict(counts),
+        "restored_row_counts": dict(counts),
+        "owner_store_backup_sha256": "sha256:" + ("7" * 64),
+        "owner_store_manifest_sha256": owner_sha,
+        "restored_owner_store_manifest_sha256": owner_sha,
+        "owner_store_dirs": ["bff", "runtime", "governance"],
+        "catalog_tables": sorted(counts),
     }
 
 
@@ -1235,29 +1276,103 @@ class ReleaseManifestContractTests(unittest.TestCase):
 
 
 class StagingSanitizeAndGateTests(unittest.TestCase):
-    def test_sanitize_dataset_masks_pii_strips_secrets_and_verifies(self) -> None:
+    def test_sanitize_dataset_strips_secrets_and_verifies_actual_product_tables(self) -> None:
         raw = _sample_raw_dataset()
         sanitized = staging_sanitize.sanitize_dataset(raw)
         result = staging_sanitize.verify_sanitized_dataset(sanitized)
         self.assertTrue(result["sanitized_verified"])
-        self.assertEqual(sanitized["tables"]["broker_credentials"], [])
-        self.assertEqual(sanitized["tables"]["exchange_api_keys"], [])
-        self.assertEqual(sanitized["tables"]["user_sessions"], [])
-        user = sanitized["tables"]["users"][0]
-        self.assertEqual(user["email"], "staging-user-usr-101@pantheon.internal")
-        self.assertEqual(user["full_name"], "Staging Persona usr-101")
-        self.assertIsNone(user["phone"])
-        self.assertIsNone(user["national_id"])
-        settings = sanitized["tables"]["system_settings"][0]
-        self.assertFalse(settings["live_broker_enabled"])
-        self.assertFalse(settings["provider_enabled"])
-        self.assertFalse(settings["real_writes_enabled"])
-        self.assertEqual(settings["execution_mode"], "paper")
-        payload = sanitized["tables"]["telemetry_events"][0]["raw_payload"]
+        self.assertEqual(
+            sorted(sanitized["tables"]),
+            [
+                "agora.agora_dataset_records",
+                "governance.governance_records",
+                "public.loop_controller_records",
+                "public.telemetry_events",
+                "public.trade_journey_action_ledger",
+            ],
+        )
+        self.assertEqual(result["schemas"], ["agora", "governance", "public"])
+        agora = sanitized["tables"]["agora.agora_dataset_records"][0]
+        self.assertEqual(agora["lease_token"], "[REDACTED]")
+        self.assertRegex(agora["user_id"], r"^staging-user-[0-9a-f]{12}@pantheon\.internal$")
+        self.assertNotIn("real.person@example.com", json.dumps(agora))
+        self.assertNotIn("api_key", agora["content"])
+        self.assertNotIn("refresh_token", sanitized["tables"]["governance.governance_records"][0]["payload"])
+        payload = sanitized["tables"]["public.telemetry_events"][0]["payload"]
         self.assertNotIn("token", payload)
         self.assertNotIn("auth", payload)
         self.assertNotIn("broker_secret", payload["nested"])
         self.assertEqual(payload["nested"]["latency_ms"], 42)
+        loop = sanitized["tables"]["public.loop_controller_records"][0]
+        self.assertNotIn("api_key", loop["payload"])
+        self.assertNotIn("access_token", loop["evidence_refs"][0])
+        self.assertNotIn("client_secret", sanitized["tables"]["public.trade_journey_action_ledger"][0]["receipt"])
+
+    def test_compose_mounts_durable_owner_stores_like_accepted_dev_wiring(self) -> None:
+        compose = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())
+        mounts = {
+            svc: {v.split("}/", 1)[1] for v in spec.get("volumes", [])}
+            for svc, spec in compose["services"].items()
+        }
+        self.assertIn("bff:/data/bff", mounts["operator-bff"])
+        self.assertIn("bff:/data/bff", mounts["lifecycle-projector"])
+        self.assertIn("runtime:/data/runtime", mounts["runtime-manager"])
+        self.assertIn("governance:/data/governance", mounts["governance"])
+        self.assertIn("governance:/data/governance", mounts["deployment"])
+        self.assertIn("runtime:/data/runtime:ro", mounts["deployment"])
+        self.assertIn("governance:/data/governance:ro", mounts["operator-bff"])
+
+    def test_compose_binds_native_store_paths_to_mounted_owner_dirs(self) -> None:
+        compose = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())
+        env = {svc: spec.get("environment", {}) for svc, spec in compose["services"].items()}
+        self.assertEqual(env["runtime-manager"]["PANTHEON_RUNTIME_BINDING_STORE_PATH"], "/data/runtime/runtime_bindings.json")
+        self.assertEqual(env["runtime-manager"]["PANTHEON_COMMAND_STATE_FILE"], "/data/runtime/internal_api_commands.json")
+        self.assertEqual(env["governance"]["GOVERNANCE_DATA_DIR"], "/data/governance")
+        self.assertEqual(env["deployment"]["DEPLOYMENT_DATA_DIR"], "/data/governance")
+        self.assertEqual(env["deployment"]["PANTHEON_GOVERNANCE_DATA_DIR"], "/data/governance")
+        self.assertEqual(env["deployment"]["PANTHEON_RUNTIME_BINDING_STORE_PATH"], "/data/runtime/runtime_bindings.json")
+        self.assertEqual(env["operator-bff"]["BFF_DATA_DIR"], "/data/bff")
+        self.assertEqual(env["lifecycle-projector"]["BFF_DATA_DIR"], "/data/bff")
+
+    def test_structured_pii_in_json_and_direct_columns_is_masked_and_verified(self) -> None:
+        raw = _sample_raw_dataset()
+        row = raw["tables"]["agora.agora_dataset_records"][0]
+        row["content"] = {
+            "profile": {"full_name": "Jane Roe", "phone": "+886912345678", "national_id": "A123456789"},
+            "contacts": [{"mobile": "0912345678", "kind": "primary"}],
+        }
+        sanitized = staging_sanitize.sanitize_dataset(raw)
+        dumped = json.dumps(sanitized["tables"]["agora.agora_dataset_records"][0]["content"])
+        for leaked in ("Jane Roe", "+886912345678", "A123456789", "0912345678"):
+            self.assertNotIn(leaked, dumped)
+        self.assertIn("primary", dumped)
+        staging_sanitize.verify_sanitized_dataset(sanitized)
+        sanitized["tables"]["agora.agora_dataset_records"][0]["content"]["profile"]["phone"] = "+886912345678"
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "PII key"):
+            staging_sanitize.verify_sanitized_dataset(sanitized)
+
+        direct = _sample_raw_dataset()
+        direct["catalog"]["agora.agora_dataset_records"]["national_id"] = {"type": "text"}
+        direct["tables"]["agora.agora_dataset_records"][0]["national_id"] = "A123456789"
+        out = staging_sanitize.sanitize_dataset(direct)
+        self.assertEqual(out["tables"]["agora.agora_dataset_records"][0]["national_id"], "[REDACTED]")
+        out["tables"]["agora.agora_dataset_records"][0]["national_id"] = "A123456789"
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "PII column"):
+            staging_sanitize.verify_sanitized_dataset(out)
+
+    def test_dataset_must_cover_every_catalog_relation_including_empty_ones(self) -> None:
+        raw = _sample_raw_dataset()
+        for rel in ("agora.agora_dataset_records", "governance.governance_records"):
+            del raw["tables"][rel]
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "missing from sanitization input"):
+            staging_sanitize.sanitize_dataset(raw)
+        raw = _sample_raw_dataset()
+        raw["tables"]["governance.governance_records"] = []
+        sanitized = staging_sanitize.sanitize_dataset(raw)
+        self.assertEqual(staging_sanitize.verify_sanitized_dataset(sanitized)["row_counts"]["governance.governance_records"], 0)
+        del sanitized["tables"]["governance.governance_records"]
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "missing from sanitization input"):
+            staging_sanitize.verify_sanitized_dataset(sanitized)
 
     def test_rejects_production_data_and_unknown_schema_inputs_fail_closed(self) -> None:
         prod_input = _sample_raw_dataset()
@@ -1266,14 +1381,39 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
             staging_sanitize.sanitize_dataset(prod_input)
 
         unknown_table = _sample_raw_dataset()
-        unknown_table["tables"]["secret_live_orders"] = [{"id": "1"}]
+        unknown_table["tables"]["agora.not_in_catalog"] = [{"id": "1"}]
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "unknown table"):
             staging_sanitize.sanitize_dataset(unknown_table)
 
+        phantom_table = _sample_raw_dataset()
+        phantom_table["tables"]["public.users"] = [{"id": "usr-1"}]
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "unknown table"):
+            staging_sanitize.sanitize_dataset(phantom_table)
+
+        credential_table = _sample_raw_dataset()
+        credential_table["catalog"]["public.broker_credentials"] = {"id": {"type": "text"}}
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "credential table"):
+            staging_sanitize.sanitize_dataset(credential_table)
+
+        unknown_secret_table = _sample_raw_dataset()
+        unknown_secret_table["tables"]["secret_live_orders"] = [{"id": "1"}]
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "credential table"):
+            staging_sanitize.sanitize_dataset(unknown_secret_table)
+
+        unredacted = staging_sanitize.sanitize_dataset(_sample_raw_dataset())
+        unredacted["tables"]["agora.agora_dataset_records"][0]["lease_token"] = "still-live"
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "unredacted"):
+            staging_sanitize.verify_sanitized_dataset(unredacted)
+
         unknown_col = _sample_raw_dataset()
-        unknown_col["tables"]["users"][0]["ssn_raw"] = "000-11-2222"
+        unknown_col["tables"]["public.telemetry_events"][0]["raw_payload"] = {"x": 1}
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "unknown column"):
             staging_sanitize.sanitize_dataset(unknown_col)
+
+        residual = staging_sanitize.sanitize_dataset(_sample_raw_dataset())
+        residual["tables"]["public.telemetry_events"][0]["payload"]["api_key"] = "x"
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "sensitive key"):
+            staging_sanitize.verify_sanitized_dataset(residual)
 
     def test_migration_backup_rollback_and_security_readback_verifiers(self) -> None:
         mig_sha = "sha256:" + ("4" * 64)
@@ -1281,14 +1421,14 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
             "expected_migration_set_sha256": mig_sha,
             "observed_migration_set_sha256": mig_sha,
             "phase": "expand",
-            "statements": ["ALTER TABLE users ADD COLUMN locale TEXT NULL;"],
+            "statements": ["ALTER TABLE telemetry_events ADD COLUMN locale TEXT NULL;"],
             "old_app_schema": {
-                "users": {"id": {"type": "text"}, "email": {"type": "text"}},
+                "public.telemetry_events": {"event_id": {"type": "text"}, "event_type": {"type": "text"}},
             },
             "new_schema": {
-                "users": {
-                    "id": {"type": "text"},
-                    "email": {"type": "text"},
+                "public.telemetry_events": {
+                    "event_id": {"type": "text"},
+                    "event_type": {"type": "text"},
                     "locale": {"type": "text", "nullable": True, "has_default": False},
                 },
             },
@@ -1300,12 +1440,12 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         )
 
         destructive_plan = copy.deepcopy(valid_plan)
-        destructive_plan["statements"] = ["ALTER TABLE users DROP COLUMN email;"]
+        destructive_plan["statements"] = ["ALTER TABLE telemetry_events DROP COLUMN event_type;"]
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "destructive SQL forbidden"):
             staging_sanitize.verify_migration_and_compatibility(destructive_plan)
 
         incompatible_plan = copy.deepcopy(valid_plan)
-        incompatible_plan["new_schema"]["users"]["locale"] = {
+        incompatible_plan["new_schema"]["public.telemetry_events"]["locale"] = {
             "type": "text",
             "nullable": False,
             "has_default": False,
@@ -1313,24 +1453,22 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "neither nullable nor defaulted"):
             staging_sanitize.verify_migration_and_compatibility(incompatible_plan)
 
-        backup_record = {
-            "backup_id": "stg-backup-20261024-001",
-            "backup_sha256": "sha256:" + ("8" * 64),
-            "expected_migration_set_sha256": mig_sha,
-            "restored_migration_set_sha256": mig_sha,
-            "restore_completed": True,
-            "read_query_verified": True,
-            "restored_row_counts": {
-                "users": 1,
-                "tenants": 1,
-                "broker_credentials": 0,
-                "exchange_api_keys": 0,
-                "user_sessions": 0,
-            },
-        }
+        owner_sha = "sha256:" + ("9" * 64)
+        backup_record = _sample_backup_record(owner_sha)
         self.assertTrue(
             staging_sanitize.verify_backup_restore_readability(backup_record)["backup_restore_verified"]
         )
+        for mutate, pattern in (
+            (lambda r: r.update(restored_catalog_sha256="sha256:" + "0" * 64), "restored catalog hash"),
+            (lambda r: r["restored_row_counts"].update({"public.telemetry_events": 7}), "row counts differ"),
+            (lambda r: r["restored_row_counts"].update(users=1), "unknown table"),
+            (lambda r: r.update(restored_owner_store_manifest_sha256="sha256:" + "0" * 64), "owner-store file manifest"),
+            (lambda r: r.update(owner_store_dirs=["bff"]), "owner store backup must cover"),
+        ):
+            bad = copy.deepcopy(backup_record)
+            mutate(bad)
+            with self.assertRaisesRegex(staging_sanitize.SanitizationError, pattern):
+                staging_sanitize.verify_backup_restore_readability(bad)
 
         manifest = _sample_manifest()
         baseline = manifest["rollback_baseline"]
@@ -1417,7 +1555,10 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             self.fe_baseline_tarball,
             content="<!doctype html><title>Pantheon Baseline Release</title>",
         )
-        self.manifest = _sample_manifest(fe_sha=self.fe_sha, prev_fe_sha=self.fe_baseline_sha)
+        self.migration_files, self.migration_set_sha = _real_migration_set()
+        self.manifest = _sample_manifest(
+            fe_sha=self.fe_sha, prev_fe_sha=self.fe_baseline_sha, mig_sha=self.migration_set_sha
+        )
         self.manifest_path = self.tmp_path / "release-manifest.json"
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
         self.manifest_sha = release_manifest.compute_manifest_sha256(self.manifest)
@@ -1439,7 +1580,10 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.secrets_dir = self.staging_root / "secrets"
         for d in (
             self.staging_root,
-            self.data_mount / "sanitized",
+            self.data_mount / "sanitized" / "migrations",
+            self.data_mount / "bff",
+            self.data_mount / "runtime",
+            self.data_mount / "governance",
             self.fe_root,
             self.bin_dir,
             self.secrets_dir,
@@ -1471,10 +1615,12 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             json.dumps({
                 "phase": "expand",
                 "migration_set_sha256": self.manifest["migration_set_sha256"],
-                "statements": ["ALTER TABLE users ADD COLUMN staging_note TEXT NULL;"],
+                "files": self.migration_files,
             }, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        for mig in self.migration_files:
+            shutil.copyfile(MIGRATIONS_SRC_DIR / mig["name"], self.data_mount / "sanitized" / "migrations" / mig["name"])
 
         # Lock root-owned directories (0555) and secret files (0000) so non-root OS Login commands
         # fail with EACCES unless elevated via sudo.
@@ -1491,7 +1637,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 "migration_set_sha256": self.manifest["migration_set_sha256"],
                 "compatibility_manifest_sha256": self.manifest["compatibility_manifest_sha256"],
                 "databases": {
-                    "pantheon_staging": {"tables": sanitized["tables"]},
+                    "pantheon_staging": {"tables": sanitized["tables"], "schema": _sample_catalog()},
                 },
             }, indent=2, sort_keys=True),
             encoding="utf-8",
@@ -1566,6 +1712,8 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             "PG_RESTORE_BIN": str(self.host_bin_dir / "pg_restore"),
             "SUDO_BIN": str(self.host_bin_dir / "sudo"),
             "FAKE_OSLOGIN_NONROOT": "true",
+            "FAKE_REPO_ROOT": str(REPO_ROOT),
+            "FAKE_PG_SIM_DIR": str(self.vm_env_dir / "pg-sim"),
             "FAKE_HOST_BIN_DIR": str(self.host_bin_dir),
             "VM_RUNTIME_STATE_FILE": str(self.vm_runtime_state_file),
             "VM_BIN_LOG_FILE": str(self.vm_bin_log_file),
@@ -1812,6 +1960,104 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertNotEqual(ver.returncode, 0)
                 self.assertIn("LIVE_GATE_COLLECTION_FAILED", ver.stderr)
                 self.assertIn(expected_err, ver.stderr)
+
+    def test_collector_rejects_tampered_migration_files_and_missing_owner_store(self) -> None:
+        subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        mig_file = self.data_mount / "sanitized" / "migrations" / self.migration_files[0]["name"]
+        original = mig_file.read_bytes()
+        self._unlock_vm_env_dir()
+        mig_file.write_bytes(original + b"\n-- tampered\n")
+        ver = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(ver.returncode, 0)
+        self.assertIn("MIGRATION_FILE_SHA_MISMATCH", ver.stderr)
+
+        self._unlock_vm_env_dir()
+        mig_file.write_bytes(original)
+        shutil.rmtree(self.data_mount / "governance")
+        ver = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(ver.returncode, 0)
+        self.assertIn("OWNER_STORE_MISSING", ver.stderr)
+
+    def _provision_and_verify(self, **env: str) -> subprocess.CompletedProcess:
+        subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", **env),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self._unlock_vm_env_dir()
+        (self.vm_env_dir / "pg-sim").mkdir(exist_ok=True)
+        return subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", **env),
+            capture_output=True,
+            text=True,
+        )
+
+    def test_file_backed_native_owner_state_survives_recreation_and_restore(self) -> None:
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        ack = "stg-ack-pantheon-20261024-001"
+        gov = json.loads((self.data_mount / "governance" / "approval_decisions.json").read_text())
+        self.assertIn(ack, gov)
+        bff = json.loads((self.data_mount / "bff" / "session_lifecycle.json").read_text())
+        self.assertEqual(bff["sessions"][ack]["state"], "acknowledged")
+
+    def test_pg_backed_governance_needs_no_json_files_and_acks_through_native_store(self) -> None:
+        ver = self._provision_and_verify(FAKE_GOVERNANCE_BACKEND="postgres")
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        ack = "stg-ack-pantheon-20261024-001"
+        self.assertFalse(list((self.data_mount / "governance").glob("*.json")))
+        sim = json.loads((self.vm_env_dir / "pg-sim" / "approval_decisions.json").read_text())
+        self.assertIn(ack, sim)
+
+    def test_collector_rejects_ack_lost_on_owner_recreation(self) -> None:
+        ver = self._provision_and_verify(FAKE_WIPE_OWNER_ON_RECREATE="true")
+        self.assertNotEqual(ver.returncode, 0)
+        self.assertIn("OWNER_ACK_LOST", ver.stderr)
+
+    def test_runtime_manager_container_id_resolved_after_dependency_recreation(self) -> None:
+        # The fake compose recreates runtime-manager (new container ID) whenever operator-bff is
+        # reconciled; inspecting the ID frozen at collection start would fail with "No such container".
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        self.assertNotIn("DOCKER_INSPECT_ENV_FAILED", ver.stderr)
+
+    def test_collector_rejects_corrupt_runtime_owner_state(self) -> None:
+        subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self._unlock_vm_env_dir()
+        (self.data_mount / "runtime" / "runtime_bindings.json").write_text("{not json", encoding="utf-8")
+        ver = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(ver.returncode, 0)
+        self.assertIn("OWNER_STORE_CORRUPT", ver.stderr)
 
     def test_no_gcloud_false_success_rejected_fail_closed(self) -> None:
         # 1. STAGING_DRY_RUN=false with unset/empty GCLOUD_BIN must fail closed and record 0 resources
@@ -2142,11 +2388,11 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 "expected_migration_set_sha256": mig_sha,
                 "observed_migration_set_sha256": mig_sha,
                 "phase": "expand",
-                "statements": ["ALTER TABLE users ADD COLUMN staging_note TEXT NULL;"],
-                "old_app_schema": {"users": {"id": {"type": "text"}}},
+                "statements": ["ALTER TABLE telemetry_events ADD COLUMN staging_note TEXT NULL;"],
+                "old_app_schema": {"public.telemetry_events": {"event_id": {"type": "text"}}},
                 "new_schema": {
-                    "users": {
-                        "id": {"type": "text"},
+                    "public.telemetry_events": {
+                        "event_id": {"type": "text"},
                         "staging_note": {"type": "text", "nullable": True, "has_default": False},
                     }
                 },
@@ -2157,15 +2403,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         bak_path = self.tmp_path / "bak.json"
         bak_path.write_text(
-            json.dumps({
-                "backup_id": "stg-bak-001",
-                "backup_sha256": "sha256:" + ("8" * 64),
-                "expected_migration_set_sha256": mig_sha,
-                "restored_migration_set_sha256": mig_sha,
-                "restore_completed": True,
-                "read_query_verified": True,
-                "restored_row_counts": {"users": 1, "tenants": 1, "broker_credentials": 0},
-            }),
+            json.dumps(_sample_backup_record()),
             encoding="utf-8",
         )
         rb = self.manifest["rollback_baseline"]
@@ -2251,7 +2489,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
 
     def test_two_consecutive_simulated_releases_zero_to_zero_and_prod_preflight_alignment(self) -> None:
         for idx, rel_id in enumerate(("pantheon-20261024-001", "pantheon-20261024-002"), start=1):
-            manifest = _sample_manifest(release_id=rel_id, fe_sha=self.fe_sha, prev_fe_sha=self.fe_baseline_sha)
+            manifest = _sample_manifest(release_id=rel_id, fe_sha=self.fe_sha, prev_fe_sha=self.fe_baseline_sha, mig_sha=self.migration_set_sha)
             m_path = self.tmp_path / f"{rel_id}.json"
             m_path.write_text(json.dumps(manifest), encoding="utf-8")
             m_sha = release_manifest.compute_manifest_sha256(manifest)
@@ -2263,7 +2501,8 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 STAGING_DELAYED_UPLOAD_SIMULATE="true" if idx == 2 else "false",
             )
             subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
-            ver = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+            ver = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True)
+            self.assertEqual(ver.returncode, 0, ver.stderr)
             ver_json = json.loads(ver.stdout)
             self.assertEqual(ver_json["status"], "staging_verified")
             self.assertFalse(ver_json["dry_run"])
@@ -2357,7 +2596,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             text=True,
         )
         self.assertNotEqual(res_no_catalog_change.returncode, 0)
-        self.assertIn("MIGRATION_VERIFICATION_FAILED", res_no_catalog_change.stderr)
+        self.assertIn("MIGRATION_NOT_APPLIED", res_no_catalog_change.stderr)
 
         res_old_app_broken = subprocess.run(
             [str(VERIFY_SCRIPT)],
@@ -2537,6 +2776,14 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         self.assertIn("root * __STAGING_CONFIG_DIR__", caddy_raw)
         self.assertTrue(BOOTSTRAP_SCRIPT.exists() and os.access(BOOTSTRAP_SCRIPT, os.X_OK))
         self.assertTrue(COLLECTOR_SCRIPT.exists() and os.access(COLLECTOR_SCRIPT, os.X_OK))
+
+    def test_collector_does_not_require_custom_image_labels(self) -> None:
+        # Actual retained BFF image carries no org.pantheon.* migration/compat labels; the
+        # contract is manifest + migration-spec + live catalog/checksum observations instead.
+        raw = COLLECTOR_SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("org.pantheon.migration_set_sha256", raw)
+        self.assertNotIn("org.pantheon.compatibility_manifest_sha256", raw)
+        self.assertIn("MIGRATION_SPEC_SHA_MISMATCH", raw)
 
 
 if __name__ == "__main__":

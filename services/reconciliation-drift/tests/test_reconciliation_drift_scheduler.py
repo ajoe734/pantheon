@@ -3395,3 +3395,210 @@ def test_scheduled_tick_uses_keyed_reads_and_stays_idempotent() -> None:
         assert second.status_code == 201, second.text
         assert second.json()["evaluated_binding_count"] == 0
         assert second.json()["skipped_binding_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# DRIFT-GAP-001: drift baseline is the approved artifact baseline shared with
+# the Evolution threshold sweep
+# ---------------------------------------------------------------------------
+
+_APPROVED_ARTIFACT_ID = "artifact-approved-drift-001"
+_APPROVED_POLICY_SOURCE = "docs/example/policy.md#reviewer-decision"
+
+
+def _write_approved_baselines(path: Path, expected_drawdown: float) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "baselines": {
+                    _APPROVED_ARTIFACT_ID: {
+                        "expected_drawdown": expected_drawdown,
+                        "policy_source": _APPROVED_POLICY_SOURCE,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _run_drawdown_tick(
+    baselines_path: Path,
+    *,
+    drawdown: float,
+    artifact_id: str = _APPROVED_ARTIFACT_ID,
+    baseline_metrics: dict | None = None,
+):
+    from fastapi.testclient import TestClient
+
+    # Real enriched paper summary shape: drawdown is a top-level runtime-summary
+    # aggregate while the committed position snapshot only carries qty/price/cash.
+    summary = _healthy_runtime_summary(
+        artifact_id=artifact_id,
+        drawdown=drawdown,
+        baseline_metrics=baseline_metrics or {},
+        committed_position_snapshot={
+            "event_id": "evt-sched-001",
+            "event_type": "position_snapshot",
+            "position_qty": 10.0,
+            "price": 101.5,
+            "cash": 9000.0,
+        },
+    )
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {"RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH": str(baselines_path)},
+            ),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc,
+                "_classify_drift_report_incident",
+                return_value={"incident_id": "inc-drawdown-001"},
+            ) as classify,
+        ):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": f"tick-dd-{uuid.uuid4().hex[:8]}"},
+            )
+        assert resp.status_code == 201
+        evaluation = svc.store.get_evaluation(
+            resp.json()["evaluation_ids"][0], tenant_id=svc._current_tenant_id()
+        )
+        reports = svc.store.list_drift_reports()
+        return resp.json(), evaluation, reports, classify
+
+
+def _drawdown_check(evaluation):
+    return next(c for c in evaluation["drift_checks"] if c["metric"] == "drawdown")
+
+
+def test_drawdown_half_of_approved_baseline_is_ok_and_raises_no_incident(tmp_path) -> None:
+    baselines = tmp_path / "baselines.json"
+    _write_approved_baselines(baselines, 0.04)
+    payload, evaluation, reports, classify = _run_drawdown_tick(baselines, drawdown=0.02)
+    check = _drawdown_check(evaluation)
+    assert check["status"] == "ok"
+    assert check["baseline"] == 0.04
+    assert check["relative_delta"] == 0.0
+    assert check["signed_relative_delta"] < 0
+    assert payload["incident_ids"] == []
+    assert reports == []
+    assert classify.call_count == 0
+
+
+def test_drawdown_1_3x_approved_baseline_is_warning_observe_only(tmp_path) -> None:
+    baselines = tmp_path / "baselines.json"
+    _write_approved_baselines(baselines, 0.04)
+    payload, evaluation, reports, classify = _run_drawdown_tick(baselines, drawdown=0.052)
+    assert _drawdown_check(evaluation)["status"] == "warning"
+    assert reports == []
+    assert payload["incident_ids"] == []
+    assert classify.call_count == 0
+
+
+def test_drawdown_1_6x_approved_baseline_is_critical_with_incident_candidate(tmp_path) -> None:
+    baselines = tmp_path / "baselines.json"
+    _write_approved_baselines(baselines, 0.04)
+    payload, evaluation, reports, classify = _run_drawdown_tick(baselines, drawdown=0.064)
+    check = _drawdown_check(evaluation)
+    assert check["status"] == "critical"
+    assert check["baseline_source"] == {
+        "artifact_id": _APPROVED_ARTIFACT_ID,
+        "baseline_key": "expected_drawdown",
+        "policy_source": _APPROVED_POLICY_SOURCE,
+    }
+    assert len(reports) == 1
+    report = reports[0]
+    assert report["severity"] == "critical"
+    assert _APPROVED_ARTIFACT_ID in report["baseline_ref"]
+    assert _APPROVED_POLICY_SOURCE in report["baseline_ref"]
+    assert classify.call_count == 1
+    assert payload["incident_ids"] == ["inc-drawdown-001"]
+
+
+def test_artifact_without_approved_baseline_stays_unmeasured(tmp_path) -> None:
+    baselines = tmp_path / "baselines.json"
+    _write_approved_baselines(baselines, 0.04)
+    payload, evaluation, reports, classify = _run_drawdown_tick(
+        baselines, drawdown=9.0, artifact_id="artifact-not-approved"
+    )
+    assert evaluation["baseline_metrics"] == {}
+    assert [c for c in evaluation["drift_checks"] if c["metric"] == "drawdown"] == []
+    assert reports == []
+    assert classify.call_count == 0
+
+
+def test_raw_summary_baseline_never_substitutes_for_missing_approval(tmp_path) -> None:
+    raw = {"drawdown": 0.04}
+    missing = tmp_path / "missing.json"
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text("{not json", encoding="utf-8")
+    invalid = tmp_path / "invalid.json"
+    _write_approved_baselines(invalid, -0.04)
+    unapproved = tmp_path / "unapproved.json"
+    unapproved.write_text(
+        json.dumps({"baselines": {"other-artifact": {"expected_drawdown": 0.04,
+                                                     "policy_source": "x"}}}),
+        encoding="utf-8",
+    )
+    for path in (missing, unreadable, invalid, unapproved):
+        payload, evaluation, reports, classify = _run_drawdown_tick(
+            path, drawdown=0.064, baseline_metrics=raw
+        )
+        assert [c for c in evaluation["drift_checks"] if c["metric"] == "drawdown"] == []
+        assert reports == []
+        assert payload["incident_ids"] == []
+        assert classify.call_count == 0
+
+
+def test_baseline_without_policy_source_is_not_approved(tmp_path) -> None:
+    baselines = tmp_path / "baselines.json"
+    baselines.write_text(
+        json.dumps({"baselines": {_APPROVED_ARTIFACT_ID: {"expected_drawdown": 0.04}}}),
+        encoding="utf-8",
+    )
+    _, evaluation, reports, _ = _run_drawdown_tick(baselines, drawdown=0.5)
+    assert evaluation["baseline_metrics"] == {}
+    assert reports == []
+
+
+def test_baseline_change_is_visible_to_drift_and_evolution_readers(tmp_path) -> None:
+    from services.evolution import threshold_sweep_worker as sweep
+
+    baselines = tmp_path / "baselines.json"
+    _write_approved_baselines(baselines, 0.04)
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        with mock.patch.dict(
+            "os.environ", {"RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH": str(baselines)}
+        ):
+            metrics, _ = svc._approved_artifact_baselines(_APPROVED_ARTIFACT_ID)
+            assert metrics == {"drawdown": 0.04}
+            assert sweep.approved_baseline_value(
+                sweep.load_baselines(str(baselines)), _APPROVED_ARTIFACT_ID, "expected_drawdown"
+            ) == 0.04
+            _write_approved_baselines(baselines, 0.08)
+            metrics, _ = svc._approved_artifact_baselines(_APPROVED_ARTIFACT_ID)
+            assert metrics == {"drawdown": 0.08}
+            assert sweep.approved_baseline_value(
+                sweep.load_baselines(str(baselines)), _APPROVED_ARTIFACT_ID, "expected_drawdown"
+            ) == 0.08
+
+
+def test_default_approved_baselines_path_is_the_evolution_governed_file() -> None:
+    from services.evolution import threshold_sweep_worker as sweep
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        with mock.patch.dict("os.environ", {}, clear=False):
+            for var in (
+                "RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH",
+                "EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH",
+            ):
+                __import__("os").environ.pop(var, None)
+            assert svc._approved_baselines_path() is None  # falls to sweep DEFAULT path
+    assert sweep.DEFAULT_BASELINES_PATH.endswith("services/evolution/config/threshold_sweep_baselines.json")
