@@ -67,7 +67,12 @@ services:
     restart: unless-stopped
     profiles: ["core"]
     <<: *secrets
-    environment: *core_env
+    environment:
+      <<: *core_env
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+      PANTHEON_COMMAND_STATE_FILE: /data/runtime/internal_api_commands.json
+    volumes:
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/runtime:/data/runtime
     labels: {"org.pantheon.role": "owner"}
 
   governance:
@@ -76,7 +81,11 @@ services:
     restart: unless-stopped
     profiles: ["core"]
     <<: *secrets
-    environment: *core_env
+    environment:
+      <<: *core_env
+      GOVERNANCE_DATA_DIR: /data/governance
+    volumes:
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/governance:/data/governance
     labels: {"org.pantheon.role": "owner"}
 
   deployment:
@@ -85,7 +94,14 @@ services:
     restart: unless-stopped
     profiles: ["core"]
     <<: *secrets
-    environment: *core_env
+    environment:
+      <<: *core_env
+      DEPLOYMENT_DATA_DIR: /data/governance
+      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+    volumes:
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/governance:/data/governance
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/runtime:/data/runtime:ro
     labels: {"org.pantheon.role": "owner"}
 
   # The single singleton worker. Exactly one instance may exist; drained/activated by ops.
@@ -94,8 +110,18 @@ services:
     pull_policy: never
     restart: unless-stopped
     profiles: ["singleton"]
+    # Existing loop-run-projector-scheduler telemetry image; command selects the lifecycle projector.
+    command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
     <<: *secrets
-    environment: *core_env
+    environment:
+      <<: *core_env
+      LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
+      BFF_DATA_DIR: /data/bff
+      # Isolated production DSNs (TELEMETRY_DB_DSN, LIFECYCLE_PROJECTOR_PROJECTION_DSN) come from
+      # the secrets env file and are validated by bootstrap.sh against PROD_POSTGRES_DB.
+      GIT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
+    volumes:
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/bff:/data/bff
     labels: {"org.pantheon.role": "singleton"}
 
   # One color of the stateless BFF. Run with: --profile blue | --profile green and
@@ -108,21 +134,33 @@ services:
     <<: *secrets
     environment: &bff_env
       <<: *core_env
-      PANTHEON_OPERATOR_BFF_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:-}
+      BFF_COMMIT: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
+      BFF_IMAGE_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:?operator_bff digest required}
+      # Shared durable state on the retained data disk (both colors mount the same dirs, so a color
+      # switch, replacement or rollback neither loses nor splits acknowledged state).
+      BFF_DATA_DIR: /data/bff
+      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+      PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: postgres
+      LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
       PANTHEON_BFF_AUTH_MODE: strict
       PANTHEON_BFF_AUTH_STUB: "false"
       PANTHEON_BFF_OIDC_ISSUER: ${PROD_IDP_ISSUER:?idp issuer required}
       PANTHEON_BFF_OIDC_DISCOVERY_URL: ${PROD_IDP_ISSUER:?idp issuer required}/.well-known/openid-configuration
       PANTHEON_BFF_CORS_ORIGINS: ${PROD_BFF_CORS_ORIGINS:?production FE origin required}
-      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8000
-      PANTHEON_GOVERNANCE_API_URL: http://governance:8000
-      PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8000
-      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8000
-      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8000
-      PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8000
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8080
+      PANTHEON_GOVERNANCE_API_URL: http://governance:8082
+      PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8082
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
+      PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8095
+    volumes: &bff_volumes
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/bff:/data/bff
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/governance:/data/governance:ro
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/runtime:/data/runtime:ro
     labels: {"org.pantheon.role": "bff", "org.pantheon.color": "blue"}
     ports:
-      - "127.0.0.1:${PROD_BLUE_PORT:?blue port required}:8000"
+      - "127.0.0.1:${PROD_BLUE_PORT:?blue port required}:8001"
 
   operator-bff-green:
     image: ${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}
@@ -131,9 +169,10 @@ services:
     profiles: ["green"]
     <<: *secrets
     environment: *bff_env
+    volumes: *bff_volumes
     labels: {"org.pantheon.role": "bff", "org.pantheon.color": "green"}
     ports:
-      - "127.0.0.1:${PROD_GREEN_PORT:?green port required}:8000"
+      - "127.0.0.1:${PROD_GREEN_PORT:?green port required}:8001"
 
 secrets:
   postgres_password:

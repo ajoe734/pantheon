@@ -238,6 +238,9 @@ run_priv "$MOUNTPOINT_BIN" -q "${STAGING_DATA_MOUNT}" || fail "DATA_DISK_NOT_MOU
 run_priv mkdir -p \
   "${STAGING_DATA_MOUNT}/postgres" \
   "${STAGING_DATA_MOUNT}/nats" \
+  "${STAGING_DATA_MOUNT}/bff" \
+  "${STAGING_DATA_MOUNT}/runtime" \
+  "${STAGING_DATA_MOUNT}/governance" \
   "${STAGING_DATA_MOUNT}/sanitized" \
   "${STAGING_DATA_MOUNT}/backups"
 

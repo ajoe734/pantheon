@@ -8,7 +8,7 @@
 # pre-acquires only digest-pinned (@sha256:...) images, and never formats, mounts over, or
 # recreates the production data disk.
 #
-# Steps: snapshot_preflight prepull_images baseline_health start_green stop_green
+# Steps: migrate snapshot_preflight prepull_images baseline_health start_green stop_green
 #        gate <name> <port> drain_singletons reload_proxy activate_singletons
 #        resume_baseline_singletons verify_runtime_config post_identity
 #
@@ -167,9 +167,64 @@ PY
   export PROD_BLUE_PORT PROD_GREEN_PORT
 }
 
+# Bind schema/compat gates to live staging evidence for this exact manifest (sets GATE_REASON on failure).
+staging_migration_gate() {
+  GATE_REASON="$(python3 - "$RELEASE_MANIFEST_PATH" "${STAGING_EVIDENCE_PATH:-}" <<'PY' 2>&1
+import hashlib, json, re, sys
+mp, ep = sys.argv[1:3]
+try:
+    m = json.load(open(mp)); e = json.load(open(ep))
+except Exception as exc:
+    print(f"cannot read manifest/staging evidence: {exc}"); sys.exit(1)
+sha = re.compile(r"sha256:[0-9a-f]{64}|[0-9a-f]{64}")
+def bad(msg): print(msg); sys.exit(1)
+g = (e.get("gates") or {}).get("migration_and_compatibility")
+if e.get("status") != "staging_verified" or e.get("dry_run") is not False or e.get("observed_from_live_vm") is not True:
+    bad("staging evidence is not a live staging_verified observation")
+if e.get("release_id") != m.get("release_id"):
+    bad("staging evidence release_id != manifest")
+if (e.get("manifest") or {}).get("operator_bff_image") != m["backend"]["images"]["operator_bff"]:
+    bad("staging evidence BFF image != manifest")
+if not isinstance(g, dict) or g.get("migration_verified") is not True or g.get("old_app_new_schema_compatible") is not True:
+    bad("staging evidence lacks migration_verified/old_app_new_schema_compatible")
+want = m.get("migration_set_sha256")
+if not isinstance(want, str) or not sha.fullmatch(want) or g.get("migration_set_sha256") != want:
+    bad("staging migration_set_sha256 != manifest migration_set_sha256")
+if not isinstance(m.get("compatibility_manifest_sha256"), str) or not sha.fullmatch(m["compatibility_manifest_sha256"]):
+    bad("manifest compatibility_manifest_sha256 missing/invalid")
+PY
+)" || return 1
+}
+# Production consumption of the Stage-owned migration contract (prod_preflight.py migration). The product has
+# no schema_migrations table: the qualified versioned SQL (migration-spec.json + migrations/*.sql, PROD_MIGRATION_DIR)
+# is hashed with the Stage recipe and must equal the manifest migration_set_sha256, and the live information_schema
+# catalog (same query Stage uses) must contain every relation that SQL creates. Never applies migrations.
+MIGRATION_HELPER="${PROD_PREFLIGHT_PY:-$(dirname "${BASH_SOURCE[0]}")/prod_preflight.py}"
+migration_dir() { printf '%s' "${PROD_MIGRATION_DIR:-${PROD_ROOT}/migration/${RELEASE_ID}}"; }
+live_catalog() {
+  compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+    <<<"$(python3 -I "$MIGRATION_HELPER" migration catalog-sql "$RELEASE_MANIFEST_PATH" "$(migration_dir)")" 2>/dev/null
+}
+production_schema_gate() {
+  local catalog
+  GATE_REASON="$(python3 -I "$MIGRATION_HELPER" migration verify "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
+  catalog="$(live_catalog)" || { GATE_REASON="production live catalog unreadable (database unreachable)"; return 1; }
+  GATE_REASON="$(printf '%s' "$catalog" | python3 -I "$MIGRATION_HELPER" migration catalog "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
+}
 container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }
 require_ready() { # require_ready <port>
   [[ "$(http_code "http://127.0.0.1:$1/bff/readyz")" == "200" ]]
+}
+# Process liveness only. BFF /bff/readyz also requires the singleton lifecycle projector controller to
+# report the SAME deployment sha as the BFF (BFF_COMMIT), so a candidate cannot be readyz-true before
+# the singleton hand-off. Pre-handoff checks use liveness; post-handoff checks use readiness.
+require_live() { # require_live <port>
+  [[ "$(http_code "http://127.0.0.1:$1/livez")" == "200" ]]
+}
+wait_until() { # wait_until <tries> <interval> <command...>
+  local tries="$1" interval="$2" _; shift 2
+  for _ in $(seq 1 "$tries"); do "$@" && return 0; sleep "$interval"; done
+  return 1
 }
 singleton_count() { compose ps -q lifecycle-projector 2>/dev/null | grep -c . || true; }
 
@@ -188,16 +243,35 @@ verify_runtime_config_internal() {
   grep -qi '^cache-control:.*no-store' <<<"$hdrs" || fail RUNTIME_CONFIG_CACHEABLE "runtime-config.js is not served no-store"
   cmp -s "$cfg" "${PROD_ROOT}/state/runtime-config.readback" || fail RUNTIME_CONFIG_DRIFT "served runtime-config.js differs from the rendered file"
   grep -q "https://${PROD_BFF_HOST}" "$cfg" || fail RUNTIME_CONFIG_BFF "runtime-config.js does not point at the production BFF"
-  if [[ -n "$expected_rel" ]]; then
-    python3 - "$cfg" "$expected_rel" <<'PY' || fail RUNTIME_CONFIG_RELEASE_MISMATCH "runtime-config.js release_id does not match expected ${expected_rel}"
-import json, re, sys
+  python3 - "$cfg" "$expected_rel" "https://${PROD_BFF_HOST}" <<'PY' || fail RUNTIME_CONFIG_CONTRACT "runtime-config.js violates the accepted public runtime config contract or expected configRef ${expected_rel}"
+import hashlib, json, re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
-want = sys.argv[2]
-m = re.search(r'"release_id"\s*:\s*"([^"]+)"', text)
-if m and m.group(1) != want:
-    raise SystemExit(1)
+want_ref, want_bff = sys.argv[2], sys.argv[3]
+m = re.search(r"window\.__PANTHEON_DEPLOYMENT_CONFIG__\s*=\s*(\{.*\})\s*;", text, re.S)
+if not m:
+    raise SystemExit("no __PANTHEON_DEPLOYMENT_CONFIG__ object")
+cfg = json.loads(m.group(1))
+if cfg.get("schemaVersion") != "pantheon.fe.public-runtime-config.v1":
+    raise SystemExit("unsupported schemaVersion")
+if cfg.get("environment") != "production":
+    raise SystemExit("environment is not production")
+if cfg.get("bffBaseUrl") != want_bff:
+    raise SystemExit("bffBaseUrl mismatch")
+ref = cfg.get("configRef")
+if not isinstance(ref, str) or not ref:
+    raise SystemExit("configRef missing")
+if want_ref and ref != want_ref:
+    raise SystemExit(f"configRef {ref} != expected {want_ref}")
+ident = cfg.get("gcpIdentity")
+if not isinstance(ident, dict) or not all(isinstance(ident.get(k), str) and ident[k] for k in ("apiKey", "projectId", "authDomain", "issuer", "audience")):
+    raise SystemExit("gcpIdentity incomplete")
+sha = cfg.get("configSha256")
+if sha is not None:
+    body = {k: v for k, v in cfg.items() if k != "configSha256"}
+    canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    if sha != "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest():
+        raise SystemExit("configSha256 is not truthful")
 PY
-  fi
 }
 
 verify_public_fe_bff_pair() {
@@ -332,7 +406,7 @@ PY
     ;;
 
   baseline_health)
-    require_ready "$PROD_ACTIVE_PORT" || fail BASELINE_UNHEALTHY "baseline on port ${PROD_ACTIVE_PORT:-?} not ready"
+    wait_until "${PROD_BASELINE_READY_TRIES:-30}" "${PROD_BASELINE_READY_INTERVAL:-2}" require_ready "$PROD_ACTIVE_PORT" || fail BASELINE_UNHEALTHY "baseline on port ${PROD_ACTIVE_PORT:-?} not ready"
     if [[ -f "${PROD_ROOT}/state/journal/${RELEASE_ID}/baseline_release.json" ]]; then
       baseline_env
       verify_runtime_config_internal "$BASELINE_RELEASE_ID"
@@ -348,19 +422,25 @@ PY
     [[ "$PANTHEON_OPERATOR_BFF_IMAGE" == "$image" ]] || fail IMAGE_MISMATCH "controller image differs from manifest"
     compose --profile core up -d --no-build --no-recreate runtime-manager governance deployment || fail OWNER_CLOSURE "core owner closure not running"
     compose --profile "$color" up -d --no-build "operator-bff-${color}" || fail GREEN_START "compose failed to start ${color}"
-    for _ in $(seq 1 "${PROD_GREEN_READY_TRIES:-30}"); do require_ready "$port" && exit 0; sleep "${PROD_GREEN_READY_INTERVAL:-2}"; done
-    fail GREEN_NOT_READY "${color} did not become ready on ${port}"
+    wait_until "${PROD_GREEN_READY_TRIES:-30}" "${PROD_GREEN_READY_INTERVAL:-2}" require_live "$port" && exit 0
+    fail GREEN_NOT_READY "${color} did not become live on ${port}"
     ;;
 
   stop_green)
+    release_env
     color="$(color_for_port "${PROD_TARGET_PORT:-}")" || fail BAD_PORT "no target port"
     compose --profile "$color" rm -fsv "operator-bff-${color}" || fail STOP_GREEN "could not stop ${color}"
     ;;
 
   gate)
     name="${1:-}"; port="${2:-}"
+    release_env
     case "$name" in
-      health) require_ready "$port" || fail GATE_HEALTH "readyz not 200 on ${port}" ;;
+      health) require_live "$port" || fail GATE_HEALTH "livez not 200 on ${port}" ;;
+      candidate_ready)
+        # Post singleton hand-off: candidate readiness now includes the candidate projector controller sha.
+        wait_until "${PROD_CANDIDATE_READY_TRIES:-30}" "${PROD_CANDIDATE_READY_INTERVAL:-2}" require_ready "$port" \
+          || fail GATE_CANDIDATE_READY "candidate readyz not 200 on ${port} after singleton hand-off" ;;
       auth)
         code="$(http_code "http://127.0.0.1:${port}/bff/capabilities")"
         [[ "$code" == "401" || "$code" == "403" ]] || fail GATE_AUTH "unauthenticated request returned ${code}, expected 401/403" ;;
@@ -381,30 +461,55 @@ PY
         code="$(http_code -X POST "http://127.0.0.1:${port}/bff/capabilities")"
         [[ "$code" =~ ^(401|403|404|405)$ ]] || fail GATE_READ_ONLY "unauthenticated write returned ${code}" ;;
       schema)
-        want="$(manifest_field migration_set_sha256)" || fail GATE_SCHEMA "manifest has no migration set sha"
-        img="$(manifest_field backend.images.operator_bff)"
-        got="$(run_priv "$DOCKER" image inspect -f '{{index .Config.Labels "org.pantheon.migration_set_sha256"}}' "$img" 2>/dev/null)"
-        [[ -n "$got" && "$got" == "$want" ]] || fail GATE_SCHEMA "image migration label '${got}' != manifest '${want}'"
-        compose exec -T postgres pg_isready >/dev/null || fail GATE_SCHEMA "postgres not ready" ;;
+        # Image labels are not a contract: the accepted BFF image carries no migration/compat labels. Identity is the
+        # exact manifest + digest-pinned image bound to genuine live staging evidence for this same manifest.
+        staging_migration_gate || fail GATE_SCHEMA "${GATE_REASON}"
+        production_schema_gate || fail GATE_SCHEMA "${GATE_REASON}" ;;
       old_new_compat)
-        want="$(manifest_field compatibility_manifest_sha256)" || fail GATE_COMPAT "manifest has no compatibility sha"
-        img="$(manifest_field backend.images.operator_bff)"
-        got="$(run_priv "$DOCKER" image inspect -f '{{index .Config.Labels "org.pantheon.compatibility_manifest_sha256"}}' "$img" 2>/dev/null)"
-        [[ -n "$got" && "$got" == "$want" ]] || fail GATE_COMPAT "image compatibility label '${got}' != manifest '${want}'"
+        staging_migration_gate || fail GATE_COMPAT "${GATE_REASON}"
+        c="$(container_of "operator-bff-$(color_for_port "$port")")"; [[ -n "$c" ]] || fail GATE_COMPAT "candidate container not found"
+        cimg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$c" 2>/dev/null | tr -d '[:space:]')"
+        [[ "$cimg" == "$(manifest_field backend.images.operator_bff)" ]] || fail GATE_COMPAT "running candidate image '${cimg}' != manifest operator_bff image"
         if [[ "${PROD_BOOTSTRAP_FIRST_RELEASE:-false}" == "true" ]]; then
           # Explicit first release has no prior baseline application; validate candidate and database without inventing old app.
           [[ ! -f "${PROD_ROOT}/state/baseline.json" ]] || fail GATE_COMPAT "bootstrap declared while retained baseline exists"
-          compose exec -T postgres pg_isready >/dev/null || fail GATE_COMPAT "postgres not ready for bootstrap candidate"
-          require_ready "$port" || fail GATE_COMPAT "bootstrap candidate not ready on ${port}"
+          production_schema_gate || fail GATE_COMPAT "${GATE_REASON}"
+          require_live "$port" || fail GATE_COMPAT "bootstrap candidate not live on ${port}"
         else
-          # Two-release path: old (active baseline) and new (green candidate) must serve the same database concurrently.
-          require_ready "$PROD_ACTIVE_PORT" && require_ready "$port" || fail GATE_COMPAT "old and new are not both ready"
+          # Two-release path: the old baseline is fully ready (it still owns the singleton) and the new candidate is
+          # live against the same database; candidate readiness is proven after the singleton hand-off.
+          # The live DB must already be at the exact staging-verified migration set (old app still ready on it).
+          production_schema_gate || fail GATE_COMPAT "${GATE_REASON}"
+          require_ready "$PROD_ACTIVE_PORT" && require_live "$port" || fail GATE_COMPAT "old is not ready or new is not live"
         fi ;;
       *) fail UNKNOWN_GATE "unknown gate '${name}'" ;;
     esac
     ;;
 
+  migrate)
+    # Out-of-band forward migration with the Stage-qualified versioned SQL (expand only, autocommit per file like
+    # Stage's psql -f). Same verified bytes, same set identity; idempotent SQL. Never touches the data disk itself.
+    release_env
+    mig_out="$(python3 -I "$MIGRATION_HELPER" migration verify "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || fail MIGRATION_SPEC "${mig_out}"
+    # Base schema first: the product's own idempotent substrate initializer (scripts/db_migrate.sh --print-sql, shipped in
+    # the same immutable material dir) creates public.telemetry_events (+ingest cursor) and loop_controller_records, which
+    # the Stage-qualified expand SQL does not. Same psql transport as scripts/bootstrap.sh. Its sha256 is journaled.
+    substrate="$(migration_dir)/db_migrate.sh"
+    [[ -s "$substrate" ]] || fail MIGRATION_SUBSTRATE "base-schema initializer ${substrate} missing from the migration material"
+    substrate_sql="$(bash "$substrate" --print-sql)" && [[ -n "$substrate_sql" ]] || fail MIGRATION_SUBSTRATE "db_migrate.sh --print-sql produced no SQL"
+    compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' \
+      <<<"$substrate_sql" >/dev/null || fail MIGRATION_SUBSTRATE_FAILED "base-schema initialization failed"
+    mkdir -p "${PROD_ROOT}/state"
+    printf '%s\n' "$(sha256sum "$substrate" | cut -d' ' -f1)" > "${PROD_ROOT}/state/substrate-${RELEASE_ID}.sha256"
+    while IFS= read -r mig_name; do
+      compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' \
+        < "$(migration_dir)/migrations/${mig_name}" >/dev/null || fail MIGRATION_SQL_FAILED "${mig_name} failed"
+    done < <(python3 -I "$MIGRATION_HELPER" migration names "$RELEASE_MANIFEST_PATH" "$(migration_dir)")
+    production_schema_gate || fail GATE_SCHEMA "${GATE_REASON}"
+    ;;
+
   drain_singletons)
+    release_env
     # Exactly one singleton owner: stop it before the upstream switch.
     compose --profile singleton rm -fsv lifecycle-projector || fail DRAIN "could not stop singleton owner"
     [[ "$(singleton_count)" == "0" ]] || fail DRAIN "singleton owner still present after drain"
@@ -422,6 +527,8 @@ PY
 
   resume_baseline_singletons)
     baseline_env
+    # A candidate projector may already own the singleton; remove it first so exactly one (baseline) remains.
+    compose --profile singleton rm -fsv lifecycle-projector || fail ACTIVATE "could not stop candidate singleton owner"
     compose --profile core up -d --no-build runtime-manager governance deployment || fail ACTIVATE "could not restore baseline core owner closure"
     compose --profile singleton up -d --no-build --no-recreate lifecycle-projector || fail ACTIVATE "could not start baseline singleton owner"
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
