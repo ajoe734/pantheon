@@ -75,7 +75,10 @@ services:
     restart: unless-stopped
     profiles: ["core"]
     <<: *secrets
-    environment: *core_env
+    environment:
+      <<: *core_env
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+      PANTHEON_COMMAND_STATE_FILE: /data/runtime/internal_api_commands.json
     volumes:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/runtime:/data/runtime
     labels: {"org.pantheon.role": "owner"}
@@ -89,7 +92,9 @@ services:
     restart: unless-stopped
     profiles: ["core"]
     <<: *secrets
-    environment: *core_env
+    environment:
+      <<: *core_env
+      GOVERNANCE_DATA_DIR: /data/governance
     volumes:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance
     labels: {"org.pantheon.role": "owner"}
@@ -103,7 +108,11 @@ services:
     restart: unless-stopped
     profiles: ["core"]
     <<: *secrets
-    environment: *core_env
+    environment:
+      <<: *core_env
+      DEPLOYMENT_DATA_DIR: /data/governance
+      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
     volumes:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/runtime:/data/runtime:ro
@@ -123,6 +132,7 @@ services:
     environment:
       <<: *core_env
       LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
+      BFF_DATA_DIR: /data/bff
       # Isolated staging DSNs come from the secrets env file (validated by bootstrap.sh).
       GIT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
     volumes:
@@ -142,6 +152,9 @@ services:
       <<: *core_env
       BFF_COMMIT: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
       BFF_IMAGE_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:?operator_bff digest required}
+      BFF_DATA_DIR: /data/bff
+      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
       PANTHEON_BFF_AUTH_MODE: strict
       PANTHEON_BFF_AUTH_STUB: "false"
       PANTHEON_BFF_OIDC_ISSUER: ${STAGING_IDP_ISSUER:?staging idp issuer required}

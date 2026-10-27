@@ -77,6 +77,14 @@ FORBIDDEN_TABLE_RE = re.compile(r"credential|secret|api_?key|password|session_to
 SENSITIVE_COLUMN_RE = re.compile(
     r"password|secret|token|api_?key|private_key|credential|cookie|authorization", re.IGNORECASE
 )
+# Structured PII keys/columns (JSON content, nested arrays, direct columns) are masked, never kept.
+PII_KEY_RE = re.compile(
+    r"^(?:full_?name|first_?name|last_?name|given_?name|family_?name|display_?name|legal_?name"
+    r"|phone(?:_?number)?|mobile(?:_?number)?|national_?id|id_?number|ssn|tax_?id|passport(?:_?number)?"
+    r"|date_?of_?birth|dob|birth_?date|(?:street_|home_|mailing_|billing_)?address)$",
+    re.IGNORECASE,
+)
+PII_MASKED_VALUES = (REDACTED, "", None, {}, [])
 # Product durable owner stores (bind-mounted by the staging compose, archived with backups).
 OWNER_STORE_PATHS = ("bff", "runtime", "governance")
 
@@ -200,6 +208,10 @@ def _scrub_value(value: Any) -> Any:
                 raise SanitizationError("JSON column keys must be strings")
             if _is_sensitive_key(k):
                 continue
+            if PII_KEY_RE.fullmatch(k):
+                if v is not None:
+                    cleaned[k] = REDACTED
+                continue
             cleaned_v = _scrub_value(v)
             if cleaned_v is not None:
                 cleaned[k] = cleaned_v
@@ -239,6 +251,12 @@ def _validate_dataset_schema(tables: Any, catalog: dict[str, dict[str, Any]]) ->
         short = name.rsplit(".", 1)[-1] if isinstance(name, str) else ""
         if short in FORBIDDEN_TABLES or FORBIDDEN_TABLE_RE.search(short):
             raise SanitizationError(f"credential table(s) must not exist in staging (fail-closed): {[name]}")
+    missing_tables = set(catalog.keys()) - set(tables.keys())
+    if missing_tables:
+        raise SanitizationError(
+            f"catalog relation(s) missing from sanitization input (fail-closed; empty relations "
+            f"must be listed as []): {sorted(missing_tables)}"
+        )
     unknown_tables = set(tables.keys()) - set(catalog.keys())
     if unknown_tables:
         raise SanitizationError(
@@ -302,6 +320,8 @@ def sanitize_dataset(payload: dict[str, Any]) -> dict[str, Any]:
                 col_type = _column_type(catalog[table_name][column])
                 if col_type == "bytea" or SENSITIVE_COLUMN_RE.search(column):
                     row[column] = _redacted_form(value, col_type)
+                elif PII_KEY_RE.fullmatch(column):
+                    row[column] = REDACTED
                 else:
                     row[column] = _scrub_value(value)
 
@@ -338,6 +358,8 @@ def verify_sanitized_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
                     raise SanitizationError(f"binary column {table_name}.{column} must be empty in staging")
                 if SENSITIVE_COLUMN_RE.search(column) and value not in (REDACTED, {}, []):
                     raise SanitizationError(f"secret-named column {table_name}.{column} holds an unredacted value")
+                if PII_KEY_RE.fullmatch(column) and value not in PII_MASKED_VALUES:
+                    raise SanitizationError(f"PII column {table_name}.{column} holds an unmasked value")
                 _assert_no_sensitive_keys(value)
 
     serialized = json.dumps(tables, sort_keys=True)
@@ -363,6 +385,8 @@ def _assert_no_sensitive_keys(obj: Any) -> None:
         for k, v in obj.items():
             if _is_sensitive_key(k):
                 raise SanitizationError(f"sensitive key {k!r} remains in sanitized JSON column")
+            if PII_KEY_RE.fullmatch(k) and v not in PII_MASKED_VALUES:
+                raise SanitizationError(f"PII key {k!r} remains unmasked in sanitized JSON column")
             _assert_no_sensitive_keys(v)
     elif isinstance(obj, list):
         for item in obj:

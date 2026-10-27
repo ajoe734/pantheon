@@ -814,7 +814,10 @@ def main() -> int:
             store_dir = root / store
             if not store_dir.is_dir():
                 _fail("OWNER_STORE_MISSING", f"Durable owner store {store_dir} is missing")
-            for f in sorted(p for p in store_dir.rglob("*") if p.is_file()):
+            files = sorted(p for p in store_dir.rglob("*") if p.is_file())
+            if not files:
+                _fail("OWNER_STORE_EMPTY", f"Durable owner store {store_dir} holds no acknowledged state")
+            for f in files:
                 lines.append(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(root)}\n")
         return "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
 

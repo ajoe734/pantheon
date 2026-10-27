@@ -1264,6 +1264,58 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         self.assertIn("runtime:/data/runtime:ro", mounts["deployment"])
         self.assertIn("governance:/data/governance:ro", mounts["operator-bff"])
 
+    def test_compose_binds_native_store_paths_to_mounted_owner_dirs(self) -> None:
+        compose = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())
+        env = {svc: spec.get("environment", {}) for svc, spec in compose["services"].items()}
+        self.assertEqual(env["runtime-manager"]["PANTHEON_RUNTIME_BINDING_STORE_PATH"], "/data/runtime/runtime_bindings.json")
+        self.assertEqual(env["runtime-manager"]["PANTHEON_COMMAND_STATE_FILE"], "/data/runtime/internal_api_commands.json")
+        self.assertEqual(env["governance"]["GOVERNANCE_DATA_DIR"], "/data/governance")
+        self.assertEqual(env["deployment"]["DEPLOYMENT_DATA_DIR"], "/data/governance")
+        self.assertEqual(env["deployment"]["PANTHEON_GOVERNANCE_DATA_DIR"], "/data/governance")
+        self.assertEqual(env["deployment"]["PANTHEON_RUNTIME_BINDING_STORE_PATH"], "/data/runtime/runtime_bindings.json")
+        self.assertEqual(env["operator-bff"]["BFF_DATA_DIR"], "/data/bff")
+        self.assertEqual(env["lifecycle-projector"]["BFF_DATA_DIR"], "/data/bff")
+
+    def test_structured_pii_in_json_and_direct_columns_is_masked_and_verified(self) -> None:
+        raw = _sample_raw_dataset()
+        row = raw["tables"]["agora.agora_dataset_records"][0]
+        row["content"] = {
+            "profile": {"full_name": "Jane Roe", "phone": "+886912345678", "national_id": "A123456789"},
+            "contacts": [{"mobile": "0912345678", "kind": "primary"}],
+        }
+        sanitized = staging_sanitize.sanitize_dataset(raw)
+        dumped = json.dumps(sanitized["tables"]["agora.agora_dataset_records"][0]["content"])
+        for leaked in ("Jane Roe", "+886912345678", "A123456789", "0912345678"):
+            self.assertNotIn(leaked, dumped)
+        self.assertIn("primary", dumped)
+        staging_sanitize.verify_sanitized_dataset(sanitized)
+        sanitized["tables"]["agora.agora_dataset_records"][0]["content"]["profile"]["phone"] = "+886912345678"
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "PII key"):
+            staging_sanitize.verify_sanitized_dataset(sanitized)
+
+        direct = _sample_raw_dataset()
+        direct["catalog"]["agora.agora_dataset_records"]["national_id"] = {"type": "text"}
+        direct["tables"]["agora.agora_dataset_records"][0]["national_id"] = "A123456789"
+        out = staging_sanitize.sanitize_dataset(direct)
+        self.assertEqual(out["tables"]["agora.agora_dataset_records"][0]["national_id"], "[REDACTED]")
+        out["tables"]["agora.agora_dataset_records"][0]["national_id"] = "A123456789"
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "PII column"):
+            staging_sanitize.verify_sanitized_dataset(out)
+
+    def test_dataset_must_cover_every_catalog_relation_including_empty_ones(self) -> None:
+        raw = _sample_raw_dataset()
+        for rel in ("agora.agora_dataset_records", "governance.governance_records"):
+            del raw["tables"][rel]
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "missing from sanitization input"):
+            staging_sanitize.sanitize_dataset(raw)
+        raw = _sample_raw_dataset()
+        raw["tables"]["governance.governance_records"] = []
+        sanitized = staging_sanitize.sanitize_dataset(raw)
+        self.assertEqual(staging_sanitize.verify_sanitized_dataset(sanitized)["row_counts"]["governance.governance_records"], 0)
+        del sanitized["tables"]["governance.governance_records"]
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "missing from sanitization input"):
+            staging_sanitize.verify_sanitized_dataset(sanitized)
+
     def test_rejects_production_data_and_unknown_schema_inputs_fail_closed(self) -> None:
         prod_input = _sample_raw_dataset()
         prod_input["metadata"]["source_environment"] = "production"
@@ -1885,6 +1937,25 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         self.assertNotEqual(ver.returncode, 0)
         self.assertIn("OWNER_STORE_MISSING", ver.stderr)
+
+    def test_collector_rejects_empty_owner_store(self) -> None:
+        subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self._unlock_vm_env_dir()
+        (self.data_mount / "runtime" / "owner-state.json").unlink()
+        ver = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(ver.returncode, 0)
+        self.assertIn("OWNER_STORE_EMPTY", ver.stderr)
 
     def test_no_gcloud_false_success_rejected_fail_closed(self) -> None:
         # 1. STAGING_DRY_RUN=false with unset/empty GCLOUD_BIN must fail closed and record 0 resources
