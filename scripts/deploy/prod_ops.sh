@@ -195,27 +195,25 @@ if not isinstance(m.get("compatibility_manifest_sha256"), str) or not sha.fullma
 PY
 )" || return 1
 }
-# Live production database readback. The catalog/migration state of THIS database is the contract: the applied
-# schema_migrations set (version:checksum, sorted) must hash to the manifest migration_set_sha256 that staging
-# verified. Missing table, empty set, query failure or drift all fail closed. This gate never applies migrations.
+# Live production database readback, using the staging-owned contract unchanged: the latest applied
+# schema_migrations.checksum_sha256 (ORDER BY applied_at DESC LIMIT 1, exactly as staging collect-gates reads it)
+# IS the migration set identity and must equal the manifest migration_set_sha256 that staging verified.
+# Missing table, no rows, query failure or drift all fail closed. This gate never applies migrations.
 production_schema_gate() {
   local rows
-  rows="$(compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F ":" -c "SELECT version, checksum_sha256 FROM schema_migrations ORDER BY version"' 2>/dev/null)" \
+  rows="$(compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT checksum_sha256 FROM schema_migrations ORDER BY applied_at DESC LIMIT 1"' 2>/dev/null)" \
     || { GATE_REASON="production schema_migrations unreadable (missing table or database unreachable)"; return 1; }
   GATE_REASON="$(printf '%s\n' "$rows" | python3 -c '
-import hashlib, json, re, sys
+import json, re, sys
 want = json.load(open(sys.argv[1])).get("migration_set_sha256")
-lines = [l for l in sys.stdin.read().splitlines() if l.strip()]
-if not lines:
+lines = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
+if len(lines) != 1:
     print("production schema_migrations is empty: no migrations applied"); sys.exit(1)
-for l in lines:
-    v, _, c = l.partition(":")
-    if not v or not re.fullmatch(r"[0-9a-f]{64}", c):
-        print("malformed schema_migrations row"); sys.exit(1)
-got = "sha256:" + hashlib.sha256(("\n".join(sorted(lines)) + "\n").encode()).hexdigest()
-w = want if isinstance(want, str) and want.startswith("sha256:") else "sha256:" + str(want)
-if got != w:
-    print(f"production migration set {got} != manifest migration_set_sha256 {w}"); sys.exit(1)
+got = lines[0]
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", got):
+    print("malformed latest schema_migrations checksum_sha256"); sys.exit(1)
+if not isinstance(want, str) or got != want:
+    print(f"production latest migration checksum {got} != manifest migration_set_sha256 {want}"); sys.exit(1)
 ' "$RELEASE_MANIFEST_PATH" 2>&1)" || return 1
 }
 container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }

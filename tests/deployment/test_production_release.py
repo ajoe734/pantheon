@@ -24,14 +24,10 @@ import yaml
 from scripts.deploy import prod_preflight, release_manifest
 from tests.deployment.test_staging_release import _sample_manifest as _staging_sample_manifest
 
-# Applied-migration rows served by the fake production postgres; the manifest set hash is bound to them.
-SCHEMA_ROWS = [f"0001_init:{'a' * 64}", f"0002_expand:{'b' * 64}"]
-
-
-def _sample_manifest(**kw):
-    m = _staging_sample_manifest(**kw)
-    m["migration_set_sha256"] = "sha256:" + hashlib.sha256(("\n".join(sorted(SCHEMA_ROWS)) + "\n").encode()).hexdigest()
-    return m
+# Staging-produced manifests are used UNMODIFIED: the fake production postgres serves the latest
+# schema_migrations.checksum_sha256 exactly as staging records it (prefixed), which must equal the manifest value.
+_sample_manifest = _staging_sample_manifest
+SCHEMA_ROWS = [_staging_sample_manifest()["migration_set_sha256"]]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWITCH = REPO_ROOT / "scripts" / "deploy" / "prod_atomic_switch.sh"
@@ -325,10 +321,6 @@ class OpsHarness(unittest.TestCase):
         self.token = self.tmp / "token"
         self.token.write_text("synthetic-readonly-token")
 
-    @staticmethod
-    def _set_hash(rows):
-        return "sha256:" + hashlib.sha256(("\n".join(sorted(rows)) + "\n").encode()).hexdigest()
-
     def env(self, **extra):
         env = {**os.environ, **PROD_ENV, "PATH": f"{self.bin}:{os.environ['PATH']}", "BIN_LOG": str(self.log),
                "FAKE_STATE": str(self.state), "PROD_ROOT": str(self.root), "PROD_DATA_MOUNT": str(self.tmp / "data"),
@@ -423,6 +415,16 @@ class ProdOpsTests(OpsHarness):
         self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertIn("UNKNOWN_GATE", self.ops("gate", "rel-1", "bogus", "8002").stderr)
 
+    def test_gate_accepts_checksum_exactly_as_staging_records_it(self):
+        # Cross-contract regression: staging's unmodified manifest/raw dataset checksum (prefixed, latest row)
+        # is what the production schema gate must accept, with no re-derived set hash.
+        from tests.deployment.test_staging_release import _sample_raw_dataset
+        staging_checksum = _sample_raw_dataset()["metadata"]["schema_migration_sha256"]
+        self.assertEqual(staging_checksum, self.manifest["migration_set_sha256"])
+        (self.state / "schema_rows").write_text(staging_checksum + "\n")
+        for gate in ("schema", "old_new_compat"):
+            self.assertEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+
     def test_schema_gates_read_live_production_database_and_fail_on_absence_or_drift(self):
         sr = self.state / "schema_rows"
         for gate in ("schema", "old_new_compat"):
@@ -434,11 +436,12 @@ class ProdOpsTests(OpsHarness):
             sr.unlink()
             self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
             # Drift: applied set differs from the staging-verified manifest set.
-            sr.write_text(f"0001_init:{'a' * 64}\n")
+            sr.write_text("sha256:" + "c" * 64 + "\n")
             r = self.ops("gate", "rel-1", gate, "8002")
             self.assertNotEqual(r.returncode, 0, gate)
             self.assertIn("migration_set_sha256", r.stderr)
-            sr.write_text(f"0001_init:{'a' * 64}\n0002_expand:{'c' * 64}\n")
+            # Bare (unprefixed) or otherwise malformed checksum is not the staging-recorded form.
+            sr.write_text(SCHEMA_ROWS[0].split(":", 1)[1] + "\n")
             self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
             sr.write_text("\n".join(self.schema_rows) + "\n")
         # Bootstrap path also verifies the DB instead of pg_isready.
