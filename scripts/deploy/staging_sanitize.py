@@ -62,36 +62,23 @@ RETIRED_IDENTIFIERS = (
     "/home/lupin",
 )
 
-# Actual accepted product storage (read-only catalog of the pinned Dev Postgres `public` schema,
-# 2026-10-27). Staging carries no identity/credential/settings tables: tenants and RBAC come from
-# BFF JWT claims, safe-off flags from service env, and the trade-journey projection schema is
-# created by the existing versioned SQL (services/trade_journey/migrations).
-ALLOWED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
-    "telemetry_events": frozenset({
-        "event_id", "event_type", "payload", "created_at", "ingested_at", "ingested_seq",
-    }),
-    "loop_controller_records": frozenset({
-        "actual_state_query", "backlog", "controller_id", "controller_name", "deployment_sha",
-        "desired_state_query", "dlq_count", "environment", "evidence_refs", "lag",
-        "last_failure_at", "last_failure_reason", "last_heartbeat_at", "last_repair_at",
-        "last_repair_reason", "last_success_at", "last_tick_at", "lease_expires_at", "loop_id",
-        "payload", "tenant_id", "truth_level", "updated_at",
-    }),
-    "trade_journey_action_ledger": frozenset({
-        "completed_at", "idempotency_key", "receipt", "request_hash", "reserved_at", "state",
-    }),
-}
-# Per-table JSON columns that must be scrubbed of secret-bearing keys.
-JSON_COLUMNS: dict[str, tuple[str, ...]] = {
-    "telemetry_events": ("payload",),
-    "loop_controller_records": ("payload", "evidence_refs"),
-    "trade_journey_action_ledger": ("receipt",),
-}
+# Staging carries the full owned application schema, not a hand-picked table list: the allowed
+# tables/columns are the catalog read back from the migrated staging Postgres (every non-system
+# schema: public, trade_journey_projection, agora, governance, research, ...). A table or column
+# that is not in that catalog fails closed; there are no phantom identity/credential/settings
+# tables (tenants and RBAC come from BFF JWT claims, safe-off flags from service env).
+SYSTEM_SCHEMAS = frozenset({"pg_catalog", "information_schema"})
+QUALIFIED_TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$")
+REDACTED = "[REDACTED]"
+# Credential-bearing tables must never exist in staging, whatever schema they live in.
+FORBIDDEN_TABLES = frozenset({"broker_credentials", "exchange_api_keys", "user_sessions"})
+FORBIDDEN_TABLE_RE = re.compile(r"credential|secret|api_?key|password|session_token", re.IGNORECASE)
+# Columns whose name says they carry a secret are redacted on every table (e.g. lease_token).
+SENSITIVE_COLUMN_RE = re.compile(
+    r"password|secret|token|api_?key|private_key|credential|cookie|authorization", re.IGNORECASE
+)
 # Product durable owner stores (bind-mounted by the staging compose, archived with backups).
 OWNER_STORE_PATHS = ("bff", "runtime", "governance")
-# Credential-bearing tables must never exist in staging; unknown tables already fail closed, this
-# names the intent explicitly.
-FORBIDDEN_TABLES = frozenset({"broker_credentials", "exchange_api_keys", "user_sessions"})
 
 
 SENSITIVE_PAYLOAD_KEYS = frozenset({
@@ -184,34 +171,75 @@ def validate_sanitized_snapshot_metadata(metadata: dict[str, Any]) -> dict[str, 
     return metadata
 
 
-def _strip_sensitive_json(value: Any) -> Any:
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return lowered in SENSITIVE_PAYLOAD_KEYS or any(
+        token in lowered for token in ("secret", "token", "password", "private_key", "api_key")
+    )
+
+
+def _mask_email(match: "re.Match[str]") -> str:
+    email = match.group(0)
+    if INTERNAL_STAGING_EMAIL_RE.fullmatch(email):
+        return email
+    return f"staging-user-{hashlib.sha256(email.lower().encode('utf-8')).hexdigest()[:12]}@pantheon.internal"
+
+
+def _scrub_string(value: str) -> str:
+    for pattern in SECRET_VALUE_PATTERNS:
+        value = pattern.sub(REDACTED, value)
+    return RAW_EMAIL_RE.sub(_mask_email, value)
+
+
+def _scrub_value(value: Any) -> Any:
+    """Recursively drop secret-bearing keys, redact secret values and mask raw emails."""
     if isinstance(value, dict):
         cleaned: dict[str, Any] = {}
         for k, v in value.items():
             if not isinstance(k, str):
-                raise SanitizationError("telemetry payload keys must be strings")
-            if k.lower() in SENSITIVE_PAYLOAD_KEYS or any(
-                token in k.lower() for token in ("secret", "token", "password", "private_key", "api_key")
-            ):
+                raise SanitizationError("JSON column keys must be strings")
+            if _is_sensitive_key(k):
                 continue
-            cleaned_v = _strip_sensitive_json(v)
+            cleaned_v = _scrub_value(v)
             if cleaned_v is not None:
                 cleaned[k] = cleaned_v
         return cleaned
     if isinstance(value, list):
-        return [_strip_sensitive_json(item) for item in value if item is not None]
+        return [_scrub_value(item) for item in value if item is not None]
+    if isinstance(value, str):
+        return _scrub_string(value)
     return value
 
 
-def _validate_dataset_schema(tables: dict[str, Any]) -> None:
+def _column_type(spec: Any) -> str:
+    return str(spec.get("type") if isinstance(spec, dict) else spec or "").lower()
+
+
+def _validate_catalog(catalog: Any) -> dict[str, dict[str, Any]]:
+    """The migrated staging catalog: {"schema.table": {column: {"type": ...}}} for every app schema."""
+    if not isinstance(catalog, dict) or not catalog:
+        raise SanitizationError("catalog must be a non-empty object of schema.table entries")
+    for name, columns in catalog.items():
+        if not isinstance(name, str) or not QUALIFIED_TABLE_RE.fullmatch(name):
+            raise SanitizationError(f"catalog entry {name!r} must be a schema-qualified table name")
+        schema, table = name.split(".", 1)
+        if schema in SYSTEM_SCHEMAS or schema.startswith(("pg_toast", "pg_temp")):
+            raise SanitizationError(f"catalog must not include system schema table {name!r}")
+        if table in FORBIDDEN_TABLES or FORBIDDEN_TABLE_RE.search(table):
+            raise SanitizationError(f"credential table(s) must not exist in staging (fail-closed): {[name]}")
+        if not isinstance(columns, dict) or not columns:
+            raise SanitizationError(f"catalog entry {name!r} must list its columns")
+    return catalog
+
+
+def _validate_dataset_schema(tables: Any, catalog: dict[str, dict[str, Any]]) -> None:
     if not isinstance(tables, dict) or not tables:
         raise SanitizationError("tables must be a non-empty object")
-    credential_tables = FORBIDDEN_TABLES & set(tables.keys())
-    if credential_tables:
-        raise SanitizationError(
-            f"credential table(s) must not exist in staging (fail-closed): {sorted(credential_tables)}"
-        )
-    unknown_tables = set(tables.keys()) - set(ALLOWED_TABLE_COLUMNS.keys())
+    for name in tables:
+        short = name.rsplit(".", 1)[-1] if isinstance(name, str) else ""
+        if short in FORBIDDEN_TABLES or FORBIDDEN_TABLE_RE.search(short):
+            raise SanitizationError(f"credential table(s) must not exist in staging (fail-closed): {[name]}")
+    unknown_tables = set(tables.keys()) - set(catalog.keys())
     if unknown_tables:
         raise SanitizationError(
             f"unknown table(s) in sanitization input (fail-closed): {sorted(unknown_tables)}"
@@ -219,7 +247,7 @@ def _validate_dataset_schema(tables: dict[str, Any]) -> None:
     for table_name, rows in tables.items():
         if not isinstance(rows, list):
             raise SanitizationError(f"table {table_name!r} must be a list of row objects")
-        allowed_cols = ALLOWED_TABLE_COLUMNS[table_name]
+        allowed_cols = set(catalog[table_name])
         for idx, row in enumerate(rows):
             if not isinstance(row, dict):
                 raise SanitizationError(f"table {table_name!r} row {idx} must be an object")
@@ -231,68 +259,85 @@ def _validate_dataset_schema(tables: dict[str, Any]) -> None:
                 )
 
 
+def _redacted_form(value: Any, col_type: str) -> Any:
+    if col_type == "bytea":
+        return None
+    if isinstance(value, dict):
+        return {}
+    if isinstance(value, list):
+        return []
+    if isinstance(value, str):
+        return REDACTED
+    return None
+
+
 def sanitize_dataset(payload: dict[str, Any]) -> dict[str, Any]:
-    """Sanitize a non-production dataset and verify zero PII/secret leakage."""
+    """Sanitize a non-production dataset covering every owned schema and verify zero PII/secrets."""
     if not isinstance(payload, dict):
         raise SanitizationError("dataset payload must be a JSON object")
     _check_no_retired_identifiers(payload)
 
-    required_top = {"metadata", "tables"}
+    required_top = {"metadata", "catalog", "tables"}
     allowed_top = required_top | {"observed_from_live_vm", "dry_run"}
     if not required_top.issubset(payload.keys()) or not set(payload.keys()).issubset(allowed_top):
-        raise SanitizationError("dataset payload must contain exact keys: metadata, tables")
+        raise SanitizationError("dataset payload must contain exact keys: metadata, catalog, tables")
 
     metadata = copy.deepcopy(payload["metadata"])
     metadata["pii_masked"] = True
     metadata["secrets_excluded"] = True
     validate_sanitized_snapshot_metadata(metadata)
 
+    catalog = _validate_catalog(payload["catalog"])
     raw_tables = payload["tables"]
-    _validate_dataset_schema(raw_tables)
+    _validate_dataset_schema(raw_tables, catalog)
     tables = copy.deepcopy(raw_tables)
 
-    # Scrub secret-bearing keys from every JSON column of the actual product tables.
-    for table_name, columns in JSON_COLUMNS.items():
-        for row in tables.get(table_name, []):
-            for column in columns:
-                value = row.get(column)
-                if value is not None and not isinstance(value, (dict, list)):
-                    raise SanitizationError(f"{table_name}.{column} must be a JSON object, array or null")
-                if value is not None:
-                    row[column] = _strip_sensitive_json(value)
+    # Every column of every table in every schema is scrubbed: secret-named columns and bytea are
+    # redacted, JSON structures lose secret-bearing keys, strings lose secret values and raw emails.
+    for table_name, rows in tables.items():
+        for row in rows:
+            for column, value in list(row.items()):
+                if value is None:
+                    continue
+                col_type = _column_type(catalog[table_name][column])
+                if col_type == "bytea" or SENSITIVE_COLUMN_RE.search(column):
+                    row[column] = _redacted_form(value, col_type)
+                else:
+                    row[column] = _scrub_value(value)
 
     canonical_tables = json.dumps(tables, sort_keys=True, separators=(",", ":")).encode("utf-8")
     metadata["dataset_sha256"] = "sha256:" + hashlib.sha256(canonical_tables).hexdigest()
 
-    result = {"metadata": metadata, "tables": tables}
+    result = {"metadata": metadata, "catalog": catalog, "tables": tables}
     verify_sanitized_dataset(result)
     return result
 
 
 def verify_sanitized_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     """Fail closed if a sanitized dataset still contains PII, secrets, or unsafe flags."""
-    required_top = {"metadata", "tables"}
+    required_top = {"metadata", "catalog", "tables"}
     allowed_top = required_top | {"observed_from_live_vm", "dry_run"}
     if (
         not isinstance(dataset, dict)
         or not required_top.issubset(dataset.keys())
         or not set(dataset.keys()).issubset(allowed_top)
     ):
-        raise SanitizationError("sanitized dataset must contain exact keys: metadata, tables")
+        raise SanitizationError("sanitized dataset must contain exact keys: metadata, catalog, tables")
     validate_sanitized_snapshot_metadata(dataset["metadata"])
+    catalog = _validate_catalog(dataset["catalog"])
     tables = dataset["tables"]
-    _validate_dataset_schema(tables)
+    _validate_dataset_schema(tables, catalog)
 
-    forbidden = FORBIDDEN_TABLES & set(tables.keys())
-    if forbidden:
-        raise SanitizationError(f"credential table(s) must not exist in staging: {sorted(forbidden)}")
-
-    for table_name, columns in JSON_COLUMNS.items():
-        for row in tables.get(table_name, []):
-            for column in columns:
-                value = row.get(column)
-                if value is not None and not isinstance(value, (dict, list)):
-                    raise SanitizationError(f"{table_name}.{column} must be a JSON object, array or null")
+    for table_name, rows in tables.items():
+        for row in rows:
+            for column, value in row.items():
+                if value is None:
+                    continue
+                col_type = _column_type(catalog[table_name][column])
+                if col_type == "bytea":
+                    raise SanitizationError(f"binary column {table_name}.{column} must be empty in staging")
+                if SENSITIVE_COLUMN_RE.search(column) and value not in (REDACTED, {}, []):
+                    raise SanitizationError(f"secret-named column {table_name}.{column} holds an unredacted value")
                 _assert_no_sensitive_keys(value)
 
     serialized = json.dumps(tables, sort_keys=True)
@@ -309,15 +354,14 @@ def verify_sanitized_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
         "source_environment": dataset["metadata"]["source_environment"],
         "dataset_sha256": dataset["metadata"].get("dataset_sha256"),
         "row_counts": {name: len(rows) for name, rows in sorted(tables.items())},
+        "schemas": sorted({name.split(".", 1)[0] for name in catalog}),
     }
 
 
 def _assert_no_sensitive_keys(obj: Any) -> None:
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if k.lower() in SENSITIVE_PAYLOAD_KEYS or any(
-                token in k.lower() for token in ("secret", "token", "password", "private_key", "api_key")
-            ):
+            if _is_sensitive_key(k):
                 raise SanitizationError(f"sensitive key {k!r} remains in sanitized JSON column")
             _assert_no_sensitive_keys(v)
     elif isinstance(obj, list):
@@ -470,6 +514,7 @@ def verify_backup_restore_readability(record: dict[str, Any]) -> dict[str, Any]:
         "owner_store_manifest_sha256",
         "restored_owner_store_manifest_sha256",
         "owner_store_dirs",
+        "catalog_tables",
     }
     if not required.issubset(set(record.keys())):
         raise SanitizationError(
@@ -492,11 +537,18 @@ def verify_backup_restore_readability(record: dict[str, Any]) -> dict[str, Any]:
     live_counts = record["live_row_counts"]
     if not isinstance(counts, dict) or not isinstance(live_counts, dict):
         raise SanitizationError("restored_row_counts and live_row_counts must be objects")
-    if "telemetry_events" not in counts:
-        raise SanitizationError("restored database must expose the telemetry_events table")
-    unknown = set(counts.keys()) - set(ALLOWED_TABLE_COLUMNS.keys())
-    if unknown:
-        raise SanitizationError(f"restored_row_counts has unknown table(s): {sorted(unknown)}")
+    catalog_tables = record["catalog_tables"]
+    if not isinstance(catalog_tables, list) or not catalog_tables:
+        raise SanitizationError("catalog_tables must list every owned schema.table")
+    if "public.telemetry_events" not in counts:
+        raise SanitizationError("restored database must expose the public.telemetry_events table")
+    bad = [n for n in counts if not isinstance(n, str) or not QUALIFIED_TABLE_RE.fullmatch(n)]
+    if bad:
+        raise SanitizationError(f"restored_row_counts has unknown table(s): {sorted(map(str, bad))}")
+    if sorted(counts.keys()) != sorted(catalog_tables):
+        raise SanitizationError(
+            "restored_row_counts must cover exactly the full owned catalog (every schema.table)"
+        )
     for name, value in counts.items():
         if type(value) is not int or value < 0:
             raise SanitizationError(f"restored row count for {name!r} must be a non-negative integer")

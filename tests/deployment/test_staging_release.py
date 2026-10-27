@@ -630,9 +630,10 @@ if tool in ("psql", "pg_dump", "pg_restore"):
         "public.telemetry_events": _cols("event_id", "event_type", "payload", "created_at", "ingested_at", "ingested_seq"),
         "public.loop_controller_records": _cols("controller_id", "loop_id", "payload", "evidence_refs", "tenant_id", "updated_at"),
         "public.trade_journey_action_ledger": _cols("idempotency_key", "request_hash", "receipt", "state"),
+        "agora.agora_dataset_records": _cols("evidence_id", "tenant_id", "user_id", "content", "lease_token"),
+        "governance.governance_records": _cols("record_id", "payload"),
     }
     db_schema = db_entry.setdefault("schema", default_catalog)
-    real_tables = ("telemetry_events", "loop_controller_records", "trade_journey_action_ledger")
 
     sql_file = ""
     for i, a in enumerate(args):
@@ -656,14 +657,15 @@ if tool in ("psql", "pg_dump", "pg_restore"):
         print(json.dumps(db_schema, sort_keys=True))
         raise SystemExit(0)
 
-    if "(SELECT count(*) FROM public." in sql:
-        print(json.dumps({t: len(db_tables.get(t) or []) for t in real_tables}, sort_keys=True))
-        raise SystemExit(0)
-    if "json_build_object('loop_controller_records'" in sql:
-        print(json.dumps({t: db_tables.get(t) or [] for t in real_tables}, sort_keys=True))
+    if "json_object_agg(k, v)" in sql:
+        # One entry per owned relation of every schema in the live catalog (not just public).
+        if "count(*)" in sql:
+            print(json.dumps({t: len(db_tables.get(t) or []) for t in db_schema}, sort_keys=True))
+        else:
+            print(json.dumps({t: db_tables.get(t) or [] for t in db_schema}, sort_keys=True))
         raise SystemExit(0)
     if sql.strip().upper().startswith("SELECT COUNT(*) FROM PUBLIC.TELEMETRY_EVENTS"):
-        print(len(db_tables.get("telemetry_events") or []))
+        print(len(db_tables.get("public.telemetry_events") or []))
         raise SystemExit(0)
 
     print("OK")
@@ -1036,6 +1038,19 @@ def _real_migration_set() -> tuple[list[dict], str]:
     return files, "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
 
 
+def _sample_catalog() -> dict:
+    def cols(*names: str) -> dict:
+        return {n: {"type": "text", "nullable": True, "has_default": False} for n in names}
+
+    return {
+        "public.telemetry_events": cols("event_id", "event_type", "payload", "created_at", "ingested_at", "ingested_seq"),
+        "public.loop_controller_records": cols("controller_id", "loop_id", "payload", "evidence_refs", "tenant_id", "updated_at"),
+        "public.trade_journey_action_ledger": cols("idempotency_key", "request_hash", "receipt", "state"),
+        "agora.agora_dataset_records": cols("evidence_id", "tenant_id", "user_id", "content", "lease_token"),
+        "governance.governance_records": cols("record_id", "payload"),
+    }
+
+
 def _sample_raw_dataset(mig_sha: str = "sha256:" + ("4" * 64)) -> dict:
     return {
         "metadata": {
@@ -1046,8 +1061,21 @@ def _sample_raw_dataset(mig_sha: str = "sha256:" + ("4" * 64)) -> dict:
             "pii_masked": False,
             "secrets_excluded": False,
         },
+        "catalog": _sample_catalog(),
         "tables": {
-            "telemetry_events": [
+            "agora.agora_dataset_records": [
+                {
+                    "evidence_id": "ev-1",
+                    "tenant_id": "tenant-alpha",
+                    "user_id": "real.person@example.com",
+                    "content": {"note": "contact real.person@example.com", "api_key": "drop-me"},
+                    "lease_token": "lease-secret-value",
+                }
+            ],
+            "governance.governance_records": [
+                {"record_id": "gov-1", "payload": {"ok": True, "refresh_token": "drop-me"}}
+            ],
+            "public.telemetry_events": [
                 {
                     "event_id": "evt-1",
                     "event_type": "loop_tick",
@@ -1062,7 +1090,7 @@ def _sample_raw_dataset(mig_sha: str = "sha256:" + ("4" * 64)) -> dict:
                     "ingested_seq": 1,
                 }
             ],
-            "loop_controller_records": [
+            "public.loop_controller_records": [
                 {
                     "controller_id": "tj-projector",
                     "loop_id": "loop-1",
@@ -1071,7 +1099,7 @@ def _sample_raw_dataset(mig_sha: str = "sha256:" + ("4" * 64)) -> dict:
                     "evidence_refs": [{"ref": "e1", "access_token": "drop-me"}],
                 }
             ],
-            "trade_journey_action_ledger": [
+            "public.trade_journey_action_ledger": [
                 {
                     "idempotency_key": "idem-1",
                     "request_hash": "h1",
@@ -1084,7 +1112,7 @@ def _sample_raw_dataset(mig_sha: str = "sha256:" + ("4" * 64)) -> dict:
 
 
 def _sample_backup_record(owner_sha: str = "sha256:" + ("9" * 64)) -> dict:
-    counts = {"telemetry_events": 1, "loop_controller_records": 1, "trade_journey_action_ledger": 1}
+    counts = {name: 1 for name in _sample_catalog()}
     return {
         "backup_id": "stg-backup-20261024-001",
         "backup_sha256": "sha256:" + ("8" * 64),
@@ -1098,6 +1126,7 @@ def _sample_backup_record(owner_sha: str = "sha256:" + ("9" * 64)) -> dict:
         "owner_store_manifest_sha256": owner_sha,
         "restored_owner_store_manifest_sha256": owner_sha,
         "owner_store_dirs": ["bff", "runtime", "governance"],
+        "catalog_tables": sorted(counts),
     }
 
 
@@ -1196,17 +1225,30 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         self.assertTrue(result["sanitized_verified"])
         self.assertEqual(
             sorted(sanitized["tables"]),
-            ["loop_controller_records", "telemetry_events", "trade_journey_action_ledger"],
+            [
+                "agora.agora_dataset_records",
+                "governance.governance_records",
+                "public.loop_controller_records",
+                "public.telemetry_events",
+                "public.trade_journey_action_ledger",
+            ],
         )
-        payload = sanitized["tables"]["telemetry_events"][0]["payload"]
+        self.assertEqual(result["schemas"], ["agora", "governance", "public"])
+        agora = sanitized["tables"]["agora.agora_dataset_records"][0]
+        self.assertEqual(agora["lease_token"], "[REDACTED]")
+        self.assertRegex(agora["user_id"], r"^staging-user-[0-9a-f]{12}@pantheon\.internal$")
+        self.assertNotIn("real.person@example.com", json.dumps(agora))
+        self.assertNotIn("api_key", agora["content"])
+        self.assertNotIn("refresh_token", sanitized["tables"]["governance.governance_records"][0]["payload"])
+        payload = sanitized["tables"]["public.telemetry_events"][0]["payload"]
         self.assertNotIn("token", payload)
         self.assertNotIn("auth", payload)
         self.assertNotIn("broker_secret", payload["nested"])
         self.assertEqual(payload["nested"]["latency_ms"], 42)
-        loop = sanitized["tables"]["loop_controller_records"][0]
+        loop = sanitized["tables"]["public.loop_controller_records"][0]
         self.assertNotIn("api_key", loop["payload"])
         self.assertNotIn("access_token", loop["evidence_refs"][0])
-        self.assertNotIn("client_secret", sanitized["tables"]["trade_journey_action_ledger"][0]["receipt"])
+        self.assertNotIn("client_secret", sanitized["tables"]["public.trade_journey_action_ledger"][0]["receipt"])
 
     def test_compose_mounts_durable_owner_stores_like_accepted_dev_wiring(self) -> None:
         compose = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())
@@ -1229,27 +1271,37 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
             staging_sanitize.sanitize_dataset(prod_input)
 
         unknown_table = _sample_raw_dataset()
-        unknown_table["tables"]["secret_live_orders"] = [{"id": "1"}]
+        unknown_table["tables"]["agora.not_in_catalog"] = [{"id": "1"}]
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "unknown table"):
             staging_sanitize.sanitize_dataset(unknown_table)
 
         phantom_table = _sample_raw_dataset()
-        phantom_table["tables"]["users"] = [{"id": "usr-1"}]
+        phantom_table["tables"]["public.users"] = [{"id": "usr-1"}]
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "unknown table"):
             staging_sanitize.sanitize_dataset(phantom_table)
 
         credential_table = _sample_raw_dataset()
-        credential_table["tables"]["broker_credentials"] = []
+        credential_table["catalog"]["public.broker_credentials"] = {"id": {"type": "text"}}
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "credential table"):
             staging_sanitize.sanitize_dataset(credential_table)
 
+        unknown_secret_table = _sample_raw_dataset()
+        unknown_secret_table["tables"]["secret_live_orders"] = [{"id": "1"}]
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "credential table"):
+            staging_sanitize.sanitize_dataset(unknown_secret_table)
+
+        unredacted = staging_sanitize.sanitize_dataset(_sample_raw_dataset())
+        unredacted["tables"]["agora.agora_dataset_records"][0]["lease_token"] = "still-live"
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "unredacted"):
+            staging_sanitize.verify_sanitized_dataset(unredacted)
+
         unknown_col = _sample_raw_dataset()
-        unknown_col["tables"]["telemetry_events"][0]["raw_payload"] = {"x": 1}
+        unknown_col["tables"]["public.telemetry_events"][0]["raw_payload"] = {"x": 1}
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "unknown column"):
             staging_sanitize.sanitize_dataset(unknown_col)
 
         residual = staging_sanitize.sanitize_dataset(_sample_raw_dataset())
-        residual["tables"]["telemetry_events"][0]["payload"]["api_key"] = "x"
+        residual["tables"]["public.telemetry_events"][0]["payload"]["api_key"] = "x"
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "sensitive key"):
             staging_sanitize.verify_sanitized_dataset(residual)
 
@@ -1298,7 +1350,7 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         )
         for mutate, pattern in (
             (lambda r: r.update(restored_catalog_sha256="sha256:" + "0" * 64), "restored catalog hash"),
-            (lambda r: r["restored_row_counts"].update(telemetry_events=7), "row counts differ"),
+            (lambda r: r["restored_row_counts"].update({"public.telemetry_events": 7}), "row counts differ"),
             (lambda r: r["restored_row_counts"].update(users=1), "unknown table"),
             (lambda r: r.update(restored_owner_store_manifest_sha256="sha256:" + "0" * 64), "owner-store file manifest"),
             (lambda r: r.update(owner_store_dirs=["bff"]), "owner store backup must cover"),
@@ -1479,7 +1531,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 "migration_set_sha256": self.manifest["migration_set_sha256"],
                 "compatibility_manifest_sha256": self.manifest["compatibility_manifest_sha256"],
                 "databases": {
-                    "pantheon_staging": {"tables": sanitized["tables"]},
+                    "pantheon_staging": {"tables": sanitized["tables"], "schema": _sample_catalog()},
                 },
             }, indent=2, sort_keys=True),
             encoding="utf-8",

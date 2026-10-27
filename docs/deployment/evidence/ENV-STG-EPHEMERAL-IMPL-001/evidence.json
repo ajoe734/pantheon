@@ -196,8 +196,8 @@
       "actual-Dev-postgres-catalog-vs-staging-contract-readonly-20261027.json",
       "actual-Dev-storage-wiring-readonly-redacted-20261027.json"
     ],
-    "sanitizer": "ALLOWED_TABLE_COLUMNS = telemetry_events, loop_controller_records, trade_journey_action_ledger; users/tenants/rbac/system_settings/schema_migrations and credential tables are not product tables and fail closed; JSON columns scrubbed.",
-    "migration": "Existing versioned services/trade_journey/migrations/*.sql applied via psql -f; per-file sha256 + recomputed set digest must equal manifest migration_set_sha256; catalog covers public + trade_journey_projection.",
+    "sanitizer": "Catalog-driven: allowed tables/columns are the live migrated catalog of every non-system schema (schema-qualified names; no hardcoded count). Tables/columns outside the catalog and credential-named tables fail closed; secret-named columns and bytea are redacted, JSON keys scrubbed, secret values redacted and raw emails masked in every column of every table.",
+    "migration": "Existing versioned services/trade_journey/migrations/*.sql applied via psql -f; per-file sha256 + recomputed set digest must equal manifest migration_set_sha256; catalog covers every owned app schema; backup/restore row counts must cover exactly the full catalog (catalog_tables).",
     "backup_restore": "pg_dump/pg_restore catalog hash + row counts, plus tar of durable owner stores bff/runtime/governance with file-manifest comparison.",
     "compose": "Durable owner-store bind mounts on the data disk mirroring Dev (/data/bff, /data/runtime, /data/governance).",
     "validation": "python3 -m unittest tests.deployment.test_staging_release tests.deployment.test_production_release -> 77 OK",
