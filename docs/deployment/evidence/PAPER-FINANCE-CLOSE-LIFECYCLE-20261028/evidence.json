@@ -1,0 +1,45 @@
+{
+  "task_id": "PAPER-FINANCE-CLOSE-LIFECYCLE-20261028",
+  "base_source": "d55152e365fee8d607d3d73e572f8680456a89f2",
+  "defect_reproduction": {
+    "method": "Real PaperRuntimeService + RuntimeTelemetryEmitter + TW broker path (mocked _post_broker_paper_order, no real broker/provider calls); SELL 1 @2385 then BUY 1 @2400 (broker_order_id 1ceebb77a70447a58f888be774b35590), canonical signal envelopes, build_event failure injected for order_submitted.",
+    "pre_fix_result": "Ledger commits fill_count=2 cash=99985 holdings=[] but accepted lifecycle for the close signal stops at ['signal_generation','trade_decision','risk_evaluation'] (test_close_build_failure_defers_chain_without_stranding_or_retrading failed on HEAD source with that exact list).",
+    "exact_exception": "LifecycleTelemetryOutboxError: canonical lifecycle payload build failed for order_submitted (raised from _emit_lifecycle_telemetry inside the PaperExecutionAlgorithm event sink, after _commit_fill).",
+    "source_cause": "A committed paper fill was published as five separately-admitted lifecycle events (risk_evaluation, order_submitted, order_accepted, fill, position_snapshot). Any build/persistence failure after the first admission left a partial chain, and the exception propagated out of execute() into SignalConsumer, which DLQ'd the signal as unexpected_error and left its execution fence in_progress. A reclaimed copy then only produced execution_in_progress_elsewhere noop, so the ledger (fill_count 2, flat) and the Telemetry projection (fill 1, short 1) diverged permanently.",
+    "caveat": "The runtime stderr of the original hosted failure was not available in the saved evidence; the concrete trigger on the host (transient build failure vs process interruption after risk_evaluation admission) is inferred from the saved outbox (chain tj_f1ec4785 stops at risk_evaluation seq 3, then noop events seq 4-6) and the in_progress fence. Both triggers are covered by the fix and by tests."
+  },
+  "fix": {
+    "paper_runtime.py": [
+      "Committed-fill lifecycle chain (risk, order_submitted, order_accepted, fill, position_snapshot) is staged and admitted in ONE atomic outbox write (LifecycleTelemetryOutbox.admit_many) with an idempotency batch id; no partial chain is possible.",
+      "Each committed fill is staged in the existing per-binding paper performance ledger (pending_fill_publications, written before the sink runs, same precedent as pending_performance_pair) and acknowledged only after durable admission.",
+      "PaperRuntimeService._on_order_event no longer lets a publication failure escape after the ledger committed (no DLQ, fence completes, no second trade); the staged fill is replayed on the next drain/restart with the original identities (event_id, broker_order_id, trade_episode_id, envelope) and deterministic payloads (position values come from the committed fill, created_at from the fill).",
+      "Snapshot exposes pending_fill_publication_count and fill_publication_error."
+    ],
+    "runtime_summary.py": [
+      "pnl/drawdown snapshots carry the authoritative ledger fill_count; when it exceeds the fill events projected, fill-derived positions are withheld (positions=[], position_count=null, positions_status=unavailable, reason fill_event_gap) instead of presenting a stale open position. Missing pnl/drawdown/sharpe stay absent, never zero."
+    ],
+    "unchanged": ["tenant isolation", "paper-only / zero real capital metadata", "signal idempotency and execution fence semantics (signal_consumer.py untouched)", "exact-payload outbox semantics", "no new service/gate/dispatcher"]
+  },
+  "tests": [
+    {"command": "python3 -m unittest services.execution.lean_runtime.test_paper_runtime services.execution.lean_runtime.test_signal_consumer", "outcome": "Ran 127 tests, OK"},
+    {"command": "python3 -m unittest discover -s services/execution/lean_runtime -p 'test_*.py' -t .", "outcome": "Ran 385, 1 error = pre-existing ImportError in test_algorithm_smoke (LEAN module unavailable in this environment); 3 skipped"},
+    {"command": "python3 -m unittest services.telemetry.test_runtime_summary_projection", "outcome": "Ran 66; 6 errors are pre-existing 'No module named flask' (TestRuntimeSummaryViewerAccess, TestRetirementEventDeliveryThroughRealAuth); all other tests incl. new TestCommittedCloseFinancialConsistency pass"}
+  ],
+  "new_tests": [
+    "test_paper_runtime.TestCommittedCloseLifecycleRecovery.test_close_build_failure_defers_chain_without_stranding_or_retrading (close + retry: ledger fill_count 2, cash 99985, no positions, no DLQ, chain completes once with sequence 1..7, original broker_order_id, broker called exactly twice)",
+    "...test_restart_replays_interrupted_close_chain_exactly_once (new service over same ledger/outbox replays; one fill, one position_snapshot)",
+    "...test_replay_after_admission_before_ack_is_idempotent",
+    "test_runtime_summary_projection.TestCommittedCloseFinancialConsistency (4 tests: stale open short withheld with pnl -15 / drawdown 0.00015 retained; close fill restores flat; consistent counts untouched; missing financials stay absent)"
+  ],
+  "ledger_vs_projection_after_close": {
+    "authoritative_runtime_ledger": {"fill_count": 2, "positions": [], "pnl": -15.0, "drawdown": 0.00015, "initial_equity": 100000.0},
+    "telemetry_projection": "pnl -15.0, drawdown 0.00015, positions [] with position_count 0 once the close fill is projected; positions withheld as unavailable (not stale short 1) while the ledger fill_count exceeds projected fills"
+  },
+  "historical_recovery_limitations": {
+    "signal": "sig-6686495046b6c023b19ae417e55399f8 / risk_event 3b035c9f-43f2-5f6e-beb7-e99f178489ed",
+    "treatment": "Truthful-unavailable: after this release the hosted summary receives pnl/drawdown snapshots with ledger fill_count=2 versus 1 projected fill and reports positions unavailable (fill_event_gap) instead of short 1. No fill/position event is forged, the signal is not re-executed and its in_progress fence is not cleared.",
+    "not_recoverable_by_this_change": "The historical ledger has no pending_fill_publications record (it predates this change), so the missing order_submitted/order_accepted/fill/position_snapshot events for that close cannot be replayed from durable state; any causal proof for them stays absent. Root handles hosted readback after delivery.",
+    "residual_window": "The fill is committed (ledger write) and then staged (second local write) before publication; a crash between those two local writes still leaves an unreplayable fill, but the projection fill_event_gap treatment keeps the summary truthful in that case."
+  },
+  "not_done": ["no Stage/Prod operation", "no hosted deployment", "Sharpe remains absent and no approved drawdown baseline fabricated"]
+}

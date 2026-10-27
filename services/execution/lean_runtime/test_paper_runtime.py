@@ -3807,6 +3807,194 @@ class PaperTradeEpisodeCorrelationTest(unittest.TestCase):
         asyncio.run(scenario())
 
 
+class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
+    """A committed paper close must reach the canonical lifecycle exactly once."""
+
+    BROKER_ORDER_ID = "1ceebb77a70447a58f888be774b35590"
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.binding_id = str(uuid.uuid4())
+        self.ledger_path = str(Path(self._dir.name) / "ledger.json")
+        self.outbox_path = str(Path(self._dir.name) / "outbox.json")
+        self.captured = []
+        self.broker_calls = []
+
+    def _service(self, *, fail_build_for=()):
+        import types
+
+        binding_id = self.binding_id
+        captured = self.captured
+        self.fail_build = fail_build_for = set(fail_build_for)
+
+        class Resolver:
+            def resolve(self):
+                return {
+                    "binding_id": binding_id, "runtime_id": "rt-p",
+                    "capital_pool_id": "pool", "artifact_id": "a",
+                    "artifact_version": "1", "plan_id": "p",
+                    "persona_capital_binding_id": "pcb",
+                    "deployment_mode": "paper", "execution_mode": "paper",
+                }
+
+        class Emitter(RuntimeTelemetryEmitter):
+            def build_event(self, event_type, *args, **kwargs):
+                if event_type in fail_build_for:
+                    return None
+                return super().build_event(event_type, *args, **kwargs)
+
+            def emit_payload(self, payload):
+                captured.append(payload)
+                return True
+
+        identity = RuntimeIdentity.from_env({
+            "PANTHEON_RUNTIME_ROLE": "paper", "PANTHEON_RUNTIME_MODE": "paper",
+            "PANTHEON_RUNTIME_ID": "rt-p", "PANTHEON_WORKSPACE_REF": "w",
+            "PANTHEON_AUTH_PROFILE_REF": "p", "PANTHEON_PERSONA_ID": "x",
+            "PANTHEON_SESSION_ID": "s", "PANTHEON_TRACE_ID": str(uuid.uuid4()),
+            "PANTHEON_REQUEST_ID": "r",
+        })
+        env = patch.dict(os.environ, {
+            "PANTHEON_LIFECYCLE_OUTBOX_PATH": self.outbox_path,
+            "PANTHEON_PERFORMANCE_STATE_PATH": self.ledger_path,
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        return PaperRuntimeService(
+            store=self.store,
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([
+                {"binding_id": binding_id, "runtime_id": "rt-p",
+                 "capital_pool_id": "pool", "status": "active"}
+            ]),
+            telemetry_emitter=Emitter(identity, Resolver()),
+            poll_interval_seconds=3600,
+        )
+
+    def _signal(self, suffix, action, direction, price):
+        from services.execution.lean_runtime.signal_producer import build_decision_signals
+
+        [signal] = build_decision_signals({
+            "decision_id": f"d{suffix}", "signal_id": f"s{suffix}",
+            "strategy_id": "st",
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tenant_id": "t", "environment": "paper", "symbol": "2330.TW",
+            "action": action, "direction": direction, "quantity": 1,
+            "quantity_type": "SHARES", "run_id": f"r{suffix}",
+            "order_type": "MARKET",
+            "metadata": {"market_data": {
+                "close": price, "event_time": "2026-10-27T01:00:00Z",
+                "source_ref": "source-ingest://snapshots/x",
+            }},
+        }, binding_id=self.binding_id, runtime_id="rt-p")
+        return signal
+
+    def _run(self, service, suffix, action, direction, price, order_id):
+        self.store.enqueue(self._signal(suffix, action, direction, price))
+
+        def broker(url, payload):
+            self.broker_calls.append(payload["client_order_id"])
+            return {"order_id": order_id, "fill_price": price, "fill_qty": 1,
+                    "side": action.lower()}
+
+        with patch.object(
+            PaperExecutionAlgorithm, "_post_broker_paper_order", staticmethod(broker)
+        ):
+            snapshot = service.drain_once()
+            service._consumer.flush_rebalance(f"r{suffix}", service._algo)
+        return snapshot
+
+    def _types(self, signal_id):
+        return [
+            e["event_type"] for e in self.captured
+            if e.get("signal_id") == signal_id
+        ]
+
+    def test_close_build_failure_defers_chain_without_stranding_or_retrading(self):
+        self.store = InMemoryPendingSignalStore()
+        service = self._service()
+        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self.assertEqual(service._algo._fill_count, 1)
+
+        # order_submitted cannot be built for the close: the original defect
+        # stopped the accepted chain right after risk_evaluation.
+        service = self._service(fail_build_for={"order_submitted"})
+        self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        ledger = service._algo.performance_ledger()
+        self.assertEqual(ledger["fill_count"], 2)
+        self.assertEqual(ledger["cash"], 99985.0)
+        self.assertEqual(ledger["positions"], [])
+        # Nothing partial reached the outbox and the signal was not DLQ'd.
+        self.assertEqual(self._types("sb"), ["signal_generation", "trade_decision"])
+        self.assertEqual(self.store.dlq_depth(), 0)
+        snapshot = service.snapshot()
+        self.assertEqual(snapshot["pending_fill_publication_count"], 1)
+        self.assertIn("order_submitted", snapshot["fill_publication_error"])
+
+        # Retry on the next drain once the build works: chain completes once.
+        self.fail_build.clear()
+        service.drain_once()
+        self.assertEqual(service.snapshot()["pending_fill_publication_count"], 0)
+        self.assertEqual(
+            self._types("sb"),
+            ["signal_generation", "trade_decision", "risk_evaluation",
+             "order_submitted", "order_accepted", "paper_fill_simulated",
+             "position_snapshot"],
+        )
+        fill = next(e for e in self.captured
+                    if e.get("signal_id") == "sb" and e["event_type"] == "paper_fill_simulated")
+        self.assertEqual(fill["metadata"]["broker_order_id"], self.BROKER_ORDER_ID)
+        self.assertEqual(fill["metadata"]["ledger_fill_count"], 2)
+        position = next(e for e in self.captured
+                        if e.get("signal_id") == "sb" and e["event_type"] == "position_snapshot")
+        self.assertEqual(position["position_qty"], 0.0)
+        sequences = [
+            e["sequence_no"] for e in self.captured if e.get("signal_id") == "sb"
+        ]
+        self.assertEqual(sequences, list(range(1, 8)))
+        # No further trade and no second ledger mutation from the retry.
+        self.assertEqual(self.broker_calls, ["sa", "sb"])
+        self.assertEqual(service._algo._fill_count, 2)
+
+    def test_restart_replays_interrupted_close_chain_exactly_once(self):
+        self.store = InMemoryPendingSignalStore()
+        service = self._service()
+        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        service = self._service(fail_build_for={"position_snapshot"})
+        self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        self.assertEqual(service.snapshot()["pending_fill_publication_count"], 1)
+        self.assertNotIn("paper_fill_simulated", self._types("sb"))
+
+        # Process restart: new service over the same ledger and outbox.
+        restarted = self._service()
+        self.assertEqual(restarted._algo._fill_count, 2)
+        self.assertEqual(len(restarted._algo.pending_fill_publications()), 1)
+        restarted.drain_once()
+        restarted.drain_once()
+        self.assertEqual(
+            self._types("sb").count("paper_fill_simulated"), 1
+        )
+        self.assertEqual(self._types("sb").count("position_snapshot"), 1)
+        self.assertEqual(restarted.snapshot()["pending_fill_publication_count"], 0)
+        self.assertEqual(self.broker_calls, ["sa", "sb"])
+
+    def test_replay_after_admission_before_ack_is_idempotent(self):
+        self.store = InMemoryPendingSignalStore()
+        service = self._service()
+        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        with patch.object(
+            PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
+        ):
+            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        self.assertEqual(len(service._algo.pending_fill_publications()), 1)
+        restarted = self._service()
+        restarted.drain_once()
+        self.assertEqual(self._types("sb").count("paper_fill_simulated"), 1)
+        self.assertEqual(restarted.snapshot()["pending_fill_publication_count"], 0)
+        self.assertEqual(self.broker_calls, ["sa", "sb"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
