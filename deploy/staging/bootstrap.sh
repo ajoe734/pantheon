@@ -281,9 +281,26 @@ for raw in env_path.read_text(encoding="utf-8").splitlines():
     k, v = line.split("=", 1)
     kv[k.strip()] = v.strip().strip('"').strip("'")
 
-for req in ("PANTHEON_BFF_JWT_SECRET", "PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_DATABASE_URL"):
+for req in (
+    "PANTHEON_BFF_JWT_SECRET",
+    "PANTHEON_RUNTIME_JWT_SECRET",
+    "PANTHEON_DATABASE_URL",
+    "TELEMETRY_DB_DSN",
+    "LIFECYCLE_PROJECTOR_PROJECTION_DSN",
+):
     if not kv.get(req):
         raise SystemExit(f"missing required secret key {req}")
+for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN"):
+    dsn_base, _, dsn_query = kv[dsn_key].partition("?")
+    dsn_path = dsn_base.rstrip("/")
+    if dsn_query:
+        from urllib.parse import parse_qs
+        override_keys = {"dbname", "host", "hostaddr", "port", "user", "service", "options"}
+        bad = override_keys & {k.lower() for k in parse_qs(dsn_query, keep_blank_values=True)}
+        if bad:
+            raise SystemExit(f"{dsn_key} must not carry routing override parameters: {sorted(bad)}")
+    if not kv[dsn_key].startswith(("postgresql://", "postgres://")) or dsn_path.rsplit("/", 1)[-1] != pg_db:
+        raise SystemExit(f"{dsn_key} must be a postgres DSN for isolated staging db {pg_db}")
 
 forbidden_prefixes = ("BROKER_API_KEY", "BROKER_SECRET", "EXCHANGE_PRIVATE_KEY", "LIVE_BROKER_TOKEN")
 for k in kv:
@@ -486,14 +503,44 @@ render_runtime_config() {
   local dep_json_path="$1"
   local dest_cfg_path="$2"
   local tmp_rt="${LOCAL_WORK_DIR}/$(basename "${dest_cfg_path}")"
+  # Emits ONLY the accepted FE `pantheon.fe.public-runtime-config.v1` fields. Deployment identity
+  # metadata stays in deployment.json; public Identity values come from direct environment wiring.
   python3 - "$tmp_rt" "$dep_json_path" <<'PY'
-import json, sys
+import hashlib, json, os, re, sys
 out_path, dep_path = sys.argv[1], sys.argv[2]
 dep = json.loads(open(dep_path, encoding="utf-8").read())
+
+def need(name):
+    val = os.environ.get(name, "").strip()
+    if not val:
+        print(json.dumps({"status": "error", "step": "bootstrap", "error_code": "PUBLIC_IDENTITY_CONFIG_MISSING",
+                          "message": f"{name} is required (public isolated Identity config; no fallback)"}), file=sys.stderr)
+        sys.exit(1)
+    return val
+
+api_key = need("STAGING_PUBLIC_GCP_IDENTITY_API_KEY")
+project_id = need("STAGING_PUBLIC_GCP_IDENTITY_PROJECT_ID")
+auth_domain = need("STAGING_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN")
+issuer = os.environ.get("STAGING_PUBLIC_GCP_IDENTITY_ISSUER", "").strip() or f"https://securetoken.google.com/{project_id}"
+audience = os.environ.get("STAGING_PUBLIC_GCP_IDENTITY_AUDIENCE", "").strip() or project_id
+cfg = {
+    "schemaVersion": "pantheon.fe.public-runtime-config.v1",
+    "environment": "staging",
+    "configRef": str(dep["release_id"]),
+    "bffBaseUrl": str(dep["bff_base_url"]),
+    "gcpIdentity": {
+        "apiKey": api_key,
+        "projectId": project_id,
+        "authDomain": auth_domain,
+        "issuer": issuer,
+        "audience": audience,
+    },
+}
+canonical = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
+cfg["configSha256"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 body = (
     "// Pantheon Staging External Runtime Config (served with Cache-Control: no-store)\n"
-    f"window.__PANTHEON_DEPLOYMENT_CONFIG__ = {json.dumps(dep, sort_keys=True)};\n"
-    f"window.__PANTHEON_RUNTIME_CONFIG__ = window.__PANTHEON_DEPLOYMENT_CONFIG__;\n"
+    f"window.__PANTHEON_DEPLOYMENT_CONFIG__ = {json.dumps(cfg, sort_keys=True)};\n"
 )
 with open(out_path, "w", encoding="utf-8") as fh:
     fh.write(body)

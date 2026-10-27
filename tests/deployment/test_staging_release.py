@@ -1451,7 +1451,9 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.secrets_env_file.write_text(
             "PANTHEON_BFF_JWT_SECRET=stg-jwt-secret-value-001\n"
             "PANTHEON_RUNTIME_JWT_SECRET=stg-runtime-jwt-secret-001\n"
-            "PANTHEON_DATABASE_URL=postgresql://pantheon_stg:stg-pg-pass@127.0.0.1:15432/pantheon_staging\n",
+            "PANTHEON_DATABASE_URL=postgresql://pantheon_stg:stg-pg-pass@127.0.0.1:15432/pantheon_staging\n"
+            "TELEMETRY_DB_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging\n"
+            "LIFECYCLE_PROJECTOR_PROJECTION_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging\n",
             encoding="utf-8",
         )
         self.secrets_env_file.chmod(0o600)
@@ -1542,6 +1544,9 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             "STAGING_STATE_DIR": str(self.state_dir),
             "STAGING_DRY_RUN": "false",
             "STAGING_NOW_EPOCH": "1792828800",
+            "STAGING_PUBLIC_GCP_IDENTITY_API_KEY": "AIza" + "a" * 35,  # local-only fixture, not a real key
+            "STAGING_PUBLIC_GCP_IDENTITY_PROJECT_ID": "pantheon-stg-20260902",
+            "STAGING_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN": "pantheon-stg-20260902.firebaseapp.com",
             "STAGING_ROOT": str(self.staging_root),
             "STAGING_DATA_MOUNT": str(self.data_mount),
             "STAGING_FE_ROOT": str(self.fe_root),
@@ -1711,6 +1716,53 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(cloud_state["instances"], [])
         self.assertEqual(cloud_state["disks"], [])
         self.assertEqual(cloud_state["addresses"], [])
+
+    def test_runtime_config_emits_only_accepted_public_schema_fields(self) -> None:
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001")
+        subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+        text = (self.staging_root / "config" / "runtime-config.js").read_text(encoding="utf-8")
+        prefix = "window.__PANTHEON_DEPLOYMENT_CONFIG__ = "
+        line = next(l for l in text.splitlines() if l.startswith(prefix))
+        cfg = json.loads(line[len(prefix):].rstrip(";"))
+        self.assertEqual(
+            set(cfg),
+            {"schemaVersion", "environment", "configRef", "configSha256", "bffBaseUrl", "gcpIdentity"},
+        )
+        self.assertEqual(cfg["schemaVersion"], "pantheon.fe.public-runtime-config.v1")
+        self.assertEqual(cfg["environment"], "staging")
+        self.assertEqual(cfg["configRef"], "pantheon-20261024-001")
+        self.assertEqual(set(cfg["gcpIdentity"]), {"apiKey", "projectId", "authDomain", "issuer", "audience"})
+        self.assertNotIn("control_vm_broker_credentials_present", text)
+        digest_src = {k: v for k, v in cfg.items() if k != "configSha256"}
+        canonical = json.dumps(digest_src, sort_keys=True, separators=(",", ":"))
+        self.assertEqual(cfg["configSha256"], "sha256:" + hashlib.sha256(canonical.encode()).hexdigest())
+
+    def test_runtime_config_requires_public_identity_inputs(self) -> None:
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_PUBLIC_GCP_IDENTITY_API_KEY="")
+        res = subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("PUBLIC_IDENTITY_CONFIG_MISSING", res.stderr + res.stdout)
+
+    def test_dsn_query_routing_override_rejected(self) -> None:
+        self._unlock_vm_env_dir()
+        original = self.secrets_env_file.read_text(encoding="utf-8")
+        for override in ("dbname=pantheon_prod", "host=prod-db.internal", "port=6543"):
+            with self.subTest(override=override):
+                self.secrets_env_file.write_text(
+                    original.replace(
+                        "TELEMETRY_DB_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging",
+                        f"TELEMETRY_DB_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging?{override}",
+                    ),
+                    encoding="utf-8",
+                )
+                res = subprocess.run(
+                    [str(PROVISION_SCRIPT)],
+                    env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res.returncode, 0)
+                self.assertIn("routing override", res.stderr + res.stdout)
 
     def test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates(self) -> None:
         # 1. Missing runtime binary when apt install is disabled fails closed with RUNTIME_BINARY_MISSING
@@ -2366,6 +2418,17 @@ class StagingControllerLifecycleTests(unittest.TestCase):
 
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
+    def test_ephemeral_workflow_wires_public_identity_vars_to_host(self) -> None:
+        raw = EPHEMERAL_WORKFLOW.read_text(encoding="utf-8")
+        ops = (REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh").read_text(encoding="utf-8")
+        for name in ("API_KEY", "PROJECT_ID", "AUTH_DOMAIN", "ISSUER", "AUDIENCE"):
+            var = f"STAGING_PUBLIC_GCP_IDENTITY_{name}"
+            self.assertIn(f"{var}: ${{{{ vars.{var}", raw)
+            self.assertIn(f'"{var}"', ops)
+        gate = raw.split("Gate staging authority", 1)[1].split("Authenticate to staging", 1)[0]
+        for name in ("API_KEY", "PROJECT_ID", "AUTH_DOMAIN"):
+            self.assertIn(f"STAGING_PUBLIC_GCP_IDENTITY_{name}", gate)
+
     def test_workflows_and_templates_parse_and_pass_actionlint(self) -> None:
         disallowed_job_env_ctx = re.compile(r"\$\{\{\s*(?:runner|steps|job)\.")
         for wf_path in (EPHEMERAL_WORKFLOW, ORPHAN_WORKFLOW):
@@ -2458,6 +2521,16 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         bff = compose["services"]["operator-bff"]
         self.assertEqual(bff["environment"]["PANTHEON_BFF_AUTH_MODE"], "strict")
         self.assertEqual(bff["environment"]["PANTHEON_BFF_AUTH_STUB"], "false")
+
+        self.assertEqual(bff["ports"], ["127.0.0.1:${STAGING_BFF_PORT:-18001}:8001"])
+        self.assertEqual(bff["environment"]["PANTHEON_RUNTIME_MANAGER_URL"], "http://runtime-manager:8080")
+        for key in ("PANTHEON_GOVERNANCE_API_URL", "PANTHEON_GOVERNANCE_SERVICE_URL", "PANTHEON_GOVERNANCE_APPROVAL_API_URL"):
+            self.assertEqual(bff["environment"][key], "http://governance:8082")
+        for key in ("PANTHEON_DEPLOYMENT_API_URL", "PANTHEON_DEPLOYMENT_SERVICE_URL"):
+            self.assertEqual(bff["environment"][key], "http://deployment:8095")
+        lp = compose["services"]["lifecycle-projector"]
+        self.assertEqual(lp["command"], ["python", "-m", "services.trade_journey.lifecycle_projector", "run"])
+        self.assertEqual(lp["environment"]["GIT_SHA"], "${PANTHEON_BACKEND_COMMIT:?backend commit required}")
 
         caddy_raw = CADDY_TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("handle /runtime-config.js", caddy_raw)
