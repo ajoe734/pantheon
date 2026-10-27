@@ -405,8 +405,9 @@ _SQL_TYPES = {
 _NON_COLUMN = {"primary", "unique", "constraint", "foreign", "check", "like", "exclude"}
 _ADD_COLUMN = re.compile(
     r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s+"
-    r"ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]+)", re.I
+    r"ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]+)([^;,]*)", re.I
 )
+_HAS_DEFAULT = re.compile(r"\bDEFAULT\b", re.I)
 
 
 def _qualify(rel: str) -> str:
@@ -426,12 +427,22 @@ def _split_top_level(body: str) -> list[str]:
 
 
 def expected_columns(migrations: list[tuple[str, str]]) -> dict[str, dict[str, str | None]]:
-    """relation -> {column: expected information_schema data_type or None (unknown type: presence only)}.
+    """relation -> {column: expected information_schema data_type or None (unknown type: presence only)}."""
+    return {rel: {c: t for c, (t, _) in cols.items()} for rel, cols in _parse_columns(migrations).items()}
+
+
+def expected_defaults(migrations: list[tuple[str, str]]) -> dict[str, set[str]]:
+    """relation -> columns the verified SQL declares with a DEFAULT (an existing table never regains one)."""
+    return {rel: {c for c, (_, d) in cols.items() if d} for rel, cols in _parse_columns(migrations).items()}
+
+
+def _parse_columns(migrations: list[tuple[str, str]]) -> dict[str, dict[str, tuple[str | None, bool]]]:
+    """relation -> {column: (expected data_type or None, declares DEFAULT)}.
 
     Parsed from CREATE TABLE bodies and ALTER TABLE ... ADD COLUMN in the verified SQL (independent of the
     relation-name regex); the substrate contract above is added explicitly."""
-    out: dict[str, dict[str, str | None]] = {
-        rel: {c: t for c, (t, _) in cols.items()} for rel, cols in SUBSTRATE_COLUMNS.items()
+    out: dict[str, dict[str, tuple[str | None, bool]]] = {
+        rel: dict(cols) for rel, cols in SUBSTRATE_COLUMNS.items()
     }
     for _, sql in migrations:
         text = re.sub(r"--[^\n]*", "", sql)
@@ -450,9 +461,11 @@ def expected_columns(migrations: list[tuple[str, str]]) -> dict[str, dict[str, s
                 toks = item.split()
                 if not toks or toks[0].lower() in _NON_COLUMN:
                     continue
-                cols[toks[0].strip('"').lower()] = _SQL_TYPES.get(toks[1].lower()) if len(toks) > 1 else None
+                cols[toks[0].strip('"').lower()] = (
+                    _SQL_TYPES.get(toks[1].lower()) if len(toks) > 1 else None, bool(_HAS_DEFAULT.search(item)))
         for m in _ADD_COLUMN.finditer(text):
-            out.setdefault(_qualify(m.group(1)), {})[m.group(2).lower()] = _SQL_TYPES.get(m.group(3).lower())
+            out.setdefault(_qualify(m.group(1)), {})[m.group(2).lower()] = (
+                _SQL_TYPES.get(m.group(3).lower()), bool(_HAS_DEFAULT.search(m.group(4))))
     return out
 
 
@@ -468,6 +481,7 @@ def check_catalog(catalog: object, migrations: list[tuple[str, str]]) -> None:
     if missing:
         raise MigrationError(f"production live catalog lacks relations from the verified SQL: {missing}")
     problems: list[str] = []
+    defaults = expected_defaults(migrations)
     for rel, cols in sorted(expected_columns(migrations).items()):
         live = catalog.get(rel)
         if not isinstance(live, dict):
@@ -479,9 +493,9 @@ def check_catalog(catalog: object, migrations: list[tuple[str, str]]) -> None:
                 problems.append(f"{rel}.{col}: column missing")
             elif want_type and obs.get("type") != want_type:
                 problems.append(f"{rel}.{col}: type {obs.get('type')!r} != {want_type!r}")
-        for col, (_, needs_default) in SUBSTRATE_COLUMNS.get(rel, {}).items():
+        for col in sorted(defaults.get(rel, ())):
             obs = live.get(col)
-            if needs_default and isinstance(obs, dict) and obs.get("has_default") is not True:
+            if isinstance(obs, dict) and obs.get("has_default") is not True:
                 problems.append(f"{rel}.{col}: default missing")
     if problems:
         raise MigrationError("production live catalog violates the product schema contract: " + "; ".join(problems))

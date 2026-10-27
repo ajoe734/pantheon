@@ -74,7 +74,7 @@ def _live_catalog() -> dict:
                 rel = None
             c = re.match(r"^    ([a-z_]+) ([A-Z]+)\b", line)
             if rel and c and c.group(1) not in ("primary", "unique", "check"):
-                cat[rel][c.group(1)] = _col(_SQL_TO_PG[c.group(2)])
+                cat[rel][c.group(1)] = _col(_SQL_TO_PG[c.group(2)], " DEFAULT " in line)
     return cat
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -522,6 +522,12 @@ class ProdOpsTests(OpsHarness):
         mutations["no_default"] = no_default
         proj = json.loads(json.dumps(good)); proj["trade_journey_projection.controller"].pop("deployment_sha")
         mutations["projection_column"] = proj
+        # Real-PG counterexample: CREATE TABLE IF NOT EXISTS never repairs a dropped DEFAULT, and the controller
+        # singleton INSERT omits last_error_message (NOT NULL DEFAULT '' in the qualified 001 SQL).
+        no_proj_default = json.loads(json.dumps(good))
+        self.assertTrue(no_proj_default["trade_journey_projection.controller"]["last_error_message"]["has_default"])
+        no_proj_default["trade_journey_projection.controller"]["last_error_message"]["has_default"] = False
+        mutations["projection_default"] = no_proj_default
         for name, bad in mutations.items():
             cat.write_text(json.dumps(bad))
             for gate in ("schema", "old_new_compat"):
