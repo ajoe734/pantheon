@@ -3423,14 +3423,27 @@ def _write_approved_baselines(path: Path, expected_drawdown: float) -> None:
 
 
 def _run_drawdown_tick(
-    baselines_path: Path, *, drawdown: float, artifact_id: str = _APPROVED_ARTIFACT_ID
+    baselines_path: Path,
+    *,
+    drawdown: float,
+    artifact_id: str = _APPROVED_ARTIFACT_ID,
+    baseline_metrics: dict | None = None,
 ):
     from fastapi.testclient import TestClient
 
+    # Real enriched paper summary shape: drawdown is a top-level runtime-summary
+    # aggregate while the committed position snapshot only carries qty/price/cash.
     summary = _healthy_runtime_summary(
         artifact_id=artifact_id,
         drawdown=drawdown,
-        baseline_metrics={},
+        baseline_metrics=baseline_metrics or {},
+        committed_position_snapshot={
+            "event_id": "evt-sched-001",
+            "event_type": "position_snapshot",
+            "position_qty": 10.0,
+            "price": 101.5,
+            "cash": 9000.0,
+        },
     )
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
@@ -3482,9 +3495,9 @@ def test_drawdown_1_3x_approved_baseline_is_warning_observe_only(tmp_path) -> No
     _write_approved_baselines(baselines, 0.04)
     payload, evaluation, reports, classify = _run_drawdown_tick(baselines, drawdown=0.052)
     assert _drawdown_check(evaluation)["status"] == "warning"
-    assert len(reports) == 1
-    assert reports[0]["severity"] != "critical"
-    assert payload["incident_ids"] == [] or classify.call_count <= 1
+    assert reports == []
+    assert payload["incident_ids"] == []
+    assert classify.call_count == 0
 
 
 def test_drawdown_1_6x_approved_baseline_is_critical_with_incident_candidate(tmp_path) -> None:
@@ -3517,6 +3530,29 @@ def test_artifact_without_approved_baseline_stays_unmeasured(tmp_path) -> None:
     assert [c for c in evaluation["drift_checks"] if c["metric"] == "drawdown"] == []
     assert reports == []
     assert classify.call_count == 0
+
+
+def test_raw_summary_baseline_never_substitutes_for_missing_approval(tmp_path) -> None:
+    raw = {"drawdown": 0.04}
+    missing = tmp_path / "missing.json"
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text("{not json", encoding="utf-8")
+    invalid = tmp_path / "invalid.json"
+    _write_approved_baselines(invalid, -0.04)
+    unapproved = tmp_path / "unapproved.json"
+    unapproved.write_text(
+        json.dumps({"baselines": {"other-artifact": {"expected_drawdown": 0.04,
+                                                     "policy_source": "x"}}}),
+        encoding="utf-8",
+    )
+    for path in (missing, unreadable, invalid, unapproved):
+        payload, evaluation, reports, classify = _run_drawdown_tick(
+            path, drawdown=0.064, baseline_metrics=raw
+        )
+        assert [c for c in evaluation["drift_checks"] if c["metric"] == "drawdown"] == []
+        assert reports == []
+        assert payload["incident_ids"] == []
+        assert classify.call_count == 0
 
 
 def test_baseline_without_policy_source_is_not_approved(tmp_path) -> None:

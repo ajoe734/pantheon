@@ -4,12 +4,17 @@
   "commands": [
     {
       "command": "python -m pytest services/reconciliation-drift services/evolution/test_threshold_sweep_worker.py -q",
-      "result": "325 passed, 1 skipped, 1 failed (test_scheduled_reconcile_core_budget_priority_prevents_starvation_under_43_summaries_and_retry); the same single failure occurs on the unmodified base (318 passed, 1 failed), and the test passes when run alone or with the scheduler file only (61 passed). Order-dependent, pre-existing."
+      "result": "326 passed, 1 skipped, 1 failed (test_scheduled_reconcile_core_budget_priority_prevents_starvation_under_43_summaries_and_retry); same pre-existing order-dependent failure as on the unmodified base."
     },
     {
       "command": "python -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q",
-      "result": "61 passed (base: 54 passed; +7 new DRIFT-GAP-001 tests: 0.5x ok, 1.3x warning, 1.6x critical+incident, unapproved artifact, missing policy_source, shared reader change, default path)"
+      "result": "Scheduler tests now use real enriched paper summary shapes (committed_position_snapshot with qty/price/cash plus top-level drawdown). 0.5x ok; 1.3x warning is strictly observe-only (no report, no classify, no incident); 1.6x critical dispatches one incident with approved baseline_ref; unapproved/invalid/unreadable/missing approved config ignores raw summary baseline_metrics."
     }
   ],
-  "wiring": "docker-compose reconciliation-drift-svc sets RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH to /workspace/services/evolution/config/threshold_sweep_baselines.json; the image already COPYs the repo (no Dockerfile change needed, file not dockerignored)."
+  "wiring": "docker-compose reconciliation-drift-svc sets RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH to /workspace/services/evolution/config/threshold_sweep_baselines.json; the image already COPYs the repo (no Dockerfile change needed, file not dockerignored).",
+  "review_fixes": [
+    "warning governed drawdown observe-only",
+    "raw summary drawdown baseline stripped; only approved positive finite baseline governs",
+    "drawdown read from summary risk telemetry separately from snapshot-grain observed_metrics"
+  ]
 }
