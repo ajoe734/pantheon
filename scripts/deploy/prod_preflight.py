@@ -139,6 +139,14 @@ def check_staging_evidence(evidence: Any, manifest: dict[str, Any], manifest_sha
     }
     if not isinstance(gates, dict) or not required <= gates.keys():
         raise PreflightError(f"staging evidence gates incomplete; need {sorted(required)}")
+    mig = gates["migration_and_compatibility"]
+    if (
+        not isinstance(mig, dict)
+        or mig.get("migration_verified") is not True
+        or mig.get("old_app_new_schema_compatible") is not True
+        or mig.get("migration_set_sha256") != manifest.get("migration_set_sha256")
+    ):
+        raise PreflightError("staging migration_and_compatibility evidence does not match manifest migration_set_sha256")
 
 
 def _environment_policy(env_policy: Any) -> tuple[set[str], bool]:

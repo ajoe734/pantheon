@@ -46,6 +46,10 @@
     {
       "id": "original_scope_wiring_and_public_contract",
       "summary": "Compose now uses accepted native ports (BFF 8001, runtime 8080, governance 8082, deployment 8095), the existing projector run command with GIT_SHA and isolated DSNs; bootstrap and atomic switch render only the accepted pantheon.fe.public-runtime-config.v1 fields (configRef, gcpIdentity, truthful optional configSha256); prod_ops verify_runtime_config consumes configRef/schema/identity/sha; production-release.yml maps and forwards PROD_PUBLIC_GCP_IDENTITY_* and preflight requires them. Local fixtures only; no hosted evidence."
+    },
+    {
+      "id": "schema_compat_gate_no_image_labels",
+      "summary": "prod_ops schema/old_new_compat gates and prod_preflight no longer require org.pantheon.migration_set_sha256/compatibility_manifest_sha256 image labels (retained accepted BFF ccb9 has none). They bind manifest migration_set_sha256/compatibility_manifest_sha256 and digest-pinned BFF image to live staging_verified evidence (migration_verified, old_app_new_schema_compatible, matching hash), the running candidate container image, and postgres readiness. Local controller tests only (54 pass); not hosted evidence."
     }
   ],
   "validation": {

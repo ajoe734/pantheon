@@ -290,16 +290,19 @@ for gate in health auth cors tenant read_only schema old_new_compat; do
 done
 write_state prod_green_verified
 
-# 7. Singleton drain: exactly one owner at any time (never run blue and green owners together).
-"$PROD_OPS_CMD" drain_singletons "$RELEASE_ID" || rollback_and_exit "singleton_drain_failed"
+# 7. Singleton hand-off BEFORE traffic. /bff/readyz requires the projector controller sha to equal the
+# BFF's own commit, so the candidate can only be ready once the single projector runs the candidate sha.
+# Exactly one owner at any time: drain (baseline, or none on first release) then activate the candidate.
 : > "${JOURNAL}/singletons_drained"
+"$PROD_OPS_CMD" drain_singletons "$RELEASE_ID" || rollback_and_exit "singleton_drain_failed"
+"$PROD_OPS_CMD" activate_singletons "$RELEASE_ID" || rollback_and_exit "singleton_activate_failed"
+"$PROD_OPS_CMD" gate "$RELEASE_ID" candidate_ready "$TARGET_PORT" || rollback_and_exit "candidate_not_ready_after_handoff"
 
 # 8. Compensated BFF upstream switch (atomic file replace + proxy reload).
 printf 'reverse_proxy 127.0.0.1:%s\n' "$TARGET_PORT" > "${UPSTREAM_FILE}.new.$$" || rollback_and_exit "upstream_write_failed"
 mv -f "${UPSTREAM_FILE}.new.$$" "$UPSTREAM_FILE" || rollback_and_exit "upstream_replace_failed"
 : > "${JOURNAL}/bff_switched"
 "$PROD_OPS_CMD" reload_proxy "$RELEASE_ID" || rollback_and_exit "proxy_reload_failed"
-"$PROD_OPS_CMD" activate_singletons "$RELEASE_ID" || rollback_and_exit "singleton_activate_failed"
 
 # 9. Atomic FE symlink switch + external runtime-config.js update.
 ln -sfn "$FE_RELEASE" "${FE_CURRENT}.new.$$" || rollback_and_exit "fe_link_failed"

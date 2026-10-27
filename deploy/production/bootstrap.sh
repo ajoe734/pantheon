@@ -275,6 +275,39 @@ PY
 fi
 
 if [[ "${PROD_BOOTSTRAP_SKIP_STATEFUL:-false}" != "true" ]]; then
+  # Compose interpolates every service (profiles do not skip required-variable checks), so the exact
+  # manifest-owned release/image values must be present before the first stateful invocation.
+  [[ -n "${RELEASE_MANIFEST_PATH:-}" && -f "${RELEASE_MANIFEST_PATH}" ]] \
+    || fail MANIFEST_REQUIRED "RELEASE_MANIFEST_PATH is required to interpolate the compose project"
+  RELEASE_VARS="$(python3 - "$RELEASE_MANIFEST_PATH" <<'PY'
+import json, re, shlex, sys
+DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+m = json.load(open(sys.argv[1], encoding="utf-8"))
+imgs = m.get("backend", {}).get("images", {})
+for k in ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector"):
+    if not DIGEST_RE.match(str(imgs.get(k) or "").strip()):
+        raise SystemExit(1)
+commit = str(m.get("backend", {}).get("commit") or "").strip()
+rel_id = str(m.get("release_id") or "").strip()
+if not commit or not rel_id:
+    raise SystemExit(1)
+bff = imgs["operator_bff"]
+out = {
+    "PANTHEON_RELEASE_ID": rel_id,
+    "PANTHEON_BACKEND_COMMIT": commit,
+    "PANTHEON_CONFIG_SCHEMA_VERSION": str(m.get("config_schema_version") or "v1"),
+    "PANTHEON_OPERATOR_BFF_IMAGE": bff,
+    "PANTHEON_OPERATOR_BFF_DIGEST": "sha256:" + bff.split("@sha256:", 1)[1],
+    "PANTHEON_RUNTIME_MANAGER_IMAGE": imgs["runtime_manager"],
+    "PANTHEON_GOVERNANCE_IMAGE": imgs["governance"],
+    "PANTHEON_DEPLOYMENT_IMAGE": imgs["deployment"],
+    "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE": imgs["lifecycle_projector"],
+}
+for k, v in out.items():
+    print(f"export {k}={shlex.quote(v)}")
+PY
+  )" || fail MANIFEST_RELEASE_VARS "manifest lacks release_id, backend.commit or digest-pinned owner images"
+  eval "$RELEASE_VARS"
   run_priv "$DOCKER" compose -p pantheon-production -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" \
     --env-file "$PROD_COMPOSE_ENV_FILE" --profile stateful up -d --no-build \
     || fail STATEFUL_START "stateful services failed to start"

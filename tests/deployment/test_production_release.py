@@ -73,6 +73,9 @@ case "$tool" in
       echo "$img" >> "$FAKE_STATE/pulled_images"
       exit 0
     fi
+    if [[ "$args" == *"compose"*"--profile stateful up"* ]]; then
+      env | grep -E '^(PANTHEON_(RELEASE_ID|BACKEND_COMMIT|OPERATOR_BFF_IMAGE|OPERATOR_BFF_DIGEST|RUNTIME_MANAGER_IMAGE|GOVERNANCE_IMAGE|DEPLOYMENT_IMAGE|LIFECYCLE_PROJECTOR_IMAGE))=' > "$FAKE_STATE/stateful_env"
+    fi
     if [[ "$args" == *"compose"*" ps -q "* ]]; then
       svc="${args##* ps -q }"
       if [[ "$svc" == lifecycle-projector ]]; then
@@ -86,6 +89,11 @@ case "$tool" in
     if [[ "$args" == *"compose"*"up -d"*lifecycle-projector* ]]; then
       [[ "${FAKE_DOCKER_FAIL:-}" == *"compose"* ]] && exit 1
       touch "$FAKE_STATE/singleton_up"
+      if [[ -n "${FAKE_SINGLETON_COMMIT_OVERRIDE:-}" && "${PANTHEON_RELEASE_ID:-}" == "${FAKE_SINGLETON_COMMIT_OVERRIDE_RELEASE:-}" ]]; then
+        printf '%s' "$FAKE_SINGLETON_COMMIT_OVERRIDE" > "$FAKE_STATE/singleton_commit"
+      else
+        printf '%s' "${PANTHEON_BACKEND_COMMIT:-}" > "$FAKE_STATE/singleton_commit"
+      fi
       if [[ -n "${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:-}" ]]; then
         printf '%s' "${FAKE_SINGLETON_IMAGE_OVERRIDE:-$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}" > "$FAKE_STATE/image_cid-lifecycle-projector-1"
       fi
@@ -196,7 +204,22 @@ PY
           port="${PROD_TARGET_PORT:-8002}"
         fi
       fi
+      if [[ "${FAKE_REAL_READYZ:-}" == "1" ]]; then
+        # Mirrors services/control-plane/bff/main.py::_lifecycle_projector_dependency: ready only when a
+        # projector controller exists and its deployment_sha equals the BFF's own BFF_COMMIT.
+        bff_commit="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("source_commit_sha",""))' "$FAKE_STATE/bff_version_${port}" 2>/dev/null)"
+        if [[ -f "$FAKE_STATE/singleton_up" && -n "$bff_commit" && "$(cat "$FAKE_STATE/singleton_commit" 2>/dev/null)" == "$bff_commit" ]]; then printf 200; else printf 503; fi
+        exit 0
+      fi
       [[ " ${FAKE_READY_PORTS:-} " == *" $port "* ]] && printf 200 || printf 503
+      exit 0
+    fi
+    if [[ "$url" == */livez ]]; then
+      if [[ "${FAKE_REAL_READYZ:-}" == "1" ]]; then
+        [[ -f "$FAKE_STATE/bff_version_${port}" ]] && printf 200 || printf 503
+      else
+        [[ " ${FAKE_READY_PORTS:-} " == *" $port "* ]] && printf 200 || printf 503
+      fi
       exit 0
     fi
     if [[ "$url" == */bff/version ]]; then
@@ -266,6 +289,8 @@ class OpsHarness(unittest.TestCase):
             self.manifest["backend"]["images"][owner] = f"r/{owner}@sha256:" + "a" * 64
         self.mpath = self.tmp / "manifest.json"
         self.mpath.write_text(json.dumps(self.manifest))
+        self.epath = self.tmp / "staging_evidence.json"
+        self.epath.write_text(json.dumps(_evidence(self.manifest, "0" * 64)))
         self.log = self.tmp / "bin.log"
         self.rc = self.root / "config" / "runtime-config.js"
         self.rc.write_text(_public_runtime_config("rel-1"))
@@ -292,8 +317,9 @@ class OpsHarness(unittest.TestCase):
                "PROD_TARGET_PORT": "8002", "RELEASE_MANIFEST_PATH": str(self.mpath),
                "PROD_COMPOSE_FILE": str(COMPOSE), "PROD_COMPOSE_ENV_FILE": str(self.tmp / "compose.env"),
                "PROD_GATE_TOKEN_FILE": str(self.token), "FAKE_READY_PORTS": "8001 8002",
-               "FAKE_MIGRATION_LABEL": self.manifest["migration_set_sha256"],
-               "FAKE_COMPAT_LABEL": self.manifest["compatibility_manifest_sha256"]}
+               "STAGING_EVIDENCE_PATH": str(self.epath),
+               "PROD_BASELINE_READY_TRIES": "1", "PROD_BASELINE_READY_INTERVAL": "0",
+               "PROD_CANDIDATE_READY_TRIES": "1", "PROD_CANDIDATE_READY_INTERVAL": "0"}
         env.update(extra)
         return env
 
@@ -357,12 +383,24 @@ class ProdOpsTests(OpsHarness):
             "cors": {"FAKE_CORS_ALLOW": "*"},
             "tenant": {"FAKE_TENANT_CODE": "200"},
             "read_only": {"FAKE_WRITE_CODE": "200"},
-            "schema": {"FAKE_MIGRATION_LABEL": "sha256:" + "0" * 64},
-            "old_new_compat": {"FAKE_COMPAT_LABEL": ""},
         }
         for gate, extra in cases.items():
             r = self.ops("gate", "rel-1", gate, "8002", **extra)
             self.assertNotEqual(r.returncode, 0, gate)
+        # schema/compat are bound to genuine staging evidence, not image labels (accepted BFF has none).
+        ev = json.loads(self.epath.read_text())
+        mutations = {
+            "mig_hash": lambda d: d["gates"]["migration_and_compatibility"].update(migration_set_sha256="sha256:" + "0" * 64),
+            "not_compat": lambda d: d["gates"]["migration_and_compatibility"].update(old_app_new_schema_compatible=False),
+            "dry_run": lambda d: d.update(dry_run=True),
+            "other_image": lambda d: d["manifest"].update(operator_bff_image="r/x@sha256:" + "9" * 64),
+        }
+        for name, mut in mutations.items():
+            bad = json.loads(json.dumps(ev)); mut(bad)
+            bp = self.tmp / f"bad_{name}.json"; bp.write_text(json.dumps(bad))
+            for gate in ("schema", "old_new_compat"):
+                self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002", STAGING_EVIDENCE_PATH=str(bp)).returncode, 0, f"{gate}/{name}")
+        self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertIn("UNKNOWN_GATE", self.ops("gate", "rel-1", "bogus", "8002").stderr)
 
@@ -596,9 +634,11 @@ def _evidence(manifest: dict, sha: str) -> dict:
             "operator_bff_image": manifest["backend"]["images"]["operator_bff"],
             "frontend_artifact_sha256": manifest["frontend"]["artifact_sha256"],
         },
-        "gates": {k: {} for k in (
-            "sanitized_data", "migration_and_compatibility", "backup_restore_readability",
+        "gates": {**{k: {} for k in (
+            "sanitized_data", "backup_restore_readability",
             "exact_pair_rollback", "security_and_safety_readbacks", "cleanup_dry_run")},
+            "migration_and_compatibility": {"migration_verified": True, "old_app_new_schema_compatible": True,
+                                            "migration_set_sha256": manifest["migration_set_sha256"]}},
     }
 
 
@@ -691,6 +731,10 @@ class PreflightTests(unittest.TestCase):
                 prod_preflight.check_staging_evidence(bad, manifest, sha)
         bad = _evidence(manifest, sha)
         del bad["gates"]["exact_pair_rollback"]
+        with self.assertRaises(prod_preflight.PreflightError):
+            prod_preflight.check_staging_evidence(bad, manifest, sha)
+        bad = _evidence(manifest, sha)
+        bad["gates"]["migration_and_compatibility"]["migration_set_sha256"] = "sha256:" + "0" * 64
         with self.assertRaises(prod_preflight.PreflightError):
             prod_preflight.check_staging_evidence(bad, manifest, sha)
 
@@ -801,8 +845,8 @@ class SwitchTests(SwitchHarness):
         self.assertIn("8002", self._upstream())
         steps = self._steps()
         self.assertEqual(steps.index("snapshot_preflight") < steps.index("start_green") < steps.index("drain_singletons")
-                         < steps.index("reload_proxy") < steps.index("post_identity"), True)
-        self.assertEqual(steps.count("gate"), 7)
+                         < steps.index("activate_singletons") < steps.index("reload_proxy") < steps.index("post_identity"), True)
+        self.assertEqual(steps.count("gate"), 8)
         state = json.loads((self.root / "state" / f"{rid}.json").read_text())
         self.assertEqual(state["release_state"], "prod_active")
         self.assertNotIn("release_complete", json.dumps(state))
@@ -1013,8 +1057,6 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
             WORKFLOW_INITIATOR="initiator-a",
             FE_ARTIFACT_PATH=str(artifact),
             PROD_BOOTSTRAP_FIRST_RELEASE="true" if bootstrap else "false",
-            FAKE_MIGRATION_LABEL=manifest["migration_set_sha256"],
-            FAKE_COMPAT_LABEL=manifest["compatibility_manifest_sha256"],
             **extra_env,
         )
         return subprocess.run([str(SWITCH)], env=env, capture_output=True, text=True, timeout=60)
@@ -1156,6 +1198,61 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         self.assertEqual((self.state / "image_cid-lifecycle-projector-1").read_text(),
                          m1["backend"]["images"]["lifecycle_projector"])
         self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-001")
+
+
+    def test_real_readiness_contract_first_release_and_changed_backend_sha_handoff(self):
+        # FAKE_REAL_READYZ models main.py::_lifecycle_projector_dependency: readyz is 200 only when the
+        # singleton controller deployment_sha == the BFF's BFF_COMMIT. No unconditional 200s.
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="a" * 40, digest_char="1", bootstrap=True)
+        boot = self._run_bootstrap(mpath1)
+        self.assertEqual(boot.returncode, 0, boot.stderr)
+        env_seen = dict(l.split("=", 1) for l in (self.state / "stateful_env").read_text().splitlines())
+        self.assertEqual(env_seen["PANTHEON_RELEASE_ID"], "pantheon-20261025-001")
+        self.assertEqual(env_seen["PANTHEON_BACKEND_COMMIT"], "a" * 40)
+        self.assertEqual(env_seen["PANTHEON_LIFECYCLE_PROJECTOR_IMAGE"], m1["backend"]["images"]["lifecycle_projector"])
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_REAL_READYZ="1")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        self.assertEqual((self.state / "singleton_commit").read_text(), "a" * 40)
+
+        rb = {"previous_release_id": "pantheon-20261025-001", "frontend_commit": m1["frontend"]["commit"],
+              "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"], "backend_commit": m1["backend"]["commit"],
+              "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+              "backend_images": m1["backend"]["images"], "config_schema_version": m1["config_schema_version"]}
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="b" * 40, digest_char="2", rollback_baseline=rb)
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, FAKE_REAL_READYZ="1")
+        self.assertEqual(sw2.returncode, 0, f"stdout={sw2.stdout}\nstderr={sw2.stderr}")
+        self.assertEqual((self.state / "singleton_commit").read_text(), "b" * 40)
+        self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-002")
+
+    def test_candidate_never_ready_after_handoff_rolls_back_to_baseline_singleton(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="a" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        self.assertEqual(self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True,
+                                          FAKE_REAL_READYZ="1").returncode, 0)
+        rb = {"previous_release_id": "pantheon-20261025-001", "frontend_commit": m1["frontend"]["commit"],
+              "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"], "backend_commit": m1["backend"]["commit"],
+              "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+              "backend_images": m1["backend"]["images"], "config_schema_version": m1["config_schema_version"]}
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="b" * 40, digest_char="2", rollback_baseline=rb)
+        # Projector fails to register the candidate sha (stale controller): candidate readyz stays 503.
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, FAKE_REAL_READYZ="1",
+                               FAKE_SINGLETON_COMMIT_OVERRIDE="c" * 40,
+                               FAKE_SINGLETON_COMMIT_OVERRIDE_RELEASE="pantheon-20261025-002",
+                               PROD_CANDIDATE_READY_TRIES="1", PROD_CANDIDATE_READY_INTERVAL="0",
+                               PROD_BASELINE_READY_TRIES="1", PROD_BASELINE_READY_INTERVAL="0")
+        self.assertEqual(sw2.returncode, 2, f"stdout={sw2.stdout}\nstderr={sw2.stderr}")
+        self.assertIn("127.0.0.1:8002", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        self.assertTrue((self.state / "singleton_up").exists())
+        self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-001")
+        self.assertEqual((self.state / "singleton_commit").read_text(), "a" * 40)
 
 
 class StaticContractTests(unittest.TestCase):
