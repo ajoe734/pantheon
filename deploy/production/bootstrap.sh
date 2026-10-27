@@ -127,6 +127,7 @@ umask 077
 run_priv mkdir -p \
   "${PROD_ROOT}"/{bin,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config} \
   "${PROD_DATA_MOUNT}/postgres" "${PROD_DATA_MOUNT}/nats" \
+  "${PROD_DATA_MOUNT}/bff" "${PROD_DATA_MOUNT}/runtime" "${PROD_DATA_MOUNT}/governance" \
   "$(dirname "$PROD_COMPOSE_ENV_FILE")" \
   || fail MKDIR "cannot create tree"
 

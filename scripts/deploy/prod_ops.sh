@@ -8,7 +8,7 @@
 # pre-acquires only digest-pinned (@sha256:...) images, and never formats, mounts over, or
 # recreates the production data disk.
 #
-# Steps: snapshot_preflight prepull_images baseline_health start_green stop_green
+# Steps: migrate snapshot_preflight prepull_images baseline_health start_green stop_green
 #        gate <name> <port> drain_singletons reload_proxy activate_singletons
 #        resume_baseline_singletons verify_runtime_config post_identity
 #
@@ -195,26 +195,21 @@ if not isinstance(m.get("compatibility_manifest_sha256"), str) or not sha.fullma
 PY
 )" || return 1
 }
-# Live production database readback, using the staging-owned contract unchanged: the latest applied
-# schema_migrations.checksum_sha256 (ORDER BY applied_at DESC LIMIT 1, exactly as staging collect-gates reads it)
-# IS the migration set identity and must equal the manifest migration_set_sha256 that staging verified.
-# Missing table, no rows, query failure or drift all fail closed. This gate never applies migrations.
+# Production consumption of the Stage-owned migration contract (prod_preflight.py migration). The product has
+# no schema_migrations table: the qualified versioned SQL (migration-spec.json + migrations/*.sql, PROD_MIGRATION_DIR)
+# is hashed with the Stage recipe and must equal the manifest migration_set_sha256, and the live information_schema
+# catalog (same query Stage uses) must contain every relation that SQL creates. Never applies migrations.
+MIGRATION_HELPER="${PROD_PREFLIGHT_PY:-$(dirname "${BASH_SOURCE[0]}")/prod_preflight.py}"
+migration_dir() { printf '%s' "${PROD_MIGRATION_DIR:-${PROD_ROOT}/migration/${RELEASE_ID}}"; }
+live_catalog() {
+  compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+    <<<"$(python3 -I "$MIGRATION_HELPER" migration catalog-sql "$RELEASE_MANIFEST_PATH" "$(migration_dir)")" 2>/dev/null
+}
 production_schema_gate() {
-  local rows
-  rows="$(compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT checksum_sha256 FROM schema_migrations ORDER BY applied_at DESC LIMIT 1"' 2>/dev/null)" \
-    || { GATE_REASON="production schema_migrations unreadable (missing table or database unreachable)"; return 1; }
-  GATE_REASON="$(printf '%s\n' "$rows" | python3 -c '
-import json, re, sys
-want = json.load(open(sys.argv[1])).get("migration_set_sha256")
-lines = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
-if len(lines) != 1:
-    print("production schema_migrations is empty: no migrations applied"); sys.exit(1)
-got = lines[0]
-if not re.fullmatch(r"sha256:[0-9a-f]{64}", got):
-    print("malformed latest schema_migrations checksum_sha256"); sys.exit(1)
-if not isinstance(want, str) or got != want:
-    print(f"production latest migration checksum {got} != manifest migration_set_sha256 {want}"); sys.exit(1)
-' "$RELEASE_MANIFEST_PATH" 2>&1)" || return 1
+  local catalog
+  GATE_REASON="$(python3 -I "$MIGRATION_HELPER" migration verify "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
+  catalog="$(live_catalog)" || { GATE_REASON="production live catalog unreadable (database unreachable)"; return 1; }
+  GATE_REASON="$(printf '%s' "$catalog" | python3 -I "$MIGRATION_HELPER" migration catalog "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
 }
 container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }
 require_ready() { # require_ready <port>
@@ -489,6 +484,18 @@ PY
         fi ;;
       *) fail UNKNOWN_GATE "unknown gate '${name}'" ;;
     esac
+    ;;
+
+  migrate)
+    # Out-of-band forward migration with the Stage-qualified versioned SQL (expand only, autocommit per file like
+    # Stage's psql -f). Same verified bytes, same set identity; idempotent SQL. Never touches the data disk itself.
+    release_env
+    mig_out="$(python3 -I "$MIGRATION_HELPER" migration verify "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || fail MIGRATION_SPEC "${mig_out}"
+    while IFS= read -r mig_name; do
+      compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' \
+        < "$(migration_dir)/migrations/${mig_name}" >/dev/null || fail MIGRATION_SQL_FAILED "${mig_name} failed"
+    done < <(python3 -I "$MIGRATION_HELPER" migration names "$RELEASE_MANIFEST_PATH" "$(migration_dir)")
+    production_schema_gate || fail GATE_SCHEMA "${GATE_REASON}"
     ;;
 
   drain_singletons)

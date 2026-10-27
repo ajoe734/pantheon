@@ -17,6 +17,7 @@ Local checks prove controller behavior only; they are never hosted drill evidenc
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -312,6 +313,107 @@ def run_all(
     }
 
 
+# --- Production consumption of the Stage-owned migration contract -------------------------------
+# The product has no schema_migrations table. The migration set identity is the one Stage qualifies
+# (deploy/staging/pantheon-staging-collect-gates): sha256 over "<file sha256>  <name>\n" lines of the
+# versioned SQL files listed in migration-spec.json, sorted by name, recomputed from the bytes actually
+# applied. The live database is read back through the same information_schema catalog query Stage uses.
+
+
+def _staging_sanitize():
+    import staging_sanitize  # VM-side only; installed next to this script
+
+    return staging_sanitize
+
+
+# Same query Stage uses (pantheon-staging-collect-gates live_catalog_sql); stdout is the catalog JSON.
+LIVE_CATALOG_SQL = (
+    "SELECT COALESCE(json_object_agg(table_name, cols), '{}'::json)::text FROM ("
+    "SELECT table_schema || '.' || table_name AS table_name, json_object_agg(column_name, "
+    "json_build_object('type', data_type, 'nullable', (is_nullable = 'YES'), "
+    "'has_default', (column_default IS NOT NULL))) AS cols FROM information_schema.columns "
+    "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+    "AND table_schema NOT LIKE 'pg_toast%' AND table_schema NOT LIKE 'pg_temp%' "
+    "GROUP BY table_schema, table_name) s;"
+)
+REQUIRED_RELATIONS = ("public.telemetry_events", "trade_journey_projection.controller")
+_CREATE_TABLE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)", re.I
+)
+
+
+class MigrationError(PreflightError):
+    pass
+
+
+def load_verified(manifest_path: str, spec_dir: str) -> list[tuple[str, str]]:
+    """Return [(name, sql)] in applied order, after proving the set identity equals the manifest's."""
+    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    want = manifest.get("migration_set_sha256")
+    root = Path(spec_dir)
+    try:
+        spec = json.loads((root / "migration-spec.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise MigrationError(f"migration-spec.json unreadable in {root}: {exc}")
+    if spec.get("migration_set_sha256") != want:
+        raise MigrationError("migration-spec.json migration_set_sha256 != manifest")
+    files = spec.get("files")
+    if not isinstance(files, list) or not files:
+        raise MigrationError("migration-spec.json must list the versioned migration files")
+    out: list[tuple[str, str]] = []
+    lines: list[str] = []
+    for entry in sorted(files, key=lambda e: str(e.get("name") if isinstance(e, dict) else "")):
+        name = str(entry.get("name") or "") if isinstance(entry, dict) else ""
+        if not re.fullmatch(r"[0-9]{3}_[a-z0-9_]+\.sql", name):
+            raise MigrationError(f"invalid migration file name {name!r}")
+        path = root / "migrations" / name
+        if not path.is_file():
+            raise MigrationError(f"versioned migration file {path} is missing")
+        raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        if "sha256:" + digest != str(entry.get("sha256") or ""):
+            raise MigrationError(f"{name} digest sha256:{digest} != spec")
+        sql = raw.decode("utf-8")
+        if _staging_sanitize().DESTRUCTIVE_SQL_RE.search(sql):
+            raise MigrationError(f"destructive SQL forbidden in expand migration phase: {name}")
+        lines.append(f"{digest}  {name}\n")
+        out.append((name, sql))
+    observed = "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+    if observed != want:
+        raise MigrationError(f"recomputed migration set digest {observed} != manifest {want}")
+    return out
+
+
+def check_catalog(catalog: object, migrations: list[tuple[str, str]]) -> None:
+    if not isinstance(catalog, dict) or not catalog:
+        raise MigrationError("production live catalog is empty: migrations not applied")
+    expected = set(REQUIRED_RELATIONS)
+    for _, sql in migrations:
+        for m in _CREATE_TABLE.finditer(sql):
+            rel = m.group(1)
+            expected.add(rel if "." in rel else f"public.{rel}")
+    missing = sorted(r for r in expected if r not in catalog)
+    if missing:
+        raise MigrationError(f"production live catalog lacks relations from the verified SQL: {missing}")
+
+
+def _migration_cli(cmd: str, manifest: str, spec_dir: str) -> int:
+    try:
+        migrations = load_verified(manifest, spec_dir)
+        if cmd == "catalog":
+            check_catalog(json.loads(sys.stdin.read() or "null"), migrations)
+        elif cmd == "names":
+            print("\n".join(n for n, _ in migrations))
+        elif cmd == "catalog-sql":
+            print(LIVE_CATALOG_SQL)
+        elif cmd != "verify":
+            raise MigrationError(f"unknown migration command {cmd!r}")
+    except (PreflightError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    return 0
+
+
 def _cli() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -327,7 +429,13 @@ def _cli() -> int:
     a.add_argument("--bootstrap", action="store_true")
     a.add_argument("--skip-baseline", action="store_true", help="runner-side: baseline is checked on the control VM")
     a.add_argument("--skip-approval", action="store_true", help="pre-approval validation only")
+    mg = sub.add_parser("migration", help="verify Stage-qualified versioned SQL / live catalog (VM-side)")
+    mg.add_argument("action", choices=["verify", "names", "catalog", "catalog-sql"])
+    mg.add_argument("manifest")
+    mg.add_argument("spec_dir")
     args = p.parse_args()
+    if args.command == "migration":
+        return _migration_cli(args.action, args.manifest, args.spec_dir)
     try:
         if args.command == "config":
             check_config(os.environ)

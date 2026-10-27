@@ -171,7 +171,8 @@ jobs:
           cp "${RUNNER_TEMP}/approvals.json" "${RUNNER_TEMP}/bundle/approvals.json"
           cp "${RUNNER_TEMP}/env-policy.json" "${RUNNER_TEMP}/bundle/env-policy.json"
           cp scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh \
-             scripts/deploy/prod_preflight.py scripts/deploy/release_manifest.py "${RUNNER_TEMP}/bundle/"
+             scripts/deploy/prod_preflight.py scripts/deploy/staging_sanitize.py \
+             scripts/deploy/release_manifest.py "${RUNNER_TEMP}/bundle/"
           cp deploy/production/docker-compose.prod-control.yml deploy/production/Caddyfile deploy/production/bootstrap.sh "${RUNNER_TEMP}/bundle/"
           {
             for v in RELEASE_ID EXPECTED_MANIFEST_SHA256 PROD_BOOTSTRAP_FIRST_RELEASE PROD_ROOT PROD_DATA_MOUNT \
@@ -203,7 +204,7 @@ jobs:
             B=/tmp/pantheon-release-${RELEASE_ID}/bundle
             source \$B/remote.env
             sudo install -d \"\$PROD_ROOT/bin\" \"\$PROD_ROOT/state/snapshots\" \"\$PROD_ROOT/config\" \"\$PROD_ROOT/proxy\"
-            sudo install -m 0755 \$B/bootstrap.sh \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
+            sudo install -m 0755 \$B/bootstrap.sh \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/staging_sanitize.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
             sudo install -m 0644 \$B/docker-compose.prod-control.yml \$B/Caddyfile \"\$PROD_ROOT/bin/\"
             sudo install -m 0644 \$B/snapshot.json \"\$PROD_ROOT/state/snapshots/\$RELEASE_ID.json\"
             sudo -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true PROD_REQUIRE_FULL_SECRET_KEYS=true \

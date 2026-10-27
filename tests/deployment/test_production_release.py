@@ -22,12 +22,29 @@ import unittest
 import yaml
 
 from scripts.deploy import prod_preflight, release_manifest
-from tests.deployment.test_staging_release import _sample_manifest as _staging_sample_manifest
+from tests.deployment.test_staging_release import (
+    MIGRATIONS_SRC_DIR,
+    _real_migration_set,
+    _sample_manifest as _staging_sample_manifest,
+)
 
-# Staging-produced manifests are used UNMODIFIED: the fake production postgres serves the latest
-# schema_migrations.checksum_sha256 exactly as staging records it (prefixed), which must equal the manifest value.
-_sample_manifest = _staging_sample_manifest
-SCHEMA_ROWS = [_staging_sample_manifest()["migration_set_sha256"]]
+# Staging-produced manifests are used as Stage builds them. The product has no schema_migrations table: the
+# migration set identity is Stage's recipe over the real versioned SQL bytes (_real_migration_set), and the
+# fake production postgres serves the live information_schema catalog Stage queries.
+MIGRATION_FILES, MIGRATION_SET_SHA = _real_migration_set()
+
+
+def _sample_manifest(**kw):
+    return _staging_sample_manifest(mig_sha=MIGRATION_SET_SHA, **kw)
+
+
+def _live_catalog() -> dict:
+    cat = {rel: {"id": {"type": "text", "nullable": False, "has_default": False}} for rel in prod_preflight.REQUIRED_RELATIONS}
+    for f in MIGRATION_FILES:
+        for m in prod_preflight._CREATE_TABLE.finditer((MIGRATIONS_SRC_DIR / f["name"]).read_text()):
+            rel = m.group(1)
+            cat[rel if "." in rel else f"public.{rel}"] = {"id": {"type": "text", "nullable": False, "has_default": False}}
+    return cat
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWITCH = REPO_ROOT / "scripts" / "deploy" / "prod_atomic_switch.sh"
@@ -82,8 +99,10 @@ case "$tool" in
       env | grep -E '^(PANTHEON_(RELEASE_ID|BACKEND_COMMIT|OPERATOR_BFF_IMAGE|OPERATOR_BFF_DIGEST|RUNTIME_MANAGER_IMAGE|GOVERNANCE_IMAGE|DEPLOYMENT_IMAGE|LIFECYCLE_PROJECTOR_IMAGE))=' > "$FAKE_STATE/stateful_env"
     fi
     if [[ "$args" == *"compose"*" exec -T postgres "* ]]; then
-      [[ -f "$FAKE_STATE/schema_rows" ]] || exit 1
-      cat "$FAKE_STATE/schema_rows"; exit 0
+      if [[ "$args" == *"-f -"* ]]; then cat >> "$FAKE_STATE/applied_sql"; echo "--" >> "$FAKE_STATE/applied_sql"; exit 0; fi
+      cat >/dev/null
+      [[ -f "$FAKE_STATE/catalog" ]] || exit 1
+      cat "$FAKE_STATE/catalog"; exit 0
     fi
     if [[ "$args" == *"compose"*" ps -q "* ]]; then
       svc="${args##* ps -q }"
@@ -296,13 +315,18 @@ class OpsHarness(unittest.TestCase):
         self.manifest = _sample_manifest(state="staging_verified")
         for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projector"):
             self.manifest["backend"]["images"][owner] = f"r/{owner}@sha256:" + "a" * 64
-        self.schema_rows = list(SCHEMA_ROWS)
+        self.migration_dir = self.root / "migration" / "rel-1"
+        (self.migration_dir / "migrations").mkdir(parents=True)
+        for f in MIGRATION_FILES:
+            (self.migration_dir / "migrations" / f["name"]).write_bytes((MIGRATIONS_SRC_DIR / f["name"]).read_bytes())
+        (self.migration_dir / "migration-spec.json").write_text(json.dumps(
+            {"phase": "expand", "migration_set_sha256": MIGRATION_SET_SHA, "files": MIGRATION_FILES}))
         self.mpath = self.tmp / "manifest.json"
         self.mpath.write_text(json.dumps(self.manifest))
         self.epath = self.tmp / "staging_evidence.json"
         self.epath.write_text(json.dumps(_evidence(self.manifest, "0" * 64)))
         self.log = self.tmp / "bin.log"
-        (self.state / "schema_rows").write_text("\n".join(self.schema_rows) + "\n")
+        (self.state / "catalog").write_text(json.dumps(_live_catalog()))
         self.rc = self.root / "config" / "runtime-config.js"
         self.rc.write_text(_public_runtime_config("rel-1"))
         (self.state / "served_runtime_config").write_text(self.rc.read_text())
@@ -327,7 +351,8 @@ class OpsHarness(unittest.TestCase):
                "PROD_BLUE_PORT": "8001", "PROD_GREEN_PORT": "8002", "PROD_ACTIVE_PORT": "8001",
                "PROD_TARGET_PORT": "8002", "RELEASE_MANIFEST_PATH": str(self.mpath),
                "PROD_COMPOSE_FILE": str(COMPOSE), "PROD_COMPOSE_ENV_FILE": str(self.tmp / "compose.env"),
-               "PROD_GATE_TOKEN_FILE": str(self.token), "FAKE_READY_PORTS": "8001 8002",
+               "PROD_GATE_TOKEN_FILE": str(self.token), "PROD_MIGRATION_DIR": str(self.migration_dir),
+               "FAKE_READY_PORTS": "8001 8002",
                "STAGING_EVIDENCE_PATH": str(self.epath),
                "PROD_BASELINE_READY_TRIES": "1", "PROD_BASELINE_READY_INTERVAL": "0",
                "PROD_CANDIDATE_READY_TRIES": "1", "PROD_CANDIDATE_READY_INTERVAL": "0"}
@@ -415,40 +440,52 @@ class ProdOpsTests(OpsHarness):
         self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertIn("UNKNOWN_GATE", self.ops("gate", "rel-1", "bogus", "8002").stderr)
 
-    def test_gate_accepts_checksum_exactly_as_staging_records_it(self):
-        # Cross-contract regression: staging's unmodified manifest/raw dataset checksum (prefixed, latest row)
-        # is what the production schema gate must accept, with no re-derived set hash.
-        from tests.deployment.test_staging_release import _sample_raw_dataset
-        staging_checksum = _sample_raw_dataset()["metadata"]["schema_migration_sha256"]
-        self.assertEqual(staging_checksum, self.manifest["migration_set_sha256"])
-        (self.state / "schema_rows").write_text(staging_checksum + "\n")
+    def test_schema_gate_consumes_stage_contract_without_schema_migrations_table(self):
+        # The product has no schema_migrations table: identity = Stage recipe over versioned SQL bytes,
+        # live state = information_schema catalog. Nothing in the controller may query a phantom table.
         for gate in ("schema", "old_new_compat"):
             self.assertEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+        code = [l for l in OPS.read_text().splitlines() if not l.lstrip().startswith("#")]
+        self.assertFalse([l for l in code if "schema_migrations" in l])
+        self.assertNotIn("schema_migrations", self.log.read_text())
 
-    def test_schema_gates_read_live_production_database_and_fail_on_absence_or_drift(self):
-        sr = self.state / "schema_rows"
+    def test_schema_gates_fail_on_unmigrated_catalog_and_tampered_or_mismatched_sql(self):
+        cat = self.state / "catalog"
+        spec = self.migration_dir / "migration-spec.json"
+        first = self.migration_dir / "migrations" / MIGRATION_FILES[0]["name"]
+        good_sql = first.read_bytes()
         for gate in ("schema", "old_new_compat"):
-            self.assertEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
-            # Empty production DB (zero migrations) must be rejected even with valid staging evidence.
-            sr.write_text("")
+            cat.write_text("{}")  # empty database: migrations never applied
             self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
-            # Missing schema_migrations table / unreadable DB.
-            sr.unlink()
-            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
-            # Drift: applied set differs from the staging-verified manifest set.
-            sr.write_text("sha256:" + "c" * 64 + "\n")
+            partial = _live_catalog(); partial.pop("trade_journey_projection.controller")
+            cat.write_text(json.dumps(partial))
             r = self.ops("gate", "rel-1", gate, "8002")
-            self.assertNotEqual(r.returncode, 0, gate)
-            self.assertIn("migration_set_sha256", r.stderr)
-            # Bare (unprefixed) or otherwise malformed checksum is not the staging-recorded form.
-            sr.write_text(SCHEMA_ROWS[0].split(":", 1)[1] + "\n")
+            self.assertNotEqual(r.returncode, 0, gate); self.assertIn("lacks relations", r.stderr)
+            cat.unlink()  # database unreachable
             self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
-            sr.write_text("\n".join(self.schema_rows) + "\n")
-        # Bootstrap path also verifies the DB instead of pg_isready.
-        sr.write_text("")
-        self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002",
-                                     PROD_BOOTSTRAP_FIRST_RELEASE="true", FAKE_READY_PORTS="8002").returncode, 0)
-        self.assertNotIn("pg_isready", self.log.read_text())
+            cat.write_text(json.dumps(_live_catalog()))
+            first.write_bytes(good_sql + b"\n-- tampered\n")  # bytes differ from qualified spec
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            first.write_bytes(good_sql)
+            saved = spec.read_text()
+            spec.write_text(json.dumps({**json.loads(saved), "migration_set_sha256": "sha256:" + "0" * 64}))
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            spec.write_text(saved)
+            self.assertEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+        # Missing migration material fails closed.
+        spec.unlink()
+        self.assertNotEqual(self.ops("gate", "rel-1", "schema", "8002").returncode, 0)
+
+    def test_migrate_applies_only_verified_versioned_sql_in_order(self):
+        r = self.ops("migrate", "rel-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        applied = (self.state / "applied_sql").read_text()
+        want = "--\n".join((MIGRATIONS_SRC_DIR / f["name"]).read_text() for f in MIGRATION_FILES) + "--\n"
+        self.assertEqual(applied, want)
+        (self.migration_dir / "migrations" / MIGRATION_FILES[0]["name"]).write_bytes(b"SELECT 1;")
+        (self.state / "applied_sql").unlink()
+        self.assertNotEqual(self.ops("migrate", "rel-1").returncode, 0)
+        self.assertFalse((self.state / "applied_sql").exists())
 
     def test_bootstrap_first_release_old_new_compat_passes_without_prior_app(self):
         # Counterexample regression: PROD_BOOTSTRAP_FIRST_RELEASE=true with only candidate 8002 ready
@@ -1441,6 +1478,40 @@ class StaticContractTests(unittest.TestCase):
         self.assertNotIn("POSTGRES_PASSWORD", pg)
         self.assertNotIn("trust", COMPOSE.read_text().lower().replace("trust auth", "").replace("never trust", ""))
         self.assertIn("postgres_password", compose["secrets"])
+
+    def test_application_stores_are_durable_shared_across_colors_and_on_the_data_disk(self):
+        # Acknowledged native-store state must live on the retained data disk (never container /tmp) and be
+        # identical for blue, green, replacement and rollback; Stage's selected store paths are mirrored.
+        svc = yaml.safe_load(COMPOSE.read_text())["services"]
+        disk = "${PROD_DATA_MOUNT:?production data disk mount required}"
+        want = {
+            "runtime-manager": {"/data/runtime": "runtime"},
+            "governance": {"/data/governance": "governance"},
+            "deployment": {"/data/governance": "governance", "/data/runtime": "runtime"},
+            "lifecycle-projector": {"/data/bff": "bff"},
+            "operator-bff-blue": {"/data/bff": "bff", "/data/governance": "governance", "/data/runtime": "runtime"},
+            "operator-bff-green": {"/data/bff": "bff", "/data/governance": "governance", "/data/runtime": "runtime"},
+        }
+        for name, mounts in want.items():
+            got = {}
+            for v in svc[name]["volumes"]:
+                src, _, rest = v.partition(":/data/")
+                got["/data/" + rest.split(":")[0]] = src
+            for target, sub in mounts.items():
+                self.assertEqual(got.get(target), f"{disk}/{sub}", f"{name} {target}")
+        env = lambda n: svc[n]["environment"]
+        self.assertEqual(env("runtime-manager")["PANTHEON_RUNTIME_BINDING_STORE_PATH"], "/data/runtime/runtime_bindings.json")
+        self.assertEqual(env("runtime-manager")["PANTHEON_COMMAND_STATE_FILE"], "/data/runtime/internal_api_commands.json")
+        self.assertEqual(env("governance")["GOVERNANCE_DATA_DIR"], "/data/governance")
+        self.assertEqual(env("deployment")["DEPLOYMENT_DATA_DIR"], "/data/governance")
+        for n in ("lifecycle-projector", "operator-bff-blue", "operator-bff-green"):
+            self.assertEqual(env(n)["BFF_DATA_DIR"], "/data/bff")
+        self.assertEqual(svc["operator-bff-blue"]["volumes"], svc["operator-bff-green"]["volumes"])
+        self.assertEqual(env("operator-bff-blue"), env("operator-bff-green"))
+        # Bootstrap creates the owner store dirs next to postgres/nats on the data disk.
+        boot = (REPO_ROOT / "deploy" / "production" / "bootstrap.sh").read_text()
+        for d in ("bff", "runtime", "governance"):
+            self.assertIn(f'"${{PROD_DATA_MOUNT}}/{d}"', boot)
 
     def test_caddy_serves_external_no_store_runtime_config(self):
         text = CADDY.read_text()
