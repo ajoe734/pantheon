@@ -360,6 +360,10 @@ if tool == "docker":
             }
             explicit_svcs = [a for a in args if a in svc_image_keys]
             target_svcs = explicit_svcs if explicit_svcs else list(svc_image_keys.keys())
+            # Compose reconciles an explicit service's dependencies too; runtime-manager's
+            # PANTHEON_RELEASE_ID changes with the release, so it is recreated with a new ID.
+            if "operator-bff" in target_svcs and "runtime-manager" not in target_svcs:
+                target_svcs.append("runtime-manager")
             omit_svc = os.environ.get("FAKE_OMIT_SERVICE", "").strip()
 
             secrets_env = {}
@@ -402,11 +406,12 @@ if tool == "docker":
                         "DATABASE_URL": "postgresql://pantheon_stg@postgres:5432/pantheon_staging",
                     })
                 st.setdefault("containers", {})[svc] = {
-                    "cid": f"cid-{svc}",
+                    "cid": f"cid-{svc}-{st.setdefault('cid_gen', 0) + 1}",
                     "image": img_ref,
                     "running": True,
                     "env": merged_svc_env,
                 }
+            st["cid_gen"] = st.get("cid_gen", 0) + 1
             save_state(st)
             # Emit ordinary Docker Compose stdout to prove deploy-host does not rely on compose printing JSON.
             print("Container pantheon-staging-operator-bff-1 Started")
@@ -2027,6 +2032,13 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         ver = self._provision_and_verify(FAKE_WIPE_OWNER_ON_RECREATE="true")
         self.assertNotEqual(ver.returncode, 0)
         self.assertIn("OWNER_ACK_LOST", ver.stderr)
+
+    def test_runtime_manager_container_id_resolved_after_dependency_recreation(self) -> None:
+        # The fake compose recreates runtime-manager (new container ID) whenever operator-bff is
+        # reconciled; inspecting the ID frozen at collection start would fail with "No such container".
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        self.assertNotIn("DOCKER_INSPECT_ENV_FAILED", ver.stderr)
 
     def test_collector_rejects_corrupt_runtime_owner_state(self) -> None:
         subprocess.run(

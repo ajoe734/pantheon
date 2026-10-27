@@ -896,7 +896,14 @@ def main() -> int:
     # runtime-manager keeps its bindings/command state in files at the paths its container env
     # configures; those must be readable JSON at the mounted location (they are written only by
     # real runtime commands, so an unused path may be absent).
-    runtime_cid = service_cids["runtime-manager"]
+    # Dependency reconciliation during rehearsal may have recreated runtime-manager; resolve the
+    # current container ID rather than the one frozen at collection start.
+    runtime_cid_out = _run(
+        compose_cmd("ps", "-q", "runtime-manager"), error_code="RUNTIME_CID_PS_FAILED"
+    ).stdout.split()
+    if not runtime_cid_out:
+        _fail("SERVICE_NOT_RUNNING", "Required staging service runtime-manager is not running")
+    runtime_cid = runtime_cid_out[0]
     runtime_env_lines = _run(
         [docker_bin, "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", runtime_cid],
         error_code="DOCKER_INSPECT_ENV_FAILED",
