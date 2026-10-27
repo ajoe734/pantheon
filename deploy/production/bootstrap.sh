@@ -212,6 +212,16 @@ EOF
   run_priv mv -f "$tmp_ce" "$PROD_COMPOSE_ENV_FILE" || fail COMPOSE_ENV "cannot write compose.env"
 fi
 
+# Resolve the EFFECTIVE stateful refs exactly as compose will (shell env wins over --env-file), including an
+# existing compose.env, so the pulled refs always equal the refs compose.up needs (pull_policy: never).
+for _v in PANTHEON_POSTGRES_IMAGE PANTHEON_NATS_IMAGE; do
+  if [[ -z "${!_v:-}" ]]; then
+    _val="$(run_priv sed -n "s/^${_v}=//p" "$PROD_COMPOSE_ENV_FILE" | tail -n1)"
+    [[ -n "$_val" ]] || fail COMPOSE_ENV "${_v} unset and absent from ${PROD_COMPOSE_ENV_FILE}"
+    export "${_v}=${_val}"
+  fi
+done
+
 # Pre-acquire only immutable digest-pinned (@sha256:...) images (never build, never pull mutable tags).
 if [[ "${PROD_PREPULL_IMAGES:-true}" == "true" ]]; then
   IMAGE_LIST="$(python3 - "${RELEASE_MANIFEST_PATH:-}" "${PANTHEON_POSTGRES_IMAGE:-}" "${PANTHEON_NATS_IMAGE:-}" <<'PY'

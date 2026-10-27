@@ -22,7 +22,16 @@ import unittest
 import yaml
 
 from scripts.deploy import prod_preflight, release_manifest
-from tests.deployment.test_staging_release import _sample_manifest
+from tests.deployment.test_staging_release import _sample_manifest as _staging_sample_manifest
+
+# Applied-migration rows served by the fake production postgres; the manifest set hash is bound to them.
+SCHEMA_ROWS = [f"0001_init:{'a' * 64}", f"0002_expand:{'b' * 64}"]
+
+
+def _sample_manifest(**kw):
+    m = _staging_sample_manifest(**kw)
+    m["migration_set_sha256"] = "sha256:" + hashlib.sha256(("\n".join(sorted(SCHEMA_ROWS)) + "\n").encode()).hexdigest()
+    return m
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWITCH = REPO_ROOT / "scripts" / "deploy" / "prod_atomic_switch.sh"
@@ -75,6 +84,10 @@ case "$tool" in
     fi
     if [[ "$args" == *"compose"*"--profile stateful up"* ]]; then
       env | grep -E '^(PANTHEON_(RELEASE_ID|BACKEND_COMMIT|OPERATOR_BFF_IMAGE|OPERATOR_BFF_DIGEST|RUNTIME_MANAGER_IMAGE|GOVERNANCE_IMAGE|DEPLOYMENT_IMAGE|LIFECYCLE_PROJECTOR_IMAGE))=' > "$FAKE_STATE/stateful_env"
+    fi
+    if [[ "$args" == *"compose"*" exec -T postgres "* ]]; then
+      [[ -f "$FAKE_STATE/schema_rows" ]] || exit 1
+      cat "$FAKE_STATE/schema_rows"; exit 0
     fi
     if [[ "$args" == *"compose"*" ps -q "* ]]; then
       svc="${args##* ps -q }"
@@ -287,11 +300,13 @@ class OpsHarness(unittest.TestCase):
         self.manifest = _sample_manifest(state="staging_verified")
         for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projector"):
             self.manifest["backend"]["images"][owner] = f"r/{owner}@sha256:" + "a" * 64
+        self.schema_rows = list(SCHEMA_ROWS)
         self.mpath = self.tmp / "manifest.json"
         self.mpath.write_text(json.dumps(self.manifest))
         self.epath = self.tmp / "staging_evidence.json"
         self.epath.write_text(json.dumps(_evidence(self.manifest, "0" * 64)))
         self.log = self.tmp / "bin.log"
+        (self.state / "schema_rows").write_text("\n".join(self.schema_rows) + "\n")
         self.rc = self.root / "config" / "runtime-config.js"
         self.rc.write_text(_public_runtime_config("rel-1"))
         (self.state / "served_runtime_config").write_text(self.rc.read_text())
@@ -309,6 +324,10 @@ class OpsHarness(unittest.TestCase):
         }))
         self.token = self.tmp / "token"
         self.token.write_text("synthetic-readonly-token")
+
+    @staticmethod
+    def _set_hash(rows):
+        return "sha256:" + hashlib.sha256(("\n".join(sorted(rows)) + "\n").encode()).hexdigest()
 
     def env(self, **extra):
         env = {**os.environ, **PROD_ENV, "PATH": f"{self.bin}:{os.environ['PATH']}", "BIN_LOG": str(self.log),
@@ -403,6 +422,30 @@ class ProdOpsTests(OpsHarness):
         self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertIn("UNKNOWN_GATE", self.ops("gate", "rel-1", "bogus", "8002").stderr)
+
+    def test_schema_gates_read_live_production_database_and_fail_on_absence_or_drift(self):
+        sr = self.state / "schema_rows"
+        for gate in ("schema", "old_new_compat"):
+            self.assertEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            # Empty production DB (zero migrations) must be rejected even with valid staging evidence.
+            sr.write_text("")
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            # Missing schema_migrations table / unreadable DB.
+            sr.unlink()
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            # Drift: applied set differs from the staging-verified manifest set.
+            sr.write_text(f"0001_init:{'a' * 64}\n")
+            r = self.ops("gate", "rel-1", gate, "8002")
+            self.assertNotEqual(r.returncode, 0, gate)
+            self.assertIn("migration_set_sha256", r.stderr)
+            sr.write_text(f"0001_init:{'a' * 64}\n0002_expand:{'c' * 64}\n")
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            sr.write_text("\n".join(self.schema_rows) + "\n")
+        # Bootstrap path also verifies the DB instead of pg_isready.
+        sr.write_text("")
+        self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002",
+                                     PROD_BOOTSTRAP_FIRST_RELEASE="true", FAKE_READY_PORTS="8002").returncode, 0)
+        self.assertNotIn("pg_isready", self.log.read_text())
 
     def test_bootstrap_first_release_old_new_compat_passes_without_prior_app(self):
         # Counterexample regression: PROD_BOOTSTRAP_FIRST_RELEASE=true with only candidate 8002 ready
@@ -555,10 +598,37 @@ class BootstrapTests(OpsHarness):
         self.assertIn(self.manifest["backend"]["images"]["operator_bff"], pulled)
         self.assertIn(self.manifest["backend"]["images"]["lifecycle_projector"], pulled)
 
+    def test_bootstrap_cold_cache_prepulls_effective_stateful_images_from_defaults_and_existing_compose_env(self):
+        env_file = self.tmp / "compose.env"
+        pg = "postgres:16-alpine@sha256:" + "1" * 64
+        nats = "nats:2.10-alpine@sha256:" + "2" * 64
+        # Fresh host, no shell variables: the compose.env defaults it writes must be the refs that get pulled.
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        written = env_file.read_text()
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        for line in written.splitlines():
+            if line.startswith(("PANTHEON_POSTGRES_IMAGE=", "PANTHEON_NATS_IMAGE=")):
+                self.assertIn(line.split("=", 1)[1], pulled)
+        self.assertTrue(any(i.startswith("postgres:") for i in pulled) and any(i.startswith("nats:") for i in pulled))
+        # Existing compose.env with operator-pinned refs and no shell variables: those exact refs are pulled.
+        (self.state / "pulled_images").unlink()
+        env_file.write_text(env_file.read_text() + f"PANTHEON_POSTGRES_IMAGE={pg}\nPANTHEON_NATS_IMAGE={nats}\n")
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        self.assertIn(pg, pulled); self.assertIn(nats, pulled)
+        # Existing compose.env lacking a stateful ref and no shell value fails closed before stateful up.
+        env_file.write_text("".join(l + "\n" for l in env_file.read_text().splitlines() if not l.startswith("PANTHEON_NATS_IMAGE=")))
+        r = self._run()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("COMPOSE_ENV", r.stderr)
+
     def test_bootstrap_rejects_unpinned_images_and_supports_oslogin_sudo(self):
         r_unpinned = self._run(PANTHEON_POSTGRES_IMAGE="postgres:16-alpine")
         self.assertNotEqual(r_unpinned.returncode, 0)
         self.assertIn("IMAGE_NOT_DIGEST_PINNED", r_unpinned.stderr)
+        (self.tmp / "compose.env").unlink()  # the rejected run persisted the unpinned ref; a pinned host starts clean
         r_sudo = self._run(FAKE_OSLOGIN_NONROOT="true", PROD_REGISTRY_AUTH="true")
         self.assertEqual(r_sudo.returncode, 0, r_sudo.stderr)
         self.assertIn("sudo ", self.log.read_text())

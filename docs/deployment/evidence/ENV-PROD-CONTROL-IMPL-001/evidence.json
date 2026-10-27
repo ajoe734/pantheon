@@ -21,7 +21,7 @@
   "rework_fixes_verified": [
     {
       "id": "first_release_old_new_compat",
-      "summary": "Explicit PROD_BOOTSTRAP_FIRST_RELEASE=true passes gate old_new_compat when no state/baseline.json exists and candidate port 8002 + postgres + schema label are ready, without requiring a nonexistent old baseline on port 8001; fails closed if state/baseline.json already exists; retains concurrent old+new readiness check for two-release paths."
+      "summary": "Explicit PROD_BOOTSTRAP_FIRST_RELEASE=true passes gate old_new_compat when no state/baseline.json exists and candidate port 8002 is live and the live production schema_migrations set hashes to the manifest migration_set_sha256, without requiring a nonexistent old baseline on port 8001; fails closed if state/baseline.json already exists; retains concurrent old+new readiness check for two-release paths."
     },
     {
       "id": "rollback_baseline_closure_and_singleton_owner",
@@ -49,13 +49,13 @@
     },
     {
       "id": "schema_compat_gate_no_image_labels",
-      "summary": "prod_ops schema/old_new_compat gates and prod_preflight no longer require org.pantheon.migration_set_sha256/compatibility_manifest_sha256 image labels (retained accepted BFF ccb9 has none). They bind manifest migration_set_sha256/compatibility_manifest_sha256 and digest-pinned BFF image to live staging_verified evidence (migration_verified, old_app_new_schema_compatible, matching hash), the running candidate container image, and postgres readiness. Local controller tests only (54 pass); not hosted evidence."
+      "summary": "prod_ops schema/old_new_compat gates and prod_preflight no longer require org.pantheon.migration_set_sha256/compatibility_manifest_sha256 image labels (retained accepted BFF ccb9 has none). They bind manifest migration_set_sha256/compatibility_manifest_sha256 and digest-pinned BFF image to live staging_verified evidence (migration_verified, old_app_new_schema_compatible, matching hash), the running candidate container image, and a live production database readback: the applied schema_migrations set (version:checksum, sorted) must hash to the manifest migration_set_sha256, so an empty, missing or drifted production schema fails closed (this gate verifies only; it never applies migrations). Local controller tests only; not hosted evidence."
     }
   ],
   "validation": {
     "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
     "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
-    "result": "52 tests OK in tests.deployment.test_production_release (script behavior only; not hosted drill evidence)",
+    "result": "56 tests OK in tests.deployment.test_production_release (script behavior only; not hosted drill evidence)",
     "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
   },
   "hosted_acceptance": {

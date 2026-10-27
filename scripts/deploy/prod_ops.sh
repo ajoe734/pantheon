@@ -195,6 +195,29 @@ if not isinstance(m.get("compatibility_manifest_sha256"), str) or not sha.fullma
 PY
 )" || return 1
 }
+# Live production database readback. The catalog/migration state of THIS database is the contract: the applied
+# schema_migrations set (version:checksum, sorted) must hash to the manifest migration_set_sha256 that staging
+# verified. Missing table, empty set, query failure or drift all fail closed. This gate never applies migrations.
+production_schema_gate() {
+  local rows
+  rows="$(compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F ":" -c "SELECT version, checksum_sha256 FROM schema_migrations ORDER BY version"' 2>/dev/null)" \
+    || { GATE_REASON="production schema_migrations unreadable (missing table or database unreachable)"; return 1; }
+  GATE_REASON="$(printf '%s\n' "$rows" | python3 -c '
+import hashlib, json, re, sys
+want = json.load(open(sys.argv[1])).get("migration_set_sha256")
+lines = [l for l in sys.stdin.read().splitlines() if l.strip()]
+if not lines:
+    print("production schema_migrations is empty: no migrations applied"); sys.exit(1)
+for l in lines:
+    v, _, c = l.partition(":")
+    if not v or not re.fullmatch(r"[0-9a-f]{64}", c):
+        print("malformed schema_migrations row"); sys.exit(1)
+got = "sha256:" + hashlib.sha256(("\n".join(sorted(lines)) + "\n").encode()).hexdigest()
+w = want if isinstance(want, str) and want.startswith("sha256:") else "sha256:" + str(want)
+if got != w:
+    print(f"production migration set {got} != manifest migration_set_sha256 {w}"); sys.exit(1)
+' "$RELEASE_MANIFEST_PATH" 2>&1)" || return 1
+}
 container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }
 require_ready() { # require_ready <port>
   [[ "$(http_code "http://127.0.0.1:$1/bff/readyz")" == "200" ]]
@@ -448,7 +471,7 @@ PY
         # Image labels are not a contract: the accepted BFF image carries no migration/compat labels. Identity is the
         # exact manifest + digest-pinned image bound to genuine live staging evidence for this same manifest.
         staging_migration_gate || fail GATE_SCHEMA "${GATE_REASON}"
-        compose exec -T postgres pg_isready >/dev/null || fail GATE_SCHEMA "postgres not ready" ;;
+        production_schema_gate || fail GATE_SCHEMA "${GATE_REASON}" ;;
       old_new_compat)
         staging_migration_gate || fail GATE_COMPAT "${GATE_REASON}"
         c="$(container_of "operator-bff-$(color_for_port "$port")")"; [[ -n "$c" ]] || fail GATE_COMPAT "candidate container not found"
@@ -457,11 +480,13 @@ PY
         if [[ "${PROD_BOOTSTRAP_FIRST_RELEASE:-false}" == "true" ]]; then
           # Explicit first release has no prior baseline application; validate candidate and database without inventing old app.
           [[ ! -f "${PROD_ROOT}/state/baseline.json" ]] || fail GATE_COMPAT "bootstrap declared while retained baseline exists"
-          compose exec -T postgres pg_isready >/dev/null || fail GATE_COMPAT "postgres not ready for bootstrap candidate"
+          production_schema_gate || fail GATE_COMPAT "${GATE_REASON}"
           require_live "$port" || fail GATE_COMPAT "bootstrap candidate not live on ${port}"
         else
           # Two-release path: the old baseline is fully ready (it still owns the singleton) and the new candidate is
           # live against the same database; candidate readiness is proven after the singleton hand-off.
+          # The live DB must already be at the exact staging-verified migration set (old app still ready on it).
+          production_schema_gate || fail GATE_COMPAT "${GATE_REASON}"
           require_ready "$PROD_ACTIVE_PORT" && require_live "$port" || fail GATE_COMPAT "old is not ready or new is not live"
         fi ;;
       *) fail UNKNOWN_GATE "unknown gate '${name}'" ;;
