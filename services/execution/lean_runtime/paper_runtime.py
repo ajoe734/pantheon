@@ -3551,8 +3551,15 @@ class PaperRuntimeService:
             if isinstance(exc, LifecycleTelemetryOutboxError):
                 raise
             raise LifecycleTelemetryOutboxError(str(exc)) from exc
+        # The durable chain is authoritative. A replay of an already-admitted
+        # batch is a no-op on disk, so adopting the re-staged (further advanced)
+        # in-memory chain would desynchronise the next event's sequence_no.
+        durable_chains = self._lifecycle_outbox.chains()
         for journey_id in journeys:
-            self._lifecycle_chains[journey_id] = batch.chains[journey_id]
+            durable = durable_chains.get(journey_id)
+            self._lifecycle_chains[journey_id] = (
+                durable if durable is not None else batch.chains[journey_id]
+            )
             self._blocked_lifecycle_chains.discard(journey_id)
         self._lifecycle_outbox_verified = True
         self._lifecycle_outbox_persistence_error = None

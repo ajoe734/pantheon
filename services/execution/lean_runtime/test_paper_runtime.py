@@ -3994,6 +3994,47 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
         self.assertEqual(restarted.snapshot()["pending_fill_publication_count"], 0)
         self.assertEqual(self.broker_calls, ["sa", "sb"])
 
+    def _assert_next_event_contiguous_after_replay(self, restart):
+        self.store = InMemoryPendingSignalStore()
+        service = self._service()
+        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        with patch.object(
+            PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
+        ):
+            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        runtime = self._service() if restart else service
+        runtime.drain_once()
+        durable = runtime._lifecycle_outbox.chains()
+        self.assertEqual(runtime._lifecycle_chains, durable)
+        journey_id, chain = next(
+            (j, c) for j, c in durable.items() if c["sequence_no"] == 7
+        )
+        fill = next(
+            e for e in self.captured
+            if e.get("signal_id") == "sb" and e["event_type"] == "paper_fill_simulated"
+        )
+        metadata = dict(fill["metadata"])
+        metadata["correlation_envelope"] = dict(chain["correlation_envelope"])
+        nxt = runtime._emit_lifecycle_telemetry(
+            "paper_order_simulated",
+            {"action": "noop"},
+            metadata,
+            event_id=str(uuid.uuid4()),
+            created_at="2026-10-27T01:00:05Z",
+        )
+        self.assertIsNotNone(nxt)
+        self.assertEqual(
+            runtime._lifecycle_outbox.chains()[journey_id]["sequence_no"], 8
+        )
+        self.assertEqual(self._types("sb").count("paper_fill_simulated"), 1)
+        self.assertEqual(self.broker_calls, ["sa", "sb"])
+
+    def test_next_event_contiguous_after_same_process_replay(self):
+        self._assert_next_event_contiguous_after_replay(restart=False)
+
+    def test_next_event_contiguous_after_restart_replay(self):
+        self._assert_next_event_contiguous_after_replay(restart=True)
+
 
 if __name__ == "__main__":
     unittest.main()

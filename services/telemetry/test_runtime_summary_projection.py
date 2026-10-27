@@ -2021,6 +2021,31 @@ class TestCommittedCloseFinancialConsistency(unittest.TestCase):
         self.assertNotIn("positions_status", summary)
         self.assertEqual(summary["pnl"], -15.0)
 
+    def test_unchanged_heartbeat_fill_count_upgrades_stored_summary(self):
+        # Historical shape: stored summary has fill1/short1 and the runtime
+        # ledger is flat and unchanged, so no new pnl/drawdown snapshot exists.
+        store = self._store()
+        self._open_short(store)
+        heartbeat = _event("heartbeat", created_at="2026-10-27T13:05:00Z")
+        heartbeat["event_id"] = "evt-hb-unchanged"
+        heartbeat["metadata"] = {
+            **(heartbeat.get("metadata") or {}),
+            "performance_telemetry": {
+                "status": "unchanged",
+                "code": "performance_sample_unchanged",
+                "fill_count": 2,
+            },
+        }
+        summary = store.project_event(heartbeat)
+        self.assertEqual(summary["ledger_fill_count"], 2)
+        self.assertEqual(summary["positions"], [])
+        self.assertIsNone(summary["position_count"])
+        self.assertEqual(summary["positions_status"], "unavailable")
+        self.assertIn("fill_event_gap", summary["positions_unavailable_reason"])
+        # No fabricated fill or financials.
+        self.assertEqual(summary["executed_trade_count"], 1)
+        self.assertNotIn("pnl", summary)
+
     def test_consistent_fill_count_does_not_flag_positions(self):
         store = self._store()
         self._open_short(store)

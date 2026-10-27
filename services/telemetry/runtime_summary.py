@@ -816,6 +816,21 @@ class RuntimeSummaryProjectionStore:
             # it; a heartbeat never refreshes a mark, it can only withdraw one.
             perf = metadata.get("performance_telemetry")
             if event_type == "heartbeat" and isinstance(perf, dict):
+                # The heartbeat reports the same authoritative ledger fill_count
+                # even when the performance sample is unchanged and no new
+                # pnl/drawdown snapshot is emitted (e.g. a flat book that was
+                # closed before this projection learned fill counts).
+                hb_fill_count = perf.get("fill_count")
+                if (
+                    isinstance(hb_fill_count, int)
+                    and not isinstance(hb_fill_count, bool)
+                    and hb_fill_count >= 0
+                ):
+                    current["ledger_fill_count"] = max(
+                        int(current.get("ledger_fill_count") or 0),
+                        hb_fill_count,
+                    )
+                    _rebuild_positions(current)
                 perf_diag = (
                     perf.get("diagnostic")
                     if isinstance(perf.get("diagnostic"), dict)
