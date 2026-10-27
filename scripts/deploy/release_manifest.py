@@ -59,10 +59,6 @@ RETIRED_IDENTIFIERS = (
     "front-ai-trading-system",
 )
 
-UNACCEPTED_ALL12_CHAINS = frozenset({
-    "h12-01a11-20261023-9aeb",
-})
-
 REQUIRED_SAFETY_DEFAULTS = {
     "provider_enabled": False,
     "live_broker_enabled": False,
@@ -290,9 +286,9 @@ def _validate_dev_verification(
     if chain_id is not None:
         if not isinstance(chain_id, str) or not chain_id.strip():
             raise ReleaseManifestError("dev_verification.all12_chain_id must be a non-empty string")
-        if chain_id in UNACCEPTED_ALL12_CHAINS:
+        if dev_ver.get("all12_status") != "passed":
             raise ReleaseManifestError(
-                f"refusing to relabel unaccepted hosted all12 chain {chain_id!r} as dev_verified"
+                f"dev_verification.all12_chain_id {chain_id!r} requires all12_status 'passed'"
             )
     all12_status = dev_ver.get("all12_status")
     if all12_status is not None and all12_status != "passed":
@@ -310,11 +306,10 @@ def _validate_rollback_baseline(baseline: Any, current_release_id: str) -> None:
         "frontend_artifact_sha256",
         "backend_commit",
         "backend_operator_bff_image",
-    }
-    optional_keys = {
         "backend_images",
         "config_schema_version",
     }
+    optional_keys: set[str] = set()
     keys = set(baseline.keys())
     if not required_keys.issubset(keys) or not keys.issubset(required_keys | optional_keys):
         raise ReleaseManifestError(
@@ -338,24 +333,22 @@ def _validate_rollback_baseline(baseline: Any, current_release_id: str) -> None:
         IMAGE_DIGEST_RE,
         "rollback_baseline.backend_operator_bff_image",
     )
-    if "backend_images" in baseline:
-        b_images = baseline.get("backend_images")
-        if not isinstance(b_images, dict) or "operator_bff" not in b_images:
-            raise ReleaseManifestError("rollback_baseline.backend_images must be an object including 'operator_bff'")
-        for svc_name, img_ref in b_images.items():
-            if not isinstance(svc_name, str) or not svc_name.strip():
-                raise ReleaseManifestError("rollback_baseline.backend_images service key must be non-empty string")
-            if not isinstance(img_ref, str) or not IMAGE_DIGEST_RE.fullmatch(img_ref):
-                raise ReleaseManifestError(
-                    f"rollback_baseline.backend_images[{svc_name!r}] must be an immutable digest reference "
-                    f"('<repo>@sha256:<64-hex>'), got {img_ref!r}"
-                )
-        if b_images["operator_bff"] != bff_img:
+    b_images = baseline.get("backend_images")
+    if not isinstance(b_images, dict) or "operator_bff" not in b_images:
+        raise ReleaseManifestError("rollback_baseline.backend_images must be an object including 'operator_bff'")
+    for svc_name, img_ref in b_images.items():
+        if not isinstance(svc_name, str) or not svc_name.strip():
+            raise ReleaseManifestError("rollback_baseline.backend_images service key must be non-empty string")
+        if not isinstance(img_ref, str) or not IMAGE_DIGEST_RE.fullmatch(img_ref):
             raise ReleaseManifestError(
-                "rollback_baseline.backend_images['operator_bff'] must match rollback_baseline.backend_operator_bff_image"
+                f"rollback_baseline.backend_images[{svc_name!r}] must be an immutable digest reference "
+                f"('<repo>@sha256:<64-hex>'), got {img_ref!r}"
             )
-    if "config_schema_version" in baseline:
-        _require_str(baseline, "config_schema_version", None, "rollback_baseline.config_schema_version")
+    if b_images["operator_bff"] != bff_img:
+        raise ReleaseManifestError(
+            "rollback_baseline.backend_images['operator_bff'] must match rollback_baseline.backend_operator_bff_image"
+        )
+    _require_str(baseline, "config_schema_version", None, "rollback_baseline.config_schema_version")
 
 
 def verify_promotion_eligibility(

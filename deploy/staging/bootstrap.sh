@@ -116,13 +116,7 @@ run_priv() {
 }
 
 run_compose() {
-  if run_priv "$DOCKER_BIN" compose version >/dev/null 2>&1; then
-    run_priv "$DOCKER_BIN" compose "$@"
-  elif command -v docker-compose >/dev/null 2>&1; then
-    run_priv docker-compose "$@"
-  else
-    return 1
-  fi
+  run_priv "$DOCKER_BIN" compose "$@"
 }
 
 check_binaries() {
@@ -130,9 +124,7 @@ check_binaries() {
   for bin in "$DOCKER_BIN" "$CURL_BIN" "$CADDY_BIN" "$MOUNTPOINT_BIN" "$PSQL_BIN" "$PG_DUMP_BIN" "$PG_RESTORE_BIN"; do
     command -v "$bin" >/dev/null 2>&1 || return 1
   done
-  if ! run_priv "$DOCKER_BIN" compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
-    return 1
-  fi
+  run_priv "$DOCKER_BIN" compose version >/dev/null 2>&1 || return 1
   return 0
 }
 
@@ -151,11 +143,6 @@ PY
       return 0
     fi
   fi
-  if [[ -n "${GCLOUD_BIN:-}" ]] && command -v "${GCLOUD_BIN}" >/dev/null 2>&1; then
-    "${GCLOUD_BIN}" auth print-access-token 2>/dev/null && return 0
-  elif command -v gcloud >/dev/null 2>&1; then
-    gcloud auth print-access-token 2>/dev/null && return 0
-  fi
   return 1
 }
 
@@ -164,13 +151,6 @@ fetch_gsm_secret_to_file() {
   local dest_path="$2"
   local tmp_sec="${LOCAL_WORK_DIR}/secret-$(basename "${dest_path}")"
   rm -f "${tmp_sec}"
-  if [[ -n "${GCLOUD_BIN:-}" ]] && command -v "${GCLOUD_BIN}" >/dev/null 2>&1; then
-    if (umask 077 && "${GCLOUD_BIN}" secrets versions access latest --project="${STAGING_GCP_PROJECT_ID}" --secret="${secret_name}" > "${tmp_sec}" 2>/dev/null) && [[ -s "${tmp_sec}" ]]; then
-      run_priv install -m 0600 "${tmp_sec}" "${dest_path}"
-      rm -f "${tmp_sec}"
-      return 0
-    fi
-  fi
   local access_token=""
   access_token="$(fetch_runtime_access_token)" || return 1
   local sm_url="https://secretmanager.googleapis.com/v1/projects/${STAGING_GCP_PROJECT_ID}/secrets/${secret_name}/versions/latest:access"
@@ -198,13 +178,17 @@ if ! check_binaries; then
   if [[ "${STAGING_ALLOW_APT_INSTALL:-true}" == "true" ]] && command -v apt-get >/dev/null 2>&1; then
     run_priv env DEBIAN_FRONTEND=noninteractive apt-get update -y >&2 || fail "APT_UPDATE_FAILED" "apt-get update failed on bare Debian host"
     run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      ca-certificates curl gnupg caddy docker.io postgresql-client util-linux python3 >&2 \
+      ca-certificates curl gnupg caddy postgresql-client util-linux python3 >&2 \
       || fail "APT_INSTALL_FAILED" "apt-get install of bare-Debian runtime dependencies failed"
-    if ! run_priv "$DOCKER_BIN" compose version >/dev/null 2>&1; then
-      run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin >&2 \
-        || run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose >&2 \
-        || fail "APT_COMPOSE_INSTALL_FAILED" "Failed to install docker-compose-plugin or docker-compose on Debian 12"
-    fi
+    run_priv install -m 0755 -d /etc/apt/keyrings
+    "$CURL_BIN" -fsSL https://download.docker.com/linux/debian/gpg | run_priv gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg \
+      || fail "DOCKER_REPO_KEY_FAILED" "Failed to fetch the official Docker apt repository key"
+    run_priv chmod a+r /etc/apt/keyrings/docker.gpg
+    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable\n' "$(dpkg --print-architecture)" \
+      | run_priv tee /etc/apt/sources.list.d/docker.list >/dev/null
+    run_priv env DEBIAN_FRONTEND=noninteractive apt-get update -y >&2 || fail "APT_UPDATE_FAILED" "apt-get update failed after adding the Docker repository"
+    run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin >&2 \
+      || fail "APT_DOCKER_INSTALL_FAILED" "Failed to install Docker Engine and docker-compose-plugin from the official Docker Debian 12 repository"
     if command -v systemctl >/dev/null 2>&1; then
       run_priv systemctl enable --now docker >/dev/null 2>&1 || true
     fi
@@ -297,9 +281,26 @@ for raw in env_path.read_text(encoding="utf-8").splitlines():
     k, v = line.split("=", 1)
     kv[k.strip()] = v.strip().strip('"').strip("'")
 
-for req in ("PANTHEON_BFF_JWT_SECRET", "PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_DATABASE_URL"):
+for req in (
+    "PANTHEON_BFF_JWT_SECRET",
+    "PANTHEON_RUNTIME_JWT_SECRET",
+    "PANTHEON_DATABASE_URL",
+    "TELEMETRY_DB_DSN",
+    "LIFECYCLE_PROJECTOR_PROJECTION_DSN",
+):
     if not kv.get(req):
         raise SystemExit(f"missing required secret key {req}")
+for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN"):
+    dsn_base, _, dsn_query = kv[dsn_key].partition("?")
+    dsn_path = dsn_base.rstrip("/")
+    if dsn_query:
+        from urllib.parse import parse_qs
+        override_keys = {"dbname", "host", "hostaddr", "port", "user", "service", "options"}
+        bad = override_keys & {k.lower() for k in parse_qs(dsn_query, keep_blank_values=True)}
+        if bad:
+            raise SystemExit(f"{dsn_key} must not carry routing override parameters: {sorted(bad)}")
+    if not kv[dsn_key].startswith(("postgresql://", "postgres://")) or dsn_path.rsplit("/", 1)[-1] != pg_db:
+        raise SystemExit(f"{dsn_key} must be a postgres DSN for isolated staging db {pg_db}")
 
 forbidden_prefixes = ("BROKER_API_KEY", "BROKER_SECRET", "EXCHANGE_PRIVATE_KEY", "LIVE_BROKER_TOKEN")
 for k in kv:
@@ -364,9 +365,14 @@ if not DIGEST_RE.match(rb_bff_image):
     raise SystemExit(f"ROLLBACK_IMAGE_UNPINNED: {rb_bff_image!r}")
 
 rb_images_map = dict(rb.get("backend_images") or {})
-rb_images_map["operator_bff"] = rb_bff_image
+if not rb_images_map:
+    raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images is required")
+if str(rb_images_map.get("operator_bff") or "").strip() != rb_bff_image:
+    raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.operator_bff must equal backend_operator_bff_image")
 for key in required_owners:
-    rb_val = str(rb_images_map.get(key) or images[key]).strip()
+    rb_val = str(rb_images_map.get(key) or "").strip()
+    if not rb_val:
+        raise SystemExit(f"ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.{key} is required")
     if not DIGEST_RE.match(rb_val):
         raise SystemExit(f"ROLLBACK_OWNER_IMAGE_UNPINNED: {key}={rb_val!r}")
     rb_images_map[key] = rb_val
@@ -374,7 +380,9 @@ for key in required_owners:
 frontend_commit = str(manifest.get("frontend", {}).get("commit") or manifest.get("frontend", {}).get("commit_sha") or "")
 backend_commit = str(manifest.get("backend", {}).get("commit") or manifest.get("backend", {}).get("commit_sha") or "")
 config_schema_version = str(manifest.get("config_schema_version") or "pantheon.env-config.v1")
-rb_config_schema_version = str(rb.get("config_schema_version") or config_schema_version)
+rb_config_schema_version = str(rb.get("config_schema_version") or "").strip()
+if not rb_config_schema_version:
+    raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.config_schema_version is required")
 bff_digest = "sha256:" + images["operator_bff"].split("@sha256:", 1)[1]
 rb_bff_digest = "sha256:" + rb_bff_image.split("@sha256:", 1)[1]
 reg_host = images["operator_bff"].split("/", 1)[0] if "/" in images["operator_bff"] else ""
@@ -495,14 +503,44 @@ render_runtime_config() {
   local dep_json_path="$1"
   local dest_cfg_path="$2"
   local tmp_rt="${LOCAL_WORK_DIR}/$(basename "${dest_cfg_path}")"
+  # Emits ONLY the accepted FE `pantheon.fe.public-runtime-config.v1` fields. Deployment identity
+  # metadata stays in deployment.json; public Identity values come from direct environment wiring.
   python3 - "$tmp_rt" "$dep_json_path" <<'PY'
-import json, sys
+import hashlib, json, os, re, sys
 out_path, dep_path = sys.argv[1], sys.argv[2]
 dep = json.loads(open(dep_path, encoding="utf-8").read())
+
+def need(name):
+    val = os.environ.get(name, "").strip()
+    if not val:
+        print(json.dumps({"status": "error", "step": "bootstrap", "error_code": "PUBLIC_IDENTITY_CONFIG_MISSING",
+                          "message": f"{name} is required (public isolated Identity config; no fallback)"}), file=sys.stderr)
+        sys.exit(1)
+    return val
+
+api_key = need("STAGING_PUBLIC_GCP_IDENTITY_API_KEY")
+project_id = need("STAGING_PUBLIC_GCP_IDENTITY_PROJECT_ID")
+auth_domain = need("STAGING_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN")
+issuer = os.environ.get("STAGING_PUBLIC_GCP_IDENTITY_ISSUER", "").strip() or f"https://securetoken.google.com/{project_id}"
+audience = os.environ.get("STAGING_PUBLIC_GCP_IDENTITY_AUDIENCE", "").strip() or project_id
+cfg = {
+    "schemaVersion": "pantheon.fe.public-runtime-config.v1",
+    "environment": "staging",
+    "configRef": str(dep["release_id"]),
+    "bffBaseUrl": str(dep["bff_base_url"]),
+    "gcpIdentity": {
+        "apiKey": api_key,
+        "projectId": project_id,
+        "authDomain": auth_domain,
+        "issuer": issuer,
+        "audience": audience,
+    },
+}
+canonical = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
+cfg["configSha256"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 body = (
     "// Pantheon Staging External Runtime Config (served with Cache-Control: no-store)\n"
-    f"window.__PANTHEON_DEPLOYMENT_CONFIG__ = {json.dumps(dep, sort_keys=True)};\n"
-    f"window.__PANTHEON_RUNTIME_CONFIG__ = window.__PANTHEON_DEPLOYMENT_CONFIG__;\n"
+    f"window.__PANTHEON_DEPLOYMENT_CONFIG__ = {json.dumps(cfg, sort_keys=True)};\n"
 )
 with open(out_path, "w", encoding="utf-8") as fh:
     fh.write(body)
