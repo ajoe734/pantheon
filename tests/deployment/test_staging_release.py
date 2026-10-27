@@ -249,16 +249,7 @@ if tool == "docker":
         if img not in st.get("pulled_images", []):
             print(f"image not pulled locally: {img}", file=sys.stderr)
             raise SystemExit(1)
-        fmt = ""
-        for i, a in enumerate(args):
-            if a == "-f" and i + 1 < len(args):
-                fmt = args[i + 1]
-        if "migration_set_sha256" in fmt:
-            print(os.environ.get("FAKE_IMAGE_MIGRATION_LABEL", st.get("migration_set_sha256", "")))
-        elif "compatibility_manifest_sha256" in fmt:
-            print(os.environ.get("FAKE_IMAGE_COMPAT_LABEL", st.get("compatibility_manifest_sha256", "")))
-        else:
-            print(json.dumps([{"Id": img}]))
+        print(json.dumps([{"Id": img}]))
         raise SystemExit(0)
 
     if args[:1] == ["inspect"]:
@@ -2537,6 +2528,14 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         self.assertIn("root * __STAGING_CONFIG_DIR__", caddy_raw)
         self.assertTrue(BOOTSTRAP_SCRIPT.exists() and os.access(BOOTSTRAP_SCRIPT, os.X_OK))
         self.assertTrue(COLLECTOR_SCRIPT.exists() and os.access(COLLECTOR_SCRIPT, os.X_OK))
+
+    def test_collector_does_not_require_custom_image_labels(self) -> None:
+        # Actual retained BFF image carries no org.pantheon.* migration/compat labels; the
+        # contract is manifest + migration-spec + live catalog/checksum observations instead.
+        raw = COLLECTOR_SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("org.pantheon.migration_set_sha256", raw)
+        self.assertNotIn("org.pantheon.compatibility_manifest_sha256", raw)
+        self.assertIn("MIGRATION_SPEC_SHA_MISMATCH", raw)
 
 
 if __name__ == "__main__":

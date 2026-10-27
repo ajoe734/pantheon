@@ -183,5 +183,11 @@
     "dsn_wiring": "TELEMETRY_DB_DSN and LIFECYCLE_PROJECTOR_PROJECTION_DSN required in isolated secrets env; bootstrap.sh validates postgres scheme and isolated db name",
     "validation": "python3 -m unittest tests.deployment.test_staging_release: 24 tests OK (350s); bash -n deploy/staging/bootstrap.sh OK",
     "hosted_acceptance": "remains external_wait; whole task not done"
+  },
+  "collector_image_label_prerequisite_removal": {
+    "scope": "Source-only. pantheon-staging-collect-gates no longer requires org.pantheon.migration_set_sha256 / org.pantheon.compatibility_manifest_sha256 image labels, which the actual qualified retained BFF (indexccb9/configf572) does not carry.",
+    "retained_gates": "exact image/source/manifest identity, migration-spec sha vs manifest, live information_schema catalog before/after, schema_migrations checksum, old-app-new-schema, backup-restore readability, exact-pair rollback, tenant/RBAC and safety readbacks",
+    "validation": "python3 -m unittest tests.deployment.test_staging_release: all tests OK (run alone, ~380s); concurrent runs share /tmp bundle paths and must not overlap",
+    "hosted_acceptance": "remains external_wait; whole task not done"
   }
 }
