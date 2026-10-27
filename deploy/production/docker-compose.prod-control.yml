@@ -94,8 +94,15 @@ services:
     pull_policy: never
     restart: unless-stopped
     profiles: ["singleton"]
+    # Existing loop-run-projector-scheduler telemetry image; command selects the lifecycle projector.
+    command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
     <<: *secrets
-    environment: *core_env
+    environment:
+      <<: *core_env
+      LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
+      # Isolated production DSNs (TELEMETRY_DB_DSN, LIFECYCLE_PROJECTOR_PROJECTION_DSN) come from
+      # the secrets env file and are validated by bootstrap.sh against PROD_POSTGRES_DB.
+      GIT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
     labels: {"org.pantheon.role": "singleton"}
 
   # One color of the stateless BFF. Run with: --profile blue | --profile green and
@@ -108,21 +115,24 @@ services:
     <<: *secrets
     environment: &bff_env
       <<: *core_env
-      PANTHEON_OPERATOR_BFF_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:-}
+      BFF_COMMIT: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
+      BFF_IMAGE_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:?operator_bff digest required}
+      PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: postgres
+      LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
       PANTHEON_BFF_AUTH_MODE: strict
       PANTHEON_BFF_AUTH_STUB: "false"
       PANTHEON_BFF_OIDC_ISSUER: ${PROD_IDP_ISSUER:?idp issuer required}
       PANTHEON_BFF_OIDC_DISCOVERY_URL: ${PROD_IDP_ISSUER:?idp issuer required}/.well-known/openid-configuration
       PANTHEON_BFF_CORS_ORIGINS: ${PROD_BFF_CORS_ORIGINS:?production FE origin required}
-      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8000
-      PANTHEON_GOVERNANCE_API_URL: http://governance:8000
-      PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8000
-      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8000
-      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8000
-      PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8000
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8080
+      PANTHEON_GOVERNANCE_API_URL: http://governance:8082
+      PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8082
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
+      PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8095
     labels: {"org.pantheon.role": "bff", "org.pantheon.color": "blue"}
     ports:
-      - "127.0.0.1:${PROD_BLUE_PORT:?blue port required}:8000"
+      - "127.0.0.1:${PROD_BLUE_PORT:?blue port required}:8001"
 
   operator-bff-green:
     image: ${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}
@@ -133,7 +143,7 @@ services:
     environment: *bff_env
     labels: {"org.pantheon.role": "bff", "org.pantheon.color": "green"}
     ports:
-      - "127.0.0.1:${PROD_GREEN_PORT:?green port required}:8000"
+      - "127.0.0.1:${PROD_GREEN_PORT:?green port required}:8001"
 
 secrets:
   postgres_password:

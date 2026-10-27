@@ -42,12 +42,16 @@
     {
       "id": "staging_live_evidence_contract",
       "summary": "prod_preflight.check_staging_evidence now additionally requires dry_run=false and observed_from_live_vm=true, matching the merged ENV-STG-EPHEMERAL-IMPL-001 staging_verify.sh output, so dry_run_validated or unobserved staging evidence cannot admit production."
+    },
+    {
+      "id": "original_scope_wiring_and_public_contract",
+      "summary": "Compose now uses accepted native ports (BFF 8001, runtime 8080, governance 8082, deployment 8095), the existing projector run command with GIT_SHA and isolated DSNs; bootstrap and atomic switch render only the accepted pantheon.fe.public-runtime-config.v1 fields (configRef, gcpIdentity, truthful optional configSha256); prod_ops verify_runtime_config consumes configRef/schema/identity/sha; production-release.yml maps and forwards PROD_PUBLIC_GCP_IDENTITY_* and preflight requires them. Local fixtures only; no hosted evidence."
     }
   ],
   "validation": {
     "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
     "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
-    "result": "49 tests OK in tests.deployment.test_production_release (script behavior only; not hosted drill evidence)",
+    "result": "52 tests OK in tests.deployment.test_production_release (script behavior only; not hosted drill evidence)",
     "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
   },
   "hosted_acceptance": {

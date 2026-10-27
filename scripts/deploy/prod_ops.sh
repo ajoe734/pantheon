@@ -188,16 +188,35 @@ verify_runtime_config_internal() {
   grep -qi '^cache-control:.*no-store' <<<"$hdrs" || fail RUNTIME_CONFIG_CACHEABLE "runtime-config.js is not served no-store"
   cmp -s "$cfg" "${PROD_ROOT}/state/runtime-config.readback" || fail RUNTIME_CONFIG_DRIFT "served runtime-config.js differs from the rendered file"
   grep -q "https://${PROD_BFF_HOST}" "$cfg" || fail RUNTIME_CONFIG_BFF "runtime-config.js does not point at the production BFF"
-  if [[ -n "$expected_rel" ]]; then
-    python3 - "$cfg" "$expected_rel" <<'PY' || fail RUNTIME_CONFIG_RELEASE_MISMATCH "runtime-config.js release_id does not match expected ${expected_rel}"
-import json, re, sys
+  python3 - "$cfg" "$expected_rel" "https://${PROD_BFF_HOST}" <<'PY' || fail RUNTIME_CONFIG_CONTRACT "runtime-config.js violates the accepted public runtime config contract or expected configRef ${expected_rel}"
+import hashlib, json, re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
-want = sys.argv[2]
-m = re.search(r'"release_id"\s*:\s*"([^"]+)"', text)
-if m and m.group(1) != want:
-    raise SystemExit(1)
+want_ref, want_bff = sys.argv[2], sys.argv[3]
+m = re.search(r"window\.__PANTHEON_DEPLOYMENT_CONFIG__\s*=\s*(\{.*\})\s*;", text, re.S)
+if not m:
+    raise SystemExit("no __PANTHEON_DEPLOYMENT_CONFIG__ object")
+cfg = json.loads(m.group(1))
+if cfg.get("schemaVersion") != "pantheon.fe.public-runtime-config.v1":
+    raise SystemExit("unsupported schemaVersion")
+if cfg.get("environment") != "production":
+    raise SystemExit("environment is not production")
+if cfg.get("bffBaseUrl") != want_bff:
+    raise SystemExit("bffBaseUrl mismatch")
+ref = cfg.get("configRef")
+if not isinstance(ref, str) or not ref:
+    raise SystemExit("configRef missing")
+if want_ref and ref != want_ref:
+    raise SystemExit(f"configRef {ref} != expected {want_ref}")
+ident = cfg.get("gcpIdentity")
+if not isinstance(ident, dict) or not all(isinstance(ident.get(k), str) and ident[k] for k in ("apiKey", "projectId", "authDomain", "issuer", "audience")):
+    raise SystemExit("gcpIdentity incomplete")
+sha = cfg.get("configSha256")
+if sha is not None:
+    body = {k: v for k, v in cfg.items() if k != "configSha256"}
+    canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    if sha != "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest():
+        raise SystemExit("configSha256 is not truthful")
 PY
-  fi
 }
 
 verify_public_fe_bff_pair() {

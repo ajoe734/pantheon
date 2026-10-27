@@ -94,32 +94,41 @@ PY
 
 render_runtime_config() {
   # render_runtime_config <rel_id> <fe_commit> <fe_sha> <bff_commit> <bff_img> <cfg_ver> <out_path>
-  python3 - "$1" "$2" "$3" "$4" "$5" "$6" "${PROD_BFF_HOST}" "${PROD_IDP_ISSUER}" "$7" <<'PY'
-import json, sys
-from pathlib import Path
-rel_id, fe_commit, fe_sha, bff_commit, bff_img, cfg_ver, bff_host, idp_issuer, out_p = sys.argv[1:10]
+  # Emits ONLY the accepted FE `pantheon.fe.public-runtime-config.v1` fields; deployment identity
+  # metadata stays in deployment.json. Public Identity values come from PROD_PUBLIC_GCP_IDENTITY_*.
+  python3 - "$1" "https://${PROD_BFF_HOST}" "$7" <<'PY'
+import hashlib, json, os, sys
+config_ref, bff_base_url, out_path = sys.argv[1:4]
+
+def need(name):
+    val = os.environ.get(name, "").strip()
+    if not val:
+        print(json.dumps({"status": "error", "error_code": "PUBLIC_IDENTITY_CONFIG_MISSING",
+                          "message": f"{name} is required (public production Identity config; no fallback)"}), file=sys.stderr)
+        sys.exit(1)
+    return val
+
+api_key = need("PROD_PUBLIC_GCP_IDENTITY_API_KEY")
+project_id = need("PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID")
+auth_domain = need("PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN")
 cfg = {
+    "schemaVersion": "pantheon.fe.public-runtime-config.v1",
     "environment": "production",
-    "release_id": rel_id or None,
-    "frontend_commit": fe_commit,
-    "frontend_artifact_sha256": fe_sha,
-    "backend_commit": bff_commit,
-    "operator_bff_image": bff_img,
-    "config_schema_version": cfg_ver,
-    "bffBaseUrl": f"https://{bff_host}",
-    "oidcIssuer": idp_issuer,
-    "vite_bff_mode": "live",
-    "vite_bff_fallback": "strict",
-    "provider_enabled": False,
-    "live_broker_enabled": False,
-    "real_writes_enabled": False,
-    "control_vm_broker_credentials_present": False,
+    "configRef": config_ref,
+    "bffBaseUrl": bff_base_url,
+    "gcpIdentity": {
+        "apiKey": api_key,
+        "projectId": project_id,
+        "authDomain": auth_domain,
+        "issuer": os.environ.get("PROD_PUBLIC_GCP_IDENTITY_ISSUER", "").strip() or f"https://securetoken.google.com/{project_id}",
+        "audience": os.environ.get("PROD_PUBLIC_GCP_IDENTITY_AUDIENCE", "").strip() or project_id,
+    },
 }
-body = (
-    "window.__PANTHEON_DEPLOYMENT_CONFIG__ = Object.freeze(" + json.dumps(cfg, sort_keys=True) + ");\n"
-    "window.__PANTHEON_RUNTIME_CONFIG__ = window.__PANTHEON_DEPLOYMENT_CONFIG__;\n"
-)
-Path(out_p).write_text(body, encoding="utf-8")
+canonical = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
+cfg["configSha256"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+with open(out_path, "w", encoding="utf-8") as fh:
+    fh.write("// Pantheon Production External Runtime Config (served with Cache-Control: no-store)\n")
+    fh.write("window.__PANTHEON_DEPLOYMENT_CONFIG__ = " + json.dumps(cfg, sort_keys=True) + ";\n")
 PY
 }
 

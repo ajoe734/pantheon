@@ -103,6 +103,11 @@ jobs:
       PROD_BFF_HOST: ${{ vars.PROD_BFF_HOST }}
       PROD_FE_HOST: ${{ vars.PROD_FE_HOST }}
       PROD_IDP_ISSUER: ${{ vars.PROD_IDP_ISSUER }}
+      PROD_PUBLIC_GCP_IDENTITY_API_KEY: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_API_KEY || '' }}
+      PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID || '' }}
+      PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN || '' }}
+      PROD_PUBLIC_GCP_IDENTITY_ISSUER: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_ISSUER || '' }}
+      PROD_PUBLIC_GCP_IDENTITY_AUDIENCE: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_AUDIENCE || '' }}
       PROD_RPO_SECONDS: ${{ vars.PROD_RPO_SECONDS }}
       PROD_RTO_SECONDS: ${{ vars.PROD_RTO_SECONDS }}
       PROD_RETENTION_DAYS: ${{ vars.PROD_RETENTION_DAYS }}
@@ -174,7 +179,9 @@ jobs:
                      PROD_SERVICE_ACCOUNT PROD_IAM_POLICY_REF PROD_SECRETS_REF PROD_DATA_DISK PROD_NETWORK \
                      PROD_BFF_HOST PROD_FE_HOST PROD_IDP_ISSUER PROD_RPO_SECONDS PROD_RTO_SECONDS \
                      PROD_RETENTION_DAYS PROD_ONCALL_OWNER PROD_ROLLBACK_OWNER STAGING_GCP_PROJECT_ID \
-                     DEV_GCP_PROJECT_ID; do
+                     DEV_GCP_PROJECT_ID PROD_PUBLIC_GCP_IDENTITY_API_KEY PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID \
+                     PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN PROD_PUBLIC_GCP_IDENTITY_ISSUER \
+                     PROD_PUBLIC_GCP_IDENTITY_AUDIENCE; do
               printf 'export %s=%q\n' "$v" "${!v}"
             done
             printf 'export WORKFLOW_INITIATOR=%q\n' "${{ github.triggering_actor }}"
@@ -199,7 +206,7 @@ jobs:
             sudo install -m 0755 \$B/bootstrap.sh \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
             sudo install -m 0644 \$B/docker-compose.prod-control.yml \$B/Caddyfile \"\$PROD_ROOT/bin/\"
             sudo install -m 0644 \$B/snapshot.json \"\$PROD_ROOT/state/snapshots/\$RELEASE_ID.json\"
-            sudo -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true \
+            sudo -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true PROD_REQUIRE_FULL_SECRET_KEYS=true \
               PROD_SECRETS_ENV_FILE=\"\${PROD_SECRETS_ENV_FILE:-\$PROD_ROOT/secrets/prod.secrets.env}\" \
               PROD_POSTGRES_PASSWORD_FILE=\"\${PROD_POSTGRES_PASSWORD_FILE:-\$PROD_ROOT/secrets/postgres_password}\" \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \

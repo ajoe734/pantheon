@@ -229,6 +229,23 @@ esac
 """
 
 
+def _public_runtime_config(config_ref: str, *, sha: bool = True, **override) -> str:
+    cfg = {
+        "schemaVersion": "pantheon.fe.public-runtime-config.v1",
+        "environment": "production",
+        "configRef": config_ref,
+        "bffBaseUrl": "https://api.trading.acme-prod.net",
+        "gcpIdentity": {"apiKey": "public-web-key-fixture", "projectId": "acme-prod-identity",
+                        "authDomain": "acme-prod-identity.firebaseapp.com",
+                        "issuer": "https://securetoken.google.com/acme-prod-identity", "audience": "acme-prod-identity"},
+    }
+    cfg.update(override)
+    if sha:
+        canon = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
+        cfg["configSha256"] = "sha256:" + hashlib.sha256(canon.encode()).hexdigest()
+    return "window.__PANTHEON_DEPLOYMENT_CONFIG__ = " + json.dumps(cfg, sort_keys=True) + ";\n"
+
+
 class OpsHarness(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -251,7 +268,7 @@ class OpsHarness(unittest.TestCase):
         self.mpath.write_text(json.dumps(self.manifest))
         self.log = self.tmp / "bin.log"
         self.rc = self.root / "config" / "runtime-config.js"
-        self.rc.write_text('window.__PANTHEON_RUNTIME_CONFIG__ = {"bffBaseUrl":"https://api.trading.acme-prod.net"};\n')
+        self.rc.write_text(_public_runtime_config("rel-1"))
         (self.state / "served_runtime_config").write_text(self.rc.read_text())
         (self.state / "container_env").write_text("\n".join([
             "PANTHEON_LIVE_BROKER_ENABLED=false", "PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED=false",
@@ -401,6 +418,27 @@ class ProdOpsTests(OpsHarness):
         self.rc.unlink()
         self.assertIn("RUNTIME_CONFIG_MISSING", self.ops("verify_runtime_config", "rel-1").stderr)
 
+    def test_runtime_config_contract_consumes_config_ref_and_truthful_sha(self):
+        (self.root / "fe" / "releases" / "r1").mkdir()
+        os.symlink(self.root / "fe" / "releases" / "r1", self.root / "fe" / "current")
+
+        def verify(text, want="rel-1"):
+            self.rc.write_text(text)
+            (self.state / "served_runtime_config").write_text(text)
+            return self.ops("verify_runtime_config", want)
+
+        self.assertEqual(verify(_public_runtime_config("rel-1")).returncode, 0)
+        self.assertEqual(verify(_public_runtime_config("rel-1", sha=False)).returncode, 0)  # sha is optional
+        for bad in (
+            _public_runtime_config("rel-0"),                                   # configRef mismatch
+            _public_runtime_config("rel-1", schemaVersion="legacy"),           # unsupported schema
+            _public_runtime_config("rel-1", gcpIdentity={"apiKey": "k"}),      # incomplete identity
+            _public_runtime_config("rel-1").replace("sha256:", "sha256:0"),    # untruthful sha
+            'window.__PANTHEON_DEPLOYMENT_CONFIG__ = {"release_id":"rel-1","oidcIssuer":"https://x",'
+            '"bffBaseUrl":"https://api.trading.acme-prod.net"};\n',            # legacy shape
+        ):
+            self.assertIn("RUNTIME_CONFIG_CONTRACT", verify(bad).stderr)
+
     def test_post_identity_reads_back_real_public_and_local_values_and_fails_closed(self):
         cur = self.root / "fe" / "releases" / "r1"
         cur.mkdir()
@@ -471,6 +509,9 @@ class BootstrapTests(OpsHarness):
         self.assertFalse((self.root / "fe" / "current").exists())
         rc = (self.root / "config" / "runtime-config.js").read_text()
         self.assertIn("https://api.trading.acme-prod.net", rc)
+        self.assertIn('"schemaVersion": "pantheon.fe.public-runtime-config.v1"', rc)
+        self.assertIn('"configRef": "pending-first-release"', rc)
+        self.assertNotIn("oidcIssuer", rc)
         self.assertIn("--profile stateful", self.log.read_text())
         pulled = (self.state / "pulled_images").read_text().splitlines()
         self.assertIn(self.manifest["backend"]["images"]["operator_bff"], pulled)
@@ -532,6 +573,9 @@ PROD_ENV = {
     "PROD_BFF_HOST": "api.trading.acme-prod.net",
     "PROD_FE_HOST": "app.trading.acme-prod.net",
     "PROD_IDP_ISSUER": "https://idp.acme-prod.net",
+    "PROD_PUBLIC_GCP_IDENTITY_API_KEY": "public-web-key-fixture",
+    "PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID": "acme-prod-identity",
+    "PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN": "acme-prod-identity.firebaseapp.com",
     "PROD_RPO_SECONDS": "300",
     "PROD_RTO_SECONDS": "1800",
     "PROD_RETENTION_DAYS": "30",
@@ -1141,7 +1185,32 @@ class StaticContractTests(unittest.TestCase):
             for unused in ("PANTHEON_REAL_WRITES_ENABLED", "PANTHEON_PROVIDER_ENABLED", "PANTHEON_DEV_STUB_WRITES_ENABLED"):
                 self.assertNotIn(unused, s["environment"])
             self.assertNotIn("build", s)
+            self.assertEqual(s["ports"][0].rsplit(":", 1)[1], "8001")  # accepted native BFF port
+            self.assertEqual(s["environment"]["PANTHEON_RUNTIME_MANAGER_URL"], "http://runtime-manager:8080")
+            self.assertEqual(s["environment"]["PANTHEON_GOVERNANCE_API_URL"], "http://governance:8082")
+            self.assertEqual(s["environment"]["PANTHEON_DEPLOYMENT_API_URL"], "http://deployment:8095")
+            self.assertIn("BFF_COMMIT", s["environment"])
+        proj = svc["lifecycle-projector"]
+        self.assertEqual(proj["command"], ["python", "-m", "services.trade_journey.lifecycle_projector", "run"])
+        self.assertIn("GIT_SHA", proj["environment"])
+        self.assertEqual(proj["environment"]["LIFECYCLE_PROJECTOR_WRITER_BACKEND"], "postgres")
         self.assertNotEqual(svc["operator-bff-blue"]["ports"], svc["operator-bff-green"]["ports"])
+
+    def test_workflow_forwards_public_identity_to_host_bootstrap_and_switch(self):
+        wf = yaml.safe_load(WORKFLOW.read_text())
+        text = WORKFLOW.read_text()
+        for name in ("API_KEY", "PROJECT_ID", "AUTH_DOMAIN", "ISSUER", "AUDIENCE"):
+            key = f"PROD_PUBLIC_GCP_IDENTITY_{name}"
+            self.assertIn(key, wf["jobs"]["deploy"]["env"])
+            self.assertIn(f"{key} ", text.split("for v in RELEASE_ID", 1)[1].split("; do", 1)[0] + " ")
+        self.assertIn("PROD_REQUIRE_FULL_SECRET_KEYS=true", text)
+
+    def test_bootstrap_renders_public_runtime_schema_and_validates_isolated_dsns(self):
+        text = BOOTSTRAP.read_text()
+        self.assertIn("pantheon.fe.public-runtime-config.v1", text)
+        self.assertNotIn("oidcIssuer", text)
+        self.assertIn("TELEMETRY_DB_DSN", text)
+        self.assertIn("LIFECYCLE_PROJECTOR_PROJECTION_DSN", text)
 
     def test_workflow_scopes_prod_vars_to_environment_and_transports_over_iap(self):
         wf = yaml.safe_load(WORKFLOW.read_text())
