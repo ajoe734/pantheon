@@ -2,9 +2,9 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "ENV-STG-EPHEMERAL-IMPL-001",
   "title": "Ephemeral Staging Template & Automated Lifecycle Engine",
-  "recorded_at": "2026-10-26T22:58:00Z",
-  "owner": "Antigravity2",
-  "reviewer": "Claude",
+  "recorded_at": "2026-10-27T19:30:00Z",
+  "owner": "Claude",
+  "reviewer": "Codex",
   "target_repo": "pantheon",
   "task_class": "functional",
   "base_branch": "dev",
@@ -189,5 +189,18 @@
     "retained_gates": "exact image/source/manifest identity, migration-spec sha vs manifest, live information_schema catalog before/after, schema_migrations checksum, old-app-new-schema, backup-restore readability, exact-pair rollback, tenant/RBAC and safety readbacks",
     "validation": "python3 -m unittest tests.deployment.test_staging_release: all tests OK (run alone, ~380s); concurrent runs share /tmp bundle paths and must not overlap",
     "hosted_acceptance": "remains external_wait; whole task not done"
+  },
+  "actual_product_storage_alignment": {
+    "scope": "Source-only. Aligns sanitizer, collector, compose overlay and bootstrap with accepted Dev storage; no cloud/hosted action, no product business code.",
+    "proofs": [
+      "actual-Dev-postgres-catalog-vs-staging-contract-readonly-20261027.json",
+      "actual-Dev-storage-wiring-readonly-redacted-20261027.json"
+    ],
+    "sanitizer": "ALLOWED_TABLE_COLUMNS = telemetry_events, loop_controller_records, trade_journey_action_ledger; users/tenants/rbac/system_settings/schema_migrations and credential tables are not product tables and fail closed; JSON columns scrubbed.",
+    "migration": "Existing versioned services/trade_journey/migrations/*.sql applied via psql -f; per-file sha256 + recomputed set digest must equal manifest migration_set_sha256; catalog covers public + trade_journey_projection.",
+    "backup_restore": "pg_dump/pg_restore catalog hash + row counts, plus tar of durable owner stores bff/runtime/governance with file-manifest comparison.",
+    "compose": "Durable owner-store bind mounts on the data disk mirroring Dev (/data/bff, /data/runtime, /data/governance).",
+    "validation": "python3 -m unittest tests.deployment.test_staging_release tests.deployment.test_production_release -> 77 OK",
+    "hosted_status": "external_wait unchanged; local mocks are not hosted evidence."
   }
 }

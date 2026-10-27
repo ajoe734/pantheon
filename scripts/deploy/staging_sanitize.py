@@ -62,26 +62,38 @@ RETIRED_IDENTIFIERS = (
     "/home/lupin",
 )
 
+# Actual accepted product storage (read-only catalog of the pinned Dev Postgres `public` schema,
+# 2026-10-27). Staging carries no identity/credential/settings tables: tenants and RBAC come from
+# BFF JWT claims, safe-off flags from service env, and the trade-journey projection schema is
+# created by the existing versioned SQL (services/trade_journey/migrations).
 ALLOWED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
-    "users": frozenset({"id", "email", "full_name", "password_hash", "phone", "national_id", "tenant_id", "role"}),
-    "broker_credentials": frozenset({"id", "account_id", "broker_name", "encrypted_secret", "api_key"}),
-    "exchange_api_keys": frozenset({"id", "exchange", "key_id", "secret_ciphertext"}),
-    "user_sessions": frozenset({"id", "user_id", "session_token", "refresh_token", "expires_at"}),
-    "system_settings": frozenset({
-        "id",
-        "live_broker_enabled",
-        "provider_enabled",
-        "real_writes_enabled",
-        "safe_write_strict",
-        "execution_mode",
+    "telemetry_events": frozenset({
+        "event_id", "event_type", "payload", "created_at", "ingested_at", "ingested_seq",
     }),
-    "telemetry_events": frozenset({"id", "event_type", "tenant_id", "raw_payload", "created_at"}),
-    "tenants": frozenset({"id", "name", "status"}),
-    "rbac_bindings": frozenset({"id", "user_id", "tenant_id", "role"}),
-    "schema_migrations": frozenset({"version", "applied_at", "checksum_sha256"}),
+    "loop_controller_records": frozenset({
+        "actual_state_query", "backlog", "controller_id", "controller_name", "deployment_sha",
+        "desired_state_query", "dlq_count", "environment", "evidence_refs", "lag",
+        "last_failure_at", "last_failure_reason", "last_heartbeat_at", "last_repair_at",
+        "last_repair_reason", "last_success_at", "last_tick_at", "lease_expires_at", "loop_id",
+        "payload", "tenant_id", "truth_level", "updated_at",
+    }),
+    "trade_journey_action_ledger": frozenset({
+        "completed_at", "idempotency_key", "receipt", "request_hash", "reserved_at", "state",
+    }),
 }
+# Per-table JSON columns that must be scrubbed of secret-bearing keys.
+JSON_COLUMNS: dict[str, tuple[str, ...]] = {
+    "telemetry_events": ("payload",),
+    "loop_controller_records": ("payload", "evidence_refs"),
+    "trade_journey_action_ledger": ("receipt",),
+}
+# Product durable owner stores (bind-mounted by the staging compose, archived with backups).
+OWNER_STORE_PATHS = ("bff", "runtime", "governance")
+# Credential-bearing tables must never exist in staging; unknown tables already fail closed, this
+# names the intent explicitly.
+FORBIDDEN_TABLES = frozenset({"broker_credentials", "exchange_api_keys", "user_sessions"})
 
-CREDENTIAL_TABLES = ("broker_credentials", "exchange_api_keys", "user_sessions")
+
 SENSITIVE_PAYLOAD_KEYS = frozenset({
     "token",
     "auth",
@@ -98,7 +110,6 @@ SENSITIVE_PAYLOAD_KEYS = frozenset({
     "refresh_token",
     "client_secret",
 })
-DUMMY_PASSWORD_HASH = "$2b$12$dummyStagingHashForVerificationPurposesOnly"
 
 
 class SanitizationError(ValueError):
@@ -195,6 +206,11 @@ def _strip_sensitive_json(value: Any) -> Any:
 def _validate_dataset_schema(tables: dict[str, Any]) -> None:
     if not isinstance(tables, dict) or not tables:
         raise SanitizationError("tables must be a non-empty object")
+    credential_tables = FORBIDDEN_TABLES & set(tables.keys())
+    if credential_tables:
+        raise SanitizationError(
+            f"credential table(s) must not exist in staging (fail-closed): {sorted(credential_tables)}"
+        )
     unknown_tables = set(tables.keys()) - set(ALLOWED_TABLE_COLUMNS.keys())
     if unknown_tables:
         raise SanitizationError(
@@ -235,41 +251,15 @@ def sanitize_dataset(payload: dict[str, Any]) -> dict[str, Any]:
     _validate_dataset_schema(raw_tables)
     tables = copy.deepcopy(raw_tables)
 
-    # 1. Wipe credential and session tables
-    for cred_table in CREDENTIAL_TABLES:
-        if cred_table in tables:
-            tables[cred_table] = []
-
-    # 2. Anonymize user PII
-    for row in tables.get("users", []):
-        user_id = str(row.get("id", "")).strip()
-        if not user_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", user_id):
-            raise SanitizationError(f"users row has invalid id: {user_id!r}")
-        row["email"] = f"staging-user-{user_id}@pantheon.internal"
-        row["full_name"] = f"Staging Persona {user_id}"
-        row["password_hash"] = DUMMY_PASSWORD_HASH
-        if "phone" in row:
-            row["phone"] = None
-        if "national_id" in row:
-            row["national_id"] = None
-
-    # 3. Force fail-closed safety settings
-    if not tables.get("system_settings"):
-        tables["system_settings"] = [{"id": "default"}]
-    for setting in tables["system_settings"]:
-        setting["live_broker_enabled"] = False
-        setting["provider_enabled"] = False
-        setting["real_writes_enabled"] = False
-        setting["safe_write_strict"] = True
-        setting["execution_mode"] = "paper"
-
-    # 4. Strip sensitive telemetry fields
-    for event in tables.get("telemetry_events", []):
-        raw_payload = event.get("raw_payload")
-        if raw_payload is not None and not isinstance(raw_payload, dict):
-            raise SanitizationError("telemetry_events.raw_payload must be an object or null")
-        if isinstance(raw_payload, dict):
-            event["raw_payload"] = _strip_sensitive_json(raw_payload)
+    # Scrub secret-bearing keys from every JSON column of the actual product tables.
+    for table_name, columns in JSON_COLUMNS.items():
+        for row in tables.get(table_name, []):
+            for column in columns:
+                value = row.get(column)
+                if value is not None and not isinstance(value, (dict, list)):
+                    raise SanitizationError(f"{table_name}.{column} must be a JSON object, array or null")
+                if value is not None:
+                    row[column] = _strip_sensitive_json(value)
 
     canonical_tables = json.dumps(tables, sort_keys=True, separators=(",", ":")).encode("utf-8")
     metadata["dataset_sha256"] = "sha256:" + hashlib.sha256(canonical_tables).hexdigest()
@@ -293,42 +283,17 @@ def verify_sanitized_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     tables = dataset["tables"]
     _validate_dataset_schema(tables)
 
-    for cred_table in CREDENTIAL_TABLES:
-        if tables.get(cred_table):
-            raise SanitizationError(f"credential table {cred_table!r} must be empty after sanitization")
+    forbidden = FORBIDDEN_TABLES & set(tables.keys())
+    if forbidden:
+        raise SanitizationError(f"credential table(s) must not exist in staging: {sorted(forbidden)}")
 
-    for row in tables.get("users", []):
-        email = row.get("email", "")
-        if not isinstance(email, str) or not INTERNAL_STAGING_EMAIL_RE.fullmatch(email):
-            raise SanitizationError(f"unmasked user email detected: {email!r}")
-        full_name = row.get("full_name", "")
-        if not isinstance(full_name, str) or not full_name.startswith("Staging Persona "):
-            raise SanitizationError(f"unmasked user full_name detected: {full_name!r}")
-        if row.get("password_hash") != DUMMY_PASSWORD_HASH:
-            raise SanitizationError("user password_hash was not replaced with staging dummy hash")
-        if row.get("phone") is not None or row.get("national_id") is not None:
-            raise SanitizationError("user phone/national_id must be null in sanitized dataset")
-
-    settings = tables.get("system_settings", [])
-    if not settings:
-        raise SanitizationError("system_settings table must contain at least one row")
-    for row in settings:
-        if row.get("live_broker_enabled") is not False:
-            raise SanitizationError("system_settings.live_broker_enabled must be False")
-        if row.get("provider_enabled") is not False:
-            raise SanitizationError("system_settings.provider_enabled must be False")
-        if row.get("real_writes_enabled") is not False:
-            raise SanitizationError("system_settings.real_writes_enabled must be False")
-        if row.get("safe_write_strict") is not True:
-            raise SanitizationError("system_settings.safe_write_strict must be True")
-        if row.get("execution_mode") != "paper":
-            raise SanitizationError("system_settings.execution_mode must be 'paper'")
-
-    for event in tables.get("telemetry_events", []):
-        payload = event.get("raw_payload") or {}
-        if not isinstance(payload, dict):
-            raise SanitizationError("telemetry_events.raw_payload must be an object")
-        _assert_no_sensitive_keys(payload)
+    for table_name, columns in JSON_COLUMNS.items():
+        for row in tables.get(table_name, []):
+            for column in columns:
+                value = row.get(column)
+                if value is not None and not isinstance(value, (dict, list)):
+                    raise SanitizationError(f"{table_name}.{column} must be a JSON object, array or null")
+                _assert_no_sensitive_keys(value)
 
     serialized = json.dumps(tables, sort_keys=True)
     for pattern in SECRET_VALUE_PATTERNS:
@@ -343,7 +308,7 @@ def verify_sanitized_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
         "snapshot_name": dataset["metadata"]["snapshot_name"],
         "source_environment": dataset["metadata"]["source_environment"],
         "dataset_sha256": dataset["metadata"].get("dataset_sha256"),
-        "user_count": len(tables.get("users", [])),
+        "row_counts": {name: len(rows) for name, rows in sorted(tables.items())},
     }
 
 
@@ -353,7 +318,7 @@ def _assert_no_sensitive_keys(obj: Any) -> None:
             if k.lower() in SENSITIVE_PAYLOAD_KEYS or any(
                 token in k.lower() for token in ("secret", "token", "password", "private_key", "api_key")
             ):
-                raise SanitizationError(f"sensitive key {k!r} remains in telemetry payload")
+                raise SanitizationError(f"sensitive key {k!r} remains in sanitized JSON column")
             _assert_no_sensitive_keys(v)
     elif isinstance(obj, list):
         for item in obj:
@@ -438,12 +403,14 @@ def verify_migration_and_compatibility(plan: dict[str, Any]) -> dict[str, Any]:
                     )
 
     add_col_re = re.compile(
-        r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+        r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)",
         re.IGNORECASE,
     )
     for stmt in statements:
         for match in add_col_re.finditer(stmt):
             target_table, target_col = match.group(1), match.group(2)
+            if "." not in target_table:
+                target_table = f"public.{target_table}"
             if target_table not in new_schema or target_col not in new_schema.get(target_table, {}):
                 raise SanitizationError(
                     f"migration statement added column {target_table}.{target_col}, "
@@ -481,17 +448,28 @@ def verify_migration_and_compatibility(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_backup_restore_readability(record: dict[str, Any]) -> dict[str, Any]:
-    """Verify backup creation, restore execution, and post-restore data readability."""
+    """Verify Postgres + durable owner-store backup, restore, and post-restore readability.
+
+    Identity is the real catalog (information_schema columns hashed before the backup and after
+    the restore) plus exact row counts of the actual product tables and the file digest manifest of
+    the durable owner stores (`/data/bff`, `/data/runtime`, `/data/governance`); there is no
+    synthetic `schema_migrations` row.
+    """
     if not isinstance(record, dict):
         raise SanitizationError("backup restore record must be a JSON object")
     required = {
         "backup_id",
         "backup_sha256",
-        "expected_migration_set_sha256",
-        "restored_migration_set_sha256",
+        "expected_catalog_sha256",
+        "restored_catalog_sha256",
         "restore_completed",
         "read_query_verified",
+        "live_row_counts",
         "restored_row_counts",
+        "owner_store_backup_sha256",
+        "owner_store_manifest_sha256",
+        "restored_owner_store_manifest_sha256",
+        "owner_store_dirs",
     }
     if not required.issubset(set(record.keys())):
         raise SanitizationError(
@@ -499,26 +477,45 @@ def verify_backup_restore_readability(record: dict[str, Any]) -> dict[str, Any]:
         )
     if not isinstance(record["backup_id"], str) or not record["backup_id"].strip():
         raise SanitizationError("backup_id must be a non-empty string")
-    if not isinstance(record["backup_sha256"], str) or not SHA256_PREFIXED_RE.fullmatch(record["backup_sha256"]):
-        raise SanitizationError("backup_sha256 must match 'sha256:<64-hex>'")
-    if record["expected_migration_set_sha256"] != record["restored_migration_set_sha256"]:
-        raise SanitizationError("restored schema migration hash does not match expected migration_set_sha256")
+    for key in ("backup_sha256", "owner_store_backup_sha256"):
+        if not isinstance(record[key], str) or not SHA256_PREFIXED_RE.fullmatch(record[key]):
+            raise SanitizationError(f"{key} must match 'sha256:<64-hex>'")
+    for key in ("expected_catalog_sha256", "restored_catalog_sha256"):
+        if not isinstance(record[key], str) or not SHA256_PREFIXED_RE.fullmatch(record[key]):
+            raise SanitizationError(f"{key} must match 'sha256:<64-hex>'")
+    if record["expected_catalog_sha256"] != record["restored_catalog_sha256"]:
+        raise SanitizationError("restored catalog hash does not match the pre-backup catalog hash")
     if record.get("restore_completed") is not True or record.get("read_query_verified") is not True:
         raise SanitizationError("backup restore and read query verification must both be True")
 
-    counts = record.get("restored_row_counts")
-    if not isinstance(counts, dict):
-        raise SanitizationError("restored_row_counts must be an object")
-    if counts.get("users", 0) <= 0 or counts.get("tenants", 0) <= 0:
-        raise SanitizationError("restored database must have positive readable rows for users and tenants")
-    for cred_table in CREDENTIAL_TABLES:
-        if counts.get(cred_table, 0) != 0:
-            raise SanitizationError(f"restored {cred_table} must have 0 rows in nonprod")
+    counts = record["restored_row_counts"]
+    live_counts = record["live_row_counts"]
+    if not isinstance(counts, dict) or not isinstance(live_counts, dict):
+        raise SanitizationError("restored_row_counts and live_row_counts must be objects")
+    if "telemetry_events" not in counts:
+        raise SanitizationError("restored database must expose the telemetry_events table")
+    unknown = set(counts.keys()) - set(ALLOWED_TABLE_COLUMNS.keys())
+    if unknown:
+        raise SanitizationError(f"restored_row_counts has unknown table(s): {sorted(unknown)}")
+    for name, value in counts.items():
+        if type(value) is not int or value < 0:
+            raise SanitizationError(f"restored row count for {name!r} must be a non-negative integer")
+    if counts != live_counts:
+        raise SanitizationError("restored row counts differ from pre-backup row counts")
+
+    for key in ("owner_store_manifest_sha256", "restored_owner_store_manifest_sha256"):
+        if not isinstance(record[key], str) or not SHA256_PREFIXED_RE.fullmatch(record[key]):
+            raise SanitizationError(f"{key} must match 'sha256:<64-hex>'")
+    if record["owner_store_manifest_sha256"] != record["restored_owner_store_manifest_sha256"]:
+        raise SanitizationError("restored owner-store file manifest differs from the pre-backup manifest")
+    if record["owner_store_dirs"] != list(OWNER_STORE_PATHS):
+        raise SanitizationError(f"owner store backup must cover exactly {list(OWNER_STORE_PATHS)}")
 
     return {
         "backup_restore_verified": True,
         "backup_id": record["backup_id"],
         "backup_sha256": record["backup_sha256"],
+        "owner_store_backup_sha256": record["owner_store_backup_sha256"],
     }
 
 

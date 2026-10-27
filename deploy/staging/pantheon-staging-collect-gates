@@ -11,8 +11,8 @@ to collect and verify all 6 host-level staging verification sections:
 2. `sanitized_dataset`: live Postgres table contents and snapshot provenance metadata validated by
    `staging_sanitize.verify_sanitized_dataset`.
 3. `migration_plan`: pre-migration schema readback, expand-phase SQL execution via `psql`,
-   post-migration schema and `schema_migrations` readback, image label check, and compatibility
-   smoke validated by `staging_sanitize.verify_migration_and_compatibility`.
+   post-migration schema readback (public + trade_journey_projection), versioned-SQL digest
+   verification, and compatibility smoke validated by `staging_sanitize.verify_migration_and_compatibility`.
 4. `backup_restore_record`: real `pg_dump` backup archive creation, SHA-256 hashing, `pg_restore`
    into an isolated verification database, and post-restore readability SQL queries validated by
    `staging_sanitize.verify_backup_restore_readability`.
@@ -435,18 +435,15 @@ def main() -> int:
         _fail("SNAPSHOT_METADATA_MISSING", f"Sanitized snapshot metadata missing at {snap_meta_path}")
     snap_meta = json.loads(snap_meta_path.read_text(encoding="utf-8"))
 
+    # Only the actual accepted product tables (see staging_sanitize.ALLOWED_TABLE_COLUMNS); any
+    # missing table fails the query closed instead of being fabricated.
     tables_sql = (
         "SELECT json_build_object("
-        "'users', COALESCE((SELECT json_agg(row_to_json(t)) FROM users t), '[]'::json),"
-        "'broker_credentials', COALESCE((SELECT json_agg(row_to_json(t)) FROM broker_credentials t), '[]'::json),"
-        "'exchange_api_keys', COALESCE((SELECT json_agg(row_to_json(t)) FROM exchange_api_keys t), '[]'::json),"
-        "'user_sessions', COALESCE((SELECT json_agg(row_to_json(t)) FROM user_sessions t), '[]'::json),"
-        "'system_settings', COALESCE((SELECT json_agg(row_to_json(t)) FROM system_settings t), '[]'::json),"
-        "'telemetry_events', COALESCE((SELECT json_agg(row_to_json(t)) FROM telemetry_events t), '[]'::json),"
-        "'tenants', COALESCE((SELECT json_agg(row_to_json(t)) FROM tenants t), '[]'::json),"
-        "'rbac_bindings', COALESCE((SELECT json_agg(row_to_json(t)) FROM rbac_bindings t), '[]'::json),"
-        "'schema_migrations', COALESCE((SELECT json_agg(row_to_json(t)) FROM schema_migrations t), '[]'::json)"
-        ");"
+        + ",".join(
+            f"'{name}', COALESCE((SELECT json_agg(row_to_json(t)) FROM public.{name} t), '[]'::json)"
+            for name in sorted(staging_sanitize.ALLOWED_TABLE_COLUMNS)
+        )
+        + ");"
     )
     tables_raw = psql_query(tables_sql, error_code="SANITIZED_TABLES_QUERY_FAILED")
     try:
@@ -578,11 +575,40 @@ def main() -> int:
     if not mig_spec_path.exists():
         _fail("MIGRATION_SPEC_MISSING", f"Migration specification missing at {mig_spec_path}")
     mig_spec = json.loads(mig_spec_path.read_text(encoding="utf-8"))
-    spec_mig_sha = str(mig_spec.get("migration_set_sha256") or manifest["migration_set_sha256"])
+    spec_mig_sha = str(mig_spec.get("migration_set_sha256") or "")
     if spec_mig_sha != manifest["migration_set_sha256"]:
         _fail(
             "MIGRATION_SPEC_SHA_MISMATCH",
             f"migration-spec.json migration_set_sha256 {spec_mig_sha!r} != manifest {manifest['migration_set_sha256']!r}",
+        )
+    # The product has no schema_migrations table: forward migration is the existing versioned SQL
+    # (services/trade_journey/migrations/*.sql) applied the same way ProjectionStore.bootstrap_schema
+    # does. The spec lists those files with their sha256; the set identity is recomputed here from the
+    # bytes actually applied and must equal the manifest value.
+    mig_files = mig_spec.get("files")
+    if not isinstance(mig_files, list) or not mig_files:
+        _fail("MIGRATION_FILES_EMPTY", "migration-spec.json must list the versioned migration files")
+    mig_dir = data_mount / "sanitized" / "migrations"
+    statements: list[str] = []
+    set_lines: list[str] = []
+    for entry in sorted(mig_files, key=lambda e: str(e.get("name") if isinstance(e, dict) else "")):
+        name = str(entry.get("name") or "") if isinstance(entry, dict) else ""
+        if not re.fullmatch(r"[0-9]{3}_[a-z0-9_]+\.sql", name):
+            _fail("MIGRATION_FILE_NAME_INVALID", f"Invalid migration file name {name!r}")
+        mig_path = mig_dir / name
+        if not mig_path.is_file():
+            _fail("MIGRATION_FILE_MISSING", f"Versioned migration file {mig_path} is missing")
+        raw_sql = mig_path.read_bytes()
+        file_sha = hashlib.sha256(raw_sql).hexdigest()
+        if "sha256:" + file_sha != str(entry.get("sha256") or ""):
+            _fail("MIGRATION_FILE_SHA_MISMATCH", f"{name} digest sha256:{file_sha} != spec {entry.get('sha256')!r}")
+        statements.append(raw_sql.decode("utf-8"))
+        set_lines.append(f"{file_sha}  {name}\n")
+    observed_mig_sha = "sha256:" + hashlib.sha256("".join(set_lines).encode("utf-8")).hexdigest()
+    if observed_mig_sha != manifest["migration_set_sha256"]:
+        _fail(
+            "MIGRATION_SET_SHA_MISMATCH",
+            f"Recomputed migration set digest {observed_mig_sha} != manifest {manifest['migration_set_sha256']}",
         )
 
     live_catalog_sql = (
@@ -591,7 +617,7 @@ def main() -> int:
         "  '{}'::json"
         ")::text "
         "FROM ("
-        "  SELECT table_name,"
+        "  SELECT table_schema || '.' || table_name AS table_name,"
         "    json_object_agg("
         "      column_name,"
         "      json_build_object("
@@ -601,35 +627,41 @@ def main() -> int:
         "      )"
         "    ) AS cols "
         "  FROM information_schema.columns "
-        "  WHERE table_schema = 'public' "
-        "  GROUP BY table_name"
+        "  WHERE table_schema IN ('public', 'trade_journey_projection') "
+        "  GROUP BY table_schema, table_name"
         ") s;"
     )
 
-    def query_live_catalog(query_error_code: str, empty_error_code: str) -> dict[str, Any]:
-        raw = psql_query(live_catalog_sql, error_code=query_error_code)
+    def query_live_catalog(query_error_code: str, empty_error_code: str, *, db: str = pg_db) -> dict[str, Any]:
+        raw = psql_query(live_catalog_sql, db=db, error_code=query_error_code)
         try:
             catalog = json.loads(raw)
         except json.JSONDecodeError as exc:
             _fail(empty_error_code, f"Live PostgreSQL information_schema query returned non-JSON {raw!r}: {exc}")
-        if not isinstance(catalog, dict) or not catalog or "users" not in catalog:
-            _fail(empty_error_code, f"Live PostgreSQL information_schema catalog is empty or missing 'users': {catalog!r}")
+        if not isinstance(catalog, dict) or "public.telemetry_events" not in catalog:
+            _fail(
+                empty_error_code,
+                f"Live PostgreSQL information_schema catalog is empty or missing 'public.telemetry_events': {catalog!r}",
+            )
         return catalog
 
     old_app_schema = query_live_catalog("PRE_SCHEMA_QUERY_FAILED", "PRE_SCHEMA_CATALOG_EMPTY")
 
-    statements = mig_spec.get("statements") or []
-    if not isinstance(statements, list) or not statements:
-        _fail("MIGRATION_STATEMENTS_EMPTY", "migration-spec.json must provide non-empty SQL statements")
-
-    for stmt in statements:
-        psql_query(str(stmt), error_code="MIGRATION_SQL_FAILED")
+    # `psql -f` runs each statement in autocommit mode, which versioned SQL with
+    # CREATE INDEX CONCURRENTLY requires (a multi-statement `-c` would be one transaction).
+    for mig_name, stmt in zip(sorted(str(e["name"]) for e in mig_files), statements):
+        _run(
+            [
+                psql_bin, "-h", "127.0.0.1", "-p", pg_port, "-U", pg_user, "-d", pg_db,
+                "-v", "ON_ERROR_STOP=1", "-f", str(mig_dir / mig_name),
+            ],
+            env=pg_env,
+            error_code="MIGRATION_SQL_FAILED",
+        )
 
     new_schema = query_live_catalog("POST_SCHEMA_QUERY_FAILED", "POST_SCHEMA_CATALOG_EMPTY")
-    observed_mig_sha = psql_query(
-        "SELECT checksum_sha256 FROM schema_migrations ORDER BY applied_at DESC LIMIT 1;",
-        error_code="MIGRATION_SHA_QUERY_FAILED",
-    )
+    if "trade_journey_projection.controller" not in new_schema:
+        _fail("MIGRATION_NOT_APPLIED", "trade_journey_projection.controller is absent after applying versioned SQL")
 
     # Exercise the retained old application (rollback_baseline.backend_operator_bff_image)
     # against the migrated database (new_schema) before restoring candidate BFF.
@@ -689,7 +721,7 @@ def main() -> int:
     )
     old_app_me_data = old_app_me_body.get("data") if isinstance(old_app_me_body.get("data"), dict) else {}
     smoke_out = psql_query(
-        "SELECT id, email, tenant_id, role FROM users WHERE tenant_id = 'tenant-alpha' LIMIT 1;",
+        "SELECT count(*) FROM public.telemetry_events;",
         error_code="OLD_APP_SMOKE_QUERY_FAILED",
     )
 
@@ -711,7 +743,7 @@ def main() -> int:
         )
 
     old_app_compat_passed = (
-        bool(smoke_out)
+        smoke_out.isdigit()
         and old_app_image_observed == baseline_bff_img
         and old_app_version_commit == str(rollback_baseline["backend_commit"])
         and old_app_readyz_status == 200
@@ -742,24 +774,53 @@ def main() -> int:
     except Exception as exc:
         _fail("MIGRATION_VERIFICATION_FAILED", str(exc))
 
-    # 4. Backup & restore readability rehearsal via pg_dump and pg_restore
+    # 4. Backup & restore readability rehearsal: pg_dump/pg_restore of the product database plus a
+    # tar archive of the durable owner stores (/data/bff, /data/runtime, /data/governance), so
+    # acknowledged product state outside Postgres is part of the restore proof.
+    def canonical_catalog_sha(catalog: dict[str, Any]) -> str:
+        return "sha256:" + hashlib.sha256(
+            json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    def row_counts(db: str) -> dict[str, int]:
+        counts_raw = psql_query(
+            "SELECT json_build_object("
+            + ",".join(
+                f"'{name}', (SELECT count(*) FROM public.{name})"
+                for name in sorted(staging_sanitize.ALLOWED_TABLE_COLUMNS)
+            )
+            + ");",
+            db=db,
+            error_code="ROW_COUNT_QUERY_FAILED",
+        )
+        try:
+            return {k: int(v) for k, v in json.loads(counts_raw).items()}
+        except (json.JSONDecodeError, ValueError, AttributeError) as exc:
+            _fail("ROW_COUNT_JSON_INVALID", f"Invalid JSON from row count query: {exc}")
+
+    def owner_store_manifest(root: Path) -> str:
+        lines: list[str] = []
+        for store in staging_sanitize.OWNER_STORE_PATHS:
+            store_dir = root / store
+            if not store_dir.is_dir():
+                _fail("OWNER_STORE_MISSING", f"Durable owner store {store_dir} is missing")
+            for f in sorted(p for p in store_dir.rglob("*") if p.is_file()):
+                lines.append(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(root)}\n")
+        return "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+    live_catalog_pre_backup = canonical_catalog_sha(
+        query_live_catalog("BACKUP_CATALOG_QUERY_FAILED", "BACKUP_CATALOG_EMPTY")
+    )
+    live_row_counts = row_counts(pg_db)
+    owner_manifest_sha = owner_store_manifest(data_mount)
+
     backup_dir = data_mount / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_file = backup_dir / f"{release_id}.dump"
     _run(
         [
-            pg_dump_bin,
-            "-h",
-            "127.0.0.1",
-            "-p",
-            pg_port,
-            "-U",
-            pg_user,
-            "-d",
-            pg_db,
-            "-Fc",
-            "-f",
-            str(backup_file),
+            pg_dump_bin, "-h", "127.0.0.1", "-p", pg_port, "-U", pg_user, "-d", pg_db,
+            "-Fc", "-f", str(backup_file),
         ],
         env=pg_env,
         error_code="PG_DUMP_FAILED",
@@ -767,6 +828,12 @@ def main() -> int:
     if not backup_file.exists() or backup_file.stat().st_size == 0:
         _fail("BACKUP_FILE_EMPTY", f"pg_dump did not produce a non-empty backup at {backup_file}")
     backup_sha256 = "sha256:" + hashlib.sha256(backup_file.read_bytes()).hexdigest()
+
+    owner_backup_file = backup_dir / f"{release_id}.owner-stores.tar.gz"
+    with tarfile.open(owner_backup_file, "w:gz") as tf:
+        for store in staging_sanitize.OWNER_STORE_PATHS:
+            tf.add(str(data_mount / store), arcname=store)
+    owner_backup_sha256 = "sha256:" + hashlib.sha256(owner_backup_file.read_bytes()).hexdigest()
 
     restore_db = f"{pg_db}_restore_verify"
     if not re.fullmatch(r"^[a-z][a-z0-9_]{1,62}$", restore_db) or restore_db == pg_db:
@@ -778,53 +845,39 @@ def main() -> int:
     psql_query(f'CREATE DATABASE "{restore_db}";', db=pg_db, error_code="RESTORE_DB_CREATE_FAILED")
     _run(
         [
-            pg_restore_bin,
-            "-h",
-            "127.0.0.1",
-            "-p",
-            pg_port,
-            "-U",
-            pg_user,
-            "-d",
-            restore_db,
-            "--clean",
-            "--if-exists",
-            str(backup_file),
+            pg_restore_bin, "-h", "127.0.0.1", "-p", pg_port, "-U", pg_user, "-d", restore_db,
+            "--clean", "--if-exists", str(backup_file),
         ],
         env=pg_env,
         error_code="PG_RESTORE_FAILED",
     )
-
-    restored_summary_raw = psql_query(
-        "SELECT json_build_object("
-        "'migration_set_sha256', (SELECT checksum_sha256 FROM schema_migrations ORDER BY applied_at DESC LIMIT 1),"
-        "'counts', json_build_object("
-        "'users', (SELECT count(*) FROM users),"
-        "'tenants', (SELECT count(*) FROM tenants),"
-        "'broker_credentials', (SELECT count(*) FROM broker_credentials),"
-        "'exchange_api_keys', (SELECT count(*) FROM exchange_api_keys),"
-        "'user_sessions', (SELECT count(*) FROM user_sessions)"
-        ")"
-        ");",
-        db=restore_db,
-        error_code="RESTORED_DB_QUERY_FAILED",
+    restored_catalog_sha = canonical_catalog_sha(
+        query_live_catalog("RESTORED_CATALOG_QUERY_FAILED", "RESTORED_CATALOG_EMPTY", db=restore_db)
     )
+    restored_row_counts = row_counts(restore_db)
     psql_query(f'DROP DATABASE IF EXISTS "{restore_db}";', db=pg_db, error_code="RESTORE_DB_CLEANUP_FAILED")
-    try:
-        restored_summary = json.loads(restored_summary_raw)
-    except json.JSONDecodeError as exc:
-        _fail("RESTORED_DB_JSON_INVALID", f"Invalid JSON from restored DB query: {exc}")
+
+    with tempfile.TemporaryDirectory(prefix="stg-owner-restore-") as restore_tmp:
+        restore_root = Path(restore_tmp)
+        with tarfile.open(owner_backup_file, "r:gz") as tf:
+            tf.extractall(restore_root, filter="data")
+        restored_owner_manifest_sha = owner_store_manifest(restore_root)
 
     backup_restore_record = {
         "observed_from_live_vm": True,
         "dry_run": False,
         "backup_id": f"stg-backup-{release_id}",
         "backup_sha256": backup_sha256,
-        "expected_migration_set_sha256": manifest["migration_set_sha256"],
-        "restored_migration_set_sha256": str(restored_summary.get("migration_set_sha256") or ""),
+        "expected_catalog_sha256": live_catalog_pre_backup,
+        "restored_catalog_sha256": restored_catalog_sha,
         "restore_completed": True,
         "read_query_verified": True,
-        "restored_row_counts": restored_summary.get("counts") or {},
+        "live_row_counts": live_row_counts,
+        "restored_row_counts": restored_row_counts,
+        "owner_store_backup_sha256": owner_backup_sha256,
+        "owner_store_manifest_sha256": owner_manifest_sha,
+        "restored_owner_store_manifest_sha256": restored_owner_manifest_sha,
+        "owner_store_dirs": list(staging_sanitize.OWNER_STORE_PATHS),
     }
     try:
         staging_sanitize.verify_backup_restore_readability(backup_restore_record)
@@ -1086,8 +1139,6 @@ def main() -> int:
             k, v = line.split("=", 1)
             cand_env[k.strip()] = v.strip()
 
-    db_settings = (live_tables.get("system_settings") or [{}])[0]
-
     role_map_strict = (
         cand_env.get("PANTHEON_BFF_AUTH_MODE") == "strict"
         and cand_env.get("PANTHEON_BFF_AUTH_STUB", "").lower() == "false"
@@ -1097,15 +1148,12 @@ def main() -> int:
         or _as_bool(cand_env.get("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED"), False)
         or _as_bool(cand_env.get("PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED"), False)
         or cand_env.get("PANTHEON_ASSISTANT_PROVIDER", "disabled").lower() != "disabled"
-        or _as_bool(db_settings.get("provider_enabled"), False)
     )
     live_broker_enabled = (
         _as_bool(cand_env.get("PANTHEON_LIVE_BROKER_ENABLED"), False)
-        or _as_bool(db_settings.get("live_broker_enabled"), False)
     )
     real_writes_enabled = (
         _as_bool(cand_env.get("PANTHEON_REAL_WRITES_ENABLED"), False)
-        or _as_bool(db_settings.get("real_writes_enabled"), False)
     )
     dev_stub_writes_enabled = (
         _as_bool(cand_env.get("PANTHEON_DEV_STUB_WRITES_ENABLED"), False)
@@ -1117,11 +1165,10 @@ def main() -> int:
         any(k.upper().startswith(p) for p in forbidden_cred_prefixes)
         for k in (*cand_env.keys(), *secrets_kv.keys())
     )
-    has_db_broker_creds = bool(live_tables.get("broker_credentials")) or bool(live_tables.get("exchange_api_keys"))
+    # Credential tables do not exist in the product schema; the sanitizer already rejects them.
     broker_creds_present = (
         _as_bool(cand_env.get("PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT"), False)
         or has_env_broker_creds
-        or has_db_broker_creds
     )
 
     security_readback = {
@@ -1157,7 +1204,7 @@ def main() -> int:
         "control_vm_broker_credentials_present": broker_creds_present,
         "vite_bff_mode": str(dep_json.get("vite_bff_mode") or "live"),
         "vite_bff_fallback": str(dep_json.get("vite_bff_fallback") or "strict"),
-        "execution_mode": str(cand_env.get("PANTHEON_EXECUTION_MODE") or db_settings.get("execution_mode") or "paper"),
+        "execution_mode": str(cand_env.get("PANTHEON_EXECUTION_MODE") or "paper"),
     }
     try:
         staging_sanitize.verify_security_and_safety_readbacks(security_readback)
