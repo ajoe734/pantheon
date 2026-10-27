@@ -1,0 +1,15 @@
+{
+  "task_id": "DRIFT-BASELINE-APPROVED-ARTIFACT-20261027",
+  "decision": "Operator 2026-10-27: drift baseline = approved artifact baseline shared with Evolution (DRIFT-GAP-001)",
+  "commands": [
+    {
+      "command": "python -m pytest services/reconciliation-drift services/evolution/test_threshold_sweep_worker.py -q",
+      "result": "325 passed, 1 skipped, 1 failed (test_scheduled_reconcile_core_budget_priority_prevents_starvation_under_43_summaries_and_retry); the same single failure occurs on the unmodified base (318 passed, 1 failed), and the test passes when run alone or with the scheduler file only (61 passed). Order-dependent, pre-existing."
+    },
+    {
+      "command": "python -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q",
+      "result": "61 passed (base: 54 passed; +7 new DRIFT-GAP-001 tests: 0.5x ok, 1.3x warning, 1.6x critical+incident, unapproved artifact, missing policy_source, shared reader change, default path)"
+    }
+  ],
+  "wiring": "docker-compose reconciliation-drift-svc sets RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH to /workspace/services/evolution/config/threshold_sweep_baselines.json; the image already COPYs the repo (no Dockerfile change needed, file not dockerignored)."
+}

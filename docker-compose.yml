@@ -2475,6 +2475,8 @@ services:
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
       PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS: ${PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS:-110}
+      # Same governed approved-baseline file the Evolution threshold sweep reads (shipped in the image, not copied).
+      RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH: /workspace/services/evolution/config/threshold_sweep_baselines.json
       RECONCILIATION_DRIFT_AUTH_MODE: ${RECONCILIATION_DRIFT_AUTH_MODE:-token}
       RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
