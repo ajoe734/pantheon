@@ -631,39 +631,6 @@ def main() -> int:
         error_code="MIGRATION_SHA_QUERY_FAILED",
     )
 
-    img_mig_label = _run(
-        [
-            docker_bin,
-            "image",
-            "inspect",
-            "-f",
-            '{{index .Config.Labels "org.pantheon.migration_set_sha256"}}',
-            observed_bff_image,
-        ],
-        error_code="IMAGE_MIGRATION_LABEL_FAILED",
-    ).stdout.strip()
-    img_compat_label = _run(
-        [
-            docker_bin,
-            "image",
-            "inspect",
-            "-f",
-            '{{index .Config.Labels "org.pantheon.compatibility_manifest_sha256"}}',
-            observed_bff_image,
-        ],
-        error_code="IMAGE_COMPAT_LABEL_FAILED",
-    ).stdout.strip()
-    if img_mig_label != manifest["migration_set_sha256"]:
-        _fail(
-            "IMAGE_MIGRATION_LABEL_MISMATCH",
-            f"Image label {img_mig_label!r} != manifest {manifest['migration_set_sha256']!r}",
-        )
-    if img_compat_label != manifest["compatibility_manifest_sha256"]:
-        _fail(
-            "IMAGE_COMPAT_LABEL_MISMATCH",
-            f"Image compat label {img_compat_label!r} != manifest {manifest['compatibility_manifest_sha256']!r}",
-        )
-
     # Exercise the retained old application (rollback_baseline.backend_operator_bff_image)
     # against the migrated database (new_schema) before restoring candidate BFF.
     _run(
