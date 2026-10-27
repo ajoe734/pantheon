@@ -1958,3 +1958,81 @@ class TestValuationFailureProjection(unittest.TestCase):
         self.assertNotIn("market_value", stale_pos)
         self.assertEqual(stale_pos["last_known_mark_as_of"], "2026-10-22T00:00:00Z")
         self.assertEqual(stale_pos["last_known_mark_observed_at"], "2026-10-23T12:29:54Z")
+
+
+class TestCommittedCloseFinancialConsistency(unittest.TestCase):
+    """Runtime ledger fill_count must govern whether fill-derived positions are current."""
+
+    def _store(self):
+        return RuntimeSummaryProjectionStore(
+            path=str(Path(tempfile.mkdtemp()) / "summaries.json")
+        )
+
+    @staticmethod
+    def _snapshot(event_type, *, created_at, fill_count, pnl=-15.0, drawdown=0.00015):
+        event = _event(event_type, created_at=created_at)
+        event["event_id"] = f"evt-{event_type}-{created_at}"
+        event["metrics"] = {
+            "pnl": pnl,
+            "drawdown_pct": drawdown,
+            "portfolio_value": 100000.0 + pnl,
+            "initial_cash": 100000.0,
+            "cash": 99985.0,
+            "fill_count": fill_count,
+        }
+        return event
+
+    def _open_short(self, store):
+        store.project_event(
+            _fill_event(symbol="2330.TW", qty=-1.0, price=2385.0, created_at="2026-10-27T01:43:10Z")
+        )
+
+    def test_missing_close_fill_event_withholds_stale_open_position(self):
+        store = self._store()
+        self._open_short(store)
+        summary = store.project_event(
+            self._snapshot("pnl_snapshot", created_at="2026-10-27T13:03:00Z", fill_count=2)
+        )
+        summary = store.project_event(
+            self._snapshot("drawdown_snapshot", created_at="2026-10-27T13:03:00Z", fill_count=2)
+        )
+        self.assertEqual(summary["executed_trade_count"], 1)
+        self.assertEqual(summary["ledger_fill_count"], 2)
+        self.assertEqual(summary["positions"], [])
+        self.assertIsNone(summary["position_count"])
+        self.assertEqual(summary["positions_status"], "unavailable")
+        self.assertIn("fill_event_gap", summary["positions_unavailable_reason"])
+        # Authoritative ledger financials are still presented.
+        self.assertEqual(summary["pnl"], -15.0)
+        self.assertEqual(summary["drawdown"], 0.00015)
+
+    def test_close_fill_event_restores_flat_position_and_clears_unavailability(self):
+        store = self._store()
+        self._open_short(store)
+        store.project_event(
+            self._snapshot("pnl_snapshot", created_at="2026-10-27T13:03:00Z", fill_count=2)
+        )
+        summary = store.project_event(
+            _fill_event(symbol="2330.TW", qty=1.0, price=2400.0, created_at="2026-10-27T13:01:35Z")
+        )
+        self.assertEqual(summary["executed_trade_count"], 2)
+        self.assertEqual(summary["positions"], [])
+        self.assertEqual(summary["position_count"], 0)
+        self.assertNotIn("positions_status", summary)
+        self.assertEqual(summary["pnl"], -15.0)
+
+    def test_consistent_fill_count_does_not_flag_positions(self):
+        store = self._store()
+        self._open_short(store)
+        summary = store.project_event(
+            self._snapshot("pnl_snapshot", created_at="2026-10-27T01:44:00Z", fill_count=1, pnl=0.0, drawdown=0.0)
+        )
+        self.assertNotIn("positions_status", summary)
+        self.assertEqual(summary["position_count"], 1)
+
+    def test_missing_financial_inputs_stay_unavailable_not_zero(self):
+        store = self._store()
+        summary = store.project_event(_event("heartbeat", created_at="2026-10-27T13:03:00Z"))
+        for key in ("pnl", "drawdown", "sharpe_ratio"):
+            self.assertNotIn(key, summary)
+        self.assertNotIn("ledger_fill_count", summary)
