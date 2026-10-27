@@ -12,6 +12,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
+import shutil
+import sys
 import os
 from pathlib import Path
 import subprocess
@@ -22,7 +25,57 @@ import unittest
 import yaml
 
 from scripts.deploy import prod_preflight, release_manifest
-from tests.deployment.test_staging_release import _sample_manifest
+from tests.deployment.test_staging_release import (
+    MIGRATIONS_SRC_DIR,
+    _real_migration_set,
+    _sample_manifest as _staging_sample_manifest,
+)
+
+# Staging-produced manifests are used as Stage builds them. The product has no schema_migrations table: the
+# migration set identity is Stage's recipe over the real versioned SQL bytes (_real_migration_set), and the
+# fake production postgres serves the live information_schema catalog Stage queries.
+MIGRATION_FILES, MIGRATION_SET_SHA = _real_migration_set()
+
+
+def _sample_manifest(**kw):
+    return _staging_sample_manifest(mig_sha=MIGRATION_SET_SHA, **kw)
+
+
+def _col(typ: str, default: bool = False) -> dict:
+    return {"type": typ, "nullable": False, "has_default": default}
+
+
+# Independent of prod_preflight's parser: literal substrate columns (scripts/db_migrate.sh) and a line-oriented
+# reading of the versioned SQL (one column per indented "name TYPE" line), as a real information_schema would show.
+_SQL_TO_PG = {"TEXT": "text", "BIGINT": "bigint", "INT": "integer", "BOOLEAN": "boolean", "JSONB": "jsonb",
+              "TIMESTAMPTZ": "timestamp with time zone"}
+
+
+def _live_catalog() -> dict:
+    cat = {
+        "public.telemetry_events": {
+            "event_id": _col("text"), "event_type": _col("text"), "created_at": _col("timestamp with time zone"),
+            "payload": _col("jsonb"), "ingested_seq": _col("bigint", True), "ingested_at": _col("timestamp with time zone", True),
+        },
+        "public.loop_controller_records": {
+            "loop_id": _col("text"), "tenant_id": _col("text"), "environment": _col("text"),
+            "controller_id": _col("text"), "controller_name": _col("text"), "deployment_sha": _col("text"),
+            "evidence_refs": _col("jsonb", True), "truth_level": _col("text"), "payload": _col("jsonb", True),
+            "updated_at": _col("timestamp with time zone", True),
+        },
+    }
+    for f in MIGRATION_FILES:
+        rel = None
+        for line in (MIGRATIONS_SRC_DIR / f["name"]).read_text().splitlines():
+            m = re.match(r"CREATE TABLE IF NOT EXISTS (\S+) \(", line)
+            if m:
+                rel = m.group(1); cat[rel] = {}; continue
+            if line.startswith(");"):
+                rel = None
+            c = re.match(r"^    ([a-z_]+) ([A-Z]+)\b", line)
+            if rel and c and c.group(1) not in ("primary", "unique", "check"):
+                cat[rel][c.group(1)] = _col(_SQL_TO_PG[c.group(2)], " DEFAULT " in line)
+    return cat
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWITCH = REPO_ROOT / "scripts" / "deploy" / "prod_atomic_switch.sh"
@@ -73,6 +126,15 @@ case "$tool" in
       echo "$img" >> "$FAKE_STATE/pulled_images"
       exit 0
     fi
+    if [[ "$args" == *"compose"*"--profile stateful up"* ]]; then
+      env | grep -E '^(PANTHEON_(RELEASE_ID|BACKEND_COMMIT|OPERATOR_BFF_IMAGE|OPERATOR_BFF_DIGEST|RUNTIME_MANAGER_IMAGE|GOVERNANCE_IMAGE|DEPLOYMENT_IMAGE|LIFECYCLE_PROJECTOR_IMAGE))=' > "$FAKE_STATE/stateful_env"
+    fi
+    if [[ "$args" == *"compose"*" exec -T postgres "* ]]; then
+      if [[ "$args" == *"-f -"* ]]; then cat >> "$FAKE_STATE/applied_sql"; echo "--" >> "$FAKE_STATE/applied_sql"; exit 0; fi
+      cat >/dev/null
+      [[ -f "$FAKE_STATE/catalog" ]] || exit 1
+      cat "$FAKE_STATE/catalog"; exit 0
+    fi
     if [[ "$args" == *"compose"*" ps -q "* ]]; then
       svc="${args##* ps -q }"
       if [[ "$svc" == lifecycle-projector ]]; then
@@ -86,6 +148,11 @@ case "$tool" in
     if [[ "$args" == *"compose"*"up -d"*lifecycle-projector* ]]; then
       [[ "${FAKE_DOCKER_FAIL:-}" == *"compose"* ]] && exit 1
       touch "$FAKE_STATE/singleton_up"
+      if [[ -n "${FAKE_SINGLETON_COMMIT_OVERRIDE:-}" && "${PANTHEON_RELEASE_ID:-}" == "${FAKE_SINGLETON_COMMIT_OVERRIDE_RELEASE:-}" ]]; then
+        printf '%s' "$FAKE_SINGLETON_COMMIT_OVERRIDE" > "$FAKE_STATE/singleton_commit"
+      else
+        printf '%s' "${PANTHEON_BACKEND_COMMIT:-}" > "$FAKE_STATE/singleton_commit"
+      fi
       if [[ -n "${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:-}" ]]; then
         printf '%s' "${FAKE_SINGLETON_IMAGE_OVERRIDE:-$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}" > "$FAKE_STATE/image_cid-lifecycle-projector-1"
       fi
@@ -196,7 +263,22 @@ PY
           port="${PROD_TARGET_PORT:-8002}"
         fi
       fi
+      if [[ "${FAKE_REAL_READYZ:-}" == "1" ]]; then
+        # Mirrors services/control-plane/bff/main.py::_lifecycle_projector_dependency: ready only when a
+        # projector controller exists and its deployment_sha equals the BFF's own BFF_COMMIT.
+        bff_commit="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("source_commit_sha",""))' "$FAKE_STATE/bff_version_${port}" 2>/dev/null)"
+        if [[ -f "$FAKE_STATE/singleton_up" && -n "$bff_commit" && "$(cat "$FAKE_STATE/singleton_commit" 2>/dev/null)" == "$bff_commit" ]]; then printf 200; else printf 503; fi
+        exit 0
+      fi
       [[ " ${FAKE_READY_PORTS:-} " == *" $port "* ]] && printf 200 || printf 503
+      exit 0
+    fi
+    if [[ "$url" == */livez ]]; then
+      if [[ "${FAKE_REAL_READYZ:-}" == "1" ]]; then
+        [[ -f "$FAKE_STATE/bff_version_${port}" ]] && printf 200 || printf 503
+      else
+        [[ " ${FAKE_READY_PORTS:-} " == *" $port "* ]] && printf 200 || printf 503
+      fi
       exit 0
     fi
     if [[ "$url" == */bff/version ]]; then
@@ -229,6 +311,23 @@ esac
 """
 
 
+def _public_runtime_config(config_ref: str, *, sha: bool = True, **override) -> str:
+    cfg = {
+        "schemaVersion": "pantheon.fe.public-runtime-config.v1",
+        "environment": "production",
+        "configRef": config_ref,
+        "bffBaseUrl": "https://api.trading.acme-prod.net",
+        "gcpIdentity": {"apiKey": "public-web-key-fixture", "projectId": "acme-prod-identity",
+                        "authDomain": "acme-prod-identity.firebaseapp.com",
+                        "issuer": "https://securetoken.google.com/acme-prod-identity", "audience": "acme-prod-identity"},
+    }
+    cfg.update(override)
+    if sha:
+        canon = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
+        cfg["configSha256"] = "sha256:" + hashlib.sha256(canon.encode()).hexdigest()
+    return "window.__PANTHEON_DEPLOYMENT_CONFIG__ = " + json.dumps(cfg, sort_keys=True) + ";\n"
+
+
 class OpsHarness(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -247,11 +346,21 @@ class OpsHarness(unittest.TestCase):
         self.manifest = _sample_manifest(state="staging_verified")
         for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projector"):
             self.manifest["backend"]["images"][owner] = f"r/{owner}@sha256:" + "a" * 64
+        self.migration_dir = self.root / "migration" / "rel-1"
+        (self.migration_dir / "migrations").mkdir(parents=True)
+        for f in MIGRATION_FILES:
+            (self.migration_dir / "migrations" / f["name"]).write_bytes((MIGRATIONS_SRC_DIR / f["name"]).read_bytes())
+        shutil.copy(REPO_ROOT / "scripts" / "db_migrate.sh", self.migration_dir / "db_migrate.sh")
+        (self.migration_dir / "migration-spec.json").write_text(json.dumps(
+            {"phase": "expand", "migration_set_sha256": MIGRATION_SET_SHA, "files": MIGRATION_FILES}))
         self.mpath = self.tmp / "manifest.json"
         self.mpath.write_text(json.dumps(self.manifest))
+        self.epath = self.tmp / "staging_evidence.json"
+        self.epath.write_text(json.dumps(_evidence(self.manifest, "0" * 64)))
         self.log = self.tmp / "bin.log"
+        (self.state / "catalog").write_text(json.dumps(_live_catalog()))
         self.rc = self.root / "config" / "runtime-config.js"
-        self.rc.write_text('window.__PANTHEON_RUNTIME_CONFIG__ = {"bffBaseUrl":"https://api.trading.acme-prod.net"};\n')
+        self.rc.write_text(_public_runtime_config("rel-1"))
         (self.state / "served_runtime_config").write_text(self.rc.read_text())
         (self.state / "container_env").write_text("\n".join([
             "PANTHEON_LIVE_BROKER_ENABLED=false", "PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED=false",
@@ -274,9 +383,11 @@ class OpsHarness(unittest.TestCase):
                "PROD_BLUE_PORT": "8001", "PROD_GREEN_PORT": "8002", "PROD_ACTIVE_PORT": "8001",
                "PROD_TARGET_PORT": "8002", "RELEASE_MANIFEST_PATH": str(self.mpath),
                "PROD_COMPOSE_FILE": str(COMPOSE), "PROD_COMPOSE_ENV_FILE": str(self.tmp / "compose.env"),
-               "PROD_GATE_TOKEN_FILE": str(self.token), "FAKE_READY_PORTS": "8001 8002",
-               "FAKE_MIGRATION_LABEL": self.manifest["migration_set_sha256"],
-               "FAKE_COMPAT_LABEL": self.manifest["compatibility_manifest_sha256"]}
+               "PROD_GATE_TOKEN_FILE": str(self.token), "PROD_MIGRATION_DIR": str(self.migration_dir),
+               "FAKE_READY_PORTS": "8001 8002",
+               "STAGING_EVIDENCE_PATH": str(self.epath),
+               "PROD_BASELINE_READY_TRIES": "1", "PROD_BASELINE_READY_INTERVAL": "0",
+               "PROD_CANDIDATE_READY_TRIES": "1", "PROD_CANDIDATE_READY_INTERVAL": "0"}
         env.update(extra)
         return env
 
@@ -340,14 +451,132 @@ class ProdOpsTests(OpsHarness):
             "cors": {"FAKE_CORS_ALLOW": "*"},
             "tenant": {"FAKE_TENANT_CODE": "200"},
             "read_only": {"FAKE_WRITE_CODE": "200"},
-            "schema": {"FAKE_MIGRATION_LABEL": "sha256:" + "0" * 64},
-            "old_new_compat": {"FAKE_COMPAT_LABEL": ""},
         }
         for gate, extra in cases.items():
             r = self.ops("gate", "rel-1", gate, "8002", **extra)
             self.assertNotEqual(r.returncode, 0, gate)
+        # schema/compat are bound to genuine staging evidence, not image labels (accepted BFF has none).
+        ev = json.loads(self.epath.read_text())
+        mutations = {
+            "mig_hash": lambda d: d["gates"]["migration_and_compatibility"].update(migration_set_sha256="sha256:" + "0" * 64),
+            "not_compat": lambda d: d["gates"]["migration_and_compatibility"].update(old_app_new_schema_compatible=False),
+            "dry_run": lambda d: d.update(dry_run=True),
+            "other_image": lambda d: d["manifest"].update(operator_bff_image="r/x@sha256:" + "9" * 64),
+        }
+        for name, mut in mutations.items():
+            bad = json.loads(json.dumps(ev)); mut(bad)
+            bp = self.tmp / f"bad_{name}.json"; bp.write_text(json.dumps(bad))
+            for gate in ("schema", "old_new_compat"):
+                self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002", STAGING_EVIDENCE_PATH=str(bp)).returncode, 0, f"{gate}/{name}")
+        self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertNotEqual(self.ops("gate", "rel-1", "old_new_compat", "8002", FAKE_READY_PORTS="8002").returncode, 0)
         self.assertIn("UNKNOWN_GATE", self.ops("gate", "rel-1", "bogus", "8002").stderr)
+
+    def test_schema_gate_consumes_stage_contract_without_schema_migrations_table(self):
+        # The product has no schema_migrations table: identity = Stage recipe over versioned SQL bytes,
+        # live state = information_schema catalog. Nothing in the controller may query a phantom table.
+        for gate in ("schema", "old_new_compat"):
+            self.assertEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+        code = [l for l in OPS.read_text().splitlines() if not l.lstrip().startswith("#")]
+        self.assertFalse([l for l in code if "schema_migrations" in l])
+        self.assertNotIn("schema_migrations", self.log.read_text())
+
+    def test_schema_gates_fail_on_unmigrated_catalog_and_tampered_or_mismatched_sql(self):
+        cat = self.state / "catalog"
+        spec = self.migration_dir / "migration-spec.json"
+        first = self.migration_dir / "migrations" / MIGRATION_FILES[0]["name"]
+        good_sql = first.read_bytes()
+        for gate in ("schema", "old_new_compat"):
+            cat.write_text("{}")  # empty database: migrations never applied
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            partial = _live_catalog(); partial.pop("trade_journey_projection.controller")
+            cat.write_text(json.dumps(partial))
+            r = self.ops("gate", "rel-1", gate, "8002")
+            self.assertNotEqual(r.returncode, 0, gate); self.assertIn("lacks relations", r.stderr)
+            cat.unlink()  # database unreachable
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            cat.write_text(json.dumps(_live_catalog()))
+            first.write_bytes(good_sql + b"\n-- tampered\n")  # bytes differ from qualified spec
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            first.write_bytes(good_sql)
+            saved = spec.read_text()
+            spec.write_text(json.dumps({**json.loads(saved), "migration_set_sha256": "sha256:" + "0" * 64}))
+            self.assertNotEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+            spec.write_text(saved)
+            self.assertEqual(self.ops("gate", "rel-1", gate, "8002").returncode, 0, gate)
+        # Missing migration material fails closed.
+        spec.unlink()
+        self.assertNotEqual(self.ops("gate", "rel-1", "schema", "8002").returncode, 0)
+
+    def test_schema_gate_rejects_unusable_application_catalog_columns(self):
+        # Counterexample: every relation exists but with only an id column. Names alone are not the contract.
+        cat = self.state / "catalog"
+        good = _live_catalog()
+        bare = {rel: {"id": _col("text")} for rel in good}
+        mutations = {"id_only": bare}
+        no_cursor = json.loads(json.dumps(good)); no_cursor["public.telemetry_events"].pop("ingested_seq")
+        mutations["missing_ingested_seq"] = no_cursor
+        wrong_type = json.loads(json.dumps(good)); wrong_type["public.telemetry_events"]["ingested_at"]["type"] = "text"
+        mutations["wrong_type"] = wrong_type
+        no_default = json.loads(json.dumps(good)); no_default["public.telemetry_events"]["ingested_seq"]["has_default"] = False
+        mutations["no_default"] = no_default
+        proj = json.loads(json.dumps(good)); proj["trade_journey_projection.controller"].pop("deployment_sha")
+        mutations["projection_column"] = proj
+        # Real-PG counterexample: CREATE TABLE IF NOT EXISTS never repairs a dropped DEFAULT, and the controller
+        # singleton INSERT omits last_error_message (NOT NULL DEFAULT '' in the qualified 001 SQL).
+        no_proj_default = json.loads(json.dumps(good))
+        self.assertTrue(no_proj_default["trade_journey_projection.controller"]["last_error_message"]["has_default"])
+        no_proj_default["trade_journey_projection.controller"]["last_error_message"]["has_default"] = False
+        mutations["projection_default"] = no_proj_default
+        for name, bad in mutations.items():
+            cat.write_text(json.dumps(bad))
+            for gate in ("schema", "old_new_compat"):
+                r = self.ops("gate", "rel-1", gate, "8002")
+                self.assertNotEqual(r.returncode, 0, (name, gate))
+                self.assertIn("schema contract", r.stderr, (name, gate))
+        cat.write_text(json.dumps(good))
+        self.assertEqual(self.ops("gate", "rel-1", "schema", "8002").returncode, 0)
+
+    def test_render_builds_manifest_equal_material_and_fails_closed_on_other_checkout(self):
+        out = self.tmp / "rendered"
+        r = subprocess.run([sys.executable, "-I", str(REPO_ROOT / "scripts/deploy/prod_preflight.py"), "migration", "render",
+                            str(self.mpath), str(out), "--src", str(MIGRATIONS_SRC_DIR)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        spec = json.loads((out / "migration-spec.json").read_text())
+        self.assertEqual(spec["migration_set_sha256"], MIGRATION_SET_SHA)
+        other = self.tmp / "other-src"; other.mkdir()
+        (other / "001_x.sql").write_text("CREATE TABLE IF NOT EXISTS x (id TEXT);")
+        r = subprocess.run([sys.executable, "-I", str(REPO_ROOT / "scripts/deploy/prod_preflight.py"), "migration", "render",
+                            str(self.mpath), str(self.tmp / "rendered2"), "--src", str(other)], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_workflow_delivers_migration_material_and_runs_migrate_before_switch(self):
+        wf = WORKFLOW.read_text()
+        for needle in ("prod_preflight.py migration render", "scripts/db_migrate.sh", "migration-spec.json"):
+            self.assertIn(needle, wf)
+        self.assertLess(wf.index("prod_ops.sh\\\" migrate"), wf.index("prod_atomic_switch.sh\\\""))
+
+    def test_migrate_applies_only_verified_versioned_sql_in_order(self):
+        r = self.ops("migrate", "rel-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        applied = (self.state / "applied_sql").read_text()
+        substrate = subprocess.run(["bash", str(REPO_ROOT / "scripts" / "db_migrate.sh"), "--print-sql"],
+                                   capture_output=True, text=True, check=True).stdout
+        self.assertIn("CREATE TABLE IF NOT EXISTS telemetry_events", substrate)
+        want = (substrate + "\n--\n" if not substrate.endswith("\n") else substrate + "--\n")
+        want += "--\n".join((MIGRATIONS_SRC_DIR / f["name"]).read_text() for f in MIGRATION_FILES) + "--\n"
+        self.assertEqual(applied, want)
+        self.assertTrue((self.root / "state" / "substrate-rel-1.sha256").is_file())
+        # Missing base-schema initializer fails closed before any SQL is applied.
+        (self.state / "applied_sql").unlink()
+        (self.migration_dir / "db_migrate.sh").unlink()
+        self.assertNotEqual(self.ops("migrate", "rel-1").returncode, 0)
+        self.assertFalse((self.state / "applied_sql").exists())
+        shutil.copy(REPO_ROOT / "scripts" / "db_migrate.sh", self.migration_dir / "db_migrate.sh")
+        (self.migration_dir / "migrations" / MIGRATION_FILES[0]["name"]).write_bytes(b"SELECT 1;")
+        (self.state / "applied_sql").unlink(missing_ok=True)
+        self.assertNotEqual(self.ops("migrate", "rel-1").returncode, 0)
+        self.assertFalse((self.state / "applied_sql").exists())
 
     def test_bootstrap_first_release_old_new_compat_passes_without_prior_app(self):
         # Counterexample regression: PROD_BOOTSTRAP_FIRST_RELEASE=true with only candidate 8002 ready
@@ -400,6 +629,27 @@ class ProdOpsTests(OpsHarness):
         (self.state / "served_runtime_config_override").unlink()
         self.rc.unlink()
         self.assertIn("RUNTIME_CONFIG_MISSING", self.ops("verify_runtime_config", "rel-1").stderr)
+
+    def test_runtime_config_contract_consumes_config_ref_and_truthful_sha(self):
+        (self.root / "fe" / "releases" / "r1").mkdir()
+        os.symlink(self.root / "fe" / "releases" / "r1", self.root / "fe" / "current")
+
+        def verify(text, want="rel-1"):
+            self.rc.write_text(text)
+            (self.state / "served_runtime_config").write_text(text)
+            return self.ops("verify_runtime_config", want)
+
+        self.assertEqual(verify(_public_runtime_config("rel-1")).returncode, 0)
+        self.assertEqual(verify(_public_runtime_config("rel-1", sha=False)).returncode, 0)  # sha is optional
+        for bad in (
+            _public_runtime_config("rel-0"),                                   # configRef mismatch
+            _public_runtime_config("rel-1", schemaVersion="legacy"),           # unsupported schema
+            _public_runtime_config("rel-1", gcpIdentity={"apiKey": "k"}),      # incomplete identity
+            _public_runtime_config("rel-1").replace("sha256:", "sha256:0"),    # untruthful sha
+            'window.__PANTHEON_DEPLOYMENT_CONFIG__ = {"release_id":"rel-1","oidcIssuer":"https://x",'
+            '"bffBaseUrl":"https://api.trading.acme-prod.net"};\n',            # legacy shape
+        ):
+            self.assertIn("RUNTIME_CONFIG_CONTRACT", verify(bad).stderr)
 
     def test_post_identity_reads_back_real_public_and_local_values_and_fails_closed(self):
         cur = self.root / "fe" / "releases" / "r1"
@@ -471,15 +721,45 @@ class BootstrapTests(OpsHarness):
         self.assertFalse((self.root / "fe" / "current").exists())
         rc = (self.root / "config" / "runtime-config.js").read_text()
         self.assertIn("https://api.trading.acme-prod.net", rc)
+        self.assertIn('"schemaVersion": "pantheon.fe.public-runtime-config.v1"', rc)
+        self.assertIn('"configRef": "pending-first-release"', rc)
+        self.assertNotIn("oidcIssuer", rc)
         self.assertIn("--profile stateful", self.log.read_text())
         pulled = (self.state / "pulled_images").read_text().splitlines()
         self.assertIn(self.manifest["backend"]["images"]["operator_bff"], pulled)
         self.assertIn(self.manifest["backend"]["images"]["lifecycle_projector"], pulled)
 
+    def test_bootstrap_cold_cache_prepulls_effective_stateful_images_from_defaults_and_existing_compose_env(self):
+        env_file = self.tmp / "compose.env"
+        pg = "postgres:16-alpine@sha256:" + "1" * 64
+        nats = "nats:2.10-alpine@sha256:" + "2" * 64
+        # Fresh host, no shell variables: the compose.env defaults it writes must be the refs that get pulled.
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        written = env_file.read_text()
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        for line in written.splitlines():
+            if line.startswith(("PANTHEON_POSTGRES_IMAGE=", "PANTHEON_NATS_IMAGE=")):
+                self.assertIn(line.split("=", 1)[1], pulled)
+        self.assertTrue(any(i.startswith("postgres:") for i in pulled) and any(i.startswith("nats:") for i in pulled))
+        # Existing compose.env with operator-pinned refs and no shell variables: those exact refs are pulled.
+        (self.state / "pulled_images").unlink()
+        env_file.write_text(env_file.read_text() + f"PANTHEON_POSTGRES_IMAGE={pg}\nPANTHEON_NATS_IMAGE={nats}\n")
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        self.assertIn(pg, pulled); self.assertIn(nats, pulled)
+        # Existing compose.env lacking a stateful ref and no shell value fails closed before stateful up.
+        env_file.write_text("".join(l + "\n" for l in env_file.read_text().splitlines() if not l.startswith("PANTHEON_NATS_IMAGE=")))
+        r = self._run()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("COMPOSE_ENV", r.stderr)
+
     def test_bootstrap_rejects_unpinned_images_and_supports_oslogin_sudo(self):
         r_unpinned = self._run(PANTHEON_POSTGRES_IMAGE="postgres:16-alpine")
         self.assertNotEqual(r_unpinned.returncode, 0)
         self.assertIn("IMAGE_NOT_DIGEST_PINNED", r_unpinned.stderr)
+        (self.tmp / "compose.env").unlink()  # the rejected run persisted the unpinned ref; a pinned host starts clean
         r_sudo = self._run(FAKE_OSLOGIN_NONROOT="true", PROD_REGISTRY_AUTH="true")
         self.assertEqual(r_sudo.returncode, 0, r_sudo.stderr)
         self.assertIn("sudo ", self.log.read_text())
@@ -532,6 +812,9 @@ PROD_ENV = {
     "PROD_BFF_HOST": "api.trading.acme-prod.net",
     "PROD_FE_HOST": "app.trading.acme-prod.net",
     "PROD_IDP_ISSUER": "https://idp.acme-prod.net",
+    "PROD_PUBLIC_GCP_IDENTITY_API_KEY": "public-web-key-fixture",
+    "PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID": "acme-prod-identity",
+    "PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN": "acme-prod-identity.firebaseapp.com",
     "PROD_RPO_SECONDS": "300",
     "PROD_RTO_SECONDS": "1800",
     "PROD_RETENTION_DAYS": "30",
@@ -543,6 +826,8 @@ PROD_ENV = {
 def _evidence(manifest: dict, sha: str) -> dict:
     return {
         "status": "staging_verified",
+        "dry_run": False,
+        "observed_from_live_vm": True,
         "release_id": manifest["release_id"],
         "workflow_run_id": "123456",
         "manifest": {
@@ -550,9 +835,11 @@ def _evidence(manifest: dict, sha: str) -> dict:
             "operator_bff_image": manifest["backend"]["images"]["operator_bff"],
             "frontend_artifact_sha256": manifest["frontend"]["artifact_sha256"],
         },
-        "gates": {k: {} for k in (
-            "sanitized_data", "migration_and_compatibility", "backup_restore_readability",
+        "gates": {**{k: {} for k in (
+            "sanitized_data", "backup_restore_readability",
             "exact_pair_rollback", "security_and_safety_readbacks", "cleanup_dry_run")},
+            "migration_and_compatibility": {"migration_verified": True, "old_app_new_schema_compatible": True,
+                                            "migration_set_sha256": manifest["migration_set_sha256"]}},
     }
 
 
@@ -638,8 +925,17 @@ class PreflightTests(unittest.TestCase):
         bad["status"] = "staging_failed"
         with self.assertRaises(prod_preflight.PreflightError):
             prod_preflight.check_staging_evidence(bad, manifest, sha)
+        for key, val in (("dry_run", True), ("observed_from_live_vm", False)):
+            bad = _evidence(manifest, sha)
+            bad[key] = val
+            with self.assertRaises(prod_preflight.PreflightError, msg=key):
+                prod_preflight.check_staging_evidence(bad, manifest, sha)
         bad = _evidence(manifest, sha)
         del bad["gates"]["exact_pair_rollback"]
+        with self.assertRaises(prod_preflight.PreflightError):
+            prod_preflight.check_staging_evidence(bad, manifest, sha)
+        bad = _evidence(manifest, sha)
+        bad["gates"]["migration_and_compatibility"]["migration_set_sha256"] = "sha256:" + "0" * 64
         with self.assertRaises(prod_preflight.PreflightError):
             prod_preflight.check_staging_evidence(bad, manifest, sha)
 
@@ -659,8 +955,11 @@ class PreflightTests(unittest.TestCase):
             prod_preflight.check_baseline(manifest, bootstrap=True, baseline_state=good)
         no_rb = {k: v for k, v in manifest.items() if k != "rollback_baseline"}
         self.assertEqual(prod_preflight.check_baseline(no_rb, bootstrap=True, baseline_state=None), "bootstrap")
+        # Unmodified staging manifest (carries rollback_baseline artifact metadata) is consumable by
+        # first-release bootstrap; the reference is never treated as an incumbent.
+        self.assertEqual(prod_preflight.check_baseline(manifest, bootstrap=True, baseline_state=None), "bootstrap")
         with self.assertRaises(prod_preflight.PreflightError):
-            prod_preflight.check_baseline(manifest, bootstrap=True, baseline_state=None)
+            prod_preflight.check_baseline({**manifest, "rollback_baseline": "x"}, bootstrap=True, baseline_state=None)
 
 
 class SwitchHarness(unittest.TestCase):
@@ -678,9 +977,9 @@ class SwitchHarness(unittest.TestCase):
         self.log = self.tmp / "ops.log"
         self.identity_file = self.tmp / "identity.json"
 
-    def _prepare(self, *, bootstrap=False, mutate_manifest=None):
+    def _prepare(self, *, bootstrap=False, mutate_manifest=None, keep_rollback_artifact=False):
         manifest = _sample_manifest(state="staging_verified")
-        if bootstrap:
+        if bootstrap and not keep_rollback_artifact:
             manifest = {k: v for k, v in manifest.items() if k != "rollback_baseline"}
         artifact = self.tmp / "fe.tar.gz"
         fe_sha = _fe_tarball(artifact, "new")
@@ -750,8 +1049,8 @@ class SwitchTests(SwitchHarness):
         self.assertIn("8002", self._upstream())
         steps = self._steps()
         self.assertEqual(steps.index("snapshot_preflight") < steps.index("start_green") < steps.index("drain_singletons")
-                         < steps.index("reload_proxy") < steps.index("post_identity"), True)
-        self.assertEqual(steps.count("gate"), 7)
+                         < steps.index("activate_singletons") < steps.index("reload_proxy") < steps.index("post_identity"), True)
+        self.assertEqual(steps.count("gate"), 8)
         state = json.loads((self.root / "state" / f"{rid}.json").read_text())
         self.assertEqual(state["release_state"], "prod_active")
         self.assertNotIn("release_complete", json.dumps(state))
@@ -885,6 +1184,27 @@ class SwitchTests(SwitchHarness):
         state = json.loads((self.root / "state" / f"{self.manifest['release_id']}.json").read_text())
         self.assertEqual(state["release_state"], "prod_aborted")
 
+    def test_bootstrap_consumes_unmodified_staging_manifest_without_switching_to_artifact_baseline(self):
+        # Staging requires rollback_baseline for promotion; first-release must accept it as artifact
+        # metadata only, never as a healthy incumbent or rollback target.
+        manifest = self._prepare(bootstrap=True, keep_rollback_artifact=True)
+        self.assertIn("rollback_baseline", manifest)
+        r = self._run(bootstrap=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("baseline_health", self._steps())
+        self.assertNotIn("resume_baseline_singletons", self._steps())
+        self.setUp()
+        self._prepare(bootstrap=True, keep_rollback_artifact=True)
+        r = self._run(bootstrap=True, extra_env={"IDENTITY_OVERRIDE": "{}"})
+        self.assertEqual(r.returncode, 4)
+        self.assertNotIn("resume_baseline_singletons", self._steps())
+        self.assertFalse((self.root / "fe" / "current").exists())
+        self.assertIn("503", self._upstream())
+        # Without bootstrap declaration or with a real incumbent the same manifest is still governed.
+        self.setUp()
+        self._prepare(bootstrap=True, keep_rollback_artifact=True)
+        self.assertEqual(self._run(bootstrap=False).returncode, 1)
+
     def test_first_release_without_bootstrap_declaration_refused(self):
         self._prepare(bootstrap=True)
         r = self._run(bootstrap=False)
@@ -962,8 +1282,6 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
             WORKFLOW_INITIATOR="initiator-a",
             FE_ARTIFACT_PATH=str(artifact),
             PROD_BOOTSTRAP_FIRST_RELEASE="true" if bootstrap else "false",
-            FAKE_MIGRATION_LABEL=manifest["migration_set_sha256"],
-            FAKE_COMPAT_LABEL=manifest["compatibility_manifest_sha256"],
             **extra_env,
         )
         return subprocess.run([str(SWITCH)], env=env, capture_output=True, text=True, timeout=60)
@@ -1107,6 +1425,61 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-001")
 
 
+    def test_real_readiness_contract_first_release_and_changed_backend_sha_handoff(self):
+        # FAKE_REAL_READYZ models main.py::_lifecycle_projector_dependency: readyz is 200 only when the
+        # singleton controller deployment_sha == the BFF's BFF_COMMIT. No unconditional 200s.
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="a" * 40, digest_char="1", bootstrap=True)
+        boot = self._run_bootstrap(mpath1)
+        self.assertEqual(boot.returncode, 0, boot.stderr)
+        env_seen = dict(l.split("=", 1) for l in (self.state / "stateful_env").read_text().splitlines())
+        self.assertEqual(env_seen["PANTHEON_RELEASE_ID"], "pantheon-20261025-001")
+        self.assertEqual(env_seen["PANTHEON_BACKEND_COMMIT"], "a" * 40)
+        self.assertEqual(env_seen["PANTHEON_LIFECYCLE_PROJECTOR_IMAGE"], m1["backend"]["images"]["lifecycle_projector"])
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_REAL_READYZ="1")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        self.assertEqual((self.state / "singleton_commit").read_text(), "a" * 40)
+
+        rb = {"previous_release_id": "pantheon-20261025-001", "frontend_commit": m1["frontend"]["commit"],
+              "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"], "backend_commit": m1["backend"]["commit"],
+              "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+              "backend_images": m1["backend"]["images"], "config_schema_version": m1["config_schema_version"]}
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="b" * 40, digest_char="2", rollback_baseline=rb)
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, FAKE_REAL_READYZ="1")
+        self.assertEqual(sw2.returncode, 0, f"stdout={sw2.stdout}\nstderr={sw2.stderr}")
+        self.assertEqual((self.state / "singleton_commit").read_text(), "b" * 40)
+        self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-002")
+
+    def test_candidate_never_ready_after_handoff_rolls_back_to_baseline_singleton(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="a" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        self.assertEqual(self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True,
+                                          FAKE_REAL_READYZ="1").returncode, 0)
+        rb = {"previous_release_id": "pantheon-20261025-001", "frontend_commit": m1["frontend"]["commit"],
+              "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"], "backend_commit": m1["backend"]["commit"],
+              "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+              "backend_images": m1["backend"]["images"], "config_schema_version": m1["config_schema_version"]}
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="b" * 40, digest_char="2", rollback_baseline=rb)
+        # Projector fails to register the candidate sha (stale controller): candidate readyz stays 503.
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, FAKE_REAL_READYZ="1",
+                               FAKE_SINGLETON_COMMIT_OVERRIDE="c" * 40,
+                               FAKE_SINGLETON_COMMIT_OVERRIDE_RELEASE="pantheon-20261025-002",
+                               PROD_CANDIDATE_READY_TRIES="1", PROD_CANDIDATE_READY_INTERVAL="0",
+                               PROD_BASELINE_READY_TRIES="1", PROD_BASELINE_READY_INTERVAL="0")
+        self.assertEqual(sw2.returncode, 2, f"stdout={sw2.stdout}\nstderr={sw2.stderr}")
+        self.assertIn("127.0.0.1:8002", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        self.assertTrue((self.state / "singleton_up").exists())
+        self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-001")
+        self.assertEqual((self.state / "singleton_commit").read_text(), "a" * 40)
+
+
 class StaticContractTests(unittest.TestCase):
     def test_workflow_is_inert_and_gated(self):
         text = WORKFLOW.read_text()
@@ -1134,7 +1507,32 @@ class StaticContractTests(unittest.TestCase):
             for unused in ("PANTHEON_REAL_WRITES_ENABLED", "PANTHEON_PROVIDER_ENABLED", "PANTHEON_DEV_STUB_WRITES_ENABLED"):
                 self.assertNotIn(unused, s["environment"])
             self.assertNotIn("build", s)
+            self.assertEqual(s["ports"][0].rsplit(":", 1)[1], "8001")  # accepted native BFF port
+            self.assertEqual(s["environment"]["PANTHEON_RUNTIME_MANAGER_URL"], "http://runtime-manager:8080")
+            self.assertEqual(s["environment"]["PANTHEON_GOVERNANCE_API_URL"], "http://governance:8082")
+            self.assertEqual(s["environment"]["PANTHEON_DEPLOYMENT_API_URL"], "http://deployment:8095")
+            self.assertIn("BFF_COMMIT", s["environment"])
+        proj = svc["lifecycle-projector"]
+        self.assertEqual(proj["command"], ["python", "-m", "services.trade_journey.lifecycle_projector", "run"])
+        self.assertIn("GIT_SHA", proj["environment"])
+        self.assertEqual(proj["environment"]["LIFECYCLE_PROJECTOR_WRITER_BACKEND"], "postgres")
         self.assertNotEqual(svc["operator-bff-blue"]["ports"], svc["operator-bff-green"]["ports"])
+
+    def test_workflow_forwards_public_identity_to_host_bootstrap_and_switch(self):
+        wf = yaml.safe_load(WORKFLOW.read_text())
+        text = WORKFLOW.read_text()
+        for name in ("API_KEY", "PROJECT_ID", "AUTH_DOMAIN", "ISSUER", "AUDIENCE"):
+            key = f"PROD_PUBLIC_GCP_IDENTITY_{name}"
+            self.assertIn(key, wf["jobs"]["deploy"]["env"])
+            self.assertIn(f"{key} ", text.split("for v in RELEASE_ID", 1)[1].split("; do", 1)[0] + " ")
+        self.assertIn("PROD_REQUIRE_FULL_SECRET_KEYS=true", text)
+
+    def test_bootstrap_renders_public_runtime_schema_and_validates_isolated_dsns(self):
+        text = BOOTSTRAP.read_text()
+        self.assertIn("pantheon.fe.public-runtime-config.v1", text)
+        self.assertNotIn("oidcIssuer", text)
+        self.assertIn("TELEMETRY_DB_DSN", text)
+        self.assertIn("LIFECYCLE_PROJECTOR_PROJECTION_DSN", text)
 
     def test_workflow_scopes_prod_vars_to_environment_and_transports_over_iap(self):
         wf = yaml.safe_load(WORKFLOW.read_text())
@@ -1171,6 +1569,40 @@ class StaticContractTests(unittest.TestCase):
         self.assertNotIn("POSTGRES_PASSWORD", pg)
         self.assertNotIn("trust", COMPOSE.read_text().lower().replace("trust auth", "").replace("never trust", ""))
         self.assertIn("postgres_password", compose["secrets"])
+
+    def test_application_stores_are_durable_shared_across_colors_and_on_the_data_disk(self):
+        # Acknowledged native-store state must live on the retained data disk (never container /tmp) and be
+        # identical for blue, green, replacement and rollback; Stage's selected store paths are mirrored.
+        svc = yaml.safe_load(COMPOSE.read_text())["services"]
+        disk = "${PROD_DATA_MOUNT:?production data disk mount required}"
+        want = {
+            "runtime-manager": {"/data/runtime": "runtime"},
+            "governance": {"/data/governance": "governance"},
+            "deployment": {"/data/governance": "governance", "/data/runtime": "runtime"},
+            "lifecycle-projector": {"/data/bff": "bff"},
+            "operator-bff-blue": {"/data/bff": "bff", "/data/governance": "governance", "/data/runtime": "runtime"},
+            "operator-bff-green": {"/data/bff": "bff", "/data/governance": "governance", "/data/runtime": "runtime"},
+        }
+        for name, mounts in want.items():
+            got = {}
+            for v in svc[name]["volumes"]:
+                src, _, rest = v.partition(":/data/")
+                got["/data/" + rest.split(":")[0]] = src
+            for target, sub in mounts.items():
+                self.assertEqual(got.get(target), f"{disk}/{sub}", f"{name} {target}")
+        env = lambda n: svc[n]["environment"]
+        self.assertEqual(env("runtime-manager")["PANTHEON_RUNTIME_BINDING_STORE_PATH"], "/data/runtime/runtime_bindings.json")
+        self.assertEqual(env("runtime-manager")["PANTHEON_COMMAND_STATE_FILE"], "/data/runtime/internal_api_commands.json")
+        self.assertEqual(env("governance")["GOVERNANCE_DATA_DIR"], "/data/governance")
+        self.assertEqual(env("deployment")["DEPLOYMENT_DATA_DIR"], "/data/governance")
+        for n in ("lifecycle-projector", "operator-bff-blue", "operator-bff-green"):
+            self.assertEqual(env(n)["BFF_DATA_DIR"], "/data/bff")
+        self.assertEqual(svc["operator-bff-blue"]["volumes"], svc["operator-bff-green"]["volumes"])
+        self.assertEqual(env("operator-bff-blue"), env("operator-bff-green"))
+        # Bootstrap creates the owner store dirs next to postgres/nats on the data disk.
+        boot = (REPO_ROOT / "deploy" / "production" / "bootstrap.sh").read_text()
+        for d in ("bff", "runtime", "governance"):
+            self.assertIn(f'"${{PROD_DATA_MOUNT}}/{d}"', boot)
 
     def test_caddy_serves_external_no_store_runtime_config(self):
         text = CADDY.read_text()

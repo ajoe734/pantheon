@@ -103,6 +103,11 @@ jobs:
       PROD_BFF_HOST: ${{ vars.PROD_BFF_HOST }}
       PROD_FE_HOST: ${{ vars.PROD_FE_HOST }}
       PROD_IDP_ISSUER: ${{ vars.PROD_IDP_ISSUER }}
+      PROD_PUBLIC_GCP_IDENTITY_API_KEY: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_API_KEY || '' }}
+      PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID || '' }}
+      PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN || '' }}
+      PROD_PUBLIC_GCP_IDENTITY_ISSUER: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_ISSUER || '' }}
+      PROD_PUBLIC_GCP_IDENTITY_AUDIENCE: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_AUDIENCE || '' }}
       PROD_RPO_SECONDS: ${{ vars.PROD_RPO_SECONDS }}
       PROD_RTO_SECONDS: ${{ vars.PROD_RTO_SECONDS }}
       PROD_RETENTION_DAYS: ${{ vars.PROD_RETENTION_DAYS }}
@@ -166,15 +171,23 @@ jobs:
           cp "${RUNNER_TEMP}/approvals.json" "${RUNNER_TEMP}/bundle/approvals.json"
           cp "${RUNNER_TEMP}/env-policy.json" "${RUNNER_TEMP}/bundle/env-policy.json"
           cp scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh \
-             scripts/deploy/prod_preflight.py scripts/deploy/release_manifest.py "${RUNNER_TEMP}/bundle/"
+             scripts/deploy/prod_preflight.py scripts/deploy/staging_sanitize.py \
+             scripts/deploy/release_manifest.py "${RUNNER_TEMP}/bundle/"
           cp deploy/production/docker-compose.prod-control.yml deploy/production/Caddyfile deploy/production/bootstrap.sh "${RUNNER_TEMP}/bundle/"
+          # Immutable migration material: Stage recipe over the checked-out versioned SQL, proven equal to the manifest
+          # migration_set_sha256 (fails closed otherwise), plus the base-schema initializer applied before it.
+          python3 -I scripts/deploy/prod_preflight.py migration render "${RELEASE_MANIFEST_PATH}" "${RUNNER_TEMP}/bundle/migration" \
+            --src services/trade_journey/migrations
+          cp scripts/db_migrate.sh "${RUNNER_TEMP}/bundle/migration/db_migrate.sh"
           {
             for v in RELEASE_ID EXPECTED_MANIFEST_SHA256 PROD_BOOTSTRAP_FIRST_RELEASE PROD_ROOT PROD_DATA_MOUNT \
                      PROD_BLUE_PORT PROD_GREEN_PORT PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_WIF_PROVIDER \
                      PROD_SERVICE_ACCOUNT PROD_IAM_POLICY_REF PROD_SECRETS_REF PROD_DATA_DISK PROD_NETWORK \
                      PROD_BFF_HOST PROD_FE_HOST PROD_IDP_ISSUER PROD_RPO_SECONDS PROD_RTO_SECONDS \
                      PROD_RETENTION_DAYS PROD_ONCALL_OWNER PROD_ROLLBACK_OWNER STAGING_GCP_PROJECT_ID \
-                     DEV_GCP_PROJECT_ID; do
+                     DEV_GCP_PROJECT_ID PROD_PUBLIC_GCP_IDENTITY_API_KEY PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID \
+                     PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN PROD_PUBLIC_GCP_IDENTITY_ISSUER \
+                     PROD_PUBLIC_GCP_IDENTITY_AUDIENCE; do
               printf 'export %s=%q\n' "$v" "${!v}"
             done
             printf 'export WORKFLOW_INITIATOR=%q\n' "${{ github.triggering_actor }}"
@@ -196,10 +209,13 @@ jobs:
             B=/tmp/pantheon-release-${RELEASE_ID}/bundle
             source \$B/remote.env
             sudo install -d \"\$PROD_ROOT/bin\" \"\$PROD_ROOT/state/snapshots\" \"\$PROD_ROOT/config\" \"\$PROD_ROOT/proxy\"
-            sudo install -m 0755 \$B/bootstrap.sh \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
+            sudo install -m 0755 \$B/bootstrap.sh \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/staging_sanitize.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
             sudo install -m 0644 \$B/docker-compose.prod-control.yml \$B/Caddyfile \"\$PROD_ROOT/bin/\"
+            sudo rm -rf \"\$PROD_ROOT/migration/\$RELEASE_ID\" && sudo install -d -m 0755 \"\$PROD_ROOT/migration/\$RELEASE_ID/migrations\"
+            sudo install -m 0644 \$B/migration/migration-spec.json \$B/migration/db_migrate.sh \"\$PROD_ROOT/migration/\$RELEASE_ID/\"
+            sudo install -m 0644 \$B/migration/migrations/*.sql \"\$PROD_ROOT/migration/\$RELEASE_ID/migrations/\"
             sudo install -m 0644 \$B/snapshot.json \"\$PROD_ROOT/state/snapshots/\$RELEASE_ID.json\"
-            sudo -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true \
+            sudo -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true PROD_REQUIRE_FULL_SECRET_KEYS=true \
               PROD_SECRETS_ENV_FILE=\"\${PROD_SECRETS_ENV_FILE:-\$PROD_ROOT/secrets/prod.secrets.env}\" \
               PROD_POSTGRES_PASSWORD_FILE=\"\${PROD_POSTGRES_PASSWORD_FILE:-\$PROD_ROOT/secrets/postgres_password}\" \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
@@ -211,6 +227,11 @@ jobs:
               RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
               APPROVALS_PATH=\$B/approvals.json ENV_POLICY_PATH=\$B/env-policy.json \
               FE_ARTIFACT_PATH=\$B/fe.tar.gz \"\$PROD_ROOT/bin/prod_ops.sh\" prepull_images \"\$RELEASE_ID\"
+            sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
+              PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
+              PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
+              RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
+              FE_ARTIFACT_PATH=\$B/fe.tar.gz \"\$PROD_ROOT/bin/prod_ops.sh\" migrate \"\$RELEASE_ID\"
             sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
               PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
