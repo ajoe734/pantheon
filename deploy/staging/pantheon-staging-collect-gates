@@ -809,17 +809,109 @@ def main() -> int:
             _fail("ROW_COUNT_JSON_INVALID", f"Invalid JSON from row count query: {exc}")
 
     def owner_store_manifest(root: Path) -> str:
+        # Which owner stores hold files depends on each owner's selected backend (a PG-backed owner
+        # leaves its JSON directory unused), so the directory must exist and its contents are
+        # hashed as-is; acknowledged-state meaning is proven separately through the native stores.
         lines: list[str] = []
         for store in staging_sanitize.OWNER_STORE_PATHS:
             store_dir = root / store
             if not store_dir.is_dir():
                 _fail("OWNER_STORE_MISSING", f"Durable owner store {store_dir} is missing")
-            files = sorted(p for p in store_dir.rglob("*") if p.is_file())
-            if not files:
-                _fail("OWNER_STORE_EMPTY", f"Durable owner store {store_dir} holds no acknowledged state")
-            for f in files:
+            for f in sorted(p for p in store_dir.rglob("*") if p.is_file()):
                 lines.append(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(root)}\n")
         return "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+    # Native acknowledged-state proof: write one record through each owner's own store class inside
+    # the running owner container (the store factory picks the backend from the container env, so a
+    # PG-backed owner writes to PG and a file-backed owner writes to its configured path), recreate
+    # the owner, and read the record back through the same native store.
+    ack_id = f"stg-ack-{release_id}"
+    gov_snippet = (
+        "import json,os,sys,pathlib\n"
+        "import services.governance as _g\n"
+        "sys.path.insert(0,str(pathlib.Path(_g.__file__).resolve().parent.parent/'control-plane'/'governance'))\n"
+        "from approval_decision import ApprovalDecision\n"
+        "from services.governance.pg_store import build_approval_decision_store\n"
+        "mode,ack=sys.argv[1],sys.argv[2]\n"
+        "s=build_approval_decision_store(os.path.join(os.environ['GOVERNANCE_DATA_DIR'],'approval_decisions.json'))\n"
+        "if mode=='write':\n"
+        "    s.put(ApprovalDecision.create_proposed(decision_id=ack,target_type='strategy',target_id='stg-ack',target_version='1'))\n"
+        "ids=[d.decision_id for d in s.list_all()]\n"
+        "print(json.dumps({'backend':os.getenv('GOVERNANCE_STORE_BACKEND','json').strip().lower() or 'json','ids':ids}))\n"
+    )
+    bff_snippet = (
+        "import importlib.util,json,os,sys,datetime\n"
+        "mode,ack=sys.argv[1],sys.argv[2]\n"
+        "rel='services/control-plane/bff/session_lifecycle_store.py'\n"
+        "path=next(os.path.join(b,rel) for b in [os.getcwd(),*sys.path] if b and os.path.exists(os.path.join(b,rel)))\n"
+        "spec=importlib.util.spec_from_file_location('session_lifecycle_store',path)\n"
+        "mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
+        "store_path=os.path.join(os.environ['BFF_DATA_DIR'],'session_lifecycle.json')\n"
+        "s=mod.SessionLifecycleStore(store_path)\n"
+        "now=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')\n"
+        "if mode=='write':\n"
+        "    s.upsert_session(ack,{'state':'acknowledged'},now=now)\n"
+        "ids=[k for k in json.load(open(store_path))['sessions']]\n"
+        "print(json.dumps({'backend':'file','ids':ids}))\n"
+    )
+
+    def owner_native_state(svc: str, snippet: str, mode: str) -> dict[str, Any]:
+        last_err = ""
+        for _attempt in range(int(os.environ.get("STAGING_READY_TRIES", "10"))):
+            cid_out = _run(compose_cmd("ps", "-q", svc), error_code="OWNER_ACK_PS_FAILED").stdout.split()
+            if cid_out:
+                proc = _run(
+                    [docker_bin, "exec", cid_out[0], "python", "-c", snippet, mode, ack_id],
+                    check=False,
+                )
+                if proc.returncode == 0:
+                    try:
+                        return json.loads(proc.stdout.strip().splitlines()[-1])
+                    except (ValueError, IndexError):
+                        last_err = f"unparseable native readback {proc.stdout!r}"
+                else:
+                    last_err = (proc.stderr or proc.stdout or "").strip()
+            time.sleep(float(os.environ.get("STAGING_READY_INTERVAL", "3")))
+        _fail("OWNER_ACK_READBACK_FAILED", f"{svc} native store {mode} failed: {last_err}")
+
+    for store in staging_sanitize.OWNER_STORE_PATHS:
+        if not (data_mount / store).is_dir():
+            _fail("OWNER_STORE_MISSING", f"Durable owner store {data_mount / store} is missing")
+
+    owner_ack: dict[str, dict[str, Any]] = {}
+    for svc, snippet in (("governance", gov_snippet), ("operator-bff", bff_snippet)):
+        written = owner_native_state(svc, snippet, "write")
+        if ack_id not in written["ids"]:
+            _fail("OWNER_ACK_NOT_RECORDED", f"{svc} native store did not record acknowledged record {ack_id}")
+        _run(compose_cmd("--profile", "core", "rm", "-fsv", svc), error_code="OWNER_ACK_RECREATE_FAILED")
+        _run(
+            compose_cmd("--profile", "core", "up", "-d", "--no-build", svc),
+            error_code="OWNER_ACK_RECREATE_FAILED",
+        )
+        reread = owner_native_state(svc, snippet, "read")
+        if ack_id not in reread["ids"]:
+            _fail("OWNER_ACK_LOST", f"{svc} native store lost acknowledged record {ack_id} after owner recreation")
+        owner_ack[svc] = {"backend": reread["backend"], "records": len(reread["ids"])}
+
+    # runtime-manager keeps its bindings/command state in files at the paths its container env
+    # configures; those must be readable JSON at the mounted location (they are written only by
+    # real runtime commands, so an unused path may be absent).
+    runtime_cid = service_cids["runtime-manager"]
+    runtime_env_lines = _run(
+        [docker_bin, "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", runtime_cid],
+        error_code="DOCKER_INSPECT_ENV_FAILED",
+    ).stdout.splitlines()
+    runtime_env = dict(line.split("=", 1) for line in runtime_env_lines if "=" in line)
+    for env_key in ("PANTHEON_RUNTIME_BINDING_STORE_PATH", "PANTHEON_COMMAND_STATE_FILE"):
+        configured = runtime_env.get(env_key, "")
+        if not configured.startswith("/data/runtime/"):
+            _fail("OWNER_STORE_PATH_INVALID", f"runtime-manager {env_key}={configured!r} is not on the mounted owner store")
+        host_path = data_mount / configured.removeprefix("/data/")
+        if host_path.exists():
+            try:
+                json.loads(host_path.read_text(encoding="utf-8"))
+            except ValueError as exc:
+                _fail("OWNER_STORE_CORRUPT", f"runtime-manager state {host_path} is not valid JSON: {exc}")
 
     live_catalog_pre_backup = canonical_catalog_sha(
         query_live_catalog("BACKUP_CATALOG_QUERY_FAILED", "BACKUP_CATALOG_EMPTY")
@@ -875,6 +967,13 @@ def main() -> int:
         with tarfile.open(owner_backup_file, "r:gz") as tf:
             tf.extractall(restore_root, filter="data")
         restored_owner_manifest_sha = owner_store_manifest(restore_root)
+        restored_bff = json.loads((restore_root / "bff" / "session_lifecycle.json").read_text(encoding="utf-8"))
+        if ack_id not in restored_bff.get("sessions", {}):
+            _fail("OWNER_ACK_RESTORE_MISSING", f"Restored bff owner store lacks acknowledged record {ack_id}")
+        if owner_ack["governance"]["backend"] == "json":
+            restored_gov = json.loads((restore_root / "governance" / "approval_decisions.json").read_text(encoding="utf-8"))
+            if ack_id not in restored_gov:
+                _fail("OWNER_ACK_RESTORE_MISSING", f"Restored governance owner store lacks acknowledged record {ack_id}")
 
     backup_restore_record = {
         "observed_from_live_vm": True,

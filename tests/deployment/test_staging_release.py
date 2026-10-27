@@ -49,6 +49,14 @@ ACTIONLINT_CANDIDATES = (
 
 
 FAKE_HOST_BIN_SCRIPT = r"""#!/usr/bin/env python3
+FAKE_NATIVE_ENV = {
+    "runtime-manager": {
+        "PANTHEON_RUNTIME_BINDING_STORE_PATH": "/data/runtime/runtime_bindings.json",
+        "PANTHEON_COMMAND_STATE_FILE": "/data/runtime/internal_api_commands.json",
+    },
+    "governance": {"GOVERNANCE_DATA_DIR": "/data/governance"},
+    "operator-bff": {"BFF_DATA_DIR": "/data/bff"},
+}
 import base64
 import hashlib
 import hmac
@@ -107,7 +115,7 @@ def _root_owned_dirs() -> list[Path]:
         if val:
             b = Path(val)
             dirs.append(b)
-            for sub in ("secrets", "state", "config", "lib", "releases", "backups", "sanitized"):
+            for sub in ("secrets", "state", "config", "lib", "releases", "backups", "sanitized", "bff", "runtime", "governance"):
                 sd = b / sub
                 if sd.exists() and sd.is_dir():
                     dirs.append(sd)
@@ -244,6 +252,42 @@ if tool == "docker":
         print(f"Pulled {img}")
         raise SystemExit(0)
 
+    if args[:1] == ["exec"]:
+        # Runs the collector's native-store snippet against the real repo store classes, with the
+        # container's own env and its /data/<owner> mounts mapped onto the fake data disk.
+        cinfo = next((i for i in st.get("containers", {}).values() if i.get("cid") == args[1]), None)
+        if not cinfo or not cinfo.get("running"):
+            print(f"Error response from daemon: container {args[1]} is not running", file=sys.stderr)
+            raise SystemExit(1)
+        c_idx = args.index("-c")
+        code, rest = args[c_idx + 1], args[c_idx + 2:]
+        data_mount = os.environ["STAGING_DATA_MOUNT"]
+        exec_env = {k: v for k, v in os.environ.items() if not k.startswith(("GOVERNANCE_", "BFF_", "DATABASE_URL"))}
+        exec_env.update({
+            k: (data_mount + v[len("/data"):] if v.startswith("/data/") else v)
+            for k, v in cinfo.get("env", {}).items()
+        })
+        exec_env["PYTHONPATH"] = os.environ["FAKE_REPO_ROOT"]
+        if cinfo["env"].get("GOVERNANCE_STORE_BACKEND") == "postgres":
+            # No PostgreSQL in unit tests: the PG store class persists to a sim dir outside the data disk.
+            code = (
+                "import os,sys,pathlib,services.governance as _g\n"
+                "sys.path.insert(0,str(pathlib.Path(_g.__file__).resolve().parent.parent/'control-plane'/'governance'))\n"
+                "from approval_decision import ApprovalDecisionStore as _S\n"
+                "import services.governance.pg_store as _pg\n"
+                "class _Sim(_S):\n"
+                "    def __init__(self, dsn, table, bootstrap):\n"
+                "        super().__init__(os.path.join(os.environ['FAKE_PG_SIM_DIR'], 'approval_decisions.json'))\n"
+                "_pg.PostgresApprovalDecisionStore=_Sim\n"
+            ) + code
+        proc = subprocess.run(
+            [sys.executable, "-c", code, *rest], env=exec_env, cwd=os.environ["FAKE_REPO_ROOT"],
+            capture_output=True, text=True,
+        )
+        sys.stdout.write(proc.stdout)
+        sys.stderr.write(proc.stderr)
+        raise SystemExit(proc.returncode)
+
     if args[:2] == ["image", "inspect"]:
         img = args[-1]
         if img not in st.get("pulled_images", []):
@@ -293,6 +337,8 @@ if tool == "docker":
 
         if "rm" in args and "-fsv" in args:
             svc = args[-1]
+            if os.environ.get("FAKE_WIPE_OWNER_ON_RECREATE") == "true" and svc == "operator-bff":
+                (Path(os.environ["STAGING_DATA_MOUNT"]) / "bff" / "session_lifecycle.json").unlink(missing_ok=True)
             if svc in st.get("containers", {}):
                 st["containers"][svc]["running"] = False
                 save_state(st)
@@ -346,8 +392,15 @@ if tool == "docker":
                     "PANTHEON_BFF_JWT_AUDIENCE": c_env.get("PANTHEON_BFF_JWT_AUDIENCE", "pantheon-operator-bff"),
                     "BFF_COMMIT": c_env.get("PANTHEON_BACKEND_COMMIT", ""),
                     "BFF_IMAGE_DIGEST": c_env.get("PANTHEON_OPERATOR_BFF_DIGEST", ""),
+                    **FAKE_NATIVE_ENV.get(svc, {}),
                     **secrets_env,
                 }
+                if svc == "governance" and os.environ.get("FAKE_GOVERNANCE_BACKEND") == "postgres":
+                    merged_svc_env.update({
+                        "GOVERNANCE_STORE_BACKEND": "postgres",
+                        "GOVERNANCE_AUDIT_BACKEND": "postgres",
+                        "DATABASE_URL": "postgresql://pantheon_stg@postgres:5432/pantheon_staging",
+                    })
                 st.setdefault("containers", {})[svc] = {
                     "cid": f"cid-{svc}",
                     "image": img_ref,
@@ -1563,10 +1616,6 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         for mig in self.migration_files:
             shutil.copyfile(MIGRATIONS_SRC_DIR / mig["name"], self.data_mount / "sanitized" / "migrations" / mig["name"])
-        for store in ("bff", "runtime", "governance"):
-            (self.data_mount / store / "owner-state.json").write_text(
-                json.dumps({"store": store, "acknowledged": True}), encoding="utf-8"
-            )
 
         # Lock root-owned directories (0555) and secret files (0000) so non-root OS Login commands
         # fail with EACCES unless elevated via sudo.
@@ -1658,6 +1707,8 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             "PG_RESTORE_BIN": str(self.host_bin_dir / "pg_restore"),
             "SUDO_BIN": str(self.host_bin_dir / "sudo"),
             "FAKE_OSLOGIN_NONROOT": "true",
+            "FAKE_REPO_ROOT": str(REPO_ROOT),
+            "FAKE_PG_SIM_DIR": str(self.vm_env_dir / "pg-sim"),
             "FAKE_HOST_BIN_DIR": str(self.host_bin_dir),
             "VM_RUNTIME_STATE_FILE": str(self.vm_runtime_state_file),
             "VM_BIN_LOG_FILE": str(self.vm_bin_log_file),
@@ -1938,7 +1989,46 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertNotEqual(ver.returncode, 0)
         self.assertIn("OWNER_STORE_MISSING", ver.stderr)
 
-    def test_collector_rejects_empty_owner_store(self) -> None:
+    def _provision_and_verify(self, **env: str) -> subprocess.CompletedProcess:
+        subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", **env),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self._unlock_vm_env_dir()
+        (self.vm_env_dir / "pg-sim").mkdir(exist_ok=True)
+        return subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", **env),
+            capture_output=True,
+            text=True,
+        )
+
+    def test_file_backed_native_owner_state_survives_recreation_and_restore(self) -> None:
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        ack = "stg-ack-pantheon-20261024-001"
+        gov = json.loads((self.data_mount / "governance" / "approval_decisions.json").read_text())
+        self.assertIn(ack, gov)
+        bff = json.loads((self.data_mount / "bff" / "session_lifecycle.json").read_text())
+        self.assertEqual(bff["sessions"][ack]["state"], "acknowledged")
+
+    def test_pg_backed_governance_needs_no_json_files_and_acks_through_native_store(self) -> None:
+        ver = self._provision_and_verify(FAKE_GOVERNANCE_BACKEND="postgres")
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        ack = "stg-ack-pantheon-20261024-001"
+        self.assertFalse(list((self.data_mount / "governance").glob("*.json")))
+        sim = json.loads((self.vm_env_dir / "pg-sim" / "approval_decisions.json").read_text())
+        self.assertIn(ack, sim)
+
+    def test_collector_rejects_ack_lost_on_owner_recreation(self) -> None:
+        ver = self._provision_and_verify(FAKE_WIPE_OWNER_ON_RECREATE="true")
+        self.assertNotEqual(ver.returncode, 0)
+        self.assertIn("OWNER_ACK_LOST", ver.stderr)
+
+    def test_collector_rejects_corrupt_runtime_owner_state(self) -> None:
         subprocess.run(
             [str(PROVISION_SCRIPT)],
             env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
@@ -1947,7 +2037,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             check=True,
         )
         self._unlock_vm_env_dir()
-        (self.data_mount / "runtime" / "owner-state.json").unlink()
+        (self.data_mount / "runtime" / "runtime_bindings.json").write_text("{not json", encoding="utf-8")
         ver = subprocess.run(
             [str(VERIFY_SCRIPT)],
             env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
@@ -1955,7 +2045,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             text=True,
         )
         self.assertNotEqual(ver.returncode, 0)
-        self.assertIn("OWNER_STORE_EMPTY", ver.stderr)
+        self.assertIn("OWNER_STORE_CORRUPT", ver.stderr)
 
     def test_no_gcloud_false_success_rejected_fail_closed(self) -> None:
         # 1. STAGING_DRY_RUN=false with unset/empty GCLOUD_BIN must fail closed and record 0 resources
