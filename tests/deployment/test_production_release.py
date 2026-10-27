@@ -543,6 +543,8 @@ PROD_ENV = {
 def _evidence(manifest: dict, sha: str) -> dict:
     return {
         "status": "staging_verified",
+        "dry_run": False,
+        "observed_from_live_vm": True,
         "release_id": manifest["release_id"],
         "workflow_run_id": "123456",
         "manifest": {
@@ -638,6 +640,11 @@ class PreflightTests(unittest.TestCase):
         bad["status"] = "staging_failed"
         with self.assertRaises(prod_preflight.PreflightError):
             prod_preflight.check_staging_evidence(bad, manifest, sha)
+        for key, val in (("dry_run", True), ("observed_from_live_vm", False)):
+            bad = _evidence(manifest, sha)
+            bad[key] = val
+            with self.assertRaises(prod_preflight.PreflightError, msg=key):
+                prod_preflight.check_staging_evidence(bad, manifest, sha)
         bad = _evidence(manifest, sha)
         del bad["gates"]["exact_pair_rollback"]
         with self.assertRaises(prod_preflight.PreflightError):

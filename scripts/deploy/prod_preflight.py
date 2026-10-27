@@ -112,6 +112,8 @@ def check_staging_evidence(evidence: Any, manifest: dict[str, Any], manifest_sha
         raise PreflightError("staging evidence must be a JSON object")
     if evidence.get("status") != "staging_verified":
         raise PreflightError("staging evidence status must be 'staging_verified'")
+    if evidence.get("dry_run") is not False or evidence.get("observed_from_live_vm") is not True:
+        raise PreflightError("staging evidence must be a live (non-dry-run) observation")
     if evidence.get("release_id") != manifest["release_id"]:
         raise PreflightError("staging evidence release_id does not match manifest")
     summary = evidence.get("manifest")

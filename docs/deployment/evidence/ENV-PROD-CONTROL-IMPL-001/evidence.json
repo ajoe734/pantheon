@@ -38,12 +38,16 @@
     {
       "id": "host_bootstrap_and_digest_pinned_prepull_wiring",
       "summary": "production-release.yml creates /tmp/pantheon-release-<id> over IAP SSH before SCP, installs and invokes deploy/production/bootstrap.sh and prod_ops.sh prepull_images on the control VM before prod_atomic_switch.sh; bootstrap.sh and prod_ops.sh support non-root OS Login (run_priv), validate runtime binaries and secret content, and pre-acquire only @sha256:... digest-pinned images."
+    },
+    {
+      "id": "staging_live_evidence_contract",
+      "summary": "prod_preflight.check_staging_evidence now additionally requires dry_run=false and observed_from_live_vm=true, matching the merged ENV-STG-EPHEMERAL-IMPL-001 staging_verify.sh output, so dry_run_validated or unobserved staging evidence cannot admit production."
     }
   ],
   "validation": {
     "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
     "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
-    "result": "73 tests OK (49 in test_production_release, 24 in test_staging_release)",
+    "result": "49 tests OK in tests.deployment.test_production_release (script behavior only; not hosted drill evidence)",
     "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
   },
   "hosted_acceptance": {
