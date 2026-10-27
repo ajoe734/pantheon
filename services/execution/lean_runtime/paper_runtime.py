@@ -2609,11 +2609,27 @@ class LifecycleTelemetryOutbox:
                 )
                 exact_payloads.append(payload)
             admitted_batches.append(batch_id)
-            candidate["admitted_batches"] = admitted_batches[-512:]
+            # Never evicted by count: an id must outlive outbox delivery until the
+            # ledger acknowledges the fill (release_batch), otherwise a replay
+            # would re-publish the fill with a new sequence_no.
+            candidate["admitted_batches"] = admitted_batches
             self._validate_state(candidate)
             self._write_state(candidate)
             self._state = candidate
             return [self._strict_copy(payload) for payload in exact_payloads]
+
+    def release_batch(self, batch_id: str) -> None:
+        """Forget an admitted batch id once its producer durably acknowledged it."""
+        with self._lock:
+            self._require_healthy()
+            batches = list(self._state.get("admitted_batches") or [])
+            if batch_id not in batches:
+                return
+            candidate = dict(self._state)
+            candidate["admitted_batches"] = [b for b in batches if b != batch_id]
+            self._validate_state(candidate)
+            self._write_state(candidate)
+            self._state = candidate
 
     def acknowledge(self, event_id: str) -> None:
         """Remove a pending record only after a positive remote acknowledgement."""
@@ -3265,7 +3281,15 @@ class PaperRuntimeService:
             )
             return
         self._fill_publication_error = None
-        self._algo.ack_fill_publication(event.event_id)
+        self._ack_fill_publication(event.event_id)
+
+    def _ack_fill_publication(self, event_id: str) -> None:
+        if not self._algo.ack_fill_publication(event_id):
+            return
+        try:
+            self._lifecycle_outbox.release_batch(event_id)
+        except LifecycleTelemetryOutboxError:
+            log.exception("admitted batch %s release deferred", event_id)
 
     def _replay_pending_fill_publications(self) -> None:
         """Re-publish committed fills whose lifecycle chain was interrupted."""
@@ -3280,7 +3304,7 @@ class PaperRuntimeService:
                 )
                 return
             self._fill_publication_error = None
-            self._algo.ack_fill_publication(str(record["event_id"]))
+            self._ack_fill_publication(str(record["event_id"]))
 
     def _handle_order_event(self, event: OrderEvent, *, replay: bool = False) -> None:
         if event.event_type == "signal_generation":

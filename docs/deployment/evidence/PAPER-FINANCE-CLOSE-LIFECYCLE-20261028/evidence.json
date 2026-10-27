@@ -14,7 +14,8 @@
       "Each committed fill is staged in the existing per-binding paper performance ledger (pending_fill_publications, written before the sink runs, same precedent as pending_performance_pair) and acknowledged only after durable admission.",
       "PaperRuntimeService._on_order_event no longer lets a publication failure escape after the ledger committed (no DLQ, fence completes, no second trade); the staged fill is replayed on the next drain/restart with the original identities (event_id, broker_order_id, trade_episode_id, envelope) and deterministic payloads (position values come from the committed fill, created_at from the fill).",
       "Snapshot exposes pending_fill_publication_count and fill_publication_error.",
-      "_admit_lifecycle_batch adopts the durable outbox chain (not the re-staged in-memory chain) after admission, so replaying an already-admitted batch (ack failed, same process or restart) no longer leaves memory sequence ahead of disk; the next non-trading event is contiguous (previously memory seq 12 vs disk 7 then 'admission sequence is not contiguous')."
+      "_admit_lifecycle_batch adopts the durable outbox chain (not the re-staged in-memory chain) after admission, so replaying an already-admitted batch (ack failed, same process or restart) no longer leaves memory sequence ahead of disk; the next non-trading event is contiguous (previously memory seq 12 vs disk 7 then 'admission sequence is not contiguous').",
+      "Outbox admitted_batches is no longer truncated by count (was [-512:]); a batch id is released (LifecycleTelemetryOutbox.release_batch) only after the ledger acknowledges the fill publication, so a replay after >512 intervening batches (same process or restart) still hits the idempotent no-op and keeps the original sequence_no (regression: test_replay_after_many_batches_same_process/restart)."
     ],
     "runtime_summary.py": [
       "pnl/drawdown snapshots carry the authoritative ledger fill_count; when it exceeds the fill events projected, fill-derived positions are withheld (positions=[], position_count=null, positions_status=unavailable, reason fill_event_gap) instead of presenting a stale open position. Missing pnl/drawdown/sharpe stay absent, never zero.",
@@ -36,6 +37,14 @@
     {
       "command": "paper_runtime.py reverted to HEAD with new tests kept",
       "outcome": "2 new next-event tests FAIL, confirming they catch the sequence desync"
+    },
+    {
+      "command": "python3 -m unittest services.execution.lean_runtime.test_paper_runtime (system python)",
+      "outcome": "Ran 94 tests, OK, including the 2 eviction-horizon tests"
+    },
+    {
+      "command": "full 3-module unittest with system python",
+      "outcome": "198 run; only 6 errors, all ModuleNotFoundError flask in telemetry main-based classes (env limitation, no shared venv found in this session); the shared-venv run remains the reference"
     }
   ],
   "new_tests": [
@@ -66,5 +75,6 @@
     "no Stage/Prod operation",
     "no hosted deployment",
     "Sharpe remains absent and no approved drawdown baseline fabricated"
-  ]
+  ],
+  "unmet_acceptance": "Acceptance 1/3/6 original-cause: the original hosted exception is NOT proven and cannot be from available artifacts (original stderr unavailable; saved outbox only shows chain stopping at risk_evaluation). Injected-failure scenarios are regression coverage, not original-cause proof. Requires operator resolution or hosted log readback by Root."
 }

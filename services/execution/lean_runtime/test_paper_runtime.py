@@ -4035,6 +4035,53 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def test_next_event_contiguous_after_restart_replay(self):
         self._assert_next_event_contiguous_after_replay(restart=True)
 
+    def _assert_replay_survives_batch_eviction_horizon(self, restart):
+        self.store = InMemoryPendingSignalStore()
+        service = self._service()
+        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        with patch.object(
+            PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
+        ):
+            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        fill = next(
+            e for e in self.captured
+            if e.get("signal_id") == "sb" and e["event_type"] == "paper_fill_simulated"
+        )
+        first_sequence = fill["sequence_no"]
+        for _ in range(520):
+            _, chain = next(
+                (j, c) for j, c in service._lifecycle_outbox.chains().items()
+                if c["sequence_no"] >= 7
+            )
+            metadata = dict(fill["metadata"])
+            metadata["correlation_envelope"] = dict(chain["correlation_envelope"])
+            service._emit_lifecycle_telemetry(
+                "paper_order_simulated",
+                {"action": "noop"},
+                metadata,
+                event_id=str(uuid.uuid4()),
+                created_at="2026-10-27T01:00:05Z",
+            )
+        runtime = self._service() if restart else service
+        runtime.drain_once()
+        fills = [
+            e for e in self.captured
+            if e.get("signal_id") == "sb" and e["event_type"] == "paper_fill_simulated"
+        ]
+        self.assertEqual(len(fills), 1)
+        self.assertEqual(fills[0]["sequence_no"], first_sequence)
+        self.assertEqual(runtime.snapshot()["pending_fill_publication_count"], 0)
+        self.assertNotIn(
+            fill["event_id"], runtime._lifecycle_outbox._state["admitted_batches"]
+        )
+        self.assertEqual(self.broker_calls, ["sa", "sb"])
+
+    def test_replay_after_many_batches_same_process(self):
+        self._assert_replay_survives_batch_eviction_horizon(restart=False)
+
+    def test_replay_after_many_batches_restart(self):
+        self._assert_replay_survives_batch_eviction_horizon(restart=True)
+
 
 if __name__ == "__main__":
     unittest.main()
