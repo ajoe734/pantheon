@@ -292,7 +292,10 @@ class PaperExecutionAlgorithm:
         deployment_stage: str = "paper",
         bracket_order_execution_enabled: bool = True,
         state_path: str | None = None,
+        durable_fill_publication: bool = False,
     ) -> None:
+        self._durable_fill_publication = bool(durable_fill_publication)
+        self._pending_fill_publications: list[dict[str, Any]] = []
         self._initial_cash = _finite_float(
             initial_cash,
             field="initial_cash",
@@ -643,6 +646,7 @@ class PaperExecutionAlgorithm:
             event_metadata["position_quantity"] = float(
                 self._holding(str(symbol)).Quantity
             )
+            event_metadata["ledger_cash"] = float(self._cash)
             if self._reversal_info:
                 rev = self._reversal_info
                 self._reversal_info = None
@@ -658,18 +662,30 @@ class PaperExecutionAlgorithm:
                 event_metadata["trade_episode_id"] = self._last_fill_episode_id
             else:
                 event_metadata.pop("trade_episode_id", None)
-        self._event_sink(
-            OrderEvent(
-                event_type=event_type,
-                symbol=str(symbol),
-                quantity=event_quantity,
-                fill_price=event_price,
-                action=action,
-                submitted_to_broker=submitted_to_broker,
-                broker_submission_status=broker_submission_status,
-                metadata=event_metadata,
-            )
+        order_event = OrderEvent(
+            event_type=event_type,
+            symbol=str(symbol),
+            quantity=event_quantity,
+            fill_price=event_price,
+            action=action,
+            submitted_to_broker=submitted_to_broker,
+            broker_submission_status=broker_submission_status,
+            metadata=event_metadata,
         )
+        if (
+            event_type == "paper_fill_simulated"
+            and self._durable_fill_publication
+            and not self._stage_fill_publication(order_event)
+        ):
+            # The fill is already committed; keep going so the event is still
+            # published in-process, but surface the staging failure.
+            log.error(
+                "committed paper fill %s could not be staged for durable "
+                "lifecycle replay: %s",
+                order_event.event_id,
+                self._state_error,
+            )
+        self._event_sink(order_event)
 
     def SetHoldings(self, symbol: str, target_percent: float) -> None:  # noqa: N802
         security = self._security(symbol)
@@ -1297,6 +1313,30 @@ class PaperExecutionAlgorithm:
             return False
         return self._state_error is None
 
+    def pending_fill_publications(self) -> list[dict[str, Any]]:
+        """Committed fills whose lifecycle events are not yet durably admitted."""
+        return json.loads(json.dumps(self._pending_fill_publications))
+
+    def _stage_fill_publication(self, event: "OrderEvent") -> bool:
+        record = json.loads(json.dumps(event.to_dict(), allow_nan=False))
+        previous = self._pending_fill_publications
+        self._pending_fill_publications = [*previous, record]
+        if not self._persist_state():
+            self._pending_fill_publications = previous
+            return False
+        return True
+
+    def ack_fill_publication(self, event_id: str) -> bool:
+        previous = self._pending_fill_publications
+        remaining = [r for r in previous if r.get("event_id") != event_id]
+        if len(remaining) == len(previous):
+            return True
+        self._pending_fill_publications = remaining
+        if not self._persist_state():
+            self._pending_fill_publications = previous
+            return False
+        return True
+
     def _record_fill(self) -> None:
         filled_at = _iso_now()
         if self._fill_count == 0:
@@ -1538,6 +1578,19 @@ class PaperExecutionAlgorithm:
                     binding_id=normalized_binding_id,
                 )
 
+            raw_pending_publications = payload.get("pending_fill_publications", [])
+            if not isinstance(raw_pending_publications, list):
+                raise ValueError("pending fill publications must be a list")
+            restored_publications: list[dict[str, Any]] = []
+            for record in raw_pending_publications:
+                if (
+                    not isinstance(record, dict)
+                    or not isinstance(record.get("event_id"), str)
+                    or record.get("event_type") != "paper_fill_simulated"
+                ):
+                    raise ValueError("pending fill publication record is malformed")
+                restored_publications.append(json.loads(json.dumps(record, allow_nan=False)))
+
             raw_open_episodes = payload.get("open_episodes")
             restored_episodes: dict[str, str] = {}
             if raw_open_episodes is not None:
@@ -1567,6 +1620,7 @@ class PaperExecutionAlgorithm:
             self._ledger_started_at = ledger_started_at
             self._performance_window_state = dict(performance_window)
             self._pending_performance_pair = pending_performance_pair
+            self._pending_fill_publications = restored_publications
             self._performance_binding_id = normalized_binding_id or None
             if self._performance_binding_id is None:
                 self._loaded_state_missing_binding_id = True
@@ -1597,6 +1651,7 @@ class PaperExecutionAlgorithm:
             "last_fill_at": self._last_fill_at,
             "performance_window": self._performance_window_state,
             "pending_performance_pair": self._pending_performance_pair,
+            "pending_fill_publications": self._pending_fill_publications,
             "holdings": {
                 symbol: float(holding.Quantity)
                 for symbol, holding in sorted(self.Portfolio.items())
@@ -2201,6 +2256,16 @@ class RuntimeTelemetryEmitter:
         }
 
 
+class _LifecycleBatch:
+    """Ordered canonical lifecycle payloads staged for one atomic admission."""
+
+    def __init__(self, chains: Mapping[str, Mapping[str, Any]]) -> None:
+        self.chains: dict[str, dict[str, Any]] = {
+            key: dict(value) for key, value in chains.items()
+        }
+        self.items: list[dict[str, Any]] = []
+
+
 class LifecycleTelemetryOutboxError(RuntimeError):
     """Raised when canonical lifecycle durability cannot be guaranteed."""
 
@@ -2479,6 +2544,77 @@ class LifecycleTelemetryOutbox:
             self._state = candidate
             return self._strict_copy(exact_payload)
 
+    def admit_many(
+        self,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        batch_id: str,
+    ) -> list[dict[str, Any]]:
+        """Atomically persist an ordered lifecycle batch in one durable write.
+
+        Each item carries ``payload``, ``journey_id`` and ``checkpoint`` exactly
+        as ``admit`` does. Either every payload is admitted or none is, so a
+        committed paper fill can never leave a half-written event chain.
+        ``batch_id`` is remembered so replaying the same batch after a crash
+        between admission and acknowledgement is an idempotent no-op even once
+        the payloads were already delivered and removed from ``pending``.
+        """
+        with self._lock:
+            self._require_healthy()
+            batch = list(items)
+            if not batch or not batch_id:
+                raise LifecycleTelemetryOutboxError(
+                    "lifecycle telemetry batch admission requires items and a batch id"
+                )
+            admitted_batches = list(self._state.get("admitted_batches") or [])
+            if batch_id in admitted_batches:
+                return [
+                    self._strict_copy(dict(item["payload"])) for item in batch
+                ]
+            candidate = self._strict_copy(self._state)
+            exact_payloads: list[dict[str, Any]] = []
+            for item in batch:
+                payload = self._strict_copy(dict(item["payload"]))
+                journey_id = str(item["journey_id"])
+                checkpoint = self._strict_copy(dict(item["checkpoint"]))
+                event_id = str(payload.get("event_id") or "")
+                sequence_no = checkpoint.get("sequence_no")
+                if not journey_id or checkpoint.get("event_id") != event_id:
+                    raise LifecycleTelemetryOutboxError(
+                        "lifecycle telemetry admission identity is invalid"
+                    )
+                uuid.UUID(event_id)
+                envelope = validate_envelope(checkpoint.get("correlation_envelope"))
+                if envelope["journey_id"] != journey_id or envelope["event_id"] != event_id:
+                    raise LifecycleTelemetryOutboxError(
+                        "lifecycle telemetry admission envelope is invalid"
+                    )
+                current = candidate["chains"].get(journey_id)
+                expected_sequence = 1 if current is None else int(current["sequence_no"]) + 1
+                if sequence_no != expected_sequence:
+                    raise LifecycleTelemetryOutboxError(
+                        "lifecycle telemetry admission sequence is not contiguous"
+                    )
+                admission_no = int(candidate["next_admission_no"])
+                candidate["next_admission_no"] = admission_no + 1
+                candidate["chains"][journey_id] = checkpoint
+                candidate["pending"].append(
+                    {
+                        "admission_no": admission_no,
+                        "journey_id": journey_id,
+                        "event_id": event_id,
+                        "sequence_no": sequence_no,
+                        "payload": payload,
+                    }
+                )
+                exact_payloads.append(payload)
+            admitted_batches.append(batch_id)
+            candidate["admitted_batches"] = admitted_batches[-512:]
+            self._validate_state(candidate)
+            self._write_state(candidate)
+            self._state = candidate
+            return [self._strict_copy(payload) for payload in exact_payloads]
+
     def acknowledge(self, event_id: str) -> None:
         """Remove a pending record only after a positive remote acknowledgement."""
         self.acknowledge_many((event_id,))
@@ -2625,6 +2761,7 @@ class PaperRuntimeService:
         self._lifecycle_outbox_verified = False
         self._lifecycle_outbox_persistence_error = lifecycle_load_error
         self._lifecycle_delivery_error: str | None = None
+        self._fill_publication_error: str | None = None
         self._lifecycle_replay_batch_size = max(
             int(os.getenv("PANTHEON_LIFECYCLE_REPLAY_BATCH_SIZE", "512")),
             1,
@@ -2634,13 +2771,14 @@ class PaperRuntimeService:
             window_days=int(os.getenv("PANTHEON_PERFORMANCE_WINDOW_DAYS", "20"))
         )
         self._algo = PaperExecutionAlgorithm(
-            event_sink=self._handle_order_event,
+            event_sink=self._on_order_event,
             deployment_stage=self._identity.deployment_stage or self._identity.runtime_mode or "paper",
             bracket_order_execution_enabled=_as_bool(
                 os.getenv("PANTHEON_BRACKET_ORDER_EXECUTION_ENABLED"),
                 default=True,
             ),
             state_path=performance_state_path,
+            durable_fill_publication=True,
         )
         self._performance_state_restore_error: str | None = None
         try:
@@ -2759,6 +2897,7 @@ class PaperRuntimeService:
                         or ledger.get("state_error")
                         or "paper performance ledger binding failed"
                     )
+                self._replay_pending_fill_publications()
                 binding_status = str(binding.get("status") or "").lower()
                 if binding_status in _HALT_BINDING_STATUSES:
                     # Safety gate (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY):
@@ -2837,6 +2976,10 @@ class PaperRuntimeService:
                 "telemetry": self._telemetry.snapshot(),
                 **lags,
                 "lifecycle_outbox": lifecycle_outbox,
+                "pending_fill_publication_count": len(
+                    self._algo.pending_fill_publications()
+                ),
+                "fill_publication_error": self._fill_publication_error,
                 "paper_state": {
                     "started_at": self._started_at,
                     "last_poll_at": self._last_poll_at,
@@ -3010,13 +3153,15 @@ class PaperRuntimeService:
         *,
         event_id: str,
         created_at: str,
+        batch: "_LifecycleBatch | None" = None,
     ) -> dict[str, Any] | None:
         canonical = self._canonical_lifecycle_identity(metadata)
         if canonical is None:
             return None
         lifecycle_metadata, incoming_envelope = canonical
         journey_id = str(incoming_envelope["journey_id"])
-        chain = self._lifecycle_chains.get(journey_id)
+        chains = self._lifecycle_chains if batch is None else batch.chains
+        chain = chains.get(journey_id)
         if chain is None:
             sequence_no = 1
             causal_parent_id = str(incoming_envelope["event_id"])
@@ -3066,6 +3211,17 @@ class PaperRuntimeService:
             "event_id": event_id,
             "correlation_envelope": dict(outgoing_envelope),
         }
+        if batch is not None:
+            # Staged: nothing is durable until the whole batch is admitted.
+            batch.chains[journey_id] = checkpoint
+            batch.items.append(
+                {
+                    "payload": payload,
+                    "journey_id": journey_id,
+                    "checkpoint": checkpoint,
+                }
+            )
+            return payload
         try:
             had_pending = bool(self._lifecycle_outbox.pending())
             exact_payload = self._lifecycle_outbox.admit(
@@ -3090,7 +3246,43 @@ class PaperRuntimeService:
             self._flush_lifecycle_outbox()
         return exact_payload
 
-    def _handle_order_event(self, event: OrderEvent) -> None:
+    def _on_order_event(self, event: OrderEvent) -> None:
+        """Event sink: a committed paper fill is never undone by publication."""
+        if event.event_type != "paper_fill_simulated":
+            self._handle_order_event(event)
+            return
+        try:
+            self._handle_order_event(event)
+        except Exception as exc:  # noqa: BLE001
+            # The ledger already committed this fill. Raising would DLQ the
+            # signal and leave its execution fence in_progress forever, so the
+            # financial state would be stranded with no lifecycle record.
+            # The staged record in the ledger is replayed by the next drain.
+            self._fill_publication_error = f"{type(exc).__name__}: {exc}"
+            log.exception(
+                "committed paper fill %s lifecycle publication deferred for replay",
+                event.event_id,
+            )
+            return
+        self._fill_publication_error = None
+        self._algo.ack_fill_publication(event.event_id)
+
+    def _replay_pending_fill_publications(self) -> None:
+        """Re-publish committed fills whose lifecycle chain was interrupted."""
+        for record in self._algo.pending_fill_publications():
+            try:
+                event = OrderEvent(**record)
+                self._handle_order_event(event, replay=True)
+            except Exception as exc:  # noqa: BLE001
+                self._fill_publication_error = f"{type(exc).__name__}: {exc}"
+                log.exception(
+                    "pending committed fill %s replay failed", record.get("event_id")
+                )
+                return
+            self._fill_publication_error = None
+            self._algo.ack_fill_publication(str(record["event_id"]))
+
+    def _handle_order_event(self, event: OrderEvent, *, replay: bool = False) -> None:
         if event.event_type == "signal_generation":
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
             signal_metadata.setdefault("symbol", event.symbol)
@@ -3138,11 +3330,12 @@ class PaperRuntimeService:
             return
 
         event_payload = event.to_dict()
-        self._execution_event_count += 1
-        if event.event_type == "paper_fill_simulated":
-            self._fill_event_count += 1
-        self._recent_order_events.append(event_payload)
-        self._recent_order_events = self._recent_order_events[-20:]
+        if not replay:
+            self._execution_event_count += 1
+            if event.event_type == "paper_fill_simulated":
+                self._fill_event_count += 1
+            self._recent_order_events.append(event_payload)
+            self._recent_order_events = self._recent_order_events[-20:]
         telemetry_metadata = {
             "runtime_package": "paper_execution_runtime",
             "symbol": event.symbol,
@@ -3202,6 +3395,14 @@ class PaperRuntimeService:
             event.event_type == "paper_fill_simulated"
             and event.metadata.get("ledger_committed") is True
         )
+        # A committed fill's whole canonical chain is staged and admitted in one
+        # durable write, so a build/persistence failure cannot strand a partial
+        # chain (e.g. risk_evaluation without the fill and position snapshot).
+        batch = (
+            _LifecycleBatch(self._lifecycle_chains)
+            if committed_fill and canonical_lifecycle
+            else None
+        )
         if committed_fill and canonical_lifecycle:
             risk_event_id = str(
                 uuid.uuid5(
@@ -3227,6 +3428,7 @@ class PaperRuntimeService:
                 risk_metadata,
                 event_id=risk_event_id,
                 created_at=event.created_at,
+                batch=batch,
             )
             order_event_id = str(
                 uuid.uuid5(
@@ -3248,6 +3450,7 @@ class PaperRuntimeService:
                 order_metadata,
                 event_id=order_event_id,
                 created_at=event.created_at,
+                batch=batch,
             )
             accepted_event_id = str(
                 uuid.uuid5(
@@ -3271,6 +3474,7 @@ class PaperRuntimeService:
                 accepted_metadata,
                 event_id=accepted_event_id,
                 created_at=event.created_at,
+                batch=batch,
             )
         if canonical_lifecycle and (
             event.event_type != "paper_fill_simulated" or committed_fill
@@ -3281,6 +3485,7 @@ class PaperRuntimeService:
                 telemetry_metadata,
                 event_id=event.event_id,
                 created_at=event.created_at,
+                batch=batch,
             )
         if lifecycle_payload is None and not canonical_lifecycle:
             self._telemetry.emit(event.event_type, metrics, metadata=telemetry_metadata)
@@ -3309,20 +3514,50 @@ class PaperRuntimeService:
                     ),
                 }
             )
-            position_quantity = float(self._algo._holding(event.symbol).Quantity)
-            position_price = float(self._algo._security(event.symbol).Price)
+            # Use the values committed with the fill, not live algorithm state,
+            # so a replay after restart builds the identical position payload.
+            position_quantity = event.metadata.get("position_quantity")
+            if position_quantity is None:
+                position_quantity = self._algo._holding(event.symbol).Quantity
+            position_quantity = float(position_quantity)
+            position_price = float(event.fill_price)
+            position_cash = event.metadata.get("ledger_cash")
+            if position_cash is None:
+                position_cash = float(self._algo._cash)
             self._emit_lifecycle_telemetry(
                 "position_snapshot",
                 {
                     "action": "position_snapshot_committed",
                     "position_qty": position_quantity,
                     "price": position_price,
-                    "cash": float(self._algo._cash),
+                    "cash": float(position_cash),
                 },
                 position_metadata,
                 event_id=position_event_id,
-                created_at=_iso_now(),
+                created_at=event.created_at,
+                batch=batch,
             )
+        if batch is not None and batch.items:
+            self._admit_lifecycle_batch(batch, batch_id=event.event_id)
+
+    def _admit_lifecycle_batch(self, batch: _LifecycleBatch, *, batch_id: str) -> None:
+        journeys = {str(item["journey_id"]) for item in batch.items}
+        try:
+            had_pending = bool(self._lifecycle_outbox.pending())
+            self._lifecycle_outbox.admit_many(batch.items, batch_id=batch_id)
+        except (LifecycleTelemetryOutboxError, CorrelationEnvelopeError) as exc:
+            for journey_id in journeys:
+                self._record_lifecycle_persistence_failure(exc, journey_id=journey_id)
+            if isinstance(exc, LifecycleTelemetryOutboxError):
+                raise
+            raise LifecycleTelemetryOutboxError(str(exc)) from exc
+        for journey_id in journeys:
+            self._lifecycle_chains[journey_id] = batch.chains[journey_id]
+            self._blocked_lifecycle_chains.discard(journey_id)
+        self._lifecycle_outbox_verified = True
+        self._lifecycle_outbox_persistence_error = None
+        if not had_pending:
+            self._flush_lifecycle_outbox()
 
     def _maybe_emit_heartbeat(self) -> None:
         if not self._telemetry.enabled:
