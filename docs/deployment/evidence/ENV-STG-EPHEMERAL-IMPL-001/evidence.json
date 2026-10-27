@@ -2,8 +2,8 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "ENV-STG-EPHEMERAL-IMPL-001",
   "title": "Ephemeral Staging Template & Automated Lifecycle Engine",
-  "recorded_at": "2026-10-25T17:06:00Z",
-  "owner": "Antigravity",
+  "recorded_at": "2026-10-26T22:58:00Z",
+  "owner": "Antigravity2",
   "reviewer": "Claude",
   "target_repo": "pantheon",
   "task_class": "functional",
@@ -107,7 +107,7 @@
       "/home/lupin",
       "front-ai-trading-system"
     ],
-    "unaccepted_all12_chain_rejected": "h12-01a11-20261023-9aeb",
+    "unaccepted_all12_chain_rejected": "any all12_chain_id requires all12_status == passed; static chain blacklist retired",
     "safe_defaults_enforced": {
       "provider_enabled": false,
       "live_broker_enabled": false,
@@ -163,5 +163,25 @@
         "result": "exit 0"
       }
     ]
+  },
+  "pr6826_source_corrections": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/6826",
+    "commit_trailers_job": "121892517653 failed only on subject length 75 > 72; history rewritten to a single commit with subject <= 72",
+    "collector_candidate_fill_removed": "pantheon-staging-collect-gates requires digest-pinned rollback_baseline.backend_images for all five owners and config_schema_version; fails closed with ROLLBACK_BASELINE_INCOMPLETE",
+    "all12_blacklist_retired": "release_manifest.py no longer hardcodes unaccepted chains; requires all12_status == passed",
+    "validation": "tests.deployment.test_staging_release 22 tests OK (local controller behavior only, not hosted evidence)"
+  },
+  "image_runtime_wiring_corrections": {
+    "scope": "Source-only alignment of deploy/staging with accepted image native runtime (retained image CMD proof); no cloud/hosted action.",
+    "bff_container_port": "8001 (public host 18001 unchanged)",
+    "owner_urls": {
+      "runtime_manager": "http://runtime-manager:8080",
+      "governance": "http://governance:8082",
+      "deployment": "http://deployment:8095"
+    },
+    "lifecycle_projector": "existing loop-run-projector-scheduler image; command python -m services.trade_journey.lifecycle_projector run; GIT_SHA=${PANTHEON_BACKEND_COMMIT}",
+    "dsn_wiring": "TELEMETRY_DB_DSN and LIFECYCLE_PROJECTOR_PROJECTION_DSN required in isolated secrets env; bootstrap.sh validates postgres scheme and isolated db name",
+    "validation": "python3 -m unittest tests.deployment.test_staging_release: 24 tests OK (350s); bash -n deploy/staging/bootstrap.sh OK",
+    "hosted_acceptance": "remains external_wait; whole task not done"
   }
 }

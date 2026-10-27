@@ -199,7 +199,9 @@
         "frontend_commit",
         "frontend_artifact_sha256",
         "backend_commit",
-        "backend_operator_bff_image"
+        "backend_operator_bff_image",
+        "backend_images",
+        "config_schema_version"
       ],
       "additionalProperties": false,
       "properties": {

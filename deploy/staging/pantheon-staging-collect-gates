@@ -492,28 +492,27 @@ def main() -> int:
     baseline_bff_img = str(rollback_baseline["backend_operator_bff_image"])
     baseline_images_map = rollback_baseline.get("backend_images")
     if not isinstance(baseline_images_map, dict):
-        baseline_images_map = {}
-
-    baseline_rm_img = str(
-        baseline_images_map.get("runtime_manager") or compose_env.get("PANTHEON_RUNTIME_MANAGER_IMAGE", "")
-    )
-    baseline_gov_img = str(
-        baseline_images_map.get("governance") or compose_env.get("PANTHEON_GOVERNANCE_IMAGE", "")
-    )
-    baseline_dep_img = str(
-        baseline_images_map.get("deployment") or compose_env.get("PANTHEON_DEPLOYMENT_IMAGE", "")
-    )
-    baseline_lp_img = str(
-        baseline_images_map.get("lifecycle_projector") or compose_env.get("PANTHEON_LIFECYCLE_PROJECTOR_IMAGE", "")
-    )
+        _fail("ROLLBACK_BASELINE_INCOMPLETE", "rollback_baseline.backend_images is required")
+    baseline_owner_imgs: dict[str, str] = {}
+    for key in ("runtime_manager", "governance", "deployment", "lifecycle_projector"):
+        img = str(baseline_images_map.get(key) or "")
+        if "@sha256:" not in img:
+            _fail("ROLLBACK_BASELINE_INCOMPLETE", f"rollback_baseline.backend_images.{key} must be digest-pinned")
+        baseline_owner_imgs[key] = img
+    if str(baseline_images_map.get("operator_bff") or "") != baseline_bff_img:
+        _fail("ROLLBACK_BASELINE_INCOMPLETE", "rollback_baseline.backend_images.operator_bff must equal backend_operator_bff_image")
+    if not str(rollback_baseline.get("config_schema_version") or ""):
+        _fail("ROLLBACK_BASELINE_INCOMPLETE", "rollback_baseline.config_schema_version is required")
+    baseline_rm_img = baseline_owner_imgs["runtime_manager"]
+    baseline_gov_img = baseline_owner_imgs["governance"]
+    baseline_dep_img = baseline_owner_imgs["deployment"]
+    baseline_lp_img = baseline_owner_imgs["lifecycle_projector"]
 
     baseline_env_map["PANTHEON_RELEASE_ID"] = prev_release_id
     baseline_env_map["PANTHEON_BACKEND_COMMIT"] = str(rollback_baseline["backend_commit"])
     baseline_env_map["PANTHEON_FRONTEND_COMMIT"] = str(rollback_baseline["frontend_commit"])
     baseline_env_map["PANTHEON_FRONTEND_ARTIFACT_SHA256"] = str(rollback_baseline["frontend_artifact_sha256"])
-    baseline_env_map["PANTHEON_CONFIG_SCHEMA_VERSION"] = str(
-        rollback_baseline.get("config_schema_version") or compose_env.get("PANTHEON_CONFIG_SCHEMA_VERSION", "")
-    )
+    baseline_env_map["PANTHEON_CONFIG_SCHEMA_VERSION"] = str(rollback_baseline["config_schema_version"])
     baseline_env_map["PANTHEON_OPERATOR_BFF_IMAGE"] = baseline_bff_img
     baseline_env_map["PANTHEON_OPERATOR_BFF_DIGEST"] = "sha256:" + baseline_bff_img.split("@sha256:", 1)[1]
     if baseline_rm_img and "@sha256:" in baseline_rm_img:

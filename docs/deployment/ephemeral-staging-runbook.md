@@ -69,3 +69,13 @@ bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_ops.sh script
 2. **Remaining Hosted Prerequisites (`external_wait`)**:
    - Wait for `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (`Root01a11`) to produce a genuinely `dev_verified` release manifest and populate the sanitized non-production snapshot `pantheon-stg-sanitized-seed-20261024`.
    - Execute two consecutive live ephemeral staging releases starting from zero staging resources, passing all live verification gates, and destroying all owned VM/disks/IP resources with verified zero lingering inventory.
+
+## Accepted image runtime wiring
+
+Compose matches the accepted images' native ports: operator-bff 8001 (host 18001 unchanged), runtime-manager 8080, governance 8082, deployment 8095. `lifecycle-projector` reuses the existing loop-run-projector-scheduler telemetry image with command `python -m services.trade_journey.lifecycle_projector run` and `GIT_SHA=${PANTHEON_BACKEND_COMMIT}`. The isolated secrets env must also contain `TELEMETRY_DB_DSN` and `LIFECYCLE_PROJECTOR_PROJECTION_DSN` (postgres DSNs for the isolated staging database); `bootstrap.sh` fails closed otherwise.
+
+## Public runtime config (`/runtime-config.js`)
+
+Bootstrap renders only the accepted FE `pantheon.fe.public-runtime-config.v1` fields (`schemaVersion`, `environment`, `configRef` = release ID, `bffBaseUrl`, `gcpIdentity{apiKey,projectId,authDomain,issuer,audience}`, truthful `configSha256`) outside the sealed FE release. Deployment identity metadata, safe flags and secrets stay in `deployment.json` and never enter the public config.
+
+Required hosted inputs (public isolated Identity config, supplied by the operator after GCP auth; no fallback, bootstrap fails closed with `PUBLIC_IDENTITY_CONFIG_MISSING`): `STAGING_PUBLIC_GCP_IDENTITY_API_KEY`, `STAGING_PUBLIC_GCP_IDENTITY_PROJECT_ID`, `STAGING_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN`; optional `STAGING_PUBLIC_GCP_IDENTITY_ISSUER`, `STAGING_PUBLIC_GCP_IDENTITY_AUDIENCE`.
