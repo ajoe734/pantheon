@@ -3,6 +3,9 @@
 # (compose --no-build, pull_policy: never). Includes the full /bff/readyz owner closure
 # (runtime-manager, governance, deployment, lifecycle-projector) and isolated Postgres
 # password-file secrets (never trust auth, never inline passwords).
+# Durable owner stores mirror the accepted Dev wiring: /data/bff (bff + projector rw), /data/runtime
+# (runtime-manager rw), /data/governance (governance + deployment rw); other owners read them
+# read-only. They live on the data disk so owner recreation and backup/restore preserve them.
 
 name: pantheon-staging
 
@@ -73,6 +76,8 @@ services:
     profiles: ["core"]
     <<: *secrets
     environment: *core_env
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/runtime:/data/runtime
     labels: {"org.pantheon.role": "owner"}
     depends_on:
       - postgres
@@ -85,6 +90,8 @@ services:
     profiles: ["core"]
     <<: *secrets
     environment: *core_env
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance
     labels: {"org.pantheon.role": "owner"}
     depends_on:
       - postgres
@@ -97,6 +104,9 @@ services:
     profiles: ["core"]
     <<: *secrets
     environment: *core_env
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/runtime:/data/runtime:ro
     labels: {"org.pantheon.role": "owner"}
     depends_on:
       - postgres
@@ -115,6 +125,8 @@ services:
       LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
       # Isolated staging DSNs come from the secrets env file (validated by bootstrap.sh).
       GIT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/bff:/data/bff
     labels: {"org.pantheon.role": "singleton"}
     depends_on:
       - postgres
@@ -143,6 +155,10 @@ services:
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_DEPLOYMENT_SERVICE_URL: http://deployment:8095
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/bff:/data/bff
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance:ro
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/runtime:/data/runtime:ro
     labels: {"org.pantheon.role": "bff"}
     ports:
       - "127.0.0.1:${STAGING_BFF_PORT:-18001}:8001"
