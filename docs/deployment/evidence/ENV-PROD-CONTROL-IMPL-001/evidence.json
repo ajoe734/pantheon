@@ -56,6 +56,10 @@
       "summary": "Phantom schema_migrations readback removed. prod_preflight.py (migration) re-hashes the qualified migration-spec.json + versioned SQL with Stage's recipe (must equal manifest migration_set_sha256, expand-only) and requires the live information_schema catalog (Stage's query) to contain every relation the SQL creates plus the Stage-required relations; prod_ops.sh migrate applies the same verified bytes out of band. Tests use the unmodified Stage manifest builder with the real versioned SQL and a fake catalog; no schema_migrations table exists anywhere. Local only; not hosted drill evidence."
     },
     {
+      "id": "first_release_schema_initialization_and_column_contract",
+      "summary": "Workflow now renders migration-spec.json + versioned SQL (Stage recipe, proven equal to manifest migration_set_sha256), ships them with scripts/db_migrate.sh to PROD_MIGRATION_DIR and runs prod_ops.sh migrate before the switch: product base-schema initializer (db_migrate.sh --print-sql, creates public.telemetry_events) first, then the qualified expand SQL, then the gate. Catalog check is column/type/default level (telemetry_events ingested_seq/ingested_at etc. plus SQL-declared columns); id-only and wrong-type catalogs are rejected with independent regressions. No manifests/SQL/hashes rewritten. Local controller tests only (no PostgreSQL binary available in this worker); real-PG replay of the reviewer reproducers is left to the reviewer/hosted drill; not hosted evidence."
+    },
+    {
       "id": "durable_application_stores",
       "summary": "Compose wires Stage's selected native store paths for runtime-manager, governance, deployment, lifecycle-projector and both BFF colors onto the retained data disk ($PROD_DATA_MOUNT/{runtime,governance,bff}, created by bootstrap.sh) with identical shared mounts per color; static tests assert paths/mounts/env parity. Runbook documents backup (pg_dump + owner-store tar) and restore readability drill. Local only; hosted backup/restore drill remains external_wait."
     }

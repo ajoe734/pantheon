@@ -174,6 +174,11 @@ jobs:
              scripts/deploy/prod_preflight.py scripts/deploy/staging_sanitize.py \
              scripts/deploy/release_manifest.py "${RUNNER_TEMP}/bundle/"
           cp deploy/production/docker-compose.prod-control.yml deploy/production/Caddyfile deploy/production/bootstrap.sh "${RUNNER_TEMP}/bundle/"
+          # Immutable migration material: Stage recipe over the checked-out versioned SQL, proven equal to the manifest
+          # migration_set_sha256 (fails closed otherwise), plus the base-schema initializer applied before it.
+          python3 -I scripts/deploy/prod_preflight.py migration render "${RELEASE_MANIFEST_PATH}" "${RUNNER_TEMP}/bundle/migration" \
+            --src services/trade_journey/migrations
+          cp scripts/db_migrate.sh "${RUNNER_TEMP}/bundle/migration/db_migrate.sh"
           {
             for v in RELEASE_ID EXPECTED_MANIFEST_SHA256 PROD_BOOTSTRAP_FIRST_RELEASE PROD_ROOT PROD_DATA_MOUNT \
                      PROD_BLUE_PORT PROD_GREEN_PORT PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_WIF_PROVIDER \
@@ -206,6 +211,9 @@ jobs:
             sudo install -d \"\$PROD_ROOT/bin\" \"\$PROD_ROOT/state/snapshots\" \"\$PROD_ROOT/config\" \"\$PROD_ROOT/proxy\"
             sudo install -m 0755 \$B/bootstrap.sh \$B/prod_atomic_switch.sh \$B/prod_rollback.sh \$B/prod_ops.sh \$B/prod_preflight.py \$B/staging_sanitize.py \$B/release_manifest.py \"\$PROD_ROOT/bin/\"
             sudo install -m 0644 \$B/docker-compose.prod-control.yml \$B/Caddyfile \"\$PROD_ROOT/bin/\"
+            sudo rm -rf \"\$PROD_ROOT/migration/\$RELEASE_ID\" && sudo install -d -m 0755 \"\$PROD_ROOT/migration/\$RELEASE_ID/migrations\"
+            sudo install -m 0644 \$B/migration/migration-spec.json \$B/migration/db_migrate.sh \"\$PROD_ROOT/migration/\$RELEASE_ID/\"
+            sudo install -m 0644 \$B/migration/migrations/*.sql \"\$PROD_ROOT/migration/\$RELEASE_ID/migrations/\"
             sudo install -m 0644 \$B/snapshot.json \"\$PROD_ROOT/state/snapshots/\$RELEASE_ID.json\"
             sudo -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true PROD_REQUIRE_FULL_SECRET_KEYS=true \
               PROD_SECRETS_ENV_FILE=\"\${PROD_SECRETS_ENV_FILE:-\$PROD_ROOT/secrets/prod.secrets.env}\" \
@@ -219,6 +227,11 @@ jobs:
               RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
               APPROVALS_PATH=\$B/approvals.json ENV_POLICY_PATH=\$B/env-policy.json \
               FE_ARTIFACT_PATH=\$B/fe.tar.gz \"\$PROD_ROOT/bin/prod_ops.sh\" prepull_images \"\$RELEASE_ID\"
+            sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
+              PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
+              PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \
+              RELEASE_MANIFEST_PATH=\$B/manifest.json STAGING_EVIDENCE_PATH=\$B/staging_evidence.json \
+              FE_ARTIFACT_PATH=\$B/fe.tar.gz \"\$PROD_ROOT/bin/prod_ops.sh\" migrate \"\$RELEASE_ID\"
             sudo -E env PROD_OPS_CMD=\"\$PROD_ROOT/bin/prod_ops.sh\" \
               PROD_COMPOSE_FILE=\$B/docker-compose.prod-control.yml \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_ROOT/config/compose.env\" \

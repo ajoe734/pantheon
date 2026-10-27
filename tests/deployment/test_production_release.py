@@ -12,6 +12,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
+import shutil
+import sys
 import os
 from pathlib import Path
 import subprocess
@@ -38,12 +41,40 @@ def _sample_manifest(**kw):
     return _staging_sample_manifest(mig_sha=MIGRATION_SET_SHA, **kw)
 
 
+def _col(typ: str, default: bool = False) -> dict:
+    return {"type": typ, "nullable": False, "has_default": default}
+
+
+# Independent of prod_preflight's parser: literal substrate columns (scripts/db_migrate.sh) and a line-oriented
+# reading of the versioned SQL (one column per indented "name TYPE" line), as a real information_schema would show.
+_SQL_TO_PG = {"TEXT": "text", "BIGINT": "bigint", "INT": "integer", "BOOLEAN": "boolean", "JSONB": "jsonb",
+              "TIMESTAMPTZ": "timestamp with time zone"}
+
+
 def _live_catalog() -> dict:
-    cat = {rel: {"id": {"type": "text", "nullable": False, "has_default": False}} for rel in prod_preflight.REQUIRED_RELATIONS}
+    cat = {
+        "public.telemetry_events": {
+            "event_id": _col("text"), "event_type": _col("text"), "created_at": _col("timestamp with time zone"),
+            "payload": _col("jsonb"), "ingested_seq": _col("bigint", True), "ingested_at": _col("timestamp with time zone", True),
+        },
+        "public.loop_controller_records": {
+            "loop_id": _col("text"), "tenant_id": _col("text"), "environment": _col("text"),
+            "controller_id": _col("text"), "controller_name": _col("text"), "deployment_sha": _col("text"),
+            "evidence_refs": _col("jsonb", True), "truth_level": _col("text"), "payload": _col("jsonb", True),
+            "updated_at": _col("timestamp with time zone", True),
+        },
+    }
     for f in MIGRATION_FILES:
-        for m in prod_preflight._CREATE_TABLE.finditer((MIGRATIONS_SRC_DIR / f["name"]).read_text()):
-            rel = m.group(1)
-            cat[rel if "." in rel else f"public.{rel}"] = {"id": {"type": "text", "nullable": False, "has_default": False}}
+        rel = None
+        for line in (MIGRATIONS_SRC_DIR / f["name"]).read_text().splitlines():
+            m = re.match(r"CREATE TABLE IF NOT EXISTS (\S+) \(", line)
+            if m:
+                rel = m.group(1); cat[rel] = {}; continue
+            if line.startswith(");"):
+                rel = None
+            c = re.match(r"^    ([a-z_]+) ([A-Z]+)\b", line)
+            if rel and c and c.group(1) not in ("primary", "unique", "check"):
+                cat[rel][c.group(1)] = _col(_SQL_TO_PG[c.group(2)])
     return cat
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -319,6 +350,7 @@ class OpsHarness(unittest.TestCase):
         (self.migration_dir / "migrations").mkdir(parents=True)
         for f in MIGRATION_FILES:
             (self.migration_dir / "migrations" / f["name"]).write_bytes((MIGRATIONS_SRC_DIR / f["name"]).read_bytes())
+        shutil.copy(REPO_ROOT / "scripts" / "db_migrate.sh", self.migration_dir / "db_migrate.sh")
         (self.migration_dir / "migration-spec.json").write_text(json.dumps(
             {"phase": "expand", "migration_set_sha256": MIGRATION_SET_SHA, "files": MIGRATION_FILES}))
         self.mpath = self.tmp / "manifest.json"
@@ -476,14 +508,67 @@ class ProdOpsTests(OpsHarness):
         spec.unlink()
         self.assertNotEqual(self.ops("gate", "rel-1", "schema", "8002").returncode, 0)
 
+    def test_schema_gate_rejects_unusable_application_catalog_columns(self):
+        # Counterexample: every relation exists but with only an id column. Names alone are not the contract.
+        cat = self.state / "catalog"
+        good = _live_catalog()
+        bare = {rel: {"id": _col("text")} for rel in good}
+        mutations = {"id_only": bare}
+        no_cursor = json.loads(json.dumps(good)); no_cursor["public.telemetry_events"].pop("ingested_seq")
+        mutations["missing_ingested_seq"] = no_cursor
+        wrong_type = json.loads(json.dumps(good)); wrong_type["public.telemetry_events"]["ingested_at"]["type"] = "text"
+        mutations["wrong_type"] = wrong_type
+        no_default = json.loads(json.dumps(good)); no_default["public.telemetry_events"]["ingested_seq"]["has_default"] = False
+        mutations["no_default"] = no_default
+        proj = json.loads(json.dumps(good)); proj["trade_journey_projection.controller"].pop("deployment_sha")
+        mutations["projection_column"] = proj
+        for name, bad in mutations.items():
+            cat.write_text(json.dumps(bad))
+            for gate in ("schema", "old_new_compat"):
+                r = self.ops("gate", "rel-1", gate, "8002")
+                self.assertNotEqual(r.returncode, 0, (name, gate))
+                self.assertIn("schema contract", r.stderr, (name, gate))
+        cat.write_text(json.dumps(good))
+        self.assertEqual(self.ops("gate", "rel-1", "schema", "8002").returncode, 0)
+
+    def test_render_builds_manifest_equal_material_and_fails_closed_on_other_checkout(self):
+        out = self.tmp / "rendered"
+        r = subprocess.run([sys.executable, "-I", str(REPO_ROOT / "scripts/deploy/prod_preflight.py"), "migration", "render",
+                            str(self.mpath), str(out), "--src", str(MIGRATIONS_SRC_DIR)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        spec = json.loads((out / "migration-spec.json").read_text())
+        self.assertEqual(spec["migration_set_sha256"], MIGRATION_SET_SHA)
+        other = self.tmp / "other-src"; other.mkdir()
+        (other / "001_x.sql").write_text("CREATE TABLE IF NOT EXISTS x (id TEXT);")
+        r = subprocess.run([sys.executable, "-I", str(REPO_ROOT / "scripts/deploy/prod_preflight.py"), "migration", "render",
+                            str(self.mpath), str(self.tmp / "rendered2"), "--src", str(other)], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_workflow_delivers_migration_material_and_runs_migrate_before_switch(self):
+        wf = WORKFLOW.read_text()
+        for needle in ("prod_preflight.py migration render", "scripts/db_migrate.sh", "migration-spec.json"):
+            self.assertIn(needle, wf)
+        self.assertLess(wf.index("prod_ops.sh\\\" migrate"), wf.index("prod_atomic_switch.sh\\\""))
+
     def test_migrate_applies_only_verified_versioned_sql_in_order(self):
         r = self.ops("migrate", "rel-1")
         self.assertEqual(r.returncode, 0, r.stderr)
         applied = (self.state / "applied_sql").read_text()
-        want = "--\n".join((MIGRATIONS_SRC_DIR / f["name"]).read_text() for f in MIGRATION_FILES) + "--\n"
+        substrate = subprocess.run(["bash", str(REPO_ROOT / "scripts" / "db_migrate.sh"), "--print-sql"],
+                                   capture_output=True, text=True, check=True).stdout
+        self.assertIn("CREATE TABLE IF NOT EXISTS telemetry_events", substrate)
+        want = (substrate + "\n--\n" if not substrate.endswith("\n") else substrate + "--\n")
+        want += "--\n".join((MIGRATIONS_SRC_DIR / f["name"]).read_text() for f in MIGRATION_FILES) + "--\n"
         self.assertEqual(applied, want)
-        (self.migration_dir / "migrations" / MIGRATION_FILES[0]["name"]).write_bytes(b"SELECT 1;")
+        self.assertTrue((self.root / "state" / "substrate-rel-1.sha256").is_file())
+        # Missing base-schema initializer fails closed before any SQL is applied.
         (self.state / "applied_sql").unlink()
+        (self.migration_dir / "db_migrate.sh").unlink()
+        self.assertNotEqual(self.ops("migrate", "rel-1").returncode, 0)
+        self.assertFalse((self.state / "applied_sql").exists())
+        shutil.copy(REPO_ROOT / "scripts" / "db_migrate.sh", self.migration_dir / "db_migrate.sh")
+        (self.migration_dir / "migrations" / MIGRATION_FILES[0]["name"]).write_bytes(b"SELECT 1;")
+        (self.state / "applied_sql").unlink(missing_ok=True)
         self.assertNotEqual(self.ops("migrate", "rel-1").returncode, 0)
         self.assertFalse((self.state / "applied_sql").exists())
 

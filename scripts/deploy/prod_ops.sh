@@ -491,6 +491,16 @@ PY
     # Stage's psql -f). Same verified bytes, same set identity; idempotent SQL. Never touches the data disk itself.
     release_env
     mig_out="$(python3 -I "$MIGRATION_HELPER" migration verify "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || fail MIGRATION_SPEC "${mig_out}"
+    # Base schema first: the product's own idempotent substrate initializer (scripts/db_migrate.sh --print-sql, shipped in
+    # the same immutable material dir) creates public.telemetry_events (+ingest cursor) and loop_controller_records, which
+    # the Stage-qualified expand SQL does not. Same psql transport as scripts/bootstrap.sh. Its sha256 is journaled.
+    substrate="$(migration_dir)/db_migrate.sh"
+    [[ -s "$substrate" ]] || fail MIGRATION_SUBSTRATE "base-schema initializer ${substrate} missing from the migration material"
+    substrate_sql="$(bash "$substrate" --print-sql)" && [[ -n "$substrate_sql" ]] || fail MIGRATION_SUBSTRATE "db_migrate.sh --print-sql produced no SQL"
+    compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' \
+      <<<"$substrate_sql" >/dev/null || fail MIGRATION_SUBSTRATE_FAILED "base-schema initialization failed"
+    mkdir -p "${PROD_ROOT}/state"
+    printf '%s\n' "$(sha256sum "$substrate" | cut -d' ' -f1)" > "${PROD_ROOT}/state/substrate-${RELEASE_ID}.sha256"
     while IFS= read -r mig_name; do
       compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' \
         < "$(migration_dir)/migrations/${mig_name}" >/dev/null || fail MIGRATION_SQL_FAILED "${mig_name} failed"
