@@ -3035,6 +3035,12 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         caddy_raw = CADDY_TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("handle /runtime-config.js", caddy_raw)
         self.assertIn("root * __STAGING_CONFIG_DIR__", caddy_raw)
+        # Private `.internal` hosts need explicit internal TLS on Debian Caddy 2.6, and the
+        # collector reads FE/runtime-config back over loopback HTTP through the same Caddy.
+        self.assertEqual(caddy_raw.count("tls internal"), 2)
+        self.assertIn("http://127.0.0.1:__STAGING_FE_HTTP_PORT__", caddy_raw)
+        self.assertIn("bind 127.0.0.1", caddy_raw)
+        self.assertEqual(caddy_raw.count("import staging_fe_routes"), 2)
         self.assertTrue(BOOTSTRAP_SCRIPT.exists() and os.access(BOOTSTRAP_SCRIPT, os.X_OK))
         self.assertTrue(COLLECTOR_SCRIPT.exists() and os.access(COLLECTOR_SCRIPT, os.X_OK))
 

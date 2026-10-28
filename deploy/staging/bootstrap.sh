@@ -90,6 +90,7 @@ STAGING_ROOT="${STAGING_ROOT:-/var/lib/pantheon-staging-root}"
 STAGING_DATA_MOUNT="${STAGING_DATA_MOUNT:-/var/lib/pantheon-staging}"
 STAGING_FE_ROOT="${STAGING_FE_ROOT:-/var/www/pantheon-staging-fe}"
 STAGING_BFF_PORT="${STAGING_BFF_PORT:-18001}"
+STAGING_FE_HTTP_PORT="${STAGING_FE_HTTP_PORT:-18080}"
 STAGING_BIN_DIR="${STAGING_BIN_DIR:-/usr/local/bin}"
 STAGING_CADDYFILE_PATH="${STAGING_CADDYFILE_PATH:-/etc/caddy/Caddyfile}"
 STAGING_SECRETS_ENV_FILE="${STAGING_SECRETS_ENV_FILE:-${STAGING_ROOT}/secrets/staging.secrets.env}"
@@ -636,9 +637,9 @@ if [[ "$(readlink -f "${RUNTIME_CFG_PATH}")" == "$(readlink -f "${STAGING_FE_ROO
 fi
 
 # 7. Render, validate, and reload Caddy via run_priv.
-python3 - "${BUNDLE_DIR}/Caddyfile.staging.tmpl" "${LOCAL_WORK_DIR}/Caddyfile" "${BFF_HOST}" "${FE_HOST}" "${STAGING_FE_ROOT}" "${STAGING_ROOT}/config" "127.0.0.1:${STAGING_BFF_PORT}" <<'PY'
+python3 - "${BUNDLE_DIR}/Caddyfile.staging.tmpl" "${LOCAL_WORK_DIR}/Caddyfile" "${BFF_HOST}" "${FE_HOST}" "${STAGING_FE_ROOT}" "${STAGING_ROOT}/config" "127.0.0.1:${STAGING_BFF_PORT}" "${STAGING_FE_HTTP_PORT}" <<'PY'
 import sys
-tmpl_path, out_path, bff_host, fe_host, fe_root, cfg_dir, upstream = sys.argv[1:8]
+tmpl_path, out_path, bff_host, fe_host, fe_root, cfg_dir, upstream, fe_http_port = sys.argv[1:9]
 text = open(tmpl_path, encoding="utf-8").read()
 text = (
     text.replace("__STAGING_BFF_HOST__", bff_host)
@@ -646,6 +647,7 @@ text = (
     .replace("__STAGING_FE_ROOT__", fe_root)
     .replace("__STAGING_CONFIG_DIR__", cfg_dir)
     .replace("__STAGING_BFF_UPSTREAM__", upstream)
+    .replace("__STAGING_FE_HTTP_PORT__", fe_http_port)
 )
 with open(out_path, "w", encoding="utf-8") as fh:
     fh.write(text)
