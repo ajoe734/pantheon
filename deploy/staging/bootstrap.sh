@@ -99,9 +99,13 @@ STAGING_POSTGRES_DB="${STAGING_POSTGRES_DB:-pantheon_staging}"
 STAGING_JWT_ISSUER="${STAGING_JWT_ISSUER:-https://auth.stg.pantheon.internal}"
 STAGING_JWT_AUDIENCE="${STAGING_JWT_AUDIENCE:-pantheon-staging-api}"
 STAGING_IDP_ISSUER="${STAGING_IDP_ISSUER:-https://idp.stg.pantheon.internal}"
+# Explicit staging tenant for product owners; deliberately no default (never invented).
+STAGING_TENANT_ID="${STAGING_TENANT_ID:-}"
 STAGING_POSTGRES_IMAGE="${STAGING_POSTGRES_IMAGE:-postgres:16-alpine@sha256:6b202572e5a92a4938fa080be515ad270515fc2d4a5850fa4ca10b0bd3efad89}"
 STAGING_NATS_IMAGE="${STAGING_NATS_IMAGE:-nats:2.10-alpine@sha256:d3eb053c882d39324bf4b1be5b4cb4dc1aa4bbbe0bf6ce3cdca90f2f2b0b12a7}"
 STAGING_METADATA_TOKEN_URL="${STAGING_METADATA_TOKEN_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
+
+[[ -n "$STAGING_TENANT_ID" ]] || fail "TENANT_ID_MISSING" "STAGING_TENANT_ID is required for the product owner closure"
 
 LOCAL_WORK_DIR="$(mktemp -d "${BUNDLE_DIR}/work.XXXXXX")"
 chmod 0700 "${LOCAL_WORK_DIR}"
@@ -241,6 +245,7 @@ run_priv mkdir -p \
   "${STAGING_DATA_MOUNT}/bff" \
   "${STAGING_DATA_MOUNT}/runtime" \
   "${STAGING_DATA_MOUNT}/governance" \
+  "${STAGING_DATA_MOUNT}/product" \
   "${STAGING_DATA_MOUNT}/sanitized" \
   "${STAGING_DATA_MOUNT}/backups"
 
@@ -269,6 +274,31 @@ pg_pw_path = Path(sys.argv[2])
 pg_user = sys.argv[3].strip()
 pg_db = sys.argv[4].strip()
 
+PRODUCT_DSN_KEYS = (
+    "DATABASE_URL",
+    "PERSONA_STORE_DSN",
+    "PERSONA_CAPABILITY_STORE_DSN",
+    "AGORA_WORKSHOP_STORE_DSN",
+    "AGORA_DATASET_STORE_DSN",
+    "AGORA_GOVERNANCE_STORE_DSN",
+    "AGORA_RESEARCH_STORE_DSN",
+)
+PRODUCT_SECRET_KEYS = (
+    "PANTHEON_RUNTIME_MANAGER_TOKEN",
+    "CONSULTATION_SERVICE_TOKEN",
+    "CONSULTATION_HANDOFF_TOKEN",
+    "PANTHEON_TELEMETRY_SERVICE_TOKEN",
+    "EVOLUTION_AUTH_TOKEN",
+    "RECONCILIATION_DRIFT_AUTH_TOKEN",
+    "POLICY_LEARNING_SERVICE_TOKEN",
+    "PANTHEON_PERSONA_SERVICE_TOKEN",
+    "PANTHEON_RESEARCH_JWT_SECRET",
+    "PANTHEON_REGISTRY_JWT_SECRET",
+    "PANTHEON_TELEMETRY_JWT_SECRET",
+    "PERSONA_JWT_SECRET",
+    "TRAINING_SESSION_JWT_SECRET",
+)
+
 if not pg_pw_path.read_text(encoding="utf-8").strip():
     raise SystemExit("empty postgres password")
 if pg_user in ("", "postgres", "pantheon_prod", "pantheon_dev"):
@@ -290,10 +320,13 @@ for req in (
     "PANTHEON_DATABASE_URL",
     "TELEMETRY_DB_DSN",
     "LIFECYCLE_PROJECTOR_PROJECTION_DSN",
+    # Product owner native stores and service-to-service/JWT secrets. No Dev default may fill these.
+    *PRODUCT_DSN_KEYS,
+    *PRODUCT_SECRET_KEYS,
 ):
     if not kv.get(req):
         raise SystemExit(f"missing required secret key {req}")
-for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN"):
+for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN", *PRODUCT_DSN_KEYS):
     dsn_base, _, dsn_query = kv[dsn_key].partition("?")
     dsn_path = dsn_base.rstrip("/")
     if dsn_query:
@@ -309,6 +342,10 @@ forbidden_prefixes = ("BROKER_API_KEY", "BROKER_SECRET", "EXCHANGE_PRIVATE_KEY",
 for k in kv:
     if any(k.upper().startswith(p) for p in forbidden_prefixes):
         raise SystemExit(f"forbidden broker secret key {k} present on staging VM")
+
+for token_key in PRODUCT_SECRET_KEYS:
+    if kv[token_key].startswith("pantheon-local") or kv[token_key].endswith("-internal"):
+        raise SystemExit(f"{token_key} carries a well-known Dev default credential")
 
 for unsafe_key in (
     "PANTHEON_LIVE_BROKER_ENABLED",
@@ -331,7 +368,10 @@ run_priv python3 "${LOCAL_WORK_DIR}/validate_secrets.py" \
 
 # 5. Validate manifest owner closure & pre-pull immutable digest-pinned images (candidate + baseline).
 MANIFEST_VARS="$(python3 - "${BUNDLE_DIR}/manifest.json" "${RELEASE_ID}" "${FE_SHA}" "${BFF_IMAGE}" "${STAGING_POSTGRES_IMAGE}" "${STAGING_NATS_IMAGE}" <<'PY'
-import json, re, shlex, sys
+import json, os, re, shlex, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
+import staging_sanitize  # bundled owner packaging contract
 
 DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 manifest = json.loads(open(sys.argv[1], encoding="utf-8").read())
@@ -343,7 +383,7 @@ if manifest.get("frontend", {}).get("artifact_sha256") != fe_sha:
     raise SystemExit("MANIFEST_MISMATCH: frontend.artifact_sha256 mismatch")
 
 images = manifest.get("backend", {}).get("images", {})
-required_owners = ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector")
+required_owners = staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS
 for key in required_owners:
     val = str(images.get(key, "")).strip()
     if not DIGEST_RE.match(val):
@@ -390,7 +430,16 @@ bff_digest = "sha256:" + images["operator_bff"].split("@sha256:", 1)[1]
 rb_bff_digest = "sha256:" + rb_bff_image.split("@sha256:", 1)[1]
 reg_host = images["operator_bff"].split("/", 1)[0] if "/" in images["operator_bff"] else ""
 
+product_env, product_baseline_env, product_pull = [], [], []
+for key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
+    product_env.append(f"PANTHEON_{key.upper()}_IMAGE={images[key]}")
+    product_baseline_env.append(f"PANTHEON_{key.upper()}_IMAGE={rb_images_map[key]}")
+    product_pull.extend((images[key], rb_images_map[key]))
+
 out = {
+    "PRODUCT_COMPOSE_ENV_LINES": "\n".join(product_env),
+    "PRODUCT_BASELINE_ENV_LINES": "\n".join(product_baseline_env),
+    "PRODUCT_PULL_IMAGES": " ".join(product_pull),
     "PANTHEON_POSTGRES_IMAGE": pg_img,
     "PANTHEON_NATS_IMAGE": nats_img,
     "PANTHEON_FRONTEND_COMMIT": frontend_commit,
@@ -442,7 +491,8 @@ for img in \
   "$ROLLBACK_RUNTIME_MANAGER_IMAGE" \
   "$ROLLBACK_GOVERNANCE_IMAGE" \
   "$ROLLBACK_DEPLOYMENT_IMAGE" \
-  "$ROLLBACK_LIFECYCLE_PROJECTOR_IMAGE"; do
+  "$ROLLBACK_LIFECYCLE_PROJECTOR_IMAGE" \
+  $PRODUCT_PULL_IMAGES; do
   [[ -z "${img:-}" ]] && continue
   run_priv "$DOCKER_BIN" pull "$img" >&2 || fail "IMAGE_PULL_FAILED" "Failed to pull digest-pinned image ${img}"
   run_priv "$DOCKER_BIN" image inspect "$img" >/dev/null 2>&1 || fail "IMAGE_INSPECT_FAILED" "Pulled image ${img} failed local docker image inspect"
@@ -616,6 +666,7 @@ PANTHEON_RUNTIME_MANAGER_IMAGE=${PANTHEON_RUNTIME_MANAGER_IMAGE}
 PANTHEON_GOVERNANCE_IMAGE=${PANTHEON_GOVERNANCE_IMAGE}
 PANTHEON_DEPLOYMENT_IMAGE=${PANTHEON_DEPLOYMENT_IMAGE}
 PANTHEON_LIFECYCLE_PROJECTOR_IMAGE=${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}
+${PRODUCT_COMPOSE_ENV_LINES}
 STAGING_ROOT=${STAGING_ROOT}
 STAGING_DATA_MOUNT=${STAGING_DATA_MOUNT}
 STAGING_FE_ROOT=${STAGING_FE_ROOT}
@@ -628,6 +679,7 @@ STAGING_POSTGRES_DB=${STAGING_POSTGRES_DB}
 STAGING_JWT_ISSUER=${STAGING_JWT_ISSUER}
 STAGING_JWT_AUDIENCE=${STAGING_JWT_AUDIENCE}
 STAGING_IDP_ISSUER=${STAGING_IDP_ISSUER}
+STAGING_TENANT_ID=${STAGING_TENANT_ID}
 STAGING_SECRETS_ENV_FILE=${STAGING_SECRETS_ENV_FILE}
 STAGING_POSTGRES_PASSWORD_FILE=${STAGING_POSTGRES_PASSWORD_FILE}
 EOF
@@ -646,6 +698,7 @@ PANTHEON_RUNTIME_MANAGER_IMAGE=${ROLLBACK_RUNTIME_MANAGER_IMAGE}
 PANTHEON_GOVERNANCE_IMAGE=${ROLLBACK_GOVERNANCE_IMAGE}
 PANTHEON_DEPLOYMENT_IMAGE=${ROLLBACK_DEPLOYMENT_IMAGE}
 PANTHEON_LIFECYCLE_PROJECTOR_IMAGE=${ROLLBACK_LIFECYCLE_PROJECTOR_IMAGE}
+${PRODUCT_BASELINE_ENV_LINES}
 STAGING_ROOT=${STAGING_ROOT}
 STAGING_DATA_MOUNT=${STAGING_DATA_MOUNT}
 STAGING_FE_ROOT=${STAGING_FE_ROOT}
@@ -658,6 +711,7 @@ STAGING_POSTGRES_DB=${STAGING_POSTGRES_DB}
 STAGING_JWT_ISSUER=${STAGING_JWT_ISSUER}
 STAGING_JWT_AUDIENCE=${STAGING_JWT_AUDIENCE}
 STAGING_IDP_ISSUER=${STAGING_IDP_ISSUER}
+STAGING_TENANT_ID=${STAGING_TENANT_ID}
 STAGING_SECRETS_ENV_FILE=${STAGING_SECRETS_ENV_FILE}
 STAGING_POSTGRES_PASSWORD_FILE=${STAGING_POSTGRES_PASSWORD_FILE}
 EOF
@@ -688,7 +742,10 @@ OBSERVED_BFF_IMAGE="$(run_priv "$DOCKER_BIN" inspect -f '{{.Config.Image}}' "$BF
 OBSERVED_BFF_ENVS="$(run_priv "$DOCKER_BIN" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$BFF_CID")" || fail "BFF_ENV_INSPECT_FAILED" "docker inspect env failed for operator-bff"
 OBSERVED_FE_SHA="$(cat "${STAGING_FE_ROOT}/current/.artifact_sha256" | tr -d '[:space:]')"
 
-for owner_svc in runtime-manager governance deployment lifecycle-projector postgres nats; do
+for owner_svc in runtime-manager governance deployment lifecycle-projector postgres nats \
+  registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona \
+  consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc \
+  agora-interaction-worker; do
   cid="$(run_compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -q "$owner_svc" | head -n1)"
   [[ -n "$cid" ]] || fail "OWNER_CONTAINER_MISSING" "Required service ${owner_svc} is not running"
 done

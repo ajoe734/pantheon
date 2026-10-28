@@ -43,6 +43,30 @@ ORPHAN_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "staging-orphan-cleanup.
 INSTANCE_TEMPLATE = REPO_ROOT / "deploy" / "staging" / "instance-template.json"
 COMPOSE_STAGING = REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml"
 CADDY_TEMPLATE = REPO_ROOT / "deploy" / "staging" / "Caddyfile.staging.tmpl"
+PRODUCT_DSN_KEYS = (
+    "DATABASE_URL",
+    "PERSONA_STORE_DSN",
+    "PERSONA_CAPABILITY_STORE_DSN",
+    "AGORA_WORKSHOP_STORE_DSN",
+    "AGORA_DATASET_STORE_DSN",
+    "AGORA_GOVERNANCE_STORE_DSN",
+    "AGORA_RESEARCH_STORE_DSN",
+)
+PRODUCT_SECRET_KEYS = (
+    "PANTHEON_RUNTIME_MANAGER_TOKEN",
+    "CONSULTATION_SERVICE_TOKEN",
+    "CONSULTATION_HANDOFF_TOKEN",
+    "PANTHEON_TELEMETRY_SERVICE_TOKEN",
+    "EVOLUTION_AUTH_TOKEN",
+    "RECONCILIATION_DRIFT_AUTH_TOKEN",
+    "POLICY_LEARNING_SERVICE_TOKEN",
+    "PANTHEON_PERSONA_SERVICE_TOKEN",
+    "PANTHEON_RESEARCH_JWT_SECRET",
+    "PANTHEON_REGISTRY_JWT_SECRET",
+    "PANTHEON_TELEMETRY_JWT_SECRET",
+    "PERSONA_JWT_SECRET",
+    "TRAINING_SESSION_JWT_SECRET",
+)
 ACTIONLINT_CANDIDATES = (
     Path("/tmp/pantheon-env-current-20261024/tools/actionlint"),
 )
@@ -115,7 +139,7 @@ def _root_owned_dirs() -> list[Path]:
         if val:
             b = Path(val)
             dirs.append(b)
-            for sub in ("secrets", "state", "config", "lib", "releases", "backups", "sanitized", "bff", "runtime", "governance"):
+            for sub in ("secrets", "state", "config", "lib", "releases", "backups", "sanitized", "bff", "runtime", "governance", "product"):
                 sd = b / sub
                 if sd.exists() and sd.is_dir():
                     dirs.append(sd)
@@ -312,6 +336,8 @@ if tool == "docker":
             raise SystemExit(1)
         if fmt == "{{.Config.Image}}":
             print(cinfo["image"])
+        elif "State.Running" in fmt:
+            print("true" if cinfo.get("running", True) else "false")
         elif "Config.Env" in fmt:
             for k, v in sorted(cinfo.get("env", {}).items()):
                 print(f"{k}={v}")
@@ -358,6 +384,12 @@ if tool == "docker":
                 "lifecycle-projector": "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE",
                 "operator-bff": "PANTHEON_OPERATOR_BFF_IMAGE",
             }
+            for product_svc in (
+                "registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona "
+                "consultation-svc source-ingest training-session-svc policy-learning-svc "
+                "research-orchestrator-svc agora-interaction-worker"
+            ).split():
+                svc_image_keys[product_svc] = "PANTHEON_" + product_svc.upper().replace("-", "_") + "_IMAGE"
             explicit_svcs = [a for a in args if a in svc_image_keys]
             target_svcs = explicit_svcs if explicit_svcs else list(svc_image_keys.keys())
             # Compose reconciles an explicit service's dependencies too; runtime-manager's
@@ -1048,6 +1080,10 @@ def _sample_manifest(
             "governance": f"{reg}/governance@sha256:" + ("b" * 64),
             "deployment": f"{reg}/deployment@sha256:" + ("c" * 64),
             "lifecycle_projector": f"{reg}/lifecycle-projector@sha256:" + ("d" * 64),
+            **{
+                key: f"{reg}/{key.replace('_', '-')}@sha256:" + (f"{i:02x}" * 32)
+                for i, key in enumerate(staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS, start=0xA0)
+            },
         },
         compatibility_manifest_sha256=compat_sha,
         migration_set_sha256=mig_sha,
@@ -1076,6 +1112,10 @@ def _sample_manifest(
                 "governance": f"{reg}/governance@sha256:" + ("62" * 32),
                 "deployment": f"{reg}/deployment@sha256:" + ("63" * 32),
                 "lifecycle_projector": f"{reg}/lifecycle-projector@sha256:" + ("64" * 32),
+                **{
+                    key: f"{reg}/{key.replace('_', '-')}@sha256:" + (f"{i:02x}" * 32)
+                    for i, key in enumerate(staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS, start=0xC0)
+                },
             },
             "config_schema_version": "pantheon.env-config.v1",
         },
@@ -1183,7 +1223,7 @@ def _sample_backup_record(owner_sha: str = "sha256:" + ("9" * 64)) -> dict:
         "owner_store_backup_sha256": "sha256:" + ("7" * 64),
         "owner_store_manifest_sha256": owner_sha,
         "restored_owner_store_manifest_sha256": owner_sha,
-        "owner_store_dirs": ["bff", "runtime", "governance"],
+        "owner_store_dirs": ["bff", "runtime", "governance", "product"],
         "catalog_tables": sorted(counts),
     }
 
@@ -1321,6 +1361,43 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         self.assertIn("governance:/data/governance", mounts["deployment"])
         self.assertIn("runtime:/data/runtime:ro", mounts["deployment"])
         self.assertIn("governance:/data/governance:ro", mounts["operator-bff"])
+
+    def test_compose_packages_every_required_owner_from_immutable_images_only(self) -> None:
+        text = COMPOSE_STAGING.read_text(encoding="utf-8")
+        compose = yaml.safe_load(text)
+        services = compose["services"]
+        for key in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS:
+            svc = key.replace("_", "-")
+            self.assertIn(svc, services, key)
+            spec = services[svc]
+            self.assertNotIn("build", spec, svc)
+            self.assertEqual(spec["pull_policy"], "never", svc)
+            self.assertTrue(spec["image"].startswith(f"${{PANTHEON_{key.upper()}_IMAGE:?"), svc)
+        # Product owners are in the default `core` profile so up/rollback manage the whole closure.
+        for key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
+            self.assertIn("core", services[key.replace("_", "-")]["profiles"])
+        # Original request-driven routes are served by the BFF's configured owner targets.
+        bff_env = services["operator-bff"]["environment"]
+        for var, host in (
+            ("PERSONA_URL", "persona"),
+            ("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "research-orchestrator-svc"),
+            ("PANTHEON_REGISTRY_API_URL", "registry"),
+            ("PANTHEON_EVOLUTION_API_URL", "evolution"),
+            ("SOURCE_MANAGEMENT_API_URL", "source-ingest"),
+        ):
+            self.assertIn(f"http://{host}:", bff_env[var], var)
+        self.assertEqual(
+            services["agora-interaction-worker"]["command"], ["python", "scripts/run_agora_interaction_worker.py"]
+        )
+        # Dev-only principal issuer / periodic producers / well-known Dev credentials are not shipped.
+        rendered = yaml.safe_dump(compose)
+        for forbidden in ("dev-paper", "pantheon-local", "scheduler", "producer", "pantheon_app", "-internal"):
+            self.assertNotIn(forbidden, rendered, forbidden)
+        for svc, spec in services.items():
+            env = spec.get("environment") or {}
+            for flag in ("PANTHEON_PROVIDER_ENABLED", "PANTHEON_LIVE_BROKER_ENABLED", "PANTHEON_REAL_WRITES_ENABLED"):
+                if flag in env:
+                    self.assertEqual(str(env[flag]).lower(), "false", f"{svc}.{flag}")
 
     def test_compose_binds_native_store_paths_to_mounted_owner_dirs(self) -> None:
         compose = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())
@@ -1487,6 +1564,21 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
             staging_sanitize.verify_exact_pair_rollback(baseline, rollback_readback)["exact_pair_rollback_verified"]
         )
 
+        served = dict(baseline["backend_images"])
+        rollback_readback["served_backend_images"] = served
+        self.assertTrue(
+            staging_sanitize.verify_exact_pair_rollback(baseline, rollback_readback)["exact_pair_rollback_verified"]
+        )
+        for dropped in ("agora_interaction_worker", "registry"):
+            partial = {k: v for k, v in served.items() if k != dropped}
+            with self.assertRaisesRegex(staging_sanitize.SanitizationError, "every required owner"):
+                staging_sanitize.verify_exact_pair_rollback(
+                    baseline, dict(rollback_readback, served_backend_images=partial)
+                )
+        wrong = dict(served, persona=baseline["backend_images"]["registry"])
+        with self.assertRaisesRegex(staging_sanitize.SanitizationError, "does not match baseline image"):
+            staging_sanitize.verify_exact_pair_rollback(baseline, dict(rollback_readback, served_backend_images=wrong))
+
         hybrid_readback = dict(rollback_readback, fe_manifest_paired_backend_commit="f" * 40)
         with self.assertRaisesRegex(staging_sanitize.SanitizationError, "hybrid state"):
             staging_sanitize.verify_exact_pair_rollback(baseline, hybrid_readback)
@@ -1584,6 +1676,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             self.data_mount / "bff",
             self.data_mount / "runtime",
             self.data_mount / "governance",
+            self.data_mount / "product",
             self.fe_root,
             self.bin_dir,
             self.secrets_dir,
@@ -1597,7 +1690,12 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             "PANTHEON_RUNTIME_JWT_SECRET=stg-runtime-jwt-secret-001\n"
             "PANTHEON_DATABASE_URL=postgresql://pantheon_stg:stg-pg-pass@127.0.0.1:15432/pantheon_staging\n"
             "TELEMETRY_DB_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging\n"
-            "LIFECYCLE_PROJECTOR_PROJECTION_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging\n",
+            "LIFECYCLE_PROJECTOR_PROJECTION_DSN=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging\n"
+            + "".join(
+                f"{k}=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging\n"
+                for k in PRODUCT_DSN_KEYS
+            )
+            + "".join(f"{k}=stg-fixture-{k.lower()}-value\n" for k in PRODUCT_SECRET_KEYS),
             encoding="utf-8",
         )
         self.secrets_env_file.chmod(0o600)
@@ -1693,6 +1791,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             "STAGING_PUBLIC_GCP_IDENTITY_API_KEY": "AIza" + "a" * 35,  # local-only fixture, not a real key
             "STAGING_PUBLIC_GCP_IDENTITY_PROJECT_ID": "pantheon-stg-20260902",
             "STAGING_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN": "pantheon-stg-20260902.firebaseapp.com",
+            "STAGING_TENANT_ID": "tenant-stg-fixture",
             "STAGING_ROOT": str(self.staging_root),
             "STAGING_DATA_MOUNT": str(self.data_mount),
             "STAGING_FE_ROOT": str(self.fe_root),
@@ -1891,6 +1990,39 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("PUBLIC_IDENTITY_CONFIG_MISSING", res.stderr + res.stdout)
 
+    def test_product_owner_inputs_fail_closed(self) -> None:
+        res = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_TENANT_ID=""),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("TENANT_ID_MISSING", res.stderr + res.stdout)
+
+        self.setUp()
+        self._unlock_vm_env_dir()
+        original = self.secrets_env_file.read_text(encoding="utf-8")
+        for key, bad in (
+            ("EVOLUTION_AUTH_TOKEN", "pantheon-local-evolution-service"),
+            ("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-service-internal"),
+            ("PERSONA_STORE_DSN", ""),
+            ("AGORA_RESEARCH_STORE_DSN", "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"),
+        ):
+            with self.subTest(key=key):
+                lines = [l for l in original.splitlines() if not l.startswith(f"{key}=")]
+                if bad:
+                    lines.append(f"{key}={bad}")
+                self.secrets_env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                res = subprocess.run(
+                    [str(PROVISION_SCRIPT)],
+                    env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res.returncode, 0)
+                self.assertIn("SECRET_CONTENT_INVALID", res.stderr + res.stdout)
+
     def test_dsn_query_routing_override_rejected(self) -> None:
         self._unlock_vm_env_dir()
         original = self.secrets_env_file.read_text(encoding="utf-8")
@@ -1942,6 +2074,18 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         self.assertNotEqual(res_owner.returncode, 0)
         self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res_owner.stderr)
+
+        # 3b. A missing product owner / request worker is as fatal as a missing core owner
+        for omitted in ("registry", "agora-interaction-worker"):
+            self.setUp()
+            res_product = subprocess.run(
+                [str(PROVISION_SCRIPT)],
+                env=self._base_env(FAKE_OMIT_SERVICE=omitted),
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(res_product.returncode, 0, omitted)
+            self.assertIn(f"Required service {omitted} is not running", res_product.stderr)
 
         # 4. Real collector gate failures (migration SQL error, pg_restore failure, cross-tenant HTTP 200 leak, live broker env leak)
         self.setUp()

@@ -203,5 +203,41 @@
     "validation": "python3 -m unittest tests.deployment.test_staging_release tests.deployment.test_production_release -> 86 OK (incl. runtime-manager CID-rotation regression; local only)",
     "review_d893e210_p1": "Collector resolves runtime-manager current container ID via compose ps immediately before env inspect (was frozen pre-rehearsal and deleted by dependency reconciliation). Fixture now recreates runtime-manager with a new ID on operator-bff reconcile and rejects deleted IDs; regression fails without the fix.",
     "hosted_status": "external_wait unchanged; local mocks are not hosted evidence."
+  },
+  "product_owner_packaging_extension": {
+    "recorded_at": "2026-10-28",
+    "scope": "packaging/wiring only in staging-owned deployment files; no product business code, nonprod-deploy.yml, deploy_nonprod_vm.sh or Dev entrypoint change",
+    "source_of_truth": "scripts/deploy/staging_sanitize.py REQUIRED_OWNER_IMAGE_KEYS (CORE + PRODUCT)",
+    "product_owner_image_keys": [
+      "registry",
+      "telemetry",
+      "incidents",
+      "postmortems",
+      "evolution",
+      "lineage_read",
+      "reconciliation_drift_svc",
+      "persona",
+      "consultation_svc",
+      "source_ingest",
+      "training_session_svc",
+      "policy_learning_svc",
+      "research_orchestrator_svc",
+      "agora_interaction_worker"
+    ],
+    "rollback": "every required owner in rollback_baseline.backend_images; collector rehearses switch to baseline and back; verify_exact_pair_rollback rejects missing/mismatched owners",
+    "not_shipped": [
+      "dev-paper-principal-issuer",
+      "periodic producers/dispatchers/schedulers",
+      "openclaw adapter",
+      "search-svc",
+      "broker"
+    ],
+    "new_fail_closed_hosted_inputs": [
+      "STAGING_TENANT_ID",
+      "isolated product DSNs",
+      "per-service tokens and JWT secrets (no Dev defaults)"
+    ],
+    "validation": "python3 -m unittest tests.deployment.test_staging_release (37+ tests incl. product-owner compose/secret/omission/rollback cases) run in bounded batches: all passed",
+    "hosted_status": "external_wait; local tests are not hosted drill evidence"
   }
 }

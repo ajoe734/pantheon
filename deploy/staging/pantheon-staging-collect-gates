@@ -348,11 +348,7 @@ def main() -> int:
 
     # 1. Collect live observed_deploy
     required_services = (
-        "operator-bff",
-        "runtime-manager",
-        "governance",
-        "deployment",
-        "lifecycle-projector",
+        *(k.replace("_", "-") for k in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS),
         "postgres",
         "nats",
     )
@@ -413,6 +409,29 @@ def main() -> int:
     bff_healthy = str(readyz.get("status", "")).lower() in ("ok", "ready", "healthy") or readyz.get("ready") is True
     if not bff_healthy:
         _fail("BFF_UNHEALTHY", f"/bff/readyz reported unhealthy: {readyz}")
+
+    def _unserved_product_owners() -> list[str]:
+        # Product route owners must be running (and healthy where a healthcheck exists), not just
+        # the five /bff/readyz owners.
+        bad: list[str] = []
+        for key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
+            svc = key.replace("_", "-")
+            ids = _run(compose_cmd("ps", "-q", svc), error_code="PRODUCT_OWNER_PS_FAILED").stdout.split()
+            state = (
+                _run(
+                    [docker_bin, "inspect", "-f", "{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", ids[0]],
+                    error_code="PRODUCT_OWNER_INSPECT_FAILED",
+                ).stdout.split()
+                if ids
+                else []
+            )
+            if not state or state[0] != "true" or (len(state) > 1 and state[1] != "healthy"):
+                bad.append(svc)
+        return bad
+
+    unserved = _unserved_product_owners()
+    if unserved:
+        _fail("PRODUCT_OWNER_UNSERVED", f"Product owners not running/healthy: {', '.join(unserved)}")
 
     observed_deploy = {
         "status": "deployed_observed",
@@ -539,7 +558,9 @@ def main() -> int:
     if not isinstance(baseline_images_map, dict):
         _fail("ROLLBACK_BASELINE_INCOMPLETE", "rollback_baseline.backend_images is required")
     baseline_owner_imgs: dict[str, str] = {}
-    for key in ("runtime_manager", "governance", "deployment", "lifecycle_projector"):
+    for key in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS:
+        if key == "operator_bff":
+            continue
         img = str(baseline_images_map.get(key) or "")
         if "@sha256:" not in img:
             _fail("ROLLBACK_BASELINE_INCOMPLETE", f"rollback_baseline.backend_images.{key} must be digest-pinned")
@@ -548,10 +569,6 @@ def main() -> int:
         _fail("ROLLBACK_BASELINE_INCOMPLETE", "rollback_baseline.backend_images.operator_bff must equal backend_operator_bff_image")
     if not str(rollback_baseline.get("config_schema_version") or ""):
         _fail("ROLLBACK_BASELINE_INCOMPLETE", "rollback_baseline.config_schema_version is required")
-    baseline_rm_img = baseline_owner_imgs["runtime_manager"]
-    baseline_gov_img = baseline_owner_imgs["governance"]
-    baseline_dep_img = baseline_owner_imgs["deployment"]
-    baseline_lp_img = baseline_owner_imgs["lifecycle_projector"]
 
     baseline_env_map["PANTHEON_RELEASE_ID"] = prev_release_id
     baseline_env_map["PANTHEON_BACKEND_COMMIT"] = str(rollback_baseline["backend_commit"])
@@ -560,18 +577,9 @@ def main() -> int:
     baseline_env_map["PANTHEON_CONFIG_SCHEMA_VERSION"] = str(rollback_baseline["config_schema_version"])
     baseline_env_map["PANTHEON_OPERATOR_BFF_IMAGE"] = baseline_bff_img
     baseline_env_map["PANTHEON_OPERATOR_BFF_DIGEST"] = "sha256:" + baseline_bff_img.split("@sha256:", 1)[1]
-    if baseline_rm_img and "@sha256:" in baseline_rm_img:
-        baseline_env_map["PANTHEON_RUNTIME_MANAGER_IMAGE"] = baseline_rm_img
-        baseline_env_map["PANTHEON_RUNTIME_MANAGER_DIGEST"] = "sha256:" + baseline_rm_img.split("@sha256:", 1)[1]
-    if baseline_gov_img and "@sha256:" in baseline_gov_img:
-        baseline_env_map["PANTHEON_GOVERNANCE_IMAGE"] = baseline_gov_img
-        baseline_env_map["PANTHEON_GOVERNANCE_DIGEST"] = "sha256:" + baseline_gov_img.split("@sha256:", 1)[1]
-    if baseline_dep_img and "@sha256:" in baseline_dep_img:
-        baseline_env_map["PANTHEON_DEPLOYMENT_IMAGE"] = baseline_dep_img
-        baseline_env_map["PANTHEON_DEPLOYMENT_DIGEST"] = "sha256:" + baseline_dep_img.split("@sha256:", 1)[1]
-    if baseline_lp_img and "@sha256:" in baseline_lp_img:
-        baseline_env_map["PANTHEON_LIFECYCLE_PROJECTOR_IMAGE"] = baseline_lp_img
-        baseline_env_map["PANTHEON_LIFECYCLE_PROJECTOR_DIGEST"] = "sha256:" + baseline_lp_img.split("@sha256:", 1)[1]
+    for key, img in baseline_owner_imgs.items():
+        baseline_env_map[f"PANTHEON_{key.upper()}_IMAGE"] = img
+        baseline_env_map[f"PANTHEON_{key.upper()}_DIGEST"] = "sha256:" + img.split("@sha256:", 1)[1]
 
     baseline_compose_env.write_text(
         "".join(f"{k}={v}\n" for k, v in sorted(baseline_env_map.items())),
@@ -1004,16 +1012,10 @@ def main() -> int:
     except Exception as exc:
         _fail("BACKUP_RESTORE_VERIFICATION_FAILED", str(exc))
 
-    # 5. Exact-pair application rollback rehearsal to rollback_baseline across full 5-service owner closure
+    # 5. Exact-pair application rollback rehearsal to rollback_baseline across full owner closure
     rt_cfg_candidate = staging_root / "config" / "runtime-config.candidate.js"
     rt_cfg_baseline = staging_root / "config" / "runtime-config.baseline.js"
-    owner_services = (
-        ("operator-bff", "operator_bff"),
-        ("runtime-manager", "runtime_manager"),
-        ("governance", "governance"),
-        ("deployment", "deployment"),
-        ("lifecycle-projector", "lifecycle_projector"),
-    )
+    owner_services = tuple((k.replace("_", "-"), k) for k in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS)
 
     t0 = time.monotonic()
     # Drain singleton before switching
@@ -1038,11 +1040,7 @@ def main() -> int:
             "up",
             "-d",
             "--no-build",
-            "operator-bff",
-            "runtime-manager",
-            "governance",
-            "deployment",
-            "lifecycle-projector",
+            *(svc for svc, _ in owner_services),
         ],
         error_code="ROLLBACK_COMPOSE_UP_FAILED",
     )
@@ -1072,7 +1070,7 @@ def main() -> int:
     rb_dep_json = json.loads((current_fe / "deployment.json").read_text(encoding="utf-8"))
     rollback_duration = round(time.monotonic() - t0, 3)
 
-    # Restore candidate pair across all 5 owner services after rollback readback
+    # Restore candidate pair across every required owner service after rollback readback
     _run(compose_cmd("--profile", "singleton", "rm", "-fsv", "lifecycle-projector"), error_code="RESTORE_CANDIDATE_DRAIN_FAILED")
     if current_fe.is_symlink() or current_fe.exists():
         current_fe.unlink()
@@ -1086,16 +1084,15 @@ def main() -> int:
             "up",
             "-d",
             "--no-build",
-            "operator-bff",
-            "runtime-manager",
-            "governance",
-            "deployment",
-            "lifecycle-projector",
+            *(svc for svc, _ in owner_services),
         ),
         error_code="RESTORE_CANDIDATE_UP_FAILED",
     )
     if _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") != 200:
         _fail("RESTORE_CANDIDATE_UNHEALTHY", "Candidate BFF failed /bff/readyz after rollback rehearsal")
+    unserved = _unserved_product_owners()
+    if unserved:
+        _fail("RESTORE_CANDIDATE_UNHEALTHY", f"Product owners not running/healthy after rollback rehearsal: {', '.join(unserved)}")
 
     rollback_readback = {
         "observed_from_live_vm": True,

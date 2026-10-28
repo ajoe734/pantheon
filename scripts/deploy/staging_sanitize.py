@@ -25,6 +25,36 @@ from typing import Any
 SHA256_PREFIXED_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_DIGEST_RE = re.compile(r"^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$")
+
+# Staging owner packaging contract (single source; bundled to the VM next to bootstrap.sh).
+# Each backend.images key maps to the compose service by "_" -> "-" and to the
+# PANTHEON_<KEY>_IMAGE / ROLLBACK_<KEY>_IMAGE env names. The product owners are the existing
+# Management/Agora/Persona/Research/approval route owners plus the Agora request worker; Dev-only
+# principal issuers and periodic producers/dispatchers are intentionally not part of this set.
+CORE_OWNER_IMAGE_KEYS = (
+    "operator_bff",
+    "runtime_manager",
+    "governance",
+    "deployment",
+    "lifecycle_projector",
+)
+PRODUCT_OWNER_IMAGE_KEYS = (
+    "registry",
+    "telemetry",
+    "incidents",
+    "postmortems",
+    "evolution",
+    "lineage_read",
+    "reconciliation_drift_svc",
+    "persona",
+    "consultation_svc",
+    "source_ingest",
+    "training_session_svc",
+    "policy_learning_svc",
+    "research_orchestrator_svc",
+    "agora_interaction_worker",
+)
+REQUIRED_OWNER_IMAGE_KEYS = CORE_OWNER_IMAGE_KEYS + PRODUCT_OWNER_IMAGE_KEYS
 INTERNAL_STAGING_EMAIL_RE = re.compile(r"^staging-user-[A-Za-z0-9_-]+@pantheon\.internal$")
 RAW_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 SECRET_VALUE_PATTERNS = (
@@ -86,7 +116,7 @@ PII_KEY_RE = re.compile(
 )
 PII_MASKED_VALUES = (REDACTED, "", None, {}, [])
 # Product durable owner stores (bind-mounted by the staging compose, archived with backups).
-OWNER_STORE_PATHS = ("bff", "runtime", "governance")
+OWNER_STORE_PATHS = ("bff", "runtime", "governance", "product")
 
 
 SENSITIVE_PAYLOAD_KEYS = frozenset({
@@ -646,13 +676,7 @@ def verify_exact_pair_rollback(
     if rollback_readback.get("served_operator_bff_image") != rollback_baseline["backend_operator_bff_image"]:
         raise SanitizationError("rollback served_operator_bff_image does not match baseline image digest")
 
-    required_owner_keys = {
-        "operator_bff",
-        "runtime_manager",
-        "governance",
-        "deployment",
-        "lifecycle_projector",
-    }
+    required_owner_keys = set(REQUIRED_OWNER_IMAGE_KEYS)
     if (
         rollback_readback.get("observed_from_live_vm") is True
         or "served_backend_images" in rollback_readback
@@ -662,8 +686,8 @@ def verify_exact_pair_rollback(
         if served_imgs is not None or rollback_readback.get("observed_from_live_vm") is True:
             if not isinstance(served_imgs, dict) or set(served_imgs.keys()) != required_owner_keys:
                 raise SanitizationError(
-                    "rollback served_backend_images must report all 5 owner services: "
-                    "operator_bff, runtime_manager, governance, deployment, lifecycle_projector"
+                    "rollback served_backend_images must report every required owner service: "
+                    + ", ".join(REQUIRED_OWNER_IMAGE_KEYS)
                 )
             for svc_key, img_val in served_imgs.items():
                 if not isinstance(img_val, str) or not IMAGE_DIGEST_RE.fullmatch(img_val):
