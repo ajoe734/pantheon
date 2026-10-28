@@ -25,6 +25,10 @@ import unittest
 import yaml
 
 from scripts.deploy import prod_preflight, release_manifest
+from scripts.deploy.staging_sanitize import PRODUCT_OWNER_IMAGE_KEYS, REQUIRED_OWNER_IMAGE_KEYS
+
+PRODUCT_OWNER_KEYS = PRODUCT_OWNER_IMAGE_KEYS
+PRODUCT_SERVICE_NAMES = {k.replace("_", "-") for k in PRODUCT_OWNER_KEYS}
 from tests.deployment.test_staging_release import (
     MIGRATIONS_SRC_DIR,
     _real_migration_set,
@@ -105,6 +109,7 @@ BOOTSTRAP = REPO_ROOT / "deploy" / "production" / "bootstrap.sh"
 # Fake docker/curl/mountpoint/sudo binaries exercise the REAL prod_ops.sh/bootstrap.sh code paths.
 FAKE_BIN = r"""#!/usr/bin/env bash
 tool="$(basename "$0")"
+PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc memory capital openclaw-gateway-adapter agora-interaction-worker"
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
   sudo)
@@ -127,7 +132,7 @@ case "$tool" in
       exit 0
     fi
     if [[ "$args" == *"compose"*"--profile stateful up"* ]]; then
-      env | grep -E '^(PANTHEON_(RELEASE_ID|BACKEND_COMMIT|OPERATOR_BFF_IMAGE|OPERATOR_BFF_DIGEST|RUNTIME_MANAGER_IMAGE|GOVERNANCE_IMAGE|DEPLOYMENT_IMAGE|LIFECYCLE_PROJECTOR_IMAGE))=' > "$FAKE_STATE/stateful_env"
+      env | grep -E '^(PANTHEON_(RELEASE_ID|BACKEND_COMMIT|OPERATOR_BFF_IMAGE|OPERATOR_BFF_DIGEST|RUNTIME_MANAGER_IMAGE|GOVERNANCE_IMAGE|DEPLOYMENT_IMAGE|LIFECYCLE_PROJECTOR_IMAGE|[A-Z_]+_IMAGE))=' > "$FAKE_STATE/stateful_env"
     fi
     if [[ "$args" == *"compose"*" exec -T postgres "* ]]; then
       if [[ "$args" == *"-f -"* ]]; then cat >> "$FAKE_STATE/applied_sql"; echo "--" >> "$FAKE_STATE/applied_sql"; exit 0; fi
@@ -142,8 +147,31 @@ case "$tool" in
       elif [[ "$svc" == operator-bff-blue || "$svc" == operator-bff-green ]]; then
         if [[ -f "$FAKE_STATE/stopped_$svc" ]]; then exit 0; fi
         echo "cid-$svc"
+      elif [[ " $PRODUCT_SERVICES " == *" $svc "* ]]; then
+        if [[ -f "$FAKE_STATE/image_cid-$svc" ]]; then echo "cid-$svc"; fi
       else echo "cid-$svc"; fi
       exit 0
+    fi
+    if [[ "$args" == "ps -aq --filter"* ]]; then
+      svc="${args##*com.docker.compose.service=}"
+      if [[ -f "$FAKE_STATE/image_cid-$svc" ]]; then echo "cid-$svc"; fi
+      exit 0
+    fi
+    if [[ "$args" == "rm -f "* ]]; then
+      for c in ${args#rm -f }; do rm -f "$FAKE_STATE/image_$c"; done
+      echo "rm $args" >> "$FAKE_STATE/removed_containers"
+      exit 0
+    fi
+    if [[ "$args" == *"compose"*"up -d"* ]]; then
+      for svc in $PRODUCT_SERVICES; do
+        if [[ " $args " == *" $svc "* ]]; then
+          var="PANTHEON_$(echo "${svc^^}" | tr - _)_IMAGE"
+          [[ "$args" == *"--no-recreate"* && -f "$FAKE_STATE/image_cid-$svc" ]] && continue
+          [[ "${FAKE_PRODUCT_FAIL:-}" == "$svc" ]] && exit 1
+          printf '%s' "${!var}" > "$FAKE_STATE/image_cid-$svc"
+          echo "up $svc ${!var}" >> "$FAKE_STATE/product_ups"
+        fi
+      done
     fi
     if [[ "$args" == *"compose"*"up -d"*lifecycle-projector* ]]; then
       [[ "${FAKE_DOCKER_FAIL:-}" == *"compose"* ]] && exit 1
@@ -189,7 +217,7 @@ PY
       fi
     fi
     if [[ "$args" == *"compose"*"rm -fsv lifecycle-projector"* ]]; then
-      rm -f "$FAKE_STATE/singleton_up" "$FAKE_STATE/image_cid-lifecycle-projector-1"
+      rm -f "$FAKE_STATE/singleton_up" "$FAKE_STATE/image_cid-lifecycle-projector-1" "$FAKE_STATE/image_cid-agora-interaction-worker"
     fi
     if [[ "$args" == *"compose"*"rm -fsv operator-bff-blue"* ]]; then
       touch "$FAKE_STATE/stopped_operator-bff-blue"
@@ -344,7 +372,7 @@ class OpsHarness(unittest.TestCase):
         for d in ("state/snapshots", "config", "fe/releases"):
             (self.root / d).mkdir(parents=True)
         self.manifest = _sample_manifest(state="staging_verified")
-        for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projector"):
+        for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projector", *PRODUCT_OWNER_KEYS):
             self.manifest["backend"]["images"][owner] = f"r/{owner}@sha256:" + "a" * 64
         self.migration_dir = self.root / "migration" / "rel-1"
         (self.migration_dir / "migrations").mkdir(parents=True)
@@ -619,6 +647,83 @@ class ProdOpsTests(OpsHarness):
         self.assertNotEqual(dup.returncode, 0)
         self.assertIn("expected exactly 1", dup.stderr)
 
+    def _product_images_run(self):
+        return {svc.removeprefix("cid-"): (self.state / f"image_{svc}").read_text()
+                for svc in sorted(p.name.removeprefix("image_") for p in self.state.glob("image_cid-*"))
+                if svc.removeprefix("cid-") in PRODUCT_SERVICE_NAMES}
+
+    def test_product_owner_closure_is_acquired_and_started_at_exact_candidate_digests(self):
+        (self.root / "state" / "baseline.json").write_text("{}")  # retained baseline present -> baseline images acquired too
+        r = self.ops("prepull_images", "rel-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        for key in REQUIRED_OWNER_IMAGE_KEYS:
+            self.assertIn(self.manifest["backend"]["images"][key], pulled, key)
+            self.assertIn(self.manifest["rollback_baseline"]["backend_images"][key], pulled, key)
+        self.assertEqual(self.ops("activate_singletons", "rel-1").returncode, 0)
+        running = self._product_images_run()
+        self.assertEqual(set(running), PRODUCT_SERVICE_NAMES)
+        for key in PRODUCT_OWNER_KEYS:
+            self.assertEqual(running[key.replace("_", "-")], self.manifest["backend"]["images"][key], key)
+
+    def test_candidate_missing_or_unpinned_product_owner_fails_closed_before_any_start(self):
+        for key in ("agora_interaction_worker", "capital"):
+            for mutate in (lambda m, k=key: m["backend"]["images"].pop(k),
+                           lambda m, k=key: m["backend"]["images"].__setitem__(k, "r/x:latest")):
+                manifest = json.loads(self.mpath.read_text())
+                mutate(manifest)
+                (self.tmp / "bad-manifest.json").write_text(json.dumps(manifest))
+                for step in ("prepull_images", "activate_singletons", "start_green"):
+                    args = (step, "rel-1") + (("8002", manifest["backend"]["images"]["operator_bff"]) if step == "start_green" else ())
+                    r = self.ops(*args, RELEASE_MANIFEST_PATH=str(self.tmp / "bad-manifest.json"), PROD_ACTIVE_PORT="8001")
+                    self.assertNotEqual(r.returncode, 0, (step, key))
+                    self.assertIn("OWNER_IMAGES", r.stderr)
+        self.assertFalse((self.state / "product_ups").exists())
+
+    def test_product_owner_start_failure_is_reported_and_does_not_report_success(self):
+        r = self.ops("activate_singletons", "rel-1", FAKE_PRODUCT_FAIL="capital")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("ACTIVATE", r.stderr)
+
+    def test_rollback_restores_every_product_owner_to_exact_baseline_digest(self):
+        self.assertEqual(self.ops("activate_singletons", "rel-1").returncode, 0)
+        self.assertEqual(self.ops("drain_singletons", "rel-1").returncode, 0)
+        self.assertEqual(self._product_images_run().get("agora-interaction-worker"), None)  # worker drained, singleton gone
+        self.assertEqual(self.ops("resume_baseline_singletons", "rel-1").returncode, 0)
+        running = self._product_images_run()
+        self.assertEqual(set(running), PRODUCT_SERVICE_NAMES)
+        for key in PRODUCT_OWNER_KEYS:
+            self.assertEqual(running[key.replace("_", "-")], self.manifest["rollback_baseline"]["backend_images"][key], key)
+            self.assertNotEqual(running[key.replace("_", "-")], self.manifest["backend"]["images"][key], key)
+
+    def test_rollback_to_baseline_without_product_owners_removes_them_and_never_starts_sentinel(self):
+        manifest = json.loads(self.mpath.read_text())
+        for key in PRODUCT_OWNER_KEYS:
+            manifest["rollback_baseline"]["backend_images"].pop(key)
+        (self.tmp / "legacy-baseline.json").write_text(json.dumps(manifest))
+        env = {"RELEASE_MANIFEST_PATH": str(self.tmp / "legacy-baseline.json")}
+        self.assertEqual(self.ops("activate_singletons", "rel-1", **env).returncode, 0)
+        self.assertEqual(set(self._product_images_run()), PRODUCT_SERVICE_NAMES)
+        r = self.ops("resume_baseline_singletons", "rel-1", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._product_images_run(), {})
+        self.assertTrue((self.state / "singleton_up").exists())
+        self.assertNotIn("baseline-absent.invalid", (self.state / "product_ups").read_text())
+
+    def test_partial_baseline_product_owner_closure_is_not_restorable(self):
+        manifest = json.loads(self.mpath.read_text())
+        manifest["rollback_baseline"]["backend_images"].pop("memory")
+        (self.tmp / "partial-baseline.json").write_text(json.dumps(manifest))
+        r = self.ops("resume_baseline_singletons", "rel-1", RELEASE_MANIFEST_PATH=str(self.tmp / "partial-baseline.json"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("BASELINE_ENV_MISSING", r.stderr)
+
+    def test_product_owner_wrong_running_image_fails_activation_readback(self):
+        # A pre-existing owner running a different digest must be caught by the exact-image readback.
+        (self.state / "image_cid-persona").write_text("r/persona@sha256:" + "f" * 64)
+        r = self.ops("activate_singletons", "rel-1", FAKE_PRODUCT_FAIL="persona")
+        self.assertNotEqual(r.returncode, 0)
+
     def test_runtime_config_is_external_no_store_and_matches(self):
         (self.root / "fe" / "releases" / "r1").mkdir()
         os.symlink(self.root / "fe" / "releases" / "r1", self.root / "fe" / "current")
@@ -812,6 +917,7 @@ PROD_ENV = {
     "PROD_BFF_HOST": "api.trading.acme-prod.net",
     "PROD_FE_HOST": "app.trading.acme-prod.net",
     "PROD_IDP_ISSUER": "https://idp.acme-prod.net",
+    "PROD_TENANT_ID": "acme-prod-tenant",
     "PROD_PUBLIC_GCP_IDENTITY_API_KEY": "public-web-key-fixture",
     "PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID": "acme-prod-identity",
     "PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN": "acme-prod-identity.firebaseapp.com",
@@ -1231,7 +1337,8 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         manifest["backend"]["commit"] = bff_commit
         manifest["dev_verification"]["frontend_commit"] = fe_commit
         manifest["dev_verification"]["bff_version_commit"] = bff_commit
-        for owner in ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector"):
+        for owner in ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector",
+                      *PRODUCT_OWNER_KEYS):
             manifest["backend"]["images"][owner] = (
                 f"asia-east1-docker.pkg.dev/pantheon-prod-20260902/pantheon/{owner}@sha256:" + digest_char * 64
             )
@@ -1504,8 +1611,9 @@ class StaticContractTests(unittest.TestCase):
             self.assertEqual(s["environment"]["PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED"], "false")
             self.assertEqual(s["environment"]["PANTHEON_BFF_AUTH_STUB"], "false")
             self.assertEqual(s["environment"]["PANTHEON_BFF_AUTH_MODE"], "strict")
-            for unused in ("PANTHEON_REAL_WRITES_ENABLED", "PANTHEON_PROVIDER_ENABLED", "PANTHEON_DEV_STUB_WRITES_ENABLED"):
-                self.assertNotIn(unused, s["environment"])
+            for off in ("PANTHEON_REAL_WRITES_ENABLED", "PANTHEON_PROVIDER_ENABLED", "PANTHEON_DEV_STUB_WRITES_ENABLED",
+                        "PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT"):
+                self.assertEqual(s["environment"][off], "false")
             self.assertNotIn("build", s)
             self.assertEqual(s["ports"][0].rsplit(":", 1)[1], "8001")  # accepted native BFF port
             self.assertEqual(s["environment"]["PANTHEON_RUNTIME_MANAGER_URL"], "http://runtime-manager:8080")
@@ -1517,6 +1625,56 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("GIT_SHA", proj["environment"])
         self.assertEqual(proj["environment"]["LIFECYCLE_PROJECTOR_WRITER_BACKEND"], "postgres")
         self.assertNotEqual(svc["operator-bff-blue"]["ports"], svc["operator-bff-green"]["ports"])
+
+    def test_compose_packages_every_product_owner_and_agora_worker_from_immutable_manifest_images(self):
+        svc = yaml.safe_load(COMPOSE.read_text())["services"]
+        ops_text = OPS.read_text()
+        listed = re.search(r'^PRODUCT_OWNER_KEYS="([^"]+)"', ops_text, re.M).group(1).split()
+        worker = re.search(r'^PRODUCT_WORKER_KEY="([^"]+)"', ops_text, re.M).group(1)
+        # prod_ops.sh owner list is the Stage packaging contract, not a parallel framework.
+        self.assertEqual(sorted(listed + [worker]), sorted(PRODUCT_OWNER_KEYS))
+        for key in PRODUCT_OWNER_KEYS:
+            name = key.replace("_", "-")
+            self.assertIn(name, svc, key)
+            conf = svc[name]
+            self.assertTrue(conf["image"].startswith("${PANTHEON_" + key.upper() + "_IMAGE:?"), key)
+            self.assertEqual(conf["pull_policy"], "never")
+            self.assertNotIn("build", conf)
+            self.assertNotIn("ports", conf, "product owners are reachable only on the compose network")
+            self.assertTrue(conf["env_file"][0].startswith("${PROD_SECRETS_ENV_FILE:?"))
+            self.assertEqual(conf["environment"]["PANTHEON_LIVE_BROKER_ENABLED"], "false")
+            self.assertEqual(conf["environment"]["PANTHEON_REAL_WRITES_ENABLED"], "false")
+            self.assertEqual(conf["environment"]["PANTHEON_TENANT_ID"], "${PROD_TENANT_ID:?production tenant id required}")
+            # stateful postgres/nats live in the never-recreated 'stateful' profile; owners must not pull them in.
+            self.assertFalse({"postgres", "nats"} & set(conf.get("depends_on") or []), key)
+            for vol in conf.get("volumes", []):
+                self.assertTrue(vol.startswith("${PROD_DATA_MOUNT:?"), vol)
+        self.assertEqual(svc["agora-interaction-worker"]["profiles"], ["singleton"])
+        self.assertEqual(svc["agora-interaction-worker"]["labels"]["org.pantheon.role"], "singleton")
+        for key in listed:
+            self.assertEqual(svc[key.replace("_", "-")]["profiles"], ["core"], key)
+        self.assertNotIn("agora-interaction-worker", [n for n in svc if n.startswith("operator-bff")])
+        bff_env = svc["operator-bff-blue"]["environment"]
+        self.assertEqual(bff_env, svc["operator-bff-green"]["environment"])
+        for url in ("PANTHEON_REGISTRY_API_URL", "PERSONA_URL", "PANTHEON_MEMORY_API_URL", "PANTHEON_CAPITAL_API_URL",
+                    "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "PANTHEON_RESEARCH_ORCHESTRATOR_API_URL"):
+            self.assertIn(url, bff_env)
+        # Adapter has no gateway/broker wiring and every adapter write stays off.
+        adapter = svc["openclaw-gateway-adapter"]["environment"]
+        for flag in ("PRODUCTION_BROKER", "PAPER_ADAPTER", "LIVE_ADAPTER", "CANARY_ADAPTER", "CAPITAL_BINDING"):
+            self.assertEqual(adapter[f"OPENCLAW_{flag}_ENABLED"], "false")
+        # No Dev/Staging identity leaks into the production compose.
+        text = COMPOSE.read_text()
+        self.assertNotIn("STAGING_", text)
+        self.assertNotIn("pantheon-local", text)
+
+    def test_preflight_and_bootstrap_require_explicit_tenant_and_product_secrets(self):
+        self.assertIn("PROD_TENANT_ID", prod_preflight.REQUIRED_CONFIG)
+        boot = BOOTSTRAP.read_text()
+        self.assertIn("PROD_TENANT_ID; do", boot)
+        for key in ("PERSONA_JWT_SECRET", "AGORA_RESEARCH_STORE_DSN", "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"):
+            self.assertIn(f'"{key}"', boot)
+        self.assertIn("PROD_TENANT_ID", WORKFLOW.read_text().split("for v in RELEASE_ID", 1)[1].split("; do", 1)[0])
 
     def test_workflow_forwards_public_identity_to_host_bootstrap_and_switch(self):
         wf = yaml.safe_load(WORKFLOW.read_text())

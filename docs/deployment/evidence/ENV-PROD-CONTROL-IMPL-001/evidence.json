@@ -62,12 +62,16 @@
     {
       "id": "durable_application_stores",
       "summary": "Compose wires Stage's selected native store paths for runtime-manager, governance, deployment, lifecycle-projector and both BFF colors onto the retained data disk ($PROD_DATA_MOUNT/{runtime,governance,bff}, created by bootstrap.sh) with identical shared mounts per color; static tests assert paths/mounts/env parity. Runbook documents backup (pg_dump + owner-store tar) and restore readability drill. Local only; hosted backup/restore drill remains external_wait."
+    },
+    {
+      "id": "product_owner_packaging_extension",
+      "summary": "Same-task source extension (fresh task head, new PR; merged PR6829 untouched). Consumes merged ENV-STG-EPHEMERAL-IMPL-001 packaging contract (staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS): production compose packages the 16 existing product owners plus the Agora request worker from immutable manifest backend.images with native Postgres stores, per-owner stores under $PROD_DATA_MOUNT/product, no published ports, safe-off flags, BFF owner-route URLs and Agora store env. bootstrap.sh requires PROD_TENANT_ID and all product DSN/service secrets (rejecting Dev defaults) and pre-pulls the full pinned closure; prod_ops.sh requires every owner digest, acquires with --no-recreate, activates the worker as a singleton with the lifecycle projector, verifies exact running digests, and rolls product owners back to exact retained baseline digests (removing them when the baseline predates them, failing closed on a partial baseline, never inventing a digest). prod_preflight requires PROD_TENANT_ID. Local fake-docker tests only; no provisioning, deployment, secret or business-data access; not hosted evidence."
     }
   ],
   "validation": {
     "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
     "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
-    "result": "56 tests OK in tests.deployment.test_production_release (script behavior only; not hosted drill evidence)",
+    "result": "tests.deployment.test_production_release pytest run locally (script behavior only; not hosted drill evidence)",
     "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
   },
   "hosted_acceptance": {
