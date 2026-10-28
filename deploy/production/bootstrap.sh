@@ -9,7 +9,8 @@
 # Pre-acquires only immutable digest-pinned (@sha256:...) images; never builds images.
 #
 # Required env: PROD_ROOT PROD_DATA_MOUNT PROD_BFF_HOST PROD_FE_HOST PROD_IDP_ISSUER
-#   PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE PROD_COMPOSE_ENV_FILE
+#   PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE PROD_COMPOSE_ENV_FILE PROD_TENANT_ID
+#   (product owner tenant; deliberately no default, never invented)
 # Optional: DOCKER_BIN (default docker), CURL_BIN (default curl), MOUNTPOINT_BIN (default mountpoint),
 #   SUDO_BIN (default sudo), PROD_USE_SUDO=true (OS Login non-root mode),
 #   PROD_ALLOW_APT_INSTALL=true (install missing Debian 12 runtime packages),
@@ -34,7 +35,7 @@ run_priv() {
 }
 
 for v in PROD_ROOT PROD_DATA_MOUNT PROD_BFF_HOST PROD_FE_HOST PROD_IDP_ISSUER \
-         PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE PROD_COMPOSE_ENV_FILE; do
+         PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE PROD_COMPOSE_ENV_FILE PROD_TENANT_ID; do
   [[ -n "${!v:-}" ]] || fail MISSING_INPUT "required env ${v} is missing"
 done
 
@@ -102,14 +103,46 @@ for unsafe in (
     if kv.get(unsafe, "").lower() in ("true", "1", "yes"):
         raise SystemExit(f"unsafe override {unsafe}={kv.get(unsafe)}")
 
+# Product owner native stores and service-to-service/JWT secrets. No Dev default may fill these.
+PRODUCT_DSN_KEYS = (
+    "DATABASE_URL",
+    "PERSONA_STORE_DSN",
+    "PERSONA_CAPABILITY_STORE_DSN",
+    "AGORA_WORKSHOP_STORE_DSN",
+    "AGORA_DATASET_STORE_DSN",
+    "AGORA_GOVERNANCE_STORE_DSN",
+    "AGORA_RESEARCH_STORE_DSN",
+)
+PRODUCT_SECRET_KEYS = (
+    "PANTHEON_RUNTIME_MANAGER_TOKEN",
+    "CONSULTATION_SERVICE_TOKEN",
+    "CONSULTATION_HANDOFF_TOKEN",
+    "PANTHEON_TELEMETRY_SERVICE_TOKEN",
+    "EVOLUTION_AUTH_TOKEN",
+    "RECONCILIATION_DRIFT_AUTH_TOKEN",
+    "POLICY_LEARNING_SERVICE_TOKEN",
+    "PANTHEON_PERSONA_SERVICE_TOKEN",
+    "PANTHEON_RESEARCH_JWT_SECRET",
+    "PANTHEON_REGISTRY_JWT_SECRET",
+    "PANTHEON_TELEMETRY_JWT_SECRET",
+    "PERSONA_JWT_SECRET",
+    "TRAINING_SESSION_JWT_SECRET",
+    "CAPITAL_JWT_SECRET",
+    "PANTHEON_CAPITAL_JWT_SECRET",
+    "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN",
+)
+
 if require_full:
     for req in ("PANTHEON_BFF_JWT_SECRET", "PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_DATABASE_URL",
-                "TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN"):
+                "TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN", *PRODUCT_DSN_KEYS, *PRODUCT_SECRET_KEYS):
         if not kv.get(req):
             raise SystemExit(f"missing required secret {req}")
+    for token_key in PRODUCT_SECRET_KEYS:
+        if kv[token_key].startswith("pantheon-local") or kv[token_key].endswith("-internal"):
+            raise SystemExit(f"{token_key} carries a well-known Dev default credential")
     from urllib.parse import parse_qs
     pg_db = sys.argv[4]
-    for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN"):
+    for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN", *PRODUCT_DSN_KEYS):
         dsn_base, _, dsn_query = kv[dsn_key].partition("?")
         if dsn_query:
             bad = {"dbname", "host", "hostaddr", "port", "user", "service", "options"} & {
@@ -127,7 +160,7 @@ umask 077
 run_priv mkdir -p \
   "${PROD_ROOT}"/{bin,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config} \
   "${PROD_DATA_MOUNT}/postgres" "${PROD_DATA_MOUNT}/nats" \
-  "${PROD_DATA_MOUNT}/bff" "${PROD_DATA_MOUNT}/runtime" "${PROD_DATA_MOUNT}/governance" \
+  "${PROD_DATA_MOUNT}/bff" "${PROD_DATA_MOUNT}/runtime" "${PROD_DATA_MOUNT}/governance" "${PROD_DATA_MOUNT}/product" \
   "$(dirname "$PROD_COMPOSE_ENV_FILE")" \
   || fail MKDIR "cannot create tree"
 
@@ -203,6 +236,7 @@ PROD_POSTGRES_DB=${PROD_POSTGRES_DB:-pantheon_production}
 PROD_JWT_ISSUER=${PROD_JWT_ISSUER:-${PROD_IDP_ISSUER}}
 PROD_JWT_AUDIENCE=${PROD_JWT_AUDIENCE:-pantheon-production-api}
 PROD_IDP_ISSUER=${PROD_IDP_ISSUER}
+PROD_TENANT_ID=${PROD_TENANT_ID}
 PROD_BFF_CORS_ORIGINS=https://${PROD_FE_HOST}
 PROD_BLUE_PORT=${PROD_BLUE_PORT:-18001}
 PROD_GREEN_PORT=${PROD_GREEN_PORT:-18002}
@@ -211,6 +245,12 @@ PANTHEON_NATS_IMAGE=${PANTHEON_NATS_IMAGE:-nats:2.10-alpine@sha256:d3eb053c882d3
 EOF
   chmod 0600 "$tmp_ce"
   run_priv mv -f "$tmp_ce" "$PROD_COMPOSE_ENV_FILE" || fail COMPOSE_ENV "cannot write compose.env"
+fi
+
+# An already-provisioned compose.env predates the product owner closure: add the explicit tenant, never overwrite it.
+if ! run_priv grep -q '^PROD_TENANT_ID=.' "$PROD_COMPOSE_ENV_FILE"; then
+  printf 'PROD_TENANT_ID=%s\n' "$PROD_TENANT_ID" | run_priv tee -a "$PROD_COMPOSE_ENV_FILE" >/dev/null \
+    || fail COMPOSE_ENV "cannot record PROD_TENANT_ID in ${PROD_COMPOSE_ENV_FILE}"
 fi
 
 # Resolve the EFFECTIVE stateful refs exactly as compose will (shell env wins over --env-file), including an
@@ -225,9 +265,12 @@ done
 
 # Pre-acquire only immutable digest-pinned (@sha256:...) images (never build, never pull mutable tags).
 if [[ "${PROD_PREPULL_IMAGES:-true}" == "true" ]]; then
-  IMAGE_LIST="$(python3 - "${RELEASE_MANIFEST_PATH:-}" "${PANTHEON_POSTGRES_IMAGE:-}" "${PANTHEON_NATS_IMAGE:-}" <<'PY'
+  IMAGE_LIST="$(python3 - "${RELEASE_MANIFEST_PATH:-}" "${PANTHEON_POSTGRES_IMAGE:-}" "${PANTHEON_NATS_IMAGE:-}" "${SCRIPT_DIR}" <<'PY'
 import json, re, sys
 from pathlib import Path
+
+sys.path[:0] = [sys.argv[4], str(Path(sys.argv[4]).parents[1] / "scripts" / "deploy")]
+import staging_sanitize  # bundled owner packaging contract (single source of owner keys)
 
 DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 mpath_str, pg_img, nats_img = sys.argv[1:4]
@@ -241,7 +284,7 @@ for ref in (pg_img, nats_img):
 if mpath_str and Path(mpath_str).is_file():
     manifest = json.loads(Path(mpath_str).read_text(encoding="utf-8"))
     b_imgs = manifest.get("backend", {}).get("images", {})
-    for key in ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector"):
+    for key in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS:
         val = str(b_imgs.get(key) or "").strip()
         if not DIGEST_RE.match(val):
             raise SystemExit(f"UNPINNED:{key}={val}")
@@ -290,12 +333,15 @@ if [[ "${PROD_BOOTSTRAP_SKIP_STATEFUL:-false}" != "true" ]]; then
   # manifest-owned release/image values must be present before the first stateful invocation.
   [[ -n "${RELEASE_MANIFEST_PATH:-}" && -f "${RELEASE_MANIFEST_PATH}" ]] \
     || fail MANIFEST_REQUIRED "RELEASE_MANIFEST_PATH is required to interpolate the compose project"
-  RELEASE_VARS="$(python3 - "$RELEASE_MANIFEST_PATH" <<'PY'
+  RELEASE_VARS="$(python3 - "$RELEASE_MANIFEST_PATH" "${SCRIPT_DIR}" <<'PY'
 import json, re, shlex, sys
+from pathlib import Path
+sys.path[:0] = [sys.argv[2], str(Path(sys.argv[2]).parents[1] / "scripts" / "deploy")]
+import staging_sanitize  # bundled owner packaging contract (single source of owner keys)
 DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 imgs = m.get("backend", {}).get("images", {})
-for k in ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector"):
+for k in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS:
     if not DIGEST_RE.match(str(imgs.get(k) or "").strip()):
         raise SystemExit(1)
 commit = str(m.get("backend", {}).get("commit") or "").strip()
@@ -314,6 +360,8 @@ out = {
     "PANTHEON_DEPLOYMENT_IMAGE": imgs["deployment"],
     "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE": imgs["lifecycle_projector"],
 }
+for k in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
+    out[f"PANTHEON_{k.upper()}_IMAGE"] = imgs[k]
 for k, v in out.items():
     print(f"export {k}={shlex.quote(v)}")
 PY

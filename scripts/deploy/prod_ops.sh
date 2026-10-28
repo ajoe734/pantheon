@@ -46,6 +46,28 @@ run_priv() {
 need PROD_ROOT PROD_DATA_MOUNT PROD_BLUE_PORT PROD_GREEN_PORT PROD_BFF_HOST PROD_FE_HOST \
      RELEASE_MANIFEST_PATH PROD_COMPOSE_FILE PROD_COMPOSE_ENV_FILE
 
+# Product owner packaging contract (single source: staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS, asserted equal by tests).
+# Core-profile product owners are stateless-process owners with native Postgres stores; the Agora request worker is a
+# singleton-profile worker (exactly one instance, drained/activated with the lifecycle projector, never per color).
+PRODUCT_OWNER_KEYS="registry telemetry incidents postmortems evolution lineage_read reconciliation_drift_svc persona consultation_svc source_ingest training_session_svc policy_learning_svc research_orchestrator_svc memory capital openclaw_gateway_adapter"
+PRODUCT_WORKER_KEY="agora_interaction_worker"
+ABSENT_BASELINE_IMAGE="baseline-absent.invalid/product-owner@sha256:$(printf '0%.0s' {1..64})"
+svc_of() { echo "${1//_/-}"; }
+PRODUCT_CORE_SERVICES=""
+for _k in $PRODUCT_OWNER_KEYS; do PRODUCT_CORE_SERVICES+="$(svc_of "$_k") "; done
+PRODUCT_WORKER_SERVICE="$(svc_of "$PRODUCT_WORKER_KEY")"
+# Both profiles are always active: the worker depends on core product owners and compose rejects inactive-profile deps.
+CORE_PROFILES=(--profile core --profile singleton)
+
+# Digest-pinned product owner images currently exported by release_env/baseline_env (none for an absent baseline).
+owner_images() {
+  local k v
+  [[ "${PROD_BASELINE_PRODUCT_OWNERS:-present}" == "absent" ]] && return 0
+  for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
+    v="PANTHEON_${k^^}_IMAGE"; echo "${!v}"
+  done
+}
+
 color_for_port() { if [[ "$1" == "$PROD_BLUE_PORT" ]]; then echo blue; elif [[ "$1" == "$PROD_GREEN_PORT" ]]; then echo green; else return 1; fi; }
 compose() { run_priv "$DOCKER" compose -p pantheon-production -f "$PROD_COMPOSE_FILE" --env-file "$PROD_COMPOSE_ENV_FILE" "$@"; }
 manifest_field() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));
@@ -58,14 +80,15 @@ BFF_ORIGIN="https://${PROD_BFF_HOST}"
 release_env() {
   # Candidate image refs come only from the candidate manifest (immutable @sha256:... digests).
   local vars
-  vars="$(python3 - "$RELEASE_MANIFEST_PATH" "$RELEASE_ID" "$FE_ORIGIN" <<'PY'
+  vars="$(python3 - "$RELEASE_MANIFEST_PATH" "$RELEASE_ID" "$FE_ORIGIN" "$PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY" <<'PY'
 import json, re, shlex, sys
 
 DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 rel_id, fe_origin = sys.argv[2], sys.argv[3]
 imgs = m.get("backend", {}).get("images", {})
-required = ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector")
+product_keys = sys.argv[4].split()
+required = ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector", *product_keys)
 for k in required:
     val = str(imgs.get(k) or "").strip()
     if not DIGEST_RE.match(val):
@@ -84,11 +107,14 @@ out = {
     "PANTHEON_DEPLOYMENT_IMAGE": imgs["deployment"],
     "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE": imgs["lifecycle_projector"],
     "PROD_BFF_CORS_ORIGINS": fe_origin,
+    "PROD_BASELINE_PRODUCT_OWNERS": "present",
 }
+for k in product_keys:
+    out[f"PANTHEON_{k.upper()}_IMAGE"] = imgs[k]
 for k, v in out.items():
     print(f"export {k}={shlex.quote(v)}")
 PY
-  )" || fail OWNER_IMAGES "manifest backend.images lacks the digest-pinned core owner closure (operator_bff, runtime_manager, governance, deployment, lifecycle_projector)"
+  )" || fail OWNER_IMAGES "manifest backend.images lacks the digest-pinned owner closure (core owners and every product owner incl. agora_interaction_worker)"
   eval "$vars"
   export PROD_BLUE_PORT PROD_GREEN_PORT
 }
@@ -99,12 +125,14 @@ baseline_env() {
   local journal_rec="${PROD_ROOT}/state/journal/${RELEASE_ID}/baseline_release.json"
   local state_base="${PROD_ROOT}/state/baseline.json"
   local vars
-  vars="$(python3 - "$journal_rec" "$state_base" "$RELEASE_MANIFEST_PATH" "$FE_ORIGIN" <<'PY'
+  vars="$(python3 - "$journal_rec" "$state_base" "$RELEASE_MANIFEST_PATH" "$FE_ORIGIN" "$PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY" "$ABSENT_BASELINE_IMAGE" <<'PY'
 import json, re, shlex, sys
 from pathlib import Path
 
 DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 journal_p, state_p, manifest_p, fe_origin = [Path(x) for x in sys.argv[1:4]] + [sys.argv[4]]
+product_keys = sys.argv[5].split()
+absent_image = sys.argv[6]
 
 rec = {}
 if journal_p.is_file():
@@ -143,6 +171,13 @@ for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projecto
     if not DIGEST_RE.match(b_imgs[owner]):
         raise SystemExit(f"unpinned baseline owner {owner}")
 
+# Product owners are restored to the EXACT retained baseline digests; they are never derived from the candidate or
+# invented. A baseline that predates the product owners must carry none of them (rollback then removes them); a
+# partial set is an unrestorable baseline and fails closed.
+have = [k for k in product_keys if k in b_imgs]
+if have and len(have) != len(product_keys):
+    raise SystemExit("partial baseline product owner closure: missing " + ",".join(k for k in product_keys if k not in b_imgs))
+
 out = {
     "PANTHEON_RELEASE_ID": rel_id,
     "BASELINE_RELEASE_ID": rel_id,
@@ -158,7 +193,11 @@ out = {
     "PANTHEON_DEPLOYMENT_IMAGE": b_imgs["deployment"],
     "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE": b_imgs["lifecycle_projector"],
     "PROD_BFF_CORS_ORIGINS": fe_origin,
+    "PROD_BASELINE_PRODUCT_OWNERS": "present" if have else "absent",
 }
+for k in product_keys:
+    # Sentinel only satisfies compose interpolation when the baseline has no product owners; it is never started.
+    out[f"PANTHEON_{k.upper()}_IMAGE"] = b_imgs[k] if have else absent_image
 for k, v in out.items():
     print(f"export {k}={shlex.quote(v)}")
 PY
@@ -227,6 +266,37 @@ wait_until() { # wait_until <tries> <interval> <command...>
   return 1
 }
 singleton_count() { compose ps -q lifecycle-projector 2>/dev/null | grep -c . || true; }
+worker_count() { compose ps -q "$PRODUCT_WORKER_SERVICE" 2>/dev/null | grep -c . || true; }
+# Every product owner must run the exact exported digest (candidate or retained baseline); the Agora request worker
+# must be a singleton (0 only when the baseline has none). Sets OWNER_REASON on failure.
+verify_product_owner_images() {
+  local k svc var want c got
+  OWNER_REASON=""
+  if [[ "${PROD_BASELINE_PRODUCT_OWNERS:-present}" == "absent" ]]; then
+    for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
+      svc="$(svc_of "$k")"
+      [[ -z "$(container_of "$svc")" ]] || { OWNER_REASON="product owner ${svc} still present but absent from retained baseline"; return 1; }
+    done
+    return 0
+  fi
+  for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
+    svc="$(svc_of "$k")"; var="PANTHEON_${k^^}_IMAGE"; want="${!var}"
+    c="$(container_of "$svc")"
+    [[ -n "$c" && "$(printf '%s\n' "$c" | grep -c .)" == "1" ]] || { OWNER_REASON="product owner ${svc} is not running exactly once"; return 1; }
+    got="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$c" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$got" == "$want" ]] || { OWNER_REASON="product owner ${svc} runs '${got}' != expected '${want}'"; return 1; }
+  done
+  [[ "$(worker_count)" == "1" ]] || { OWNER_REASON="agora request worker count is $(worker_count), expected exactly 1"; return 1; }
+}
+# Remove product owner containers by compose project labels (works without a resolvable owner image).
+remove_product_owners() {
+  local k svc ids
+  for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
+    svc="$(svc_of "$k")"
+    ids="$(run_priv "$DOCKER" ps -aq --filter "label=com.docker.compose.project=pantheon-production" --filter "label=com.docker.compose.service=${svc}")" || return 1
+    [[ -z "$ids" ]] || run_priv "$DOCKER" rm -f $ids >/dev/null || return 1
+  done
+}
 
 verify_runtime_config_internal() {
   local expected_rel="${1:-}"
@@ -389,7 +459,7 @@ PY
     release_env
     for img in "$PANTHEON_OPERATOR_BFF_IMAGE" "$PANTHEON_RUNTIME_MANAGER_IMAGE" \
                "$PANTHEON_GOVERNANCE_IMAGE" "$PANTHEON_DEPLOYMENT_IMAGE" \
-               "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE"; do
+               "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" $(owner_images); do
       run_priv "$DOCKER" pull "$img" >/dev/null 2>&1 || fail IMAGE_PULL_FAILED "failed to pull digest-pinned image ${img}"
       run_priv "$DOCKER" image inspect "$img" >/dev/null 2>&1 || fail IMAGE_INSPECT_FAILED "pulled image ${img} failed inspect"
     done
@@ -397,7 +467,7 @@ PY
       baseline_env
       for img in "$PANTHEON_OPERATOR_BFF_IMAGE" "$PANTHEON_RUNTIME_MANAGER_IMAGE" \
                  "$PANTHEON_GOVERNANCE_IMAGE" "$PANTHEON_DEPLOYMENT_IMAGE" \
-                 "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE"; do
+                 "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" $(owner_images); do
         run_priv "$DOCKER" pull "$img" >/dev/null 2>&1 || fail IMAGE_PULL_FAILED "failed to pull baseline image ${img}"
         run_priv "$DOCKER" image inspect "$img" >/dev/null 2>&1 || fail IMAGE_INSPECT_FAILED "baseline image ${img} failed inspect"
       done
@@ -420,7 +490,8 @@ PY
     [[ "$port" != "${PROD_ACTIVE_PORT:-}" ]] || fail PORT_IN_USE "target port equals the active baseline port"
     release_env
     [[ "$PANTHEON_OPERATOR_BFF_IMAGE" == "$image" ]] || fail IMAGE_MISMATCH "controller image differs from manifest"
-    compose --profile core up -d --no-build --no-recreate runtime-manager governance deployment || fail OWNER_CLOSURE "core owner closure not running"
+    # Acquisition only: owners are started if absent but an already-running owner (baseline) is never recreated here.
+    compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail OWNER_CLOSURE "core/product owner closure not running"
     compose --profile "$color" up -d --no-build "operator-bff-${color}" || fail GREEN_START "compose failed to start ${color}"
     wait_until "${PROD_GREEN_READY_TRIES:-30}" "${PROD_GREEN_READY_INTERVAL:-2}" require_live "$port" && exit 0
     fail GREEN_NOT_READY "${color} did not become live on ${port}"
@@ -511,15 +582,16 @@ PY
   drain_singletons)
     release_env
     # Exactly one singleton owner: stop it before the upstream switch.
-    compose --profile singleton rm -fsv lifecycle-projector || fail DRAIN "could not stop singleton owner"
-    [[ "$(singleton_count)" == "0" ]] || fail DRAIN "singleton owner still present after drain"
+    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail DRAIN "could not stop singleton owner"
+    [[ "$(singleton_count)" == "0" && "$(worker_count)" == "0" ]] || fail DRAIN "singleton owner still present after drain"
     ;;
 
   activate_singletons)
     release_env
-    compose --profile core up -d --no-build runtime-manager governance deployment || fail ACTIVATE "could not update core owner closure"
-    compose --profile singleton up -d --no-build --no-recreate lifecycle-projector || fail ACTIVATE "could not start singleton owner"
+    compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not update core/product owner closure"
+    compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not start singleton owners"
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
+    verify_product_owner_images || fail ACTIVATE "${OWNER_REASON}"
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "singleton container not found"
     simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail ACTIVATE "singleton inspect failed"
     [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail ACTIVATE "singleton image '${simg}' != candidate '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
@@ -528,10 +600,18 @@ PY
   resume_baseline_singletons)
     baseline_env
     # A candidate projector may already own the singleton; remove it first so exactly one (baseline) remains.
-    compose --profile singleton rm -fsv lifecycle-projector || fail ACTIVATE "could not stop candidate singleton owner"
-    compose --profile core up -d --no-build runtime-manager governance deployment || fail ACTIVATE "could not restore baseline core owner closure"
-    compose --profile singleton up -d --no-build --no-recreate lifecycle-projector || fail ACTIVATE "could not start baseline singleton owner"
+    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not stop candidate singleton owners"
+    if [[ "$PROD_BASELINE_PRODUCT_OWNERS" == "absent" ]]; then
+      # The retained baseline never had product owners: remove the candidate's (by compose labels; no sentinel image is started).
+      remove_product_owners || fail ACTIVATE "could not remove candidate product owners absent from the baseline"
+      compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment || fail ACTIVATE "could not restore baseline core owner closure"
+      compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector || fail ACTIVATE "could not start baseline singleton owner"
+    else
+      compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not restore baseline core/product owner closure"
+      compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not start baseline singleton owners"
+    fi
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
+    verify_product_owner_images || fail ACTIVATE "${OWNER_REASON}"
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "baseline singleton container not found"
     simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail ACTIVATE "baseline singleton inspect failed"
     [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail ACTIVATE "restored singleton image '${simg}' != baseline '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
