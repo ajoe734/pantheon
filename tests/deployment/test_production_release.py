@@ -232,6 +232,10 @@ PY
     if [[ "$args" == *"compose"*"rm -fsv operator-bff-green"* ]]; then
       touch "$FAKE_STATE/stopped_operator-bff-green"
     fi
+    if [[ "$args" == "exec "* && "$args" == *"PROD_GATE_TENANT_ID="* ]]; then
+      [[ "${FAKE_DOCKER_FAIL:-}" == *"exec"* ]] && exit 1
+      printf 'fake.gate.token\n'; exit 0
+    fi
     if [[ "$args" == "inspect -f {{range .Config.Env}}"* ]]; then cat "$FAKE_STATE/container_env"; exit 0; fi
     if [[ "$args" == "inspect -f {{.Config.Image}}"* ]]; then
       cid="${@: -1}"
@@ -340,7 +344,10 @@ PY
       exit 0
     fi
     if [[ "$all" == *"-X POST"* ]]; then printf '%s' "${FAKE_WRITE_CODE:-405}"; exit 0; fi
-    if [[ "$all" == *"Authorization"* ]]; then printf '%s' "${FAKE_TENANT_CODE:-403}"; exit 0; fi
+    if [[ "$all" == *"Authorization"* ]]; then
+      if [[ "$all" == *"__foreign_tenant__"* ]]; then printf '%s' "${FAKE_TENANT_CODE:-403}"; else printf '%s' "${FAKE_OWN_TENANT_CODE:-200}"; fi
+      exit 0
+    fi
     printf '%s' "${FAKE_AUTH_CODE:-401}"; exit 0 ;;
 esac
 """
@@ -634,6 +641,23 @@ class ProdOpsTests(OpsHarness):
     def test_tenant_gate_is_never_skipped_without_identity(self):
         self.token.unlink()
         self.assertNotEqual(self.ops("gate", "rel-1", "tenant", "8002").returncode, 0)
+
+    def test_tenant_gate_mints_service_token_in_container_and_cleans_up(self):
+        r = self.ops("gate", "rel-1", "tenant", "8002", PROD_GATE_TOKEN_FILE="")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        log = self.log.read_text()
+        exec_lines = [l for l in log.splitlines() if " exec " in f" {l} " and "PROD_GATE_TENANT_ID=acme-prod-tenant" in l]
+        self.assertEqual(len(exec_lines), 1, log)
+        self.assertNotIn("SECRET", exec_lines[0])
+        self.assertEqual(list((self.root / "state").glob(".gate-token.*")), [])
+
+    def test_tenant_gate_requires_own_tenant_200_before_foreign_403(self):
+        for extra in ({"FAKE_OWN_TENANT_CODE": "401"}, {"FAKE_OWN_TENANT_CODE": "404"}, {"FAKE_TENANT_CODE": "401"},
+                      {"FAKE_TENANT_CODE": "404"}, {"FAKE_DOCKER_FAIL": "exec"}):
+            r = self.ops("gate", "rel-1", "tenant", "8002", PROD_GATE_TOKEN_FILE="", **extra)
+            self.assertNotEqual(r.returncode, 0, extra)
+            self.assertIn("GATE_TENANT", r.stderr)
+            self.assertEqual(list((self.root / "state").glob(".gate-token.*")), [])
 
     def test_read_only_gate_rejects_unsafe_runtime_flags(self):
         (self.state / "container_env").write_text("PANTHEON_LIVE_BROKER_ENABLED=true\n")

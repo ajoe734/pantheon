@@ -16,8 +16,11 @@
 #   PROD_FE_HOST RELEASE_MANIFEST_PATH PROD_COMPOSE_FILE PROD_COMPOSE_ENV_FILE
 #   PROD_ACTIVE_PORT / PROD_TARGET_PORT (exported by the controller).
 # Test seams (default to real binaries): DOCKER_BIN CURL_BIN MOUNTPOINT_BIN SUDO_BIN PROD_CADDY_CONTAINER.
-# Gates that need an authenticated identity read PROD_GATE_TOKEN_FILE (read-only synthetic
-# identity issued by the production IdP); absent => the gate fails, it is never skipped.
+# The tenant gate needs an authenticated identity. Unless PROD_GATE_TOKEN_FILE names a pre-issued token, it mints a
+# short-lived (120s) viewer SERVICE token INSIDE the candidate BFF container (real PANTHEON_BFF_JWT_SECRET/issuer/
+# audience never leave the VM) with the existing services.runtime_auth_inbound.encode_jwt_hs256 encoder, binds it to the
+# explicit PROD_TENANT_ID, keeps it in a 0600 VM-local file, and removes it on exit. It carries no human/MFA/email/IAM
+# claims and is not a release approval. The gate requires own-tenant 200 THEN foreign-tenant 403; it is never skipped.
 
 set -uo pipefail
 
@@ -254,6 +257,26 @@ production_schema_gate() {
   GATE_REASON="$(printf '%s' "$catalog" | python3 -I "$MIGRATION_HELPER" migration catalog "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
 }
 container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }
+# mint_gate_token <port> <outfile>: viewer SERVICE token for the explicit production tenant, signed inside the BFF
+# container with its own secret/issuer/audience. Written 0600; the secret is never read or printed by this script.
+mint_gate_token() {
+  local c; c="$(container_of "operator-bff-$(color_for_port "$1")")"; [[ -n "$c" ]] || return 1
+  ( umask 077
+    run_priv "$DOCKER" exec -e "PROD_GATE_TENANT_ID=${PROD_TENANT_ID}" "$c" python3 -c '
+import os, sys, time
+from services.runtime_auth_inbound import encode_jwt_hs256
+secret = os.environ.get("PANTHEON_BFF_JWT_SECRET", "").strip()
+iss = os.environ.get("PANTHEON_BFF_JWT_ISSUER", "").strip()
+aud = os.environ.get("PANTHEON_BFF_JWT_AUDIENCE", "").strip()
+tenant = os.environ.get("PROD_GATE_TENANT_ID", "").strip()
+if not (secret and iss and aud and tenant):
+    sys.exit(2)
+now = int(time.time())
+print(encode_jwt_hs256({"sub": "service:prod-release-gate", "service": "prod-release-gate", "roles": ["viewer"],
+    "tenant_id": tenant, "allowed_tenants": [tenant], "iss": iss, "aud": aud, "iat": now, "exp": now + 120},
+    secret=secret))
+' >"$2" ) && [[ -s "$2" ]]
+}
 require_ready() { # require_ready <port>
   [[ "$(http_code "http://127.0.0.1:$1/bff/readyz")" == "200" ]]
 }
@@ -530,9 +553,20 @@ PY
         denied="$("$CURL" -sS -m 10 -D - -o /dev/null -H "Origin: https://evil.invalid" -X OPTIONS -H "Access-Control-Request-Method: GET" "http://127.0.0.1:${port}/bff/capabilities" | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')"
         [[ "$allowed" == "$FE_ORIGIN" && -z "$denied" ]] || fail GATE_CORS "allow-origin='${allowed}' foreign='${denied}'" ;;
       tenant)
-        need PROD_GATE_TOKEN_FILE; [[ -s "$PROD_GATE_TOKEN_FILE" ]] || fail GATE_TENANT "gate token file missing/empty"
-        code="$(http_code -H "Authorization: Bearer $(cat "$PROD_GATE_TOKEN_FILE")" -H "X-Tenant-Id: __foreign_tenant__" "http://127.0.0.1:${port}/bff/capabilities")"
-        [[ "$code" == "401" || "$code" == "403" || "$code" == "404" ]] || fail GATE_TENANT "cross-tenant request returned ${code}" ;;
+        need PROD_TENANT_ID
+        tok="${PROD_GATE_TOKEN_FILE:-}"
+        if [[ -z "$tok" ]]; then
+          gate_dir="$(umask 077; mktemp -d "${PROD_ROOT}/state/.gate-token.XXXXXX")" || fail GATE_TENANT "cannot create gate token dir"
+          trap 'rm -rf "$gate_dir"' EXIT
+          tok="${gate_dir}/token"
+          mint_gate_token "$port" "$tok" || fail GATE_TENANT "could not mint service gate token inside candidate BFF container"
+        fi
+        [[ -s "$tok" ]] || fail GATE_TENANT "gate token file missing/empty"
+        auth_hdr="Authorization: Bearer $(tr -d '[:space:]' <"$tok")"
+        code="$(http_code -H "$auth_hdr" -H "X-Tenant-Id: ${PROD_TENANT_ID}" "http://127.0.0.1:${port}/bff/me")"
+        [[ "$code" == "200" ]] || fail GATE_TENANT "own-tenant authenticated /bff/me returned ${code}, expected 200"
+        code="$(http_code -H "$auth_hdr" -H "X-Tenant-Id: __foreign_tenant__" "http://127.0.0.1:${port}/bff/me")"
+        [[ "$code" == "403" ]] || fail GATE_TENANT "foreign-tenant /bff/me returned ${code}, expected 403" ;;
       read_only)
         c="$(container_of "operator-bff-$(color_for_port "$port")")"; [[ -n "$c" ]] || fail GATE_READ_ONLY "green container not found"
         envs="$(run_priv "$DOCKER" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$c")" || fail GATE_READ_ONLY "inspect failed"
