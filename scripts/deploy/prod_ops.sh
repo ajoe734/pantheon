@@ -62,6 +62,10 @@ PRODUCT_CORE_SERVICES=""
 for _k in $PRODUCT_OWNER_KEYS; do PRODUCT_CORE_SERVICES+="$(svc_of "$_k") "; done
 PRODUCT_WORKER_SERVICE=""
 for _k in $PRODUCT_WORKER_KEY; do PRODUCT_WORKER_SERVICE+="$(svc_of "$_k") "; done
+PRODUCT_WORKER_SERVICE_ALL="$PRODUCT_WORKER_SERVICE"
+# Singleton workers added after the first product-owner baselines: a retained baseline that predates them is still a
+# valid rollback target. Their images are restored when retained and the workers are removed (never invented) when not.
+BASELINE_OPTIONAL_KEYS="paper_fleet_reconciler paper_signal_producer"
 # Both profiles are always active: the worker depends on core product owners and compose rejects inactive-profile deps.
 CORE_PROFILES=(--profile core --profile singleton)
 
@@ -70,6 +74,7 @@ owner_images() {
   local k v
   [[ "${PROD_BASELINE_PRODUCT_OWNERS:-present}" == "absent" ]] && return 0
   for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
+    [[ " ${PROD_BASELINE_ABSENT_KEYS:-} " == *" $k "* ]] && continue
     v="PANTHEON_${k^^}_IMAGE"; echo "${!v}"
   done
 }
@@ -131,7 +136,7 @@ baseline_env() {
   local journal_rec="${PROD_ROOT}/state/journal/${RELEASE_ID}/baseline_release.json"
   local state_base="${PROD_ROOT}/state/baseline.json"
   local vars
-  vars="$(python3 - "$journal_rec" "$state_base" "$RELEASE_MANIFEST_PATH" "$FE_ORIGIN" "$PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY" "$ABSENT_BASELINE_IMAGE" <<'PY'
+  vars="$(python3 - "$journal_rec" "$state_base" "$RELEASE_MANIFEST_PATH" "$FE_ORIGIN" "$PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY" "$ABSENT_BASELINE_IMAGE" "$BASELINE_OPTIONAL_KEYS" <<'PY'
 import json, re, shlex, sys
 from pathlib import Path
 
@@ -139,6 +144,7 @@ DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 journal_p, state_p, manifest_p, fe_origin = [Path(x) for x in sys.argv[1:4]] + [sys.argv[4]]
 product_keys = sys.argv[5].split()
 absent_image = sys.argv[6]
+optional_keys = sys.argv[7].split()
 
 rec = {}
 if journal_p.is_file():
@@ -180,9 +186,12 @@ for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projecto
 # Product owners are restored to the EXACT retained baseline digests; they are never derived from the candidate or
 # invented. A baseline that predates the product owners must carry none of them (rollback then removes them); a
 # partial set is an unrestorable baseline and fails closed.
-have = [k for k in product_keys if k in b_imgs]
-if have and len(have) != len(product_keys):
-    raise SystemExit("partial baseline product owner closure: missing " + ",".join(k for k in product_keys if k not in b_imgs))
+required_keys = [k for k in product_keys if k not in optional_keys]
+have = [k for k in required_keys if k in b_imgs]
+if have and len(have) != len(required_keys):
+    raise SystemExit("partial baseline product owner closure: missing " + ",".join(k for k in required_keys if k not in b_imgs))
+# Optional (later-added) singleton workers: each restored only when its exact digest was retained.
+absent_keys = [k for k in product_keys if not (have and k in b_imgs)]
 
 out = {
     "PANTHEON_RELEASE_ID": rel_id,
@@ -200,15 +209,21 @@ out = {
     "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE": b_imgs["lifecycle_projector"],
     "PROD_BFF_CORS_ORIGINS": fe_origin,
     "PROD_BASELINE_PRODUCT_OWNERS": "present" if have else "absent",
+    "PROD_BASELINE_ABSENT_KEYS": " ".join(k for k in absent_keys if have),
 }
 for k in product_keys:
-    # Sentinel only satisfies compose interpolation when the baseline has no product owners; it is never started.
-    out[f"PANTHEON_{k.upper()}_IMAGE"] = b_imgs[k] if have else absent_image
+    # Sentinel only satisfies compose interpolation for owners the baseline never had; it is never started.
+    out[f"PANTHEON_{k.upper()}_IMAGE"] = b_imgs[k] if (have and k in b_imgs) else absent_image
 for k, v in out.items():
     print(f"export {k}={shlex.quote(v)}")
 PY
   )" || fail BASELINE_ENV_MISSING "retained baseline manifest/config closure missing or invalid for rollback"
   eval "$vars"
+  # Singleton workers the baseline never had are neither started nor counted; they are removed on resume.
+  PRODUCT_WORKER_SERVICE=""
+  for _k in $PRODUCT_WORKER_KEY; do
+    [[ " ${PROD_BASELINE_ABSENT_KEYS:-} " == *" $_k "* ]] || PRODUCT_WORKER_SERVICE+="$(svc_of "$_k") "
+  done
   export PROD_BLUE_PORT PROD_GREEN_PORT
 }
 
@@ -314,6 +329,10 @@ verify_product_owner_images() {
   fi
   for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
     svc="$(svc_of "$k")"; var="PANTHEON_${k^^}_IMAGE"; want="${!var}"
+    if [[ " ${PROD_BASELINE_ABSENT_KEYS:-} " == *" $k "* ]]; then
+      [[ -z "$(container_of "$svc")" ]] || { OWNER_REASON="product owner ${svc} still present but absent from retained baseline"; return 1; }
+      continue
+    fi
     c="$(container_of "$svc")"
     [[ -n "$c" && "$(printf '%s\n' "$c" | grep -c .)" == "1" ]] || { OWNER_REASON="product owner ${svc} is not running exactly once"; return 1; }
     got="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$c" 2>/dev/null | tr -d '[:space:]')"
@@ -322,9 +341,9 @@ verify_product_owner_images() {
   workers_each_single || return 1
 }
 # Remove product owner containers by compose project labels (works without a resolvable owner image).
-remove_product_owners() {
-  local k svc ids
-  for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
+remove_product_owners() {  # [owner_key...] (default: every product owner)
+  local k svc ids keys="${*:-$PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY}"
+  for k in $keys; do
     svc="$(svc_of "$k")"
     ids="$(run_priv "$DOCKER" ps -aq --filter "label=com.docker.compose.project=pantheon-production" --filter "label=com.docker.compose.service=${svc}")" || return 1
     [[ -z "$ids" ]] || run_priv "$DOCKER" rm -f $ids >/dev/null || return 1
@@ -644,13 +663,14 @@ PY
   resume_baseline_singletons)
     baseline_env
     # A candidate projector may already own the singleton; remove it first so exactly one (baseline) remains.
-    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not stop candidate singleton owners"
+    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector $PRODUCT_WORKER_SERVICE_ALL || fail ACTIVATE "could not stop candidate singleton owners"
     if [[ "$PROD_BASELINE_PRODUCT_OWNERS" == "absent" ]]; then
       # The retained baseline never had product owners: remove the candidate's (by compose labels; no sentinel image is started).
       remove_product_owners || fail ACTIVATE "could not remove candidate product owners absent from the baseline"
       compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment || fail ACTIVATE "could not restore baseline core owner closure"
       compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector || fail ACTIVATE "could not start baseline singleton owner"
     else
+      [[ -z "${PROD_BASELINE_ABSENT_KEYS:-}" ]] || remove_product_owners $PROD_BASELINE_ABSENT_KEYS || fail ACTIVATE "could not remove candidate workers absent from the baseline"
       compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not restore baseline core/product owner closure"
       compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not start baseline singleton owners"
     fi

@@ -21,6 +21,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import unittest.mock
 
 import yaml
 
@@ -749,6 +750,30 @@ class ProdOpsTests(OpsHarness):
         r = self.ops("resume_baseline_singletons", "rel-1", RELEASE_MANIFEST_PATH=str(self.tmp / "partial-baseline.json"))
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("BASELINE_ENV_MISSING", r.stderr)
+
+    def test_pre_paper_baseline_restores_retained_owners_and_removes_new_paper_workers(self):
+        paper = {"paper_fleet_reconciler", "paper_signal_producer"}
+        manifest = json.loads(self.mpath.read_text())
+        for key in paper:
+            manifest["rollback_baseline"]["backend_images"].pop(key)
+        (self.tmp / "pre-paper-baseline.json").write_text(json.dumps(manifest))
+        env = {"RELEASE_MANIFEST_PATH": str(self.tmp / "pre-paper-baseline.json")}
+        self.assertEqual(self.ops("activate_singletons", "rel-1", **env).returncode, 0)
+        self.assertEqual(set(self._product_images_run()), PRODUCT_SERVICE_NAMES)  # candidate runs the Paper workers
+        self.assertEqual(self.ops("drain_singletons", "rel-1", **env).returncode, 0)
+        r = self.ops("resume_baseline_singletons", "rel-1", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        running = self._product_images_run()
+        self.assertEqual(set(running), PRODUCT_SERVICE_NAMES - {k.replace("_", "-") for k in paper})
+        for key in PRODUCT_OWNER_KEYS:
+            if key not in paper:
+                self.assertEqual(running[key.replace("_", "-")], manifest["rollback_baseline"]["backend_images"][key], key)
+        self.assertTrue((self.state / "singleton_up").exists())
+        self.assertNotIn("baseline-absent.invalid", (self.state / "product_ups").read_text())
+        # Prepull acquires only retained baseline images; no sentinel is ever pulled.
+        (self.root / "state" / "baseline.json").write_text("{}")
+        self.assertEqual(self.ops("prepull_images", "rel-1", **env).returncode, 0)
+        self.assertNotIn("baseline-absent.invalid", (self.state / "pulled_images").read_text())
 
     def test_product_owner_wrong_running_image_fails_activation_readback(self):
         # A pre-existing owner running a different digest must be caught by the exact-image readback.
@@ -1641,6 +1666,85 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         manifest["backend"]["images"]["paper_signal_producer"] = "r/other@sha256:" + "b" * 64
         with self.assertRaises(release_manifest.ReleaseManifestError):
             release_manifest.validate_manifest(manifest)
+
+    def test_bff_reads_paper_reconciler_and_producer_health_in_both_environments(self):
+        import http.server, threading
+        from services.control_plane.bff import downstream_health_monitor as dhm
+        stage = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())["services"]
+        prod = yaml.safe_load(COMPOSE.read_text())["services"]
+        bffs = {"stage": (stage["operator-bff"], stage), "prod-blue": (prod["operator-bff-blue"], prod),
+                "prod-green": (prod["operator-bff-green"], prod)}
+        specs = dict(dhm._DEFAULT_TARGET_SPECS)
+        url_key = specs["paper-fleet-reconciler"][0]
+        health_path = dict(dhm._DEFAULT_WORKER_SPECS)["paper-signal-producer"][1]
+        for name, (bff, svcs) in bffs.items():
+            env = bff["environment"]
+            self.assertEqual(env[url_key], "http://paper-fleet-reconciler:8011", name)
+            self.assertEqual(svcs["paper-fleet-reconciler"]["environment"]["PORT"], "8011", name)
+            def mount(v):  # host source may itself contain ':' (compose ${VAR:?msg}); split from the right
+                m = re.fullmatch(r"(.+):(/[^:]+)(?::(ro))?", v)
+                return [m.group(1), m.group(2), m.group(3) or "rw"]
+            mounts = [mount(v) for v in bff["volumes"]]
+            health = [m for m in mounts if m[1] == "/data/health"]
+            self.assertEqual(len(health), 1, name)
+            self.assertEqual(health[0][2], "ro", name)  # BFF only reads worker health
+            producer_mounts = [mount(v) for v in svcs["paper-signal-producer"]["volumes"]]
+            self.assertEqual([m[0] for m in producer_mounts if m[1] == "/data/health"], [health[0][0]], name)
+            self.assertEqual(svcs["paper-signal-producer"]["environment"]["PAPER_PRODUCER_HEALTH_FILE"], health_path, name)
+        # Actual readback: the mounted health file and the reconciler endpoint are read through the BFF's own probes.
+        with tempfile.TemporaryDirectory() as td:
+            hf = Path(td) / "paper-signal-producer-health.json"
+            hf.write_text(json.dumps({"worker_name": "paper-signal-producer", "status": "ok", "ticks": 3, "execution_mode": "paper",
+                                      "live_capital_enabled": False, "live_order_submission_enabled": False}))
+            ok, code, reason = dhm._probe_file_health(str(hf), target_name="paper-signal-producer")
+            self.assertTrue(ok, reason)
+            hf.write_text(json.dumps({"ok": False, "reason": "no executable artifact"}))
+            self.assertFalse(dhm._probe_file_health(str(hf), target_name="paper-signal-producer")[0])
+            self.assertFalse(dhm._probe_file_health(str(Path(td) / "missing.json"), target_name="paper-signal-producer")[0])
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps({"ready": True, "monitoring_sessions": []}).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close); self.addCleanup(srv.shutdown)
+        configured = bffs["prod-blue"][0]["environment"][url_key].replace("paper-fleet-reconciler:8011", f"127.0.0.1:{srv.server_port}")
+        self.assertTrue(dhm._probe_http(f"{configured}/readyz", 5.0)[0])
+
+    def test_paper_reconciler_requires_controller_dsn_and_exact_release_sha(self):
+        stage = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())["services"]
+        prod = yaml.safe_load(COMPOSE.read_text())["services"]
+        for name, svcs in (("stage", stage), ("prod", prod)):
+            env = svcs["paper-fleet-reconciler"]["environment"]
+            self.assertEqual(env["PANTHEON_DEPLOYMENT_SHA"], "${PANTHEON_BACKEND_COMMIT:?backend commit required}", name)
+            self.assertEqual(env["GIT_SHA"], env["PANTHEON_DEPLOYMENT_SHA"], name)
+            self.assertNotIn("RECONCILER_LOOP_CONTROLLER_DSN", env, name)  # only via the secrets env file
+            self.assertNotIn("RECONCILER_LOOP_CONTROLLER_DSN", svcs["paper-signal-producer"]["environment"], name)
+        for boot in (BOOTSTRAP, REPO_ROOT / "deploy" / "staging" / "bootstrap.sh"):
+            dsn_block = boot.read_text().split("PRODUCT_DSN_KEYS = (", 1)[1].split("\n)", 1)[0]
+            self.assertIn('"RECONCILER_LOOP_CONTROLLER_DSN"', dsn_block, boot.name)
+        # Writer-enabled with the exact release head; the controller DSN is stripped from worker subprocesses.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("pfr_under_test", REPO_ROOT / "services" / "paper_fleet_reconciler" / "paper_fleet_reconciler.py")
+        self.addCleanup(sys.modules.pop, "pfr_under_test", None)
+        try:
+            mod = importlib.util.module_from_spec(spec); sys.modules[spec.name] = mod; spec.loader.exec_module(mod)
+        except Exception as exc:  # reconciler runtime deps are not part of this lightweight env
+            self.skipTest(f"reconciler module not importable here: {exc}")
+        seen = {}
+        class FakeModule:
+            class LoopControllerWriter:
+                def __init__(self, dsn, **kw):
+                    seen["dsn"] = dsn; seen.update(kw)
+        with unittest.mock.patch.object(mod.importlib, "import_module", return_value=FakeModule), \
+                unittest.mock.patch.dict(os.environ, {"PANTHEON_DEPLOYMENT_SHA": "a" * 40, "GIT_SHA": "a" * 40}):
+            writer = mod._build_loop_writer(dsn="postgresql://c/db", tenant_id="t", controller_id="c", lease_duration_seconds=120)
+        self.assertIsNotNone(writer)
+        self.assertEqual(seen["deployment_sha"], "a" * 40)
+        self.assertIsNone(mod._build_loop_writer(dsn="", tenant_id="t", controller_id="c", lease_duration_seconds=120))
 
     def test_rollback_baseline_accepts_observed_incumbent_paper_digests(self):
         from scripts.deploy import release_manifest

@@ -93,12 +93,12 @@
     ]
   },
   "final_head_verification": {
-    "scope": "focused only; prior exit124 broad batch (124 tests) is not pass evidence and was not re-run for this head",
+    "scope": "rework of review REJECT on 3db9f47f; full test_production_release (81 OK, 118.9s) plus focused Stage tests",
     "passed": [
-      "test_staging_release.WorkflowAndTemplateContractTests (4 tests, tls directives counted without comments)",
-      "test_staging_release...test_compose_packages_every_required_owner_from_immutable_images_only (paper-fleet-reconciler stop_signal SIGINT)",
-      "test_production_release...test_paper_owners_must_reuse_training_session_image_and_are_singletons (stop_signal SIGINT)"
+      "test_production_release (81 tests OK) incl. test_pre_paper_baseline_restores_retained_owners_and_removes_new_paper_workers, test_bff_reads_paper_reconciler_and_producer_health_in_both_environments, test_paper_reconciler_requires_controller_dsn_and_exact_release_sha",
+      "test_staging_release Stage Release/Sanitize/Workflow classes (16 pass; 1 env error: flask missing, not a pass)",
+      "StagingControllerLifecycleTests: product_owner_inputs_fail_closed, dsn_query_routing_override_rejected, bff_and_worker_share_durable_agora_stores, bare_debian_bootstrap_secrets_and_real_collector_negative_gates, two_consecutive_simulated_releases"
     ],
-    "delta": "stop_signal: SIGINT on paper-fleet-reconciler in Stage and Prod compose; tls test no longer counts comments; hosted acceptance remains external"
+    "delta": "pre-Paper baseline restores retained owners and removes absent paper workers (Prod prod_ops.sh + Stage bootstrap baseline env); BFF gets PANTHEON_PAPER_FLEET_RECONCILER_URL and read-only /data/health in Prod blue/green and Stage; reconciler binds PANTHEON_DEPLOYMENT_SHA/GIT_SHA to PANTHEON_BACKEND_COMMIT; RECONCILER_LOOP_CONTROLLER_DSN required in both bootstraps; hosted acceptance remains external_wait"
   }
 }

@@ -223,10 +223,13 @@ services:
       PANTHEON_RECONCILIATION_DRIFT_API_URL: http://reconciliation-drift-svc:8102
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_NATS_URL: nats://nats:4222
+      # Native Paper fleet reconciler read (/api/fleet/state); the shared health dir below is the producer health file.
+      PANTHEON_PAPER_FLEET_RECONCILER_URL: http://paper-fleet-reconciler:8011
     volumes:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/bff:/data/bff
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance:ro
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/runtime:/data/runtime:ro
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/health:/data/health:ro
     labels: {"org.pantheon.role": "bff"}
     ports:
       - "127.0.0.1:${STAGING_BFF_PORT:-18001}:8001"
@@ -662,6 +665,9 @@ services:
       RECONCILER_DRAIN_TIMEOUT_SECONDS: "10"
       PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: "172800"
       PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
+      # Exact release identity for the Loop 9 controller record; RECONCILER_LOOP_CONTROLLER_DSN comes from the secrets env file.
+      PANTHEON_DEPLOYMENT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
+      GIT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
       SIGNAL_STORE_URL: redis://signal-store:6379
       WORKER_SCRIPT_PATH: services/execution/lean_runtime/paper_runtime.py
       PANTHEON_CANARY_EXECUTION_ENABLED: "false"

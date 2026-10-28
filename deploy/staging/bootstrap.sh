@@ -285,6 +285,8 @@ PRODUCT_DSN_KEYS = (
     "AGORA_DATASET_STORE_DSN",
     "AGORA_GOVERNANCE_STORE_DSN",
     "AGORA_RESEARCH_STORE_DSN",
+    # Paper fleet reconciler Loop 9 controller-record writer (controller-only; never given to worker subprocesses).
+    "RECONCILER_LOOP_CONTROLLER_DSN",
 )
 PRODUCT_SECRET_KEYS = (
     "PANTHEON_RUNTIME_MANAGER_TOKEN",
@@ -418,8 +420,15 @@ if not rb_images_map:
     raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images is required")
 if str(rb_images_map.get("operator_bff") or "").strip() != rb_bff_image:
     raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.operator_bff must equal backend_operator_bff_image")
+# Paper workers were added after earlier baselines: a baseline without them is valid (they are recorded absent and
+# never started from an invented image); one that carries them must carry digest-pinned refs.
+BASELINE_OPTIONAL_OWNERS = ("paper_fleet_reconciler", "paper_signal_producer")
+baseline_absent = []
 for key in required_owners:
     rb_val = str(rb_images_map.get(key) or "").strip()
+    if not rb_val and key in BASELINE_OPTIONAL_OWNERS:
+        baseline_absent.append(key)
+        continue
     if not rb_val:
         raise SystemExit(f"ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.{key} is required")
     if not DIGEST_RE.match(rb_val):
@@ -439,8 +448,15 @@ reg_host = images["operator_bff"].split("/", 1)[0] if "/" in images["operator_bf
 product_env, product_baseline_env, product_pull = [], [], []
 for key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
     product_env.append(f"PANTHEON_{key.upper()}_IMAGE={images[key]}")
+    if key in baseline_absent:
+        # Sentinel only satisfies compose interpolation; the owner is never started or pulled for the baseline.
+        product_baseline_env.append(f"PANTHEON_{key.upper()}_IMAGE=baseline-absent.invalid/product-owner@sha256:{'0' * 64}")
+        product_pull.append(images[key])
+        continue
     product_baseline_env.append(f"PANTHEON_{key.upper()}_IMAGE={rb_images_map[key]}")
     product_pull.extend((images[key], rb_images_map[key]))
+if baseline_absent:
+    product_baseline_env.append("STAGING_BASELINE_ABSENT_OWNERS=" + ",".join(baseline_absent))
 
 out = {
     "PRODUCT_COMPOSE_ENV_LINES": "\n".join(product_env),

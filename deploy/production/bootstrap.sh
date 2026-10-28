@@ -112,6 +112,8 @@ PRODUCT_DSN_KEYS = (
     "AGORA_DATASET_STORE_DSN",
     "AGORA_GOVERNANCE_STORE_DSN",
     "AGORA_RESEARCH_STORE_DSN",
+    # Paper fleet reconciler Loop 9 controller-record writer (controller-only; never given to worker subprocesses).
+    "RECONCILER_LOOP_CONTROLLER_DSN",
 )
 PRODUCT_SECRET_KEYS = (
     "PANTHEON_RUNTIME_MANAGER_TOKEN",
