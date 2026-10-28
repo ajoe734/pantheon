@@ -17,6 +17,7 @@ Local checks prove controller behavior only; they are never hosted drill evidenc
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,9 @@ REQUIRED_CONFIG = (
     "PROD_BFF_HOST",
     "PROD_FE_HOST",
     "PROD_IDP_ISSUER",
+    "PROD_PUBLIC_GCP_IDENTITY_API_KEY",
+    "PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID",
+    "PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN",
     "PROD_RPO_SECONDS",
     "PROD_RTO_SECONDS",
     "PROD_RETENTION_DAYS",
@@ -112,6 +116,8 @@ def check_staging_evidence(evidence: Any, manifest: dict[str, Any], manifest_sha
         raise PreflightError("staging evidence must be a JSON object")
     if evidence.get("status") != "staging_verified":
         raise PreflightError("staging evidence status must be 'staging_verified'")
+    if evidence.get("dry_run") is not False or evidence.get("observed_from_live_vm") is not True:
+        raise PreflightError("staging evidence must be a live (non-dry-run) observation")
     if evidence.get("release_id") != manifest["release_id"]:
         raise PreflightError("staging evidence release_id does not match manifest")
     summary = evidence.get("manifest")
@@ -134,6 +140,14 @@ def check_staging_evidence(evidence: Any, manifest: dict[str, Any], manifest_sha
     }
     if not isinstance(gates, dict) or not required <= gates.keys():
         raise PreflightError(f"staging evidence gates incomplete; need {sorted(required)}")
+    mig = gates["migration_and_compatibility"]
+    if (
+        not isinstance(mig, dict)
+        or mig.get("migration_verified") is not True
+        or mig.get("old_app_new_schema_compatible") is not True
+        or mig.get("migration_set_sha256") != manifest.get("migration_set_sha256")
+    ):
+        raise PreflightError("staging migration_and_compatibility evidence does not match manifest migration_set_sha256")
 
 
 def _environment_policy(env_policy: Any) -> tuple[set[str], bool]:
@@ -207,8 +221,13 @@ def check_baseline(manifest: dict[str, Any], *, bootstrap: bool, baseline_state:
             raise PreflightError(
                 "no retained production baseline; first release must explicitly declare bootstrap"
             )
-        if "rollback_baseline" in manifest:
-            raise PreflightError("bootstrap release must not invent a rollback_baseline")
+        # The staging-qualified manifest carries rollback_baseline as retained/tested rollback ARTIFACT
+        # metadata (staging requires it for promotion eligibility). It is not a production incumbent:
+        # incumbent posture comes only from genuine on-host baseline state, which is absent here, so
+        # bootstrap never treats this reference as a healthy or switchable rollback target.
+        rb = manifest.get("rollback_baseline")
+        if rb is not None and not isinstance(rb, dict):
+            raise PreflightError("manifest rollback_baseline must be an object when present")
         return "bootstrap"
     if bootstrap:
         raise PreflightError("bootstrap declared but a retained baseline exists")
@@ -294,6 +313,233 @@ def run_all(
     }
 
 
+# --- Production consumption of the Stage-owned migration contract -------------------------------
+# The product has no schema_migrations table. The migration set identity is the one Stage qualifies
+# (deploy/staging/pantheon-staging-collect-gates): sha256 over "<file sha256>  <name>\n" lines of the
+# versioned SQL files listed in migration-spec.json, sorted by name, recomputed from the bytes actually
+# applied. The live database is read back through the same information_schema catalog query Stage uses.
+
+
+def _staging_sanitize():
+    import staging_sanitize  # VM-side only; installed next to this script
+
+    return staging_sanitize
+
+
+# Same query Stage uses (pantheon-staging-collect-gates live_catalog_sql); stdout is the catalog JSON.
+LIVE_CATALOG_SQL = (
+    "SELECT COALESCE(json_object_agg(table_name, cols), '{}'::json)::text FROM ("
+    "SELECT table_schema || '.' || table_name AS table_name, json_object_agg(column_name, "
+    "json_build_object('type', data_type, 'nullable', (is_nullable = 'YES'), "
+    "'has_default', (column_default IS NOT NULL))) AS cols FROM information_schema.columns "
+    "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+    "AND table_schema NOT LIKE 'pg_toast%' AND table_schema NOT LIKE 'pg_temp%' "
+    "GROUP BY table_schema, table_name) s;"
+)
+REQUIRED_RELATIONS = ("public.telemetry_events", "trade_journey_projection.controller")
+_CREATE_TABLE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)", re.I
+)
+
+
+class MigrationError(PreflightError):
+    pass
+
+
+def load_verified(manifest_path: str, spec_dir: str) -> list[tuple[str, str]]:
+    """Return [(name, sql)] in applied order, after proving the set identity equals the manifest's."""
+    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    want = manifest.get("migration_set_sha256")
+    root = Path(spec_dir)
+    try:
+        spec = json.loads((root / "migration-spec.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise MigrationError(f"migration-spec.json unreadable in {root}: {exc}")
+    if spec.get("migration_set_sha256") != want:
+        raise MigrationError("migration-spec.json migration_set_sha256 != manifest")
+    files = spec.get("files")
+    if not isinstance(files, list) or not files:
+        raise MigrationError("migration-spec.json must list the versioned migration files")
+    out: list[tuple[str, str]] = []
+    lines: list[str] = []
+    for entry in sorted(files, key=lambda e: str(e.get("name") if isinstance(e, dict) else "")):
+        name = str(entry.get("name") or "") if isinstance(entry, dict) else ""
+        if not re.fullmatch(r"[0-9]{3}_[a-z0-9_]+\.sql", name):
+            raise MigrationError(f"invalid migration file name {name!r}")
+        path = root / "migrations" / name
+        if not path.is_file():
+            raise MigrationError(f"versioned migration file {path} is missing")
+        raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        if "sha256:" + digest != str(entry.get("sha256") or ""):
+            raise MigrationError(f"{name} digest sha256:{digest} != spec")
+        sql = raw.decode("utf-8")
+        if _staging_sanitize().DESTRUCTIVE_SQL_RE.search(sql):
+            raise MigrationError(f"destructive SQL forbidden in expand migration phase: {name}")
+        lines.append(f"{digest}  {name}\n")
+        out.append((name, sql))
+    observed = "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+    if observed != want:
+        raise MigrationError(f"recomputed migration set digest {observed} != manifest {want}")
+    return out
+
+
+# Current product schema contract owned by scripts/db_migrate.sh (the existing telemetry substrate initializer):
+# the exact columns the projector/ingest read (SELECT ingested_seq, ingested_at FROM public.telemetry_events ...).
+SUBSTRATE_COLUMNS: dict[str, dict[str, tuple[str, bool]]] = {  # column -> (information_schema data_type, has_default)
+    "public.telemetry_events": {
+        "event_id": ("text", False), "event_type": ("text", False), "created_at": ("timestamp with time zone", False),
+        "payload": ("jsonb", False), "ingested_seq": ("bigint", True), "ingested_at": ("timestamp with time zone", True),
+    },
+    "public.loop_controller_records": {
+        "loop_id": ("text", False), "tenant_id": ("text", False), "environment": ("text", False),
+        "controller_id": ("text", False), "controller_name": ("text", False), "deployment_sha": ("text", False),
+        "evidence_refs": ("jsonb", True), "truth_level": ("text", False), "payload": ("jsonb", True),
+        "updated_at": ("timestamp with time zone", True),
+    },
+}
+_SQL_TYPES = {
+    "text": "text", "bigint": "bigint", "int": "integer", "integer": "integer", "boolean": "boolean",
+    "jsonb": "jsonb", "timestamptz": "timestamp with time zone", "smallint": "smallint",
+}
+_NON_COLUMN = {"primary", "unique", "constraint", "foreign", "check", "like", "exclude"}
+_ADD_COLUMN = re.compile(
+    r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s+"
+    r"ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]+)([^;,]*)", re.I
+)
+_HAS_DEFAULT = re.compile(r"\bDEFAULT\b", re.I)
+
+
+def _qualify(rel: str) -> str:
+    return rel if "." in rel else f"public.{rel}"
+
+
+def _split_top_level(body: str) -> list[str]:
+    parts, depth, cur = [], 0, []
+    for ch in body:
+        depth += (ch == "(") - (ch == ")")
+        if ch == "," and depth == 0:
+            parts.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
+def expected_columns(migrations: list[tuple[str, str]]) -> dict[str, dict[str, str | None]]:
+    """relation -> {column: expected information_schema data_type or None (unknown type: presence only)}."""
+    return {rel: {c: t for c, (t, _) in cols.items()} for rel, cols in _parse_columns(migrations).items()}
+
+
+def expected_defaults(migrations: list[tuple[str, str]]) -> dict[str, set[str]]:
+    """relation -> columns the verified SQL declares with a DEFAULT (an existing table never regains one)."""
+    return {rel: {c for c, (_, d) in cols.items() if d} for rel, cols in _parse_columns(migrations).items()}
+
+
+def _parse_columns(migrations: list[tuple[str, str]]) -> dict[str, dict[str, tuple[str | None, bool]]]:
+    """relation -> {column: (expected data_type or None, declares DEFAULT)}.
+
+    Parsed from CREATE TABLE bodies and ALTER TABLE ... ADD COLUMN in the verified SQL (independent of the
+    relation-name regex); the substrate contract above is added explicitly."""
+    out: dict[str, dict[str, tuple[str | None, bool]]] = {
+        rel: dict(cols) for rel, cols in SUBSTRATE_COLUMNS.items()
+    }
+    for _, sql in migrations:
+        text = re.sub(r"--[^\n]*", "", sql)
+        for m in _CREATE_TABLE.finditer(text):
+            start = text.find("(", m.end())
+            if start < 0:
+                continue
+            depth, i = 0, start
+            while i < len(text):
+                depth += (text[i] == "(") - (text[i] == ")")
+                if depth == 0:
+                    break
+                i += 1
+            cols = out.setdefault(_qualify(m.group(1)), {})
+            for item in _split_top_level(text[start + 1:i]):
+                toks = item.split()
+                if not toks or toks[0].lower() in _NON_COLUMN:
+                    continue
+                cols[toks[0].strip('"').lower()] = (
+                    _SQL_TYPES.get(toks[1].lower()) if len(toks) > 1 else None, bool(_HAS_DEFAULT.search(item)))
+        for m in _ADD_COLUMN.finditer(text):
+            out.setdefault(_qualify(m.group(1)), {})[m.group(2).lower()] = (
+                _SQL_TYPES.get(m.group(3).lower()), bool(_HAS_DEFAULT.search(m.group(4))))
+    return out
+
+
+def check_catalog(catalog: object, migrations: list[tuple[str, str]]) -> None:
+    """Live information_schema catalog must satisfy the product schema/read contract, not just relation names."""
+    if not isinstance(catalog, dict) or not catalog:
+        raise MigrationError("production live catalog is empty: migrations not applied")
+    expected = set(REQUIRED_RELATIONS)
+    for _, sql in migrations:
+        for m in _CREATE_TABLE.finditer(sql):
+            expected.add(_qualify(m.group(1)))
+    missing = sorted(r for r in expected if r not in catalog)
+    if missing:
+        raise MigrationError(f"production live catalog lacks relations from the verified SQL: {missing}")
+    problems: list[str] = []
+    defaults = expected_defaults(migrations)
+    for rel, cols in sorted(expected_columns(migrations).items()):
+        live = catalog.get(rel)
+        if not isinstance(live, dict):
+            problems.append(f"{rel}: relation missing")
+            continue
+        for col, want_type in sorted(cols.items()):
+            obs = live.get(col)
+            if not isinstance(obs, dict):
+                problems.append(f"{rel}.{col}: column missing")
+            elif want_type and obs.get("type") != want_type:
+                problems.append(f"{rel}.{col}: type {obs.get('type')!r} != {want_type!r}")
+        for col in sorted(defaults.get(rel, ())):
+            obs = live.get(col)
+            if isinstance(obs, dict) and obs.get("has_default") is not True:
+                problems.append(f"{rel}.{col}: default missing")
+    if problems:
+        raise MigrationError("production live catalog violates the product schema contract: " + "; ".join(problems))
+
+
+def render_material(manifest_path: str, src_dir: str, out_dir: str) -> None:
+    """Deterministically build migration-spec.json + migrations/*.sql from the checked-out versioned SQL with the
+    Stage recipe, then prove the set equals the manifest (fails closed if the checkout is not the qualified set)."""
+    src, out = Path(src_dir), Path(out_dir)
+    files = []
+    (out / "migrations").mkdir(parents=True, exist_ok=True)
+    for path in sorted(src.glob("*.sql")):
+        raw = path.read_bytes()
+        (out / "migrations" / path.name).write_bytes(raw)
+        files.append({"name": path.name, "sha256": "sha256:" + hashlib.sha256(raw).hexdigest()})
+    lines = "".join(f"{f['sha256'][7:]}  {f['name']}\n" for f in files)
+    spec = {
+        "phase": "expand", "files": files,
+        "migration_set_sha256": "sha256:" + hashlib.sha256(lines.encode("utf-8")).hexdigest(),
+    }
+    (out / "migration-spec.json").write_text(json.dumps(spec, indent=2, sort_keys=True), encoding="utf-8")
+    load_verified(manifest_path, out_dir)
+
+
+def _migration_cli(cmd: str, manifest: str, spec_dir: str, src_dir: str = "") -> int:
+    try:
+        if cmd == "render":
+            render_material(manifest, src_dir, spec_dir)
+            return 0
+        migrations = load_verified(manifest, spec_dir)
+        if cmd == "catalog":
+            check_catalog(json.loads(sys.stdin.read() or "null"), migrations)
+        elif cmd == "names":
+            print("\n".join(n for n, _ in migrations))
+        elif cmd == "catalog-sql":
+            print(LIVE_CATALOG_SQL)
+        elif cmd != "verify":
+            raise MigrationError(f"unknown migration command {cmd!r}")
+    except (PreflightError, ValueError) as exc:
+        print(str(exc))
+        return 1
+    return 0
+
+
 def _cli() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -309,7 +555,14 @@ def _cli() -> int:
     a.add_argument("--bootstrap", action="store_true")
     a.add_argument("--skip-baseline", action="store_true", help="runner-side: baseline is checked on the control VM")
     a.add_argument("--skip-approval", action="store_true", help="pre-approval validation only")
+    mg = sub.add_parser("migration", help="verify Stage-qualified versioned SQL / live catalog (VM-side)")
+    mg.add_argument("action", choices=["verify", "names", "catalog", "catalog-sql", "render"])
+    mg.add_argument("manifest")
+    mg.add_argument("spec_dir", help="material dir (render: output dir)")
+    mg.add_argument("--src", default="", help="render: directory of versioned *.sql")
     args = p.parse_args()
+    if args.command == "migration":
+        return _migration_cli(args.action, args.manifest, args.spec_dir, args.src)
     try:
         if args.command == "config":
             check_config(os.environ)

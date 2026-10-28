@@ -21,7 +21,7 @@
   "rework_fixes_verified": [
     {
       "id": "first_release_old_new_compat",
-      "summary": "Explicit PROD_BOOTSTRAP_FIRST_RELEASE=true passes gate old_new_compat when no state/baseline.json exists and candidate port 8002 + postgres + schema label are ready, without requiring a nonexistent old baseline on port 8001; fails closed if state/baseline.json already exists; retains concurrent old+new readiness check for two-release paths."
+      "summary": "Explicit PROD_BOOTSTRAP_FIRST_RELEASE=true passes gate old_new_compat when no state/baseline.json exists and candidate port 8002 is live and the verified versioned SQL and live catalog match the Stage migration contract, without requiring a nonexistent old baseline on port 8001; fails closed if state/baseline.json already exists; retains concurrent old+new readiness check for two-release paths."
     },
     {
       "id": "rollback_baseline_closure_and_singleton_owner",
@@ -38,12 +38,36 @@
     {
       "id": "host_bootstrap_and_digest_pinned_prepull_wiring",
       "summary": "production-release.yml creates /tmp/pantheon-release-<id> over IAP SSH before SCP, installs and invokes deploy/production/bootstrap.sh and prod_ops.sh prepull_images on the control VM before prod_atomic_switch.sh; bootstrap.sh and prod_ops.sh support non-root OS Login (run_priv), validate runtime binaries and secret content, and pre-acquire only @sha256:... digest-pinned images."
+    },
+    {
+      "id": "staging_live_evidence_contract",
+      "summary": "prod_preflight.check_staging_evidence now additionally requires dry_run=false and observed_from_live_vm=true, matching the merged ENV-STG-EPHEMERAL-IMPL-001 staging_verify.sh output, so dry_run_validated or unobserved staging evidence cannot admit production."
+    },
+    {
+      "id": "original_scope_wiring_and_public_contract",
+      "summary": "Compose now uses accepted native ports (BFF 8001, runtime 8080, governance 8082, deployment 8095), the existing projector run command with GIT_SHA and isolated DSNs; bootstrap and atomic switch render only the accepted pantheon.fe.public-runtime-config.v1 fields (configRef, gcpIdentity, truthful optional configSha256); prod_ops verify_runtime_config consumes configRef/schema/identity/sha; production-release.yml maps and forwards PROD_PUBLIC_GCP_IDENTITY_* and preflight requires them. Local fixtures only; no hosted evidence."
+    },
+    {
+      "id": "schema_compat_gate_no_image_labels",
+      "summary": "prod_ops schema/old_new_compat gates and prod_preflight no longer require org.pantheon.migration_set_sha256/compatibility_manifest_sha256 image labels (retained accepted BFF ccb9 has none). They bind manifest migration_set_sha256/compatibility_manifest_sha256 and digest-pinned BFF image to live staging_verified evidence (migration_verified, old_app_new_schema_compatible, matching hash), the running candidate container image, and the Stage migration contract (verified versioned SQL set digest plus live information_schema catalog; gates never apply migrations). Local controller tests only; not hosted evidence."
+    },
+    {
+      "id": "schema_gate_staging_contract_alignment",
+      "summary": "Phantom schema_migrations readback removed. prod_preflight.py (migration) re-hashes the qualified migration-spec.json + versioned SQL with Stage's recipe (must equal manifest migration_set_sha256, expand-only) and requires the live information_schema catalog (Stage's query) to contain every relation the SQL creates plus the Stage-required relations; prod_ops.sh migrate applies the same verified bytes out of band. Tests use the unmodified Stage manifest builder with the real versioned SQL and a fake catalog; no schema_migrations table exists anywhere. Local only; not hosted drill evidence."
+    },
+    {
+      "id": "first_release_schema_initialization_and_column_contract",
+      "summary": "Workflow now renders migration-spec.json + versioned SQL (Stage recipe, proven equal to manifest migration_set_sha256), ships them with scripts/db_migrate.sh to PROD_MIGRATION_DIR and runs prod_ops.sh migrate before the switch: product base-schema initializer (db_migrate.sh --print-sql, creates public.telemetry_events) first, then the qualified expand SQL, then the gate. Catalog check is column/type/default level (telemetry_events ingested_seq/ingested_at etc. plus SQL-declared columns); id-only and wrong-type catalogs are rejected with independent regressions. No manifests/SQL/hashes rewritten. Local controller tests only (no PostgreSQL binary available in this worker); real-PG replay of the reviewer reproducers is left to the reviewer/hosted drill; not hosted evidence."
+    },
+    {
+      "id": "durable_application_stores",
+      "summary": "Compose wires Stage's selected native store paths for runtime-manager, governance, deployment, lifecycle-projector and both BFF colors onto the retained data disk ($PROD_DATA_MOUNT/{runtime,governance,bff}, created by bootstrap.sh) with identical shared mounts per color; static tests assert paths/mounts/env parity. Runbook documents backup (pg_dump + owner-store tar) and restore readability drill. Local only; hosted backup/restore drill remains external_wait."
     }
   ],
   "validation": {
     "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
     "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
-    "result": "73 tests OK (49 in test_production_release, 24 in test_staging_release)",
+    "result": "56 tests OK in tests.deployment.test_production_release (script behavior only; not hosted drill evidence)",
     "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
   },
   "hosted_acceptance": {

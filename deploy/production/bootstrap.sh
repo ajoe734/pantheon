@@ -66,7 +66,7 @@ for f in "$PROD_SECRETS_ENV_FILE" "$PROD_POSTGRES_PASSWORD_FILE"; do
   [[ "$mode" =~ ^(400|600)$ ]] || fail SECRET_MODE "${f} must be mode 0400/0600"
 done
 
-run_priv python3 - "$PROD_SECRETS_ENV_FILE" "$PROD_POSTGRES_PASSWORD_FILE" "${PROD_REQUIRE_FULL_SECRET_KEYS:-false}" <<'PY' \
+run_priv python3 - "$PROD_SECRETS_ENV_FILE" "$PROD_POSTGRES_PASSWORD_FILE" "${PROD_REQUIRE_FULL_SECRET_KEYS:-false}" "${PROD_POSTGRES_DB:-pantheon_production}" <<'PY' \
   || fail SECRET_CONTENT_INVALID "production secrets failed safety or required-key validation"
 import sys
 from pathlib import Path
@@ -103,9 +103,21 @@ for unsafe in (
         raise SystemExit(f"unsafe override {unsafe}={kv.get(unsafe)}")
 
 if require_full:
-    for req in ("PANTHEON_BFF_JWT_SECRET", "PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_DATABASE_URL"):
+    for req in ("PANTHEON_BFF_JWT_SECRET", "PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_DATABASE_URL",
+                "TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN"):
         if not kv.get(req):
             raise SystemExit(f"missing required secret {req}")
+    from urllib.parse import parse_qs
+    pg_db = sys.argv[4]
+    for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN"):
+        dsn_base, _, dsn_query = kv[dsn_key].partition("?")
+        if dsn_query:
+            bad = {"dbname", "host", "hostaddr", "port", "user", "service", "options"} & {
+                k.lower() for k in parse_qs(dsn_query, keep_blank_values=True)}
+            if bad:
+                raise SystemExit(f"{dsn_key} must not carry routing override parameters: {sorted(bad)}")
+        if not kv[dsn_key].startswith(("postgresql://", "postgres://")) or dsn_base.rstrip("/").rsplit("/", 1)[-1] != pg_db:
+            raise SystemExit(f"{dsn_key} must be a postgres DSN for isolated production db {pg_db}")
 PY
 
 [[ "$PROD_FE_HOST" != "$PROD_BFF_HOST" ]] || fail HOST_COLLISION "FE and BFF hosts must differ"
@@ -115,6 +127,7 @@ umask 077
 run_priv mkdir -p \
   "${PROD_ROOT}"/{bin,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config} \
   "${PROD_DATA_MOUNT}/postgres" "${PROD_DATA_MOUNT}/nats" \
+  "${PROD_DATA_MOUNT}/bff" "${PROD_DATA_MOUNT}/runtime" "${PROD_DATA_MOUNT}/governance" \
   "$(dirname "$PROD_COMPOSE_ENV_FILE")" \
   || fail MKDIR "cannot create tree"
 
@@ -138,25 +151,41 @@ fi
 # Do not overwrite an active release's runtime-config.js if fe/current already exists.
 if ! run_priv test -s "${PROD_ROOT}/config/runtime-config.js" || ! run_priv test -L "${PROD_ROOT}/fe/current"; then
   tmp_rc="$(mktemp)"
-  python3 - "$PROD_BFF_HOST" "$PROD_IDP_ISSUER" > "$tmp_rc" <<'PY' || { rm -f "$tmp_rc"; fail RENDER "runtime-config render failed"; }
-import json, sys
+  # Accepted FE `pantheon.fe.public-runtime-config.v1` fields only. No release is active yet, so the
+  # placeholder configRef is explicit; the first controller switch re-renders it with the release id.
+  python3 - "pending-first-release" "https://${PROD_BFF_HOST}" "$tmp_rc" <<'PY' || { rm -f "$tmp_rc"; fail RENDER "runtime-config render failed"; }
+import hashlib, json, os, sys
+config_ref, bff_base_url, out_path = sys.argv[1:4]
+
+def need(name):
+    val = os.environ.get(name, "").strip()
+    if not val:
+        print(json.dumps({"status": "error", "error_code": "PUBLIC_IDENTITY_CONFIG_MISSING",
+                          "message": f"{name} is required (public production Identity config; no fallback)"}), file=sys.stderr)
+        sys.exit(1)
+    return val
+
+api_key = need("PROD_PUBLIC_GCP_IDENTITY_API_KEY")
+project_id = need("PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID")
+auth_domain = need("PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN")
 cfg = {
+    "schemaVersion": "pantheon.fe.public-runtime-config.v1",
     "environment": "production",
-    "release_id": None,
-    "bffBaseUrl": f"https://{sys.argv[1]}",
-    "oidcIssuer": sys.argv[2],
-    "vite_bff_mode": "live",
-    "vite_bff_fallback": "strict",
-    "provider_enabled": False,
-    "live_broker_enabled": False,
-    "real_writes_enabled": False,
-    "control_vm_broker_credentials_present": False,
+    "configRef": config_ref,
+    "bffBaseUrl": bff_base_url,
+    "gcpIdentity": {
+        "apiKey": api_key,
+        "projectId": project_id,
+        "authDomain": auth_domain,
+        "issuer": os.environ.get("PROD_PUBLIC_GCP_IDENTITY_ISSUER", "").strip() or f"https://securetoken.google.com/{project_id}",
+        "audience": os.environ.get("PROD_PUBLIC_GCP_IDENTITY_AUDIENCE", "").strip() or project_id,
+    },
 }
-body = (
-    "window.__PANTHEON_DEPLOYMENT_CONFIG__ = Object.freeze(" + json.dumps(cfg, sort_keys=True) + ");\n"
-    "window.__PANTHEON_RUNTIME_CONFIG__ = window.__PANTHEON_DEPLOYMENT_CONFIG__;\n"
-)
-sys.stdout.write(body)
+canonical = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
+cfg["configSha256"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+with open(out_path, "w", encoding="utf-8") as fh:
+    fh.write("// Pantheon Production External Runtime Config (served with Cache-Control: no-store)\n")
+    fh.write("window.__PANTHEON_DEPLOYMENT_CONFIG__ = " + json.dumps(cfg, sort_keys=True) + ";\n")
 PY
   chmod 0644 "$tmp_rc"
   run_priv mv -f "$tmp_rc" "${PROD_ROOT}/config/runtime-config.js" || fail RENDER "cannot install runtime-config.js"
@@ -183,6 +212,16 @@ EOF
   chmod 0600 "$tmp_ce"
   run_priv mv -f "$tmp_ce" "$PROD_COMPOSE_ENV_FILE" || fail COMPOSE_ENV "cannot write compose.env"
 fi
+
+# Resolve the EFFECTIVE stateful refs exactly as compose will (shell env wins over --env-file), including an
+# existing compose.env, so the pulled refs always equal the refs compose.up needs (pull_policy: never).
+for _v in PANTHEON_POSTGRES_IMAGE PANTHEON_NATS_IMAGE; do
+  if [[ -z "${!_v:-}" ]]; then
+    _val="$(run_priv sed -n "s/^${_v}=//p" "$PROD_COMPOSE_ENV_FILE" | tail -n1)"
+    [[ -n "$_val" ]] || fail COMPOSE_ENV "${_v} unset and absent from ${PROD_COMPOSE_ENV_FILE}"
+    export "${_v}=${_val}"
+  fi
+done
 
 # Pre-acquire only immutable digest-pinned (@sha256:...) images (never build, never pull mutable tags).
 if [[ "${PROD_PREPULL_IMAGES:-true}" == "true" ]]; then
@@ -247,6 +286,39 @@ PY
 fi
 
 if [[ "${PROD_BOOTSTRAP_SKIP_STATEFUL:-false}" != "true" ]]; then
+  # Compose interpolates every service (profiles do not skip required-variable checks), so the exact
+  # manifest-owned release/image values must be present before the first stateful invocation.
+  [[ -n "${RELEASE_MANIFEST_PATH:-}" && -f "${RELEASE_MANIFEST_PATH}" ]] \
+    || fail MANIFEST_REQUIRED "RELEASE_MANIFEST_PATH is required to interpolate the compose project"
+  RELEASE_VARS="$(python3 - "$RELEASE_MANIFEST_PATH" <<'PY'
+import json, re, shlex, sys
+DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+m = json.load(open(sys.argv[1], encoding="utf-8"))
+imgs = m.get("backend", {}).get("images", {})
+for k in ("operator_bff", "runtime_manager", "governance", "deployment", "lifecycle_projector"):
+    if not DIGEST_RE.match(str(imgs.get(k) or "").strip()):
+        raise SystemExit(1)
+commit = str(m.get("backend", {}).get("commit") or "").strip()
+rel_id = str(m.get("release_id") or "").strip()
+if not commit or not rel_id:
+    raise SystemExit(1)
+bff = imgs["operator_bff"]
+out = {
+    "PANTHEON_RELEASE_ID": rel_id,
+    "PANTHEON_BACKEND_COMMIT": commit,
+    "PANTHEON_CONFIG_SCHEMA_VERSION": str(m.get("config_schema_version") or "v1"),
+    "PANTHEON_OPERATOR_BFF_IMAGE": bff,
+    "PANTHEON_OPERATOR_BFF_DIGEST": "sha256:" + bff.split("@sha256:", 1)[1],
+    "PANTHEON_RUNTIME_MANAGER_IMAGE": imgs["runtime_manager"],
+    "PANTHEON_GOVERNANCE_IMAGE": imgs["governance"],
+    "PANTHEON_DEPLOYMENT_IMAGE": imgs["deployment"],
+    "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE": imgs["lifecycle_projector"],
+}
+for k, v in out.items():
+    print(f"export {k}={shlex.quote(v)}")
+PY
+  )" || fail MANIFEST_RELEASE_VARS "manifest lacks release_id, backend.commit or digest-pinned owner images"
+  eval "$RELEASE_VARS"
   run_priv "$DOCKER" compose -p pantheon-production -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" \
     --env-file "$PROD_COMPOSE_ENV_FILE" --profile stateful up -d --no-build \
     || fail STATEFUL_START "stateful services failed to start"
