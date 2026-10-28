@@ -212,13 +212,13 @@ CLOUD_INSTANCES_JSON="[]"
 CLOUD_DISKS_JSON="[]"
 CLOUD_ADDRESSES_JSON="[]"
 if [[ "${DRY_RUN}" != "true" ]]; then
-  if ! CLOUD_INSTANCES_JSON="$("${GCLOUD_BIN}" compute instances list --project="${STAGING_GCP_PROJECT_ID}" --zones="${STAGING_GCP_ZONE}" --format=json 2>&1)"; then
+  if ! CLOUD_INSTANCES_JSON="$("${GCLOUD_BIN}" compute instances list --project="${STAGING_GCP_PROJECT_ID}" --zones="${STAGING_GCP_ZONE}" --format=json)"; then
     die_json "CLOUD_INVENTORY_QUERY_FAILED" "Failed to query GCP instances in ${STAGING_GCP_PROJECT_ID}/${STAGING_GCP_ZONE}"
   fi
-  if ! CLOUD_DISKS_JSON="$("${GCLOUD_BIN}" compute disks list --project="${STAGING_GCP_PROJECT_ID}" --zones="${STAGING_GCP_ZONE}" --format=json 2>&1)"; then
+  if ! CLOUD_DISKS_JSON="$("${GCLOUD_BIN}" compute disks list --project="${STAGING_GCP_PROJECT_ID}" --zones="${STAGING_GCP_ZONE}" --format=json)"; then
     die_json "CLOUD_INVENTORY_QUERY_FAILED" "Failed to query GCP disks in ${STAGING_GCP_PROJECT_ID}/${STAGING_GCP_ZONE}"
   fi
-  if ! CLOUD_ADDRESSES_JSON="$("${GCLOUD_BIN}" compute addresses list --project="${STAGING_GCP_PROJECT_ID}" --regions="${STAGING_GCP_REGION}" --format=json 2>&1)"; then
+  if ! CLOUD_ADDRESSES_JSON="$("${GCLOUD_BIN}" compute addresses list --project="${STAGING_GCP_PROJECT_ID}" --regions="${STAGING_GCP_REGION}" --format=json)"; then
     die_json "CLOUD_INVENTORY_QUERY_FAILED" "Failed to query GCP addresses in ${STAGING_GCP_PROJECT_ID}/${STAGING_GCP_REGION}"
   fi
 fi
