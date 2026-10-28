@@ -1617,6 +1617,17 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         with self.assertRaises(release_manifest.ReleaseManifestError):
             release_manifest.validate_manifest(manifest)
 
+    def test_rollback_baseline_accepts_observed_incumbent_paper_digests(self):
+        from scripts.deploy import release_manifest
+        manifest = _sample_manifest(state="staging_verified")
+        baseline = manifest["rollback_baseline"]
+        imgs = dict(baseline["backend_images"])
+        imgs["training_session_svc"] = "r/t@sha256:" + "a" * 64
+        imgs["paper_fleet_reconciler"] = "r/pfr@sha256:" + "b" * 64
+        imgs["paper_signal_producer"] = "r/psp@sha256:" + "c" * 64
+        baseline["backend_images"] = imgs
+        release_manifest.validate_manifest(manifest)
+
     def test_real_readiness_contract_first_release_and_changed_backend_sha_handoff(self):
         # FAKE_REAL_READYZ models main.py::_lifecycle_projector_dependency: readyz is 200 only when the
         # singleton controller deployment_sha == the BFF's BFF_COMMIT. No unconditional 200s.

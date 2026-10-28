@@ -358,7 +358,8 @@ def _validate_rollback_baseline(baseline: Any, current_release_id: str) -> None:
                 f"rollback_baseline.backend_images[{svc_name!r}] must be an immutable digest reference "
                 f"('<repo>@sha256:<64-hex>'), got {img_ref!r}"
             )
-    _require_paper_owner_image_reuse(b_images, "rollback_baseline.backend_images")
+    # The rollback baseline records the actually observed incumbent: Paper owners deployed before the
+    # reuse rule may carry their own immutable digests. Candidate backend.images still enforces reuse.
     if b_images["operator_bff"] != bff_img:
         raise ReleaseManifestError(
             "rollback_baseline.backend_images['operator_bff'] must match rollback_baseline.backend_operator_bff_image"
