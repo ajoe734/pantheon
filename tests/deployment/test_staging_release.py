@@ -2884,6 +2884,19 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         for name in ("API_KEY", "PROJECT_ID", "AUTH_DOMAIN"):
             self.assertIn(f"STAGING_PUBLIC_GCP_IDENTITY_{name}", gate)
 
+    def test_ephemeral_workflow_forwards_bootstrap_inputs_to_host(self) -> None:
+        raw = EPHEMERAL_WORKFLOW.read_text(encoding="utf-8")
+        ops = (REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh").read_text(encoding="utf-8")
+        for var in (
+            "STAGING_SECRETS_GSM_NAME",
+            "STAGING_POSTGRES_PASSWORD_GSM_NAME",
+            "STAGING_IDP_ISSUER",
+            "STAGING_POSTGRES_IMAGE",
+            "STAGING_NATS_IMAGE",
+        ):
+            self.assertIn(f"{var}: ${{{{ vars.{var} || '' }}}}", raw)
+            self.assertIn(f'"{var}"', ops)
+
     def test_workflows_and_templates_parse_and_pass_actionlint(self) -> None:
         disallowed_job_env_ctx = re.compile(r"\$\{\{\s*(?:runner|steps|job)\.")
         for wf_path in (EPHEMERAL_WORKFLOW, ORPHAN_WORKFLOW):
