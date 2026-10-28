@@ -39,6 +39,14 @@ on:
         required: false
         default: "true"
         type: string
+      hosted_qa_window_seconds:
+        description: "Optional bounded hold after successful live verify and before destroy (0 or 300)"
+        required: false
+        default: "0"
+        type: choice
+        options:
+          - "0"
+          - "300"
 
 permissions:
   contents: read
@@ -153,6 +161,11 @@ jobs:
           STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
         run: |
           ./scripts/deploy/staging_verify.sh
+
+      - name: Stage 3b - Bounded hosted QA window (optional, before always-destroy)
+        if: ${{ success() && (inputs.dry_run || 'true') != 'true' && inputs.hosted_qa_window_seconds == '300' }}
+        timeout-minutes: 6
+        run: sleep 300
 
       - name: Stage 4 & 5 - Collect bounded evidence and destroy owned staging resources
         id: destroy
