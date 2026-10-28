@@ -337,7 +337,15 @@ if tool == "docker":
         if fmt == "{{.Config.Image}}":
             print(cinfo["image"])
         elif "State.Running" in fmt:
-            print("true" if cinfo.get("running", True) else "false")
+            running = "true" if cinfo.get("running", True) else "false"
+            mode = os.environ.get("FAKE_OWNER_HEALTH", "")
+            health = ""
+            if mode:
+                counter = vm_state_file.with_name("health-" + cid + ".count")
+                n = int(counter.read_text()) if counter.exists() else 0
+                counter.write_text(str(n + 1))
+                health = "unhealthy" if mode == "unhealthy" else ("healthy" if n >= 2 else "starting")
+            print(running + (" " + health if health else ""))
         elif "Config.Env" in fmt:
             for k, v in sorted(cinfo.get("env", {}).items()):
                 print(f"{k}={v}")
@@ -2183,6 +2191,28 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         ver = self._provision_and_verify()
         self.assertEqual(ver.returncode, 0, ver.stderr)
         self.assertNotIn("DOCKER_INSPECT_ENV_FAILED", ver.stderr)
+
+    def test_collector_waits_for_owner_health_starting_to_healthy(self) -> None:
+        ver = self._provision_and_verify(FAKE_OWNER_HEALTH="starting_then_healthy", STAGING_READY_INTERVAL="0")
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+
+    def test_collector_rejects_persistently_unhealthy_owner(self) -> None:
+        ver = self._provision_and_verify(
+            FAKE_OWNER_HEALTH="unhealthy", STAGING_READY_INTERVAL="0.05", STAGING_OWNER_READY_TIMEOUT="0.3"
+        )
+        self.assertNotEqual(ver.returncode, 0)
+        self.assertIn("PRODUCT_OWNER_UNSERVED", ver.stderr)
+
+    def test_bff_and_worker_share_durable_agora_stores(self) -> None:
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))["services"]
+        bff = compose["operator-bff"]["environment"]
+        worker = compose["agora-interaction-worker"]["environment"]
+        for kind in ("WORKSHOP", "DATASET", "GOVERNANCE", "RESEARCH"):
+            for suffix in ("BACKEND", "SCHEMA"):
+                key = f"AGORA_{kind}_STORE_{suffix}"
+                self.assertIn(key, bff, key)
+                self.assertEqual(bff[key], worker[key], key)
+            self.assertEqual(bff[f"AGORA_{kind}_STORE_BACKEND"], "postgres")
 
     def test_collector_rejects_corrupt_runtime_owner_state(self) -> None:
         subprocess.run(

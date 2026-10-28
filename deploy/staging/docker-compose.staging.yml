@@ -188,6 +188,15 @@ services:
       PANTHEON_BFF_CORS_ORIGINS: ${STAGING_BFF_CORS_ORIGINS:?staging FE origin required}
       PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: postgres
       LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
+      # Shared durable Agora stores: must match agora-interaction-worker so requests/readbacks do not diverge.
+      AGORA_WORKSHOP_STORE_BACKEND: postgres
+      AGORA_WORKSHOP_STORE_SCHEMA: agora
+      AGORA_DATASET_STORE_BACKEND: postgres
+      AGORA_DATASET_STORE_SCHEMA: agora
+      AGORA_GOVERNANCE_STORE_BACKEND: postgres
+      AGORA_GOVERNANCE_STORE_SCHEMA: agora
+      AGORA_RESEARCH_STORE_BACKEND: postgres
+      AGORA_RESEARCH_STORE_SCHEMA: agora_research
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8080
       PANTHEON_GOVERNANCE_API_URL: http://governance:8082
       PANTHEON_GOVERNANCE_SERVICE_URL: http://governance:8082

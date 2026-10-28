@@ -429,7 +429,18 @@ def main() -> int:
                 bad.append(svc)
         return bad
 
-    unserved = _unserved_product_owners()
+    def _wait_product_owners() -> list[str]:
+        # Bounded retry: Docker reports health=starting right after `up -d --no-build`; persistent
+        # unhealthy or timeout still fails.
+        deadline = time.monotonic() + float(os.environ.get("STAGING_OWNER_READY_TIMEOUT", "180"))
+        interval = float(os.environ.get("STAGING_READY_INTERVAL", "3"))
+        while True:
+            bad = _unserved_product_owners()
+            if not bad or time.monotonic() >= deadline:
+                return bad
+            time.sleep(interval)
+
+    unserved = _wait_product_owners()
     if unserved:
         _fail("PRODUCT_OWNER_UNSERVED", f"Product owners not running/healthy: {', '.join(unserved)}")
 
@@ -1090,7 +1101,7 @@ def main() -> int:
     )
     if _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") != 200:
         _fail("RESTORE_CANDIDATE_UNHEALTHY", "Candidate BFF failed /bff/readyz after rollback rehearsal")
-    unserved = _unserved_product_owners()
+    unserved = _wait_product_owners()
     if unserved:
         _fail("RESTORE_CANDIDATE_UNHEALTHY", f"Product owners not running/healthy after rollback rehearsal: {', '.join(unserved)}")
 
