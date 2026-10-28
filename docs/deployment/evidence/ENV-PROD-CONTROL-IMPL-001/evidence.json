@@ -66,6 +66,11 @@
     {
       "id": "product_owner_packaging_extension",
       "summary": "Same-task source extension (fresh task head, new PR; merged PR6829 untouched). Consumes merged ENV-STG-EPHEMERAL-IMPL-001 packaging contract (staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS): production compose packages the 16 existing product owners plus the Agora request worker from immutable manifest backend.images with native Postgres stores, per-owner stores under $PROD_DATA_MOUNT/product, no published ports, safe-off flags, BFF owner-route URLs and Agora store env. bootstrap.sh requires PROD_TENANT_ID and all product DSN/service secrets (rejecting Dev defaults) and pre-pulls the full pinned closure; prod_ops.sh requires every owner digest, acquires with --no-recreate, activates the worker as a singleton with the lifecycle projector, verifies exact running digests, and rolls product owners back to exact retained baseline digests (removing them when the baseline predates them, failing closed on a partial baseline, never inventing a digest). prod_preflight requires PROD_TENANT_ID. Local fake-docker tests only; no provisioning, deployment, secret or business-data access; not hosted evidence."
+    },
+    {
+      "id": "baseline_json_rollback_and_paper_owner_packaging",
+      "summary": "prod_atomic_switch.sh journals prior state/baseline.json (prev_baseline.json); prod_rollback.sh restores it after a post-success manual rollback and removes any baseline.json on a bootstrap abort (honest no-baseline safe 503, exit 4). Existing paper-fleet-reconciler and paper-signal-producer singleton owners plus the existing Redis signal-store are packaged in Stage and Prod compose/ops/bootstrap, reusing the training_session_svc image digest (enforced by release_manifest.py); drained/resumed with the lifecycle projector, exactly one each. Local controller tests only; no hosted qualification or release manifest is claimed.",
+      "pr": 6844
     }
   ],
   "validation": {
@@ -86,5 +91,20 @@
       "two production-shaped deploy/rollback drills (<120s rollback)",
       "30-minute observation window"
     ]
+  },
+  "final_head_verification": {
+    "scope": "rework of review REJECT on 3db9f47f; full test_production_release (81 OK, 118.9s) plus focused Stage tests",
+    "passed": [
+      "test_production_release (81 tests OK) incl. test_pre_paper_baseline_restores_retained_owners_and_removes_new_paper_workers, test_bff_reads_paper_reconciler_and_producer_health_in_both_environments, test_paper_reconciler_requires_controller_dsn_and_exact_release_sha",
+      "test_staging_release Stage Release/Sanitize/Workflow classes (16 pass; 1 env error: flask missing, not a pass)",
+      "StagingControllerLifecycleTests: product_owner_inputs_fail_closed, dsn_query_routing_override_rejected, bff_and_worker_share_durable_agora_stores, bare_debian_bootstrap_secrets_and_real_collector_negative_gates, two_consecutive_simulated_releases"
+    ],
+    "delta": "pre-Paper baseline restores retained owners and removes absent paper workers (Prod prod_ops.sh + Stage bootstrap baseline env); BFF gets PANTHEON_PAPER_FLEET_RECONCILER_URL and read-only /data/health in Prod blue/green and Stage; reconciler binds PANTHEON_DEPLOYMENT_SHA/GIT_SHA to PANTHEON_BACKEND_COMMIT; RECONCILER_LOOP_CONTROLLER_DSN required in both bootstraps; hosted acceptance remains external_wait",
+    "review_rework_bb9670ba3": {
+      "fix_commit": "2aa9b1647bfb99ef0122e230e8e04937ea45b1cd",
+      "p1": "Stage collector/sanitize carry baseline-absent Paper owners through validation, drain, health and exact-pair rollback readback; e2e test_pre_paper_baseline_rolls_back_without_inventing_absent_workers",
+      "p2": "Prod bootstrap resolves/validates/pulls effective PANTHEON_SIGNAL_STORE_IMAGE from shell or compose.env; test_bootstrap_pulls_effective_signal_store_image_from_existing_compose_env",
+      "validation": "test_production_release 82 OK; StagingControllerLifecycleTests 30/30 OK run serially per shard (parallel shards contend and fail spuriously); Manifest/Workflow classes OK; sanitize 8/9 with 1 env error (flask missing, not a pass); bash -n and git diff --check clean"
+    }
   }
 }

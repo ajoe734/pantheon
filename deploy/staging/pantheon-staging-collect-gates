@@ -410,11 +410,13 @@ def main() -> int:
     if not bff_healthy:
         _fail("BFF_UNHEALTHY", f"/bff/readyz reported unhealthy: {readyz}")
 
-    def _unserved_product_owners() -> list[str]:
+    def _unserved_product_owners(skip: frozenset[str] = frozenset()) -> list[str]:
         # Product route owners must be running (and healthy where a healthcheck exists), not just
         # the five /bff/readyz owners.
         bad: list[str] = []
         for key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
+            if key in skip:
+                continue
             svc = key.replace("_", "-")
             ids = _run(compose_cmd("ps", "-q", svc), error_code="PRODUCT_OWNER_PS_FAILED").stdout.split()
             state = (
@@ -429,13 +431,13 @@ def main() -> int:
                 bad.append(svc)
         return bad
 
-    def _wait_product_owners() -> list[str]:
+    def _wait_product_owners(skip: frozenset[str] = frozenset()) -> list[str]:
         # Bounded retry: Docker reports health=starting right after `up -d --no-build`; persistent
         # unhealthy or timeout still fails.
         deadline = time.monotonic() + float(os.environ.get("STAGING_OWNER_READY_TIMEOUT", "180"))
         interval = float(os.environ.get("STAGING_READY_INTERVAL", "3"))
         while True:
-            bad = _unserved_product_owners()
+            bad = _unserved_product_owners(skip)
             if not bad or time.monotonic() >= deadline:
                 return bad
             time.sleep(interval)
@@ -569,10 +571,14 @@ def main() -> int:
     if not isinstance(baseline_images_map, dict):
         _fail("ROLLBACK_BASELINE_INCOMPLETE", "rollback_baseline.backend_images is required")
     baseline_owner_imgs: dict[str, str] = {}
+    baseline_absent_owners: set[str] = set()
     for key in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS:
         if key == "operator_bff":
             continue
         img = str(baseline_images_map.get(key) or "")
+        if not img and key in staging_sanitize.BASELINE_OPTIONAL_OWNER_IMAGE_KEYS:
+            baseline_absent_owners.add(key)
+            continue
         if "@sha256:" not in img:
             _fail("ROLLBACK_BASELINE_INCOMPLETE", f"rollback_baseline.backend_images.{key} must be digest-pinned")
         baseline_owner_imgs[key] = img
@@ -588,6 +594,9 @@ def main() -> int:
     baseline_env_map["PANTHEON_CONFIG_SCHEMA_VERSION"] = str(rollback_baseline["config_schema_version"])
     baseline_env_map["PANTHEON_OPERATOR_BFF_IMAGE"] = baseline_bff_img
     baseline_env_map["PANTHEON_OPERATOR_BFF_DIGEST"] = "sha256:" + baseline_bff_img.split("@sha256:", 1)[1]
+    for key in baseline_absent_owners:
+        # Interpolation sentinel only; absent owners are removed and never started for the baseline.
+        baseline_env_map[f"PANTHEON_{key.upper()}_IMAGE"] = f"baseline-absent.invalid/product-owner@sha256:{'0' * 64}"
     for key, img in baseline_owner_imgs.items():
         baseline_env_map[f"PANTHEON_{key.upper()}_IMAGE"] = img
         baseline_env_map[f"PANTHEON_{key.upper()}_DIGEST"] = "sha256:" + img.split("@sha256:", 1)[1]
@@ -1027,10 +1036,14 @@ def main() -> int:
     rt_cfg_candidate = staging_root / "config" / "runtime-config.candidate.js"
     rt_cfg_baseline = staging_root / "config" / "runtime-config.baseline.js"
     owner_services = tuple((k.replace("_", "-"), k) for k in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS)
+    baseline_owner_services = tuple((svc, k) for svc, k in owner_services if k not in baseline_absent_owners)
 
     t0 = time.monotonic()
     # Drain singleton before switching
     _run(compose_cmd("--profile", "singleton", "rm", "-fsv", "lifecycle-projector"), error_code="ROLLBACK_DRAIN_FAILED")
+    for absent_key in sorted(baseline_absent_owners):
+        # Owners the baseline never had must not keep running beside the restored baseline.
+        _run(compose_cmd("rm", "-fsv", absent_key.replace("_", "-")), error_code="ROLLBACK_ABSENT_OWNER_REMOVE_FAILED")
     if current_fe.is_symlink() or current_fe.exists():
         current_fe.unlink()
     current_fe.symlink_to(baseline_fe_dir)
@@ -1051,20 +1064,24 @@ def main() -> int:
             "up",
             "-d",
             "--no-build",
-            *(svc for svc, _ in owner_services),
+            *(svc for svc, _ in baseline_owner_services),
         ],
         error_code="ROLLBACK_COMPOSE_UP_FAILED",
     )
 
     # Baseline owners must be running/healthy (not just carry the baseline Config.Image) before
     # any rollback evidence or duration is recorded.
-    unserved = _wait_product_owners()
+    unserved = _wait_product_owners(frozenset(baseline_absent_owners))
     if unserved:
         _fail("ROLLBACK_BASELINE_UNHEALTHY", f"Baseline product owners not running/healthy after rollback: {', '.join(unserved)}")
     rb_ready = _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") == 200
     rb_version = _http_json(curl_bin, f"http://127.0.0.1:{bff_port}/bff/version", error_code="ROLLBACK_VERSION_FAILED")
     served_backend_images: dict[str, str] = {}
-    for compose_svc, manifest_key in owner_services:
+    for absent_key in sorted(baseline_absent_owners):
+        stray = _run(compose_cmd("ps", "-q", absent_key.replace("_", "-")), error_code="ROLLBACK_PS_FAILED").stdout.strip()
+        if stray:
+            _fail("ROLLBACK_ABSENT_OWNER_STILL_RUNNING", f"{absent_key} must not run on the pre-Paper baseline")
+    for compose_svc, manifest_key in baseline_owner_services:
         svc_cid = (
             _run(compose_cmd("ps", "-q", compose_svc), error_code="ROLLBACK_PS_FAILED")
             .stdout.strip()

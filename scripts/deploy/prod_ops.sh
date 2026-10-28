@@ -16,8 +16,11 @@
 #   PROD_FE_HOST RELEASE_MANIFEST_PATH PROD_COMPOSE_FILE PROD_COMPOSE_ENV_FILE
 #   PROD_ACTIVE_PORT / PROD_TARGET_PORT (exported by the controller).
 # Test seams (default to real binaries): DOCKER_BIN CURL_BIN MOUNTPOINT_BIN SUDO_BIN PROD_CADDY_CONTAINER.
-# Gates that need an authenticated identity read PROD_GATE_TOKEN_FILE (read-only synthetic
-# identity issued by the production IdP); absent => the gate fails, it is never skipped.
+# The tenant gate needs an authenticated identity. Unless PROD_GATE_TOKEN_FILE names a pre-issued token, it mints a
+# short-lived (120s) viewer SERVICE token INSIDE the candidate BFF container (real PANTHEON_BFF_JWT_SECRET/issuer/
+# audience never leave the VM) with the existing services.runtime_auth_inbound.encode_jwt_hs256 encoder, binds it to the
+# explicit PROD_TENANT_ID, keeps it in a 0600 VM-local file, and removes it on exit. It carries no human/MFA/email/IAM
+# claims and is not a release approval. The gate requires own-tenant 200 THEN foreign-tenant 403; it is never skipped.
 
 set -uo pipefail
 
@@ -50,12 +53,19 @@ need PROD_ROOT PROD_DATA_MOUNT PROD_BLUE_PORT PROD_GREEN_PORT PROD_BFF_HOST PROD
 # Core-profile product owners are stateless-process owners with native Postgres stores; the Agora request worker is a
 # singleton-profile worker (exactly one instance, drained/activated with the lifecycle projector, never per color).
 PRODUCT_OWNER_KEYS="registry telemetry incidents postmortems evolution lineage_read reconciliation_drift_svc persona consultation_svc source_ingest training_session_svc policy_learning_svc research_orchestrator_svc memory capital openclaw_gateway_adapter"
-PRODUCT_WORKER_KEY="agora_interaction_worker"
+# Singleton workers (drained/activated together with the lifecycle projector; exactly one each, never per color).
+# The Paper fleet reconciler/signal producer reuse the existing training-session image and the Redis signal-store.
+PRODUCT_WORKER_KEY="agora_interaction_worker paper_fleet_reconciler paper_signal_producer"
 ABSENT_BASELINE_IMAGE="baseline-absent.invalid/product-owner@sha256:$(printf '0%.0s' {1..64})"
 svc_of() { echo "${1//_/-}"; }
 PRODUCT_CORE_SERVICES=""
 for _k in $PRODUCT_OWNER_KEYS; do PRODUCT_CORE_SERVICES+="$(svc_of "$_k") "; done
-PRODUCT_WORKER_SERVICE="$(svc_of "$PRODUCT_WORKER_KEY")"
+PRODUCT_WORKER_SERVICE=""
+for _k in $PRODUCT_WORKER_KEY; do PRODUCT_WORKER_SERVICE+="$(svc_of "$_k") "; done
+PRODUCT_WORKER_SERVICE_ALL="$PRODUCT_WORKER_SERVICE"
+# Singleton workers added after the first product-owner baselines: a retained baseline that predates them is still a
+# valid rollback target. Their images are restored when retained and the workers are removed (never invented) when not.
+BASELINE_OPTIONAL_KEYS="paper_fleet_reconciler paper_signal_producer"
 # Both profiles are always active: the worker depends on core product owners and compose rejects inactive-profile deps.
 CORE_PROFILES=(--profile core --profile singleton)
 
@@ -64,6 +74,7 @@ owner_images() {
   local k v
   [[ "${PROD_BASELINE_PRODUCT_OWNERS:-present}" == "absent" ]] && return 0
   for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
+    [[ " ${PROD_BASELINE_ABSENT_KEYS:-} " == *" $k "* ]] && continue
     v="PANTHEON_${k^^}_IMAGE"; echo "${!v}"
   done
 }
@@ -125,7 +136,7 @@ baseline_env() {
   local journal_rec="${PROD_ROOT}/state/journal/${RELEASE_ID}/baseline_release.json"
   local state_base="${PROD_ROOT}/state/baseline.json"
   local vars
-  vars="$(python3 - "$journal_rec" "$state_base" "$RELEASE_MANIFEST_PATH" "$FE_ORIGIN" "$PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY" "$ABSENT_BASELINE_IMAGE" <<'PY'
+  vars="$(python3 - "$journal_rec" "$state_base" "$RELEASE_MANIFEST_PATH" "$FE_ORIGIN" "$PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY" "$ABSENT_BASELINE_IMAGE" "$BASELINE_OPTIONAL_KEYS" <<'PY'
 import json, re, shlex, sys
 from pathlib import Path
 
@@ -133,6 +144,7 @@ DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 journal_p, state_p, manifest_p, fe_origin = [Path(x) for x in sys.argv[1:4]] + [sys.argv[4]]
 product_keys = sys.argv[5].split()
 absent_image = sys.argv[6]
+optional_keys = sys.argv[7].split()
 
 rec = {}
 if journal_p.is_file():
@@ -174,9 +186,12 @@ for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projecto
 # Product owners are restored to the EXACT retained baseline digests; they are never derived from the candidate or
 # invented. A baseline that predates the product owners must carry none of them (rollback then removes them); a
 # partial set is an unrestorable baseline and fails closed.
-have = [k for k in product_keys if k in b_imgs]
-if have and len(have) != len(product_keys):
-    raise SystemExit("partial baseline product owner closure: missing " + ",".join(k for k in product_keys if k not in b_imgs))
+required_keys = [k for k in product_keys if k not in optional_keys]
+have = [k for k in required_keys if k in b_imgs]
+if have and len(have) != len(required_keys):
+    raise SystemExit("partial baseline product owner closure: missing " + ",".join(k for k in required_keys if k not in b_imgs))
+# Optional (later-added) singleton workers: each restored only when its exact digest was retained.
+absent_keys = [k for k in product_keys if not (have and k in b_imgs)]
 
 out = {
     "PANTHEON_RELEASE_ID": rel_id,
@@ -194,15 +209,21 @@ out = {
     "PANTHEON_LIFECYCLE_PROJECTOR_IMAGE": b_imgs["lifecycle_projector"],
     "PROD_BFF_CORS_ORIGINS": fe_origin,
     "PROD_BASELINE_PRODUCT_OWNERS": "present" if have else "absent",
+    "PROD_BASELINE_ABSENT_KEYS": " ".join(k for k in absent_keys if have),
 }
 for k in product_keys:
-    # Sentinel only satisfies compose interpolation when the baseline has no product owners; it is never started.
-    out[f"PANTHEON_{k.upper()}_IMAGE"] = b_imgs[k] if have else absent_image
+    # Sentinel only satisfies compose interpolation for owners the baseline never had; it is never started.
+    out[f"PANTHEON_{k.upper()}_IMAGE"] = b_imgs[k] if (have and k in b_imgs) else absent_image
 for k, v in out.items():
     print(f"export {k}={shlex.quote(v)}")
 PY
   )" || fail BASELINE_ENV_MISSING "retained baseline manifest/config closure missing or invalid for rollback"
   eval "$vars"
+  # Singleton workers the baseline never had are neither started nor counted; they are removed on resume.
+  PRODUCT_WORKER_SERVICE=""
+  for _k in $PRODUCT_WORKER_KEY; do
+    [[ " ${PROD_BASELINE_ABSENT_KEYS:-} " == *" $_k "* ]] || PRODUCT_WORKER_SERVICE+="$(svc_of "$_k") "
+  done
   export PROD_BLUE_PORT PROD_GREEN_PORT
 }
 
@@ -251,6 +272,26 @@ production_schema_gate() {
   GATE_REASON="$(printf '%s' "$catalog" | python3 -I "$MIGRATION_HELPER" migration catalog "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
 }
 container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }
+# mint_gate_token <port> <outfile>: viewer SERVICE token for the explicit production tenant, signed inside the BFF
+# container with its own secret/issuer/audience. Written 0600; the secret is never read or printed by this script.
+mint_gate_token() {
+  local c; c="$(container_of "operator-bff-$(color_for_port "$1")")"; [[ -n "$c" ]] || return 1
+  ( umask 077
+    run_priv "$DOCKER" exec -e "PROD_GATE_TENANT_ID=${PROD_TENANT_ID}" "$c" python3 -c '
+import os, sys, time
+from services.runtime_auth_inbound import encode_jwt_hs256
+secret = os.environ.get("PANTHEON_BFF_JWT_SECRET", "").strip()
+iss = os.environ.get("PANTHEON_BFF_JWT_ISSUER", "").strip()
+aud = os.environ.get("PANTHEON_BFF_JWT_AUDIENCE", "").strip()
+tenant = os.environ.get("PROD_GATE_TENANT_ID", "").strip()
+if not (secret and iss and aud and tenant):
+    sys.exit(2)
+now = int(time.time())
+print(encode_jwt_hs256({"sub": "service:prod-release-gate", "service": "prod-release-gate", "roles": ["viewer"],
+    "tenant_id": tenant, "allowed_tenants": [tenant], "iss": iss, "aud": aud, "iat": now, "exp": now + 120},
+    secret=secret))
+' >"$2" ) && [[ -s "$2" ]]
+}
 require_ready() { # require_ready <port>
   [[ "$(http_code "http://127.0.0.1:$1/bff/readyz")" == "200" ]]
 }
@@ -266,7 +307,14 @@ wait_until() { # wait_until <tries> <interval> <command...>
   return 1
 }
 singleton_count() { compose ps -q lifecycle-projector 2>/dev/null | grep -c . || true; }
-worker_count() { compose ps -q "$PRODUCT_WORKER_SERVICE" 2>/dev/null | grep -c . || true; }
+worker_count() { compose ps -q $PRODUCT_WORKER_SERVICE 2>/dev/null | grep -c . || true; }
+# Every singleton worker (Agora request worker, Paper fleet reconciler, Paper signal producer) is exactly one.
+workers_each_single() {
+  local svc
+  for svc in $PRODUCT_WORKER_SERVICE; do
+    [[ "$(compose ps -q "$svc" 2>/dev/null | grep -c . || true)" == "1" ]] || { OWNER_REASON="singleton worker ${svc} count is not exactly 1"; return 1; }
+  done
+}
 # Every product owner must run the exact exported digest (candidate or retained baseline); the Agora request worker
 # must be a singleton (0 only when the baseline has none). Sets OWNER_REASON on failure.
 verify_product_owner_images() {
@@ -281,17 +329,21 @@ verify_product_owner_images() {
   fi
   for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
     svc="$(svc_of "$k")"; var="PANTHEON_${k^^}_IMAGE"; want="${!var}"
+    if [[ " ${PROD_BASELINE_ABSENT_KEYS:-} " == *" $k "* ]]; then
+      [[ -z "$(container_of "$svc")" ]] || { OWNER_REASON="product owner ${svc} still present but absent from retained baseline"; return 1; }
+      continue
+    fi
     c="$(container_of "$svc")"
     [[ -n "$c" && "$(printf '%s\n' "$c" | grep -c .)" == "1" ]] || { OWNER_REASON="product owner ${svc} is not running exactly once"; return 1; }
     got="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$c" 2>/dev/null | tr -d '[:space:]')"
     [[ "$got" == "$want" ]] || { OWNER_REASON="product owner ${svc} runs '${got}' != expected '${want}'"; return 1; }
   done
-  [[ "$(worker_count)" == "1" ]] || { OWNER_REASON="agora request worker count is $(worker_count), expected exactly 1"; return 1; }
+  workers_each_single || return 1
 }
 # Remove product owner containers by compose project labels (works without a resolvable owner image).
-remove_product_owners() {
-  local k svc ids
-  for k in $PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY; do
+remove_product_owners() {  # [owner_key...] (default: every product owner)
+  local k svc ids keys="${*:-$PRODUCT_OWNER_KEYS $PRODUCT_WORKER_KEY}"
+  for k in $keys; do
     svc="$(svc_of "$k")"
     ids="$(run_priv "$DOCKER" ps -aq --filter "label=com.docker.compose.project=pantheon-production" --filter "label=com.docker.compose.service=${svc}")" || return 1
     [[ -z "$ids" ]] || run_priv "$DOCKER" rm -f $ids >/dev/null || return 1
@@ -520,9 +572,20 @@ PY
         denied="$("$CURL" -sS -m 10 -D - -o /dev/null -H "Origin: https://evil.invalid" -X OPTIONS -H "Access-Control-Request-Method: GET" "http://127.0.0.1:${port}/bff/capabilities" | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')"
         [[ "$allowed" == "$FE_ORIGIN" && -z "$denied" ]] || fail GATE_CORS "allow-origin='${allowed}' foreign='${denied}'" ;;
       tenant)
-        need PROD_GATE_TOKEN_FILE; [[ -s "$PROD_GATE_TOKEN_FILE" ]] || fail GATE_TENANT "gate token file missing/empty"
-        code="$(http_code -H "Authorization: Bearer $(cat "$PROD_GATE_TOKEN_FILE")" -H "X-Tenant-Id: __foreign_tenant__" "http://127.0.0.1:${port}/bff/capabilities")"
-        [[ "$code" == "401" || "$code" == "403" || "$code" == "404" ]] || fail GATE_TENANT "cross-tenant request returned ${code}" ;;
+        need PROD_TENANT_ID
+        tok="${PROD_GATE_TOKEN_FILE:-}"
+        if [[ -z "$tok" ]]; then
+          gate_dir="$(umask 077; mktemp -d "${PROD_ROOT}/state/.gate-token.XXXXXX")" || fail GATE_TENANT "cannot create gate token dir"
+          trap 'rm -rf "$gate_dir"' EXIT
+          tok="${gate_dir}/token"
+          mint_gate_token "$port" "$tok" || fail GATE_TENANT "could not mint service gate token inside candidate BFF container"
+        fi
+        [[ -s "$tok" ]] || fail GATE_TENANT "gate token file missing/empty"
+        auth_hdr="Authorization: Bearer $(tr -d '[:space:]' <"$tok")"
+        code="$(http_code -H "$auth_hdr" -H "X-Tenant-Id: ${PROD_TENANT_ID}" "http://127.0.0.1:${port}/bff/me")"
+        [[ "$code" == "200" ]] || fail GATE_TENANT "own-tenant authenticated /bff/me returned ${code}, expected 200"
+        code="$(http_code -H "$auth_hdr" -H "X-Tenant-Id: __foreign_tenant__" "http://127.0.0.1:${port}/bff/me")"
+        [[ "$code" == "403" ]] || fail GATE_TENANT "foreign-tenant /bff/me returned ${code}, expected 403" ;;
       read_only)
         c="$(container_of "operator-bff-$(color_for_port "$port")")"; [[ -n "$c" ]] || fail GATE_READ_ONLY "green container not found"
         envs="$(run_priv "$DOCKER" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$c")" || fail GATE_READ_ONLY "inspect failed"
@@ -582,14 +645,14 @@ PY
   drain_singletons)
     release_env
     # Exactly one singleton owner: stop it before the upstream switch.
-    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail DRAIN "could not stop singleton owner"
+    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector $PRODUCT_WORKER_SERVICE || fail DRAIN "could not stop singleton owner"
     [[ "$(singleton_count)" == "0" && "$(worker_count)" == "0" ]] || fail DRAIN "singleton owner still present after drain"
     ;;
 
   activate_singletons)
     release_env
     compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not update core/product owner closure"
-    compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not start singleton owners"
+    compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not start singleton owners"
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
     verify_product_owner_images || fail ACTIVATE "${OWNER_REASON}"
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "singleton container not found"
@@ -600,15 +663,16 @@ PY
   resume_baseline_singletons)
     baseline_env
     # A candidate projector may already own the singleton; remove it first so exactly one (baseline) remains.
-    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not stop candidate singleton owners"
+    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector $PRODUCT_WORKER_SERVICE_ALL || fail ACTIVATE "could not stop candidate singleton owners"
     if [[ "$PROD_BASELINE_PRODUCT_OWNERS" == "absent" ]]; then
       # The retained baseline never had product owners: remove the candidate's (by compose labels; no sentinel image is started).
       remove_product_owners || fail ACTIVATE "could not remove candidate product owners absent from the baseline"
       compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment || fail ACTIVATE "could not restore baseline core owner closure"
       compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector || fail ACTIVATE "could not start baseline singleton owner"
     else
+      [[ -z "${PROD_BASELINE_ABSENT_KEYS:-}" ]] || remove_product_owners $PROD_BASELINE_ABSENT_KEYS || fail ACTIVATE "could not remove candidate workers absent from the baseline"
       compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not restore baseline core/product owner closure"
-      compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not start baseline singleton owners"
+      compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not start baseline singleton owners"
     fi
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
     verify_product_owner_images || fail ACTIVATE "${OWNER_REASON}"

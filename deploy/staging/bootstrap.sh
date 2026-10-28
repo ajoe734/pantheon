@@ -90,6 +90,7 @@ STAGING_ROOT="${STAGING_ROOT:-/var/lib/pantheon-staging-root}"
 STAGING_DATA_MOUNT="${STAGING_DATA_MOUNT:-/var/lib/pantheon-staging}"
 STAGING_FE_ROOT="${STAGING_FE_ROOT:-/var/www/pantheon-staging-fe}"
 STAGING_BFF_PORT="${STAGING_BFF_PORT:-18001}"
+STAGING_FE_HTTP_PORT="${STAGING_FE_HTTP_PORT:-18080}"
 STAGING_BIN_DIR="${STAGING_BIN_DIR:-/usr/local/bin}"
 STAGING_CADDYFILE_PATH="${STAGING_CADDYFILE_PATH:-/etc/caddy/Caddyfile}"
 STAGING_SECRETS_ENV_FILE="${STAGING_SECRETS_ENV_FILE:-${STAGING_ROOT}/secrets/staging.secrets.env}"
@@ -103,6 +104,7 @@ STAGING_IDP_ISSUER="${STAGING_IDP_ISSUER:-https://idp.stg.pantheon.internal}"
 STAGING_TENANT_ID="${STAGING_TENANT_ID:-}"
 STAGING_POSTGRES_IMAGE="${STAGING_POSTGRES_IMAGE:-postgres:16-alpine@sha256:6b202572e5a92a4938fa080be515ad270515fc2d4a5850fa4ca10b0bd3efad89}"
 STAGING_NATS_IMAGE="${STAGING_NATS_IMAGE:-nats:2.10-alpine@sha256:d3eb053c882d39324bf4b1be5b4cb4dc1aa4bbbe0bf6ce3cdca90f2f2b0b12a7}"
+PANTHEON_SIGNAL_STORE_IMAGE="${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}"
 STAGING_METADATA_TOKEN_URL="${STAGING_METADATA_TOKEN_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
 
 [[ -n "$STAGING_TENANT_ID" ]] || fail "TENANT_ID_MISSING" "STAGING_TENANT_ID is required for the product owner closure"
@@ -242,6 +244,7 @@ run_priv "$MOUNTPOINT_BIN" -q "${STAGING_DATA_MOUNT}" || fail "DATA_DISK_NOT_MOU
 run_priv mkdir -p \
   "${STAGING_DATA_MOUNT}/postgres" \
   "${STAGING_DATA_MOUNT}/nats" \
+  "${STAGING_DATA_MOUNT}/signal-store" \
   "${STAGING_DATA_MOUNT}/bff" \
   "${STAGING_DATA_MOUNT}/runtime" \
   "${STAGING_DATA_MOUNT}/governance" \
@@ -282,6 +285,8 @@ PRODUCT_DSN_KEYS = (
     "AGORA_DATASET_STORE_DSN",
     "AGORA_GOVERNANCE_STORE_DSN",
     "AGORA_RESEARCH_STORE_DSN",
+    # Paper fleet reconciler Loop 9 controller-record writer (controller-only; never given to worker subprocesses).
+    "RECONCILER_LOOP_CONTROLLER_DSN",
 )
 PRODUCT_SECRET_KEYS = (
     "PANTHEON_RUNTIME_MANAGER_TOKEN",
@@ -415,8 +420,15 @@ if not rb_images_map:
     raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images is required")
 if str(rb_images_map.get("operator_bff") or "").strip() != rb_bff_image:
     raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.operator_bff must equal backend_operator_bff_image")
+# Paper workers were added after earlier baselines: a baseline without them is valid (they are recorded absent and
+# never started from an invented image); one that carries them must carry digest-pinned refs.
+BASELINE_OPTIONAL_OWNERS = staging_sanitize.BASELINE_OPTIONAL_OWNER_IMAGE_KEYS
+baseline_absent = []
 for key in required_owners:
     rb_val = str(rb_images_map.get(key) or "").strip()
+    if not rb_val and key in BASELINE_OPTIONAL_OWNERS:
+        baseline_absent.append(key)
+        continue
     if not rb_val:
         raise SystemExit(f"ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.{key} is required")
     if not DIGEST_RE.match(rb_val):
@@ -436,8 +448,15 @@ reg_host = images["operator_bff"].split("/", 1)[0] if "/" in images["operator_bf
 product_env, product_baseline_env, product_pull = [], [], []
 for key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
     product_env.append(f"PANTHEON_{key.upper()}_IMAGE={images[key]}")
+    if key in baseline_absent:
+        # Sentinel only satisfies compose interpolation; the owner is never started or pulled for the baseline.
+        product_baseline_env.append(f"PANTHEON_{key.upper()}_IMAGE=baseline-absent.invalid/product-owner@sha256:{'0' * 64}")
+        product_pull.append(images[key])
+        continue
     product_baseline_env.append(f"PANTHEON_{key.upper()}_IMAGE={rb_images_map[key]}")
     product_pull.extend((images[key], rb_images_map[key]))
+if baseline_absent:
+    product_baseline_env.append("STAGING_BASELINE_ABSENT_OWNERS=" + ",".join(baseline_absent))
 
 out = {
     "PRODUCT_COMPOSE_ENV_LINES": "\n".join(product_env),
@@ -485,6 +504,7 @@ fi
 for img in \
   "$PANTHEON_POSTGRES_IMAGE" \
   "$PANTHEON_NATS_IMAGE" \
+  "${PANTHEON_SIGNAL_STORE_IMAGE}" \
   "$PANTHEON_OPERATOR_BFF_IMAGE" \
   "$PANTHEON_RUNTIME_MANAGER_IMAGE" \
   "$PANTHEON_GOVERNANCE_IMAGE" \
@@ -633,9 +653,9 @@ if [[ "$(readlink -f "${RUNTIME_CFG_PATH}")" == "$(readlink -f "${STAGING_FE_ROO
 fi
 
 # 7. Render, validate, and reload Caddy via run_priv.
-python3 - "${BUNDLE_DIR}/Caddyfile.staging.tmpl" "${LOCAL_WORK_DIR}/Caddyfile" "${BFF_HOST}" "${FE_HOST}" "${STAGING_FE_ROOT}" "${STAGING_ROOT}/config" "127.0.0.1:${STAGING_BFF_PORT}" <<'PY'
+python3 - "${BUNDLE_DIR}/Caddyfile.staging.tmpl" "${LOCAL_WORK_DIR}/Caddyfile" "${BFF_HOST}" "${FE_HOST}" "${STAGING_FE_ROOT}" "${STAGING_ROOT}/config" "127.0.0.1:${STAGING_BFF_PORT}" "${STAGING_FE_HTTP_PORT}" <<'PY'
 import sys
-tmpl_path, out_path, bff_host, fe_host, fe_root, cfg_dir, upstream = sys.argv[1:8]
+tmpl_path, out_path, bff_host, fe_host, fe_root, cfg_dir, upstream, fe_http_port = sys.argv[1:9]
 text = open(tmpl_path, encoding="utf-8").read()
 text = (
     text.replace("__STAGING_BFF_HOST__", bff_host)
@@ -643,6 +663,7 @@ text = (
     .replace("__STAGING_FE_ROOT__", fe_root)
     .replace("__STAGING_CONFIG_DIR__", cfg_dir)
     .replace("__STAGING_BFF_UPSTREAM__", upstream)
+    .replace("__STAGING_FE_HTTP_PORT__", fe_http_port)
 )
 with open(out_path, "w", encoding="utf-8") as fh:
     fh.write(text)
@@ -663,6 +684,7 @@ PANTHEON_BACKEND_COMMIT=${PANTHEON_BACKEND_COMMIT}
 PANTHEON_CONFIG_SCHEMA_VERSION=${PANTHEON_CONFIG_SCHEMA_VERSION}
 PANTHEON_POSTGRES_IMAGE=${STAGING_POSTGRES_IMAGE}
 PANTHEON_NATS_IMAGE=${STAGING_NATS_IMAGE}
+PANTHEON_SIGNAL_STORE_IMAGE=${PANTHEON_SIGNAL_STORE_IMAGE}
 PANTHEON_OPERATOR_BFF_IMAGE=${PANTHEON_OPERATOR_BFF_IMAGE}
 PANTHEON_OPERATOR_BFF_DIGEST=${PANTHEON_OPERATOR_BFF_DIGEST}
 PANTHEON_RUNTIME_MANAGER_IMAGE=${PANTHEON_RUNTIME_MANAGER_IMAGE}
@@ -695,6 +717,7 @@ PANTHEON_BACKEND_COMMIT=${ROLLBACK_BFF_COMMIT}
 PANTHEON_CONFIG_SCHEMA_VERSION=${ROLLBACK_CONFIG_SCHEMA_VERSION}
 PANTHEON_POSTGRES_IMAGE=${STAGING_POSTGRES_IMAGE}
 PANTHEON_NATS_IMAGE=${STAGING_NATS_IMAGE}
+PANTHEON_SIGNAL_STORE_IMAGE=${PANTHEON_SIGNAL_STORE_IMAGE}
 PANTHEON_OPERATOR_BFF_IMAGE=${ROLLBACK_BFF_IMAGE}
 PANTHEON_OPERATOR_BFF_DIGEST=${ROLLBACK_BFF_DIGEST}
 PANTHEON_RUNTIME_MANAGER_IMAGE=${ROLLBACK_RUNTIME_MANAGER_IMAGE}
@@ -748,7 +771,7 @@ OBSERVED_FE_SHA="$(cat "${STAGING_FE_ROOT}/current/.artifact_sha256" | tr -d '[:
 for owner_svc in runtime-manager governance deployment lifecycle-projector postgres nats \
   registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona \
   consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc \
-  agora-interaction-worker memory capital openclaw-gateway-adapter; do
+  agora-interaction-worker paper-fleet-reconciler paper-signal-producer signal-store memory capital openclaw-gateway-adapter; do
   cid="$(run_compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -q "$owner_svc" | head -n1)"
   [[ -n "$cid" ]] || fail "OWNER_CONTAINER_MISSING" "Required service ${owner_svc} is not running"
 done

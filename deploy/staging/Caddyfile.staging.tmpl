@@ -3,8 +3,13 @@
 # `__STAGING_FE_ROOT__`, `__STAGING_CONFIG_DIR__`, `__STAGING_BFF_UPSTREAM__`).
 # /runtime-config.js is served from __STAGING_CONFIG_DIR__ outside the sealed FE release
 # directory with Cache-Control: no-store.
+# Both private `.internal` HTTPS sites use `tls internal` (Debian Caddy 2.6 does not treat
+# `.internal` as an internal subject). The FE routes are shared through a snippet with a
+# loopback-only HTTP site at 127.0.0.1:__STAGING_FE_HTTP_PORT__ used by pantheon-staging-collect-gates
+# for runtime-config/FE readback; no additional service or process.
 
 __STAGING_BFF_HOST__ {
+	tls internal
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Pantheon-Environment "staging"
@@ -16,7 +21,7 @@ __STAGING_BFF_HOST__ {
 	reverse_proxy __STAGING_BFF_UPSTREAM__
 }
 
-__STAGING_FE_HOST__ {
+(staging_fe_routes) {
 	root * __STAGING_FE_ROOT__/current
 	header {
 		X-Content-Type-Options nosniff
@@ -54,4 +59,14 @@ __STAGING_FE_HOST__ {
 		try_files {path} /index.html
 		file_server
 	}
+}
+
+__STAGING_FE_HOST__ {
+	tls internal
+	import staging_fe_routes
+}
+
+http://127.0.0.1:__STAGING_FE_HTTP_PORT__ {
+	bind 127.0.0.1
+	import staging_fe_routes
 }
