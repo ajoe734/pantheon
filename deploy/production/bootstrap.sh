@@ -159,7 +159,7 @@ PY
 umask 077
 run_priv mkdir -p \
   "${PROD_ROOT}"/{bin,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config} \
-  "${PROD_DATA_MOUNT}/postgres" "${PROD_DATA_MOUNT}/nats" \
+  "${PROD_DATA_MOUNT}/postgres" "${PROD_DATA_MOUNT}/nats" "${PROD_DATA_MOUNT}/signal-store" \
   "${PROD_DATA_MOUNT}/bff" "${PROD_DATA_MOUNT}/runtime" "${PROD_DATA_MOUNT}/governance" "${PROD_DATA_MOUNT}/product" \
   "$(dirname "$PROD_COMPOSE_ENV_FILE")" \
   || fail MKDIR "cannot create tree"
@@ -242,6 +242,7 @@ PROD_BLUE_PORT=${PROD_BLUE_PORT:-18001}
 PROD_GREEN_PORT=${PROD_GREEN_PORT:-18002}
 PANTHEON_POSTGRES_IMAGE=${PANTHEON_POSTGRES_IMAGE:-postgres:16-alpine@sha256:6b202572e5a92a4938fa080be515ad270515fc2d4a5850fa4ca10b0bd3efad89}
 PANTHEON_NATS_IMAGE=${PANTHEON_NATS_IMAGE:-nats:2.10-alpine@sha256:d3eb053c882d39324bf4b1be5b4cb4dc1aa4bbbe0bf6ce3cdca90f2f2b0b12a7}
+PANTHEON_SIGNAL_STORE_IMAGE=${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
 EOF
   chmod 0600 "$tmp_ce"
   run_priv mv -f "$tmp_ce" "$PROD_COMPOSE_ENV_FILE" || fail COMPOSE_ENV "cannot write compose.env"
@@ -265,7 +266,7 @@ done
 
 # Pre-acquire only immutable digest-pinned (@sha256:...) images (never build, never pull mutable tags).
 if [[ "${PROD_PREPULL_IMAGES:-true}" == "true" ]]; then
-  IMAGE_LIST="$(python3 - "${RELEASE_MANIFEST_PATH:-}" "${PANTHEON_POSTGRES_IMAGE:-}" "${PANTHEON_NATS_IMAGE:-}" "${SCRIPT_DIR}" <<'PY'
+  IMAGE_LIST="$(python3 - "${RELEASE_MANIFEST_PATH:-}" "${PANTHEON_POSTGRES_IMAGE:-}" "${PANTHEON_NATS_IMAGE:-}" "${SCRIPT_DIR}" "${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}" <<'PY'
 import json, re, sys
 from pathlib import Path
 
@@ -274,8 +275,9 @@ import staging_sanitize  # bundled owner packaging contract (single source of ow
 
 DIGEST_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 mpath_str, pg_img, nats_img = sys.argv[1:4]
+signal_img = sys.argv[5]
 images = []
-for ref in (pg_img, nats_img):
+for ref in (pg_img, nats_img, signal_img):
     if ref:
         if not DIGEST_RE.match(ref):
             raise SystemExit(f"UNPINNED:{ref}")

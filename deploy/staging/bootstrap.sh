@@ -103,6 +103,7 @@ STAGING_IDP_ISSUER="${STAGING_IDP_ISSUER:-https://idp.stg.pantheon.internal}"
 STAGING_TENANT_ID="${STAGING_TENANT_ID:-}"
 STAGING_POSTGRES_IMAGE="${STAGING_POSTGRES_IMAGE:-postgres:16-alpine@sha256:6b202572e5a92a4938fa080be515ad270515fc2d4a5850fa4ca10b0bd3efad89}"
 STAGING_NATS_IMAGE="${STAGING_NATS_IMAGE:-nats:2.10-alpine@sha256:d3eb053c882d39324bf4b1be5b4cb4dc1aa4bbbe0bf6ce3cdca90f2f2b0b12a7}"
+PANTHEON_SIGNAL_STORE_IMAGE="${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}"
 STAGING_METADATA_TOKEN_URL="${STAGING_METADATA_TOKEN_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
 
 [[ -n "$STAGING_TENANT_ID" ]] || fail "TENANT_ID_MISSING" "STAGING_TENANT_ID is required for the product owner closure"
@@ -242,6 +243,7 @@ run_priv "$MOUNTPOINT_BIN" -q "${STAGING_DATA_MOUNT}" || fail "DATA_DISK_NOT_MOU
 run_priv mkdir -p \
   "${STAGING_DATA_MOUNT}/postgres" \
   "${STAGING_DATA_MOUNT}/nats" \
+  "${STAGING_DATA_MOUNT}/signal-store" \
   "${STAGING_DATA_MOUNT}/bff" \
   "${STAGING_DATA_MOUNT}/runtime" \
   "${STAGING_DATA_MOUNT}/governance" \
@@ -485,6 +487,7 @@ fi
 for img in \
   "$PANTHEON_POSTGRES_IMAGE" \
   "$PANTHEON_NATS_IMAGE" \
+  "${PANTHEON_SIGNAL_STORE_IMAGE}" \
   "$PANTHEON_OPERATOR_BFF_IMAGE" \
   "$PANTHEON_RUNTIME_MANAGER_IMAGE" \
   "$PANTHEON_GOVERNANCE_IMAGE" \
@@ -663,6 +666,7 @@ PANTHEON_BACKEND_COMMIT=${PANTHEON_BACKEND_COMMIT}
 PANTHEON_CONFIG_SCHEMA_VERSION=${PANTHEON_CONFIG_SCHEMA_VERSION}
 PANTHEON_POSTGRES_IMAGE=${STAGING_POSTGRES_IMAGE}
 PANTHEON_NATS_IMAGE=${STAGING_NATS_IMAGE}
+PANTHEON_SIGNAL_STORE_IMAGE=${PANTHEON_SIGNAL_STORE_IMAGE}
 PANTHEON_OPERATOR_BFF_IMAGE=${PANTHEON_OPERATOR_BFF_IMAGE}
 PANTHEON_OPERATOR_BFF_DIGEST=${PANTHEON_OPERATOR_BFF_DIGEST}
 PANTHEON_RUNTIME_MANAGER_IMAGE=${PANTHEON_RUNTIME_MANAGER_IMAGE}
@@ -695,6 +699,7 @@ PANTHEON_BACKEND_COMMIT=${ROLLBACK_BFF_COMMIT}
 PANTHEON_CONFIG_SCHEMA_VERSION=${ROLLBACK_CONFIG_SCHEMA_VERSION}
 PANTHEON_POSTGRES_IMAGE=${STAGING_POSTGRES_IMAGE}
 PANTHEON_NATS_IMAGE=${STAGING_NATS_IMAGE}
+PANTHEON_SIGNAL_STORE_IMAGE=${PANTHEON_SIGNAL_STORE_IMAGE}
 PANTHEON_OPERATOR_BFF_IMAGE=${ROLLBACK_BFF_IMAGE}
 PANTHEON_OPERATOR_BFF_DIGEST=${ROLLBACK_BFF_DIGEST}
 PANTHEON_RUNTIME_MANAGER_IMAGE=${ROLLBACK_RUNTIME_MANAGER_IMAGE}
@@ -748,7 +753,7 @@ OBSERVED_FE_SHA="$(cat "${STAGING_FE_ROOT}/current/.artifact_sha256" | tr -d '[:
 for owner_svc in runtime-manager governance deployment lifecycle-projector postgres nats \
   registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona \
   consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc \
-  agora-interaction-worker memory capital openclaw-gateway-adapter; do
+  agora-interaction-worker paper-fleet-reconciler paper-signal-producer signal-store memory capital openclaw-gateway-adapter; do
   cid="$(run_compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -q "$owner_svc" | head -n1)"
   [[ -n "$cid" ]] || fail "OWNER_CONTAINER_MISSING" "Required service ${owner_svc} is not running"
 done

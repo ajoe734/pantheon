@@ -53,6 +53,8 @@ PRODUCT_OWNER_IMAGE_KEYS = (
     "policy_learning_svc",
     "research_orchestrator_svc",
     "agora_interaction_worker",
+    "paper_fleet_reconciler",
+    "paper_signal_producer",
     "memory",
     "capital",
     "openclaw_gateway_adapter",

@@ -41,6 +41,13 @@ from tests.deployment.test_staging_release import (
 MIGRATION_FILES, MIGRATION_SET_SHA = _real_migration_set()
 
 
+def _pin_paper_owner_images(manifest: dict) -> None:
+    """The Paper fleet reconciler/signal producer reuse the existing training-session image digest."""
+    images = manifest["backend"]["images"]
+    for key in ("paper_fleet_reconciler", "paper_signal_producer"):
+        images[key] = images["training_session_svc"]
+
+
 def _sample_manifest(**kw):
     return _staging_sample_manifest(mig_sha=MIGRATION_SET_SHA, **kw)
 
@@ -109,7 +116,7 @@ BOOTSTRAP = REPO_ROOT / "deploy" / "production" / "bootstrap.sh"
 # Fake docker/curl/mountpoint/sudo binaries exercise the REAL prod_ops.sh/bootstrap.sh code paths.
 FAKE_BIN = r"""#!/usr/bin/env bash
 tool="$(basename "$0")"
-PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc memory capital openclaw-gateway-adapter agora-interaction-worker"
+PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc memory capital openclaw-gateway-adapter agora-interaction-worker paper-fleet-reconciler paper-signal-producer"
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
   sudo)
@@ -217,7 +224,7 @@ PY
       fi
     fi
     if [[ "$args" == *"compose"*"rm -fsv lifecycle-projector"* ]]; then
-      rm -f "$FAKE_STATE/singleton_up" "$FAKE_STATE/image_cid-lifecycle-projector-1" "$FAKE_STATE/image_cid-agora-interaction-worker"
+      rm -f "$FAKE_STATE/singleton_up" "$FAKE_STATE/image_cid-lifecycle-projector-1" "$FAKE_STATE/image_cid-agora-interaction-worker" "$FAKE_STATE/image_cid-paper-fleet-reconciler" "$FAKE_STATE/image_cid-paper-signal-producer"
     fi
     if [[ "$args" == *"compose"*"rm -fsv operator-bff-blue"* ]]; then
       touch "$FAKE_STATE/stopped_operator-bff-blue"
@@ -374,6 +381,7 @@ class OpsHarness(unittest.TestCase):
         self.manifest = _sample_manifest(state="staging_verified")
         for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projector", *PRODUCT_OWNER_KEYS):
             self.manifest["backend"]["images"][owner] = f"r/{owner}@sha256:" + "a" * 64
+        _pin_paper_owner_images(self.manifest)
         self.migration_dir = self.root / "migration" / "rel-1"
         (self.migration_dir / "migrations").mkdir(parents=True)
         for f in MIGRATION_FILES:
@@ -1342,6 +1350,7 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
             manifest["backend"]["images"][owner] = (
                 f"asia-east1-docker.pkg.dev/pantheon-prod-20260902/pantheon/{owner}@sha256:" + digest_char * 64
             )
+        _pin_paper_owner_images(manifest)
         if bootstrap:
             manifest.pop("rollback_baseline", None)
         elif rollback_baseline is not None:
@@ -1532,6 +1541,82 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-001")
 
 
+    def _two_successful_releases(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="2" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        rb = {
+            "previous_release_id": "pantheon-20261025-001",
+            "frontend_commit": m1["frontend"]["commit"],
+            "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"],
+            "backend_commit": m1["backend"]["commit"],
+            "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+            "backend_images": m1["backend"]["images"],
+            "config_schema_version": m1["config_schema_version"],
+        }
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="4" * 40, digest_char="2", bootstrap=False, rollback_baseline=rb)
+        return (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2)
+
+    def test_manual_rollback_after_success_restores_exact_prior_baseline_json(self):
+        (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
+        base_path = self.root / "state" / "baseline.json"
+        prior_bytes = base_path.read_bytes()
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 0, sw2.stderr)
+        self.assertEqual(json.loads(base_path.read_text())["release_id"], "pantheon-20261025-002")
+        self.assertEqual((self.root / "state" / "journal" / "pantheon-20261025-002" / "prev_baseline.json").read_bytes(),
+                         prior_bytes)
+        r = subprocess.run([str(ROLLBACK), "pantheon-20261025-002"], capture_output=True, text=True, timeout=60,
+                           env=self.env(PROD_OPS_CMD=str(OPS), RELEASE_ID="pantheon-20261025-002",
+                                        RELEASE_MANIFEST_PATH=str(mpath2), PROD_ACTIVE_PORT="8002", PROD_TARGET_PORT="8001",
+                                        FAKE_READY_PORTS="8001 8002"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(base_path.read_bytes(), prior_bytes)
+        self.assertEqual(json.loads((self.root / "state" / "active_manifest.json").read_text())["release_id"],
+                         "pantheon-20261025-001")
+
+    def test_bootstrap_rollback_after_success_removes_baseline_json_and_reports_no_target(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="2" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        self.assertTrue((self.root / "state" / "baseline.json").is_file())
+        r = subprocess.run([str(ROLLBACK), "pantheon-20261025-001"], capture_output=True, text=True, timeout=60,
+                           env=self.env(PROD_OPS_CMD=str(OPS), RELEASE_ID="pantheon-20261025-001",
+                                        RELEASE_MANIFEST_PATH=str(mpath1)))
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("no_rollback_target", r.stdout)
+        self.assertFalse((self.root / "state" / "baseline.json").exists())
+        self.assertIn("503", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+
+    def test_paper_owners_must_reuse_training_session_image_and_are_singletons(self):
+        svc = yaml.safe_load(COMPOSE.read_text())["services"]
+        for name in ("paper-fleet-reconciler", "paper-signal-producer"):
+            self.assertEqual(svc[name]["profiles"], ["singleton"], name)
+            self.assertNotIn("build", svc[name], name)
+            env = svc[name]["environment"]
+            self.assertEqual(env["SIGNAL_STORE_URL"], "redis://signal-store:6379")
+            self.assertEqual(env["PANTHEON_LIVE_BROKER_ENABLED"], "false")
+            self.assertNotIn("RECONCILER_LOOP_CONTROLLER_DSN", env)  # controller DSN only via secrets env file
+        self.assertEqual(svc["signal-store"]["profiles"], ["stateful"])
+        self.assertEqual(svc["paper-signal-producer"]["environment"]["PAPER_SIGNAL_STRATEGY"], "artifact")
+        from scripts.deploy import release_manifest
+        manifest = _sample_manifest(state="staging_verified")
+        manifest["backend"]["images"]["training_session_svc"] = "r/t@sha256:" + "a" * 64
+        manifest["backend"]["images"]["paper_fleet_reconciler"] = "r/t@sha256:" + "a" * 64
+        manifest["backend"]["images"]["paper_signal_producer"] = "r/t@sha256:" + "a" * 64
+        release_manifest.validate_manifest(manifest)
+        manifest["backend"]["images"]["paper_signal_producer"] = "r/other@sha256:" + "b" * 64
+        with self.assertRaises(release_manifest.ReleaseManifestError):
+            release_manifest.validate_manifest(manifest)
+
     def test_real_readiness_contract_first_release_and_changed_backend_sha_handoff(self):
         # FAKE_REAL_READYZ models main.py::_lifecycle_projector_dependency: readyz is 200 only when the
         # singleton controller deployment_sha == the BFF's BFF_COMMIT. No unconditional 200s.
@@ -1630,9 +1715,9 @@ class StaticContractTests(unittest.TestCase):
         svc = yaml.safe_load(COMPOSE.read_text())["services"]
         ops_text = OPS.read_text()
         listed = re.search(r'^PRODUCT_OWNER_KEYS="([^"]+)"', ops_text, re.M).group(1).split()
-        worker = re.search(r'^PRODUCT_WORKER_KEY="([^"]+)"', ops_text, re.M).group(1)
+        workers = re.search(r'^PRODUCT_WORKER_KEY="([^"]+)"', ops_text, re.M).group(1).split()
         # prod_ops.sh owner list is the Stage packaging contract, not a parallel framework.
-        self.assertEqual(sorted(listed + [worker]), sorted(PRODUCT_OWNER_KEYS))
+        self.assertEqual(sorted(listed + workers), sorted(PRODUCT_OWNER_KEYS))
         for key in PRODUCT_OWNER_KEYS:
             name = key.replace("_", "-")
             self.assertIn(name, svc, key)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pantheon production rollback: restore FE symlink, BFF upstream, runtime-config,
-# active manifest/compose env and the baseline singleton owner to the journaled
+# active manifest/baseline.json/compose env and the baseline singleton owner to the journaled
 # baseline. For an explicit first-release bootstrap abort, stops both the green
 # candidate and any started singleton and restores the safe 503 no-active-release
 # proxy/FE posture without leaving routes or symlinks pointing at the stopped candidate.
@@ -21,6 +21,7 @@ FE_CURRENT="${PROD_ROOT}/fe/current"
 UPSTREAM_FILE="${PROD_ROOT}/proxy/bff_upstream.caddy"
 RUNTIME_CONFIG_FILE="${PROD_ROOT}/config/runtime-config.js"
 ACTIVE_MANIFEST_FILE="${PROD_ROOT}/state/active_manifest.json"
+BASELINE_FILE="${PROD_ROOT}/state/baseline.json"
 COMPOSE_ENV_FILE="${PROD_COMPOSE_ENV_FILE:-${PROD_ROOT}/config/compose.env}"
 START_NS="$(date +%s%N)"
 FAILED=()
@@ -41,7 +42,8 @@ if [[ -f "${JOURNAL}/bootstrap" ]]; then
   mkdir -p "$(dirname "$UPSTREAM_FILE")" "${PROD_ROOT}/config"
   printf 'respond "no production release active" 503\n' > "${UPSTREAM_FILE}.rollback.$$" \
     && mv -f "${UPSTREAM_FILE}.rollback.$$" "$UPSTREAM_FILE"
-  rm -f "$FE_CURRENT" "$ACTIVE_MANIFEST_FILE"
+  # No prior baseline existed: a baseline.json written by a successful bootstrap must not survive as a fake healthy target.
+  rm -f "$FE_CURRENT" "$ACTIVE_MANIFEST_FILE" "$BASELINE_FILE"
   if [[ -f "${JOURNAL}/prev_runtime_config.js" ]]; then
     cp "${JOURNAL}/prev_runtime_config.js" "${RUNTIME_CONFIG_FILE}.rollback.$$" \
       && mv -f "${RUNTIME_CONFIG_FILE}.rollback.$$" "$RUNTIME_CONFIG_FILE"
@@ -80,6 +82,10 @@ restore_runtime_config() {
   if [[ -f "${JOURNAL}/prev_manifest.json" ]]; then
     cp "${JOURNAL}/prev_manifest.json" "${ACTIVE_MANIFEST_FILE}.rollback.$$" || return 1
     mv -f "${ACTIVE_MANIFEST_FILE}.rollback.$$" "$ACTIVE_MANIFEST_FILE" || return 1
+  fi
+  if [[ -f "${JOURNAL}/prev_baseline.json" ]]; then
+    cp "${JOURNAL}/prev_baseline.json" "${BASELINE_FILE}.rollback.$$" || return 1
+    mv -f "${BASELINE_FILE}.rollback.$$" "$BASELINE_FILE" || return 1
   fi
   if [[ -f "${JOURNAL}/prev_compose.env" ]]; then
     cp "${JOURNAL}/prev_compose.env" "${COMPOSE_ENV_FILE}.rollback.$$" || return 1

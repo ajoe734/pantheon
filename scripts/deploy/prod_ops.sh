@@ -50,12 +50,15 @@ need PROD_ROOT PROD_DATA_MOUNT PROD_BLUE_PORT PROD_GREEN_PORT PROD_BFF_HOST PROD
 # Core-profile product owners are stateless-process owners with native Postgres stores; the Agora request worker is a
 # singleton-profile worker (exactly one instance, drained/activated with the lifecycle projector, never per color).
 PRODUCT_OWNER_KEYS="registry telemetry incidents postmortems evolution lineage_read reconciliation_drift_svc persona consultation_svc source_ingest training_session_svc policy_learning_svc research_orchestrator_svc memory capital openclaw_gateway_adapter"
-PRODUCT_WORKER_KEY="agora_interaction_worker"
+# Singleton workers (drained/activated together with the lifecycle projector; exactly one each, never per color).
+# The Paper fleet reconciler/signal producer reuse the existing training-session image and the Redis signal-store.
+PRODUCT_WORKER_KEY="agora_interaction_worker paper_fleet_reconciler paper_signal_producer"
 ABSENT_BASELINE_IMAGE="baseline-absent.invalid/product-owner@sha256:$(printf '0%.0s' {1..64})"
 svc_of() { echo "${1//_/-}"; }
 PRODUCT_CORE_SERVICES=""
 for _k in $PRODUCT_OWNER_KEYS; do PRODUCT_CORE_SERVICES+="$(svc_of "$_k") "; done
-PRODUCT_WORKER_SERVICE="$(svc_of "$PRODUCT_WORKER_KEY")"
+PRODUCT_WORKER_SERVICE=""
+for _k in $PRODUCT_WORKER_KEY; do PRODUCT_WORKER_SERVICE+="$(svc_of "$_k") "; done
 # Both profiles are always active: the worker depends on core product owners and compose rejects inactive-profile deps.
 CORE_PROFILES=(--profile core --profile singleton)
 
@@ -266,7 +269,14 @@ wait_until() { # wait_until <tries> <interval> <command...>
   return 1
 }
 singleton_count() { compose ps -q lifecycle-projector 2>/dev/null | grep -c . || true; }
-worker_count() { compose ps -q "$PRODUCT_WORKER_SERVICE" 2>/dev/null | grep -c . || true; }
+worker_count() { compose ps -q $PRODUCT_WORKER_SERVICE 2>/dev/null | grep -c . || true; }
+# Every singleton worker (Agora request worker, Paper fleet reconciler, Paper signal producer) is exactly one.
+workers_each_single() {
+  local svc
+  for svc in $PRODUCT_WORKER_SERVICE; do
+    [[ "$(compose ps -q "$svc" 2>/dev/null | grep -c . || true)" == "1" ]] || { OWNER_REASON="singleton worker ${svc} count is not exactly 1"; return 1; }
+  done
+}
 # Every product owner must run the exact exported digest (candidate or retained baseline); the Agora request worker
 # must be a singleton (0 only when the baseline has none). Sets OWNER_REASON on failure.
 verify_product_owner_images() {
@@ -286,7 +296,7 @@ verify_product_owner_images() {
     got="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$c" 2>/dev/null | tr -d '[:space:]')"
     [[ "$got" == "$want" ]] || { OWNER_REASON="product owner ${svc} runs '${got}' != expected '${want}'"; return 1; }
   done
-  [[ "$(worker_count)" == "1" ]] || { OWNER_REASON="agora request worker count is $(worker_count), expected exactly 1"; return 1; }
+  workers_each_single || return 1
 }
 # Remove product owner containers by compose project labels (works without a resolvable owner image).
 remove_product_owners() {
@@ -582,14 +592,14 @@ PY
   drain_singletons)
     release_env
     # Exactly one singleton owner: stop it before the upstream switch.
-    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail DRAIN "could not stop singleton owner"
+    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector $PRODUCT_WORKER_SERVICE || fail DRAIN "could not stop singleton owner"
     [[ "$(singleton_count)" == "0" && "$(worker_count)" == "0" ]] || fail DRAIN "singleton owner still present after drain"
     ;;
 
   activate_singletons)
     release_env
     compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not update core/product owner closure"
-    compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not start singleton owners"
+    compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not start singleton owners"
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
     verify_product_owner_images || fail ACTIVATE "${OWNER_REASON}"
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "singleton container not found"
@@ -600,7 +610,7 @@ PY
   resume_baseline_singletons)
     baseline_env
     # A candidate projector may already own the singleton; remove it first so exactly one (baseline) remains.
-    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not stop candidate singleton owners"
+    compose "${CORE_PROFILES[@]}" rm -fsv lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not stop candidate singleton owners"
     if [[ "$PROD_BASELINE_PRODUCT_OWNERS" == "absent" ]]; then
       # The retained baseline never had product owners: remove the candidate's (by compose labels; no sentinel image is started).
       remove_product_owners || fail ACTIVATE "could not remove candidate product owners absent from the baseline"
@@ -608,7 +618,7 @@ PY
       compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector || fail ACTIVATE "could not start baseline singleton owner"
     else
       compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not restore baseline core/product owner closure"
-      compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector "$PRODUCT_WORKER_SERVICE" || fail ACTIVATE "could not start baseline singleton owners"
+      compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not start baseline singleton owners"
     fi
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
     verify_product_owner_images || fail ACTIVATE "${OWNER_REASON}"
