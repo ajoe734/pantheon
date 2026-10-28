@@ -598,6 +598,7 @@ services:
     profiles: ["singleton"]
     labels: {"org.pantheon.role": "singleton"}
     stop_grace_period: 30s
+    stop_signal: SIGINT
     command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
     environment:
       <<: *product_env

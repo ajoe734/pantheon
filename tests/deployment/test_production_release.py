@@ -1629,6 +1629,7 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
             self.assertEqual(env["SIGNAL_STORE_URL"], "redis://signal-store:6379")
             self.assertEqual(env["PANTHEON_LIVE_BROKER_ENABLED"], "false")
             self.assertNotIn("RECONCILER_LOOP_CONTROLLER_DSN", env)  # controller DSN only via secrets env file
+        self.assertEqual(svc["paper-fleet-reconciler"]["stop_signal"], "SIGINT")
         self.assertEqual(svc["signal-store"]["profiles"], ["stateful"])
         self.assertEqual(svc["paper-signal-producer"]["environment"]["PAPER_SIGNAL_STRATEGY"], "artifact")
         from scripts.deploy import release_manifest

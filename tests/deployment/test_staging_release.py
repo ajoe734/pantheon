@@ -1433,6 +1433,7 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         for forbidden in ("dev-paper", "pantheon-local", "pantheon_app", "-internal", "build"):
             self.assertNotIn(forbidden, paper_rendered, forbidden)
         self.assertEqual(services["paper-signal-producer"]["environment"]["PAPER_SIGNAL_STRATEGY"], "artifact")
+        self.assertEqual(services["paper-fleet-reconciler"]["stop_signal"], "SIGINT")
         for paper in ("paper-fleet-reconciler", "paper-signal-producer"):
             self.assertEqual(services[paper]["environment"]["PANTHEON_LIVE_BROKER_ENABLED"], "false", paper)
             self.assertEqual(services[paper]["environment"]["PANTHEON_REAL_WRITES_ENABLED"], "false", paper)
@@ -3037,7 +3038,8 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         self.assertIn("root * __STAGING_CONFIG_DIR__", caddy_raw)
         # Private `.internal` hosts need explicit internal TLS on Debian Caddy 2.6, and the
         # collector reads FE/runtime-config back over loopback HTTP through the same Caddy.
-        self.assertEqual(caddy_raw.count("tls internal"), 2)
+        tls_directives = [ln for ln in caddy_raw.splitlines() if ln.strip() == "tls internal"]
+        self.assertEqual(len(tls_directives), 2)
         self.assertIn("http://127.0.0.1:__STAGING_FE_HTTP_PORT__", caddy_raw)
         self.assertIn("bind 127.0.0.1", caddy_raw)
         self.assertEqual(caddy_raw.count("import staging_fe_routes"), 2)

@@ -648,6 +648,7 @@ services:
     image: ${PANTHEON_PAPER_FLEET_RECONCILER_IMAGE:?immutable paper-fleet-reconciler digest required}
     <<: *product_owner
     stop_grace_period: 30s
+    stop_signal: SIGINT
     command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
     environment:
       <<: *product_env
