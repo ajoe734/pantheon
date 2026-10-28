@@ -241,6 +241,27 @@ def _rebuild_positions(
     Marks are only joined when they belong to the current binding generation
     and the exact symbol; a position without one stays explicitly unmarked.
     """
+    ledger_fill_count = current.get("ledger_fill_count")
+    executed_fills = int(current.get("executed_trade_count") or 0)
+    if (
+        isinstance(ledger_fill_count, int)
+        and not isinstance(ledger_fill_count, bool)
+        and ledger_fill_count > executed_fills
+    ):
+        # The runtime ledger (authoritative, carried by pnl/drawdown snapshots)
+        # has committed more fills than this projection received as fill
+        # events. Quantities summed from the received fills would present a
+        # stale open position as current, so withhold them instead.
+        current["positions"] = []
+        current["position_count"] = None
+        current["positions_status"] = "unavailable"
+        current["positions_unavailable_reason"] = (
+            f"fill_event_gap: runtime ledger fill_count={ledger_fill_count} "
+            f"but {executed_fills} fill event(s) projected"
+        )
+        return
+    current.pop("positions_status", None)
+    current.pop("positions_unavailable_reason", None)
     positions = current.get("_positions_by_symbol")
     marks = current.get("_marks_by_symbol")
     if not isinstance(positions, dict):
@@ -539,6 +560,7 @@ class RuntimeSummaryProjectionStore:
                     "executed_trade_count",
                     "last_fill",
                     "_positions_by_symbol", "_marks_by_symbol", "_valuation_failure", "_valuation_attempt_at", "positions", "position_count",
+                    "ledger_fill_count", "positions_status", "positions_unavailable_reason",
                     "last_heartbeat_at", "last_heartbeat_event_id",
                     "state", "connectivity_status", "broker_status",
                     "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
@@ -745,6 +767,20 @@ class RuntimeSummaryProjectionStore:
                         current[f"{target_key}_binding_id"] = binding_id
                         break
 
+            if event_type in ("pnl_snapshot", "drawdown_snapshot") and not is_derived_metric_echo:
+                reported_fill_count = metrics.get("fill_count")
+                if (
+                    isinstance(reported_fill_count, int)
+                    and not isinstance(reported_fill_count, bool)
+                    and reported_fill_count >= 0
+                ):
+                    # Ledger fill counts only grow within a binding generation.
+                    current["ledger_fill_count"] = max(
+                        int(current.get("ledger_fill_count") or 0),
+                        reported_fill_count,
+                    )
+                    _rebuild_positions(current)
+
             # Surface executed paper fills so trade activity is visible end-to-end.
             # ``bracket_order_logged`` only records order intent and must never
             # inflate fill counts or positions.  Only the simulated-fill event
@@ -780,6 +816,21 @@ class RuntimeSummaryProjectionStore:
             # it; a heartbeat never refreshes a mark, it can only withdraw one.
             perf = metadata.get("performance_telemetry")
             if event_type == "heartbeat" and isinstance(perf, dict):
+                # The heartbeat reports the same authoritative ledger fill_count
+                # even when the performance sample is unchanged and no new
+                # pnl/drawdown snapshot is emitted (e.g. a flat book that was
+                # closed before this projection learned fill counts).
+                hb_fill_count = perf.get("fill_count")
+                if (
+                    isinstance(hb_fill_count, int)
+                    and not isinstance(hb_fill_count, bool)
+                    and hb_fill_count >= 0
+                ):
+                    current["ledger_fill_count"] = max(
+                        int(current.get("ledger_fill_count") or 0),
+                        hb_fill_count,
+                    )
+                    _rebuild_positions(current)
                 perf_diag = (
                     perf.get("diagnostic")
                     if isinstance(perf.get("diagnostic"), dict)

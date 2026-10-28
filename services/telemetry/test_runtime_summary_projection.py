@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -1958,3 +1959,783 @@ class TestValuationFailureProjection(unittest.TestCase):
         self.assertNotIn("market_value", stale_pos)
         self.assertEqual(stale_pos["last_known_mark_as_of"], "2026-10-22T00:00:00Z")
         self.assertEqual(stale_pos["last_known_mark_observed_at"], "2026-10-23T12:29:54Z")
+
+
+class TestCommittedCloseFinancialConsistency(unittest.TestCase):
+    """Runtime ledger fill_count must govern whether fill-derived positions are current."""
+
+    def _store(self):
+        return RuntimeSummaryProjectionStore(
+            path=str(Path(tempfile.mkdtemp()) / "summaries.json")
+        )
+
+    @staticmethod
+    def _snapshot(event_type, *, created_at, fill_count, pnl=-15.0, drawdown=0.00015):
+        event = _event(event_type, created_at=created_at)
+        event["event_id"] = f"evt-{event_type}-{created_at}"
+        event["metrics"] = {
+            "pnl": pnl,
+            "drawdown_pct": drawdown,
+            "portfolio_value": 100000.0 + pnl,
+            "initial_cash": 100000.0,
+            "cash": 99985.0,
+            "fill_count": fill_count,
+        }
+        return event
+
+    def _open_short(self, store):
+        store.project_event(
+            _fill_event(symbol="2330.TW", qty=-1.0, price=2385.0, created_at="2026-10-27T01:43:10Z")
+        )
+
+    def test_missing_close_fill_event_withholds_stale_open_position(self):
+        store = self._store()
+        self._open_short(store)
+        summary = store.project_event(
+            self._snapshot("pnl_snapshot", created_at="2026-10-27T13:03:00Z", fill_count=2)
+        )
+        summary = store.project_event(
+            self._snapshot("drawdown_snapshot", created_at="2026-10-27T13:03:00Z", fill_count=2)
+        )
+        self.assertEqual(summary["executed_trade_count"], 1)
+        self.assertEqual(summary["ledger_fill_count"], 2)
+        self.assertEqual(summary["positions"], [])
+        self.assertIsNone(summary["position_count"])
+        self.assertEqual(summary["positions_status"], "unavailable")
+        self.assertIn("fill_event_gap", summary["positions_unavailable_reason"])
+        # Authoritative ledger financials are still presented.
+        self.assertEqual(summary["pnl"], -15.0)
+        self.assertEqual(summary["drawdown"], 0.00015)
+
+    def test_close_fill_event_restores_flat_position_and_clears_unavailability(self):
+        store = self._store()
+        self._open_short(store)
+        store.project_event(
+            self._snapshot("pnl_snapshot", created_at="2026-10-27T13:03:00Z", fill_count=2)
+        )
+        summary = store.project_event(
+            _fill_event(symbol="2330.TW", qty=1.0, price=2400.0, created_at="2026-10-27T13:01:35Z")
+        )
+        self.assertEqual(summary["executed_trade_count"], 2)
+        self.assertEqual(summary["positions"], [])
+        self.assertEqual(summary["position_count"], 0)
+        self.assertNotIn("positions_status", summary)
+        self.assertEqual(summary["pnl"], -15.0)
+
+    def test_unchanged_heartbeat_fill_count_upgrades_stored_summary(self):
+        # Historical shape: stored summary has fill1/short1 and the runtime
+        # ledger is flat and unchanged, so no new pnl/drawdown snapshot exists.
+        store = self._store()
+        self._open_short(store)
+        heartbeat = _event("heartbeat", created_at="2026-10-27T13:05:00Z")
+        heartbeat["event_id"] = "evt-hb-unchanged"
+        heartbeat["metadata"] = {
+            **(heartbeat.get("metadata") or {}),
+            "performance_telemetry": {
+                "status": "unchanged",
+                "code": "performance_sample_unchanged",
+                "fill_count": 2,
+            },
+        }
+        summary = store.project_event(heartbeat)
+        self.assertEqual(summary["ledger_fill_count"], 2)
+        self.assertEqual(summary["positions"], [])
+        self.assertIsNone(summary["position_count"])
+        self.assertEqual(summary["positions_status"], "unavailable")
+        self.assertIn("fill_event_gap", summary["positions_unavailable_reason"])
+        # No fabricated fill or financials.
+        self.assertEqual(summary["executed_trade_count"], 1)
+        self.assertNotIn("pnl", summary)
+
+    def test_consistent_fill_count_does_not_flag_positions(self):
+        store = self._store()
+        self._open_short(store)
+        summary = store.project_event(
+            self._snapshot("pnl_snapshot", created_at="2026-10-27T01:44:00Z", fill_count=1, pnl=0.0, drawdown=0.0)
+        )
+        self.assertNotIn("positions_status", summary)
+        self.assertEqual(summary["position_count"], 1)
+
+    def test_missing_financial_inputs_stay_unavailable_not_zero(self):
+        store = self._store()
+        summary = store.project_event(_event("heartbeat", created_at="2026-10-27T13:03:00Z"))
+        for key in ("pnl", "drawdown", "sharpe_ratio"):
+            self.assertNotIn(key, summary)
+        self.assertNotIn("ledger_fill_count", summary)
+
+
+# Frozen real inputs (read-only owner GETs, tenant-dev paper, 2026-10-27).
+#   summary  <- financial-inputs-after-d551-release-20261028.json
+#               sha256 d113f567ea3d3f39596c90bb3649005b3440832d943fbf0aa92b917d3bc0d3a5
+#               (financial_owner_read.summaries[0], runtime rt-81e2f12f, d551 projector)
+#   heartbeat <- financial-original-heartbeat-owner-proof-20261028.json
+#               sha256 2bb54a980565569eaf7abeb1eadf0ee065b3e2e6e41f39c798e9d15ad337898f
+#               (event cb71a62f-d073-496c-82b4-336cf1b50b6b)
+# Persisted ledger (sha256 a8929fb5...a0a32): fill_count=2, holdings={}, cash=99985.
+_REAL_D551_SUMMARY = json.loads(r"""
+{
+    "_binding_boundary_at": "2026-10-27T01:42:12Z",
+    "_binding_boundary_source": "metadata.runtime_binding_effective_at",
+    "_binding_effective_at": "2026-10-27T01:42:12Z",
+    "_binding_effective_source": "metadata.runtime_binding_effective_at",
+    "_binding_first_event_at": "2026-10-27T01:42:26Z",
+    "_binding_latest_event_at": "2026-10-27T19:54:11Z",
+    "_marks_by_symbol": {
+        "2330.TW": {
+            "as_of": "2026-10-27T00:00:00Z",
+            "binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+            "calendar_evidence": {
+                "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",
+                "checksum": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+                "coverage_end": "2026-10-28",
+                "coverage_start": "2026-10-22",
+                "fetched_at": "2026-10-23T07:00:39Z",
+                "holidays": {
+                    "2026-10-23": {
+                        "name": "颱風全日休市 (TWSE 臨時休市公告)"
+                    },
+                    "2026-10-25": {
+                        "name": "臺灣光復暨金門古寧頭大捷紀念日"
+                    },
+                    "2026-10-26": {
+                        "name": "臺灣光復暨金門古寧頭大捷紀念日"
+                    }
+                },
+                "market": "TW",
+                "source_url": "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+                "timezone": "Asia/Taipei",
+                "trading_days": [
+                    "2026-10-22",
+                    "2026-10-27",
+                    "2026-10-28"
+                ],
+                "venue": "TWSE",
+                "version": "twse-2026-emergency-closure-20261023-v2"
+            },
+            "lineage": {
+                "connector_ids": [
+                    "tw-twse-tpex-official-market"
+                ],
+                "content_refs": [
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-12/b7cccaadeb0de836",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-13/fa96f9c7d494cd4b",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-14/3fdfa78a63cc6d7d",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-17/be1c4fec958d482d",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-18/6f629e3bdaa4d52b",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-19/5257e4b094f61680",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-20/4d265a41afde9033",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-21/c15db3967fe11de8",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-24/3521c8e4c5014967",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-25/ae55e73ad36f33d5",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-26/34cb2f6fafcb1fb9",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-27/58e5badefcb24b26",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-28/8908237b6ac95ed9",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-31/9ce71bc7f3123ad9",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-01/6450635b77534ef3",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-02/7e3e16125d62c8e2",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-03/11d3e2b9da811052",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-04/c8babce8ba646574",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-07/469fa93787137ead",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-08/820530d545bb5c38",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-09/ea38784557eda681",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-10/a63257be0d676e8a",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-11/1d6dab1e84b80fdb",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-14/f68a82442a25756c",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-15/0b4d1f4c49e30fd9",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-16/0a8ac12f9dd41fe4",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-17/37806df652ed08ad",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-18/bf5f15a59e19ad0a",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-21/fc286d5a7640de26",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-22/e759774fff2be04d",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-23/238532f02e22165f",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-24/05bca2967dc31336",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-29/523257279b4c61f2",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-30/47104356c7fb192a",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-01/53fc49a2eabe1a60",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-02/53197c0eb80d9a79",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-05/94715490491f5d22",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-06/e961087e0abb112e",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-07/baa9a905ee4c2e18",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-08/d431e8abd8d642af",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-12/87f48a6834d99cb2",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-13/a2eb8eb547ae72d5",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-14/ec38df8985de48ce",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-15/e4b598d99f084c19",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-16/d3fcadde497d307e",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-19/377207ae9cea98d3",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-20/25371c27f3a02a70",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-21/dd391cb2bc59b2c6",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-22/9691b8ad1b066a80",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-27/87dff0f47fd344e7"
+                ],
+                "ingest_run_ids": [
+                    "ingest-06e31af273c7",
+                    "ingest-0bd36c20aa94",
+                    "ingest-165e0a945a5e",
+                    "ingest-207617dd7ceb",
+                    "ingest-38c8baa26a52",
+                    "ingest-67efeabf184f",
+                    "ingest-72b7157bf39f",
+                    "ingest-84555a4c38a4",
+                    "ingest-be034098f497",
+                    "ingest-c416f857e4fa",
+                    "ingest-e53a86463995"
+                ],
+                "source_ids": [
+                    "tw-official:tw_price_daily:TWSE:2330:05bca2967dc31336",
+                    "tw-official:tw_price_daily:TWSE:2330:0a8ac12f9dd41fe4",
+                    "tw-official:tw_price_daily:TWSE:2330:0b4d1f4c49e30fd9",
+                    "tw-official:tw_price_daily:TWSE:2330:11d3e2b9da811052",
+                    "tw-official:tw_price_daily:TWSE:2330:1d6dab1e84b80fdb",
+                    "tw-official:tw_price_daily:TWSE:2330:238532f02e22165f",
+                    "tw-official:tw_price_daily:TWSE:2330:25371c27f3a02a70",
+                    "tw-official:tw_price_daily:TWSE:2330:34cb2f6fafcb1fb9",
+                    "tw-official:tw_price_daily:TWSE:2330:3521c8e4c5014967",
+                    "tw-official:tw_price_daily:TWSE:2330:377207ae9cea98d3",
+                    "tw-official:tw_price_daily:TWSE:2330:37806df652ed08ad",
+                    "tw-official:tw_price_daily:TWSE:2330:3fdfa78a63cc6d7d",
+                    "tw-official:tw_price_daily:TWSE:2330:469fa93787137ead",
+                    "tw-official:tw_price_daily:TWSE:2330:47104356c7fb192a",
+                    "tw-official:tw_price_daily:TWSE:2330:4d265a41afde9033",
+                    "tw-official:tw_price_daily:TWSE:2330:523257279b4c61f2",
+                    "tw-official:tw_price_daily:TWSE:2330:5257e4b094f61680",
+                    "tw-official:tw_price_daily:TWSE:2330:53197c0eb80d9a79",
+                    "tw-official:tw_price_daily:TWSE:2330:53fc49a2eabe1a60",
+                    "tw-official:tw_price_daily:TWSE:2330:58e5badefcb24b26",
+                    "tw-official:tw_price_daily:TWSE:2330:6450635b77534ef3",
+                    "tw-official:tw_price_daily:TWSE:2330:6f629e3bdaa4d52b",
+                    "tw-official:tw_price_daily:TWSE:2330:7e3e16125d62c8e2",
+                    "tw-official:tw_price_daily:TWSE:2330:820530d545bb5c38",
+                    "tw-official:tw_price_daily:TWSE:2330:87dff0f47fd344e7",
+                    "tw-official:tw_price_daily:TWSE:2330:87f48a6834d99cb2",
+                    "tw-official:tw_price_daily:TWSE:2330:8908237b6ac95ed9",
+                    "tw-official:tw_price_daily:TWSE:2330:94715490491f5d22",
+                    "tw-official:tw_price_daily:TWSE:2330:9691b8ad1b066a80",
+                    "tw-official:tw_price_daily:TWSE:2330:9ce71bc7f3123ad9",
+                    "tw-official:tw_price_daily:TWSE:2330:a2eb8eb547ae72d5",
+                    "tw-official:tw_price_daily:TWSE:2330:a63257be0d676e8a",
+                    "tw-official:tw_price_daily:TWSE:2330:ae55e73ad36f33d5",
+                    "tw-official:tw_price_daily:TWSE:2330:b7cccaadeb0de836",
+                    "tw-official:tw_price_daily:TWSE:2330:baa9a905ee4c2e18",
+                    "tw-official:tw_price_daily:TWSE:2330:be1c4fec958d482d",
+                    "tw-official:tw_price_daily:TWSE:2330:bf5f15a59e19ad0a",
+                    "tw-official:tw_price_daily:TWSE:2330:c15db3967fe11de8",
+                    "tw-official:tw_price_daily:TWSE:2330:c8babce8ba646574",
+                    "tw-official:tw_price_daily:TWSE:2330:d3fcadde497d307e",
+                    "tw-official:tw_price_daily:TWSE:2330:d431e8abd8d642af",
+                    "tw-official:tw_price_daily:TWSE:2330:dd391cb2bc59b2c6",
+                    "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+                    "tw-official:tw_price_daily:TWSE:2330:e759774fff2be04d",
+                    "tw-official:tw_price_daily:TWSE:2330:e961087e0abb112e",
+                    "tw-official:tw_price_daily:TWSE:2330:ea38784557eda681",
+                    "tw-official:tw_price_daily:TWSE:2330:ec38df8985de48ce",
+                    "tw-official:tw_price_daily:TWSE:2330:f68a82442a25756c",
+                    "tw-official:tw_price_daily:TWSE:2330:fa96f9c7d494cd4b",
+                    "tw-official:tw_price_daily:TWSE:2330:fc286d5a7640de26"
+                ]
+            },
+            "observed_at": "2026-10-27T13:00:38Z",
+            "price": 2400.0,
+            "source_ref": "source-ingest://snapshots/mss-6c6e5f3d50b58e4304aff864"
+        }
+    },
+    "_positions_by_symbol": {
+        "2330.TW": -1.0
+    },
+    "_valuation_attempt_at": "2026-10-27T19:54:11Z",
+    "aggregate_id": "tj_f1ec4785-e662-5af2-9e84-fb7d28d0440b",
+    "aggregate_type": "trade_journey",
+    "artifact_id": "artifact-persona-paper-d63a91e1b498113c5ddb",
+    "artifact_version": "1.0.0",
+    "authority_refs": {
+        "authority_source": "runtime_binding",
+        "persona_id": "persona-34c856860d59d103760c",
+        "runtime_mode": "paper",
+        "runtime_role": "pantheon-lean-paper-runtime",
+        "write_owner": "runtime-manager"
+    },
+    "avg_slippage_bps": 0.0,
+    "avg_slippage_bps_at": "2026-10-27T13:01:55Z",
+    "avg_slippage_bps_binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+    "binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+    "broker_status": "not_applicable",
+    "capital_pool_id": "pool-persona-paper-d63a91e1b498113c5ddb",
+    "causal_parent_id": "76f4a001-22f0-5452-b56b-5dd7d4da3f31",
+    "collected_at": "2026-10-27T19:54:11Z",
+    "connectivity_status": "connected",
+    "correlation_envelope": {
+        "causation_event_id": "76f4a001-22f0-5452-b56b-5dd7d4da3f31",
+        "correlation_id": "0a9107ea-7bde-57ab-ad24-a63bf4fce802",
+        "environment": "paper",
+        "event_id": "a07ea9b8-2c97-4506-b4c4-086d26184485",
+        "event_time": "2026-10-27T13:02:38Z",
+        "journey_id": "tj_f1ec4785-e662-5af2-9e84-fb7d28d0440b",
+        "producer": "execution.paper_runtime",
+        "producer_revision": 1,
+        "received_at": "2026-10-27T13:02:38Z",
+        "schema_version": "trade-journey-envelope/1",
+        "tenant_id": "tenant-dev",
+        "trace_id": "ad4de3d0-cbbe-588e-a6ce-d7eee583e095"
+    },
+    "deployment_plan_id": "plan-persona-paper-d63a91e1b498113c5ddb",
+    "deployment_stage": "paper",
+    "drawdown": 0.00015,
+    "drawdown_at": "2026-10-27T13:01:35Z",
+    "drawdown_binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+    "environment": "paper",
+    "event_delivery_lag_ms": 57.151,
+    "executed_trade_count": 1,
+    "execution_mode": "paper",
+    "fill_rate": 0.0,
+    "fill_rate_at": "2026-10-27T13:02:38Z",
+    "fill_rate_binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+    "health_summary": {
+        "bridge": "not_applicable",
+        "broker": "not_applicable",
+        "paper_runtime": "ok",
+        "telemetry": "ok"
+    },
+    "id": "rt-81e2f12f",
+    "journey_id": "tj_f1ec4785-e662-5af2-9e84-fb7d28d0440b",
+    "last_event_at": "2026-10-27T19:54:11Z",
+    "last_event_id": "cb71a62f-d073-496c-82b4-336cf1b50b6b",
+    "last_event_type": "heartbeat",
+    "last_fill": {
+        "action": "SELL",
+        "at": "2026-10-27T01:43:10Z",
+        "fill_price": 2385.0,
+        "quantity": -1.0,
+        "submitted_to_broker": true,
+        "symbol": "2330.TW"
+    },
+    "last_heartbeat_at": "2026-10-27T19:54:11Z",
+    "last_heartbeat_event_id": "cb71a62f-d073-496c-82b4-336cf1b50b6b",
+    "last_lifecycle_identity": {
+        "aggregate_id": "tj_f1ec4785-e662-5af2-9e84-fb7d28d0440b",
+        "aggregate_type": "trade_journey",
+        "artifact_id": "artifact-persona-paper-d63a91e1b498113c5ddb",
+        "artifact_version": "1.0.0",
+        "authority_refs": {
+            "authority_source": "runtime_binding",
+            "persona_id": "persona-34c856860d59d103760c",
+            "runtime_mode": "paper",
+            "runtime_role": "pantheon-lean-paper-runtime",
+            "write_owner": "runtime-manager"
+        },
+        "binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+        "capital_pool_id": "pool-persona-paper-d63a91e1b498113c5ddb",
+        "causal_parent_id": "76f4a001-22f0-5452-b56b-5dd7d4da3f31",
+        "correlation_envelope": {
+            "causation_event_id": "76f4a001-22f0-5452-b56b-5dd7d4da3f31",
+            "correlation_id": "0a9107ea-7bde-57ab-ad24-a63bf4fce802",
+            "environment": "paper",
+            "event_id": "a07ea9b8-2c97-4506-b4c4-086d26184485",
+            "event_time": "2026-10-27T13:02:38Z",
+            "journey_id": "tj_f1ec4785-e662-5af2-9e84-fb7d28d0440b",
+            "producer": "execution.paper_runtime",
+            "producer_revision": 1,
+            "received_at": "2026-10-27T13:02:38Z",
+            "schema_version": "trade-journey-envelope/1",
+            "tenant_id": "tenant-dev",
+            "trace_id": "ad4de3d0-cbbe-588e-a6ce-d7eee583e095"
+        },
+        "created_at": "2026-10-27T13:02:38Z",
+        "deployment_stage": "paper",
+        "environment": "paper",
+        "event_id": "a07ea9b8-2c97-4506-b4c4-086d26184485",
+        "event_type": "paper_order_simulated",
+        "execution_mode": "paper",
+        "journey_id": "tj_f1ec4785-e662-5af2-9e84-fb7d28d0440b",
+        "loop_run_id": "lr-run-rb-ebd0dfbd7e10438ebf25d9cc4f6f3292-6686495046b6c023b19ae417",
+        "metadata": {
+            "binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+            "broker_submission_status": "not_submitted_signal_filtered",
+            "capital_scale_pct": 0,
+            "causal_parent_id": "76f4a001-22f0-5452-b56b-5dd7d4da3f31",
+            "computed_quantity": 0.0,
+            "correlation_envelope": {
+                "causation_event_id": "d8f11f2f-bd3f-4621-bc29-8f8135ff7b6c",
+                "correlation_id": "0a9107ea-7bde-57ab-ad24-a63bf4fce802",
+                "environment": "paper",
+                "event_id": "76f4a001-22f0-5452-b56b-5dd7d4da3f31",
+                "event_time": "2026-10-27T13:01:32Z",
+                "journey_id": "tj_f1ec4785-e662-5af2-9e84-fb7d28d0440b",
+                "producer": "execution.paper_runtime",
+                "producer_revision": 1,
+                "received_at": "2026-10-27T13:01:32Z",
+                "schema_version": "trade-journey-envelope/1",
+                "tenant_id": "tenant-dev",
+                "trace_id": "ad4de3d0-cbbe-588e-a6ce-d7eee583e095"
+            },
+            "decision_status": "no_order",
+            "environment": "paper",
+            "execution_fence_status": "in_progress",
+            "filter_reason": "execution_in_progress_elsewhere",
+            "is_real_capital": false,
+            "is_real_order": false,
+            "journey_id": "tj_f1ec4785-e662-5af2-9e84-fb7d28d0440b",
+            "loop_run_id": "lr-run-rb-ebd0dfbd7e10438ebf25d9cc4f6f3292-6686495046b6c023b19ae417",
+            "market_price": 2400.0,
+            "market_price_as_of": "2026-10-27T00:00:00Z",
+            "market_price_source": "source-ingest://snapshots/mss-6c6e5f3d50b58e4304aff864",
+            "noop_reason": "execution_in_progress_elsewhere",
+            "order_status": "not_submitted",
+            "order_type": "MARKET",
+            "persona_id": "persona-34c856860d59d103760c",
+            "price": 2400.0,
+            "quantity_type": "SHARES",
+            "requested_quantity": 1.0,
+            "run_id": "run-rb-ebd0dfbd7e10438ebf25d9cc4f6f3292-6686495046b6c023b19ae417",
+            "runtime_binding_effective_at": "2026-10-27T01:42:12Z",
+            "runtime_package": "paper_execution_runtime",
+            "runtime_role": "pantheon-lean-paper-runtime",
+            "sequence_no": 6,
+            "signal_id": "sig-6686495046b6c023b19ae417e55399f8",
+            "sim_fill_flag": false,
+            "source_mode": "live",
+            "source_worker": "paper-signal-producer",
+            "strategy_id": "strategy-persona-d63a91e1b498113c5ddb",
+            "submitted_to_broker": false,
+            "symbol": "2330.TW",
+            "tenant_id": "tenant-dev"
+        },
+        "persona_capital_binding_id": "pcb-persona-paper-d63a91e1b498113c5ddb",
+        "plan_id": "plan-persona-paper-d63a91e1b498113c5ddb",
+        "run_id": "run-rb-ebd0dfbd7e10438ebf25d9cc4f6f3292-6686495046b6c023b19ae417",
+        "runtime_id": "rt-81e2f12f",
+        "sequence_no": 6,
+        "signal_id": "sig-6686495046b6c023b19ae417e55399f8",
+        "source_mode": "live",
+        "target": {
+            "artifact_type": "execution_bundle",
+            "artifact_version": "1.0.0",
+            "promotion_state": "paper",
+            "registry_id": "artifact-persona-paper-d63a91e1b498113c5ddb",
+            "strategy_id": "strategy-persona-d63a91e1b498113c5ddb"
+        },
+        "tenant_id": "tenant-dev",
+        "trace_id": "ad4de3d0-cbbe-588e-a6ce-d7eee583e095"
+    },
+    "loop_run_id": "lr-run-rb-ebd0dfbd7e10438ebf25d9cc4f6f3292-6686495046b6c023b19ae417",
+    "persona_capital_binding_id": "pcb-persona-paper-d63a91e1b498113c5ddb",
+    "plan_id": "plan-persona-paper-d63a91e1b498113c5ddb",
+    "pnl": -15.0,
+    "pnl_at": "2026-10-27T13:01:35Z",
+    "pnl_binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+    "position_count": 1,
+    "positions": [
+        {
+            "mark_as_of": "2026-10-27T00:00:00Z",
+            "mark_calendar_evidence": {
+                "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",
+                "checksum": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+                "coverage_end": "2026-10-28",
+                "coverage_start": "2026-10-22",
+                "fetched_at": "2026-10-23T07:00:39Z",
+                "holidays": {
+                    "2026-10-23": {
+                        "name": "颱風全日休市 (TWSE 臨時休市公告)"
+                    },
+                    "2026-10-25": {
+                        "name": "臺灣光復暨金門古寧頭大捷紀念日"
+                    },
+                    "2026-10-26": {
+                        "name": "臺灣光復暨金門古寧頭大捷紀念日"
+                    }
+                },
+                "market": "TW",
+                "source_url": "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+                "timezone": "Asia/Taipei",
+                "trading_days": [
+                    "2026-10-22",
+                    "2026-10-27",
+                    "2026-10-28"
+                ],
+                "venue": "TWSE",
+                "version": "twse-2026-emergency-closure-20261023-v2"
+            },
+            "mark_lineage": {
+                "connector_ids": [
+                    "tw-twse-tpex-official-market"
+                ],
+                "content_refs": [
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-12/b7cccaadeb0de836",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-13/fa96f9c7d494cd4b",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-14/3fdfa78a63cc6d7d",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-17/be1c4fec958d482d",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-18/6f629e3bdaa4d52b",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-19/5257e4b094f61680",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-20/4d265a41afde9033",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-21/c15db3967fe11de8",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-24/3521c8e4c5014967",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-25/ae55e73ad36f33d5",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-26/34cb2f6fafcb1fb9",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-27/58e5badefcb24b26",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-28/8908237b6ac95ed9",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-08-31/9ce71bc7f3123ad9",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-01/6450635b77534ef3",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-02/7e3e16125d62c8e2",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-03/11d3e2b9da811052",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-04/c8babce8ba646574",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-07/469fa93787137ead",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-08/820530d545bb5c38",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-09/ea38784557eda681",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-10/a63257be0d676e8a",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-11/1d6dab1e84b80fdb",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-14/f68a82442a25756c",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-15/0b4d1f4c49e30fd9",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-16/0a8ac12f9dd41fe4",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-17/37806df652ed08ad",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-18/bf5f15a59e19ad0a",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-21/fc286d5a7640de26",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-22/e759774fff2be04d",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-23/238532f02e22165f",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-24/05bca2967dc31336",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-29/523257279b4c61f2",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-09-30/47104356c7fb192a",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-01/53fc49a2eabe1a60",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-02/53197c0eb80d9a79",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-05/94715490491f5d22",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-06/e961087e0abb112e",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-07/baa9a905ee4c2e18",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-08/d431e8abd8d642af",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-12/87f48a6834d99cb2",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-13/a2eb8eb547ae72d5",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-14/ec38df8985de48ce",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-15/e4b598d99f084c19",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-16/d3fcadde497d307e",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-19/377207ae9cea98d3",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-20/25371c27f3a02a70",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-21/dd391cb2bc59b2c6",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-22/9691b8ad1b066a80",
+                    "tw-official://tw_price_daily/TWSE/2330/2026-10-27/87dff0f47fd344e7"
+                ],
+                "ingest_run_ids": [
+                    "ingest-06e31af273c7",
+                    "ingest-0bd36c20aa94",
+                    "ingest-165e0a945a5e",
+                    "ingest-207617dd7ceb",
+                    "ingest-38c8baa26a52",
+                    "ingest-67efeabf184f",
+                    "ingest-72b7157bf39f",
+                    "ingest-84555a4c38a4",
+                    "ingest-be034098f497",
+                    "ingest-c416f857e4fa",
+                    "ingest-e53a86463995"
+                ],
+                "source_ids": [
+                    "tw-official:tw_price_daily:TWSE:2330:05bca2967dc31336",
+                    "tw-official:tw_price_daily:TWSE:2330:0a8ac12f9dd41fe4",
+                    "tw-official:tw_price_daily:TWSE:2330:0b4d1f4c49e30fd9",
+                    "tw-official:tw_price_daily:TWSE:2330:11d3e2b9da811052",
+                    "tw-official:tw_price_daily:TWSE:2330:1d6dab1e84b80fdb",
+                    "tw-official:tw_price_daily:TWSE:2330:238532f02e22165f",
+                    "tw-official:tw_price_daily:TWSE:2330:25371c27f3a02a70",
+                    "tw-official:tw_price_daily:TWSE:2330:34cb2f6fafcb1fb9",
+                    "tw-official:tw_price_daily:TWSE:2330:3521c8e4c5014967",
+                    "tw-official:tw_price_daily:TWSE:2330:377207ae9cea98d3",
+                    "tw-official:tw_price_daily:TWSE:2330:37806df652ed08ad",
+                    "tw-official:tw_price_daily:TWSE:2330:3fdfa78a63cc6d7d",
+                    "tw-official:tw_price_daily:TWSE:2330:469fa93787137ead",
+                    "tw-official:tw_price_daily:TWSE:2330:47104356c7fb192a",
+                    "tw-official:tw_price_daily:TWSE:2330:4d265a41afde9033",
+                    "tw-official:tw_price_daily:TWSE:2330:523257279b4c61f2",
+                    "tw-official:tw_price_daily:TWSE:2330:5257e4b094f61680",
+                    "tw-official:tw_price_daily:TWSE:2330:53197c0eb80d9a79",
+                    "tw-official:tw_price_daily:TWSE:2330:53fc49a2eabe1a60",
+                    "tw-official:tw_price_daily:TWSE:2330:58e5badefcb24b26",
+                    "tw-official:tw_price_daily:TWSE:2330:6450635b77534ef3",
+                    "tw-official:tw_price_daily:TWSE:2330:6f629e3bdaa4d52b",
+                    "tw-official:tw_price_daily:TWSE:2330:7e3e16125d62c8e2",
+                    "tw-official:tw_price_daily:TWSE:2330:820530d545bb5c38",
+                    "tw-official:tw_price_daily:TWSE:2330:87dff0f47fd344e7",
+                    "tw-official:tw_price_daily:TWSE:2330:87f48a6834d99cb2",
+                    "tw-official:tw_price_daily:TWSE:2330:8908237b6ac95ed9",
+                    "tw-official:tw_price_daily:TWSE:2330:94715490491f5d22",
+                    "tw-official:tw_price_daily:TWSE:2330:9691b8ad1b066a80",
+                    "tw-official:tw_price_daily:TWSE:2330:9ce71bc7f3123ad9",
+                    "tw-official:tw_price_daily:TWSE:2330:a2eb8eb547ae72d5",
+                    "tw-official:tw_price_daily:TWSE:2330:a63257be0d676e8a",
+                    "tw-official:tw_price_daily:TWSE:2330:ae55e73ad36f33d5",
+                    "tw-official:tw_price_daily:TWSE:2330:b7cccaadeb0de836",
+                    "tw-official:tw_price_daily:TWSE:2330:baa9a905ee4c2e18",
+                    "tw-official:tw_price_daily:TWSE:2330:be1c4fec958d482d",
+                    "tw-official:tw_price_daily:TWSE:2330:bf5f15a59e19ad0a",
+                    "tw-official:tw_price_daily:TWSE:2330:c15db3967fe11de8",
+                    "tw-official:tw_price_daily:TWSE:2330:c8babce8ba646574",
+                    "tw-official:tw_price_daily:TWSE:2330:d3fcadde497d307e",
+                    "tw-official:tw_price_daily:TWSE:2330:d431e8abd8d642af",
+                    "tw-official:tw_price_daily:TWSE:2330:dd391cb2bc59b2c6",
+                    "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+                    "tw-official:tw_price_daily:TWSE:2330:e759774fff2be04d",
+                    "tw-official:tw_price_daily:TWSE:2330:e961087e0abb112e",
+                    "tw-official:tw_price_daily:TWSE:2330:ea38784557eda681",
+                    "tw-official:tw_price_daily:TWSE:2330:ec38df8985de48ce",
+                    "tw-official:tw_price_daily:TWSE:2330:f68a82442a25756c",
+                    "tw-official:tw_price_daily:TWSE:2330:fa96f9c7d494cd4b",
+                    "tw-official:tw_price_daily:TWSE:2330:fc286d5a7640de26"
+                ]
+            },
+            "mark_observed_at": "2026-10-27T13:00:38Z",
+            "mark_price": 2400.0,
+            "mark_source_ref": "source-ingest://snapshots/mss-6c6e5f3d50b58e4304aff864",
+            "market_value": -2400.0,
+            "quantity": -1.0,
+            "symbol": "2330.TW"
+        }
+    ],
+    "projection_source": "telemetry_ingest",
+    "projection_updated_at": "2026-10-27T19:54:11Z",
+    "queue_lag_ms": 0.0,
+    "recent_lifecycle_event_ids": [
+        "4666c4c2-0bbc-463b-b73f-f94cac7c197e",
+        "0bf024af-d51c-56c3-95f0-ecb67cde9748",
+        "66ac5547-cbd3-54fe-a41c-af98aa6f046d",
+        "ccd4db00-0440-568e-9ea0-09949d19ad26",
+        "e5ab25f4-ff48-525f-95b9-4c347f8b4024",
+        "e57ab8d8-bd2a-419c-aebb-db0c3ddd9f61",
+        "8da58fb2-929b-5582-87fc-53b37dda588b",
+        "31b7d021-33cf-54bd-94a3-681009bed0a7",
+        "6cd4dd86-4435-45de-88df-460c713718f6",
+        "05d58469-0438-5010-8604-a3ea42dbefa4",
+        "3b035c9f-43f2-5f6e-beb7-e99f178489ed",
+        "d8f11f2f-bd3f-4621-bc29-8f8135ff7b6c",
+        "76f4a001-22f0-5452-b56b-5dd7d4da3f31",
+        "a07ea9b8-2c97-4506-b4c4-086d26184485"
+    ],
+    "run_id": "run-rb-ebd0dfbd7e10438ebf25d9cc4f6f3292-6686495046b6c023b19ae417",
+    "runtime_binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+    "runtime_id": "rt-81e2f12f",
+    "runtime_package": "paper_execution_runtime",
+    "sequence_no": 6,
+    "signal_id": "sig-6686495046b6c023b19ae417e55399f8",
+    "source_mode": "live",
+    "state": "active",
+    "tenant_id": "tenant-dev",
+    "total_trades": 1,
+    "trace_id": "ad4de3d0-cbbe-588e-a6ce-d7eee583e095",
+    "window": "latest"
+}
+""")
+
+_REAL_D551_HEARTBEAT = json.loads(r"""
+{
+    "artifact_id": "artifact-persona-paper-d63a91e1b498113c5ddb",
+    "artifact_version": "1.0.0",
+    "authority_refs": {
+        "authority_source": "runtime_binding",
+        "persona_id": "persona-34c856860d59d103760c",
+        "runtime_mode": "paper",
+        "runtime_role": "pantheon-lean-paper-runtime",
+        "write_owner": "runtime-manager"
+    },
+    "binding_id": "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292",
+    "capital_pool_id": "pool-persona-paper-d63a91e1b498113c5ddb",
+    "created_at": "2026-10-27T19:54:11Z",
+    "deployment_stage": "paper",
+    "environment": "paper",
+    "event_id": "cb71a62f-d073-496c-82b4-336cf1b50b6b",
+    "event_type": "heartbeat",
+    "execution_mode": "paper",
+    "metadata": {
+        "capital_scale_pct": 0,
+        "delivery_lag_ms": 57.151,
+        "event_delivery_lag_ms": 57.151,
+        "is_real_capital": false,
+        "is_real_order": false,
+        "performance_telemetry": {
+            "as_of": "2026-10-27T13:01:35Z",
+            "attempted_at": "2026-10-27T19:54:11Z",
+            "code": "performance_sample_unchanged",
+            "fill_count": 2,
+            "mark_count": 0,
+            "mark_source": {
+                "enabled": true,
+                "indexed_mark_count": 0,
+                "last_error": null,
+                "last_refresh_at": null,
+                "max_mark_age_seconds": 172800.0,
+                "requested_symbols": [],
+                "source": "source_ingest",
+                "url": "http://source-ingest:8097"
+            },
+            "position_count": 0,
+            "status": "unchanged",
+            "valuation_method": "fill_cash_ledger_mark_to_market"
+        },
+        "persona_id": "persona-34c856860d59d103760c",
+        "queue_depth": 0,
+        "queue_lag_ms": 0.0,
+        "runtime_binding_effective_at": "2026-10-27T01:42:12Z",
+        "runtime_heartbeat": {
+            "broker_status": "not_applicable",
+            "connectivity_status": "connected",
+            "delivery_lag_ms": 57.151,
+            "event_delivery_lag_ms": 57.151,
+            "queue_lag_ms": 0.0
+        },
+        "runtime_package": "paper_execution_runtime",
+        "runtime_role": "pantheon-lean-paper-runtime",
+        "sim_fill_flag": false
+    },
+    "metrics": {
+        "delivery_lag_ms": 57.151,
+        "event_delivery_lag_ms": 57.151,
+        "heartbeat": 1,
+        "queue_lag_ms": 0.0
+    },
+    "persona_capital_binding_id": "pcb-persona-paper-d63a91e1b498113c5ddb",
+    "plan_id": "plan-persona-paper-d63a91e1b498113c5ddb",
+    "runtime_id": "rt-81e2f12f",
+    "target": {
+        "artifact_type": "execution_bundle",
+        "artifact_version": "1.0.0",
+        "promotion_state": "paper",
+        "registry_id": "artifact-persona-paper-d63a91e1b498113c5ddb",
+        "strategy_id": "strategy-persona-d63a91e1b498113c5ddb"
+    },
+    "tenant_id": "tenant-dev"
+}
+""")
+
+
+class TestRealStateColdStartUnchangedHeartbeat(unittest.TestCase):
+    """Silent d551 defect: no exception; stale short 1 survives a flat committed ledger.
+
+    The interrupting trigger at 13:01 is NOT established by this replay; it only
+    covers the observable projection failure on the original saved inputs.
+    """
+
+    def _store_from_saved_summary(self):
+        path = Path(tempfile.mkdtemp()) / "summaries.json"
+        record = json.loads(json.dumps(_REAL_D551_SUMMARY))
+        path.write_text(json.dumps({record["id"]: record}), encoding="utf-8")
+        return RuntimeSummaryProjectionStore(path=str(path))
+
+    def test_saved_summary_is_the_stale_short_state(self):
+        self.assertEqual(_REAL_D551_SUMMARY["position_count"], 1)
+        self.assertEqual(_REAL_D551_SUMMARY["positions"][0]["quantity"], -1.0)
+        self.assertEqual(_REAL_D551_SUMMARY["positions"][0]["market_value"], -2400.0)
+        self.assertEqual(_REAL_D551_SUMMARY["executed_trade_count"], 1)
+
+    def test_original_unchanged_heartbeat_withholds_stale_short(self):
+        store = self._store_from_saved_summary()
+        telemetry = _REAL_D551_HEARTBEAT["metadata"]["performance_telemetry"]
+        self.assertEqual(telemetry["status"], "unchanged")
+        self.assertEqual(telemetry["fill_count"], 2)
+        self.assertEqual(telemetry["position_count"], 0)
+        summary = store.project_event(json.loads(json.dumps(_REAL_D551_HEARTBEAT)))
+        self.assertEqual(summary["binding_id"], "rb-ebd0dfbd7e10438ebf25d9cc4f6f3292")
+        self.assertEqual(summary["ledger_fill_count"], 2)
+        self.assertEqual(summary["executed_trade_count"], 1)
+        self.assertEqual(summary["positions"], [])
+        self.assertIsNone(summary["position_count"])
+        self.assertEqual(summary["positions_status"], "unavailable")
+        self.assertIn("fill_event_gap", summary["positions_unavailable_reason"])
+        # Real financials and their original as-of are preserved, not refreshed.
+        self.assertEqual(summary["pnl"], -15.0)
+        self.assertEqual(summary["drawdown"], 0.00015)
+        self.assertEqual(summary["pnl_at"], "2026-10-27T13:01:35Z")
+        self.assertEqual(summary["drawdown_at"], "2026-10-27T13:01:35Z")
+        # No fabricated fill event.
+        self.assertEqual(summary["last_fill"]["action"], "SELL")
