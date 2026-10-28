@@ -223,10 +223,13 @@ services:
       PANTHEON_RECONCILIATION_DRIFT_API_URL: http://reconciliation-drift-svc:8102
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_NATS_URL: nats://nats:4222
+      # Native Paper fleet reconciler read (/api/fleet/state); the shared health dir below is the producer health file.
+      PANTHEON_PAPER_FLEET_RECONCILER_URL: http://paper-fleet-reconciler:8011
     volumes:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/bff:/data/bff
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance:ro
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/runtime:/data/runtime:ro
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/health:/data/health:ro
     labels: {"org.pantheon.role": "bff"}
     ports:
       - "127.0.0.1:${STAGING_BFF_PORT:-18001}:8001"
@@ -623,6 +626,91 @@ services:
       - nats
       - persona
       - research-orchestrator-svc
+
+  # Existing Redis signal queue (pinned ref from the root compose); persistent on the staging data disk.
+  signal-store:
+    image: ${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core", "stateful"]
+    command: ["redis-server", "--appendonly", "yes", "--dir", "/data"]
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/signal-store:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Existing binding-scoped Paper fleet reconciler and artifact signal producer. They reuse the already published
+  # training-session image (manifest keys paper_fleet_reconciler/paper_signal_producer must equal that digest) and
+  # are singleton owners (one container each, no blue/green duplication). Service tokens,
+  # the controller-only reconciler DSN and the producer telemetry DSN come from the secrets env file; subprocess
+  # workers never receive the controller DSN. Provider/live/canary/real-write stay off; no broker credentials.
+  paper-fleet-reconciler:
+    image: ${PANTHEON_PAPER_FLEET_RECONCILER_IMAGE:?immutable paper-fleet-reconciler digest required}
+    <<: *product_owner
+    stop_grace_period: 30s
+    stop_signal: SIGINT
+    command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
+    environment:
+      <<: *product_env
+      PORT: "8011"
+      PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      RECONCILER_POLL_INTERVAL_SECONDS: "15"
+      RECONCILER_WORKER_BASE_PORT: "8020"
+      RECONCILER_MAX_RESTARTS: "5"
+      RECONCILER_RESTART_BACKOFF_SECONDS: "5"
+      RECONCILER_DRAIN_TIMEOUT_SECONDS: "10"
+      PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: "172800"
+      PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
+      # Exact release identity for the Loop 9 controller record; RECONCILER_LOOP_CONTROLLER_DSN comes from the secrets env file.
+      PANTHEON_DEPLOYMENT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
+      GIT_SHA: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
+      SIGNAL_STORE_URL: redis://signal-store:6379
+      WORKER_SCRIPT_PATH: services/execution/lean_runtime/paper_runtime.py
+      PANTHEON_CANARY_EXECUTION_ENABLED: "false"
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/runtime:/data/runtime
+    depends_on:
+      - runtime-manager
+      - telemetry
+      - source-ingest
+      - signal-store
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/readyz', timeout=5).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  paper-signal-producer:
+    image: ${PANTHEON_PAPER_SIGNAL_PRODUCER_IMAGE:?immutable paper-signal-producer digest required}
+    <<: *product_owner
+    stop_grace_period: 30s
+    command: ["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]
+    environment:
+      <<: *product_env
+      SIGNAL_STORE_URL: redis://signal-store:6379
+      PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      PAPER_PRODUCER_INTERVAL_SECONDS: "60"
+      # Source-owned persisted artifact/snapshot strategy only; fails closed without an executable artifact/snapshot.
+      PAPER_SIGNAL_STRATEGY: artifact
+      PAPER_PRODUCER_HEALTH_FILE: /data/health/paper-signal-producer-health.json
+      PANTHEON_CANARY_EXECUTION_ENABLED: "false"
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/health:/data/health
+    depends_on:
+      - runtime-manager
+      - source-ingest
+      - signal-store
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.execution.lean_runtime.paper_signal_producer", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # Existing memory / capital / OpenClaw gateway adapter owners consumed by the BFF persona,
   # capital-read and OpenClaw ops routes. Same immutable images and native Postgres stores; the

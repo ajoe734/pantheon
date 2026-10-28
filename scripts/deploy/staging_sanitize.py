@@ -53,11 +53,16 @@ PRODUCT_OWNER_IMAGE_KEYS = (
     "policy_learning_svc",
     "research_orchestrator_svc",
     "agora_interaction_worker",
+    "paper_fleet_reconciler",
+    "paper_signal_producer",
     "memory",
     "capital",
     "openclaw_gateway_adapter",
 )
 REQUIRED_OWNER_IMAGE_KEYS = CORE_OWNER_IMAGE_KEYS + PRODUCT_OWNER_IMAGE_KEYS
+# Paper workers postdate earlier baselines: a rollback baseline may legitimately omit them (recorded absent, never
+# started from an invented image). Every other owner remains mandatory.
+BASELINE_OPTIONAL_OWNER_IMAGE_KEYS = ("paper_fleet_reconciler", "paper_signal_producer")
 INTERNAL_STAGING_EMAIL_RE = re.compile(r"^staging-user-[A-Za-z0-9_-]+@pantheon\.internal$")
 RAW_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 SECRET_VALUE_PATTERNS = (
@@ -679,7 +684,13 @@ def verify_exact_pair_rollback(
     if rollback_readback.get("served_operator_bff_image") != rollback_baseline["backend_operator_bff_image"]:
         raise SanitizationError("rollback served_operator_bff_image does not match baseline image digest")
 
-    required_owner_keys = set(REQUIRED_OWNER_IMAGE_KEYS)
+    baseline_images_for_keys = rollback_baseline.get("backend_images")
+    baseline_absent_keys = {
+        k
+        for k in BASELINE_OPTIONAL_OWNER_IMAGE_KEYS
+        if isinstance(baseline_images_for_keys, dict) and not baseline_images_for_keys.get(k)
+    }
+    required_owner_keys = set(REQUIRED_OWNER_IMAGE_KEYS) - baseline_absent_keys
     if (
         rollback_readback.get("observed_from_live_vm") is True
         or "served_backend_images" in rollback_readback
@@ -689,8 +700,9 @@ def verify_exact_pair_rollback(
         if served_imgs is not None or rollback_readback.get("observed_from_live_vm") is True:
             if not isinstance(served_imgs, dict) or set(served_imgs.keys()) != required_owner_keys:
                 raise SanitizationError(
-                    "rollback served_backend_images must report every required owner service: "
-                    + ", ".join(REQUIRED_OWNER_IMAGE_KEYS)
+                    "rollback served_backend_images must report every required owner service "
+                    "(baseline-absent optional owners excluded): "
+                    + ", ".join(k for k in REQUIRED_OWNER_IMAGE_KEYS if k in required_owner_keys)
                 )
             for svc_key, img_val in served_imgs.items():
                 if not isinstance(img_val, str) or not IMAGE_DIGEST_RE.fullmatch(img_val):

@@ -28,6 +28,9 @@ RELEASE_ID_RE = re.compile(r"^pantheon-[0-9]{8}-[0-9]{3}$")
 COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_PREFIXED_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_RE = re.compile(r"^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$")
+# Existing Paper owners packaged in the already-published training-session image (no new image is built).
+PAPER_OWNER_IMAGE_KEYS = ("paper_fleet_reconciler", "paper_signal_producer")
+PAPER_OWNER_SOURCE_IMAGE_KEY = "training_session_svc"
 WORKFLOW_RUN_RE = re.compile(r"^ajoe734/(?:pantheon|execute-plans)/actions/runs/[0-9]+$")
 PANTHEON_WORKFLOW_RUN_RE = re.compile(r"^ajoe734/pantheon/actions/runs/[0-9]+$")
 RFC3339_UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
@@ -121,6 +124,16 @@ def compute_manifest_sha256(manifest: dict[str, Any]) -> str:
     digest = hashlib.sha256(canonical_manifest_bytes(manifest)).hexdigest()
     return f"sha256:{digest}"
 
+
+
+def _require_paper_owner_image_reuse(images: dict, label: str) -> None:
+    """Paper owners must reuse the exact training-session image digest; a divergent ref is never accepted."""
+    source = images.get(PAPER_OWNER_SOURCE_IMAGE_KEY)
+    for key in PAPER_OWNER_IMAGE_KEYS:
+        if key in images and images[key] != source:
+            raise ReleaseManifestError(
+                f"{label}[{key!r}] must reuse the {PAPER_OWNER_SOURCE_IMAGE_KEY} image digest"
+            )
 
 def _require_str(mapping: dict[str, Any], key: str, pattern: re.Pattern[str] | None, label: str) -> str:
     val = mapping.get(key)
@@ -219,6 +232,7 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 f"backend.images[{service_name!r}] must be an immutable digest reference "
                 f"('<repo>@sha256:<64-hex>'), got {image_ref!r}"
             )
+    _require_paper_owner_image_reuse(images, "backend.images")
 
     safety = manifest.get("safety_defaults")
     if not isinstance(safety, dict) or set(safety.keys()) != set(REQUIRED_SAFETY_DEFAULTS.keys()):
@@ -344,6 +358,8 @@ def _validate_rollback_baseline(baseline: Any, current_release_id: str) -> None:
                 f"rollback_baseline.backend_images[{svc_name!r}] must be an immutable digest reference "
                 f"('<repo>@sha256:<64-hex>'), got {img_ref!r}"
             )
+    # The rollback baseline records the actually observed incumbent: Paper owners deployed before the
+    # reuse rule may carry their own immutable digests. Candidate backend.images still enforces reuse.
     if b_images["operator_bff"] != bff_img:
         raise ReleaseManifestError(
             "rollback_baseline.backend_images['operator_bff'] must match rollback_baseline.backend_operator_bff_image"

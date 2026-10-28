@@ -167,6 +167,7 @@ if [[ "$BOOTSTRAP" == "true" ]]; then
 else
   readlink "$FE_CURRENT" > "${JOURNAL}/prev_fe_target" || die_json "NO_CURRENT_FE" "baseline FE symlink missing"
   cp "$UPSTREAM_FILE" "${JOURNAL}/prev_upstream.caddy" || die_json "NO_CURRENT_UPSTREAM" "baseline BFF upstream missing"
+  cp "$BASELINE_FILE" "${JOURNAL}/prev_baseline.json" || die_json "BASELINE_JOURNAL_FAILED" "cannot journal exact prior state/baseline.json"
   python3 - "$BASELINE_FILE" "$ACTIVE_MANIFEST_FILE" "$RELEASE_MANIFEST_PATH" "$ACTIVE_PORT" "${JOURNAL}/baseline_release.json" <<'PY' \
     || die_json "BASELINE_JOURNAL_FAILED" "cannot journal baseline release closure"
 import json, sys
