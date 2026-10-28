@@ -2268,6 +2268,24 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertNotEqual(ver.returncode, 0)
         self.assertIn("PRODUCT_OWNER_UNSERVED", ver.stderr)
 
+    def test_pre_paper_baseline_rolls_back_without_inventing_absent_workers(self) -> None:
+        # A baseline predating the Paper workers is valid: retained owners are restored exactly, the absent
+        # workers are removed for the rollback window and never started from the interpolation sentinel.
+        for key in staging_sanitize.BASELINE_OPTIONAL_OWNER_IMAGE_KEYS:
+            del self.manifest["rollback_baseline"]["backend_images"][key]
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        self.manifest_sha = release_manifest.compute_manifest_sha256(self.manifest)
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        baseline_env = (self.staging_root / "state" / "compose.baseline.env").read_text()
+        self.assertEqual(baseline_env.count("baseline-absent.invalid"), 2)
+        self.assertIn("baseline-absent.invalid", baseline_env)
+        for key in staging_sanitize.BASELINE_OPTIONAL_OWNER_IMAGE_KEYS:
+            self.assertNotIn(
+                self.manifest["backend"]["images"][key],
+                [l.split("=", 1)[1] for l in baseline_env.splitlines() if l.startswith(f"PANTHEON_{key.upper()}_IMAGE=")],
+            )
+
     def test_collector_waits_for_baseline_owner_health_starting_to_healthy(self) -> None:
         ver = self._provision_and_verify(FAKE_BASELINE_OWNER_HEALTH="starting_then_healthy", STAGING_READY_INTERVAL="0")
         self.assertEqual(ver.returncode, 0, ver.stderr)

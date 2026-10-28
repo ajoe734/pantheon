@@ -99,6 +99,12 @@
       "test_staging_release Stage Release/Sanitize/Workflow classes (16 pass; 1 env error: flask missing, not a pass)",
       "StagingControllerLifecycleTests: product_owner_inputs_fail_closed, dsn_query_routing_override_rejected, bff_and_worker_share_durable_agora_stores, bare_debian_bootstrap_secrets_and_real_collector_negative_gates, two_consecutive_simulated_releases"
     ],
-    "delta": "pre-Paper baseline restores retained owners and removes absent paper workers (Prod prod_ops.sh + Stage bootstrap baseline env); BFF gets PANTHEON_PAPER_FLEET_RECONCILER_URL and read-only /data/health in Prod blue/green and Stage; reconciler binds PANTHEON_DEPLOYMENT_SHA/GIT_SHA to PANTHEON_BACKEND_COMMIT; RECONCILER_LOOP_CONTROLLER_DSN required in both bootstraps; hosted acceptance remains external_wait"
+    "delta": "pre-Paper baseline restores retained owners and removes absent paper workers (Prod prod_ops.sh + Stage bootstrap baseline env); BFF gets PANTHEON_PAPER_FLEET_RECONCILER_URL and read-only /data/health in Prod blue/green and Stage; reconciler binds PANTHEON_DEPLOYMENT_SHA/GIT_SHA to PANTHEON_BACKEND_COMMIT; RECONCILER_LOOP_CONTROLLER_DSN required in both bootstraps; hosted acceptance remains external_wait",
+    "review_rework_bb9670ba3": {
+      "fix_commit": "2aa9b1647bfb99ef0122e230e8e04937ea45b1cd",
+      "p1": "Stage collector/sanitize carry baseline-absent Paper owners through validation, drain, health and exact-pair rollback readback; e2e test_pre_paper_baseline_rolls_back_without_inventing_absent_workers",
+      "p2": "Prod bootstrap resolves/validates/pulls effective PANTHEON_SIGNAL_STORE_IMAGE from shell or compose.env; test_bootstrap_pulls_effective_signal_store_image_from_existing_compose_env",
+      "validation": "test_production_release 82 OK; StagingControllerLifecycleTests 30/30 OK run serially per shard (parallel shards contend and fail spuriously); Manifest/Workflow classes OK; sanitize 8/9 with 1 env error (flask missing, not a pass); bash -n and git diff --check clean"
+    }
   }
 }

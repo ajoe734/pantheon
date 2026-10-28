@@ -266,6 +266,13 @@ for _v in PANTHEON_POSTGRES_IMAGE PANTHEON_NATS_IMAGE; do
   fi
 done
 
+# The signal-store ref has a compose default, so an absent env-file entry falls back to it; a configured
+# (shell or existing compose.env) override must be the ref that is pulled.
+if [[ -z "${PANTHEON_SIGNAL_STORE_IMAGE:-}" ]]; then
+  _val="$(run_priv sed -n 's/^PANTHEON_SIGNAL_STORE_IMAGE=//p' "$PROD_COMPOSE_ENV_FILE" | tail -n1)"
+  export PANTHEON_SIGNAL_STORE_IMAGE="${_val:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}"
+fi
+
 # Pre-acquire only immutable digest-pinned (@sha256:...) images (never build, never pull mutable tags).
 if [[ "${PROD_PREPULL_IMAGES:-true}" == "true" ]]; then
   IMAGE_LIST="$(python3 - "${RELEASE_MANIFEST_PATH:-}" "${PANTHEON_POSTGRES_IMAGE:-}" "${PANTHEON_NATS_IMAGE:-}" "${SCRIPT_DIR}" "${PANTHEON_SIGNAL_STORE_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}" <<'PY'

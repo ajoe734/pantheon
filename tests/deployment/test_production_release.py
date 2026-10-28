@@ -917,6 +917,27 @@ class BootstrapTests(OpsHarness):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("COMPOSE_ENV", r.stderr)
 
+    def test_bootstrap_pulls_effective_signal_store_image_from_existing_compose_env(self):
+        env_file = self.tmp / "compose.env"
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        custom = "redis:7-alpine@sha256:" + "3" * 64
+        env_file.write_text(
+            "".join(l + "\n" for l in env_file.read_text().splitlines() if not l.startswith("PANTHEON_SIGNAL_STORE_IMAGE="))
+            + f"PANTHEON_SIGNAL_STORE_IMAGE={custom}\n"
+        )
+        (self.state / "pulled_images").unlink()
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        self.assertIn(custom, pulled)
+        self.assertEqual([i for i in pulled if i.startswith("redis:")], [custom])
+        # An unpinned configured ref fails closed.
+        env_file.write_text(env_file.read_text() + "PANTHEON_SIGNAL_STORE_IMAGE=redis:7-alpine\n")
+        r = self._run()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("IMAGE_NOT_DIGEST_PINNED", r.stderr)
+
     def test_bootstrap_rejects_unpinned_images_and_supports_oslogin_sudo(self):
         r_unpinned = self._run(PANTHEON_POSTGRES_IMAGE="postgres:16-alpine")
         self.assertNotEqual(r_unpinned.returncode, 0)

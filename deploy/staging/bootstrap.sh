@@ -422,7 +422,7 @@ if str(rb_images_map.get("operator_bff") or "").strip() != rb_bff_image:
     raise SystemExit("ROLLBACK_BASELINE_INCOMPLETE: rollback_baseline.backend_images.operator_bff must equal backend_operator_bff_image")
 # Paper workers were added after earlier baselines: a baseline without them is valid (they are recorded absent and
 # never started from an invented image); one that carries them must carry digest-pinned refs.
-BASELINE_OPTIONAL_OWNERS = ("paper_fleet_reconciler", "paper_signal_producer")
+BASELINE_OPTIONAL_OWNERS = staging_sanitize.BASELINE_OPTIONAL_OWNER_IMAGE_KEYS
 baseline_absent = []
 for key in required_owners:
     rb_val = str(rb_images_map.get(key) or "").strip()
