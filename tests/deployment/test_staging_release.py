@@ -338,7 +338,9 @@ if tool == "docker":
             print(cinfo["image"])
         elif "State.Running" in fmt:
             running = "true" if cinfo.get("running", True) else "false"
-            mode = os.environ.get("FAKE_OWNER_HEALTH", "")
+            mode = os.environ.get(
+                "FAKE_BASELINE_OWNER_HEALTH" if cinfo.get("baseline") else "FAKE_OWNER_HEALTH", ""
+            )
             health = ""
             if mode:
                 counter = vm_state_file.with_name("health-" + cid + ".count")
@@ -449,6 +451,7 @@ if tool == "docker":
                     "cid": f"cid-{svc}-{st.setdefault('cid_gen', 0) + 1}",
                     "image": img_ref,
                     "running": True,
+                    "baseline": bool(env_file and env_file.name == "compose.baseline.env"),
                     "env": merged_svc_env,
                 }
             st["cid_gen"] = st.get("cid_gen", 0) + 1
@@ -2202,6 +2205,17 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         self.assertNotEqual(ver.returncode, 0)
         self.assertIn("PRODUCT_OWNER_UNSERVED", ver.stderr)
+
+    def test_collector_waits_for_baseline_owner_health_starting_to_healthy(self) -> None:
+        ver = self._provision_and_verify(FAKE_BASELINE_OWNER_HEALTH="starting_then_healthy", STAGING_READY_INTERVAL="0")
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+
+    def test_collector_rejects_persistently_unhealthy_baseline_owner(self) -> None:
+        ver = self._provision_and_verify(
+            FAKE_BASELINE_OWNER_HEALTH="unhealthy", STAGING_READY_INTERVAL="0.05", STAGING_OWNER_READY_TIMEOUT="0.3"
+        )
+        self.assertNotEqual(ver.returncode, 0)
+        self.assertIn("ROLLBACK_BASELINE_UNHEALTHY", ver.stderr)
 
     def test_bff_and_worker_share_durable_agora_stores(self) -> None:
         compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))["services"]

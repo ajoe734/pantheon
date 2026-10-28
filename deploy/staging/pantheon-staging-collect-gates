@@ -1056,6 +1056,11 @@ def main() -> int:
         error_code="ROLLBACK_COMPOSE_UP_FAILED",
     )
 
+    # Baseline owners must be running/healthy (not just carry the baseline Config.Image) before
+    # any rollback evidence or duration is recorded.
+    unserved = _wait_product_owners()
+    if unserved:
+        _fail("ROLLBACK_BASELINE_UNHEALTHY", f"Baseline product owners not running/healthy after rollback: {', '.join(unserved)}")
     rb_ready = _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") == 200
     rb_version = _http_json(curl_bin, f"http://127.0.0.1:{bff_port}/bff/version", error_code="ROLLBACK_VERSION_FAILED")
     served_backend_images: dict[str, str] = {}
