@@ -21,6 +21,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import unittest.mock
 
 import yaml
 
@@ -39,6 +40,13 @@ from tests.deployment.test_staging_release import (
 # migration set identity is Stage's recipe over the real versioned SQL bytes (_real_migration_set), and the
 # fake production postgres serves the live information_schema catalog Stage queries.
 MIGRATION_FILES, MIGRATION_SET_SHA = _real_migration_set()
+
+
+def _pin_paper_owner_images(manifest: dict) -> None:
+    """The Paper fleet reconciler/signal producer reuse the existing training-session image digest."""
+    images = manifest["backend"]["images"]
+    for key in ("paper_fleet_reconciler", "paper_signal_producer"):
+        images[key] = images["training_session_svc"]
 
 
 def _sample_manifest(**kw):
@@ -109,7 +117,7 @@ BOOTSTRAP = REPO_ROOT / "deploy" / "production" / "bootstrap.sh"
 # Fake docker/curl/mountpoint/sudo binaries exercise the REAL prod_ops.sh/bootstrap.sh code paths.
 FAKE_BIN = r"""#!/usr/bin/env bash
 tool="$(basename "$0")"
-PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc memory capital openclaw-gateway-adapter agora-interaction-worker"
+PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc memory capital openclaw-gateway-adapter agora-interaction-worker paper-fleet-reconciler paper-signal-producer"
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
   sudo)
@@ -217,13 +225,17 @@ PY
       fi
     fi
     if [[ "$args" == *"compose"*"rm -fsv lifecycle-projector"* ]]; then
-      rm -f "$FAKE_STATE/singleton_up" "$FAKE_STATE/image_cid-lifecycle-projector-1" "$FAKE_STATE/image_cid-agora-interaction-worker"
+      rm -f "$FAKE_STATE/singleton_up" "$FAKE_STATE/image_cid-lifecycle-projector-1" "$FAKE_STATE/image_cid-agora-interaction-worker" "$FAKE_STATE/image_cid-paper-fleet-reconciler" "$FAKE_STATE/image_cid-paper-signal-producer"
     fi
     if [[ "$args" == *"compose"*"rm -fsv operator-bff-blue"* ]]; then
       touch "$FAKE_STATE/stopped_operator-bff-blue"
     fi
     if [[ "$args" == *"compose"*"rm -fsv operator-bff-green"* ]]; then
       touch "$FAKE_STATE/stopped_operator-bff-green"
+    fi
+    if [[ "$args" == "exec "* && "$args" == *"PROD_GATE_TENANT_ID="* ]]; then
+      [[ "${FAKE_DOCKER_FAIL:-}" == *"exec"* ]] && exit 1
+      printf 'fake.gate.token\n'; exit 0
     fi
     if [[ "$args" == "inspect -f {{range .Config.Env}}"* ]]; then cat "$FAKE_STATE/container_env"; exit 0; fi
     if [[ "$args" == "inspect -f {{.Config.Image}}"* ]]; then
@@ -333,7 +345,10 @@ PY
       exit 0
     fi
     if [[ "$all" == *"-X POST"* ]]; then printf '%s' "${FAKE_WRITE_CODE:-405}"; exit 0; fi
-    if [[ "$all" == *"Authorization"* ]]; then printf '%s' "${FAKE_TENANT_CODE:-403}"; exit 0; fi
+    if [[ "$all" == *"Authorization"* ]]; then
+      if [[ "$all" == *"__foreign_tenant__"* ]]; then printf '%s' "${FAKE_TENANT_CODE:-403}"; else printf '%s' "${FAKE_OWN_TENANT_CODE:-200}"; fi
+      exit 0
+    fi
     printf '%s' "${FAKE_AUTH_CODE:-401}"; exit 0 ;;
 esac
 """
@@ -374,6 +389,7 @@ class OpsHarness(unittest.TestCase):
         self.manifest = _sample_manifest(state="staging_verified")
         for owner in ("runtime_manager", "governance", "deployment", "lifecycle_projector", *PRODUCT_OWNER_KEYS):
             self.manifest["backend"]["images"][owner] = f"r/{owner}@sha256:" + "a" * 64
+        _pin_paper_owner_images(self.manifest)
         self.migration_dir = self.root / "migration" / "rel-1"
         (self.migration_dir / "migrations").mkdir(parents=True)
         for f in MIGRATION_FILES:
@@ -627,6 +643,23 @@ class ProdOpsTests(OpsHarness):
         self.token.unlink()
         self.assertNotEqual(self.ops("gate", "rel-1", "tenant", "8002").returncode, 0)
 
+    def test_tenant_gate_mints_service_token_in_container_and_cleans_up(self):
+        r = self.ops("gate", "rel-1", "tenant", "8002", PROD_GATE_TOKEN_FILE="")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        log = self.log.read_text()
+        exec_lines = [l for l in log.splitlines() if " exec " in f" {l} " and "PROD_GATE_TENANT_ID=acme-prod-tenant" in l]
+        self.assertEqual(len(exec_lines), 1, log)
+        self.assertNotIn("SECRET", exec_lines[0])
+        self.assertEqual(list((self.root / "state").glob(".gate-token.*")), [])
+
+    def test_tenant_gate_requires_own_tenant_200_before_foreign_403(self):
+        for extra in ({"FAKE_OWN_TENANT_CODE": "401"}, {"FAKE_OWN_TENANT_CODE": "404"}, {"FAKE_TENANT_CODE": "401"},
+                      {"FAKE_TENANT_CODE": "404"}, {"FAKE_DOCKER_FAIL": "exec"}):
+            r = self.ops("gate", "rel-1", "tenant", "8002", PROD_GATE_TOKEN_FILE="", **extra)
+            self.assertNotEqual(r.returncode, 0, extra)
+            self.assertIn("GATE_TENANT", r.stderr)
+            self.assertEqual(list((self.root / "state").glob(".gate-token.*")), [])
+
     def test_read_only_gate_rejects_unsafe_runtime_flags(self):
         (self.state / "container_env").write_text("PANTHEON_LIVE_BROKER_ENABLED=true\n")
         self.assertIn("GATE_READ_ONLY", self.ops("gate", "rel-1", "read_only", "8002").stderr)
@@ -717,6 +750,30 @@ class ProdOpsTests(OpsHarness):
         r = self.ops("resume_baseline_singletons", "rel-1", RELEASE_MANIFEST_PATH=str(self.tmp / "partial-baseline.json"))
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("BASELINE_ENV_MISSING", r.stderr)
+
+    def test_pre_paper_baseline_restores_retained_owners_and_removes_new_paper_workers(self):
+        paper = {"paper_fleet_reconciler", "paper_signal_producer"}
+        manifest = json.loads(self.mpath.read_text())
+        for key in paper:
+            manifest["rollback_baseline"]["backend_images"].pop(key)
+        (self.tmp / "pre-paper-baseline.json").write_text(json.dumps(manifest))
+        env = {"RELEASE_MANIFEST_PATH": str(self.tmp / "pre-paper-baseline.json")}
+        self.assertEqual(self.ops("activate_singletons", "rel-1", **env).returncode, 0)
+        self.assertEqual(set(self._product_images_run()), PRODUCT_SERVICE_NAMES)  # candidate runs the Paper workers
+        self.assertEqual(self.ops("drain_singletons", "rel-1", **env).returncode, 0)
+        r = self.ops("resume_baseline_singletons", "rel-1", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        running = self._product_images_run()
+        self.assertEqual(set(running), PRODUCT_SERVICE_NAMES - {k.replace("_", "-") for k in paper})
+        for key in PRODUCT_OWNER_KEYS:
+            if key not in paper:
+                self.assertEqual(running[key.replace("_", "-")], manifest["rollback_baseline"]["backend_images"][key], key)
+        self.assertTrue((self.state / "singleton_up").exists())
+        self.assertNotIn("baseline-absent.invalid", (self.state / "product_ups").read_text())
+        # Prepull acquires only retained baseline images; no sentinel is ever pulled.
+        (self.root / "state" / "baseline.json").write_text("{}")
+        self.assertEqual(self.ops("prepull_images", "rel-1", **env).returncode, 0)
+        self.assertNotIn("baseline-absent.invalid", (self.state / "pulled_images").read_text())
 
     def test_product_owner_wrong_running_image_fails_activation_readback(self):
         # A pre-existing owner running a different digest must be caught by the exact-image readback.
@@ -859,6 +916,27 @@ class BootstrapTests(OpsHarness):
         r = self._run()
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("COMPOSE_ENV", r.stderr)
+
+    def test_bootstrap_pulls_effective_signal_store_image_from_existing_compose_env(self):
+        env_file = self.tmp / "compose.env"
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        custom = "redis:7-alpine@sha256:" + "3" * 64
+        env_file.write_text(
+            "".join(l + "\n" for l in env_file.read_text().splitlines() if not l.startswith("PANTHEON_SIGNAL_STORE_IMAGE="))
+            + f"PANTHEON_SIGNAL_STORE_IMAGE={custom}\n"
+        )
+        (self.state / "pulled_images").unlink()
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        self.assertIn(custom, pulled)
+        self.assertEqual([i for i in pulled if i.startswith("redis:")], [custom])
+        # An unpinned configured ref fails closed.
+        env_file.write_text(env_file.read_text() + "PANTHEON_SIGNAL_STORE_IMAGE=redis:7-alpine\n")
+        r = self._run()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("IMAGE_NOT_DIGEST_PINNED", r.stderr)
 
     def test_bootstrap_rejects_unpinned_images_and_supports_oslogin_sudo(self):
         r_unpinned = self._run(PANTHEON_POSTGRES_IMAGE="postgres:16-alpine")
@@ -1342,6 +1420,7 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
             manifest["backend"]["images"][owner] = (
                 f"asia-east1-docker.pkg.dev/pantheon-prod-20260902/pantheon/{owner}@sha256:" + digest_char * 64
             )
+        _pin_paper_owner_images(manifest)
         if bootstrap:
             manifest.pop("rollback_baseline", None)
         elif rollback_baseline is not None:
@@ -1532,6 +1611,173 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-001")
 
 
+    def _two_successful_releases(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="2" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        rb = {
+            "previous_release_id": "pantheon-20261025-001",
+            "frontend_commit": m1["frontend"]["commit"],
+            "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"],
+            "backend_commit": m1["backend"]["commit"],
+            "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+            "backend_images": m1["backend"]["images"],
+            "config_schema_version": m1["config_schema_version"],
+        }
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="4" * 40, digest_char="2", bootstrap=False, rollback_baseline=rb)
+        return (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2)
+
+    def test_manual_rollback_after_success_restores_exact_prior_baseline_json(self):
+        (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
+        base_path = self.root / "state" / "baseline.json"
+        prior_bytes = base_path.read_bytes()
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 0, sw2.stderr)
+        self.assertEqual(json.loads(base_path.read_text())["release_id"], "pantheon-20261025-002")
+        self.assertEqual((self.root / "state" / "journal" / "pantheon-20261025-002" / "prev_baseline.json").read_bytes(),
+                         prior_bytes)
+        r = subprocess.run([str(ROLLBACK), "pantheon-20261025-002"], capture_output=True, text=True, timeout=60,
+                           env=self.env(PROD_OPS_CMD=str(OPS), RELEASE_ID="pantheon-20261025-002",
+                                        RELEASE_MANIFEST_PATH=str(mpath2), PROD_ACTIVE_PORT="8002", PROD_TARGET_PORT="8001",
+                                        FAKE_READY_PORTS="8001 8002"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(base_path.read_bytes(), prior_bytes)
+        self.assertEqual(json.loads((self.root / "state" / "active_manifest.json").read_text())["release_id"],
+                         "pantheon-20261025-001")
+
+    def test_bootstrap_rollback_after_success_removes_baseline_json_and_reports_no_target(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="2" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        self.assertTrue((self.root / "state" / "baseline.json").is_file())
+        r = subprocess.run([str(ROLLBACK), "pantheon-20261025-001"], capture_output=True, text=True, timeout=60,
+                           env=self.env(PROD_OPS_CMD=str(OPS), RELEASE_ID="pantheon-20261025-001",
+                                        RELEASE_MANIFEST_PATH=str(mpath1)))
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("no_rollback_target", r.stdout)
+        self.assertFalse((self.root / "state" / "baseline.json").exists())
+        self.assertIn("503", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+
+    def test_paper_owners_must_reuse_training_session_image_and_are_singletons(self):
+        svc = yaml.safe_load(COMPOSE.read_text())["services"]
+        for name in ("paper-fleet-reconciler", "paper-signal-producer"):
+            self.assertEqual(svc[name]["profiles"], ["singleton"], name)
+            self.assertNotIn("build", svc[name], name)
+            env = svc[name]["environment"]
+            self.assertEqual(env["SIGNAL_STORE_URL"], "redis://signal-store:6379")
+            self.assertEqual(env["PANTHEON_LIVE_BROKER_ENABLED"], "false")
+            self.assertNotIn("RECONCILER_LOOP_CONTROLLER_DSN", env)  # controller DSN only via secrets env file
+        self.assertEqual(svc["paper-fleet-reconciler"]["stop_signal"], "SIGINT")
+        self.assertEqual(svc["signal-store"]["profiles"], ["stateful"])
+        self.assertEqual(svc["paper-signal-producer"]["environment"]["PAPER_SIGNAL_STRATEGY"], "artifact")
+        from scripts.deploy import release_manifest
+        manifest = _sample_manifest(state="staging_verified")
+        manifest["backend"]["images"]["training_session_svc"] = "r/t@sha256:" + "a" * 64
+        manifest["backend"]["images"]["paper_fleet_reconciler"] = "r/t@sha256:" + "a" * 64
+        manifest["backend"]["images"]["paper_signal_producer"] = "r/t@sha256:" + "a" * 64
+        release_manifest.validate_manifest(manifest)
+        manifest["backend"]["images"]["paper_signal_producer"] = "r/other@sha256:" + "b" * 64
+        with self.assertRaises(release_manifest.ReleaseManifestError):
+            release_manifest.validate_manifest(manifest)
+
+    def test_bff_reads_paper_reconciler_and_producer_health_in_both_environments(self):
+        import http.server, threading
+        from services.control_plane.bff import downstream_health_monitor as dhm
+        stage = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())["services"]
+        prod = yaml.safe_load(COMPOSE.read_text())["services"]
+        bffs = {"stage": (stage["operator-bff"], stage), "prod-blue": (prod["operator-bff-blue"], prod),
+                "prod-green": (prod["operator-bff-green"], prod)}
+        specs = dict(dhm._DEFAULT_TARGET_SPECS)
+        url_key = specs["paper-fleet-reconciler"][0]
+        health_path = dict(dhm._DEFAULT_WORKER_SPECS)["paper-signal-producer"][1]
+        for name, (bff, svcs) in bffs.items():
+            env = bff["environment"]
+            self.assertEqual(env[url_key], "http://paper-fleet-reconciler:8011", name)
+            self.assertEqual(svcs["paper-fleet-reconciler"]["environment"]["PORT"], "8011", name)
+            def mount(v):  # host source may itself contain ':' (compose ${VAR:?msg}); split from the right
+                m = re.fullmatch(r"(.+):(/[^:]+)(?::(ro))?", v)
+                return [m.group(1), m.group(2), m.group(3) or "rw"]
+            mounts = [mount(v) for v in bff["volumes"]]
+            health = [m for m in mounts if m[1] == "/data/health"]
+            self.assertEqual(len(health), 1, name)
+            self.assertEqual(health[0][2], "ro", name)  # BFF only reads worker health
+            producer_mounts = [mount(v) for v in svcs["paper-signal-producer"]["volumes"]]
+            self.assertEqual([m[0] for m in producer_mounts if m[1] == "/data/health"], [health[0][0]], name)
+            self.assertEqual(svcs["paper-signal-producer"]["environment"]["PAPER_PRODUCER_HEALTH_FILE"], health_path, name)
+        # Actual readback: the mounted health file and the reconciler endpoint are read through the BFF's own probes.
+        with tempfile.TemporaryDirectory() as td:
+            hf = Path(td) / "paper-signal-producer-health.json"
+            hf.write_text(json.dumps({"worker_name": "paper-signal-producer", "status": "ok", "ticks": 3, "execution_mode": "paper",
+                                      "live_capital_enabled": False, "live_order_submission_enabled": False}))
+            ok, code, reason = dhm._probe_file_health(str(hf), target_name="paper-signal-producer")
+            self.assertTrue(ok, reason)
+            hf.write_text(json.dumps({"ok": False, "reason": "no executable artifact"}))
+            self.assertFalse(dhm._probe_file_health(str(hf), target_name="paper-signal-producer")[0])
+            self.assertFalse(dhm._probe_file_health(str(Path(td) / "missing.json"), target_name="paper-signal-producer")[0])
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps({"ready": True, "monitoring_sessions": []}).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close); self.addCleanup(srv.shutdown)
+        configured = bffs["prod-blue"][0]["environment"][url_key].replace("paper-fleet-reconciler:8011", f"127.0.0.1:{srv.server_port}")
+        self.assertTrue(dhm._probe_http(f"{configured}/readyz", 5.0)[0])
+
+    def test_paper_reconciler_requires_controller_dsn_and_exact_release_sha(self):
+        stage = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())["services"]
+        prod = yaml.safe_load(COMPOSE.read_text())["services"]
+        for name, svcs in (("stage", stage), ("prod", prod)):
+            env = svcs["paper-fleet-reconciler"]["environment"]
+            self.assertEqual(env["PANTHEON_DEPLOYMENT_SHA"], "${PANTHEON_BACKEND_COMMIT:?backend commit required}", name)
+            self.assertEqual(env["GIT_SHA"], env["PANTHEON_DEPLOYMENT_SHA"], name)
+            self.assertNotIn("RECONCILER_LOOP_CONTROLLER_DSN", env, name)  # only via the secrets env file
+            self.assertNotIn("RECONCILER_LOOP_CONTROLLER_DSN", svcs["paper-signal-producer"]["environment"], name)
+        for boot in (BOOTSTRAP, REPO_ROOT / "deploy" / "staging" / "bootstrap.sh"):
+            dsn_block = boot.read_text().split("PRODUCT_DSN_KEYS = (", 1)[1].split("\n)", 1)[0]
+            self.assertIn('"RECONCILER_LOOP_CONTROLLER_DSN"', dsn_block, boot.name)
+        # Writer-enabled with the exact release head; the controller DSN is stripped from worker subprocesses.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("pfr_under_test", REPO_ROOT / "services" / "paper_fleet_reconciler" / "paper_fleet_reconciler.py")
+        self.addCleanup(sys.modules.pop, "pfr_under_test", None)
+        try:
+            mod = importlib.util.module_from_spec(spec); sys.modules[spec.name] = mod; spec.loader.exec_module(mod)
+        except Exception as exc:  # reconciler runtime deps are not part of this lightweight env
+            self.skipTest(f"reconciler module not importable here: {exc}")
+        seen = {}
+        class FakeModule:
+            class LoopControllerWriter:
+                def __init__(self, dsn, **kw):
+                    seen["dsn"] = dsn; seen.update(kw)
+        with unittest.mock.patch.object(mod.importlib, "import_module", return_value=FakeModule), \
+                unittest.mock.patch.dict(os.environ, {"PANTHEON_DEPLOYMENT_SHA": "a" * 40, "GIT_SHA": "a" * 40}):
+            writer = mod._build_loop_writer(dsn="postgresql://c/db", tenant_id="t", controller_id="c", lease_duration_seconds=120)
+        self.assertIsNotNone(writer)
+        self.assertEqual(seen["deployment_sha"], "a" * 40)
+        self.assertIsNone(mod._build_loop_writer(dsn="", tenant_id="t", controller_id="c", lease_duration_seconds=120))
+
+    def test_rollback_baseline_accepts_observed_incumbent_paper_digests(self):
+        from scripts.deploy import release_manifest
+        manifest = _sample_manifest(state="staging_verified")
+        baseline = manifest["rollback_baseline"]
+        imgs = dict(baseline["backend_images"])
+        imgs["training_session_svc"] = "r/t@sha256:" + "a" * 64
+        imgs["paper_fleet_reconciler"] = "r/pfr@sha256:" + "b" * 64
+        imgs["paper_signal_producer"] = "r/psp@sha256:" + "c" * 64
+        baseline["backend_images"] = imgs
+        release_manifest.validate_manifest(manifest)
+
     def test_real_readiness_contract_first_release_and_changed_backend_sha_handoff(self):
         # FAKE_REAL_READYZ models main.py::_lifecycle_projector_dependency: readyz is 200 only when the
         # singleton controller deployment_sha == the BFF's BFF_COMMIT. No unconditional 200s.
@@ -1630,9 +1876,9 @@ class StaticContractTests(unittest.TestCase):
         svc = yaml.safe_load(COMPOSE.read_text())["services"]
         ops_text = OPS.read_text()
         listed = re.search(r'^PRODUCT_OWNER_KEYS="([^"]+)"', ops_text, re.M).group(1).split()
-        worker = re.search(r'^PRODUCT_WORKER_KEY="([^"]+)"', ops_text, re.M).group(1)
+        workers = re.search(r'^PRODUCT_WORKER_KEY="([^"]+)"', ops_text, re.M).group(1).split()
         # prod_ops.sh owner list is the Stage packaging contract, not a parallel framework.
-        self.assertEqual(sorted(listed + [worker]), sorted(PRODUCT_OWNER_KEYS))
+        self.assertEqual(sorted(listed + workers), sorted(PRODUCT_OWNER_KEYS))
         for key in PRODUCT_OWNER_KEYS:
             name = key.replace("_", "-")
             self.assertIn(name, svc, key)

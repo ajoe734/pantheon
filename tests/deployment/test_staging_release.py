@@ -51,6 +51,7 @@ PRODUCT_DSN_KEYS = (
     "AGORA_DATASET_STORE_DSN",
     "AGORA_GOVERNANCE_STORE_DSN",
     "AGORA_RESEARCH_STORE_DSN",
+    "RECONCILER_LOOP_CONTROLLER_DSN",
 )
 PRODUCT_SECRET_KEYS = (
     "PANTHEON_RUNTIME_MANAGER_TOKEN",
@@ -391,6 +392,7 @@ if tool == "docker":
             svc_image_keys = {
                 "postgres": "PANTHEON_POSTGRES_IMAGE",
                 "nats": "PANTHEON_NATS_IMAGE",
+                "signal-store": "PANTHEON_SIGNAL_STORE_IMAGE",
                 "runtime-manager": "PANTHEON_RUNTIME_MANAGER_IMAGE",
                 "governance": "PANTHEON_GOVERNANCE_IMAGE",
                 "deployment": "PANTHEON_DEPLOYMENT_IMAGE",
@@ -400,7 +402,8 @@ if tool == "docker":
             for product_svc in (
                 "registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona "
                 "consultation-svc source-ingest training-session-svc policy-learning-svc "
-                "research-orchestrator-svc agora-interaction-worker memory capital openclaw-gateway-adapter"
+                "research-orchestrator-svc agora-interaction-worker paper-fleet-reconciler paper-signal-producer "
+                "memory capital openclaw-gateway-adapter"
             ).split():
                 svc_image_keys[product_svc] = "PANTHEON_" + product_svc.upper().replace("-", "_") + "_IMAGE"
             explicit_svcs = [a for a in args if a in svc_image_keys]
@@ -1097,10 +1100,7 @@ def _sample_manifest(
             "governance": f"{reg}/governance@sha256:" + ("b" * 64),
             "deployment": f"{reg}/deployment@sha256:" + ("c" * 64),
             "lifecycle_projector": f"{reg}/lifecycle-projector@sha256:" + ("d" * 64),
-            **{
-                key: f"{reg}/{key.replace('_', '-')}@sha256:" + (f"{i:02x}" * 32)
-                for i, key in enumerate(staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS, start=0xA0)
-            },
+            **_owner_images(reg, 0xA0),
         },
         compatibility_manifest_sha256=compat_sha,
         migration_set_sha256=mig_sha,
@@ -1129,10 +1129,7 @@ def _sample_manifest(
                 "governance": f"{reg}/governance@sha256:" + ("62" * 32),
                 "deployment": f"{reg}/deployment@sha256:" + ("63" * 32),
                 "lifecycle_projector": f"{reg}/lifecycle-projector@sha256:" + ("64" * 32),
-                **{
-                    key: f"{reg}/{key.replace('_', '-')}@sha256:" + (f"{i:02x}" * 32)
-                    for i, key in enumerate(staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS, start=0xC0)
-                },
+                **_owner_images(reg, 0xC0),
             },
             "config_schema_version": "pantheon.env-config.v1",
         },
@@ -1243,6 +1240,18 @@ def _sample_backup_record(owner_sha: str = "sha256:" + ("9" * 64)) -> dict:
         "owner_store_dirs": ["bff", "runtime", "governance", "product"],
         "catalog_tables": sorted(counts),
     }
+
+
+
+def _owner_images(reg, start):
+    """Distinct per-owner digests; the Paper owners reuse the training-session image (no new image)."""
+    images = {
+        key: f"{reg}/{key.replace('_', '-')}@sha256:" + (f"{i:02x}" * 32)
+        for i, key in enumerate(staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS, start=start)
+    }
+    for key in ("paper_fleet_reconciler", "paper_signal_producer"):
+        images[key] = images["training_session_svc"]
+    return images
 
 
 class ReleaseManifestContractTests(unittest.TestCase):
@@ -1416,9 +1425,19 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
             services["agora-interaction-worker"]["command"], ["python", "scripts/run_agora_interaction_worker.py"]
         )
         # Dev-only principal issuer / periodic producers / well-known Dev credentials are not shipped.
-        rendered = yaml.safe_dump(compose)
+        # The only sanctioned producer is the existing Source-artifact Paper signal producer (training-session image).
+        non_paper = {k: v for k, v in services.items() if k not in ("paper-signal-producer", "paper-fleet-reconciler")}
+        rendered = yaml.safe_dump({**compose, "services": non_paper} if "services" in compose else non_paper)
         for forbidden in ("dev-paper", "pantheon-local", "scheduler", "producer", "pantheon_app", "-internal"):
             self.assertNotIn(forbidden, rendered, forbidden)
+        paper_rendered = yaml.safe_dump({k: services[k] for k in ("paper-signal-producer", "paper-fleet-reconciler")})
+        for forbidden in ("dev-paper", "pantheon-local", "pantheon_app", "-internal", "build"):
+            self.assertNotIn(forbidden, paper_rendered, forbidden)
+        self.assertEqual(services["paper-signal-producer"]["environment"]["PAPER_SIGNAL_STRATEGY"], "artifact")
+        self.assertEqual(services["paper-fleet-reconciler"]["stop_signal"], "SIGINT")
+        for paper in ("paper-fleet-reconciler", "paper-signal-producer"):
+            self.assertEqual(services[paper]["environment"]["PANTHEON_LIVE_BROKER_ENABLED"], "false", paper)
+            self.assertEqual(services[paper]["environment"]["PANTHEON_REAL_WRITES_ENABLED"], "false", paper)
         for svc, spec in services.items():
             env = spec.get("environment") or {}
             for flag in ("PANTHEON_PROVIDER_ENABLED", "PANTHEON_LIVE_BROKER_ENABLED", "PANTHEON_REAL_WRITES_ENABLED"):
@@ -2249,6 +2268,24 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertNotEqual(ver.returncode, 0)
         self.assertIn("PRODUCT_OWNER_UNSERVED", ver.stderr)
 
+    def test_pre_paper_baseline_rolls_back_without_inventing_absent_workers(self) -> None:
+        # A baseline predating the Paper workers is valid: retained owners are restored exactly, the absent
+        # workers are removed for the rollback window and never started from the interpolation sentinel.
+        for key in staging_sanitize.BASELINE_OPTIONAL_OWNER_IMAGE_KEYS:
+            del self.manifest["rollback_baseline"]["backend_images"][key]
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        self.manifest_sha = release_manifest.compute_manifest_sha256(self.manifest)
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        baseline_env = (self.staging_root / "state" / "compose.baseline.env").read_text()
+        self.assertEqual(baseline_env.count("baseline-absent.invalid"), 2)
+        self.assertIn("baseline-absent.invalid", baseline_env)
+        for key in staging_sanitize.BASELINE_OPTIONAL_OWNER_IMAGE_KEYS:
+            self.assertNotIn(
+                self.manifest["backend"]["images"][key],
+                [l.split("=", 1)[1] for l in baseline_env.splitlines() if l.startswith(f"PANTHEON_{key.upper()}_IMAGE=")],
+            )
+
     def test_collector_waits_for_baseline_owner_health_starting_to_healthy(self) -> None:
         ver = self._provision_and_verify(FAKE_BASELINE_OWNER_HEALTH="starting_then_healthy", STAGING_READY_INTERVAL="0")
         self.assertEqual(ver.returncode, 0, ver.stderr)
@@ -3018,6 +3055,13 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         caddy_raw = CADDY_TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("handle /runtime-config.js", caddy_raw)
         self.assertIn("root * __STAGING_CONFIG_DIR__", caddy_raw)
+        # Private `.internal` hosts need explicit internal TLS on Debian Caddy 2.6, and the
+        # collector reads FE/runtime-config back over loopback HTTP through the same Caddy.
+        tls_directives = [ln for ln in caddy_raw.splitlines() if ln.strip() == "tls internal"]
+        self.assertEqual(len(tls_directives), 2)
+        self.assertIn("http://127.0.0.1:__STAGING_FE_HTTP_PORT__", caddy_raw)
+        self.assertIn("bind 127.0.0.1", caddy_raw)
+        self.assertEqual(caddy_raw.count("import staging_fe_routes"), 2)
         self.assertTrue(BOOTSTRAP_SCRIPT.exists() and os.access(BOOTSTRAP_SCRIPT, os.X_OK))
         self.assertTrue(COLLECTOR_SCRIPT.exists() and os.access(COLLECTOR_SCRIPT, os.X_OK))
 
