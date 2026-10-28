@@ -91,5 +91,14 @@
       "two production-shaped deploy/rollback drills (<120s rollback)",
       "30-minute observation window"
     ]
+  },
+  "final_head_verification": {
+    "scope": "focused only; prior exit124 broad batch (124 tests) is not pass evidence and was not re-run for this head",
+    "passed": [
+      "test_staging_release.WorkflowAndTemplateContractTests (4 tests, tls directives counted without comments)",
+      "test_staging_release...test_compose_packages_every_required_owner_from_immutable_images_only (paper-fleet-reconciler stop_signal SIGINT)",
+      "test_production_release...test_paper_owners_must_reuse_training_session_image_and_are_singletons (stop_signal SIGINT)"
+    ],
+    "delta": "stop_signal: SIGINT on paper-fleet-reconciler in Stage and Prod compose; tls test no longer counts comments; hosted acceptance remains external"
   }
 }
