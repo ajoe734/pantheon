@@ -239,5 +239,14 @@
     ],
     "validation": "python3 -m unittest tests.deployment.test_staging_release (37+ tests incl. product-owner compose/secret/omission/rollback cases) run in bounded batches: all passed",
     "hosted_status": "external_wait; local tests are not hosted drill evidence"
+  },
+  "pr6842_followup_corrections": {
+    "recorded_at": "2026-10-28",
+    "pr": "https://github.com/ajoe734/pantheon/pull/6842",
+    "commit_trailers": "CI 122808274863 failed only on missing LLM-Agent/Task-ID/Reviewer trailers on a1038a45/f0b33171; original author Claude amended both commits with genuine trailers (LLM-Agent: Claude, Task-ID, Reviewer: Codex) and force-with-lease updated the same PR. Trees unchanged; no checks bypassed.",
+    "gcloud_inventory_stderr": "staging_provision.sh: removed 2>&1 from three inventory command substitutions so zone/region warnings on stderr cannot corrupt JSON parsing; fake gcloud now emits the warning on stderr.",
+    "bounded_qa_window": "staging-ephemeral-deploy.yml: optional qa_window_seconds dispatch input (default 0, only 0 or 300) with one sleep step after successful real verify and before always-destroy. No new gate, collector, cleanup, TTL, cancellation or artifact change.",
+    "validation": "Existing focused tests passed previously (201.018s); unchanged broad suites not rerun. Workflow validated by actionlint/existing CI only.",
+    "hosted_acceptance": "Still external_wait; no cloud, secret, GitHub-setting or product action taken."
   }
 }

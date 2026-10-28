@@ -896,6 +896,7 @@ if args[:3] == ["compute", "addresses", "create"]:
     raise SystemExit(0)
 
 if args[:3] == ["compute", "addresses", "list"]:
+    print("WARNING: The following filter keys were not present in any resource : zone", file=sys.stderr)
     print(json.dumps(state["addresses"]))
     raise SystemExit(0)
 
@@ -929,6 +930,7 @@ if args[:3] == ["compute", "disks", "create"]:
     raise SystemExit(0)
 
 if args[:3] == ["compute", "disks", "list"]:
+    print("WARNING: The following filter keys were not present in any resource : zone", file=sys.stderr)
     print(json.dumps(state["disks"]))
     raise SystemExit(0)
 
@@ -982,6 +984,7 @@ if args[:3] == ["compute", "instances", "create"]:
     raise SystemExit(0)
 
 if args[:3] == ["compute", "instances", "list"]:
+    print("WARNING: The following filter keys were not present in any resource : zone", file=sys.stderr)
     print(json.dumps(state["instances"]))
     raise SystemExit(0)
 
