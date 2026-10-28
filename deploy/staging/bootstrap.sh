@@ -297,6 +297,9 @@ PRODUCT_SECRET_KEYS = (
     "PANTHEON_TELEMETRY_JWT_SECRET",
     "PERSONA_JWT_SECRET",
     "TRAINING_SESSION_JWT_SECRET",
+    "CAPITAL_JWT_SECRET",
+    "PANTHEON_CAPITAL_JWT_SECRET",
+    "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN",
 )
 
 if not pg_pw_path.read_text(encoding="utf-8").strip():
@@ -745,7 +748,7 @@ OBSERVED_FE_SHA="$(cat "${STAGING_FE_ROOT}/current/.artifact_sha256" | tr -d '[:
 for owner_svc in runtime-manager governance deployment lifecycle-projector postgres nats \
   registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona \
   consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc \
-  agora-interaction-worker; do
+  agora-interaction-worker memory capital openclaw-gateway-adapter; do
   cid="$(run_compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -q "$owner_svc" | head -n1)"
   [[ -n "$cid" ]] || fail "OWNER_CONTAINER_MISSING" "Required service ${owner_svc} is not running"
 done

@@ -12,7 +12,7 @@
 # immutable backend.images as Dev (no rebuild), against the isolated staging Postgres/NATS and
 # per-owner stores under ${STAGING_DATA_MOUNT}/product. Tokens/DSNs/JWT secrets come only from the
 # staging secrets env file (validated by bootstrap.sh); no Dev default credential is used. Dev-only
-# principal issuers, periodic producers/dispatchers and the OpenClaw adapter are not shipped.
+# principal issuers and periodic producers/dispatchers are not shipped; the OpenClaw adapter runs without gateway/credentials.
 
 name: pantheon-staging
 
@@ -217,6 +217,9 @@ services:
       PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
       PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
       PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_CAPITAL_API_URL: http://capital:8092
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_RECONCILIATION_DRIFT_API_URL: http://reconciliation-drift-svc:8102
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_NATS_URL: nats://nats:4222
@@ -247,6 +250,9 @@ services:
       - training-session-svc
       - policy-learning-svc
       - research-orchestrator-svc
+      - memory
+      - capital
+      - openclaw-gateway-adapter
     deploy:
       resources:
         limits:
@@ -617,6 +623,84 @@ services:
       - nats
       - persona
       - research-orchestrator-svc
+
+  # Existing memory / capital / OpenClaw gateway adapter owners consumed by the BFF persona,
+  # capital-read and OpenClaw ops routes. Same immutable images and native Postgres stores; the
+  # adapter has no gateway, assistant credentials or broker wiring and every adapter write is off.
+  memory:
+    image: ${PANTHEON_MEMORY_IMAGE:?immutable memory digest required}
+    <<: *product_owner
+    environment:
+      <<: *product_env
+      PORT: "8086"
+      PANTHEON_MEMORY_STORE_BACKEND: postgres
+      PANTHEON_MEMORY_AUTH_MODE: strict
+      PANTHEON_MEMORY_JWT_ISSUER: ${STAGING_JWT_ISSUER:?staging jwt issuer required}
+      PANTHEON_MEMORY_JWT_AUDIENCE: ${STAGING_JWT_AUDIENCE:?staging jwt audience required}
+      PANTHEON_MEMORY_DATA_DIR: /data/memory
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/memory:/data/memory
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  capital:
+    image: ${PANTHEON_CAPITAL_IMAGE:?immutable capital digest required}
+    <<: *product_owner
+    environment:
+      <<: *product_env
+      PORT: "8092"
+      CAPITAL_DATA_DIR: /data/capital
+      CAPITAL_STORE_BACKEND: postgres
+      CAPITAL_AUDIT_BACKEND: postgres
+      CAPITAL_AUTH_MODE: strict
+      CAPITAL_JWT_ISSUER: ${STAGING_JWT_ISSUER:?staging jwt issuer required}
+      CAPITAL_JWT_AUDIENCE: ${STAGING_JWT_AUDIENCE:?staging jwt audience required}
+      CAPITAL_ROLE_CLAIMS: roles,role
+      CAPITAL_GOVERNANCE_BASE_URL: http://governance:8082
+      CAPITAL_ALLOWED_READER_SERVICES: control-plane-bff,runtime-manager
+      OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/capital:/data/capital
+    depends_on:
+      - postgres
+      - nats
+      - governance
+      - runtime-manager
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  openclaw-gateway-adapter:
+    image: ${PANTHEON_OPENCLAW_GATEWAY_ADAPTER_IMAGE:?immutable openclaw-gateway-adapter digest required}
+    <<: *product_owner
+    environment:
+      <<: *product_env
+      PORT: "8104"
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: "true"
+      OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
+      OPENCLAW_PAPER_ADAPTER_ENABLED: "false"
+      OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
+      OPENCLAW_CANARY_ADAPTER_ENABLED: "false"
+      OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
+      OPENCLAW_RUNTIME_MANAGER_URL: http://runtime-manager:8080
+    volumes:
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/product/openclaw-gateway-adapter:/root/.openclaw
+    depends_on:
+      - nats
+      - runtime-manager
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8104/livez', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
 secrets:
   postgres_password:

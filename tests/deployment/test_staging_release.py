@@ -66,6 +66,9 @@ PRODUCT_SECRET_KEYS = (
     "PANTHEON_TELEMETRY_JWT_SECRET",
     "PERSONA_JWT_SECRET",
     "TRAINING_SESSION_JWT_SECRET",
+    "CAPITAL_JWT_SECRET",
+    "PANTHEON_CAPITAL_JWT_SECRET",
+    "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN",
 )
 ACTIONLINT_CANDIDATES = (
     Path("/tmp/pantheon-env-current-20261024/tools/actionlint"),
@@ -397,7 +400,7 @@ if tool == "docker":
             for product_svc in (
                 "registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona "
                 "consultation-svc source-ingest training-session-svc policy-learning-svc "
-                "research-orchestrator-svc agora-interaction-worker"
+                "research-orchestrator-svc agora-interaction-worker memory capital openclaw-gateway-adapter"
             ).split():
                 svc_image_keys[product_svc] = "PANTHEON_" + product_svc.upper().replace("-", "_") + "_IMAGE"
             explicit_svcs = [a for a in args if a in svc_image_keys]
@@ -1395,8 +1398,17 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
             ("PANTHEON_REGISTRY_API_URL", "registry"),
             ("PANTHEON_EVOLUTION_API_URL", "evolution"),
             ("SOURCE_MANAGEMENT_API_URL", "source-ingest"),
+            ("PANTHEON_MEMORY_API_URL", "memory"),
+            ("PANTHEON_CAPITAL_API_URL", "capital"),
+            ("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "openclaw-gateway-adapter"),
         ):
             self.assertIn(f"http://{host}:", bff_env[var], var)
+        for dep in ("memory", "capital", "openclaw-gateway-adapter"):
+            self.assertIn(dep, services["operator-bff"]["depends_on"], dep)
+        adapter_env = services["openclaw-gateway-adapter"]["environment"]
+        self.assertNotIn("OPENCLAW_GATEWAY_URL", adapter_env)
+        for flag in ("PRODUCTION_BROKER", "PAPER_ADAPTER", "LIVE_ADAPTER", "CANARY_ADAPTER", "CAPITAL_BINDING"):
+            self.assertEqual(adapter_env[f"OPENCLAW_{flag}_ENABLED"], "false", flag)
         self.assertEqual(
             services["agora-interaction-worker"]["command"], ["python", "scripts/run_agora_interaction_worker.py"]
         )

@@ -53,6 +53,9 @@ PRODUCT_OWNER_IMAGE_KEYS = (
     "policy_learning_svc",
     "research_orchestrator_svc",
     "agora_interaction_worker",
+    "memory",
+    "capital",
+    "openclaw_gateway_adapter",
 )
 REQUIRED_OWNER_IMAGE_KEYS = CORE_OWNER_IMAGE_KEYS + PRODUCT_OWNER_IMAGE_KEYS
 INTERNAL_STAGING_EMAIL_RE = re.compile(r"^staging-user-[A-Za-z0-9_-]+@pantheon\.internal$")
