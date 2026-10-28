@@ -1422,6 +1422,34 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         self.assertEqual(env["operator-bff"]["BFF_DATA_DIR"], "/data/bff")
         self.assertEqual(env["lifecycle-projector"]["BFF_DATA_DIR"], "/data/bff")
 
+    def test_telemetry_service_token_is_scoped_to_exactly_the_staging_tenant(self) -> None:
+        from unittest import mock
+
+        import flask
+
+        from services.telemetry import auth as telemetry_auth
+
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        raw_env = compose["services"]["telemetry"]["environment"]
+        tenant = "tenant-staging-a"
+        env = {
+            k: re.sub(r"\$\{STAGING_TENANT_ID:\?[^}]*\}", tenant, str(v)) for k, v in raw_env.items()
+        }
+        self.assertEqual(env["PANTHEON_TELEMETRY_SERVICE_TENANTS"], tenant)
+        self.assertNotIn("*", env["PANTHEON_TELEMETRY_SERVICE_TENANTS"])
+        env["PANTHEON_TELEMETRY_SERVICE_TOKEN"] = "fixture-service-token"  # from the secrets env_file at runtime
+
+        def resolve(request_tenant: str):
+            app = flask.Flask(__name__)
+            headers = {"Authorization": "Bearer fixture-service-token", "X-Tenant-Id": request_tenant}
+            with mock.patch.dict(os.environ, env, clear=False), app.test_request_context(headers=headers):
+                return telemetry_auth.resolve_telemetry_authority(required_roles=["service"])
+
+        self.assertEqual(resolve(tenant).tenant_id, tenant)
+        with self.assertRaises(telemetry_auth.TelemetryAuthorityError) as ctx:
+            resolve("tenant-other")
+        self.assertEqual(ctx.exception.code, "TENANT_FORBIDDEN")
+
     def test_structured_pii_in_json_and_direct_columns_is_masked_and_verified(self) -> None:
         raw = _sample_raw_dataset()
         row = raw["tables"]["agora.agora_dataset_records"][0]
