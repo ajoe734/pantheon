@@ -764,18 +764,15 @@ emit_bff_not_ready_diagnostics() {
   [[ -n "$cid" ]] || { echo "BFF_DIAG container=missing" >&2; return 0; }
   state="$(run_priv timeout 10 "$DOCKER_BIN" inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} restart_count={{.RestartCount}} error={{.State.Error}}' "$cid" 2>&1 | head -c 1024)" || true
   logs="$(run_priv timeout 10 "$DOCKER_BIN" logs --tail 100 "$cid" 2>&1 | tail -c 16384)" || true
-  # Mask real private values (from the VM-local secret files) before anything is printed.
+  # One fail-closed redactor for ALL free-text diagnostics (state + logs): if any required secret file is unreadable, withhold everything.
   {
-    printf 'BFF_DIAG state: %s\nBFF_DIAG logs_tail_begin\n' "$state"
-    printf '%s\n' "$logs" | run_priv python3 -c '
-import re, sys
+    printf 'BFF_DIAG state_and_logs_begin\n'
+    { printf '%s\n' "$state"; printf '\n--BFF_DIAG_SPLIT--\n'; printf '%s\n' "$logs"; } | run_priv python3 -c '
+import sys
 text = sys.stdin.read()
 vals = set()
 for path in sys.argv[1:]:
-    try:
-        raw = open(path, encoding="utf-8", errors="replace").read()
-    except OSError:
-        continue
+    raw = open(path, encoding="utf-8", errors="replace").read()
     for line in raw.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -787,8 +784,8 @@ for path in sys.argv[1:]:
 for v in sorted(vals, key=len, reverse=True):
     text = text.replace(v, "***")
 sys.stdout.write(text)
-' "${STAGING_SECRETS_ENV_FILE}" "${STAGING_POSTGRES_PASSWORD_FILE}" 2>/dev/null || echo "BFF_DIAG logs_redaction_failed (logs withheld)"
-    printf 'BFF_DIAG logs_tail_end\n'
+' "${STAGING_SECRETS_ENV_FILE}" "${STAGING_POSTGRES_PASSWORD_FILE}" 2>/dev/null || echo "BFF_DIAG logs_redaction_failed (state and logs withheld)"
+    printf 'BFF_DIAG state_and_logs_end\n'
   } >&2 || true
   return 0
 }
