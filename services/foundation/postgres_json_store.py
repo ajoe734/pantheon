@@ -416,14 +416,23 @@ class PostgresJsonOwnerStore:
         grouped; ``columns_sql`` is evaluated for the kept rows alone, so the
         wide payload is neither sorted nor spilled.
         """
-        unwrap = (
-            "CASE WHEN jsonb_typeof(payload) = 'string' "
-            "THEN (payload #>> '{}')::jsonb ELSE payload || '{}'::jsonb END"
-        )
+        def unwrapped(cols: str, where: str = "") -> str:
+            # ``payload || '{}'`` returns an object payload as one detoasted
+            # value, so the wide column is read once per row; the raw column is
+            # consulted again only for the (rare) non-object results, where a
+            # legacy JSON-string payload is unwrapped. Reading it up front for
+            # the type check detoasted every wide row twice.
+            return (
+                f"SELECT {cols}, CASE WHEN jsonb_typeof(u) = 'array' THEN "
+                "(CASE WHEN jsonb_typeof(payload) = 'string' "
+                "THEN (payload #>> '{}')::jsonb ELSE u END) ELSE u END AS payload "
+                f"FROM (SELECT {cols}, payload, payload || '{{}}'::jsonb AS u "
+                f"FROM {self.table} {where} OFFSET 0) AS raw OFFSET 0"
+            )
+
         if visible_sql is None:
             sql = (
-                f"SELECT {columns_sql} FROM ("
-                f"SELECT {unwrap} AS payload, updated_at FROM {self.table} OFFSET 0"
+                f"SELECT {columns_sql} FROM ({unwrapped('updated_at')}"
                 ") AS rows WHERE jsonb_typeof(payload) = 'object' ORDER BY updated_at ASC"
             )
         else:
@@ -432,15 +441,17 @@ class PostgresJsonOwnerStore:
             sql = (
                 "WITH facts AS MATERIALIZED ("
                 f"SELECT record_id, ({visible_sql}) AS vis, ({fam}) AS fam, ({bound}) AS bound "
-                f"FROM (SELECT record_id, {unwrap} AS payload FROM {self.table} OFFSET 0) AS base "
+                f"FROM ({unwrapped('record_id')}) AS base "
                 "WHERE jsonb_typeof(payload) = 'object'), "
                 "families AS (SELECT fam FROM facts WHERE vis AND fam IS NOT NULL "
                 "GROUP BY fam HAVING bool_or(bound)) "
                 f"SELECT {columns_sql} FROM ("
-                f"SELECT {unwrap} AS payload, updated_at FROM {self.table} "
-                "WHERE record_id IN (SELECT record_id FROM facts WHERE vis "
-                "AND (fam IS NULL OR fam IN (SELECT fam FROM families))) OFFSET 0"
-                ") AS rows ORDER BY updated_at ASC"
+                + unwrapped(
+                    "updated_at",
+                    "WHERE record_id IN (SELECT record_id FROM facts WHERE vis "
+                    "AND (fam IS NULL OR fam IN (SELECT fam FROM families)))",
+                )
+                + ") AS rows ORDER BY updated_at ASC"
             )
         with self._use_conn(conn) as conn:
             cursor = conn.execute(sql, keep_params) if keep_params else conn.execute(sql)
