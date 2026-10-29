@@ -226,7 +226,7 @@ fi
 # Check existing active staging leases (both local runner state and live global GCP cloud labels)
 LEASE_CHECK="$(
   STATE_DIR="$STATE_DIR" RELEASE_ID="$RELEASE_ID" WORKFLOW_RUN_ID="$WORKFLOW_RUN_ID" NOW_EPOCH="$NOW_EPOCH" \
-  DRY_RUN="$DRY_RUN" CLOUD_INSTANCES_JSON="$CLOUD_INSTANCES_JSON" CLOUD_DISKS_JSON="$CLOUD_DISKS_JSON" CLOUD_ADDRESSES_JSON="$CLOUD_ADDRESSES_JSON" \
+  DRY_RUN="$DRY_RUN" PROJECT_ID="$STAGING_GCP_PROJECT_ID" REGION="$STAGING_GCP_REGION" CLOUD_INSTANCES_JSON="$CLOUD_INSTANCES_JSON" CLOUD_DISKS_JSON="$CLOUD_DISKS_JSON" CLOUD_ADDRESSES_JSON="$CLOUD_ADDRESSES_JSON" \
   python3 - <<'PY'
 import json
 import os
@@ -262,6 +262,24 @@ if not dry_run:
             raise SystemExit(0)
         for item in items:
             labels = item.get("labels") or {}
+            pending = False
+            if env_key == "CLOUD_ADDRESSES_JSON" and not labels:
+                desc = str(item.get("description") or "")
+                if desc.startswith("pantheon-pending-v1:"):
+                    try:
+                        meta = json.loads(desc[len("pantheon-pending-v1:"):])
+                    except ValueError:
+                        meta = None
+                    p_labels = meta.get("labels") if isinstance(meta, dict) else None
+                    if (
+                        isinstance(p_labels, dict)
+                        and meta.get("project") == os.environ["PROJECT_ID"]
+                        and meta.get("region") == os.environ["REGION"]
+                        and p_labels.get("release_id")
+                        and item.get("name") == f"pantheon-stg-ip-{p_labels['release_id']}"
+                    ):
+                        labels = {str(k): str(v) for k, v in p_labels.items()}
+                        pending = True
             if labels.get("environment") != "staging" or labels.get("cleanup_policy") != "automatic":
                 continue
             exp_epoch = int(labels.get("expires_at_epoch", 0) or 0)
@@ -270,7 +288,8 @@ if not dry_run:
             c_rel = labels.get("release_id", "")
             c_owner = labels.get("workflow_run_id") or labels.get("owner") or ""
             if c_rel == release_id and c_owner == workflow_run_id:
-                idempotent_match = True
+                if not pending:
+                    idempotent_match = True
                 continue
             print(f"CONFLICT:{c_rel}:{c_owner}")
             raise SystemExit(0)
@@ -459,6 +478,9 @@ if not dry_run:
             print(f"Reserved address {r_name} missing observed IPv4 address field", file=sys.stderr)
             raise SystemExit(1)
         entry["address"] = addr
+        # GA `compute addresses create` has no --labels; labels are applied by a
+        # follow-up update, so the journal keeps the create receipt until then.
+        entry["state"] = "label_pending"
 
     elif r_type == "instance":
         expected_boot = os.environ["EXPECTED_BOOT_DISK"]
@@ -533,11 +555,56 @@ PY
 }
 
 # Step 1: Allocate regional external IP
+# GA `addresses create` has no --labels, so the owned-pending state is recorded natively in the
+# description at create time; an independent orphan sweep can then discover an address whose label update never ran.
+ADDRESS_DESCRIPTION="$(
+  GCP_LABELS_CSV="$GCP_LABELS_CSV" STAGING_GCP_PROJECT_ID="$STAGING_GCP_PROJECT_ID" STAGING_GCP_REGION="$STAGING_GCP_REGION" python3 - <<'PY'
+import json
+import os
+
+labels = dict(p.split("=", 1) for p in os.environ["GCP_LABELS_CSV"].split(",") if "=" in p)
+print("pantheon-pending-v1:" + json.dumps(
+    {"labels": labels, "project": os.environ["STAGING_GCP_PROJECT_ID"], "region": os.environ["STAGING_GCP_REGION"]},
+    sort_keys=True, separators=(",", ":"),
+))
+PY
+)"
+
 run_gcloud_resource_create "address" "${IP_NAME}" \
   compute addresses create "${IP_NAME}" \
   --project="${STAGING_GCP_PROJECT_ID}" \
   --region="${STAGING_GCP_REGION}" \
-  --labels="${GCP_LABELS_CSV}"
+  --description="${ADDRESS_DESCRIPTION}"
+
+# Step 1b: Label the address just created (journaled above) and verify actual labels + identity.
+if [[ "${DRY_RUN}" != "true" ]]; then
+  "${GCLOUD_BIN}" compute addresses update "${IP_NAME}" \
+    --project="${STAGING_GCP_PROJECT_ID}" \
+    --region="${STAGING_GCP_REGION}" \
+    --update-labels="${GCP_LABELS_CSV}" >/dev/null
+  ADDRESS_READBACK="$("${GCLOUD_BIN}" compute addresses describe "${IP_NAME}" \
+    --project="${STAGING_GCP_PROJECT_ID}" \
+    --region="${STAGING_GCP_REGION}" \
+    --format=json)"
+  INVENTORY_FILE="$INVENTORY_FILE" IP_NAME="$IP_NAME" ADDRESS_READBACK="$ADDRESS_READBACK" python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+inv_path = Path(os.environ["INVENTORY_FILE"])
+inv = json.loads(inv_path.read_text(encoding="utf-8"))
+observed = json.loads(os.environ["ADDRESS_READBACK"])
+entry = next(r for r in inv["resources"] if r["type"] == "address" and r["name"] == os.environ["IP_NAME"])
+actual = observed.get("labels") or {}
+missing = {k: v for k, v in inv["labels"].items() if actual.get(k) != v}
+if str(observed.get("id") or "") != entry["resource_id"] or missing:
+    print(f"Address {entry['name']} label readback mismatch (id/labels): {sorted(missing)}", file=sys.stderr)
+    raise SystemExit(1)
+entry["state"] = "provisioned"
+inv_path.write_text(json.dumps(inv, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+fi
 
 RESERVED_IP="$(
   INVENTORY_FILE="$INVENTORY_FILE" IP_NAME="$IP_NAME" python3 - <<'PY'

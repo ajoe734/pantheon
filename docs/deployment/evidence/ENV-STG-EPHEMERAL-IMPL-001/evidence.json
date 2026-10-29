@@ -257,5 +257,47 @@
     "release_declaration": "deploy/staging/releases/pantheon-20261028-102.json (manifest sha256 617e2936f3534a1f425e8c71726750826979c5b1d98cf767fec2fdb0c728bcf3, unchanged) plus .qualification-evidence.json sidecar; 101 files unchanged",
     "pending_hosted_truth": "Source-only. Hosted Stage 0 of 2 and Prod 0 of 2 remain unaccepted; 2 pending Paper baseline images NOT published (approval unanswered); 100 retained Dev baseline is NOT a healthy Prod baseline; no new all12/stimulus/ACK claims; no cloud, secret, GitHub-setting or product action taken.",
     "local_verification": "native manifest/JSON-schema/SHA checks only; deployment suites and Dev qualification not rerun."
+  },
+  "actual_stage102_address_create_labels_fix": {
+    "root_cause": "Hosted run 40851906925 job 123373214906 failed at staging_provision.sh address create: GA `gcloud compute addresses create` rejects --labels (exit 2).",
+    "fix": "Create address without labels, journal create receipt (id/selfLink/address) as state label_pending, then `compute addresses update --update-labels` and describe readback validating id and labels before state=provisioned.",
+    "compensation": "Teardown of a label_pending address deletes only the entry whose live id equals the journaled resource_id; different id is protected as unowned; absence is verified by exact name+id (not label filter).",
+    "fake_gcloud": "Rejects addresses create --labels; supports update/describe.",
+    "tests": "focused unittest -k address, real_gcloud, partial, idempot, orphan: all OK",
+    "pending_hosted_truth": "Source-only. No cloud/GitHub/secret action; hosted Stage 0 of 2 remains unaccepted.",
+    "verification_record": {
+      "head_verified": "433475e6c5283ecec084794572c8b42cb8b6b5d5",
+      "commands": [
+        {
+          "cmd": "bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_destroy.sh",
+          "exit": 0
+        },
+        {
+          "cmd": "git diff --check c74e52e48 HEAD",
+          "exit": 0
+        },
+        {
+          "cmd": "python3 -m unittest tests.deployment.test_staging_release -k address",
+          "result": "Ran 3 tests OK in 62.785s",
+          "exit": 0
+        },
+        {
+          "cmd": "python3 -m unittest tests.deployment.test_staging_release -k real_gcloud -k partial -k idempot -k orphan",
+          "result": "Ran 4 tests OK in 141.917s",
+          "exit": 0
+        }
+      ],
+      "scope": "local mocked controller behavior only; not hosted evidence"
+    }
+  },
+  "pending_address_orphan_discoverability": {
+    "summary": "addresses create now records owned-pending metadata (labels, project, region) in the address description; staging_destroy.sh orphan sweep and release-scoped query strictly recognise it (unlabelled address, staging/automatic, release+owner present, project/region match, name == pantheon-stg-ip-<release_id>) so a runner killed between create and label update leaves a TTL-reclaimable address. Foreign/unlabelled/malformed/mismatched addresses remain protected.",
+    "files": [
+      "scripts/deploy/staging_provision.sh",
+      "scripts/deploy/staging_destroy.sh",
+      "tests/deployment/test_staging_release.py"
+    ],
+    "verification": "python3 -m unittest tests.deployment.test_staging_release -k pending_address -k test_address -k cross_run: Ran 4 tests, OK (local mock only; not hosted evidence)",
+    "hosted_acceptance": "still pending; Stage 0 of 2, Prod 0 of 2"
   }
 }
