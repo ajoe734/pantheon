@@ -410,6 +410,9 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         deployment_stage: Optional[str] = None,
         market_scope: Optional[str] = None,
         q: Optional[str] = None,
+        purpose: Optional[str] = None,
+        data_scope: Optional[str] = None,
+        archived: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -429,7 +432,18 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 q=q,
                 page_token=page_token,
                 page_size=page_size,
+                purpose=purpose,
+                data_scope=data_scope,
+                archived=archived,
             )
+        except ValueError as exc:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid persona fleet filter",
+                str(exc),
+                precondition_failed="fleet_filter",
+            ) from exc
         except PaperReconcilerUnavailableError as exc:
             raise _bff_error(
                 503,

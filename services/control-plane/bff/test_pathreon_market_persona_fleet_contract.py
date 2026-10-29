@@ -1277,6 +1277,107 @@ def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_on
     assert "persona_league" not in data
 
 
+def _seed_fleet_classification_store(archived_count: int = 105):
+    store = _make_store(allow_local_snapshot_fallback=False)
+
+    def add(pid, state, metadata, tenant="pantheon-dev"):
+        store.create_persona(
+            persona_id=pid,
+            tenant_id=tenant,
+            name=pid,
+            actor_id="pantheon-dev-browser",
+            lifecycle_state=state,
+            created_at="2026-06-03T08:27:44Z",
+            metadata={"owner": "pantheon-dev-browser", **metadata},
+        )
+
+    prov = {"provisioning_idempotency_key": "k", "capital_mode": "paper"}
+    add("p-draft", "draft", {"provisioning_idempotency_key": "k"})
+    add("p-paper", "paper", prov)
+    add("p-test", "paper", {**prov, "data_scope": "test"})
+    add("p-legacy", "paper", {})
+    add(
+        "p-servant",
+        "paper",
+        {"persona_class": "agora_servant", "agora_user_id": "u1", "execution_authority": "none"},
+    )
+    add("p-other-tenant", "paper", prov, tenant="other-tenant")
+    for i in range(archived_count):
+        add(f"p-old-{i:04d}", "retired", prov)
+    return store
+
+
+def _fleet(client, **params):
+    response = client.get("/bff/management/persona-fleet", headers=HEADERS, params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_persona_fleet_purpose_data_scope_and_archive_filters() -> None:
+    store = _seed_fleet_classification_store()
+    with _client_with_store(store) as client:
+        default = _fleet(client, page_size=200)
+        trading = _fleet(client, purpose="trading", data_scope="regular", archived="exclude")
+        archived = _fleet(client, archived="only", page_size=20)
+        unknown = _fleet(client, data_scope="unknown", archived="exclude")
+        test = _fleet(client, data_scope="test", archived="exclude")
+        advisory = _fleet(client, purpose="advisory_assistant", archived="exclude")
+
+    # Omitted parameters keep the historical contents (everything, incl. retired).
+    assert default["page_info"]["total"] == 110
+    ids = {i["persona_id"] for i in trading["data"]["items"]}
+    assert ids == {"p-draft", "p-paper"}
+    assert "p-other-tenant" not in {i["persona_id"] for i in default["data"]["items"]}
+    draft = next(i for i in trading["data"]["items"] if i["persona_id"] == "p-draft")
+    assert draft["persona_purpose"] == "trading" and draft["data_scope"] == "regular"
+    # Archive count is global, not just the page.
+    pop = trading["data"]["summary"]["population"]
+    assert pop["archived_total"] == 105 and pop["authorized_total"] == 110
+    assert archived["page_info"]["total"] == 105
+    assert len(archived["data"]["items"]) == 20 and archived["page_info"]["next_page_token"]
+    assert {i["persona_id"] for i in unknown["data"]["items"]} == {"p-legacy"}
+    assert {i["persona_id"] for i in test["data"]["items"]} == {"p-test"}
+    servant = advisory["data"]["items"][0]
+    assert servant["persona_id"] == "p-servant"
+    for key in ("league_rank", "rank", "paper_ledger_id", "paper_ledger", "capital_mode", "deployment_stage"):
+        assert servant[key] is None
+    assert servant["state"] == "advisory" and servant["health"] == "not_applicable"
+
+
+def test_persona_fleet_archived_pages_traverse_stably_beyond_100() -> None:
+    store = _seed_fleet_classification_store(archived_count=105)
+    seen = []
+    with _client_with_store(store) as client:
+        token = None
+        while True:
+            params = {"archived": "only", "page_size": 40}
+            if token:
+                params["page_token"] = token
+            body = _fleet(client, **params)
+            seen.extend(i["persona_id"] for i in body["data"]["items"])
+            token = body["page_info"]["next_page_token"]
+            if not token:
+                break
+    assert len(seen) == 105 and len(set(seen)) == 105
+
+
+def test_persona_fleet_servant_excluded_from_trading_ranks_and_invalid_filter_rejected() -> None:
+    store = _seed_fleet_classification_store(archived_count=0)
+    with _client_with_store(store) as client:
+        body = _fleet(client, archived="exclude", page_size=200)
+        bad = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "bogus"})
+    ranked = [
+        i["rank"]["league_rank"]
+        for i in body["data"]["items"]
+        if isinstance(i.get("rank"), dict) and i["rank"].get("league_rank") is not None
+    ]
+    assert "p-servant" not in {
+        i["persona_id"] for i in body["data"]["items"] if i.get("rank")
+    }
+    assert len(ranked) == len(set(ranked))
+    assert bad.status_code == 422, bad.text
+
+
 def test_unadmitted_catalog_defaults_do_not_fabricate_ghost_fleet_rows_or_detail() -> None:
     store = _make_store(allow_local_snapshot_fallback=False)
     with _client_with_store(store) as client:

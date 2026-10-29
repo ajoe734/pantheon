@@ -1,0 +1,4 @@
+{"task_id":"PERSONA-FLEET-BFF-20261029","kind":"source_only","hosted_acceptance":"not_performed",
+ "tests":{"passed":"test_pathreon_market_persona_fleet_contract.py (19), ranking read model, management read budget, agora router, pm12 request scoped reads","preexisting_failures_identical_on_baseline":13},
+ "local_timing_ms":{"archived100_exclude":149,"archived100_include":52,"archived1000_exclude":328,"archived1000_include":416},
+ "contract":"docs/bff/execution-tasks/2026-10-29-persona-fleet/API_CONTRACT.md"}

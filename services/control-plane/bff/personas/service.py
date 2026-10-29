@@ -97,6 +97,7 @@ from ..models import (
 )
 
 from ..pm12 import evaluator_results
+from . import fleet_classification as _fleet_cls
 from ..pm12.service import _management_runtime_is_terminal
 
 try:
@@ -5168,6 +5169,10 @@ def _pm12_quarterly_ranking_items(
     quarter_window: Dict[str, Any],
     telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> List[Dict[str, Any]]:
+    # Explicit non-trading assistants never enter the trading cohort; ranks are
+    # computed over the whole trading cohort, not renumbered per page.
+    rows = [row for row in rows if not _fleet_cls.is_non_trading_persona(row)]
+
     def ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         if telemetry_cache is None:
             return _pm12_persona_league_ranking_item(row)
@@ -8394,6 +8399,28 @@ def _project_persona_fleet_list_row(
     }
 
 
+def _persona_fleet_strip_trading_facts(row: Dict[str, Any]) -> None:
+    """Advisory assistants have no trading runtime, rank, ledger or health.
+
+    Their paper ceiling is an authority ceiling only; nothing here is
+    fabricated, the trading facts are explicitly absent.
+    """
+    for key in (
+        "league_rank", "leagueRank", "league_score", "leagueScore", "rank",
+        "paper_ledger_id", "paperLedgerId", "paper_ledger", "paperLedger",
+        "legacy_paper_capital_pool_id", "legacyPaperCapitalPoolId",
+        "deployment_stage", "capital_mode", "runtime_health",
+    ):
+        if key in row:
+            row[key] = None
+    row["state"] = "advisory"
+    row["status"] = "not_applicable"
+    row["health"] = "not_applicable"
+    row["score"] = None
+    row["human_needed"] = False
+    row["governance_required"] = False
+
+
 # --- _persona_fleet_slim_list_payload ---
 @request_read_scope()
 def _persona_fleet_slim_list_payload(
@@ -8407,7 +8434,13 @@ def _persona_fleet_slim_list_payload(
     q: Optional[str],
     page_token: Optional[str],
     page_size: int,
+    purpose: Optional[str] = None,
+    data_scope: Optional[str] = None,
+    archived: Optional[str] = None,
 ) -> Dict[str, Any]:
+    purpose_filter = _fleet_cls.normalize_filter(purpose, _fleet_cls.PURPOSE_FILTERS, "all", "purpose")
+    data_scope_filter = _fleet_cls.normalize_filter(data_scope, _fleet_cls.DATA_SCOPE_FILTERS, "all", "data_scope")
+    archived_filter = _fleet_cls.normalize_filter(archived, _fleet_cls.ARCHIVED_FILTERS, "include", "archived")
     # Capture the Paper ranking projection before the broader Fleet reads. The
     # quarterly endpoint uses this same read path; doing it first prevents a
     # later degraded persona-service read from silently restoring league rank.
@@ -8452,6 +8485,40 @@ def _persona_fleet_slim_list_payload(
     personas = list(directory.records_by_id.values())
     canonical_total = len(directory.records_by_id)
     catalog_default_total = len(directory.catalog_defaults_by_id)
+    classifications = {
+        pid: _fleet_cls.persona_classification(raw)
+        for pid, raw in directory.records_by_id.items()
+    }
+    for pid, raw in directory.catalog_defaults_by_id.items():
+        classifications.setdefault(pid, _fleet_cls.persona_classification(raw, catalog_default=True))
+    # Identity/role/provenance/lifecycle filters run before any per-row
+    # projection so archived history and out-of-scope rows never pay for it.
+    # Population counts describe the whole authorized tenant population.
+    population_counts = {
+        "by_purpose": {},
+        "by_data_scope": {},
+        "archived": 0,
+        "active": 0,
+    }
+    scoped_personas: List[Dict[str, Any]] = []
+    for persona in personas:
+        pid = _persona_id(persona)
+        cls = classifications.get(pid) or _fleet_cls.persona_classification(persona)
+        is_archived = _persona_record_projected_state(persona) == "retired"
+        population_counts["archived" if is_archived else "active"] += 1
+        by_p = population_counts["by_purpose"]
+        by_p[cls["persona_purpose"]] = by_p.get(cls["persona_purpose"], 0) + 1
+        by_d = population_counts["by_data_scope"]
+        by_d[cls["data_scope"]] = by_d.get(cls["data_scope"], 0) + 1
+        if archived_filter == "exclude" and is_archived:
+            continue
+        if archived_filter == "only" and not is_archived:
+            continue
+        if not _fleet_cls.matches_scope(cls, purpose=purpose_filter, data_scope=data_scope_filter):
+            continue
+        scoped_personas.append(persona)
+    all_personas = personas
+    personas = scoped_personas
     routed_strategy_counts = {str(r.get("persona_id") or r.get("id") or "").strip(): int(r.get("routed_strategy_count") or 0) for r in league_rows if str(r.get("persona_id") or r.get("id") or "").strip()} if league_rows else (_routed_strategy_counts_by_persona() if personas else {})
     league = _get_active_read_store().list_persona_league(include_market_persona_defaults=True)
     bindings = _get_active_read_store().list_bindings(include_market_persona_defaults=True)
@@ -8459,7 +8526,7 @@ def _persona_fleet_slim_list_payload(
     pools = _get_active_read_store().list_capital_pools(include_market_persona_defaults=True)
     incidents = _get_active_read_store().list_incidents()
     evolution_decisions = list(_get_active_read_store().list_evolution_decisions() or [])
-    context_defaults = _persona_fleet_context_defaults_by_market(personas)
+    context_defaults = _persona_fleet_context_defaults_by_market(all_personas)
 
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
@@ -8625,7 +8692,19 @@ def _persona_fleet_slim_list_payload(
             routed_strategies=int(routed_strategy_counts.get(persona_id, 0)),
         )
         if row is not None:
-            if row.get("capital_mode") == "paper":
+            cls = classifications.get(persona_id) or _fleet_cls.persona_classification(persona)
+            row.update(
+                {
+                    "persona_purpose": cls["persona_purpose"],
+                    "data_scope": cls["data_scope"],
+                    "classification_source": cls["classification_source"],
+                    "classification_confirmed": cls["classification_confirmed"],
+                    "archived": is_retired_persona,
+                }
+            )
+            if cls["persona_purpose"] == _fleet_cls.PURPOSE_ADVISORY:
+                _persona_fleet_strip_trading_facts(row)
+            elif row.get("capital_mode") == "paper":
                 paper_ranking = paper_rankings.get(persona_id)
                 if paper_ranking:
                     paper_rank = _persona_fleet_optional_int(paper_ranking.get("rank"))
@@ -8717,6 +8796,18 @@ def _persona_fleet_slim_list_payload(
     }
     summary = {
         "available_personas": available_personas,
+        "population": {
+            "authorized_total": canonical_total,
+            "active_total": population_counts["active"],
+            "archived_total": population_counts["archived"],
+            "by_purpose": population_counts["by_purpose"],
+            "by_data_scope": population_counts["by_data_scope"],
+        },
+        "filters": {
+            "purpose": purpose_filter,
+            "data_scope": data_scope_filter,
+            "archived": archived_filter,
+        },
         "total_personas": total_personas,
         "canonical_total": canonical_total,
         "filtered_total": total_personas,
@@ -15364,6 +15455,7 @@ class PersonaService:
         snap = snapshot_at or self._utc_now()
         slice_fn = page_slice_fn or _page_slice
         all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
+        all_rows = [r for r in all_rows if not _fleet_cls.is_non_trading_persona(r)]
         ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
             [_pm12_persona_league_ranking_item(row) for row in all_rows],
             surface="rolling",
