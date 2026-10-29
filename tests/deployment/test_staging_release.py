@@ -328,9 +328,11 @@ if tool == "docker":
         secret = Path(os.environ["STAGING_POSTGRES_PASSWORD_FILE"]).read_text().strip()
         print("business line strategy=alpha-77 result_id=res-123 password=" + secret)
         print("Traceback (most recent call last):")
-        print('  File "/workspace/services/control-plane/bff/app.py", line 42, in main')
+        print('  File "/workspace/services/control-plane/bff/main.py", line 42, in main')
         print("    connect(password='" + secret + "')")
         print('  File "/etc/private/secret.py", line 7, in leak')
+        print('  File "/workspace/runtime/paper-performance/strategy_alpha77.py", line 9, in result_res123')
+        print("ResearchResult_res123_Strategy_alpha77Error: nope")
         print("RuntimeError: boom strategy=alpha-77 " + secret)
         raise SystemExit(0)
 
@@ -2198,9 +2200,10 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("BFF_NOT_READY", out)
         self.assertIn("BFF_DIAG status=exited exit_code=1 oom_killed=false restart_count=2 error_present=true", out)
-        self.assertIn("BFF_DIAG frame=/workspace/services/control-plane/bff/app.py:42:main", out)
+        self.assertIn("BFF_DIAG frame=/workspace/services/control-plane/bff/main.py:42", out)
         self.assertIn("BFF_DIAG exception_type=RuntimeError", out)
-        for leaked in ("stg-isolated-pg-password-20261025", "alpha-77", "res-123", "connect(", "/etc/private", "boom", "Traceback"):
+        self.assertIn("BFF_DIAG exception_type=OtherException", out)
+        for leaked in ("stg-isolated-pg-password-20261025", "alpha-77", "res-123", "connect(", "/etc/private", "strategy_alpha77", "result_res123", "ResearchResult", "boom", "Traceback"):
             self.assertNotIn(leaked, out)
 
     def test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates(self) -> None:

@@ -773,17 +773,21 @@ f = state.split()
 ok = (len(f) == 5 and f[0] in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
       and f[1].lstrip("-").isdigit() and f[3].isdigit() and f[2] in {"true", "false"} and f[4] in {"true", "false"})
 print("BFF_DIAG status=%s exit_code=%s oom_killed=%s restart_count=%s error_present=%s" % tuple(f[:5]) if ok else "BFF_DIAG state=unavailable")
-frame = re.compile(r"^\s*File \"(/workspace/[A-Za-z0-9_./-]+\.py)\", line (\d+), in (<module>|[A-Za-z_][A-Za-z0-9_]*)\s*$")
-exc = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]{0,79}(?:Error|Exception|Exit|Interrupt))(?::|$)")
+frame = re.compile(r"^\s*File \"([^\"]+)\", line (\d+), in .*$")
+exc = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]{0,127})(?::|$)")
+public_files = {"/workspace/services/control-plane/bff/main.py", "/workspace/services/control-plane/bff/__init__.py"}
+public_exc = {"Exception", "RuntimeError", "ValueError", "KeyError", "TypeError", "AttributeError", "ImportError",
+              "ModuleNotFoundError", "OSError", "ConnectionError", "TimeoutError", "SystemExit", "KeyboardInterrupt"}
 frames, kinds = [], []
 for line in logs.splitlines():
     m = frame.match(line)
-    if m and ".." not in m.group(1):
-        frames.append("%s:%s:%s" % m.groups())
+    if m:
+        if m.group(1) in public_files:
+            frames.append("%s:%s" % (m.group(1), m.group(2)))
         continue
     m = exc.match(line)
-    if m:
-        kinds.append(m.group(1))
+    if m and m.group(1).endswith(("Error", "Exception", "Exit", "Interrupt")):
+        kinds.append(m.group(1) if m.group(1) in public_exc else "OtherException")
 for fr in frames[-20:]:
     print("BFF_DIAG frame=" + fr)
 for k in kinds[-5:]:
