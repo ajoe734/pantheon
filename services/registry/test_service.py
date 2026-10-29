@@ -3135,3 +3135,50 @@ def test_list_all_strategy_spec_entries_tenant_scoped_and_artifact_state_filter(
 
 
 
+
+
+def test_strategy_spec_list_persona_binding_view_is_light_and_scoped(strict_client):
+    token_a = _jwt(subject="pb-a", tenant="tenant-a")
+    token_b = _jwt(subject="pb-b", tenant="tenant-b")
+    first_ids: dict[str, str] = {}
+    for token, sid, version, personas in (
+        (token_a, "pb-strat-a", "1.0.0", ["p1"]),
+        (token_a, "pb-strat-a", "1.1.0", ["p1", "p2"]),
+        (token_b, "pb-strat-b", "1.0.0", ["p9"]),
+    ):
+        lineage = {"source_run_ids": ["run-1"]}
+        if sid in first_ids:
+            lineage["parent_registry_ids"] = [first_ids[sid]]
+        resp = strict_client.post(
+            "/api/registry/strategy-specs",
+            json={
+                "strategy_id": sid,
+                "version": version,
+                "lineage": lineage,
+                "strategy_spec": _valid_spec(sid, bulk="x" * 5000, rev=version),
+                "metadata": {"persona_ids": personas, "tenant_id": "ignored"},
+            },
+            headers=_bearer(token),
+        )
+        assert resp.status_code == 200, resp.text
+        first_ids.setdefault(sid, resp.json()["entry"]["registry_id"])
+
+    path = "/api/registry/strategy-specs"
+    full = strict_client.get(path, headers=_bearer(token_a))
+    light = strict_client.get(f"{path}?view=persona_binding", headers=_bearer(token_a))
+    assert full.status_code == light.status_code == 200
+    full_by_id = {e["entry"]["registry_id"]: e["entry"] for e in full.json()}
+    light_by_id = {e["entry"]["registry_id"]: e["entry"] for e in light.json()}
+    assert set(light_by_id) == set(full_by_id)  # same rows, all versions, tenant-scoped
+    assert not any(e["strategy_id"] == "pb-strat-b" for e in light_by_id.values())
+    for rid, le in light_by_id.items():
+        fe = full_by_id[rid]
+        for key in ("strategy_id", "version", "artifact_state", "owner_tenant", "created_at"):
+            assert le[key] == fe[key]
+        assert le["metadata"].get("persona_ids") == fe["metadata"].get("persona_ids")
+        assert "bulk" not in str(le["metadata"])
+    assert len(light.text) < len(full.text) / 3
+
+    # Unauthenticated and bad view are rejected, never silently full/empty.
+    assert strict_client.get(f"{path}?view=persona_binding").status_code in (401, 403)
+    assert strict_client.get(f"{path}?view=bogus", headers=_bearer(token_a)).status_code == 422
