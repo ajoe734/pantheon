@@ -14481,11 +14481,50 @@ class PersonaService:
         *,
         required_data_sources: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Sole implementation of the source-health overlay projection."""
+        """Sole implementation of the source-health overlay projection.
 
+        Within one request read scope, identical inputs resolved against the
+        same truth snapshot reuse one computed overlay; every caller still
+        receives its own independent copy.
+        """
+
+        truth_by_connector = self._source_ingest_truth_by_connector()
+        try:
+            request_key = (
+                "persona_source_health_overlay",
+                id(self),
+                id(truth_by_connector),
+                json.dumps(
+                    [data_source_status, data_sources, required_data_sources],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+        except (TypeError, ValueError):
+            return self._compute_source_health_overlay(
+                data_source_status, data_sources, required_data_sources, truth_by_connector
+            )
+        # The truth snapshot is held in the cached value so its id stays unique.
+        _, shared = cached_owner_call(
+            request_key,
+            lambda: (
+                truth_by_connector,
+                self._compute_source_health_overlay(
+                    data_source_status, data_sources, required_data_sources, truth_by_connector
+                ),
+            ),
+        )
+        return json.loads(json.dumps(shared))
+
+    def _compute_source_health_overlay(
+        self,
+        data_source_status: Any,
+        data_sources: Any,
+        required_data_sources: Optional[List[Dict[str, Any]]],
+        truth_by_connector: Dict[str, Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
         dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
         srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
-        truth_by_connector = self._source_ingest_truth_by_connector()
         provider_statuses = dss.get("provider_statuses")
         if not isinstance(provider_statuses, dict):
             provider_statuses = {}
