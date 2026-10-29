@@ -14271,6 +14271,9 @@ class PersonaService:
         # must never share or invalidate each other's cached truth.
         self._source_health_clock = source_health_clock
         self._source_health_cache: Dict[str, Any] = {"at": 0.0, "by_connector": None, "truth_by_connector": None}
+        # Single-flight guard: the fleet prefetch worker and the request thread
+        # must share one in-flight cold/expired source-truth read.
+        self._source_health_read_lock = threading.Lock()
 
     def get_read_store(self) -> Any:
         return self._get_read_store()
@@ -14296,12 +14299,25 @@ class PersonaService:
         separate PersonaService instances never leak state into each other.
         """
 
-        now = self._source_health_clock()
         cache = self._source_health_cache
-        cached = cache.get("truth_by_connector")
-        if cached is not None and (now - float(cache.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
-            return cached
 
+        def _fresh() -> Optional[Dict[str, Dict[str, Any]]]:
+            cached = cache.get("truth_by_connector")
+            if cached is not None and (self._source_health_clock() - float(cache.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
+                return cached
+            return None
+
+        hit = _fresh()
+        if hit is not None:
+            return hit
+        with self._source_health_read_lock:
+            hit = _fresh()
+            if hit is not None:
+                return hit
+            return self._read_source_ingest_truth_locked(cache)
+
+    def _read_source_ingest_truth_locked(self, cache: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        now = self._source_health_clock()
         read_store = self.get_read_store()
         truth: Dict[str, Dict[str, Any]] = {}
         try:

@@ -2275,6 +2275,40 @@ def test_fleet_overlaps_strategy_spec_and_source_registry_reads(monkeypatch):
         assert elapsed < len(spans) * delay + 0.35, (elapsed, spans)
 
 
+@pytest.mark.parametrize("fail_registry", [False, True])
+def test_fleet_cold_source_truth_single_flight_when_registry_slowest(monkeypatch, fail_registry):
+    # Reverse latency: the source registry is slower than every other stage, so the
+    # prefetch worker and the request thread both want the cold source truth.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    reads = {"registry": 0, "health": 0}
+    lock = threading.Lock()
+    original_registry = store.get_source_connector_registry
+    original_health = store.get_source_health_usage_snapshot
+
+    def slow_registry():
+        with lock:
+            reads["registry"] += 1
+        _time.sleep(0.6)
+        if fail_registry:
+            raise RuntimeError("registry unavailable")
+        return original_registry()
+
+    def counted_health():
+        with lock:
+            reads["health"] += 1
+        return original_health()
+
+    monkeypatch.setattr(store, "get_source_connector_registry", slow_registry)
+    monkeypatch.setattr(store, "get_source_health_usage_snapshot", counted_health)
+    with _client_with_store(store) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert reads == {"registry": 1, "health": 1}, reads
+    assert body["data"]["summary"]["population"]["archived_total"] == 100
+
+
 def test_fleet_strategy_spec_prefetch_failure_stays_failure(monkeypatch):
     store = _seed_fleet_classification_store(100)
     calls = {"n": 0}
