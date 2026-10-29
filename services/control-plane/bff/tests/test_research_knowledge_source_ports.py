@@ -1245,3 +1245,110 @@ def test_list_strategy_specs_fails_closed_on_missing_auth_unconfigured_url_forei
         owner_reads.selected_tenant.reset(tok_tenant)
 
 
+
+
+def _multi_version_binding_store(strategy_count: int = 12, versions: int = 6) -> dict:
+    store: dict = {}
+    for n in range(strategy_count):
+        sid = f"strat-bind-{n}"
+        rows = []
+        for v in range(1, versions + 1):
+            rows.append(
+                {
+                    "spec_version_id": f"{sid}-v{v}",
+                    "spec_version": f"v{v}",
+                    "lifecycle_state": "retired" if (n % 5 == 0 and v == versions) else "approved",
+                    "created_at": f"2026-08-{10 + v:02d}T00:00:00Z",
+                    # older versions bind a different persona; only the current one counts
+                    "persona_ids": [f"p-{n % 3}", f"p-{n % 3}", " "] if v == versions else ["p-old"],
+                }
+            )
+        store[sid] = {"strategy_id": sid, "title": sid, "versions": rows}
+    return store
+
+
+def test_count_strategy_persona_bindings_matches_list_and_skips_version_normalization(monkeypatch):
+    port = DefaultResearchKnowledgeSourcePort(strategy_specs_store=_multi_version_binding_store())
+    expected: dict = {}
+    for item in port.list_strategy_specs():
+        for pid in set(item["persona_ids"]):
+            expected[pid] = expected.get(pid, 0) + 1
+    assert expected and "p-old" not in expected
+
+    normalized = {"n": 0}
+    original = DefaultResearchKnowledgeSourcePort._kw05_normalize_version_candidate.__func__
+
+    def counting(cls, *args, **kwargs):
+        normalized["n"] += 1
+        return original(cls, *args, **kwargs)
+
+    monkeypatch.setattr(DefaultResearchKnowledgeSourcePort, "_kw05_normalize_version_candidate", classmethod(counting))
+    assert port.count_strategy_persona_bindings() == expected
+    assert normalized["n"] == 0
+    port.list_strategy_specs()
+    assert normalized["n"] == 9  # full list normalizes every non-retired current version
+
+
+def test_count_strategy_persona_bindings_requests_light_registry_view_and_matches_full_list(monkeypatch):
+    import urllib.error
+    from fastapi import HTTPException
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+    urls: list[str] = []
+    payload = [_original_workshop_registry_entry("tenant-dev")]
+
+    def fake(url, **kwargs):
+        urls.append(url)
+        return payload
+
+    monkeypatch.setattr(adapter_base, "http_request_json", fake)
+    port = DefaultResearchKnowledgeSourcePort()
+    tok_auth = owner_reads.authorization.set("Bearer workshop-user:operator:tenant-dev")
+    tok_tenant = owner_reads.selected_tenant.set("tenant-dev")
+    try:
+        counts = port.count_strategy_persona_bindings()
+        full = port.list_strategy_specs()
+        assert urls == [
+            "http://registry.internal/api/registry/strategy-specs?view=persona_binding",
+            "http://registry.internal/api/registry/strategy-specs",
+        ]
+        expected: dict = {}
+        for item in full:
+            for pid in set(item["persona_ids"]):
+                expected[pid] = expected.get(pid, 0) + 1
+        assert counts == expected and counts
+
+        # Owner failures stay failures: no fallback to the full read, no zero.
+        urls.clear()
+        for code, status in ((401, 403), (403, 403), (500, 503)):
+            def boom(url, _code=code, **kw):
+                urls.append(url)
+                raise urllib.error.HTTPError(url, _code, "x", hdrs=None, fp=None)
+
+            monkeypatch.setattr(adapter_base, "http_request_json", boom)
+            with pytest.raises(HTTPException) as exc:
+                port.count_strategy_persona_bindings()
+            assert exc.value.status_code == status
+        assert all(u.endswith("?view=persona_binding") for u in urls) and len(urls) == 3
+
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: {"items": []})
+        with pytest.raises(HTTPException) as bad:
+            port.count_strategy_persona_bindings()
+        assert bad.value.status_code == 503
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)
+
+
+def test_count_strategy_persona_bindings_strips_ids_before_dedup():
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    for ids, expected in ([[" p1 "], {"p1": 1}], [["p1", " p1 "], {"p1": 1}], [[" p1 ", " p1 "], {"p1": 1}]):
+        port = DefaultResearchKnowledgeSourcePort(
+            strategy_specs_store={"s": {"strategy_id": "s", "spec_version": "1.0.0", "persona_ids": ids}}
+        )
+        assert port.count_strategy_persona_bindings() == expected

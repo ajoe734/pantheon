@@ -23,6 +23,7 @@ import socket
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Any,
     Callable,
@@ -53,7 +54,7 @@ BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 from services.control_plane.cron.persona_cron_registrar import (
     DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
 )
-from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope, selected_tenant
+from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope, selected_tenant, submit_owner_read
 
 from ..models import (
     ActionCommandStatus,
@@ -2372,25 +2373,97 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
 
 
 def _routed_strategy_counts_by_persona() -> Dict[str, int]:
-    items = _get_active_read_store().list_strategy_specs() or []
-    counts: Dict[str, int] = {}
-    for item in items:
-        if not isinstance(item, Mapping):
-            continue
-        raw_ids = item.get("persona_ids") or item.get("personaIds")
-        if not raw_ids and isinstance(item.get("versions"), list) and item["versions"]:
-            first_ver = item["versions"][0]
-            if isinstance(first_ver, Mapping):
-                raw_ids = first_ver.get("persona_ids") or first_ver.get("personaIds")
-        if not isinstance(raw_ids, list):
-            continue
-        seen_personas = set()
-        for raw_pid in raw_ids:
-            pid = str(raw_pid or "").strip()
-            if pid and pid not in seen_personas:
-                seen_personas.add(pid)
-                counts[pid] = counts.get(pid, 0) + 1
-    return counts
+    """Per-persona routed-strategy counts from the current-version binding read.
+
+    Shared per request (value or failure). The fleet list only needs the count,
+    so it avoids the per-version normalization of the full strategy list.
+    """
+    store = _get_active_read_store()
+    return dict(
+        cached_owner_call(
+            ("persona_routed_strategy_counts", id(store), selected_tenant.get()),
+            store.count_strategy_persona_bindings,
+        )
+    )
+
+
+# --- _persona_fleet_prefetch_independent_reads ---
+_PERSONA_FLEET_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=6,
+    thread_name_prefix="bff-persona-fleet-read",
+)
+
+
+def _fleet_incidents() -> List[Dict[str, Any]]:
+    """Fleet incident read, shared per request (value or failure) with its prefetch."""
+    store = _get_active_read_store()
+    return cached_owner_call(
+        ("persona_fleet_incidents", id(store), selected_tenant.get()),
+        store.list_incidents,
+    )
+
+
+def _fleet_evolution_decisions() -> List[Dict[str, Any]]:
+    """Fleet evolution-decision read, shared per request (value or failure) with its prefetch."""
+    store = _get_active_read_store()
+    return list(
+        cached_owner_call(
+            ("persona_fleet_evolution_decisions", id(store), selected_tenant.get()),
+            lambda: list(store.list_evolution_decisions() or []),
+        )
+    )
+
+
+def _persona_fleet_prefetch_independent_reads(tenant_id: Optional[str] = None) -> None:
+    """Start the fleet's slow, independent network owner reads together.
+
+    Measured on the deployed path the strategy-spec registry read (~3.4s) and
+    the first source-ingest registry read (~0.9s) ran back to back on the
+    request thread. The strategy read is request-cached and the source truth is
+    TTL-cached on the service, so the sequential code below keeps its call sites
+    and finds the value (or the cached failure) already read. Each prefetch runs
+    in a copy of the caller context (tenant, authorization, deadline).
+    """
+    service = _current_persona_service.get()
+    if service is None:
+        return
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        _routed_strategy_counts_by_persona,
+        warm_key="persona_fleet_strategy_specs",
+    )
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        service._source_ingest_truth_by_connector,
+        warm_key="persona_fleet_source_truth",
+    )
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        _fleet_incidents,
+        warm_key="persona_fleet_incidents",
+    )
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        _fleet_evolution_decisions,
+        warm_key="persona_fleet_evolution_decisions",
+    )
+    clean_tenant = str(tenant_id or "").strip()
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        lambda: _persona_provisioning_records_shared(_persona_provisioning_store(), clean_tenant),
+        warm_key=f"persona_fleet_provisioning:{clean_tenant}",
+    )
+
+
+# --- _persona_provisioning_records_shared ---
+def _persona_provisioning_records_shared(store: Any, clean_tenant: str) -> List[Any]:
+    """Durable provisioning ledger read, shared per request (value or failure)."""
+    read_prov = store.list_by_tenant if clean_tenant else store.list_all
+    read_args = (clean_tenant,) if clean_tenant else ()
+    return cached_owner_call(
+        ("persona_provisioning_records", id(store), clean_tenant),
+        lambda: list(read_prov(*read_args)),
+    )
 
 
 # --- _list_persona_records ---
@@ -2398,6 +2471,7 @@ def _list_persona_records(
     tenant_id: Optional[str] = None,
     *,
     read_store: Optional[Any] = None,
+    reuse_request_read: bool = False,
 ) -> List[Dict[str, Any]]:
     """Combine canonical personas with durable store and overlay records created via /bff.
 
@@ -2423,10 +2497,13 @@ def _list_persona_records(
     clean_tenant = str(tenant_id or "").strip()
     store = _persona_provisioning_store()
     try:
-        if clean_tenant:
-            prov_records = store.list_by_tenant(clean_tenant)
+        if reuse_request_read:
+            # Read-only callers sharing one request read the durable ledger
+            # once; a failure is cached too, so every caller sees it.
+            prov_records = _persona_provisioning_records_shared(store, clean_tenant)
         else:
-            prov_records = store.list_all()
+            read_prov = store.list_by_tenant if clean_tenant else store.list_all
+            prov_records = read_prov(*((clean_tenant,) if clean_tenant else ()))
     except Exception as exc:
         log.warning("Persona provisioning store list failed for dependency %s", "persona_provisioning_store")
         raise _bff_error(
@@ -2487,13 +2564,14 @@ def _get_persona_directory_snapshot(
     tenant_id: Optional[str] = None,
     *,
     snapshot_at: Optional[str] = None,
+    reuse_request_read: bool = False,
 ) -> PersonaDirectorySnapshot:
     snapshot_timestamp = snapshot_at or utc_now()
     clean_tenant = str(tenant_id or "").strip()
     records_by_id: Dict[str, Dict[str, Any]] = {}
     catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
 
-    for raw in _list_persona_records(clean_tenant):
+    for raw in _list_persona_records(clean_tenant, reuse_request_read=reuse_request_read):
         if not isinstance(raw, dict):
             continue
         rec_tenant = _persona_record_tenant_id(raw)
@@ -5104,8 +5182,54 @@ def _pm12_public_quarter_evidence_refs(
     )
 
 
+# --- _pm12_quarterly_governance_command_index ---
+def _pm12_quarterly_governance_command_index(
+    commands: List[Dict[str, Any]],
+    quarter: str,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Bucket the command log by persona id in one pass.
+
+    A record is bucketed under every ``-``-delimited prefix of its id tail, a
+    superset of the records ``_pm12_quarterly_ranking_governance_state``
+    accepts (``startswith(pm12-<quarter>-<persona>-)``), in log order. That
+    keeps the per-persona scan proportional to its own records instead of the
+    whole log.
+    """
+    clean_quarter = str(quarter or "").strip().lower()
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    if not clean_quarter:
+        return index
+    submit_prefix = f"pm12-{clean_quarter}-"
+    review_prefix = f"promotion_review:pm12-{clean_quarter}-"
+    for record in commands:
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        if record.get("type") == "QuarterlyRankingRecommendationSubmit":
+            key_source = str(params.get("recommendation_id") or params.get("recommendationId") or "").strip().lower()
+            prefix = submit_prefix
+        elif target.get("type") == ObjectType.HUMAN_GATE_ITEM.value:
+            key_source = str(target.get("id") or "").strip().lower()
+            prefix = review_prefix
+        else:
+            continue
+        if not key_source.startswith(prefix):
+            continue
+        tail = key_source[len(prefix):]
+        for position, char in enumerate(tail):
+            if char == "-":
+                index.setdefault(tail[:position], []).append(record)
+    return index
+
+
 # --- _pm12_quarterly_ranking_governance_state ---
-def _pm12_quarterly_ranking_governance_state(persona_id: str, quarter: str) -> str:
+def _pm12_quarterly_ranking_governance_state(
+    persona_id: str,
+    quarter: str,
+    commands: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    # ``commands`` lets a ranking pass supply this persona's already-read
+    # (and possibly pre-bucketed) command records instead of re-reading the
+    # whole log for every ranked persona.
     clean_quarter = str(quarter or "").strip().lower()
     clean_persona = str(persona_id or "").strip()
     if not clean_quarter or not clean_persona:
@@ -5118,7 +5242,9 @@ def _pm12_quarterly_ranking_governance_state(persona_id: str, quarter: str) -> s
     blocked = False
     expired = False
 
-    for record in _get_active_command_store()._get_all_commands():
+    if commands is None:
+        commands = _get_active_command_store()._get_all_commands()
+    for record in commands:
         target = record.get("target") if isinstance(record.get("target"), dict) else {}
         params = record.get("params") if isinstance(record.get("params"), dict) else {}
         cmd_type = record.get("type")
@@ -5190,11 +5316,21 @@ def _pm12_quarterly_ranking_items(
         reverse=True,
     )
     items: List[Dict[str, Any]] = []
+    commands_by_persona = (
+        _pm12_quarterly_governance_command_index(
+            _get_active_command_store()._get_all_commands(),
+            quarter_window["quarter"],
+        )
+        if ranked
+        else {}
+    )
     for rank, item in enumerate(ranked, start=1):
         score = _management_number(item.get("overall_score")) or 0.0
         persona_id = str(item.get("persona_id") or "")
         quarter = quarter_window["quarter"]
-        gov_state = _pm12_quarterly_ranking_governance_state(persona_id, quarter)
+        gov_state = _pm12_quarterly_ranking_governance_state(
+            persona_id, quarter, commands_by_persona.get(persona_id.strip(), ())
+        )
         ranking_item = {
             **item,
             "rank": rank,
@@ -6385,8 +6521,9 @@ def _pm12_persona_league_rows(
     include_allowed_actions: bool = True,
     routed_strategy_counts: Optional[Mapping[str, int]] = None,
     include_advisory: bool = False,
+    reuse_request_read: bool = False,
 ) -> List[Dict[str, Any]]:
-    raw_records = _list_persona_records(tenant_id)
+    raw_records = _list_persona_records(tenant_id, reuse_request_read=reuse_request_read)
     if not include_advisory:
         # Classify from canonical raw metadata before projection drops it, so
         # every league consumer shares one trading-only cohort.
@@ -8491,6 +8628,7 @@ def _persona_fleet_slim_list_payload(
     # quarterly endpoint uses this same read path; doing it first prevents a
     # later degraded persona-service read from silently restoring league rank.
     quarter_window = _pm12_quarter_window(None, snapshot_at)
+    _persona_fleet_prefetch_independent_reads(tenant_id)
     telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     telemetry_list_loaded = False
     try:
@@ -8517,6 +8655,7 @@ def _persona_fleet_slim_list_payload(
         include_route_policy=False,
         include_health=False,
         include_allowed_actions=False,
+        reuse_request_read=True,
     )
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
@@ -8527,7 +8666,7 @@ def _persona_fleet_slim_list_payload(
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
-    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at, reuse_request_read=True)
     # Enforce the user-private owner policy before rows or population counts.
     visible_records = {
         pid: raw
@@ -8576,8 +8715,8 @@ def _persona_fleet_slim_list_payload(
     bindings = _get_active_read_store().list_bindings(include_market_persona_defaults=True)
     runtimes = _get_active_read_store().list_runtime_bindings(include_market_persona_defaults=True)
     pools = _get_active_read_store().list_capital_pools(include_market_persona_defaults=True)
-    incidents = _get_active_read_store().list_incidents()
-    evolution_decisions = list(_get_active_read_store().list_evolution_decisions() or [])
+    incidents = _fleet_incidents()
+    evolution_decisions = _fleet_evolution_decisions()
     context_defaults = _persona_fleet_context_defaults_by_market(all_personas)
 
     league_by_persona = {
@@ -14159,6 +14298,9 @@ class PersonaService:
         # must never share or invalidate each other's cached truth.
         self._source_health_clock = source_health_clock
         self._source_health_cache: Dict[str, Any] = {"at": 0.0, "by_connector": None, "truth_by_connector": None}
+        # Single-flight guard: the fleet prefetch worker and the request thread
+        # must share one in-flight cold/expired source-truth read.
+        self._source_health_read_lock = threading.Lock()
 
     def get_read_store(self) -> Any:
         return self._get_read_store()
@@ -14184,12 +14326,25 @@ class PersonaService:
         separate PersonaService instances never leak state into each other.
         """
 
-        now = self._source_health_clock()
         cache = self._source_health_cache
-        cached = cache.get("truth_by_connector")
-        if cached is not None and (now - float(cache.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
-            return cached
 
+        def _fresh() -> Optional[Dict[str, Dict[str, Any]]]:
+            cached = cache.get("truth_by_connector")
+            if cached is not None and (self._source_health_clock() - float(cache.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
+                return cached
+            return None
+
+        hit = _fresh()
+        if hit is not None:
+            return hit
+        with self._source_health_read_lock:
+            hit = _fresh()
+            if hit is not None:
+                return hit
+            return self._read_source_ingest_truth_locked(cache)
+
+    def _read_source_ingest_truth_locked(self, cache: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        now = self._source_health_clock()
         read_store = self.get_read_store()
         truth: Dict[str, Dict[str, Any]] = {}
         try:

@@ -351,6 +351,14 @@ class RegistryService:
     def list_all_entries(self) -> list[RegistryEntryView]:
         return [self._to_view(e) for e in self.store.list_all_entries()]
 
+    def list_persona_binding_rows(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+    ) -> list[dict]:
+        """Same rows as :meth:`list_all_entries`, reduced by the owner store to flat binding fields."""
+        return self.store.list_persona_binding_rows(
+            visible_tenants=visible_tenants, artifact_type=artifact_type,
+        )
+
     def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:
         """Return the entry exactly as it was at its first successful
         creation (reviewer finding 5), if the store recorded one.

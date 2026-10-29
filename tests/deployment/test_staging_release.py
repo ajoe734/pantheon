@@ -324,6 +324,18 @@ if tool == "docker":
         print(json.dumps([{"Id": img}]))
         raise SystemExit(0)
 
+    if args[:1] == ["logs"]:
+        secret = Path(os.environ["STAGING_POSTGRES_PASSWORD_FILE"]).read_text().strip()
+        print("business line strategy=alpha-77 result_id=res-123 password=" + secret)
+        print("Traceback (most recent call last):")
+        print('  File "/workspace/services/control-plane/bff/main.py", line 42, in main')
+        print("    connect(password='" + secret + "')")
+        print('  File "/etc/private/secret.py", line 7, in leak')
+        print('  File "/workspace/runtime/paper-performance/strategy_alpha77.py", line 9, in result_res123')
+        print("ResearchResult_res123_Strategy_alpha77Error: nope")
+        print("RuntimeError: boom strategy=alpha-77 " + secret)
+        raise SystemExit(0)
+
     if args[:1] == ["inspect"]:
         cid = args[-1]
         fmt = ""
@@ -352,6 +364,8 @@ if tool == "docker":
                 counter.write_text(str(n + 1))
                 health = "unhealthy" if mode == "unhealthy" else ("healthy" if n >= 2 else "starting")
             print(running + (" " + health if health else ""))
+        elif "State.Status" in fmt:
+            print("exited 1 false 2 true")
         elif "Config.Env" in fmt:
             for k, v in sorted(cinfo.get("env", {}).items()):
                 print(f"{k}={v}")
@@ -748,7 +762,7 @@ if tool in ("psql", "pg_dump", "pg_restore"):
             sql_file = args[i + 1]
     if sql_file:
         if os.environ.get("FAKE_FAIL_MIGRATION_SQL") == "true":
-            print("ERROR: syntax or lock error executing migration SQL", file=sys.stderr)
+            print("ERROR: syntax or lock error executing migration SQL order_id=ORD-SYNTH-7788 buyer@synthetic.example", file=sys.stderr)
             raise SystemExit(1)
         if os.environ.get("FAKE_SKIP_SCHEMA_MUTATION") != "true":
             applied = Path(sql_file).read_text(encoding="utf-8")
@@ -2178,6 +2192,20 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertNotEqual(res.returncode, 0)
                 self.assertIn("routing override", res.stderr + res.stdout)
 
+    def test_bff_not_ready_public_diagnostics_are_structural_only_and_keep_original_error(self) -> None:
+        res = subprocess.run(
+            [str(PROVISION_SCRIPT)], env=self._base_env(FAKE_BFF_UNHEALTHY="true"), capture_output=True, text=True
+        )
+        out = res.stderr + res.stdout
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("BFF_NOT_READY", out)
+        self.assertIn("BFF_DIAG status=exited exit_code=1 oom_killed=false restart_count=2 error_present=true", out)
+        self.assertIn("BFF_DIAG frame=/workspace/services/control-plane/bff/main.py:42", out)
+        self.assertIn("BFF_DIAG exception_type=RuntimeError", out)
+        self.assertIn("BFF_DIAG exception_type=OtherException", out)
+        for leaked in ("stg-isolated-pg-password-20261025", "alpha-77", "res-123", "connect(", "/etc/private", "strategy_alpha77", "result_res123", "ResearchResult", "boom", "Traceback"):
+            self.assertNotIn(leaked, out)
+
     def test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates(self) -> None:
         # 1. Missing runtime binary when apt install is disabled fails closed with RUNTIME_BINARY_MISSING
         bad_bin_env = self._base_env(CADDY_BIN="/nonexistent/caddy-binary", STAGING_ALLOW_APT_INSTALL="false")
@@ -2219,7 +2247,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 text=True,
             )
             self.assertNotEqual(res_product.returncode, 0, omitted)
-            self.assertIn(f"Required service {omitted} is not running", res_product.stderr)
+            self.assertIn("OWNER_CONTAINER_MISSING", res_product.stderr)
 
         # 4. Real collector gate failures (migration SQL error, pg_restore failure, cross-tenant HTTP 200 leak, live broker env leak)
         self.setUp()
@@ -2238,6 +2266,8 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertNotEqual(ver.returncode, 0)
                 self.assertIn("LIVE_GATE_COLLECTION_FAILED", ver.stderr)
                 self.assertIn(expected_err, ver.stderr)
+                self.assertNotIn("ORD-SYNTH-7788", ver.stderr)
+                self.assertNotIn("buyer@synthetic.example", ver.stderr)
 
     def test_collector_rejects_tampered_migration_files_and_missing_owner_store(self) -> None:
         subprocess.run(

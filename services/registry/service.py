@@ -21,7 +21,7 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -1490,12 +1490,9 @@ def get_strategy_spec_entry(registry_id: str, authorization: Optional[str] = Hea
     return _authorize_read(ctx, view)
 
 
-def _filter_strategy_spec_views(
-    strategy_id: Optional[str],
-    authorization: Optional[str],
-    x_tenant_id: Optional[str],
-    artifact_state: Optional[ArtifactState],
-) -> list[RegistryEntryView]:
+def _strategy_spec_read_scope(
+    authorization: Optional[str], x_tenant_id: Optional[str],
+) -> tuple[AuthContext, Optional[str]]:
     ctx = _authenticate_registry_read(authorization)
     caller_tenant = _caller_tenant(ctx)
     header_tenant = x_tenant_id.strip() if x_tenant_id is not None else None
@@ -1506,6 +1503,16 @@ def _filter_strategy_spec_views(
         or (caller_tenant is None and "admin" not in ctx.roles)
     ):
         raise HTTPException(status_code=403, detail="X-Tenant-Id header does not match verified caller tenant.")
+    return ctx, header_tenant
+
+
+def _filter_strategy_spec_views(
+    strategy_id: Optional[str],
+    authorization: Optional[str],
+    x_tenant_id: Optional[str],
+    artifact_state: Optional[ArtifactState],
+) -> list[RegistryEntryView]:
+    ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
     svc = get_registry_service()
     views = svc.list_all_entries() if strategy_id is None else svc.list_by_strategy(strategy_id)
     return [
@@ -1517,12 +1524,43 @@ def _filter_strategy_spec_views(
     ]
 
 
+def _persona_binding_visible_tenants(ctx: AuthContext, header_tenant: Optional[str]) -> Optional[frozenset]:
+    """Owner tenants the caller may read (``None`` = every tenant), as ``_can_read_entry`` + header scope."""
+    visible = None if "admin" in ctx.roles else frozenset({BUILTIN_TENANT, _caller_tenant(ctx)})
+    if header_tenant is not None:
+        scoped = frozenset({header_tenant, BUILTIN_TENANT})
+        visible = scoped if visible is None else visible & scoped
+    return visible
+
+
+def _persona_binding_rows(
+    authorization: Optional[str], x_tenant_id: Optional[str], artifact_state: Optional[ArtifactState],
+) -> list[dict]:
+    """Flat persona-binding rows with the same scope filters as the full list.
+
+    The visible owner population is applied by the owner store before persona
+    family eligibility, so another tenant's bound version cannot make a family
+    (and its unbound visible versions) appear.
+    """
+    ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+    wanted_state = artifact_state.value if artifact_state is not None else None
+    rows = get_registry_service().list_persona_binding_rows(
+        visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+        artifact_type=ArtifactType.STRATEGY_SPEC.value,
+    )
+    return [{"entry": row} for row in rows if wanted_state is None or row.get("artifact_state") == wanted_state]
+
+
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
+    view: Optional[Literal["persona_binding"]] = None,
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
+    if view == "persona_binding":
+        # Bypasses RegistryEntryView reconstruction/validation: rows are already flat.
+        return JSONResponse(_persona_binding_rows(authorization, x_tenant_id, artifact_state))
     return _filter_strategy_spec_views(None, authorization, x_tenant_id, artifact_state)
 
 

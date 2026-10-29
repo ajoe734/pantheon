@@ -179,6 +179,17 @@ class ResearchKnowledgeSourcePort:
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
+    def count_strategy_persona_bindings(self) -> Dict[str, int]:
+        """Per-persona count of non-retired strategies whose current version binds it."""
+        counts: Dict[str, int] = {}
+        for item in self.list_strategy_specs() or []:
+            if not isinstance(item, dict):
+                continue
+            for persona_id in {str(v).strip() for v in item.get("persona_ids") or []}:
+                if persona_id:
+                    counts[persona_id] = counts.get(persona_id, 0) + 1
+        return counts
+
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
@@ -1742,6 +1753,38 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         )
         return items
 
+    def count_strategy_persona_bindings(self) -> Dict[str, int]:
+        # Same source, current-version selection, lifecycle filter and persona
+        # extraction as list_strategy_specs(), without per-version normalization.
+        source_specs = (
+            list(self._strategy_specs.values())
+            if self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+            else self._fetch_canonical_strategy_specs(binding_view=True)
+        )
+        counts: Dict[str, int] = {}
+        for strategy_spec in source_specs:
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            _strategy_id, _index, raw_current, _candidates, _versions = selected
+            lifecycle = str(
+                self._kw05_lifecycle_state(
+                    raw_current.get("lifecycle_state")
+                    or raw_current.get("status")
+                    or strategy_spec.get("lifecycle_state")
+                    or strategy_spec.get("status")
+                )
+                or ""
+            )
+            if lifecycle == "retired":
+                continue
+            raw_ids = raw_current.get("persona_ids") or strategy_spec.get("persona_ids") or []
+            for persona_id in {str(v).strip() for v in raw_ids if str(v).strip()}:
+                counts[persona_id] = counts.get(persona_id, 0) + 1
+        return counts
+
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
         if not d:
@@ -1760,7 +1803,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         from fastapi import HTTPException
         return HTTPException(status_code=status, detail={"error": {"code": code, "message": message, "reason": reason, "status_code": status}})
 
-    def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None, *, binding_view: bool = False) -> List[Dict[str, Any]]:
         sid = str(strategy_id).strip() if strategy_id is not None else ""
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
@@ -1772,6 +1815,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
             path = f"/api/registry/strategies/{urllib.parse.quote(sid, safe='')}/strategy-specs" if sid else "/api/registry/strategy-specs"
+            if binding_view and not sid:
+                # Registry-owned light projection: same rows/tenant filter, no spec bodies.
+                path += "?view=persona_binding"
             raw_entries = http_request_json(registry_url(path), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):

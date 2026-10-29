@@ -617,6 +617,18 @@ class ReadSurfacePorts:
             )
         return self.research_knowledge_source.list_strategy_specs(**kwargs)
 
+    def count_strategy_persona_bindings(self) -> Dict[str, int]:
+        def _read() -> Dict[str, int]:
+            counts = self.research_knowledge_source.count_strategy_persona_bindings()
+            if not isinstance(counts, dict):
+                raise TypeError("count_strategy_persona_bindings must return a dict")
+            return dict(counts)
+
+        return cached_owner_call(
+            ("rsp_strategy_persona_binding_counts", id(self), selected_tenant.get()),
+            _read,
+        )
+
     def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.list_strategy_specs(**kwargs)
 

@@ -750,13 +750,54 @@ run_compose -p pantheon-staging \
 
 # 9. Poll /bff/readyz until 200 and execute live on-host readbacks to emit observed deploy identity.
 READY_CODE="000"
-for _ in $(seq 1 "${STAGING_READY_TRIES:-30}"); do
+for _ in $(seq 1 "${STAGING_READY_TRIES:-180}"); do
   READY_CODE="$("$CURL_BIN" -sS -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:${STAGING_BFF_PORT}/bff/readyz" || echo "000")"
   if [[ "$READY_CODE" == "200" ]]; then
     break
   fi
   sleep "${STAGING_READY_INTERVAL:-1}"
 done
+emit_bff_not_ready_diagnostics() {
+  # Best-effort, bounded, structure-only export for PUBLIC CI output: fixed-schema container state plus traceback frame
+  # metadata (known /workspace code path, line, function) and exception TYPE. Never State.Error text, exception messages,
+  # source snippets, or arbitrary log lines. Raw logs stay on the private VM. Never changes the original failure.
+  local cid state logs
+  cid="$(run_priv timeout 10 "$DOCKER_BIN" compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -a -q operator-bff 2>/dev/null | head -n1)" || return 0
+  [[ -n "$cid" ]] || { echo "BFF_DIAG container=missing" >&2; return 0; }
+  state="$(run_priv timeout 10 "$DOCKER_BIN" inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}} {{if .State.Error}}true{{else}}false{{end}}' "$cid" 2>/dev/null | head -c 256)" || true
+  logs="$(run_priv timeout 10 "$DOCKER_BIN" logs --tail 200 "$cid" 2>&1 | tail -c 65536)" || true
+  { printf '%s\n--BFF_DIAG_SPLIT--\n%s\n' "$state" "$logs"; } | python3 -c '
+import re, sys
+state, _, logs = sys.stdin.read().partition("\n--BFF_DIAG_SPLIT--\n")
+f = state.split()
+ok = (len(f) == 5 and f[0] in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
+      and f[1].lstrip("-").isdigit() and f[3].isdigit() and f[2] in {"true", "false"} and f[4] in {"true", "false"})
+print("BFF_DIAG status=%s exit_code=%s oom_killed=%s restart_count=%s error_present=%s" % tuple(f[:5]) if ok else "BFF_DIAG state=unavailable")
+frame = re.compile(r"^\s*File \"([^\"]+)\", line (\d+), in .*$")
+exc = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]{0,127})(?::|$)")
+public_files = {"/workspace/services/control-plane/bff/main.py", "/workspace/services/control-plane/bff/__init__.py"}
+public_exc = {"Exception", "RuntimeError", "ValueError", "KeyError", "TypeError", "AttributeError", "ImportError",
+              "ModuleNotFoundError", "OSError", "ConnectionError", "TimeoutError", "SystemExit", "KeyboardInterrupt"}
+frames, kinds = [], []
+for line in logs.splitlines():
+    m = frame.match(line)
+    if m:
+        if m.group(1) in public_files:
+            frames.append("%s:%s" % (m.group(1), m.group(2)))
+        continue
+    m = exc.match(line)
+    if m and m.group(1).endswith(("Error", "Exception", "Exit", "Interrupt")):
+        kinds.append(m.group(1) if m.group(1) in public_exc else "OtherException")
+for fr in frames[-20:]:
+    print("BFF_DIAG frame=" + fr)
+for k in kinds[-5:]:
+    print("BFF_DIAG exception_type=" + k)
+' >&2 || echo "BFF_DIAG state=unavailable" >&2
+  return 0
+}
+if [[ "$READY_CODE" != "200" ]]; then
+  emit_bff_not_ready_diagnostics || true
+fi
 [[ "$READY_CODE" == "200" ]] || fail "BFF_NOT_READY" "/bff/readyz returned HTTP ${READY_CODE} on port ${STAGING_BFF_PORT}"
 
 READYZ_BODY="$("$CURL_BIN" -fsS -m 5 "http://127.0.0.1:${STAGING_BFF_PORT}/bff/readyz")" || fail "BFF_READYZ_FETCH" "Failed to read /bff/readyz body"
