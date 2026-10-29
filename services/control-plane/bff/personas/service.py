@@ -5104,8 +5104,54 @@ def _pm12_public_quarter_evidence_refs(
     )
 
 
+# --- _pm12_quarterly_governance_command_index ---
+def _pm12_quarterly_governance_command_index(
+    commands: List[Dict[str, Any]],
+    quarter: str,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Bucket the command log by persona id in one pass.
+
+    A record is bucketed under every ``-``-delimited prefix of its id tail, a
+    superset of the records ``_pm12_quarterly_ranking_governance_state``
+    accepts (``startswith(pm12-<quarter>-<persona>-)``), in log order. That
+    keeps the per-persona scan proportional to its own records instead of the
+    whole log.
+    """
+    clean_quarter = str(quarter or "").strip().lower()
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    if not clean_quarter:
+        return index
+    submit_prefix = f"pm12-{clean_quarter}-"
+    review_prefix = f"promotion_review:pm12-{clean_quarter}-"
+    for record in commands:
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        if record.get("type") == "QuarterlyRankingRecommendationSubmit":
+            key_source = str(params.get("recommendation_id") or params.get("recommendationId") or "").strip().lower()
+            prefix = submit_prefix
+        elif target.get("type") == ObjectType.HUMAN_GATE_ITEM.value:
+            key_source = str(target.get("id") or "").strip().lower()
+            prefix = review_prefix
+        else:
+            continue
+        if not key_source.startswith(prefix):
+            continue
+        tail = key_source[len(prefix):]
+        for position, char in enumerate(tail):
+            if char == "-":
+                index.setdefault(tail[:position], []).append(record)
+    return index
+
+
 # --- _pm12_quarterly_ranking_governance_state ---
-def _pm12_quarterly_ranking_governance_state(persona_id: str, quarter: str) -> str:
+def _pm12_quarterly_ranking_governance_state(
+    persona_id: str,
+    quarter: str,
+    commands: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    # ``commands`` lets a ranking pass supply this persona's already-read
+    # (and possibly pre-bucketed) command records instead of re-reading the
+    # whole log for every ranked persona.
     clean_quarter = str(quarter or "").strip().lower()
     clean_persona = str(persona_id or "").strip()
     if not clean_quarter or not clean_persona:
@@ -5118,7 +5164,9 @@ def _pm12_quarterly_ranking_governance_state(persona_id: str, quarter: str) -> s
     blocked = False
     expired = False
 
-    for record in _get_active_command_store()._get_all_commands():
+    if commands is None:
+        commands = _get_active_command_store()._get_all_commands()
+    for record in commands:
         target = record.get("target") if isinstance(record.get("target"), dict) else {}
         params = record.get("params") if isinstance(record.get("params"), dict) else {}
         cmd_type = record.get("type")
@@ -5190,11 +5238,21 @@ def _pm12_quarterly_ranking_items(
         reverse=True,
     )
     items: List[Dict[str, Any]] = []
+    commands_by_persona = (
+        _pm12_quarterly_governance_command_index(
+            _get_active_command_store()._get_all_commands(),
+            quarter_window["quarter"],
+        )
+        if ranked
+        else {}
+    )
     for rank, item in enumerate(ranked, start=1):
         score = _management_number(item.get("overall_score")) or 0.0
         persona_id = str(item.get("persona_id") or "")
         quarter = quarter_window["quarter"]
-        gov_state = _pm12_quarterly_ranking_governance_state(persona_id, quarter)
+        gov_state = _pm12_quarterly_ranking_governance_state(
+            persona_id, quarter, commands_by_persona.get(persona_id.strip(), ())
+        )
         ranking_item = {
             **item,
             "rank": rank,

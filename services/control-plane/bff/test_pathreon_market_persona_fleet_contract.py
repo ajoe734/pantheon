@@ -2189,6 +2189,66 @@ def test_fleet_owner_transport_calls_are_independent_of_archive_size(params):
     assert small == large, (small, large)
 
 
+@pytest.mark.parametrize("archived_count", [100, 1000])
+def test_fleet_reads_command_log_once_regardless_of_ranked_population(archived_count, monkeypatch):
+    # Measured cost pattern: quarterly-rank governance state used to re-read the
+    # whole command log once per ranked persona (archived history included).
+    reads = {"n": 0}
+
+    def counting(self):
+        reads["n"] += 1
+        return []
+
+    monkeypatch.setattr(_FakeCommandStore, "_get_all_commands", counting)
+    with _client_with_store(_seed_fleet_classification_store(archived_count)) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert body["data"]["summary"]["population"]["archived_total"] == archived_count
+    assert reads["n"] <= 1, reads
+
+
+def test_ranking_governance_state_is_identical_with_shared_command_log(monkeypatch):
+    commands = [
+        {
+            "type": "QuarterlyRankingRecommendationSubmit",
+            "status": "executed",
+            "params": {"recommendation_id": "pm12-2026q4-p-a-1"},
+        },
+        {
+            "type": "HumanGateDecision",
+            "status": "executed",
+            "target": {"type": personas_service.ObjectType.HUMAN_GATE_ITEM.value, "id": "promotion_review:pm12-2026q4-p-b-1"},
+            "params": {"decision": "reject"},
+        },
+    ]
+
+    class _Store:
+        def _get_all_commands(self):
+            return commands
+
+    monkeypatch.setattr(personas_service, "_get_active_command_store", lambda explicit=None: _Store())
+    commands += [
+        # Hyphenated ids sharing a prefix must not bleed into each other.
+        {
+            "type": "QuarterlyRankingRecommendationSubmit",
+            "status": "blocked",
+            "params": {"recommendationId": "PM12-2026Q4-p-a-b-1"},
+        },
+        {
+            "type": "HumanGateDecision",
+            "status": "applied",
+            "target": {"type": personas_service.ObjectType.HUMAN_GATE_ITEM.value, "id": "promotion_review:pm12-2026q4-p-a-b-9"},
+            "params": {"decision": "approve"},
+        },
+        {"type": "Other", "status": "executed", "params": {"recommendation_id": "pm12-2026q4-p-a-1"}},
+    ]
+    fn = personas_service._pm12_quarterly_ranking_governance_state
+    index = personas_service._pm12_quarterly_governance_command_index(commands, "2026Q4")
+    for pid in ("p-a", "p-a-b", "p-b", "p-none", "P-A", "p"):
+        assert fn(pid, "2026q4") == fn(pid, "2026q4", commands) == fn(pid, "2026q4", index.get(pid, ())), pid
+    assert fn("p-a-b", "2026q4") == "applied receipt"
+    assert fn("p-none", "2026q4", commands) == "recommendation"
+
+
 @pytest.mark.parametrize("failing", ["list_telemetry_summaries", "list_runtime_bindings", "list_incidents"])
 def test_fleet_owner_failure_keeps_fixed_call_budget(failing):
     outcomes = []

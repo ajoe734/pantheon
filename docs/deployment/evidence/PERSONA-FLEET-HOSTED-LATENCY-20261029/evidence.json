@@ -1,0 +1,14 @@
+{
+  "task": "PERSONA-FLEET-HOSTED-LATENCY-20261029",
+  "kind": "source_only_local_fixture_measurement",
+  "hosted_proof": false,
+  "note": "Local isolated fixture timings via the real /bff/management/persona-fleet route (TestClient, in-memory read store, file-backed CommandStore with 5000 records). NOT hosted performance; the final hosted acceptance task owns exact-pair p95.",
+  "request": "purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+  "measured_cause": "_pm12_quarterly_ranking_governance_state re-read the whole command log (file I/O) and scanned every command once per ranked persona (archived history included): O(personas x commands). Profile: 1004 calls, 24.7s cumulative of 26.0s (profiler-inflated) at 1000 archived.",
+  "fix": "Read the command log once per ranking pass and bucket it by persona id prefix (_pm12_quarterly_governance_command_index); per-persona scan only visits its own records. Rank, scores, governance_state semantics unchanged (equivalence test incl. hyphen-prefix ids and case).",
+  "warm_ms_before": {"archived_100": [4008, 4093, 4158], "archived_1000": [41840, 42453, 42493]},
+  "warm_ms_after": {"archived_100": [112, 218, 110], "archived_1000": [668, 629, 641]},
+  "owner_call_budget": "unchanged; command log reads per request: before = ranked persona count, after = 1",
+  "tests": "pytest test_pathreon_market_persona_fleet_contract.py tests/test_management_read_budget.py: 47 passed; new command-log regressions fail on uncorrected source (3 failed) and pass on corrected source",
+  "api_contract_changed": false
+}
