@@ -1342,3 +1342,13 @@ def test_count_strategy_persona_bindings_requests_light_registry_view_and_matche
     finally:
         owner_reads.authorization.reset(tok_auth)
         owner_reads.selected_tenant.reset(tok_tenant)
+
+
+def test_count_strategy_persona_bindings_strips_ids_before_dedup():
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    for ids, expected in ([[" p1 "], {"p1": 1}], [["p1", " p1 "], {"p1": 1}], [[" p1 ", " p1 "], {"p1": 1}]):
+        port = DefaultResearchKnowledgeSourcePort(
+            strategy_specs_store={"s": {"strategy_id": "s", "spec_version": "1.0.0", "persona_ids": ids}}
+        )
+        assert port.count_strategy_persona_bindings() == expected

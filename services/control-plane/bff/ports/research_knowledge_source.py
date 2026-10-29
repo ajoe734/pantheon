@@ -1781,7 +1781,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if lifecycle == "retired":
                 continue
             raw_ids = raw_current.get("persona_ids") or strategy_spec.get("persona_ids") or []
-            for persona_id in {str(v) for v in raw_ids if str(v).strip()}:
+            for persona_id in {str(v).strip() for v in raw_ids if str(v).strip()}:
                 counts[persona_id] = counts.get(persona_id, 0) + 1
         return counts
 

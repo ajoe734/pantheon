@@ -2590,3 +2590,17 @@ def test_private_servant_visibility_uses_agora_user_scope_for_verified_jwt(
     assert ("p-private-servant" in ids) is visible
     total = body["summary"]["population"]["authorized_total"]
     assert total == other + (1 if visible else 0)
+
+
+def test_routed_strategy_counts_reject_none_through_real_read_surface(monkeypatch):
+    from types import SimpleNamespace
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    store = ReadSurfacePorts(research_knowledge_source=SimpleNamespace(count_strategy_persona_bindings=lambda: None))
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda: store)
+    with pytest.raises(TypeError):
+        personas_service._routed_strategy_counts_by_persona()
+
+    empty = ReadSurfacePorts(research_knowledge_source=SimpleNamespace(count_strategy_persona_bindings=lambda: {}))
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda: empty)
+    assert personas_service._routed_strategy_counts_by_persona() == {}
