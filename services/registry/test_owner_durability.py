@@ -11,6 +11,7 @@ and rejection of a stale CAS request over HTTP (409).
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -26,7 +27,12 @@ from fastapi.testclient import TestClient
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 from . import service as service_module
-from .storage import reset_store
+from .models import RegistryEntryCreate
+from .test_service import _assert_binding_visibility_scenario, _seed_binding_visibility_scenario
+from .storage import (
+    PERSONA_BINDING_ROW_KEYS, get_store, persona_binding_candidate_family_rows,
+    persona_binding_row, reset_store,
+)
 
 # Reviewer finding 2: once the durable Postgres backend is selected, the
 # service now fails closed (500) unless auth is explicitly strict with a
@@ -116,6 +122,98 @@ def _register(client: TestClient, **overrides) -> dict:
     resp = client.post("/api/registry/entries", json=payload)
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+def test_persona_binding_sql_projection_matches_python_projection(pg_app):
+    """The Postgres-side selected-field read must equal the full-read projection
+    for every metadata shape (missing/non-dict/null values, nested spec, legacy
+    string-encoded payload) while omitting the heavy bodies."""
+    spec = {
+        "persona_ids": ["p1"], "spec_version": "1.0.0", "lifecycle_state": "active",
+        "strategy_id": "s", "created_at": "2026-01-01", "body": "x" * 4000,
+        "provenance": {"created_at": "2026-01-02", "other": "y"},
+        "metadata": {"tenant_id": "t", "persona_id": None, "noise": 1},
+    }
+    shapes = [
+        {"persona_ids": ["p1"], "tenant_id": None, "version": "1.0.0", "huge": "z" * 4000,
+         "provenance": {"created_at": "2026-01-03", "x": 1}, "strategy_spec": spec},
+        {"personaIds": ["p2"], "strategy_spec": {"metadata": "not-a-dict", "provenance": {}}},
+        {"strategy_spec": "scalar", "provenance": "scalar", "status": "approved"},
+        {},
+        None,
+        ["not", "a", "dict"],
+    ]
+    store = get_store()
+    for index, metadata in enumerate(shapes):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec", strategy_id=f"pb-sql-{index}", version="1.0.0",
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d", metadata=metadata,
+                evaluation_summary={"big": "e" * 2000},
+            ),
+            f"pb-sql-{index}-id",
+        )
+    # Legacy string-encoded payload row is still read (as list_all does).
+    entries = store._entries
+    raw = entries.list_all()[0]
+    legacy_id = "legacy-string-encoded"
+    legacy = dict(raw, registry_id=legacy_id, strategy_id="pb-sql-legacy")
+    entries.put(legacy_id, json.dumps(legacy))
+
+    all_rows = [persona_binding_row(e) for e in store.list_all_entries()]
+    expected = persona_binding_candidate_family_rows(all_rows)
+    got = store.list_persona_binding_rows()
+    assert got == expected
+    # Only the bound families (shapes 0/1 and the legacy copy of shape 0's family
+    # row) survive; fully unbound families are narrowed out in SQL.
+    assert 0 < len(got) < len(all_rows)
+    assert all(set(r) <= set(PERSONA_BINDING_ROW_KEYS) | {"metadata"} for r in got)
+    assert "huge" not in str([r["metadata"] for r in got])
+
+
+def test_persona_binding_family_narrowing_keeps_all_versions_of_bound_families(pg_app):
+    """SQL family narrowing equals the Python rule: every version of a family with
+    any bound version (even an unbound/retired latest), nothing from fully
+    unbound families, per-tenant same-id families, and many unbound families."""
+    store = get_store()
+
+    def make(rid, sid, version, metadata, tenant=None, state=None):
+        entry = RegistryEntryCreate(
+            artifact_type="strategy_spec", strategy_id=sid, version=version,
+            storage_ref={"backend": "object_store", "path": "spec.json"},
+            checksum="sha256:cafef00d", metadata=metadata,
+        )
+        store.create(entry, rid)
+
+    make("old-bound", "fam-a", "1.0.0", {"persona_ids": ["p1"]})
+    make("new-unbound", "fam-a", "2.0.0", {"persona_ids": []})
+    make("tie-1", "fam-b", "1.0.0", {"personaIds": ["p2"]})
+    make("tie-2", "fam-b", "1.0.1", {"status": "retired"})
+    make("retired-latest", "fam-c", "3.0.0", {"lifecycle_state": "retired"})
+    make("nested-bound", "fam-c", "1.0.0", {"strategy_spec": {"persona_ids": ["p3"]}})
+    make("inner-meta-bound", "fam-d", "1.0.0", {"strategy_spec": {"metadata": {"persona_id": "p4"}}})
+    make("null-bound", "fam-e", "1.0.0", {"persona_id": None})
+    for i in range(300):
+        make(f"unbound-{i}", f"unbound-fam-{i}", "1.0.0", {"persona_ids": [], "note": i})
+
+    all_rows = [persona_binding_row(e) for e in store.list_all_entries()]
+    got = store.list_persona_binding_rows()
+    assert got == persona_binding_candidate_family_rows(all_rows)
+    ids = {r["registry_id"] for r in got}
+    assert ids == {
+        "old-bound", "new-unbound", "tie-1", "tie-2", "retired-latest",
+        "nested-bound", "inner-meta-bound",
+    }
+
+
+def test_persona_binding_visible_population_precedes_family_eligibility_in_sql(pg_app):
+    store = get_store()
+    tenants = _seed_binding_visibility_scenario(store)
+    rows = store.list_persona_binding_rows(visible_tenants=frozenset(tenants), artifact_type="strategy_spec")
+    _assert_binding_visibility_scenario(rows)
+    # Unscoped read still sees every bound family (other tenant's v1 included).
+    assert {r["registry_id"] for r in store.list_persona_binding_rows()} >= {"other-v1", "own-v2"}
 
 
 def test_register_and_readback_survive_fresh_process_restart(pg_app):

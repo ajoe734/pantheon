@@ -31,7 +31,13 @@ from .models import (
     RegistryEntryCreate,
     utc_now_iso,
 )
-from .storage import RegistryConcurrentUpdateError
+from .storage import (
+    PERSONA_BINDING_INNER_META_KEYS,
+    PERSONA_BINDING_META_KEYS,
+    PERSONA_BINDING_ROW_KEYS,
+    PERSONA_BINDING_SPEC_KEYS,
+    RegistryConcurrentUpdateError,
+)
 
 
 class DivergentCommandReplayError(ValueError):
@@ -799,6 +805,23 @@ class PostgresRegistryStore:
             for raw in self._entries.list_all()
         ]
 
+    def list_persona_binding_rows(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+    ) -> list[dict]:
+        """Persona-binding flat rows projected inside Postgres (no entry rebuild).
+
+        The visible owner population is selected first; only strategy families
+        with at least one bound visible version are returned (every visible
+        version of such a family, bound or not), decided in the same statement
+        as the projection.
+        """
+        keep_sql, keep_params = persona_binding_family_keep_sql(visible_tenants, artifact_type)
+        return persona_binding_rows_from_columns(
+            self._entries.list_all_selected(
+                persona_binding_select_sql(), keep_sql=keep_sql, keep_params=keep_params,
+            )
+        )
+
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         entries = self.list_by_strategy(strategy_id)
         approved = [e for e in entries if e.artifact_state.value == "approved"]
@@ -810,6 +833,117 @@ class PostgresRegistryStore:
 
         approved.sort(key=lambda e: _parse_ver(e.version), reverse=True)
         return approved[0]
+
+
+def _binding_leaf_paths() -> list[tuple[str, ...]]:
+    """Leaf paths read for a persona-binding row, in assembly order."""
+    meta = ("metadata",)
+    spec = ("metadata", "strategy_spec")
+    spec_meta = spec + ("metadata",)
+    return (
+        [(k,) for k in PERSONA_BINDING_ROW_KEYS]
+        + [meta + (k,) for k in PERSONA_BINDING_META_KEYS]
+        + [meta + ("provenance", "created_at")]
+        + [spec + (k,) for k in PERSONA_BINDING_SPEC_KEYS]
+        + [spec + ("provenance", "created_at")]
+        + [spec_meta + (k,) for k in PERSONA_BINDING_INNER_META_KEYS]
+    )
+
+
+def _sql_node(path: tuple[str, ...]) -> str:
+    return "payload #> '{" + ",".join(path) + "}'"
+
+
+def persona_binding_select_sql() -> str:
+    """Plain column list over ``payload``: one jsonb leaf (as text) per binding field.
+
+    No jsonb construction in SQL. A missing leaf is SQL ``NULL``; a JSON ``null``
+    leaf is the text ``null``, so presence is known without a second lookup and
+    no field value can collide with it. The two container-shape facts Python
+    needs (is ``strategy_spec`` / ``strategy_spec.metadata`` an object) are two
+    trailing columns. Built only from constant key tuples (no request input).
+    """
+    cols = ", ".join(f"({_sql_node(p)})::text" for p in _binding_leaf_paths())
+    shapes = ", ".join(
+        f"jsonb_typeof({_sql_node(p)})"
+        for p in (("metadata", "strategy_spec"), ("metadata", "strategy_spec", "metadata"))
+    )
+    return f"{cols}, {shapes}"
+
+
+def persona_binding_family_keep_sql(
+    visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+) -> tuple[str, tuple]:
+    """``(boolean expression, params)``: row is visible and in a family with a visible bound version.
+
+    The verified visible owner population (``visible_tenants`` / ``artifact_type``)
+    is applied first; family eligibility is then decided only over those rows, in
+    the same statement. Mirrors ``storage.persona_binding_has_binding`` (a version
+    is bound when any persona-id source is truthy). A visible row without a
+    ``strategy_id`` is always kept. Request-derived values are bound parameters;
+    paths are constant; over-inclusion of the binding test is the safe direction.
+    """
+    empty = "'null'::jsonb, '[]'::jsonb, '{}'::jsonb, '\"\"'::jsonb, 'false'::jsonb, '0'::jsonb"
+    bound = " OR ".join(
+        f"COALESCE({_sql_node(p)}, 'null'::jsonb) NOT IN ({empty})"
+        for p in (
+            ("metadata", "strategy_spec", "persona_ids"),
+            ("metadata", "personaIds"),
+            ("metadata", "persona_ids"),
+            ("metadata", "persona_id"),
+            ("metadata", "strategy_spec", "metadata", "persona_id"),
+        )
+    )
+    visible, params = [], []
+    if artifact_type is not None:
+        visible.append("payload ->> 'artifact_type' = %s")
+        params.append(artifact_type)
+    if visible_tenants is not None:
+        named = sorted(t for t in visible_tenants if t is not None)
+        clauses = ["payload ->> 'owner_tenant' = ANY(%s::text[])"]
+        params.append(named)
+        if None in visible_tenants:
+            clauses.append("payload ->> 'owner_tenant' IS NULL")
+        visible.append("(" + " OR ".join(clauses) + ")")
+    visible_sql = " AND ".join(visible) or "TRUE"
+    fam = "payload ->> 'strategy_id'"
+    sql = (
+        f"({visible_sql}) AND ({fam} IS NULL OR "
+        f"COALESCE(bool_or({bound}) FILTER (WHERE {visible_sql}) OVER (PARTITION BY {fam}), FALSE))"
+    )
+    return sql, tuple(params) * 2
+
+
+def persona_binding_rows_from_columns(rows) -> list[dict]:
+    """Assemble ``persona_binding_row``-shaped dicts from the select columns."""
+    n = len(_binding_leaf_paths())
+    i_meta = len(PERSONA_BINDING_ROW_KEYS)
+    i_prov = i_meta + len(PERSONA_BINDING_META_KEYS)
+    i_spec = i_prov + 1
+    i_spec_prov = i_spec + len(PERSONA_BINDING_SPEC_KEYS)
+    i_inner = i_spec_prov + 1
+    out: list[dict] = []
+    for r in rows:
+        def val(i):
+            return json.loads(r[i])
+
+        def pick(keys, start):
+            return {k: val(start + j) for j, k in enumerate(keys) if r[start + j] is not None}
+
+        row = pick(PERSONA_BINDING_ROW_KEYS, 0)
+        meta = pick(PERSONA_BINDING_META_KEYS, i_meta)
+        if r[i_prov] is not None:
+            meta["provenance"] = {"created_at": val(i_prov)}
+        if r[n] == "object":
+            spec = pick(PERSONA_BINDING_SPEC_KEYS, i_spec)
+            if r[i_spec_prov] is not None:
+                spec["provenance"] = {"created_at": val(i_spec_prov)}
+            if r[n + 1] == "object":
+                spec["metadata"] = pick(PERSONA_BINDING_INNER_META_KEYS, i_inner)
+            meta["strategy_spec"] = spec
+        row["metadata"] = meta
+        out.append(row)
+    return out
 
 
 def _registry_backend() -> str:
