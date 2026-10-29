@@ -390,15 +390,24 @@ PY
 
     # 1. Create remote bundle directory safely over IAP SSH before SCP transfer.
     REMOTE_MKDIR_CMD="set -euo pipefail; rm -rf '${REMOTE_BUNDLE_DIR}' && mkdir -p '${REMOTE_BUNDLE_DIR}' && chmod 0700 '${REMOTE_BUNDLE_DIR}'"
+    # A freshly created VM can answer IAP 4047 ("Failed to lookup instance") before it is fully started: retry only that, same args.
     SSH_MKDIR_RC=0
-    SSH_MKDIR_OUT="$(
-      "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
-        --project="${STAGING_GCP_PROJECT_ID}" \
-        --zone="${STAGING_GCP_ZONE}" \
-        --tunnel-through-iap \
-        --quiet \
-        --command="${REMOTE_MKDIR_CMD}" 2>&1
-    )" || SSH_MKDIR_RC=$?
+    for SSH_MKDIR_ATTEMPT in 1 2 3; do
+      SSH_MKDIR_RC=0
+      SSH_MKDIR_OUT="$(
+        "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
+          --project="${STAGING_GCP_PROJECT_ID}" \
+          --zone="${STAGING_GCP_ZONE}" \
+          --tunnel-through-iap \
+          --quiet \
+          --command="${REMOTE_MKDIR_CMD}" 2>&1
+      )" || SSH_MKDIR_RC=$?
+      if [[ "${SSH_MKDIR_RC}" -eq 0 || "${SSH_MKDIR_ATTEMPT}" -eq 3 ]] || ! grep -q '4047' <<<"${SSH_MKDIR_OUT}" || ! grep -qi 'Failed to lookup instance' <<<"${SSH_MKDIR_OUT}"; then
+        break
+      fi
+      printf 'HOST_SSH_MKDIR_RETRY attempt=%s/3 reason=IAP 4047 Failed to lookup instance (rc=%s): %s\n' "${SSH_MKDIR_ATTEMPT}" "${SSH_MKDIR_RC}" "$(printf '%s' "${SSH_MKDIR_OUT}" | tail -n 3 | tr '\n' ' ' | cut -c1-500)" >&2
+      sleep 8
+    done
     if [[ "${SSH_MKDIR_RC}" -ne 0 ]]; then
       rm -rf "${STAGE_BUNDLE_DIR}"
       # gcloud prints recommendation boilerplate after the real cause; keep the captured body (bounded) before the short JSON.

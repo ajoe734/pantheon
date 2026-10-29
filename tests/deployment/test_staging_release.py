@@ -978,6 +978,17 @@ if args[:3] == ["compute", "disks", "delete"]:
     print(json.dumps({"deleted": name}))
     raise SystemExit(0)
 
+if args[:3] == ["compute", "instance-templates", "describe"]:
+    if os.environ.get("GCLOUD_TEMPLATE_NO_SUBNET") == "true":
+        nic = {"network": "https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging"}
+    else:
+        nic = {
+            "network": "https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging",
+            "subnetwork": "https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1",
+        }
+    print(json.dumps({"name": args[3], "properties": {"networkInterfaces": [nic]}}))
+    raise SystemExit(0)
+
 if args[:3] == ["compute", "instances", "create"]:
     name = args[3]
     project = parse_flag("--project")
@@ -1009,6 +1020,9 @@ if args[:3] == ["compute", "instances", "create"]:
         "serviceAccounts": [{"email": sa_email, "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
         "networkInterfaces": [
             {
+                # Real gcloud falls back to the default network/subnet when the NIC is not restated.
+                "network": parse_flag("--network") or f"https://www.googleapis.com/compute/v1/projects/{project}/global/networks/default",
+                "subnetwork": parse_flag("--subnet") or f"https://www.googleapis.com/compute/v1/projects/{project}/regions/asia-east1/subnetworks/default",
                 "accessConfigs": [{"natIP": address}],
             }
         ],
@@ -1073,6 +1087,14 @@ if args[:2] == ["compute", "ssh"]:
     if not cmd:
         print("compute ssh missing --command", file=sys.stderr)
         raise SystemExit(1)
+    if state.get("ssh_4047_remaining", 0) > 0:
+        state["ssh_4047_remaining"] -= 1
+        save_state()
+        print("ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4047: 'Failed to lookup instance'].", file=sys.stderr)
+        raise SystemExit(255)
+    if state.get("ssh_nonretryable"):
+        print("ERROR: [4033: 'permission denied']", file=sys.stderr)
+        raise SystemExit(255)
     if "mkdir -p '/tmp/pantheon-staging-bundle'" in cmd or "mkdir -p /tmp/pantheon-staging-bundle" in cmd:
         state.setdefault("vm_mkdir_ready", {})[vm_name] = True
         save_state()
@@ -2420,6 +2442,12 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(any("compute disks create pantheon-stg-pantheon-20261024-001-boot" in c for c in cmds))
         inst_create_cmd = next(c for c in cmds if "compute instances create pantheon-stg-pantheon-20261024-001" in c)
         self.assertIn("--address=203.0.113.10", inst_create_cmd)
+        self.assertIn("--network=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging", inst_create_cmd)
+        self.assertIn("--subnet=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1", inst_create_cmd)
+        live_nic = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"][0]["networkInterfaces"][0]
+        self.assertTrue(live_nic["network"].endswith("/networks/pantheon-staging"))
+        self.assertTrue(live_nic["subnetwork"].endswith("/subnetworks/pantheon-staging-asia-east1"))
+        self.assertEqual(live_nic["accessConfigs"][0]["natIP"], "203.0.113.10")
         self.assertIn("--service-account=pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com", inst_create_cmd)
         self.assertIn("name=pantheon-stg-pantheon-20261024-001-boot,device-name=pantheon-stg-pantheon-20261024-001-boot,boot=yes,mode=rw,auto-delete=no", inst_create_cmd)
         self.assertIn("name=pantheon-stg-data-pantheon-20261024-001,device-name=staging-data,mode=rw,auto-delete=no", inst_create_cmd)
@@ -2447,6 +2475,44 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertEqual(cloud_state["instances"], [])
                 self.assertEqual(cloud_state["disks"], [])
                 self.assertEqual(cloud_state["addresses"], [])
+
+        # Template without an explicit subnetwork fails closed before any VM is created
+        self.setUp()
+        no_nic = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(GCLOUD_TEMPLATE_NO_SUBNET="true"), capture_output=True, text=True)
+        self.assertNotEqual(no_nic.returncode, 0)
+        self.assertIn("explicit network and subnetwork", no_nic.stderr)
+        self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
+
+        # First IAP SSH: only exact transient 4047 is retried (fake sleep keeps wall time at zero)
+        fake_sleep_dir = self.tmp_path / "fake-sleep-bin"
+        fake_sleep_dir.mkdir()
+        (fake_sleep_dir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_sleep_dir / "sleep").chmod(0o755)
+        sleep_env = {"PATH": f"{fake_sleep_dir}:{os.environ['PATH']}"}
+        for label, state_patch, expect_ok, expect_mkdirs in (
+            ("transient", {"ssh_4047_remaining": 2}, True, 3),
+            ("exhausted", {"ssh_4047_remaining": 9}, False, 3),
+            ("nonretryable", {"ssh_nonretryable": True}, False, 1),
+        ):
+            with self.subTest(ssh_retry=label):
+                self.setUp()
+                st = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+                st.update(state_patch)
+                self.gcloud_state_file.write_text(json.dumps(st), encoding="utf-8")
+                res = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(**sleep_env), capture_output=True, text=True)
+                mkdir_calls = [c for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines() if "compute ssh" in c and "rm -rf" in c]
+                self.assertEqual(len(mkdir_calls), expect_mkdirs)
+                self.assertEqual(len(set(mkdir_calls)), 1)
+                if expect_ok:
+                    self.assertEqual(res.returncode, 0, res.stderr)
+                    self.assertEqual(res.stderr.count("HOST_SSH_MKDIR_RETRY"), 2)
+                else:
+                    self.assertNotEqual(res.returncode, 0)
+                    self.assertIn("HOST_SSH_MKDIR_FAILED", res.stderr)
+                    self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res.stderr)
+                    self.assertIn("rc=255", res.stderr)
+                    self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
+                    self.assertEqual(res.stderr.count("HOST_SSH_MKDIR_RETRY"), 2 if label == "exhausted" else 0)
 
         # Test post-delete readback failure propagation when cloud resource lingers after delete
         self.setUp()

@@ -308,5 +308,16 @@
     ],
     "verification": "bash -n scripts/deploy/staging_ops.sh; python3 -m unittest tests.deployment.test_staging_release.StagingControllerLifecycleTests.test_real_gcloud_invocation_attachment_and_error_propagation: Ran 1 test OK (local mock only; not hosted evidence)",
     "hosted_acceptance": "still pending; Stage 0 of 2, Prod 0 of 2"
+  },
+  "actual_stage_nic_and_first_ssh_4047_fix": {
+    "cause_note": "4047 vs startup gap is inference from Google IAP FAQ, not a confirmed sole cause.",
+    "fix": [
+      "staging_provision.sh reads the instance template NIC once and passes --network/--subnet with --address; fails closed if the template lacks exactly one NIC with explicit network and subnetwork.",
+      "staging_ops.sh retries the first mkdir IAP SSH up to 3 calls, fixed 8s apart, only on exact 4047 Failed to lookup instance; other errors and exhaustion keep the PR6851 body/rc/JSON and cleanup. Retry reason is logged to stderr."
+    ],
+    "recorded_at": "2026-10-29",
+    "trigger": "Actual Stage run 40872570260 at ce26fa2f2: VM created on regions/asia-east1/subnetworks/default (audit VM 8496409057929626699) and first IAP SSH failed rc255 [4047 Failed to lookup instance] 21.3s after create.",
+    "unchanged": "GCP template, default VPC, manifest, images, business code, IAM, GHA config.",
+    "validation": "test_real_gcloud_invocation_attachment_and_error_propagation (local fake CLI) only; not hosted evidence. Hosted acceptance remains external_wait."
   }
 }
