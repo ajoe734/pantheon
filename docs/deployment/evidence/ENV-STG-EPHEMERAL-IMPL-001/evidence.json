@@ -264,6 +264,30 @@
     "compensation": "Teardown of a label_pending address deletes only the entry whose live id equals the journaled resource_id; different id is protected as unowned; absence is verified by exact name+id (not label filter).",
     "fake_gcloud": "Rejects addresses create --labels; supports update/describe.",
     "tests": "focused unittest -k address, real_gcloud, partial, idempot, orphan: all OK",
-    "pending_hosted_truth": "Source-only. No cloud/GitHub/secret action; hosted Stage 0 of 2 remains unaccepted."
+    "pending_hosted_truth": "Source-only. No cloud/GitHub/secret action; hosted Stage 0 of 2 remains unaccepted.",
+    "verification_record": {
+      "head_verified": "433475e6c5283ecec084794572c8b42cb8b6b5d5",
+      "commands": [
+        {
+          "cmd": "bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_destroy.sh",
+          "exit": 0
+        },
+        {
+          "cmd": "git diff --check c74e52e48 HEAD",
+          "exit": 0
+        },
+        {
+          "cmd": "python3 -m unittest tests.deployment.test_staging_release -k address",
+          "result": "Ran 3 tests OK in 62.785s",
+          "exit": 0
+        },
+        {
+          "cmd": "python3 -m unittest tests.deployment.test_staging_release -k real_gcloud -k partial -k idempot -k orphan",
+          "result": "Ran 4 tests OK in 141.917s",
+          "exit": 0
+        }
+      ],
+      "scope": "local mocked controller behavior only; not hosted evidence"
+    }
   }
 }
