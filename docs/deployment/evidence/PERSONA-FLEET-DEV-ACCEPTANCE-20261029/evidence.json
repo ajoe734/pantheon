@@ -1,40 +1,29 @@
 {
  "task": "PERSONA-FLEET-DEV-ACCEPTANCE-20261029",
- "status": "release_done_hosted_qa_pending",
- "observed_at": "2026-10-29T15:05Z",
+ "status": "release_done_hosted_perf_target_failed",
+ "observed_at": "2026-10-29T20:50Z",
  "pair": {
-  "backend": "528c4fa232fef3b4ba11972dc0316c9f88c2090e",
-  "frontend": "7f5cdba28727735700f6af80f954a582c7eef3c1"
+  "backend": "71829313630064996553693bf9766a8dd2009e9c",
+  "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
  },
  "source_prs": {
   "bff": "ajoe734/pantheon#6849 (merge c01bb731e)",
   "fe": "ajoe734/execute-plans#893 (merge 7f5cdba)"
  },
  "release": {
-  "run_id": "40887021529",
+  "run_id": "40940459676",
   "workflow": "Pantheon Nonprod Deploy",
-  "created": "2026-10-29T13:59:12Z",
-  "finished": "2026-10-29T14:58:00Z",
+  "created": "2026-10-29T19:28:54Z",
+  "finished": "2026-10-29T20:26:57Z",
   "conclusion": "success",
   "jobs": {
-   "deploy_under_lease": "123493401052 success",
-   "gate_L1_L12": "123493403295 skipped (by workflow)",
-   "hosted_all12": "123493404691 skipped (by workflow)",
-   "admit_and_switch": "123506338191 success"
+   "deploy_under_lease": "123682187078 success",
+   "gate_L1_L12": "123682189894 skipped by workflow",
+   "hosted_all12": "123682190296 skipped by workflow",
+   "admit_and_switch": "123693883081 success"
   },
-  "served_manifest": {
-   "pairId": "c8e4e19c1d19bdd4e55ff75ca0e9ba2268c2a2bb1b4be802aae7d57cdcb86291",
-   "releaseCandidateId": "c513cc6aa6956aff387b6dddd6547fe77376338a78ac8bf41a17babea5c53c19",
-   "compatibilityStatus": "compatible",
-   "compatibilityManifestSha256": "c716c5dbde2f0f84795ad2580afe752e6e13e1c8acdc55593dbb6be17c9d3dc9",
-   "controller_runId": "40887021529"
-  },
-  "artifact_sha256": {
-   "release-candidate.json": "65dd03ad...bc9",
-   "release-controller-accepted.json": "1960af8e...5f0",
-   "rollback-baseline.json": "439a95d5...704c",
-   "release-compatibility-manifest.json": "c716c5db...3dc9"
-  }
+  "served_pairId": "b6ec46ee605ece3f539d287f0a1f9b1fe973c77610eb66cc4ecb329cbcf0acba",
+  "artifacts": "downloaded from run; hashes not recorded in this pass"
  },
  "prior_failed_run": {
   "run_id": "40841011879",
@@ -43,18 +32,30 @@
  },
  "hosted_acceptance": {
   "done": false,
-  "reason": "read-only admintest browser QA could not start: credential retrieval uses scripts/dev_vm_ssh.sh, and ssh fails in this worker sandbox ('Bad owner or permissions on /etc/ssh/ssh_config.d/50-cloudimg-settings.conf', uid mapped to nobody). Bypassing the sandbox was not self-authorized.",
+  "result_file": "hosted-ui-readonly-result.json",
+  "passed": [
+   "login/logout 200, post-logout me 401",
+   "exact FE/BFF identity before=after",
+   "no unsolicited archived-only fetch",
+   "filters/pagination traversal (pagination.json)",
+   "unknown purpose and focus beyond 100",
+   "Agora servant 404 documented unprovisioned, UI shows \u5c1a\u672a\u5efa\u7acb",
+   "no blocked writes, no page errors",
+   "cold API<=2000 and usable<=2500 on 3 entries"
+  ],
+  "failed": [
+   "warm p95 2643ms > 1000ms target (20 samples)"
+  ],
   "not_run": [
-   "login/logout",
-   "regular/test/unknown/archive filters",
-   "page traversal",
-   "deep links",
-   "Agora read surface",
-   "warm p95>=20 samples",
-   "cold>=3 entries",
-   "usable table",
-   "screenshots"
+   "runtime/finance missing-value readbacks",
+   "local privacy regression rerun",
+   "second-identity hosted privacy"
+  ],
+  "limitations": [
+   "Agora operational-readiness status=unavailable (source_instance_identity_not_unique), not healthy",
+   "harness is root's temporary read-only subset",
+   "served-manifest artifact hashes not recomputed here"
   ]
  },
- "remaining": "Re-run /tmp/persona-acc/run.py (prepared script: 3 cold entries, 25 warm samples, all-scope traversal, screenshots) from an unsandboxed worker shell, then fill timings.json/pagination.json/screenshots."
+ "previous_baseline_release": "40887021529 (BFF 528c4fa + FE 7f5cdba)"
 }

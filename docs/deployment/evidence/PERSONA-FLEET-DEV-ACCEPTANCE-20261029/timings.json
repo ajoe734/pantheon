@@ -1,0 +1,81 @@
+{
+ "pair": {
+  "bff": "71829313630064996553693bf9766a8dd2009e9c",
+  "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+ },
+ "method": "20 sequential browser warm GETs of fleet query trading/regular/exclude page_size=20; nearest-rank p95; cold = 3 fresh browser contexts, login latency excluded",
+ "warm_ms": [
+  1352,
+  1336,
+  891,
+  1328,
+  1117,
+  1528,
+  1207,
+  963,
+  1237,
+  943,
+  1811,
+  1420,
+  1046,
+  1162,
+  1046,
+  1330,
+  1285,
+  979,
+  4590,
+  2643
+ ],
+ "warm_p95_nearest_rank_ms": 2643,
+ "warm_target_ms": 1000,
+ "warm_pass": false,
+ "cold": [
+  {
+   "entry": 1,
+   "login_HTTP": 200,
+   "login_to_shell_ms": 902,
+   "initial_post_login_API_ms": 1539,
+   "login_to_initial_usable_ms": 2142,
+   "api_ms": 1257,
+   "usable_ms": 1970,
+   "row_count": 5,
+   "initial_fleet_queries": [
+    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+   ]
+  },
+  {
+   "entry": 2,
+   "login_HTTP": 200,
+   "login_to_shell_ms": 887,
+   "initial_post_login_API_ms": 1128,
+   "login_to_initial_usable_ms": 1699,
+   "api_ms": 1801,
+   "usable_ms": 2479,
+   "row_count": 5,
+   "initial_fleet_queries": [
+    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+   ]
+  },
+  {
+   "entry": 3,
+   "login_HTTP": 200,
+   "login_to_shell_ms": 883,
+   "initial_post_login_API_ms": 1385,
+   "login_to_initial_usable_ms": 1943,
+   "api_ms": 1178,
+   "usable_ms": 1853,
+   "row_count": 5,
+   "initial_fleet_queries": [
+    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+   ]
+  }
+ ],
+ "cold_api_target_ms": 2000,
+ "cold_usable_target_ms": 2500,
+ "cold_pass": true,
+ "pre_baseline": "none recorded by this task; earlier 2026-10-28 observation 4934/3961ms API on a different pair (plan doc), not comparable",
+ "limits": "p95 of 20 samples equals the 19th-ranked value; samples 19 (4590ms) and 20 (2643ms) are outliers but median ~1.2s also exceeds 1000ms"
+}
