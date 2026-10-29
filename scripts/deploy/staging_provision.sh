@@ -428,6 +428,7 @@ run_gcloud_resource_create() {
   EXPECTED_RUNTIME_SA="${STAGING_RUNTIME_SERVICE_ACCOUNT}" \
   EXPECTED_NIC_NETWORK="${TEMPLATE_NIC_NETWORK:-}" \
   EXPECTED_NIC_SUBNET="${TEMPLATE_NIC_SUBNET:-}" \
+  EXPECTED_SA_SCOPES="${TEMPLATE_SA_SCOPES:-}" \
   python3 - <<'PY'
 import json
 import os
@@ -552,6 +553,22 @@ if not dry_run:
         if sa_emails and expected_sa not in sa_emails:
             print(
                 f"Instance {r_name} serviceAccounts {sa_emails} does not match runtime SA {expected_sa!r}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        expected_scopes = sorted(filter(None, os.environ["EXPECTED_SA_SCOPES"].split(",")))
+        if not expected_scopes:
+            print(f"Instance {r_name} has no template service-account scopes to read back", file=sys.stderr)
+            raise SystemExit(1)
+        actual_scopes = sorted(
+            scope
+            for sa in sas
+            if isinstance(sa, dict) and sa.get("email") == expected_sa
+            for scope in (sa.get("scopes") or [])
+        )
+        if actual_scopes != expected_scopes:
+            print(
+                f"Instance {r_name} service-account scopes {actual_scopes} do not match template scopes {expected_scopes}",
                 file=sys.stderr,
             )
             raise SystemExit(1)
@@ -680,6 +697,7 @@ fi
 # gcloud resets the NIC to the default network when --address is given alone, so read the template NIC once and re-state it.
 TEMPLATE_NIC_NETWORK=""
 TEMPLATE_NIC_SUBNET=""
+TEMPLATE_SA_SCOPES=""
 if [[ "${DRY_RUN}" != "true" ]]; then
   TEMPLATE_NIC_JSON="$("${GCLOUD_BIN}" compute instance-templates describe "${STAGING_INSTANCE_TEMPLATE}" \
     --project="${STAGING_GCP_PROJECT_ID}" --format=json)"
@@ -687,13 +705,17 @@ if [[ "${DRY_RUN}" != "true" ]]; then
 import json
 import os
 
-nics = json.loads(os.environ["TEMPLATE_NIC_JSON"]).get("properties", {}).get("networkInterfaces") or []
+props = json.loads(os.environ["TEMPLATE_NIC_JSON"]).get("properties", {})
+nics = props.get("networkInterfaces") or []
 if len(nics) != 1 or not nics[0].get("network") or not nics[0].get("subnetwork"):
     raise SystemExit("Instance template must define exactly one NIC with explicit network and subnetwork")
-print(nics[0]["network"], nics[0]["subnetwork"])
+scopes = sorted({sc for sa in props.get("serviceAccounts") or [] if isinstance(sa, dict) for sc in sa.get("scopes") or []})
+if not scopes:
+    raise SystemExit("Instance template must define explicit service-account scopes")
+print(nics[0]["network"], nics[0]["subnetwork"], ",".join(scopes))
 PY
 )"
-  read -r TEMPLATE_NIC_NETWORK TEMPLATE_NIC_SUBNET <<<"${TEMPLATE_NIC_PAIR}"
+  read -r TEMPLATE_NIC_NETWORK TEMPLATE_NIC_SUBNET TEMPLATE_SA_SCOPES <<<"${TEMPLATE_NIC_PAIR}"
 fi
 NIC_ARGS=()
 if [[ -n "${TEMPLATE_NIC_NETWORK}" ]]; then
@@ -707,6 +729,7 @@ run_gcloud_resource_create "instance" "${VM_NAME}" \
   --source-instance-template="${STAGING_INSTANCE_TEMPLATE}" \
   --machine-type="${STAGING_MACHINE_TYPE:-e2-standard-2}" \
   --service-account="${STAGING_RUNTIME_SERVICE_ACCOUNT}" \
+  ${TEMPLATE_SA_SCOPES:+--scopes="${TEMPLATE_SA_SCOPES}"} \
   "${NIC_ARGS[@]}" \
   --address="${RESERVED_IP}" \
   --disk="name=${BOOT_DISK_NAME},device-name=${BOOT_DISK_NAME},boot=yes,mode=rw,auto-delete=no" \
