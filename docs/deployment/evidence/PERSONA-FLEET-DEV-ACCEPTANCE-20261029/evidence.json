@@ -1,50 +1,41 @@
 {
  "task": "PERSONA-FLEET-DEV-ACCEPTANCE-20261029",
- "status": "release_done_hosted_perf_target_failed",
- "observed_at": "2026-10-29T20:50Z",
+ "status": "release_done_hosted_warm_p95_target_failed_again",
+ "observed_at": "2026-10-29T23:05Z",
  "pair": {
-  "backend": "71829313630064996553693bf9766a8dd2009e9c",
+  "backend": "fd3c0ba1f968243228208350c599f314ef86fbba",
   "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
  },
  "source_prs": {
-  "bff": "ajoe734/pantheon#6849 (merge c01bb731e)",
-  "fe": "ajoe734/execute-plans#893 (merge 7f5cdba)"
+  "bff": "#6849",
+  "fe": "execute-plans#893, #894",
+  "hosted_latency": "#6857",
+  "warm_p95": "#6865 (merge fd3c0ba1f)"
  },
  "release": {
-  "run_id": "40940459676",
+  "run_id": "40961611194",
   "workflow": "Pantheon Nonprod Deploy",
-  "created": "2026-10-29T19:28:54Z",
-  "finished": "2026-10-29T20:26:57Z",
+  "inputs": "environment=dev component=auto ref=fd3c0ba1f frontend_sha=56bec9ad frontend_ref=dev",
+  "created": "2026-10-29T21:54:10Z",
+  "finished": "2026-10-29T22:58:39Z",
   "conclusion": "success",
-  "jobs": {
-   "deploy_under_lease": "123682187078 success",
-   "gate_L1_L12": "123682189894 skipped by workflow",
-   "hosted_all12": "123682190296 skipped by workflow",
-   "admit_and_switch": "123693883081 success"
-  },
-  "served_pairId": "b6ec46ee605ece3f539d287f0a1f9b1fe973c77610eb66cc4ecb329cbcf0acba",
-  "artifacts": "downloaded from run; hashes not recorded in this pass"
- },
- "prior_failed_run": {
-  "run_id": "40841011879",
-  "conclusion": "failure",
-  "note": "deploy job 123337111682 step exit 75 (lease heartbeat shutdown path); root cause not established here; superseded by 40887021529. No concurrent root was in progress at dispatch."
+  "jobs": "deploy_under_lease success; hosted_all12 skipped; L1-L12 gate skipped; admit_and_switch success",
+  "served_pairId": "0c9dce09831413cfafa2d1b4e885688bdfb29d48df23182181a871f5d35a95c2",
+  "pre_dispatch_check": "no in-progress Nonprod Deploy; stale queued run 29469158508 from 2026-07-16 ignored"
  },
  "hosted_acceptance": {
   "done": false,
-  "result_file": "hosted-ui-readonly-result.json",
   "passed": [
    "login/logout 200, post-logout me 401",
-   "exact FE/BFF identity before=after",
+   "FE/BFF identity (manifest commit+bffCommit) matches expected before and after",
    "no unsolicited archived-only fetch",
-   "filters/pagination traversal (pagination.json)",
-   "unknown purpose and focus beyond 100",
-   "Agora servant 404 documented unprovisioned, UI shows \u5c1a\u672a\u5efa\u7acb",
+   "filters/pagination traversal (109 authorized records)",
+   "Agora servant 404 documented, UI shows \u5c1a\u672a\u5efa\u7acb",
    "no blocked writes, no page errors",
-   "cold API<=2000 and usable<=2500 on 3 entries"
+   "cold API<=2000 and usable<=2500 on 3 entries (api 1115/1320/740, usable 1836/2076/1525)"
   ],
   "failed": [
-   "warm p95 2643ms > 1000ms target (20 samples)"
+   "warm p95 1500ms > 1000ms (20 samples, sorted max 1740, min 707, median ~1075)"
   ],
   "not_run": [
    "runtime/finance missing-value readbacks",
@@ -52,10 +43,18 @@
    "second-identity hosted privacy"
   ],
   "limitations": [
-   "Agora operational-readiness status=unavailable (source_instance_identity_not_unique), not healthy",
-   "harness is root's temporary read-only subset",
-   "served-manifest artifact hashes not recomputed here"
+   "Agora operational-readiness status=unavailable, not claimed healthy",
+   "first QA attempt at 22:59Z timed out 30s on first API GET (no samples), rerun succeeded",
+   "harness is a temporary read-only subset",
+   "artifact hashes not recomputed here"
   ]
  },
- "previous_baseline_release": "40887021529 (BFF 528c4fa + FE 7f5cdba)"
+ "previous_release": {
+  "run": "40940459676",
+  "pair": {
+   "backend": "71829313630064996553693bf9766a8dd2009e9c",
+   "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+  },
+  "warm_p95_ms": 2643
+ }
 }
