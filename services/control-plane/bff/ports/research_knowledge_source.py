@@ -179,6 +179,17 @@ class ResearchKnowledgeSourcePort:
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
+    def count_strategy_persona_bindings(self) -> Dict[str, int]:
+        """Per-persona count of non-retired strategies whose current version binds it."""
+        counts: Dict[str, int] = {}
+        for item in self.list_strategy_specs() or []:
+            if not isinstance(item, dict):
+                continue
+            for persona_id in {str(v).strip() for v in item.get("persona_ids") or []}:
+                if persona_id:
+                    counts[persona_id] = counts.get(persona_id, 0) + 1
+        return counts
+
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
@@ -1741,6 +1752,38 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             reverse=True,
         )
         return items
+
+    def count_strategy_persona_bindings(self) -> Dict[str, int]:
+        # Same source, current-version selection, lifecycle filter and persona
+        # extraction as list_strategy_specs(), without per-version normalization.
+        source_specs = (
+            list(self._strategy_specs.values())
+            if self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+            else self._fetch_canonical_strategy_specs()
+        )
+        counts: Dict[str, int] = {}
+        for strategy_spec in source_specs:
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            _strategy_id, _index, raw_current, _candidates, _versions = selected
+            lifecycle = str(
+                self._kw05_lifecycle_state(
+                    raw_current.get("lifecycle_state")
+                    or raw_current.get("status")
+                    or strategy_spec.get("lifecycle_state")
+                    or strategy_spec.get("status")
+                )
+                or ""
+            )
+            if lifecycle == "retired":
+                continue
+            raw_ids = raw_current.get("persona_ids") or strategy_spec.get("persona_ids") or []
+            for persona_id in {str(v) for v in raw_ids if str(v).strip()}:
+                counts[persona_id] = counts.get(persona_id, 0) + 1
+        return counts
 
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")

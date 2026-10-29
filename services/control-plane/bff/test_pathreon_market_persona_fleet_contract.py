@@ -2258,7 +2258,7 @@ def test_fleet_overlaps_strategy_spec_and_source_registry_reads(monkeypatch):
 
         return wrapped
 
-    monkeypatch.setattr(store, "list_strategy_specs", timed("specs", store.list_strategy_specs))
+    monkeypatch.setattr(store, "count_strategy_persona_bindings", timed("specs", store.count_strategy_persona_bindings))
     monkeypatch.setattr(store, "get_source_connector_registry", timed("source", store.get_source_connector_registry), raising=False)
     with _client_with_store(store) as client:
         started = _time.monotonic()
@@ -2317,7 +2317,7 @@ def test_fleet_strategy_spec_prefetch_failure_stays_failure(monkeypatch):
         calls["n"] += 1
         raise RuntimeError("strategy registry down")
 
-    monkeypatch.setattr(store, "list_strategy_specs", boom)
+    monkeypatch.setattr(store, "count_strategy_persona_bindings", boom)
     with _client_with_store(store) as client:
         try:
             response = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "trading", "page_size": 20})

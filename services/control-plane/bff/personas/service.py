@@ -2372,19 +2372,28 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
     return len(items)
 
 
-def _all_strategy_specs_once() -> List[Dict[str, Any]]:
-    """Unfiltered strategy-spec read, shared per request (value or failure)."""
+def _routed_strategy_counts_by_persona() -> Dict[str, int]:
+    """Per-persona routed-strategy counts from the current-version binding read.
+
+    Shared per request (value or failure). The fleet list only needs the count,
+    so it avoids the per-version normalization of the full strategy list.
+    """
     store = _get_active_read_store()
-    return cached_owner_call(
-        ("persona_all_strategy_specs", id(store), selected_tenant.get()),
-        lambda: store.list_strategy_specs(),
+    return dict(
+        cached_owner_call(
+            ("persona_routed_strategy_counts", id(store), selected_tenant.get()),
+            lambda: _read_routed_strategy_counts(store),
+        )
+        or {}
     )
 
 
-def _routed_strategy_counts_by_persona() -> Dict[str, int]:
-    items = _all_strategy_specs_once() or []
+def _read_routed_strategy_counts(store: Any) -> Dict[str, int]:
+    counter = getattr(store, "count_strategy_persona_bindings", None)
+    if callable(counter):
+        return dict(counter() or {})
     counts: Dict[str, int] = {}
-    for item in items:
+    for item in store.list_strategy_specs() or []:
         if not isinstance(item, Mapping):
             continue
         raw_ids = item.get("persona_ids") or item.get("personaIds")
@@ -2394,11 +2403,8 @@ def _routed_strategy_counts_by_persona() -> Dict[str, int]:
                 raw_ids = first_ver.get("persona_ids") or first_ver.get("personaIds")
         if not isinstance(raw_ids, list):
             continue
-        seen_personas = set()
-        for raw_pid in raw_ids:
-            pid = str(raw_pid or "").strip()
-            if pid and pid not in seen_personas:
-                seen_personas.add(pid)
+        for pid in {str(raw_pid or "").strip() for raw_pid in raw_ids}:
+            if pid:
                 counts[pid] = counts.get(pid, 0) + 1
     return counts
 
@@ -2425,7 +2431,7 @@ def _persona_fleet_prefetch_independent_reads() -> None:
         return
     submit_owner_read(
         _PERSONA_FLEET_READ_EXECUTOR,
-        _all_strategy_specs_once,
+        _routed_strategy_counts_by_persona,
         warm_key="persona_fleet_strategy_specs",
     )
     submit_owner_read(

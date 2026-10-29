@@ -1245,3 +1245,45 @@ def test_list_strategy_specs_fails_closed_on_missing_auth_unconfigured_url_forei
         owner_reads.selected_tenant.reset(tok_tenant)
 
 
+
+
+def _multi_version_binding_store(strategy_count: int = 12, versions: int = 6) -> dict:
+    store: dict = {}
+    for n in range(strategy_count):
+        sid = f"strat-bind-{n}"
+        rows = []
+        for v in range(1, versions + 1):
+            rows.append(
+                {
+                    "spec_version_id": f"{sid}-v{v}",
+                    "spec_version": f"v{v}",
+                    "lifecycle_state": "retired" if (n % 5 == 0 and v == versions) else "approved",
+                    "created_at": f"2026-08-{10 + v:02d}T00:00:00Z",
+                    # older versions bind a different persona; only the current one counts
+                    "persona_ids": [f"p-{n % 3}", f"p-{n % 3}", " "] if v == versions else ["p-old"],
+                }
+            )
+        store[sid] = {"strategy_id": sid, "title": sid, "versions": rows}
+    return store
+
+
+def test_count_strategy_persona_bindings_matches_list_and_skips_version_normalization(monkeypatch):
+    port = DefaultResearchKnowledgeSourcePort(strategy_specs_store=_multi_version_binding_store())
+    expected: dict = {}
+    for item in port.list_strategy_specs():
+        for pid in set(item["persona_ids"]):
+            expected[pid] = expected.get(pid, 0) + 1
+    assert expected and "p-old" not in expected
+
+    normalized = {"n": 0}
+    original = DefaultResearchKnowledgeSourcePort._kw05_normalize_version_candidate.__func__
+
+    def counting(cls, *args, **kwargs):
+        normalized["n"] += 1
+        return original(cls, *args, **kwargs)
+
+    monkeypatch.setattr(DefaultResearchKnowledgeSourcePort, "_kw05_normalize_version_candidate", classmethod(counting))
+    assert port.count_strategy_persona_bindings() == expected
+    assert normalized["n"] == 0
+    port.list_strategy_specs()
+    assert normalized["n"] == 9  # full list normalizes every non-retired current version
