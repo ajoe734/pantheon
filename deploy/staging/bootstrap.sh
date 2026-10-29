@@ -760,7 +760,7 @@ done
 emit_bff_not_ready_diagnostics() {
   # Best-effort, bounded actual BFF state + log tail; never prints Config.Env and never changes the original failure.
   local cid state logs
-  cid="$(run_compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -a -q operator-bff 2>/dev/null | head -n1)" || return 0
+  cid="$(run_priv timeout 10 "$DOCKER_BIN" compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -a -q operator-bff 2>/dev/null | head -n1)" || return 0
   [[ -n "$cid" ]] || { echo "BFF_DIAG container=missing" >&2; return 0; }
   state="$(run_priv timeout 10 "$DOCKER_BIN" inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} restart_count={{.RestartCount}} error={{.State.Error}}' "$cid" 2>&1 | head -c 1024)" || true
   logs="$(run_priv timeout 10 "$DOCKER_BIN" logs --tail 100 "$cid" 2>&1 | tail -c 16384)" || true
