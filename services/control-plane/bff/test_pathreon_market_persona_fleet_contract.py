@@ -1,4 +1,5 @@
 import ast
+import copy
 import json
 import os
 import sys
@@ -2142,6 +2143,43 @@ def test_fleet_detail_projection_is_page_bounded(archived_count, monkeypatch):
     assert len(body["data"]["items"]) <= 20
     assert body["page_info"]["total"] >= archived_count
     assert calls["detail"] <= 20
+
+
+def test_fleet_page_rows_reuse_cohort_projection_and_match_full_projection(monkeypatch):
+    # Warm-p95: the page rows used to re-run the whole shared projection (health,
+    # telemetry rollup, data-source overlay) already done for the cohort pass.
+    calls = {"health": 0}
+    original_health = personas_service._project_persona_fleet_health
+
+    def counting_health(**kwargs):
+        calls["health"] += 1
+        return original_health(**kwargs)
+
+    monkeypatch.setattr(personas_service, "_project_persona_fleet_health", counting_health)
+    with _client_with_store(_seed_fleet_classification_store(20)) as client:
+        body = _fleet(client, purpose="trading", archived="include", page_size=20)
+    items = body["data"]["items"]
+    assert items
+    # One health projection per cohort row; page rows add none.
+    assert calls["health"] <= body["page_info"]["total"]
+
+    # Parity: reused rows equal a from-scratch full projection of the same inputs.
+    captured = {}
+    original_list = personas_service._project_persona_fleet_list_row
+
+    def spy(**kwargs):
+        reused = original_list(**kwargs)
+        scratch = {k: v for k, v in kwargs.items() if k != "cohort_capture"}
+        fresh = original_list(**scratch)
+        captured[reused["persona_id"]] = (copy.deepcopy(reused), fresh)
+        return reused
+
+    monkeypatch.setattr(personas_service, "_project_persona_fleet_list_row", spy)
+    with _client_with_store(_seed_fleet_classification_store(20)) as client:
+        _fleet(client, purpose="trading", archived="include", page_size=20)
+    assert captured
+    for reused, fresh in captured.values():
+        assert reused == fresh
 
 
 class _OwnerCallCounter:

@@ -6522,8 +6522,11 @@ def _pm12_persona_league_rows(
     routed_strategy_counts: Optional[Mapping[str, int]] = None,
     include_advisory: bool = False,
     reuse_request_read: bool = False,
+    on_records_read: Optional[Callable[[], None]] = None,
 ) -> List[Dict[str, Any]]:
     raw_records = _list_persona_records(tenant_id, reuse_request_read=reuse_request_read)
+    if on_records_read is not None:
+        on_records_read()
     if not include_advisory:
         # Classify from canonical raw metadata before projection drops it, so
         # every league consumer shares one trading-only cohort.
@@ -8128,10 +8131,19 @@ def _project_persona_fleet_row_impl(
     snapshot_at: str,
     evolution_decisions: Optional[Sequence[Dict[str, Any]]] = None,
     routed_strategies: Optional[int] = None,
+    cohort_capture: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     persona_id = _persona_id(persona)
     if not persona_id:
         return None
+    if detail and cohort_capture and "row" in cohort_capture:
+        # The cohort pass already projected every shared field from these exact
+        # inputs; only the detail-only fields remain to be computed.
+        full = dict(cohort_capture["row"])
+        for key, value in cohort_capture["detail_extras"]().items():
+            if key in _PERSONA_FLEET_DETAIL_OVERRIDE_KEYS or key not in full:
+                full[key] = value
+        return full
 
     raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     league_metrics = league_entry.get("metrics") if isinstance(league_entry.get("metrics"), dict) else {}
@@ -8430,7 +8442,7 @@ def _project_persona_fleet_row_impl(
     )
     performance_total_trades = _management_as_float(metrics.get("total_trades"))
 
-    return {
+    row = {
         "id": persona_id,
         "persona_id": persona_id,
         **mutation_projection,
@@ -8554,6 +8566,69 @@ def _project_persona_fleet_row_impl(
             "persona_id": persona_id,
         },
     }
+    if cohort_capture is not None and not detail:
+        def detail_extras() -> Dict[str, Any]:
+            review = _persona_fleet_review_projection(
+                persona_id=persona_id,
+                league_entry=league_entry,
+                raw_metadata=raw_metadata,
+                binding=binding,
+                runtime=runtime,
+                human_needed=human_needed,
+                recommendation=recommendation,
+            )
+            ledger = _persona_fleet_paper_ledger(
+                paper_ledger_id=paper_ledger_id,
+                persona_id=persona_id,
+                league_entry=league_entry,
+                raw_metadata=raw_metadata,
+                context_metadata=context_metadata,
+            )
+            return {
+                **_persona_fleet_mutation_projection(
+                    persona_id=persona_id,
+                    updated_at=updated_at,
+                    evolution_decisions=(
+                        evolution_decisions
+                        if evolution_decisions is not None
+                        else list(_get_active_read_store().list_evolution_decisions() or [])
+                    ),
+                    artifact_ids=artifact_ids,
+                    incident_ids=incident_ids,
+                ),
+                **_persona_fleet_capital_binding_projection(
+                    persona_id=persona_id,
+                    capital_mode=capital_mode,
+                    deployment_stage=deployment_stage,
+                    paper_ledger_id=paper_ledger_id,
+                    live_pool_id=live_pool_id,
+                    binding=binding,
+                    runtime=runtime,
+                    league_entry=league_entry,
+                    raw_metadata=raw_metadata,
+                    context_metadata=context_metadata,
+                ),
+                "paper_ledger": ledger,
+                "paperLedger": ledger,
+                "review_id": review["review_id"],
+                "review_type": review["review_type"],
+                "promotion_review_id": review["promotion_review_id"],
+                "inbox_id": review["inbox_id"],
+                "review_status": review["review_status"],
+                "review": review["review"],
+            }
+
+        cohort_capture["row"] = dict(row)
+        cohort_capture["detail_extras"] = detail_extras
+    return row
+
+
+_PERSONA_FLEET_DETAIL_OVERRIDE_KEYS = frozenset(
+    {
+        "paper_ledger", "paperLedger", "review_id", "review_type",
+        "promotion_review_id", "inbox_id", "review_status", "review",
+    }
+)
 
 
 def _persona_fleet_strip_trading_facts(row: Dict[str, Any]) -> None:
@@ -8647,9 +8722,10 @@ def _persona_fleet_slim_list_payload(
         telemetry_list_loaded = True
     except Exception:
         telemetry_cache = {}
-    # The directory read needs no routed-strategy count, so it runs while the
-    # prefetched Registry count is still in flight instead of after the league.
-    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at, reuse_request_read=True)
+    # The league's persona read runs first (rank snapshot precedes broader
+    # reads); the directory read then overlaps the league's wait on the
+    # in-flight Registry count instead of following it.
+    directory_future: List[Any] = []
     league_rows = _pm12_persona_league_rows(
         state=None,
         archetype=None,
@@ -8659,7 +8735,16 @@ def _persona_fleet_slim_list_payload(
         include_health=False,
         include_allowed_actions=False,
         reuse_request_read=True,
+        on_records_read=lambda: directory_future.append(
+            submit_owner_read(
+                _PERSONA_FLEET_READ_EXECUTOR,
+                lambda: _get_persona_directory_snapshot(
+                    tenant_id, snapshot_at=snapshot_at, reuse_request_read=True
+                ),
+            )
+        ),
     )
+    directory = directory_future[0].result()
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
         for item in _pm12_quarterly_ranking_items(
@@ -8923,8 +9008,11 @@ def _persona_fleet_slim_list_payload(
             evolution_decisions=evolution_decisions,
             routed_strategies=int(routed_strategy_counts.get(persona_id, 0)),
         )
-        row = _project_persona_fleet_cohort_row(**row_kwargs)
+        capture: Optional[Dict[str, Any]] = {} if keep_detail else None
+        row = _project_persona_fleet_cohort_row(**row_kwargs, cohort_capture=capture)
         if row is not None:
+            if capture is not None:
+                row_kwargs["cohort_capture"] = capture
             finalize_row(row, persona_id, is_retired_persona, persona)
             if keep_detail:
                 detail_inputs[persona_id] = row_kwargs
