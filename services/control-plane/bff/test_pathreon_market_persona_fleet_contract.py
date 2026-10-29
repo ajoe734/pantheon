@@ -1470,6 +1470,74 @@ def test_overlay_live_finmind_health_noop_when_unavailable(monkeypatch):
     assert out_dss["state"] == "partial_readback"
 
 
+def test_source_health_truth_overlay_thin_matches_rich_for_list_rows():
+    big = {"blob": ["x" * 64] * 2000}
+    truths = {
+        "tw-finmind-broker-daily-report": {
+            "health": {
+                "source_id": "tw-finmind-broker-daily-report",
+                "status": "ok",
+                "last_success_at": "2026-06-27T05:00:00Z",
+                "row_count_last_run": 3,
+                "metadata": big,
+            },
+            "connector": {
+                "connector_id": "tw-finmind-broker-daily-report",
+                "status": "enabled",
+                "schedule": {"configured": True, "enabled": True},
+                "freshness": {"status": "fresh", **big},
+                "health_metrics": big,
+            },
+        },
+    }
+    required = [
+        {
+            "dataset": "tw_broker_top",
+            "source_class": "live_push",
+            "connector_candidates": ["tw-finmind-broker-daily-report"],
+        }
+    ]
+    sources = [
+        {"provider_key": "finmind", "status": "read_unavailable"},
+        {"provider_key": "twse", "status": "credential_unavailable", "secret_ref": "ref"},
+    ]
+    dss = {"state": "partial_readback", "provider_statuses": {"finmind": "read_unavailable"}}
+
+    def run(thin):
+        service = PersonaService(
+            write_owner=create_persona_registry_write_owner(),
+            ranking_write_owner=object(),
+            read_store=_SourceTruthReadStore(truths),
+            command_store=object(),
+        )
+        return service.overlay_source_health_truth(
+            dss, sources, required_data_sources=required, thin=thin
+        )
+
+    rich_dss, rich_sources, _ = run(False)
+    thin_dss, thin_sources, thin_bindings = run(True)
+
+    assert thin_bindings == []
+    assert "required_source_health" not in thin_dss
+    assert "connector_health" not in thin_dss
+    assert rich_dss["required_source_health"]
+    for key in (
+        "state",
+        "provider_statuses",
+        "source_health_source",
+        "live_ingestion_enabled",
+        "live_source_connector_ids",
+        "static_source_labels",
+    ):
+        assert thin_dss[key] == rich_dss[key]
+    assert [s["status"] for s in thin_sources] == [s["status"] for s in rich_sources]
+    assert (
+        personas_service._persona_fleet_list_data_sources(thin_sources)
+        == personas_service._persona_fleet_list_data_sources(rich_sources)
+    )
+    assert len(json.dumps(thin_dss)) < len(json.dumps(rich_dss)) / 10
+
+
 def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch):
     dss = {
         "state": "partial_readback",
