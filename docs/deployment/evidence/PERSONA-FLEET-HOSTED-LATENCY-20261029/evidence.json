@@ -128,5 +128,29 @@
       "note": "~44% store-level reduction on loopback; not hosted latency, no p95 claimed. Whole-fleet warm <=1000ms still unproven; root replay of this head required."
     },
     "requires": "Root bounded read-only actual-profile replay of this head; final hosted task owns release and p95."
+  },
+  "root_actual_profile_replay_35fa16d6a": {
+    "source": "/tmp/pantheon-persona-fleet-20261029/candidate-registry-owner-read-profile-35fa16d6aad3.json (root read-only, actual owner data, no HTTP/writes)",
+    "candidate_sha": "35fa16d6aad30b7ad0b8ac2242aeda810d8a9047",
+    "baseline_owner_read": {
+      "source": "actual-registry-owner-read-profile.json",
+      "handler_ms": [
+        1076.6,
+        1320.4
+      ],
+      "rows": 4869,
+      "response_bytes": 22430629
+    },
+    "candidate_owner_read": {
+      "handler_ms": [
+        587.7,
+        526.5
+      ],
+      "rows": 211,
+      "binding_inputs_match_original": true,
+      "response_bytes": 138528
+    },
+    "dominant_stage": "single PG execute wait ~472ms; fetch+json decode of 11369 values ~96ms",
+    "note": "Owner stage only (~2.3x faster, 4869->211 rows, 22.4MB->0.14MB). Not whole-fleet latency, not hosted p95; warm <=1000ms still unproven. Final hosted task owns release and p95."
   }
 }
