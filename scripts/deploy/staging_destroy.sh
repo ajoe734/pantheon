@@ -148,6 +148,36 @@ def run_gcloud(args: list[str]) -> str:
     return proc.stdout
 
 
+PENDING_PREFIX = "pantheon-pending-v1:"
+
+
+def pending_address_labels(item: dict, expect_project: str, expect_region: str, expect_release: str | None = None) -> dict | None:
+    """Labels from a strictly valid owned-pending description on an unlabelled address, else None."""
+    if item.get("labels"):
+        return None
+    desc = str(item.get("description") or "")
+    if not desc.startswith(PENDING_PREFIX):
+        return None
+    try:
+        meta = json.loads(desc[len(PENDING_PREFIX):])
+    except ValueError:
+        return None
+    labels = meta.get("labels") if isinstance(meta, dict) else None
+    if (
+        not isinstance(labels, dict)
+        or meta.get("project") != expect_project
+        or meta.get("region") != expect_region
+        or labels.get("environment") != "staging"
+        or labels.get("cleanup_policy") != "automatic"
+        or not labels.get("release_id")
+        or not labels.get("owner")
+        or (expect_release is not None and labels.get("release_id") != expect_release)
+        or item.get("name") != f"pantheon-stg-ip-{labels['release_id']}"
+    ):
+        return None
+    return {str(k): str(v) for k, v in labels.items()}
+
+
 def query_cloud_resources() -> list[dict]:
     if not gcloud_bin:
         return []
@@ -179,14 +209,15 @@ def query_cloud_resources() -> list[dict]:
             })
     for item in addr_raw:
         if isinstance(item, dict) and item.get("name"):
+            pending = pending_address_labels(item, project_id, region)
             discovered.append({
                 "type": "address",
                 "name": item["name"],
                 "project_id": item.get("project_id") or project_id,
                 "zone": zone,
                 "region": region,
-                "labels": item.get("labels") or {},
-                "state": "provisioned",
+                "labels": pending if pending is not None else (item.get("labels") or {}),
+                "state": "label_pending" if pending is not None else "provisioned",
             })
     return discovered
 
@@ -210,9 +241,29 @@ for inv_file in sorted((state_dir / "inventory").glob("*.json")):
         entry["_source_release_id"] = rel_id
         merged_by_key[key] = entry
 
+foreign_pending = []
+if gcloud_bin:
+    # A journaled label_pending address is deletable only while the live address with that name still has the journaled id.
+    live_addr_ids = {
+        a["name"]: str(a.get("id") or "")
+        for a in json.loads(run_gcloud(["compute", "addresses", "list", f"--project={project_id}", f"--regions={region}"]) or "[]")
+        if isinstance(a, dict) and a.get("name")
+    }
+    for key, res in list(merged_by_key.items()):
+        if key[0] != "address" or res.get("state") != "label_pending":
+            continue
+        live_id = live_addr_ids.get(key[1])
+        if live_id is None:
+            del merged_by_key[key]
+        elif live_id != str(res.get("resource_id") or ""):
+            del merged_by_key[key]
+            foreign_pending.append(key[1])
+
 if not dry_run or gcloud_bin:
     for c_res in query_cloud_resources():
         key = (str(c_res["type"]), str(c_res["name"]))
+        if key[0] == "address" and key[1] in foreign_pending:
+            continue
         if key not in merged_by_key:
             c_labels = c_res.get("labels") or {}
             c_res["_source_release_id"] = c_labels.get("release_id") or "cloud-discovered"
@@ -220,7 +271,9 @@ if not dry_run or gcloud_bin:
 
 deleted = []
 retained_active = []
-skipped_unowned = []
+skipped_unowned = [
+    {"name": n, "type": "address", "reason": "unowned_or_unlabeled_resource_protected"} for n in foreign_pending
+]
 preserved_evidence = []
 to_delete_by_rel: dict[str, list[dict]] = {}
 
@@ -422,6 +475,36 @@ def run_gcloud(args: list[str]) -> str:
     return proc.stdout
 
 
+PENDING_PREFIX = "pantheon-pending-v1:"
+
+
+def pending_address_labels(item: dict, expect_project: str, expect_region: str, expect_release: str | None = None) -> dict | None:
+    """Labels from a strictly valid owned-pending description on an unlabelled address, else None."""
+    if item.get("labels"):
+        return None
+    desc = str(item.get("description") or "")
+    if not desc.startswith(PENDING_PREFIX):
+        return None
+    try:
+        meta = json.loads(desc[len(PENDING_PREFIX):])
+    except ValueError:
+        return None
+    labels = meta.get("labels") if isinstance(meta, dict) else None
+    if (
+        not isinstance(labels, dict)
+        or meta.get("project") != expect_project
+        or meta.get("region") != expect_region
+        or labels.get("environment") != "staging"
+        or labels.get("cleanup_policy") != "automatic"
+        or not labels.get("release_id")
+        or not labels.get("owner")
+        or (expect_release is not None and labels.get("release_id") != expect_release)
+        or item.get("name") != f"pantheon-stg-ip-{labels['release_id']}"
+    ):
+        return None
+    return {str(k): str(v) for k, v in labels.items()}
+
+
 def query_cloud_release_resources() -> list[dict]:
     if dry_run or not gcloud_bin or not project_id or not zone:
         return []
@@ -434,6 +517,8 @@ def query_cloud_release_resources() -> list[dict]:
             if not isinstance(item, dict) or not item.get("name"):
                 continue
             labels = item.get("labels") or {}
+            if r_type == "address":
+                labels = pending_address_labels(item, project_id, region, release_id) or labels
             if labels.get("release_id") == release_id:
                 discovered.append({
                     "type": r_type,
@@ -539,6 +624,7 @@ if (
 deleted = []
 skipped_unowned = []
 remaining = []
+exact_pending_addresses = []
 
 for res in reversed(inv.get("resources", [])):
     if res.get("state") == "deleted":
@@ -573,6 +659,22 @@ for res in reversed(inv.get("resources", [])):
         remaining.append(res)
         continue
 
+    if not dry_run and r_type == "address" and res.get("state") == "label_pending":
+        # Created by this run but never labelled in the cloud: delete only the exact journaled id.
+        live = next(
+            (a for a in json.loads(run_gcloud(["compute", "addresses", "list", f"--project={res_project}", f"--regions={res_region}"]) or "[]")
+             if isinstance(a, dict) and a.get("name") == r_name),
+            None,
+        )
+        if live is None:
+            res["state"] = "deleted"
+            continue
+        if str(live.get("id") or "") != str(res.get("resource_id") or ""):
+            skipped_unowned.append({"name": r_name, "type": r_type, "reason": "unowned_or_unlabeled_resource_protected"})
+            remaining.append(res)
+            continue
+        exact_pending_addresses.append((r_name, str(res.get("resource_id")), res_project, res_region))
+
     if not dry_run:
         if r_type == "iam_binding":
             member = res.get("member")
@@ -601,6 +703,10 @@ if not dry_run:
     post_cloud = query_cloud_release_resources()
     deleted_keys = {(d["type"], d["name"]) for d in deleted if d["type"] in ("instance", "disk", "address")}
     lingering_items = [r["name"] for r in post_cloud if (r["type"], r["name"]) in deleted_keys]
+    for p_name, p_id, p_project, p_region in exact_pending_addresses:
+        for a in json.loads(run_gcloud(["compute", "addresses", "list", f"--project={p_project}", f"--regions={p_region}"]) or "[]"):
+            if isinstance(a, dict) and a.get("name") == p_name and str(a.get("id") or "") == p_id:
+                lingering_items.append(p_name)
     if lingering_items:
         print(
             json.dumps({

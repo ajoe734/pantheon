@@ -1,0 +1,7 @@
+{
+  "task": "DEV-SSH-EXPLICIT-CONFIG-20261029",
+  "change": "scripts/dev_vm_ssh.sh exec (ssh) and copy-from (scp) option arrays now start with -F /dev/null so ambient user/system SSH config is ignored",
+  "preserved": ["BatchMode=yes", "StrictHostKeyChecking=yes", "IdentitiesOnly=yes", "pinned known_hosts", "key file mode checks", "timeouts/attempts/keepalive"],
+  "validation": "bash -n scripts/dev_vm_ssh.sh ok; scripts/test_dev_vm_ssh.py 9 passed (assertions added for -F /dev/null on ssh and scp); no network, host or credential operations",
+  "not_proven": "hosted Dev acceptance remains owned by PERSONA-FLEET-DEV-ACCEPTANCE-20261029"
+}
