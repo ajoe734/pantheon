@@ -2512,6 +2512,56 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         final = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
         self.assertEqual(sorted(a["name"] for a in final["addresses"]), ["foreign-pending", "pantheon-stg-ip-other-release"])
 
+    def test_orphan_sweep_protects_foreign_replacement_of_journaled_pending_address(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        inv_path = self.state_dir / "inventory" / "pantheon-20261024-001.json"
+        inv = json.loads(inv_path.read_text(encoding="utf-8"))
+        for r in inv["resources"]:
+            if r["type"] == "address":
+                r["state"] = "label_pending"
+                r["resource_id"] = "original-created-id"
+        inv_path.write_text(json.dumps(inv), encoding="utf-8")
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        for a in cloud_state["addresses"]:
+            a["id"] = "different-foreign-id"
+            a["labels"] = {}
+            a["description"] = "unrelated"
+        cloud_state["instances"] = []
+        cloud_state["disks"] = []
+        self.gcloud_state_file.write_text(json.dumps(cloud_state), encoding="utf-8")
+        res = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "orphan-sweep"],
+            env=self._base_env(STAGING_ORPHAN_CLEANUP_ENABLED="true", STAGING_NOW_EPOCH="1792836001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        out = json.loads(res.stdout)
+        self.assertFalse(any(d["type"] == "address" for d in out["deleted_resources"]))
+        final = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual([a["id"] for a in final["addresses"]], ["different-foreign-id"])
+
+    def test_fresh_runner_rejects_unexpired_pending_address_of_other_release(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        for a in cloud_state["addresses"]:
+            a["labels"] = {}
+        cloud_state["instances"] = []
+        cloud_state["disks"] = []
+        self.gcloud_state_file.write_text(json.dumps(cloud_state), encoding="utf-8")
+        res = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(
+                RELEASE_ID="pantheon-20261024-002",
+                WORKFLOW_RUN_ID="other-run",
+                STAGING_STATE_DIR=str(self.tmp_path / "fresh-runner-state"),
+            ),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("already_provisioned", res.stdout)
+
     def test_teardown_protects_unlabelled_address_with_different_id(self) -> None:
         subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
         inv_path = self.state_dir / "inventory" / "pantheon-20261024-001.json"

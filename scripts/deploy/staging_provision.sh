@@ -226,7 +226,7 @@ fi
 # Check existing active staging leases (both local runner state and live global GCP cloud labels)
 LEASE_CHECK="$(
   STATE_DIR="$STATE_DIR" RELEASE_ID="$RELEASE_ID" WORKFLOW_RUN_ID="$WORKFLOW_RUN_ID" NOW_EPOCH="$NOW_EPOCH" \
-  DRY_RUN="$DRY_RUN" CLOUD_INSTANCES_JSON="$CLOUD_INSTANCES_JSON" CLOUD_DISKS_JSON="$CLOUD_DISKS_JSON" CLOUD_ADDRESSES_JSON="$CLOUD_ADDRESSES_JSON" \
+  DRY_RUN="$DRY_RUN" PROJECT_ID="$STAGING_GCP_PROJECT_ID" REGION="$STAGING_GCP_REGION" CLOUD_INSTANCES_JSON="$CLOUD_INSTANCES_JSON" CLOUD_DISKS_JSON="$CLOUD_DISKS_JSON" CLOUD_ADDRESSES_JSON="$CLOUD_ADDRESSES_JSON" \
   python3 - <<'PY'
 import json
 import os
@@ -262,6 +262,24 @@ if not dry_run:
             raise SystemExit(0)
         for item in items:
             labels = item.get("labels") or {}
+            pending = False
+            if env_key == "CLOUD_ADDRESSES_JSON" and not labels:
+                desc = str(item.get("description") or "")
+                if desc.startswith("pantheon-pending-v1:"):
+                    try:
+                        meta = json.loads(desc[len("pantheon-pending-v1:"):])
+                    except ValueError:
+                        meta = None
+                    p_labels = meta.get("labels") if isinstance(meta, dict) else None
+                    if (
+                        isinstance(p_labels, dict)
+                        and meta.get("project") == os.environ["PROJECT_ID"]
+                        and meta.get("region") == os.environ["REGION"]
+                        and p_labels.get("release_id")
+                        and item.get("name") == f"pantheon-stg-ip-{p_labels['release_id']}"
+                    ):
+                        labels = {str(k): str(v) for k, v in p_labels.items()}
+                        pending = True
             if labels.get("environment") != "staging" or labels.get("cleanup_policy") != "automatic":
                 continue
             exp_epoch = int(labels.get("expires_at_epoch", 0) or 0)
@@ -270,7 +288,8 @@ if not dry_run:
             c_rel = labels.get("release_id", "")
             c_owner = labels.get("workflow_run_id") or labels.get("owner") or ""
             if c_rel == release_id and c_owner == workflow_run_id:
-                idempotent_match = True
+                if not pending:
+                    idempotent_match = True
                 continue
             print(f"CONFLICT:{c_rel}:{c_owner}")
             raise SystemExit(0)

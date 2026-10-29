@@ -241,9 +241,29 @@ for inv_file in sorted((state_dir / "inventory").glob("*.json")):
         entry["_source_release_id"] = rel_id
         merged_by_key[key] = entry
 
+foreign_pending = []
+if gcloud_bin:
+    # A journaled label_pending address is deletable only while the live address with that name still has the journaled id.
+    live_addr_ids = {
+        a["name"]: str(a.get("id") or "")
+        for a in json.loads(run_gcloud(["compute", "addresses", "list", f"--project={project_id}", f"--regions={region}"]) or "[]")
+        if isinstance(a, dict) and a.get("name")
+    }
+    for key, res in list(merged_by_key.items()):
+        if key[0] != "address" or res.get("state") != "label_pending":
+            continue
+        live_id = live_addr_ids.get(key[1])
+        if live_id is None:
+            del merged_by_key[key]
+        elif live_id != str(res.get("resource_id") or ""):
+            del merged_by_key[key]
+            foreign_pending.append(key[1])
+
 if not dry_run or gcloud_bin:
     for c_res in query_cloud_resources():
         key = (str(c_res["type"]), str(c_res["name"]))
+        if key[0] == "address" and key[1] in foreign_pending:
+            continue
         if key not in merged_by_key:
             c_labels = c_res.get("labels") or {}
             c_res["_source_release_id"] = c_labels.get("release_id") or "cloud-discovered"
@@ -251,7 +271,9 @@ if not dry_run or gcloud_bin:
 
 deleted = []
 retained_active = []
-skipped_unowned = []
+skipped_unowned = [
+    {"name": n, "type": "address", "reason": "unowned_or_unlabeled_resource_protected"} for n in foreign_pending
+]
 preserved_evidence = []
 to_delete_by_rel: dict[str, list[dict]] = {}
 
