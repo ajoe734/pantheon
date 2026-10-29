@@ -750,7 +750,7 @@ run_compose -p pantheon-staging \
 
 # 9. Poll /bff/readyz until 200 and execute live on-host readbacks to emit observed deploy identity.
 READY_CODE="000"
-for _ in $(seq 1 "${STAGING_READY_TRIES:-30}"); do
+for _ in $(seq 1 "${STAGING_READY_TRIES:-180}"); do
   READY_CODE="$("$CURL_BIN" -sS -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:${STAGING_BFF_PORT}/bff/readyz" || echo "000")"
   if [[ "$READY_CODE" == "200" ]]; then
     break
