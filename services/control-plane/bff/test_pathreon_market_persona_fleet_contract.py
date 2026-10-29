@@ -2184,3 +2184,50 @@ def test_advisory_servant_has_no_nested_trading_facts_and_is_owner_private():
     for key in ("capital_scope", "capital_scope_id", "binding_state", "capital_binding",
                 "runtime_binding", "paper_ledger_id", "stage", "capital_mode"):
         assert row.get(key) is None, key
+
+
+def _verified_jwt_header(monkeypatch, *, sub: str, user_id: str) -> dict:
+    import time
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-only-persona-fleet-secret"
+    for key, value in {
+        "PANTHEON_BFF_AUTH_STUB": "", "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_JWT_SECRET": secret,
+        "PANTHEON_BFF_JWT_ISSUER": "https://auth.pantheon.local",
+        "PANTHEON_BFF_JWT_AUDIENCE": "pantheon-bff",
+    }.items():
+        monkeypatch.setenv(key, value)
+    claims = {
+        "sub": sub, "userId": user_id, "tenant_id": "pantheon-dev", "roles": ["operator"],
+        "iss": "https://auth.pantheon.local", "aud": "pantheon-bff",
+        "iat": int(time.time()), "exp": int(time.time()) + 300,
+    }
+    return {"Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret)}
+
+
+@pytest.mark.parametrize(
+    "sub,user_id,visible",
+    [("u1", "u2", False), ("u2", "u1", True)],
+)
+def test_private_servant_visibility_uses_agora_user_scope_for_verified_jwt(
+    monkeypatch, sub, user_id, visible
+):
+    with _client_with_store(_private_servant_store()) as client:
+        other = client.get(
+            "/bff/management/persona-fleet",
+            headers={"Authorization": "Bearer u9:operator"},
+            params={"purpose": "advisory_assistant"},
+        ).json()["data"]["summary"]["population"]["authorized_total"]
+    headers = _verified_jwt_header(monkeypatch, sub=sub, user_id=user_id)
+    with _client_with_store(_private_servant_store()) as client:
+        resp = client.get(
+            "/bff/management/persona-fleet", headers=headers,
+            params={"purpose": "advisory_assistant"},
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    ids = [r["persona_id"] for r in body["items"]]
+    assert ("p-private-servant" in ids) is visible
+    total = body["summary"]["population"]["authorized_total"]
+    assert total == other + (1 if visible else 0)

@@ -26,7 +26,7 @@ Paper capital mode never implies test. Names/ID patterns are never used. Legacy 
 Advisory rows: `state="advisory"`, `status`/`health="not_applicable"`, and `league_rank`, `rank`, `score`, `paper_ledger*`,
 `legacy_paper_capital_pool_id`, `capital_mode`, `deployment_stage`, `runtime_health`, `stage`, `capital_scope*`, `binding_state`, `capital_binding`, `runtime_binding`, `capital_pool*` are `null` (never fabricated, not an incident).
 
-Privacy: records with `owner_scope=user_private` or `visibility_scope=private` are returned (and counted in `summary.population`/`page_info`) only to the caller whose user id equals the record's `agora_user_id`; other callers never see them.
+Privacy: records with `owner_scope=user_private` or `visibility_scope=private` are returned (and counted in `summary.population`/`page_info`) only to the caller whose user id equals the record's `agora_user_id`; other callers never see them. The caller identity is resolved with the shared Agora user scope (`user_id`, `userId`, `sub`, `operator_id`, `operatorId`); if it cannot be resolved no private records are returned.
 
 ## Envelope / counts
 `page_info`: `{next_page_token, total, canonical_total, filtered_total, catalog_default_total, page_size}`; `total`/`filtered_total` count the filtered authorized population, not the page.
