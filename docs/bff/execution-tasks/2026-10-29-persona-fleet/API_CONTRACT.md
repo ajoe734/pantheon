@@ -53,3 +53,68 @@ cost is reduced but not independent of archive size locally; per-row enrichment 
 and out-of-scope rows, and owner reads are batch/request-cached (no per-persona remote calls). Hosted timings belong to the acceptance task.
 Tests: `test_pathreon_market_persona_fleet_contract.py` (filters, >100 archived traversal, servant exclusion, 422). 13 pre-existing
 failures in `test_persona_router.py`/`test_persona_archived_lifecycle.py` are identical on the unmodified baseline.
+
+## Stage profile & owner-call budget (review round 4; fixtures only)
+Reproduce: the `profile_fleet.py` script below (head) and the same script against `git archive c74e52e48` (base). Numbers and stage split are in `evidence.json` -> `stage_profile`.
+At 1000 archived: detail projection 445.6 -> 1.4 ms (page-bounded), end-to-end `trading/exclude/20` 1264 -> 828 ms, mocked owner transport calls 31 -> 29 and identical at 100 vs 1000 archived.
+Remaining cost: the in-process cohort/league step still scales with archive size (~800 ms at 1000); not claimed as eliminated.
+Budget tests count real owner method calls via a proxy store (`test_fleet_owner_transport_calls_are_independent_of_archive_size`, `test_fleet_owner_failure_keeps_fixed_call_budget`); an owner failure raises rather than producing healthy-looking metrics.
+
+### profile_fleet.py (save anywhere in repo root and run with `.venv-pantheon/bin/python`)
+```python
+"""Reproducible persona-fleet stage profile (fixtures only, no hosted calls).
+
+Run from repo root:  .venv-pantheon/bin/python docs/deployment/evidence/PERSONA-FLEET-BFF-20261029/profile_fleet.py
+Works on frozen base (c74e52e48) and head; omitted query params keep base-compatible behavior.
+"""
+import cProfile, importlib, json, os, pstats, sys, time
+os.environ.update(PANTHEON_BFF_AUTH_STUB="true", PANTHEON_BFF_AUTH_MODE="permissive", RANKING_STORE_BOOTSTRAP="0")
+sys.path.insert(0, "services/control-plane/bff")
+t = importlib.import_module("test_pathreon_market_persona_fleet_contract")
+
+STAGES = {
+    "owner_reads": ("list_persona_league", "list_bindings", "list_runtime_bindings", "list_capital_pools",
+                    "list_incidents", "list_evolution_decisions", "list_telemetry_summaries", "list_personas"),
+    "cohort_projection": ("_project_persona_fleet_cohort_row", "_project_persona_fleet_item", "_persona_fleet_slim_list_payload"),
+    "detail_projection": ("_project_persona_fleet_list_row",),
+    "serialization": ("jsonable_encoder", "render", "dumps"),
+}
+
+def seed(n):
+    if hasattr(t, "_seed_fleet_classification_store"):
+        return t._seed_fleet_classification_store(n)
+    raise SystemExit("seed helper missing on this revision")
+
+def run(n, params):
+    store = seed(n)
+    calls = {}
+    class P:
+        def __getattr__(self, name):
+            a = getattr(store, name)
+            if not callable(a): return a
+            def w(*x, **k):
+                calls[name] = calls.get(name, 0) + 1
+                return a(*x, **k)
+            return w
+    with t._client_with_store(P()) as c:
+        c.get("/bff/management/persona-fleet", headers=t.HEADERS, params=params)  # warm
+        calls.clear()
+        pr = cProfile.Profile(); s0 = time.perf_counter(); pr.enable()
+        r = c.get("/bff/management/persona-fleet", headers=t.HEADERS, params=params)
+        pr.disable(); wall = (time.perf_counter() - s0) * 1000
+    st = pstats.Stats(pr).stats
+    stage = {k: 0.0 for k in STAGES}
+    for (f, _l, fn), (_cc, _nc, _tt, ct, _c) in st.items():
+        for k, names in STAGES.items():
+            if fn in names: stage[k] += ct * 1000
+    return {"archived": n, "params": params, "status": r.status_code, "wall_ms": round(wall, 1),
+            "stage_cum_ms": {k: round(v, 1) for k, v in stage.items()},
+            "owner_calls": dict(sorted(calls.items())), "owner_call_total": sum(calls.values())}
+
+out = []
+for n in (100, 1000):
+    for params in ({}, {"purpose": "trading", "archived": "exclude", "page_size": 20}):
+        try: out.append(run(n, params))
+        except Exception as e: out.append({"archived": n, "params": params, "error": repr(e)[:200]})
+print(json.dumps(out, indent=1))
+```

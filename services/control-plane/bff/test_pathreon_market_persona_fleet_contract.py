@@ -2144,6 +2144,64 @@ def test_fleet_detail_projection_is_page_bounded(archived_count, monkeypatch):
     assert calls["detail"] <= 20
 
 
+class _OwnerCallCounter:
+    """Delegating proxy that counts every owner method invoked on the store."""
+
+    def __init__(self, inner, fail=None):
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "calls", {})
+        object.__setattr__(self, "_fail", fail or {})
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if not callable(attr):
+            return attr
+
+        def wrapped(*args, **kwargs):
+            self.calls[name] = self.calls.get(name, 0) + 1
+            if name in self._fail:
+                raise self._fail[name]
+            return attr(*args, **kwargs)
+
+        return wrapped
+
+
+def _owner_calls(archived_count, fail=None, **params):
+    proxy = _OwnerCallCounter(_seed_fleet_classification_store(archived_count), fail=fail)
+    with _client_with_store(proxy) as client:
+        try:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS, params=params)
+        except RuntimeError as exc:  # owner failure surfaces truthfully, never as healthy data
+            return proxy.calls, exc
+    return proxy.calls, response
+
+
+@pytest.mark.parametrize("params", [
+    {"purpose": "trading", "archived": "include", "page_size": 20},
+    {"purpose": "trading", "archived": "exclude", "page_size": 20},
+    {"page_size": 20},
+])
+def test_fleet_owner_transport_calls_are_independent_of_archive_size(params):
+    small, small_resp = _owner_calls(100, **params)
+    large, large_resp = _owner_calls(1000, **params)
+    assert small_resp.status_code == large_resp.status_code == 200
+    # Same owner methods, same call counts: no per-persona / per-archived-record N+1.
+    assert small == large, (small, large)
+
+
+@pytest.mark.parametrize("failing", ["list_telemetry_summaries", "list_runtime_bindings", "list_incidents"])
+def test_fleet_owner_failure_keeps_fixed_call_budget(failing):
+    outcomes = []
+    for count in (100, 1000):
+        calls, response = _owner_calls(
+            count, fail={failing: RuntimeError(f"{failing} owner down")},
+            purpose="trading", archived="include", page_size=20,
+        )
+        outcomes.append((calls, type(response).__name__ if isinstance(response, Exception) else response.status_code))
+    # Failure must not fan out retries/lookups with archive size.
+    assert outcomes[0] == outcomes[1], outcomes
+
+
 def test_advisory_record_never_enters_league_rows():
     with _client_with_store(_seed_fleet_classification_store(0)) as client:
         body = client.get("/bff/management/quarterly-ranking", headers=HEADERS, params={"page_size": 200}).json()

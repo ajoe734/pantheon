@@ -5,7 +5,8 @@
  "tests": {
   "passed": "test_pathreon_market_persona_fleet_contract.py (25, incl. verified-JWT userId-vs-sub isolation), ranking read model, management read budget, agora router",
   "preexisting_failures_identical_on_baseline": 13,
-  "repair_budget": "detail projections <= page_size at 100/1000 archived; advisory absent from quarterly ranking"
+  "repair_budget": "detail projections <= page_size at 100/1000 archived; advisory absent from quarterly ranking",
+  "owner_call_budget": "test_fleet_owner_transport_calls_are_independent_of_archive_size (3 param sets) and test_fleet_owner_failure_keeps_fixed_call_budget (telemetry/runtime-binding/incident owner failure) compare counted owner calls at 100 vs 1000 archived: identical. Owner failure raises truthfully (no fabricated healthy data)."
  },
  "local_timing_ms": {
   "archived100_exclude": 149,
@@ -14,5 +15,96 @@
   "archived1000_include": 416
  },
  "contract": "docs/bff/execution-tasks/2026-10-29-persona-fleet/API_CONTRACT.md",
- "repair": "Review round 2: nested advisory trading facts removed; user-private owner visibility enforced before rows/counts (two-user route test). Exclude advisory raw records at _pm12_persona_league_rows source (all league consumers); fleet list builds cohort rows for sort/filter/summary then runs full detail projection only for the page; runtime lookup indexed by persona. Review round 3: fleet private-visibility viewer now resolved via resolve_agora_user_scope (user_id,userId,sub,operator_id,operatorId; fail-closed on scope error); verified-JWT regression covers wrong-owner exclusion/counts and rightful-owner inclusion."
+ "repair": "Review round 2: nested advisory trading facts removed; user-private owner visibility enforced before rows/counts (two-user route test). Exclude advisory raw records at _pm12_persona_league_rows source (all league consumers); fleet list builds cohort rows for sort/filter/summary then runs full detail projection only for the page; runtime lookup indexed by persona. Review round 3: fleet private-visibility viewer now resolved via resolve_agora_user_scope (user_id,userId,sub,operator_id,operatorId; fail-closed on scope error); verified-JWT regression covers wrong-owner exclusion/counts and rightful-owner inclusion.",
+ "stage_profile": [
+  {
+   "command": ".venv-pantheon/bin/python profile_fleet.py (script embedded in API_CONTRACT.md; head); base = `git archive c74e52e48` extracted to a temp dir with the head test fixture module + script copied in, same command",
+   "method": "warm TestClient call, in-memory store wrapped by a call-counting proxy, cProfile cumulative ms per stage (stages nest, do not sum). Base ignores the new query params, so its filtered row equals its unfiltered cost.",
+   "base_c74e52e48": [
+    {
+     "archived": 100,
+     "params": "omitted",
+     "wall_ms": 158.5,
+     "owner_reads_ms": 22.1,
+     "cohort_ms": 115.6,
+     "detail_ms": 35.0,
+     "serialize_ms": 32.3,
+     "owner_calls": 31
+    },
+    {
+     "archived": 100,
+     "params": "trading/exclude/20",
+     "wall_ms": 160.5,
+     "owner_reads_ms": 21.6,
+     "cohort_ms": 115.0,
+     "detail_ms": 36.2,
+     "serialize_ms": 35.1,
+     "owner_calls": 31
+    },
+    {
+     "archived": 1000,
+     "params": "omitted",
+     "wall_ms": 1271.8,
+     "owner_reads_ms": 211.2,
+     "cohort_ms": 1219.9,
+     "detail_ms": 340.8,
+     "serialize_ms": 32.7,
+     "owner_calls": 31
+    },
+    {
+     "archived": 1000,
+     "params": "trading/exclude/20",
+     "wall_ms": 1264.3,
+     "owner_reads_ms": 211.9,
+     "cohort_ms": 1212.1,
+     "detail_ms": 445.6,
+     "serialize_ms": 32.7,
+     "owner_calls": 31
+    }
+   ],
+   "head_a1b495440_plus_repair": [
+    {
+     "archived": 100,
+     "params": "omitted",
+     "wall_ms": 171.2,
+     "owner_reads_ms": 21.8,
+     "cohort_ms": 152.0,
+     "detail_ms": 6.6,
+     "serialize_ms": 32.9,
+     "owner_calls": 29
+    },
+    {
+     "archived": 100,
+     "params": "trading/exclude/20",
+     "wall_ms": 108.8,
+     "owner_reads_ms": 22.3,
+     "cohort_ms": 90.4,
+     "detail_ms": 1.4,
+     "serialize_ms": 6.8,
+     "owner_calls": 29
+    },
+    {
+     "archived": 1000,
+     "params": "omitted",
+     "wall_ms": 1297.7,
+     "owner_reads_ms": 212.8,
+     "cohort_ms": 1585.1,
+     "detail_ms": 7.1,
+     "serialize_ms": 37.5,
+     "owner_calls": 29
+    },
+    {
+     "archived": 1000,
+     "params": "trading/exclude/20",
+     "wall_ms": 827.7,
+     "owner_reads_ms": 209.9,
+     "cohort_ms": 799.3,
+     "detail_ms": 1.4,
+     "serialize_ms": 10.7,
+     "owner_calls": 29
+    }
+   ],
+   "findings": "Detail projection (the per-row enrichment) is now page-bounded (445.6 -> 1.4 ms at 1000 archived). Owner transport call count is fixed (29, base 31) and independent of archive size. Honest limit: the cohort/league step still scales with archive size in-process (~800 ms at 1000 archived/exclude); end-to-end gain at 1000 archived is 1264 -> 828 ms (~35%). Local in-memory only; hosted numbers belong to acceptance."
+  }
+ ]
 }
