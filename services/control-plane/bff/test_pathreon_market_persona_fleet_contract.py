@@ -2237,6 +2237,57 @@ def test_fleet_reads_durable_persona_ledger_once_per_request(archived_count, mon
     assert counter.reads == 1, counter.reads
 
 
+def test_fleet_overlaps_provisioning_ledger_with_canonical_personas_read(monkeypatch):
+    # Measured cost pattern: durable provisioning list_by_tenant (~0.2-0.45s)
+    # started only after the canonical /api/personas read finished.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    delay = 0.4
+    spans = {}
+
+    def timed(name, fn):
+        def wrapped(*args, **kwargs):
+            start = _time.monotonic()
+            _time.sleep(delay)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                spans.setdefault(name, (start, _time.monotonic(), threading.current_thread() is threading.main_thread()))
+
+        return wrapped
+
+    counter = _LedgerCounter(personas_service._persona_provisioning_store())
+    real_list = counter.list_by_tenant
+    counter.list_by_tenant = timed("ledger", real_list)
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: counter)
+    monkeypatch.setattr(store, "list_personas", timed("personas", store.list_personas))
+    with _client_with_store(store) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert body["data"]["summary"]["population"]["archived_total"] == 100
+    assert counter.reads == 1, counter.reads
+    assert spans["ledger"][2] is False, spans
+    assert spans["ledger"][0] < spans["personas"][1] and spans["personas"][0] < spans["ledger"][1], spans
+
+
+def test_fleet_provisioning_prefetch_failure_stays_failure(monkeypatch):
+    store = _seed_fleet_classification_store(5)
+    counter = _LedgerCounter(personas_service._persona_provisioning_store())
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise RuntimeError("ledger down")
+
+    counter.list_by_tenant = boom
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: counter)
+    with _client_with_store(store) as client:
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "trading", "page_size": 20})
+    assert response.status_code == 503, response.text
+    assert calls["n"] == 1, calls
+
+
 def test_fleet_overlaps_strategy_spec_and_source_registry_reads(monkeypatch):
     # Measured cost pattern: strategy-spec registry (~3.4s) and the first
     # source-ingest registry read (~0.9s) ran serially on the request thread.

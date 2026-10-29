@@ -2414,7 +2414,7 @@ def _fleet_evolution_decisions() -> List[Dict[str, Any]]:
     )
 
 
-def _persona_fleet_prefetch_independent_reads() -> None:
+def _persona_fleet_prefetch_independent_reads(tenant_id: Optional[str] = None) -> None:
     """Start the fleet's slow, independent network owner reads together.
 
     Measured on the deployed path the strategy-spec registry read (~3.4s) and
@@ -2446,6 +2446,23 @@ def _persona_fleet_prefetch_independent_reads() -> None:
         _PERSONA_FLEET_READ_EXECUTOR,
         _fleet_evolution_decisions,
         warm_key="persona_fleet_evolution_decisions",
+    )
+    clean_tenant = str(tenant_id or "").strip()
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        lambda: _persona_provisioning_records_shared(_persona_provisioning_store(), clean_tenant),
+        warm_key=f"persona_fleet_provisioning:{clean_tenant}",
+    )
+
+
+# --- _persona_provisioning_records_shared ---
+def _persona_provisioning_records_shared(store: Any, clean_tenant: str) -> List[Any]:
+    """Durable provisioning ledger read, shared per request (value or failure)."""
+    read_prov = store.list_by_tenant if clean_tenant else store.list_all
+    read_args = (clean_tenant,) if clean_tenant else ()
+    return cached_owner_call(
+        ("persona_provisioning_records", id(store), clean_tenant),
+        lambda: list(read_prov(*read_args)),
     )
 
 
@@ -2480,17 +2497,13 @@ def _list_persona_records(
     clean_tenant = str(tenant_id or "").strip()
     store = _persona_provisioning_store()
     try:
-        read_prov = store.list_by_tenant if clean_tenant else store.list_all
-        read_args = (clean_tenant,) if clean_tenant else ()
         if reuse_request_read:
             # Read-only callers sharing one request read the durable ledger
             # once; a failure is cached too, so every caller sees it.
-            prov_records = cached_owner_call(
-                ("persona_provisioning_records", id(store), clean_tenant),
-                lambda: list(read_prov(*read_args)),
-            )
+            prov_records = _persona_provisioning_records_shared(store, clean_tenant)
         else:
-            prov_records = read_prov(*read_args)
+            read_prov = store.list_by_tenant if clean_tenant else store.list_all
+            prov_records = read_prov(*((clean_tenant,) if clean_tenant else ()))
     except Exception as exc:
         log.warning("Persona provisioning store list failed for dependency %s", "persona_provisioning_store")
         raise _bff_error(
@@ -8615,7 +8628,7 @@ def _persona_fleet_slim_list_payload(
     # quarterly endpoint uses this same read path; doing it first prevents a
     # later degraded persona-service read from silently restoring league rank.
     quarter_window = _pm12_quarter_window(None, snapshot_at)
-    _persona_fleet_prefetch_independent_reads()
+    _persona_fleet_prefetch_independent_reads(tenant_id)
     telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     telemetry_list_loaded = False
     try:
