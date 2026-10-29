@@ -474,8 +474,10 @@ PY
         --quiet \
         --command="${REMOTE_DEPLOY_CMD}" 2>&1
     )"; then
-      printf 'HOST_SSH_DEPLOY_DIAGNOSTIC_BEGIN\n%s\nHOST_SSH_DEPLOY_DIAGNOSTIC_END\n' "$(printf '%s' "$SSH_DEPLOY_OUT" | tail -c 32768)" >&2
-      die_json "HOST_SSH_DEPLOY_FAILED" "Remote staging deployment command failed on ${VM_NAME}: $(printf '%s' "$SSH_DEPLOY_OUT" | tail -n 5 | tr '\n"' '  ')"
+      # Public-output boundary: replay only structural BFF_DIAG lines and the bootstrap error_code; never the raw SSH body.
+      printf '%s\n' "$SSH_DEPLOY_OUT" | grep -E '^BFF_DIAG (status=[a-z]+ exit_code=-?[0-9]+ oom_killed=(true|false) restart_count=[0-9]+ error_present=(true|false)|state=unavailable|container=missing|frame=/workspace/[A-Za-z0-9_./-]+\.py:[0-9]+:[A-Za-z_<>][A-Za-z0-9_<>]*|exception_type=[A-Za-z_][A-Za-z0-9_.]*)$' | tail -n 40 >&2 || true
+      REMOTE_ERR_CODE="$(printf '%s\n' "$SSH_DEPLOY_OUT" | grep -oE '"error_code": "[A-Z0-9_]{1,64}"' | tail -n1 | cut -d'"' -f4 || true)"
+      die_json "HOST_SSH_DEPLOY_FAILED" "Remote staging deployment command failed on ${VM_NAME}: ${REMOTE_ERR_CODE:-unknown}"
     fi
 
     OBSERVED_DEPLOY_FILE="${OBSERVED_DEPLOY_FILE}" \

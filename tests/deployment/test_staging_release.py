@@ -326,13 +326,12 @@ if tool == "docker":
 
     if args[:1] == ["logs"]:
         secret = Path(os.environ["STAGING_POSTGRES_PASSWORD_FILE"]).read_text().strip()
-        print("Traceback: boom connecting with password=" + secret)
-        diag = os.environ.get("FAKE_DIAG_SECRET", "")
-        if diag:
-            # Secret sits at the first byte after the 16384-byte tail cut would keep only its last 4 chars.
-            print(diag + "." * (16384 - 4 - 1))
-        if os.environ.get("FAKE_LOGS_REMOVE_SECRETS_ENV") == "true":
-            Path(os.environ["STAGING_SECRETS_ENV_FILE"]).unlink()
+        print("business line strategy=alpha-77 result_id=res-123 password=" + secret)
+        print("Traceback (most recent call last):")
+        print('  File "/workspace/services/control-plane/bff/app.py", line 42, in main')
+        print("    connect(password='" + secret + "')")
+        print('  File "/etc/private/secret.py", line 7, in leak')
+        print("RuntimeError: boom strategy=alpha-77 " + secret)
         raise SystemExit(0)
 
     if args[:1] == ["inspect"]:
@@ -364,15 +363,7 @@ if tool == "docker":
                 health = "unhealthy" if mode == "unhealthy" else ("healthy" if n >= 2 else "starting")
             print(running + (" " + health if health else ""))
         elif "State.Status" in fmt:
-            state_err = ""
-            if os.environ.get("FAKE_STATE_ERROR_SECRET") == "true":
-                state_err = "oci runtime failed token=" + Path(os.environ["STAGING_POSTGRES_PASSWORD_FILE"]).read_text().strip()
-            diag = os.environ.get("FAKE_DIAG_SECRET", "")
-            if diag:
-                # Secret straddles the 1024-byte head cut (only its first 4 chars would survive truncation).
-                prefix = "status=running exit_code=0 oom_killed=false restart_count=0 error="
-                state_err = "." * (1024 - 4 - len(prefix)) + diag
-            print("status=running exit_code=0 oom_killed=false restart_count=0 error=" + state_err)
+            print("exited 1 false 2 true")
         elif "Config.Env" in fmt:
             for k, v in sorted(cinfo.get("env", {}).items()):
                 print(f"{k}={v}")
@@ -2199,79 +2190,18 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertNotEqual(res.returncode, 0)
                 self.assertIn("routing override", res.stderr + res.stdout)
 
-    def test_bff_not_ready_emits_bounded_redacted_diagnostics_and_keeps_original_error(self) -> None:
+    def test_bff_not_ready_public_diagnostics_are_structural_only_and_keep_original_error(self) -> None:
         res = subprocess.run(
             [str(PROVISION_SCRIPT)], env=self._base_env(FAKE_BFF_UNHEALTHY="true"), capture_output=True, text=True
         )
+        out = res.stderr + res.stdout
         self.assertNotEqual(res.returncode, 0)
-        self.assertIn("BFF_NOT_READY", res.stderr)
-        self.assertIn("BFF_DIAG state_and_logs_begin", res.stderr)
-        self.assertIn("Traceback: boom", res.stderr)
-        self.assertNotIn("stg-isolated-pg-password-20261025", res.stderr)
-        self.assertNotIn("PANTHEON_ENV=", res.stderr)
-
-    def test_bff_not_ready_diagnostics_redact_state_error_and_fail_closed_on_unreadable_secret(self) -> None:
-        pw = "stg-isolated-pg-password-20261025"
-        res = subprocess.run(
-            [str(PROVISION_SCRIPT)],
-            env=self._base_env(FAKE_BFF_UNHEALTHY="true", FAKE_STATE_ERROR_SECRET="true"),
-            capture_output=True,
-            text=True,
-        )
-        self.assertIn("BFF_NOT_READY", res.stderr)
-        self.assertIn("oci runtime failed", res.stderr)
-        self.assertNotIn(pw, res.stderr + res.stdout)
-        # Required secret file becomes unreadable before redaction -> diagnostics withheld, original failure preserved.
-        res2 = subprocess.run(
-            [str(PROVISION_SCRIPT)],
-            env=self._base_env(
-                FAKE_BFF_UNHEALTHY="true", FAKE_STATE_ERROR_SECRET="true", FAKE_LOGS_REMOVE_SECRETS_ENV="true"
-            ),
-            capture_output=True,
-            text=True,
-        )
-        self.assertIn("BFF_NOT_READY", res2.stderr)
-        self.assertIn("logs_redaction_failed", res2.stderr)
-        self.assertNotIn(pw, res2.stderr + res2.stdout)
-        self.assertNotIn("Traceback: boom", res2.stderr)
-        self.assertNotIn("oci runtime failed", res2.stderr)
-
-    def test_bff_not_ready_diagnostics_mask_custom_filename_short_and_boundary_secrets(self) -> None:
-        self._unlock_vm_env_dir()
-        original = self.secrets_env_file.read_text(encoding="utf-8")
-        custom = self.secrets_env_file.with_name("custom-secrets-file")
-        for label, jwt in (("long", "synthetic.jwt.value-abcdef0123456789"), ("three_chars", "j7Q")):
-            with self.subTest(label=label):
-                custom.write_text(original + f"DIAG_JWT={jwt}\n", encoding="utf-8")
-                custom.chmod(0o600)
-                self.secrets_env_file.unlink(missing_ok=True)
-                try:
-                    res = subprocess.run(
-                        [str(PROVISION_SCRIPT)],
-                        env=self._base_env(
-                            FAKE_BFF_UNHEALTHY="true",
-                            FAKE_DIAG_SECRET=jwt,
-                            STAGING_SECRETS_ENV_FILE=str(custom),
-                        ),
-                        capture_output=True,
-                        text=True,
-                    )
-                finally:
-                    self._unlock_vm_env_dir()
-                    custom.unlink(missing_ok=True)
-                    self.secrets_env_file.write_text(original, encoding="utf-8")
-                    self.secrets_env_file.chmod(0o600)
-                out = res.stderr + res.stdout
-                self.assertIn("BFF_NOT_READY", out)
-                self.assertIn("BFF_DIAG state_and_logs_begin", out)
-                if len(jwt) > 3:
-                    self.assertNotIn(jwt, out)
-                    # Neither the head-1024 prefix nor the tail-16384 suffix fragment may survive.
-                    self.assertNotIn("...." + jwt[:4], out)
-                    self.assertNotIn(jwt[-4:], out)
-                else:
-                    self.assertNotIn("." + jwt, out)
-                    self.assertNotIn(jwt + ".", out)
+        self.assertIn("BFF_NOT_READY", out)
+        self.assertIn("BFF_DIAG status=exited exit_code=1 oom_killed=false restart_count=2 error_present=true", out)
+        self.assertIn("BFF_DIAG frame=/workspace/services/control-plane/bff/app.py:42:main", out)
+        self.assertIn("BFF_DIAG exception_type=RuntimeError", out)
+        for leaked in ("stg-isolated-pg-password-20261025", "alpha-77", "res-123", "connect(", "/etc/private", "boom", "Traceback"):
+            self.assertNotIn(leaked, out)
 
     def test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates(self) -> None:
         # 1. Missing runtime binary when apt install is disabled fails closed with RUNTIME_BINARY_MISSING
@@ -2314,7 +2244,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 text=True,
             )
             self.assertNotEqual(res_product.returncode, 0, omitted)
-            self.assertIn(f"Required service {omitted} is not running", res_product.stderr)
+            self.assertIn("OWNER_CONTAINER_MISSING", res_product.stderr)
 
         # 4. Real collector gate failures (migration SQL error, pg_restore failure, cross-tenant HTTP 200 leak, live broker env leak)
         self.setUp()

@@ -758,59 +758,37 @@ for _ in $(seq 1 "${STAGING_READY_TRIES:-30}"); do
   sleep "${STAGING_READY_INTERVAL:-1}"
 done
 emit_bff_not_ready_diagnostics() {
-  # Best-effort, bounded actual BFF state + log tail; never prints Config.Env and never changes the original failure.
-  # Raw docker output is capped, masked against EVERY nonempty secret value, and only then cut to the final size.
-  local cid state logs cap=1048576
+  # Best-effort, bounded, structure-only export for PUBLIC CI output: fixed-schema container state plus traceback frame
+  # metadata (known /workspace code path, line, function) and exception TYPE. Never State.Error text, exception messages,
+  # source snippets, or arbitrary log lines. Raw logs stay on the private VM. Never changes the original failure.
+  local cid state logs
   cid="$(run_priv timeout 10 "$DOCKER_BIN" compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -a -q operator-bff 2>/dev/null | head -n1)" || return 0
   [[ -n "$cid" ]] || { echo "BFF_DIAG container=missing" >&2; return 0; }
-  local redactor='
-import sys
-mode, cap, limit, env_path, pw_path = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
-raw = sys.stdin.buffer.read()
-vals = set()
-def add(v):
-    v = v.strip()
-    if v:
-        vals.add(v)
-        for q in ("\"", "\x27"):
-            if len(v) > 2 and v[0] == q and v[-1] == q:
-                vals.add(v[1:-1])
-        if "://" in v and "@" in v:
-            cred = v.split("://", 1)[1].rsplit("@", 1)[0]
-            if ":" in cred:
-                vals.add(cred.split(":", 1)[1])
-for line in open(env_path, encoding="utf-8", errors="replace").read().splitlines():
-    line = line.strip()
-    if line and not line.startswith("#"):
-        add(line.split("=", 1)[1] if "=" in line else line)
-pw = open(pw_path, encoding="utf-8", errors="replace").read()
-add(pw)
-for line in pw.splitlines():
-    add(line)
-maxlen = max([len(v.encode()) for v in vals] or [0])
-if len(raw) >= cap:
-    # A capped read may split a secret at the cut edge: withhold that boundary fragment.
-    raw = raw[maxlen:] if mode == "tail" else raw[: max(len(raw) - maxlen, 0)]
-text = raw.decode("utf-8", errors="replace")
-for v in sorted(vals, key=len, reverse=True):
-    text = text.replace(v, "***")
-data = text.encode()
-data = data[-limit:] if mode == "tail" else data[:limit]
-sys.stdout.buffer.write(data)
-'
-  local raw_state raw_logs
-  raw_state="${LOCAL_WORK_DIR}/bff_diag_state.raw"; raw_logs="${LOCAL_WORK_DIR}/bff_diag_logs.raw"
-  ( umask 077
-    run_priv timeout 10 "$DOCKER_BIN" inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} restart_count={{.RestartCount}} error={{.State.Error}}' "$cid" 2>&1 | head -c "$cap" >"$raw_state"
-    run_priv timeout 10 "$DOCKER_BIN" logs --tail 100 "$cid" 2>&1 | tail -c "$cap" >"$raw_logs" ) || true
-  # One fail-closed redactor for ALL free-text diagnostics (state + logs): if any required secret file is unreadable, withhold everything.
-  if state="$(run_priv python3 -c "$redactor" head "$cap" 1024 "${STAGING_SECRETS_ENV_FILE}" "${STAGING_POSTGRES_PASSWORD_FILE}" <"$raw_state" 2>/dev/null)" \
-    && logs="$(run_priv python3 -c "$redactor" tail "$cap" 16384 "${STAGING_SECRETS_ENV_FILE}" "${STAGING_POSTGRES_PASSWORD_FILE}" <"$raw_logs" 2>/dev/null)"; then
-    { printf 'BFF_DIAG state_and_logs_begin\n%s\n\n--BFF_DIAG_SPLIT--\n%s\nBFF_DIAG state_and_logs_end\n' "$state" "$logs"; } >&2 || true
-  else
-    { printf 'BFF_DIAG state_and_logs_begin\nBFF_DIAG logs_redaction_failed (state and logs withheld)\nBFF_DIAG state_and_logs_end\n'; } >&2 || true
-  fi
-  rm -f "$raw_state" "$raw_logs" || true
+  state="$(run_priv timeout 10 "$DOCKER_BIN" inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}} {{if .State.Error}}true{{else}}false{{end}}' "$cid" 2>/dev/null | head -c 256)" || true
+  logs="$(run_priv timeout 10 "$DOCKER_BIN" logs --tail 200 "$cid" 2>&1 | tail -c 65536)" || true
+  { printf '%s\n--BFF_DIAG_SPLIT--\n%s\n' "$state" "$logs"; } | python3 -c '
+import re, sys
+state, _, logs = sys.stdin.read().partition("\n--BFF_DIAG_SPLIT--\n")
+f = state.split()
+ok = (len(f) == 5 and f[0] in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
+      and f[1].lstrip("-").isdigit() and f[3].isdigit() and f[2] in {"true", "false"} and f[4] in {"true", "false"})
+print("BFF_DIAG status=%s exit_code=%s oom_killed=%s restart_count=%s error_present=%s" % tuple(f[:5]) if ok else "BFF_DIAG state=unavailable")
+frame = re.compile(r"^\s*File \"(/workspace/[A-Za-z0-9_./-]+\.py)\", line (\d+), in (<module>|[A-Za-z_][A-Za-z0-9_]*)\s*$")
+exc = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]{0,79}(?:Error|Exception|Exit|Interrupt))(?::|$)")
+frames, kinds = [], []
+for line in logs.splitlines():
+    m = frame.match(line)
+    if m and ".." not in m.group(1):
+        frames.append("%s:%s:%s" % m.groups())
+        continue
+    m = exc.match(line)
+    if m:
+        kinds.append(m.group(1))
+for fr in frames[-20:]:
+    print("BFF_DIAG frame=" + fr)
+for k in kinds[-5:]:
+    print("BFF_DIAG exception_type=" + k)
+' >&2 || echo "BFF_DIAG state=unavailable" >&2
   return 0
 }
 if [[ "$READY_CODE" != "200" ]]; then
@@ -831,7 +809,7 @@ for owner_svc in runtime-manager governance deployment lifecycle-projector postg
   registry telemetry incidents postmortems evolution lineage-read reconciliation-drift-svc persona \
   consultation-svc source-ingest training-session-svc policy-learning-svc research-orchestrator-svc \
   agora-interaction-worker paper-fleet-reconciler paper-signal-producer signal-store memory capital openclaw-gateway-adapter; do
-  cid="$(run_priv timeout 10 "$DOCKER_BIN" compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -q "$owner_svc" | head -n1)"
+  cid="$(run_compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -q "$owner_svc" | head -n1)"
   [[ -n "$cid" ]] || fail "OWNER_CONTAINER_MISSING" "Required service ${owner_svc} is not running"
 done
 
