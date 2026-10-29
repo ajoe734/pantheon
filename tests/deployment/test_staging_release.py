@@ -327,6 +327,8 @@ if tool == "docker":
     if args[:1] == ["logs"]:
         secret = Path(os.environ["STAGING_POSTGRES_PASSWORD_FILE"]).read_text().strip()
         print("Traceback: boom connecting with password=" + secret)
+        if os.environ.get("FAKE_LOGS_REMOVE_SECRETS_ENV") == "true":
+            Path(os.environ["STAGING_SECRETS_ENV_FILE"]).unlink()
         raise SystemExit(0)
 
     if args[:1] == ["inspect"]:
@@ -358,7 +360,10 @@ if tool == "docker":
                 health = "unhealthy" if mode == "unhealthy" else ("healthy" if n >= 2 else "starting")
             print(running + (" " + health if health else ""))
         elif "State.Status" in fmt:
-            print("status=running exit_code=0 oom_killed=false restart_count=0 error=")
+            state_err = ""
+            if os.environ.get("FAKE_STATE_ERROR_SECRET") == "true":
+                state_err = "oci runtime failed token=" + Path(os.environ["STAGING_POSTGRES_PASSWORD_FILE"]).read_text().strip()
+            print("status=running exit_code=0 oom_killed=false restart_count=0 error=" + state_err)
         elif "Config.Env" in fmt:
             for k, v in sorted(cinfo.get("env", {}).items()):
                 print(f"{k}={v}")
@@ -2191,10 +2196,36 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("BFF_NOT_READY", res.stderr)
-        self.assertIn("BFF_DIAG state:", res.stderr)
+        self.assertIn("BFF_DIAG state_and_logs_begin", res.stderr)
         self.assertIn("Traceback: boom", res.stderr)
-        self.assertNotIn("password=stg-pg-pass", res.stderr)
+        self.assertNotIn("stg-isolated-pg-password-20261025", res.stderr)
         self.assertNotIn("PANTHEON_ENV=", res.stderr)
+
+    def test_bff_not_ready_diagnostics_redact_state_error_and_fail_closed_on_unreadable_secret(self) -> None:
+        pw = "stg-isolated-pg-password-20261025"
+        res = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(FAKE_BFF_UNHEALTHY="true", FAKE_STATE_ERROR_SECRET="true"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("BFF_NOT_READY", res.stderr)
+        self.assertIn("oci runtime failed", res.stderr)
+        self.assertNotIn(pw, res.stderr + res.stdout)
+        # Required secret file becomes unreadable before redaction -> diagnostics withheld, original failure preserved.
+        res2 = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(
+                FAKE_BFF_UNHEALTHY="true", FAKE_STATE_ERROR_SECRET="true", FAKE_LOGS_REMOVE_SECRETS_ENV="true"
+            ),
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("BFF_NOT_READY", res2.stderr)
+        self.assertIn("logs_redaction_failed", res2.stderr)
+        self.assertNotIn(pw, res2.stderr + res2.stdout)
+        self.assertNotIn("Traceback: boom", res2.stderr)
+        self.assertNotIn("oci runtime failed", res2.stderr)
 
     def test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates(self) -> None:
         # 1. Missing runtime binary when apt install is disabled fails closed with RUNTIME_BINARY_MISSING
