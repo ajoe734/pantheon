@@ -6522,8 +6522,11 @@ def _pm12_persona_league_rows(
     routed_strategy_counts: Optional[Mapping[str, int]] = None,
     include_advisory: bool = False,
     reuse_request_read: bool = False,
+    on_records_read: Optional[Callable[[], None]] = None,
 ) -> List[Dict[str, Any]]:
     raw_records = _list_persona_records(tenant_id, reuse_request_read=reuse_request_read)
+    if on_records_read is not None:
+        on_records_read()
     if not include_advisory:
         # Classify from canonical raw metadata before projection drops it, so
         # every league consumer shares one trading-only cohort.
@@ -8128,10 +8131,19 @@ def _project_persona_fleet_row_impl(
     snapshot_at: str,
     evolution_decisions: Optional[Sequence[Dict[str, Any]]] = None,
     routed_strategies: Optional[int] = None,
+    cohort_capture: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     persona_id = _persona_id(persona)
     if not persona_id:
         return None
+    if detail and cohort_capture and "row" in cohort_capture:
+        # The cohort pass already projected every shared field from these exact
+        # inputs; only the detail-only fields remain to be computed.
+        full = dict(cohort_capture["row"])
+        for key, value in cohort_capture["detail_extras"]().items():
+            if key in _PERSONA_FLEET_DETAIL_OVERRIDE_KEYS or key not in full:
+                full[key] = value
+        return full
 
     raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     league_metrics = league_entry.get("metrics") if isinstance(league_entry.get("metrics"), dict) else {}
@@ -8362,6 +8374,7 @@ def _project_persona_fleet_row_impl(
             data_source_status,
             data_sources,
             required_data_sources=required_data_sources,
+            thin=not detail,
         )
     data_source_refs = (
         context_metadata.get("data_source_refs")
@@ -8430,7 +8443,7 @@ def _project_persona_fleet_row_impl(
     )
     performance_total_trades = _management_as_float(metrics.get("total_trades"))
 
-    return {
+    row = {
         "id": persona_id,
         "persona_id": persona_id,
         **mutation_projection,
@@ -8554,6 +8567,69 @@ def _project_persona_fleet_row_impl(
             "persona_id": persona_id,
         },
     }
+    if cohort_capture is not None and not detail:
+        def detail_extras() -> Dict[str, Any]:
+            review = _persona_fleet_review_projection(
+                persona_id=persona_id,
+                league_entry=league_entry,
+                raw_metadata=raw_metadata,
+                binding=binding,
+                runtime=runtime,
+                human_needed=human_needed,
+                recommendation=recommendation,
+            )
+            ledger = _persona_fleet_paper_ledger(
+                paper_ledger_id=paper_ledger_id,
+                persona_id=persona_id,
+                league_entry=league_entry,
+                raw_metadata=raw_metadata,
+                context_metadata=context_metadata,
+            )
+            return {
+                **_persona_fleet_mutation_projection(
+                    persona_id=persona_id,
+                    updated_at=updated_at,
+                    evolution_decisions=(
+                        evolution_decisions
+                        if evolution_decisions is not None
+                        else list(_get_active_read_store().list_evolution_decisions() or [])
+                    ),
+                    artifact_ids=artifact_ids,
+                    incident_ids=incident_ids,
+                ),
+                **_persona_fleet_capital_binding_projection(
+                    persona_id=persona_id,
+                    capital_mode=capital_mode,
+                    deployment_stage=deployment_stage,
+                    paper_ledger_id=paper_ledger_id,
+                    live_pool_id=live_pool_id,
+                    binding=binding,
+                    runtime=runtime,
+                    league_entry=league_entry,
+                    raw_metadata=raw_metadata,
+                    context_metadata=context_metadata,
+                ),
+                "paper_ledger": ledger,
+                "paperLedger": ledger,
+                "review_id": review["review_id"],
+                "review_type": review["review_type"],
+                "promotion_review_id": review["promotion_review_id"],
+                "inbox_id": review["inbox_id"],
+                "review_status": review["review_status"],
+                "review": review["review"],
+            }
+
+        cohort_capture["row"] = dict(row)
+        cohort_capture["detail_extras"] = detail_extras
+    return row
+
+
+_PERSONA_FLEET_DETAIL_OVERRIDE_KEYS = frozenset(
+    {
+        "paper_ledger", "paperLedger", "review_id", "review_type",
+        "promotion_review_id", "inbox_id", "review_status", "review",
+    }
+)
 
 
 def _persona_fleet_strip_trading_facts(row: Dict[str, Any]) -> None:
@@ -8647,6 +8723,10 @@ def _persona_fleet_slim_list_payload(
         telemetry_list_loaded = True
     except Exception:
         telemetry_cache = {}
+    # The league's persona read runs first (rank snapshot precedes broader
+    # reads); the directory read then overlaps the league's wait on the
+    # in-flight Registry count instead of following it.
+    directory_future: List[Any] = []
     league_rows = _pm12_persona_league_rows(
         state=None,
         archetype=None,
@@ -8656,7 +8736,16 @@ def _persona_fleet_slim_list_payload(
         include_health=False,
         include_allowed_actions=False,
         reuse_request_read=True,
+        on_records_read=lambda: directory_future.append(
+            submit_owner_read(
+                _PERSONA_FLEET_READ_EXECUTOR,
+                lambda: _get_persona_directory_snapshot(
+                    tenant_id, snapshot_at=snapshot_at, reuse_request_read=True
+                ),
+            )
+        ),
     )
+    directory = directory_future[0].result()
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
         for item in _pm12_quarterly_ranking_items(
@@ -8666,7 +8755,6 @@ def _persona_fleet_slim_list_payload(
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
-    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at, reuse_request_read=True)
     # Enforce the user-private owner policy before rows or population counts.
     visible_records = {
         pid: raw
@@ -8921,8 +9009,11 @@ def _persona_fleet_slim_list_payload(
             evolution_decisions=evolution_decisions,
             routed_strategies=int(routed_strategy_counts.get(persona_id, 0)),
         )
-        row = _project_persona_fleet_cohort_row(**row_kwargs)
+        capture: Optional[Dict[str, Any]] = {} if keep_detail else None
+        row = _project_persona_fleet_cohort_row(**row_kwargs, cohort_capture=capture)
         if row is not None:
+            if capture is not None:
+                row_kwargs["cohort_capture"] = capture
             finalize_row(row, persona_id, is_retired_persona, persona)
             if keep_detail:
                 detail_inputs[persona_id] = row_kwargs
@@ -13591,7 +13682,12 @@ def _provider_status_from_truth(health: Dict[str, Any], connector: Dict[str, Any
     return "connector_configured_no_health"
 
 
-def _source_truth_projection(connector_id: str, truth: Dict[str, Any]) -> Dict[str, Any]:
+def _source_truth_projection(
+    connector_id: str,
+    truth: Dict[str, Any],
+    *,
+    thin: bool = False,
+) -> Dict[str, Any]:
     health = truth.get("health") if isinstance(truth.get("health"), dict) else {}
     connector = truth.get("connector") if isinstance(truth.get("connector"), dict) else {}
     schedule = connector.get("schedule") if isinstance(connector.get("schedule"), dict) else {}
@@ -13643,13 +13739,19 @@ def _source_truth_projection(connector_id: str, truth: Dict[str, Any]) -> Dict[s
         "rowCountLastRun": health.get("row_count_last_run"),
         "rejected_count_last_run": health.get("rejected_count_last_run"),
         "rejectedCountLastRun": health.get("rejected_count_last_run"),
+    }
+    if thin:
+        # Scalar status only: callers that never expose the rich connector
+        # schedule/freshness/health/usage blobs skip cloning them.
+        return projection
+    projection.update({
         "connector_schedule": json.loads(json.dumps(schedule)),
         "connectorSchedule": json.loads(json.dumps(schedule)),
         "connector_freshness": json.loads(json.dumps(freshness)),
         "connectorFreshness": json.loads(json.dumps(freshness)),
         "source_health": json.loads(json.dumps(health)),
         "sourceHealth": json.loads(json.dumps(health)),
-    }
+    })
     if isinstance(truth.get("usage_aggregate_30d"), dict):
         projection["usage_aggregate_30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
         projection["usageAggregate30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
@@ -13734,6 +13836,7 @@ def _overlay_source_health_truth(
     data_sources: Any,
     *,
     required_data_sources: Optional[List[Dict[str, Any]]] = None,
+    thin: bool = False,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Resolve through the active PersonaService instance.
 
@@ -13747,6 +13850,7 @@ def _overlay_source_health_truth(
         data_source_status,
         data_sources,
         required_data_sources=required_data_sources,
+        thin=thin,
     )
 
 
@@ -14390,12 +14494,59 @@ class PersonaService:
         data_sources: Any,
         *,
         required_data_sources: Optional[List[Dict[str, Any]]] = None,
+        thin: bool = False,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Sole implementation of the source-health overlay projection."""
+        """Sole implementation of the source-health overlay projection.
 
+        ``thin=True`` keeps every scalar/status/binding-availability result but
+        omits the rich connector health blobs (``connector_health``,
+        ``required_source_health``, bindings detail) for list-style callers
+        that never expose them; the default rich result is unchanged.
+
+        Within one request read scope, identical inputs resolved against the
+        same truth snapshot reuse one computed overlay; every caller still
+        receives its own independent copy.
+        """
+
+        truth_by_connector = self._source_ingest_truth_by_connector()
+        try:
+            request_key = (
+                "persona_source_health_overlay",
+                thin,
+                id(self),
+                id(truth_by_connector),
+                json.dumps(
+                    [data_source_status, data_sources, required_data_sources],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+        except (TypeError, ValueError):
+            return self._compute_source_health_overlay(
+                data_source_status, data_sources, required_data_sources, truth_by_connector, thin
+            )
+        # The truth snapshot is held in the cached value so its id stays unique.
+        _, shared = cached_owner_call(
+            request_key,
+            lambda: (
+                truth_by_connector,
+                self._compute_source_health_overlay(
+                    data_source_status, data_sources, required_data_sources, truth_by_connector, thin
+                ),
+            ),
+        )
+        return json.loads(json.dumps(shared))
+
+    def _compute_source_health_overlay(
+        self,
+        data_source_status: Any,
+        data_sources: Any,
+        required_data_sources: Optional[List[Dict[str, Any]]],
+        truth_by_connector: Dict[str, Dict[str, Any]],
+        thin: bool = False,
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
         dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
         srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
-        truth_by_connector = self._source_ingest_truth_by_connector()
         provider_statuses = dss.get("provider_statuses")
         if not isinstance(provider_statuses, dict):
             provider_statuses = {}
@@ -14413,7 +14564,7 @@ class PersonaService:
                 truth_by_connector,
             )
             if connector_id and truth:
-                projection = _source_truth_projection(connector_id, truth)
+                projection = _source_truth_projection(connector_id, truth, thin=thin)
                 has_live_health = bool(projection.get("source_health_available"))
                 original_status = source.get("status")
                 original_reason = source.get("reason")
@@ -14454,19 +14605,37 @@ class PersonaService:
                 if provider_key in _SOURCE_PROVIDER_CONNECTOR_CANDIDATES:
                     static_source_labels.append(provider_key)
 
-        bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
-        has_live_truth = bool(connector_health) or any(binding.get("health_source") == "source_ingest" for binding in bindings)
+        if thin:
+            bindings = []
+            has_bound_truth = any(
+                isinstance(requirement, dict)
+                and _select_source_truth(
+                    [
+                        str(candidate).strip()
+                        for candidate in (requirement.get("connector_candidates") or [])
+                        if str(candidate).strip()
+                    ],
+                    truth_by_connector,
+                )[1]
+                for requirement in (required_data_sources or [])
+            )
+        else:
+            bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
+            has_bound_truth = any(binding.get("health_source") == "source_ingest" for binding in bindings)
+        has_live_truth = bool(connector_health) or has_bound_truth
         dss["source_health_source"] = "source_ingest" if has_live_truth else "static_metadata"
         dss["sourceHealthSource"] = dss["source_health_source"]
         dss["live_ingestion_enabled"] = bool(has_live_truth)
-        dss["connector_health"] = json.loads(json.dumps(connector_health))
-        dss["connectorHealth"] = json.loads(json.dumps(connector_health))
+        if not thin:
+            dss["connector_health"] = json.loads(json.dumps(connector_health))
+            dss["connectorHealth"] = json.loads(json.dumps(connector_health))
         dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
         dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
         dss["static_source_labels"] = sorted(set(static_source_labels))
         dss["staticSourceLabels"] = dss["static_source_labels"]
-        dss["required_source_health"] = json.loads(json.dumps(bindings))
-        dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
+        if not thin:
+            dss["required_source_health"] = json.loads(json.dumps(bindings))
+            dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
         _upgrade_all_green_data_source_state(dss)
         return dss, srcs, bindings
 
