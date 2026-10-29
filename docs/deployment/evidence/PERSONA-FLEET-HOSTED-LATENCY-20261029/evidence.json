@@ -162,5 +162,12 @@
       "bff_fleet_contract_read_budget_ports": "92 passed; +2 targeted"
     },
     "not_run": "no hosted/whole-API p95 measurement; owned by original hosted task"
+  },
+  "review_findings_repair": {
+    "base_review_head": "92c17d2b9130e8ecd7afdffe3adfbea805102b87",
+    "persona_id_normalization": "count_strategy_persona_bindings strips ids before dedup, matching frozen-base fleet count; regression in test_research_knowledge_source_ports.py",
+    "none_count_contract": "ReadSurfacePorts.count_strategy_persona_bindings raises TypeError on non-dict; valid empty dict stays valid; composed-path regression in test_pathreon_market_persona_fleet_contract.py",
+    "validation": "BFF fleet/read_budget/research ports 95 passed exit0; reviewer probe now raises TypeError for None count",
+    "hosted_proof": false
   }
 }
