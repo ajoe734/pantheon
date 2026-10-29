@@ -806,9 +806,16 @@ class PostgresRegistryStore:
         ]
 
     def list_persona_binding_rows(self) -> list[dict]:
-        """Persona-binding flat rows projected inside Postgres (no entry rebuild)."""
+        """Persona-binding flat rows projected inside Postgres (no entry rebuild).
+
+        Only strategy families with at least one bound version are returned
+        (every version of such a family, bound or not), decided in the same
+        statement as the projection.
+        """
         return persona_binding_rows_from_columns(
-            self._entries.list_all_selected(persona_binding_select_sql())
+            self._entries.list_all_selected(
+                persona_binding_select_sql(), keep_sql=persona_binding_family_keep_sql(),
+            )
         )
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
@@ -863,6 +870,28 @@ def persona_binding_select_sql() -> str:
         for p in (("metadata", "strategy_spec"), ("metadata", "strategy_spec", "metadata"))
     )
     return f"{cols}, {shapes}"
+
+
+def persona_binding_family_keep_sql() -> str:
+    """Boolean expression: row belongs to a strategy family with any bound version.
+
+    Mirrors ``storage.persona_binding_has_binding`` (a version is bound when any
+    persona-id source is truthy). A row without a ``strategy_id`` is always kept.
+    Constant paths only; over-inclusion is the safe direction.
+    """
+    empty = "'null'::jsonb, '[]'::jsonb, '{}'::jsonb, '\"\"'::jsonb, 'false'::jsonb, '0'::jsonb"
+    bound = " OR ".join(
+        f"COALESCE({_sql_node(p)}, 'null'::jsonb) NOT IN ({empty})"
+        for p in (
+            ("metadata", "strategy_spec", "persona_ids"),
+            ("metadata", "personaIds"),
+            ("metadata", "persona_ids"),
+            ("metadata", "persona_id"),
+            ("metadata", "strategy_spec", "metadata", "persona_id"),
+        )
+    )
+    fam = "payload ->> 'strategy_id'"
+    return f"{fam} IS NULL OR bool_or({bound}) OVER (PARTITION BY {fam})"
 
 
 def persona_binding_rows_from_columns(rows) -> list[dict]:

@@ -28,7 +28,10 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 from . import service as service_module
 from .models import RegistryEntryCreate
-from .storage import PERSONA_BINDING_ROW_KEYS, get_store, persona_binding_row, reset_store
+from .storage import (
+    PERSONA_BINDING_ROW_KEYS, get_store, persona_binding_candidate_family_rows,
+    persona_binding_row, reset_store,
+)
 
 # Reviewer finding 2: once the durable Postgres backend is selected, the
 # service now fails closed (500) unless auth is explicitly strict with a
@@ -157,12 +160,50 @@ def test_persona_binding_sql_projection_matches_python_projection(pg_app):
     legacy = dict(raw, registry_id=legacy_id, strategy_id="pb-sql-legacy")
     entries.put(legacy_id, json.dumps(legacy))
 
-    expected = [persona_binding_row(e) for e in store.list_all_entries()]
+    all_rows = [persona_binding_row(e) for e in store.list_all_entries()]
+    expected = persona_binding_candidate_family_rows(all_rows)
     got = store.list_persona_binding_rows()
     assert got == expected
-    assert len(got) == len(shapes) + 1
+    # Only the bound families (shapes 0/1 and the legacy copy of shape 0's family
+    # row) survive; fully unbound families are narrowed out in SQL.
+    assert 0 < len(got) < len(all_rows)
     assert all(set(r) <= set(PERSONA_BINDING_ROW_KEYS) | {"metadata"} for r in got)
     assert "huge" not in str([r["metadata"] for r in got])
+
+
+def test_persona_binding_family_narrowing_keeps_all_versions_of_bound_families(pg_app):
+    """SQL family narrowing equals the Python rule: every version of a family with
+    any bound version (even an unbound/retired latest), nothing from fully
+    unbound families, per-tenant same-id families, and many unbound families."""
+    store = get_store()
+
+    def make(rid, sid, version, metadata, tenant=None, state=None):
+        entry = RegistryEntryCreate(
+            artifact_type="strategy_spec", strategy_id=sid, version=version,
+            storage_ref={"backend": "object_store", "path": "spec.json"},
+            checksum="sha256:cafef00d", metadata=metadata,
+        )
+        store.create(entry, rid)
+
+    make("old-bound", "fam-a", "1.0.0", {"persona_ids": ["p1"]})
+    make("new-unbound", "fam-a", "2.0.0", {"persona_ids": []})
+    make("tie-1", "fam-b", "1.0.0", {"personaIds": ["p2"]})
+    make("tie-2", "fam-b", "1.0.1", {"status": "retired"})
+    make("retired-latest", "fam-c", "3.0.0", {"lifecycle_state": "retired"})
+    make("nested-bound", "fam-c", "1.0.0", {"strategy_spec": {"persona_ids": ["p3"]}})
+    make("inner-meta-bound", "fam-d", "1.0.0", {"strategy_spec": {"metadata": {"persona_id": "p4"}}})
+    make("null-bound", "fam-e", "1.0.0", {"persona_id": None})
+    for i in range(300):
+        make(f"unbound-{i}", f"unbound-fam-{i}", "1.0.0", {"persona_ids": [], "note": i})
+
+    all_rows = [persona_binding_row(e) for e in store.list_all_entries()]
+    got = store.list_persona_binding_rows()
+    assert got == persona_binding_candidate_family_rows(all_rows)
+    ids = {r["registry_id"] for r in got}
+    assert ids == {
+        "old-bound", "new-unbound", "tie-1", "tie-2", "retired-latest",
+        "nested-bound", "inner-meta-bound",
+    }
 
 
 def test_register_and_readback_survive_fresh_process_restart(pg_app):

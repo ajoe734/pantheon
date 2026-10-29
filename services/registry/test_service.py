@@ -3182,3 +3182,37 @@ def test_strategy_spec_list_persona_binding_view_is_light_and_scoped(strict_clie
     # Unauthenticated and bad view are rejected, never silently full/empty.
     assert strict_client.get(f"{path}?view=persona_binding").status_code in (401, 403)
     assert strict_client.get(f"{path}?view=bogus", headers=_bearer(token_a)).status_code == 422
+
+
+def test_strategy_spec_persona_binding_view_keeps_whole_bound_families_only(strict_client):
+    token_a = _jwt(subject="pbf-a", tenant="tenant-a")
+    token_b = _jwt(subject="pbf-b", tenant="tenant-b")
+    first_ids: dict[tuple[str, str], str] = {}
+    for token, tenant, sid, version, personas in (
+        (token_a, "a", "pbf-bound-old", "1.0.0", ["p1"]),
+        (token_a, "a", "pbf-bound-old", "2.0.0", []),
+        (token_a, "a", "pbf-unbound", "1.0.0", []),
+        (token_b, "b", "pbf-other-tenant", "1.0.0", ["p9"]),
+    ):
+        lineage = {"source_run_ids": ["run-1"]}
+        if (tenant, sid) in first_ids:
+            lineage["parent_registry_ids"] = [first_ids[(tenant, sid)]]
+        resp = strict_client.post(
+            "/api/registry/strategy-specs",
+            json={
+                "strategy_id": sid, "version": version, "lineage": lineage,
+                "strategy_spec": _valid_spec(sid, rev=version),
+                "metadata": {"persona_ids": personas},
+            },
+            headers=_bearer(token),
+        )
+        assert resp.status_code == 200, resp.text
+        first_ids.setdefault((tenant, sid), resp.json()["entry"]["registry_id"])
+
+    path = "/api/registry/strategy-specs"
+    light = strict_client.get(f"{path}?view=persona_binding", headers=_bearer(token_a))
+    assert light.status_code == 200
+    got = sorted((e["entry"]["strategy_id"], e["entry"]["version"]) for e in light.json())
+    # Every version of the bound family (incl. unbound latest) is kept; the fully
+    # unbound family is dropped; tenant-b's bound family never leaks into tenant-a.
+    assert got == [("pbf-bound-old", "1.0.0"), ("pbf-bound-old", "2.0.0")]

@@ -80,6 +80,30 @@ def persona_binding_row(entry: RegistryEntry) -> dict:
     return row
 
 
+def persona_binding_has_binding(row: dict) -> bool:
+    """True when any persona-id source of a flat binding row is truthy."""
+    meta = row.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    inner = meta.get("strategy_spec")
+    inner = inner if isinstance(inner, dict) else {}
+    inner_meta = inner.get("metadata")
+    inner_meta = inner_meta if isinstance(inner_meta, dict) else {}
+    return bool(
+        inner.get("persona_ids") or meta.get("personaIds") or meta.get("persona_ids")
+        or meta.get("persona_id") or inner_meta.get("persona_id")
+    )
+
+
+def persona_binding_candidate_family_rows(rows: list[dict]) -> list[dict]:
+    """Keep every version of each strategy family with any bound version.
+
+    Families whose whole version history is unbound are dropped; rows without a
+    ``strategy_id`` are kept. Order is preserved.
+    """
+    bound = {r.get("strategy_id") for r in rows if persona_binding_has_binding(r)}
+    return [r for r in rows if r.get("strategy_id") is None or r.get("strategy_id") in bound]
+
+
 class RegistryUniqueViolationError(ValueError):
     """Raised when a create would collide on a composite ``unique_fields``
     identity (e.g. (strategy_id, version, artifact_type)) already held by a
@@ -294,7 +318,9 @@ class RegistryStore:
             ]
 
     def list_persona_binding_rows(self) -> list[dict]:
-        return [persona_binding_row(entry) for entry in self.list_all_entries()]
+        return persona_binding_candidate_family_rows(
+            [persona_binding_row(entry) for entry in self.list_all_entries()]
+        )
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""
