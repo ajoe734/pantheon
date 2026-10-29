@@ -31,7 +31,12 @@ from .models import (
     RegistryEntryCreate,
     utc_now_iso,
 )
-from .storage import RegistryConcurrentUpdateError
+from .storage import (
+    PERSONA_BINDING_INNER_META_KEYS,
+    PERSONA_BINDING_META_KEYS,
+    PERSONA_BINDING_SPEC_KEYS,
+    RegistryConcurrentUpdateError,
+)
 
 
 class DivergentCommandReplayError(ValueError):
@@ -799,6 +804,13 @@ class PostgresRegistryStore:
             for raw in self._entries.list_all()
         ]
 
+    def list_persona_binding_entries(self) -> list[RegistryEntry]:
+        """Persona-binding light entries projected inside Postgres (no full-body decode)."""
+        return [
+            RegistryEntry.from_dict(raw)
+            for raw in self._entries.list_all_projected(persona_binding_projection_sql())
+        ]
+
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         entries = self.list_by_strategy(strategy_id)
         approved = [e for e in entries if e.artifact_state.value == "approved"]
@@ -810,6 +822,54 @@ class PostgresRegistryStore:
 
         approved.sort(key=lambda e: _parse_ver(e.version), reverse=True)
         return approved[0]
+
+
+def _sql_node(path: tuple[str, ...]) -> str:
+    return "payload #> '{" + ",".join(path) + "}'"
+
+
+def _sql_pick(path: tuple[str, ...], keys: tuple[str, ...]) -> str:
+    """jsonb object holding only the present ``keys`` under ``path`` (``{}`` if none)."""
+    return " || ".join(
+        f"CASE WHEN {_sql_node(path + (k,))} IS NOT NULL "
+        f"THEN jsonb_build_object('{k}', {_sql_node(path + (k,))}) ELSE '{{}}'::jsonb END"
+        for k in keys
+    )
+
+
+def _sql_created_at_only(path: tuple[str, ...]) -> str:
+    created = _sql_node(path + ("provenance", "created_at"))
+    return (
+        f"CASE WHEN {created} IS NOT NULL THEN jsonb_build_object('provenance', "
+        f"jsonb_build_object('created_at', {created})) ELSE '{{}}'::jsonb END"
+    )
+
+
+def persona_binding_projection_sql() -> str:
+    """jsonb expression over ``payload`` equal to ``persona_binding_entry(...).to_dict()``.
+
+    Path lookups run inside Postgres on the already-decoded row, so the heavy
+    spec body, evaluation summary and approval evidence are never transferred
+    or JSON-decoded by Python. Built only from the module's constant key
+    tuples (no request input).
+    """
+    meta = ("metadata",)
+    spec = ("metadata", "strategy_spec")
+    spec_meta = ("metadata", "strategy_spec", "metadata")
+    spec_light = (
+        f"{_sql_pick(spec, PERSONA_BINDING_SPEC_KEYS)} || {_sql_created_at_only(spec)} || "
+        f"CASE WHEN jsonb_typeof({_sql_node(spec_meta)}) = 'object' THEN jsonb_build_object('metadata', "
+        f"{_sql_pick(spec_meta, PERSONA_BINDING_INNER_META_KEYS)}) ELSE '{{}}'::jsonb END"
+    )
+    light_meta = (
+        f"{_sql_pick(meta, PERSONA_BINDING_META_KEYS)} || {_sql_created_at_only(meta)} || "
+        f"CASE WHEN jsonb_typeof({_sql_node(spec)}) = 'object' "
+        f"THEN jsonb_build_object('strategy_spec', {spec_light}) ELSE '{{}}'::jsonb END"
+    )
+    return (
+        "((payload - ARRAY['evaluation_summary', 'approval_evidence', 'metadata']) "
+        f"|| jsonb_build_object('metadata', {light_meta}))"
+    )
 
 
 def _registry_backend() -> str:

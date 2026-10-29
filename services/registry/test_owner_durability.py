@@ -11,6 +11,7 @@ and rejection of a stale CAS request over HTTP (409).
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -26,7 +27,8 @@ from fastapi.testclient import TestClient
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 from . import service as service_module
-from .storage import reset_store
+from .models import RegistryEntryCreate
+from .storage import get_store, persona_binding_entry, reset_store
 
 # Reviewer finding 2: once the durable Postgres backend is selected, the
 # service now fails closed (500) unless auth is explicitly strict with a
@@ -116,6 +118,51 @@ def _register(client: TestClient, **overrides) -> dict:
     resp = client.post("/api/registry/entries", json=payload)
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+def test_persona_binding_sql_projection_matches_python_projection(pg_app):
+    """The Postgres-side selected-field read must equal the full-read projection
+    for every metadata shape (missing/non-dict/null values, nested spec, legacy
+    string-encoded payload) while omitting the heavy bodies."""
+    spec = {
+        "persona_ids": ["p1"], "spec_version": "1.0.0", "lifecycle_state": "active",
+        "strategy_id": "s", "created_at": "2026-01-01", "body": "x" * 4000,
+        "provenance": {"created_at": "2026-01-02", "other": "y"},
+        "metadata": {"tenant_id": "t", "persona_id": None, "noise": 1},
+    }
+    shapes = [
+        {"persona_ids": ["p1"], "tenant_id": None, "version": "1.0.0", "huge": "z" * 4000,
+         "provenance": {"created_at": "2026-01-03", "x": 1}, "strategy_spec": spec},
+        {"personaIds": ["p2"], "strategy_spec": {"metadata": "not-a-dict", "provenance": {}}},
+        {"strategy_spec": "scalar", "provenance": "scalar", "status": "approved"},
+        {},
+        None,
+        ["not", "a", "dict"],
+    ]
+    store = get_store()
+    for index, metadata in enumerate(shapes):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec", strategy_id=f"pb-sql-{index}", version="1.0.0",
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d", metadata=metadata,
+                evaluation_summary={"big": "e" * 2000},
+            ),
+            f"pb-sql-{index}-id",
+        )
+    # Legacy string-encoded payload row is still read (as list_all does).
+    entries = store._entries
+    raw = entries.list_all()[0]
+    legacy_id = "legacy-string-encoded"
+    legacy = dict(raw, registry_id=legacy_id, strategy_id="pb-sql-legacy")
+    entries.put(legacy_id, json.dumps(legacy))
+
+    expected = [persona_binding_entry(e) for e in store.list_all_entries()]
+    got = store.list_persona_binding_entries()
+    assert got == expected
+    assert len(got) == len(shapes) + 1
+    assert all(e.evaluation_summary is None and e.approval_evidence is None for e in got)
+    assert "huge" not in str([e.metadata for e in got])
 
 
 def test_register_and_readback_survive_fresh_process_restart(pg_app):

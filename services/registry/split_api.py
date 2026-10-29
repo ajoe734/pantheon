@@ -351,6 +351,10 @@ class RegistryService:
     def list_all_entries(self) -> list[RegistryEntryView]:
         return [self._to_view(e) for e in self.store.list_all_entries()]
 
+    def list_persona_binding_entries(self) -> list[RegistryEntryView]:
+        """Same entries as :meth:`list_all_entries`, heavy bodies dropped by the owner store."""
+        return [self._to_view(e) for e in self.store.list_persona_binding_entries()]
+
     def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:
         """Return the entry exactly as it was at its first successful
         creation (reviewer finding 5), if the store recorded one.

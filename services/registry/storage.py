@@ -10,6 +10,7 @@ needs no changes to select between them.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import threading
 from typing import Any, Callable, Optional
@@ -21,6 +22,48 @@ from .models import (
     RegistryEntryCreate,
     utc_now_iso,
 )
+
+
+# Fields the persona-binding view keeps (current-version selection, lifecycle
+# filter and persona extraction read exactly these); everything else in the
+# entry metadata, plus evaluation_summary / approval_evidence, is dropped.
+PERSONA_BINDING_META_KEYS = (
+    "spec_version_id", "tenant_id", "spec_version", "version", "personaIds",
+    "persona_ids", "persona_id", "lifecycle_state", "state", "status",
+)
+PERSONA_BINDING_SPEC_KEYS = (
+    "persona_ids", "spec_version", "lifecycle_state", "strategy_id", "created_at",
+)
+PERSONA_BINDING_INNER_META_KEYS = ("tenant_id", "persona_id")
+
+
+def persona_binding_entry(entry: RegistryEntry) -> RegistryEntry:
+    """Light projection of a StrategySpec entry for persona-binding counts.
+
+    Same entry and version row; only the heavy spec body, evaluation summary
+    and approval evidence are dropped. The Postgres owner computes the same
+    shape in SQL (``pg_store.persona_binding_projection_sql``).
+    """
+    meta = entry.metadata if isinstance(entry.metadata, dict) else {}
+    light_meta = {k: meta[k] for k in PERSONA_BINDING_META_KEYS if k in meta}
+    prov = meta.get("provenance")
+    if isinstance(prov, dict) and "created_at" in prov:
+        light_meta["provenance"] = {"created_at": prov["created_at"]}
+    inner = meta.get("strategy_spec")
+    if isinstance(inner, dict):
+        light_inner = {k: inner[k] for k in PERSONA_BINDING_SPEC_KEYS if k in inner}
+        inner_prov = inner.get("provenance")
+        if isinstance(inner_prov, dict) and "created_at" in inner_prov:
+            light_inner["provenance"] = {"created_at": inner_prov["created_at"]}
+        inner_meta = inner.get("metadata")
+        if isinstance(inner_meta, dict):
+            light_inner["metadata"] = {
+                k: inner_meta[k] for k in PERSONA_BINDING_INNER_META_KEYS if k in inner_meta
+            }
+        light_meta["strategy_spec"] = light_inner
+    return dataclasses.replace(
+        entry, metadata=light_meta, evaluation_summary=None, approval_evidence=None,
+    )
 
 
 class RegistryUniqueViolationError(ValueError):
@@ -235,6 +278,9 @@ class RegistryStore:
                 RegistryEntry.from_dict(entry.to_dict())
                 for entry in self._entries.values()
             ]
+
+    def list_persona_binding_entries(self) -> list[RegistryEntry]:
+        return [persona_binding_entry(entry) for entry in self.list_all_entries()]
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""

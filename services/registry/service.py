@@ -20,7 +20,6 @@ import logging
 import os
 import re
 import uuid
-import dataclasses
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Literal, Optional
 
@@ -1496,6 +1495,8 @@ def _filter_strategy_spec_views(
     authorization: Optional[str],
     x_tenant_id: Optional[str],
     artifact_state: Optional[ArtifactState],
+    *,
+    persona_binding: bool = False,
 ) -> list[RegistryEntryView]:
     ctx = _authenticate_registry_read(authorization)
     caller_tenant = _caller_tenant(ctx)
@@ -1508,7 +1509,10 @@ def _filter_strategy_spec_views(
     ):
         raise HTTPException(status_code=403, detail="X-Tenant-Id header does not match verified caller tenant.")
     svc = get_registry_service()
-    views = svc.list_all_entries() if strategy_id is None else svc.list_by_strategy(strategy_id)
+    if persona_binding:
+        views = svc.list_persona_binding_entries()
+    else:
+        views = svc.list_all_entries() if strategy_id is None else svc.list_by_strategy(strategy_id)
     return [
         view for view in views
         if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC
@@ -1518,47 +1522,6 @@ def _filter_strategy_spec_views(
     ]
 
 
-_PERSONA_BINDING_META_KEYS = (
-    "spec_version_id", "tenant_id", "spec_version", "version", "personaIds",
-    "persona_ids", "persona_id", "lifecycle_state", "state", "status",
-)
-_PERSONA_BINDING_SPEC_KEYS = (
-    "persona_ids", "spec_version", "lifecycle_state", "strategy_id", "created_at",
-)
-
-
-def _persona_binding_view(view: RegistryEntryView) -> RegistryEntryView:
-    """Light projection of a StrategySpec view for persona-binding counts.
-
-    Same entries, tenant filtering and version rows as the full list; only
-    the heavy spec body, evaluation summary and approval evidence are
-    dropped. Keeps every field the current-version selection, lifecycle
-    filter and persona extraction read.
-    """
-    entry = view.entry
-    meta = entry.metadata if isinstance(entry.metadata, dict) else {}
-    light_meta = {k: meta[k] for k in _PERSONA_BINDING_META_KEYS if k in meta}
-    prov = meta.get("provenance")
-    if isinstance(prov, dict) and "created_at" in prov:
-        light_meta["provenance"] = {"created_at": prov["created_at"]}
-    inner = meta.get("strategy_spec")
-    if isinstance(inner, dict):
-        light_inner = {k: inner[k] for k in _PERSONA_BINDING_SPEC_KEYS if k in inner}
-        inner_prov = inner.get("provenance")
-        if isinstance(inner_prov, dict) and "created_at" in inner_prov:
-            light_inner["provenance"] = {"created_at": inner_prov["created_at"]}
-        inner_meta = inner.get("metadata")
-        if isinstance(inner_meta, dict):
-            light_inner["metadata"] = {
-                k: inner_meta[k] for k in ("tenant_id", "persona_id") if k in inner_meta
-            }
-        light_meta["strategy_spec"] = light_inner
-    light = dataclasses.replace(
-        entry, metadata=light_meta, evaluation_summary=None, approval_evidence=None,
-    )
-    return RegistryEntryView(entry=light, deployment_stage=view.deployment_stage)
-
-
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
@@ -1566,10 +1529,9 @@ def list_all_strategy_spec_entries(
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
-    views = _filter_strategy_spec_views(None, authorization, x_tenant_id, artifact_state)
-    if view == "persona_binding":
-        return [_persona_binding_view(v) for v in views]
-    return views
+    return _filter_strategy_spec_views(
+        None, authorization, x_tenant_id, artifact_state, persona_binding=view == "persona_binding",
+    )
 
 
 @app.get("/api/registry/strategies/{strategy_id}/strategy-specs", response_model=list[RegistryEntryView])
