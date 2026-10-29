@@ -759,34 +759,58 @@ for _ in $(seq 1 "${STAGING_READY_TRIES:-30}"); do
 done
 emit_bff_not_ready_diagnostics() {
   # Best-effort, bounded actual BFF state + log tail; never prints Config.Env and never changes the original failure.
-  local cid state logs
+  # Raw docker output is capped, masked against EVERY nonempty secret value, and only then cut to the final size.
+  local cid state logs cap=1048576
   cid="$(run_priv timeout 10 "$DOCKER_BIN" compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -a -q operator-bff 2>/dev/null | head -n1)" || return 0
   [[ -n "$cid" ]] || { echo "BFF_DIAG container=missing" >&2; return 0; }
-  state="$(run_priv timeout 10 "$DOCKER_BIN" inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} restart_count={{.RestartCount}} error={{.State.Error}}' "$cid" 2>&1 | head -c 1024)" || true
-  logs="$(run_priv timeout 10 "$DOCKER_BIN" logs --tail 100 "$cid" 2>&1 | tail -c 16384)" || true
-  # One fail-closed redactor for ALL free-text diagnostics (state + logs): if any required secret file is unreadable, withhold everything.
-  {
-    printf 'BFF_DIAG state_and_logs_begin\n'
-    { printf '%s\n' "$state"; printf '\n--BFF_DIAG_SPLIT--\n'; printf '%s\n' "$logs"; } | run_priv python3 -c '
+  local redactor='
 import sys
-text = sys.stdin.read()
+mode, cap, limit, env_path, pw_path = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
+raw = sys.stdin.buffer.read()
 vals = set()
-for path in sys.argv[1:]:
-    raw = open(path, encoding="utf-8", errors="replace").read()
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        v = line.split("=", 1)[1] if "=" in line and path.endswith(".env") else line
-        v = v.strip().strip("\"\x27")
-        if len(v) >= 4:
-            vals.add(v)
+def add(v):
+    v = v.strip()
+    if v:
+        vals.add(v)
+        for q in ("\"", "\x27"):
+            if len(v) > 2 and v[0] == q and v[-1] == q:
+                vals.add(v[1:-1])
+        if "://" in v and "@" in v:
+            cred = v.split("://", 1)[1].rsplit("@", 1)[0]
+            if ":" in cred:
+                vals.add(cred.split(":", 1)[1])
+for line in open(env_path, encoding="utf-8", errors="replace").read().splitlines():
+    line = line.strip()
+    if line and not line.startswith("#"):
+        add(line.split("=", 1)[1] if "=" in line else line)
+pw = open(pw_path, encoding="utf-8", errors="replace").read()
+add(pw)
+for line in pw.splitlines():
+    add(line)
+maxlen = max([len(v.encode()) for v in vals] or [0])
+if len(raw) >= cap:
+    # A capped read may split a secret at the cut edge: withhold that boundary fragment.
+    raw = raw[maxlen:] if mode == "tail" else raw[: max(len(raw) - maxlen, 0)]
+text = raw.decode("utf-8", errors="replace")
 for v in sorted(vals, key=len, reverse=True):
     text = text.replace(v, "***")
-sys.stdout.write(text)
-' "${STAGING_SECRETS_ENV_FILE}" "${STAGING_POSTGRES_PASSWORD_FILE}" 2>/dev/null || echo "BFF_DIAG logs_redaction_failed (state and logs withheld)"
-    printf 'BFF_DIAG state_and_logs_end\n'
-  } >&2 || true
+data = text.encode()
+data = data[-limit:] if mode == "tail" else data[:limit]
+sys.stdout.buffer.write(data)
+'
+  local raw_state raw_logs
+  raw_state="${LOCAL_WORK_DIR}/bff_diag_state.raw"; raw_logs="${LOCAL_WORK_DIR}/bff_diag_logs.raw"
+  ( umask 077
+    run_priv timeout 10 "$DOCKER_BIN" inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} restart_count={{.RestartCount}} error={{.State.Error}}' "$cid" 2>&1 | head -c "$cap" >"$raw_state"
+    run_priv timeout 10 "$DOCKER_BIN" logs --tail 100 "$cid" 2>&1 | tail -c "$cap" >"$raw_logs" ) || true
+  # One fail-closed redactor for ALL free-text diagnostics (state + logs): if any required secret file is unreadable, withhold everything.
+  if state="$(run_priv python3 -c "$redactor" head "$cap" 1024 "${STAGING_SECRETS_ENV_FILE}" "${STAGING_POSTGRES_PASSWORD_FILE}" <"$raw_state" 2>/dev/null)" \
+    && logs="$(run_priv python3 -c "$redactor" tail "$cap" 16384 "${STAGING_SECRETS_ENV_FILE}" "${STAGING_POSTGRES_PASSWORD_FILE}" <"$raw_logs" 2>/dev/null)"; then
+    { printf 'BFF_DIAG state_and_logs_begin\n%s\n\n--BFF_DIAG_SPLIT--\n%s\nBFF_DIAG state_and_logs_end\n' "$state" "$logs"; } >&2 || true
+  else
+    { printf 'BFF_DIAG state_and_logs_begin\nBFF_DIAG logs_redaction_failed (state and logs withheld)\nBFF_DIAG state_and_logs_end\n'; } >&2 || true
+  fi
+  rm -f "$raw_state" "$raw_logs" || true
   return 0
 }
 if [[ "$READY_CODE" != "200" ]]; then
