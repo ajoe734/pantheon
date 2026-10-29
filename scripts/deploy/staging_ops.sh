@@ -390,28 +390,51 @@ PY
 
     # 1. Create remote bundle directory safely over IAP SSH before SCP transfer.
     REMOTE_MKDIR_CMD="set -euo pipefail; rm -rf '${REMOTE_BUNDLE_DIR}' && mkdir -p '${REMOTE_BUNDLE_DIR}' && chmod 0700 '${REMOTE_BUNDLE_DIR}'"
-    # A freshly created VM can answer IAP 4047 ("Failed to lookup instance") before it is fully started: retry only that, same args.
+    # A freshly created VM can answer IAP 4047 (lookup) or 4003 (backend port 22 not listening yet) before sshd is up:
+    # retry only those two transport codes, same args, within a short total budget that includes the command runtime.
     SSH_MKDIR_RC=0
-    for SSH_MKDIR_ATTEMPT in 1 2 3; do
+    SSH_MKDIR_BUDGET_S=120
+    SSH_MKDIR_MAX_ATTEMPTS=6
+    SSH_MKDIR_START="${SECONDS}"
+    for ((SSH_MKDIR_ATTEMPT = 1; SSH_MKDIR_ATTEMPT <= SSH_MKDIR_MAX_ATTEMPTS; SSH_MKDIR_ATTEMPT++)); do
+      SSH_MKDIR_REMAINING=$((SSH_MKDIR_BUDGET_S - (SECONDS - SSH_MKDIR_START)))
+      if [[ "${SSH_MKDIR_REMAINING}" -lt 1 ]]; then
+        SSH_MKDIR_REMAINING=1
+      fi
       SSH_MKDIR_RC=0
       SSH_MKDIR_OUT="$(
-        "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
+        timeout "${SSH_MKDIR_REMAINING}" "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
           --project="${STAGING_GCP_PROJECT_ID}" \
           --zone="${STAGING_GCP_ZONE}" \
           --tunnel-through-iap \
           --quiet \
           --command="${REMOTE_MKDIR_CMD}" 2>&1
       )" || SSH_MKDIR_RC=$?
-      if [[ "${SSH_MKDIR_RC}" -eq 0 || "${SSH_MKDIR_ATTEMPT}" -eq 3 ]] || ! grep -q '4047' <<<"${SSH_MKDIR_OUT}" || ! grep -qi 'Failed to lookup instance' <<<"${SSH_MKDIR_OUT}"; then
+      [[ "${SSH_MKDIR_RC}" -eq 0 ]] && break
+      SSH_MKDIR_REASON=""
+      if grep -q '4047' <<<"${SSH_MKDIR_OUT}" && grep -qi 'Failed to lookup instance' <<<"${SSH_MKDIR_OUT}"; then
+        SSH_MKDIR_REASON="IAP 4047 Failed to lookup instance"
+      elif grep -q '4003' <<<"${SSH_MKDIR_OUT}" && grep -qi 'failed to connect to backend' <<<"${SSH_MKDIR_OUT}"; then
+        SSH_MKDIR_REASON="IAP 4003 failed to connect to backend port 22"
+      fi
+      if [[ -z "${SSH_MKDIR_REASON}" || "${SSH_MKDIR_ATTEMPT}" -eq "${SSH_MKDIR_MAX_ATTEMPTS}" || $((SECONDS - SSH_MKDIR_START + 8)) -ge "${SSH_MKDIR_BUDGET_S}" ]]; then
         break
       fi
-      printf 'HOST_SSH_MKDIR_RETRY attempt=%s/3 reason=IAP 4047 Failed to lookup instance (rc=%s): %s\n' "${SSH_MKDIR_ATTEMPT}" "${SSH_MKDIR_RC}" "$(printf '%s' "${SSH_MKDIR_OUT}" | tail -n 3 | tr '\n' ' ' | cut -c1-500)" >&2
+      printf 'HOST_SSH_MKDIR_RETRY attempt=%s/%s reason=%s (rc=%s): %s\n' "${SSH_MKDIR_ATTEMPT}" "${SSH_MKDIR_MAX_ATTEMPTS}" "${SSH_MKDIR_REASON}" "${SSH_MKDIR_RC}" "$(printf '%s' "${SSH_MKDIR_OUT}" | tail -n 3 | tr '\n' ' ' | cut -c1-500)" >&2
       sleep 8
     done
     if [[ "${SSH_MKDIR_RC}" -ne 0 ]]; then
       rm -rf "${STAGE_BUNDLE_DIR}"
       # gcloud prints recommendation boilerplate after the real cause; keep the captured body (bounded) before the short JSON.
       printf 'HOST_SSH_MKDIR_FAILED diagnostic body (rc=%s, first 32768 chars):\n%s\n' "${SSH_MKDIR_RC}" "${SSH_MKDIR_OUT:0:32768}" >&2
+      if [[ -n "${SSH_MKDIR_REASON:-}" ]]; then
+        # Known startup error exhausted: keep bounded boot facts (no metadata values) before the caller's cleanup deletes the VM.
+        printf 'HOST_SSH_MKDIR_VM_DESCRIBE (bounded):\n' >&2
+        timeout 15 "${GCLOUD_BIN}" compute instances describe "${VM_NAME}" --project="${STAGING_GCP_PROJECT_ID}" --zone="${STAGING_GCP_ZONE}" \
+          --format='yaml(status,tags.items,networkInterfaces[].network,networkInterfaces[].subnetwork,serviceAccounts[].scopes)' 2>&1 | head -c 4096 >&2 || true
+        printf 'HOST_SSH_MKDIR_SERIAL_PORT1_TAIL (bounded):\n' >&2
+        timeout 15 "${GCLOUD_BIN}" compute instances get-serial-port-output "${VM_NAME}" --project="${STAGING_GCP_PROJECT_ID}" --zone="${STAGING_GCP_ZONE}" --port=1 2>&1 | tail -n 40 | tail -c 8192 >&2 || true
+      fi
       die_json "HOST_SSH_MKDIR_FAILED" "Failed to prepare ${REMOTE_BUNDLE_DIR} on ${VM_NAME} over IAP SSH (rc=${SSH_MKDIR_RC}): $(printf '%s' "$SSH_MKDIR_OUT" | tail -n 5 | tr '\n"\\' '   ' | cut -c1-1000)"
     fi
 

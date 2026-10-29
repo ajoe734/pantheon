@@ -986,7 +986,7 @@ if args[:3] == ["compute", "instance-templates", "describe"]:
             "network": "https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging",
             "subnetwork": "https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1",
         }
-    print(json.dumps({"name": args[3], "properties": {"networkInterfaces": [nic]}}))
+    print(json.dumps({"name": args[3], "properties": {"networkInterfaces": [nic], "serviceAccounts": [{"email": "template-sa@example.invalid", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}]}}))
     raise SystemExit(0)
 
 if args[:3] == ["compute", "instances", "create"]:
@@ -1017,7 +1017,8 @@ if args[:3] == ["compute", "instances", "create"]:
         "selfLink": f"https://www.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{name}",
         "labels": labels,
         "disks": disks_attached,
-        "serviceAccounts": [{"email": sa_email, "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
+        # Real gcloud fills the 7 default scopes (no cloud-platform) unless --scopes is given.
+        "serviceAccounts": [{"email": sa_email, "scopes": (parse_flag("--scopes").split(",") if parse_flag("--scopes") and os.environ.get("GCLOUD_IGNORE_SCOPES") != "true" else ["https://www.googleapis.com/auth/devstorage.read_only", "https://www.googleapis.com/auth/logging.write"])}],
         "networkInterfaces": [
             {
                 # Real gcloud falls back to the default network/subnet when the NIC is not restated.
@@ -1091,6 +1092,11 @@ if args[:2] == ["compute", "ssh"]:
         state["ssh_4047_remaining"] -= 1
         save_state()
         print("ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4047: 'Failed to lookup instance'].", file=sys.stderr)
+        raise SystemExit(255)
+    if state.get("ssh_4003_remaining", 0) > 0:
+        state["ssh_4003_remaining"] -= 1
+        save_state()
+        print("ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend'].", file=sys.stderr)
         raise SystemExit(255)
     if state.get("ssh_nonretryable"):
         print("ERROR: [4033: 'permission denied']", file=sys.stderr)
@@ -2448,6 +2454,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(live_nic["network"].endswith("/networks/pantheon-staging"))
         self.assertTrue(live_nic["subnetwork"].endswith("/subnetworks/pantheon-staging-asia-east1"))
         self.assertEqual(live_nic["accessConfigs"][0]["natIP"], "203.0.113.10")
+        self.assertIn("--scopes=https://www.googleapis.com/auth/cloud-platform", inst_create_cmd)
         self.assertIn("--service-account=pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com", inst_create_cmd)
         self.assertIn("name=pantheon-stg-pantheon-20261024-001-boot,device-name=pantheon-stg-pantheon-20261024-001-boot,boot=yes,mode=rw,auto-delete=no", inst_create_cmd)
         self.assertIn("name=pantheon-stg-data-pantheon-20261024-001,device-name=staging-data,mode=rw,auto-delete=no", inst_create_cmd)
@@ -2495,7 +2502,15 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(bad_state["disks"], [])
         self.assertEqual(bad_state["addresses"], [])
 
-        # First IAP SSH: only exact transient 4047 is retried (fake sleep keeps wall time at zero)
+        # Returned SA scopes differing from the template (gcloud defaults) are rejected and compensated
+        self.setUp()
+        bad_scopes = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(GCLOUD_IGNORE_SCOPES="true"), capture_output=True, text=True)
+        self.assertNotEqual(bad_scopes.returncode, 0)
+        self.assertIn("do not match template scopes", bad_scopes.stderr)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", bad_scopes.stderr)
+        self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
+
+        # First IAP SSH: only exact transient 4047/4003 is retried (fake sleep keeps wall time at zero)
         fake_sleep_dir = self.tmp_path / "fake-sleep-bin"
         fake_sleep_dir.mkdir()
         (fake_sleep_dir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -2503,7 +2518,9 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         sleep_env = {"PATH": f"{fake_sleep_dir}:{os.environ['PATH']}"}
         for label, state_patch, expect_ok, expect_mkdirs in (
             ("transient", {"ssh_4047_remaining": 2}, True, 3),
-            ("exhausted", {"ssh_4047_remaining": 9}, False, 3),
+            ("transient_4003_then_4047", {"ssh_4003_remaining": 2, "ssh_4047_remaining": 1}, True, 4),
+            ("exhausted", {"ssh_4047_remaining": 99}, False, 6),
+            ("exhausted_4003", {"ssh_4003_remaining": 99}, False, 6),
             ("nonretryable", {"ssh_nonretryable": True}, False, 1),
         ):
             with self.subTest(ssh_retry=label):
@@ -2517,14 +2534,14 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertEqual(len(set(mkdir_calls)), 1)
                 if expect_ok:
                     self.assertEqual(res.returncode, 0, res.stderr)
-                    self.assertEqual(res.stderr.count("HOST_SSH_MKDIR_RETRY"), 2)
+                    self.assertEqual(res.stderr.count("HOST_SSH_MKDIR_RETRY"), expect_mkdirs - 1)
                 else:
                     self.assertNotEqual(res.returncode, 0)
                     self.assertIn("HOST_SSH_MKDIR_FAILED", res.stderr)
                     self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res.stderr)
                     self.assertIn("rc=255", res.stderr)
                     self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
-                    self.assertEqual(res.stderr.count("HOST_SSH_MKDIR_RETRY"), 2 if label == "exhausted" else 0)
+                    self.assertEqual(res.stderr.count("HOST_SSH_MKDIR_RETRY"), 0 if label == "nonretryable" else 5)
 
         # Test post-delete readback failure propagation when cloud resource lingers after delete
         self.setUp()
