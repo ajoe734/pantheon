@@ -894,6 +894,7 @@ if args[:3] == ["compute", "addresses", "create"]:
         "address": ip_val,
         "selfLink": f"https://www.googleapis.com/compute/v1/projects/{project}/regions/{region}/addresses/{name}",
         "labels": labels,
+        "description": parse_flag("--description"),
         "status": "RESERVED",
     }
     state["addresses"] = [a for a in state["addresses"] if a["name"] != name] + [obj]
@@ -2480,6 +2481,36 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res.stderr)
         cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
         self.assertEqual([a["name"] for a in cloud_state["addresses"]], ["foreign-unlabelled"])
+
+    def test_orphan_sweep_reclaims_expired_pending_address_without_local_journal(self) -> None:
+        # Provision, then simulate a runner killed between create and label update: no labels, no local journal.
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        addr = cloud_state["addresses"][0]
+        self.assertTrue(addr["description"].startswith("pantheon-pending-v1:"))
+        addr["labels"] = {}
+        foreign = {**addr, "id": "77", "name": "foreign-pending", "description": "pantheon-pending-v1:{}"}
+        mismatch = {**addr, "id": "78", "name": "pantheon-stg-ip-other-release"}
+        cloud_state["addresses"] += [foreign, mismatch]
+        cloud_state["instances"] = []
+        cloud_state["disks"] = []
+        self.gcloud_state_file.write_text(json.dumps(cloud_state), encoding="utf-8")
+        shutil.rmtree(self.state_dir)
+        res = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "orphan-sweep"],
+            env=self._base_env(
+                STAGING_STATE_DIR=str(self.tmp_path / "fresh-runner-state"),
+                STAGING_ORPHAN_CLEANUP_ENABLED="true",
+                STAGING_NOW_EPOCH="1792836001",
+            ),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        out = json.loads(res.stdout)
+        self.assertEqual([d["name"] for d in out["deleted_resources"]], ["pantheon-stg-ip-pantheon-20261024-001"])
+        final = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(a["name"] for a in final["addresses"]), ["foreign-pending", "pantheon-stg-ip-other-release"])
 
     def test_teardown_protects_unlabelled_address_with_different_id(self) -> None:
         subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)

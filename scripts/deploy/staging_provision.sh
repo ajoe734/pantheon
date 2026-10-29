@@ -536,10 +536,26 @@ PY
 }
 
 # Step 1: Allocate regional external IP
+# GA `addresses create` has no --labels, so the owned-pending state is recorded natively in the
+# description at create time; an independent orphan sweep can then discover an address whose label update never ran.
+ADDRESS_DESCRIPTION="$(
+  GCP_LABELS_CSV="$GCP_LABELS_CSV" STAGING_GCP_PROJECT_ID="$STAGING_GCP_PROJECT_ID" STAGING_GCP_REGION="$STAGING_GCP_REGION" python3 - <<'PY'
+import json
+import os
+
+labels = dict(p.split("=", 1) for p in os.environ["GCP_LABELS_CSV"].split(",") if "=" in p)
+print("pantheon-pending-v1:" + json.dumps(
+    {"labels": labels, "project": os.environ["STAGING_GCP_PROJECT_ID"], "region": os.environ["STAGING_GCP_REGION"]},
+    sort_keys=True, separators=(",", ":"),
+))
+PY
+)"
+
 run_gcloud_resource_create "address" "${IP_NAME}" \
   compute addresses create "${IP_NAME}" \
   --project="${STAGING_GCP_PROJECT_ID}" \
-  --region="${STAGING_GCP_REGION}"
+  --region="${STAGING_GCP_REGION}" \
+  --description="${ADDRESS_DESCRIPTION}"
 
 # Step 1b: Label the address just created (journaled above) and verify actual labels + identity.
 if [[ "${DRY_RUN}" != "true" ]]; then

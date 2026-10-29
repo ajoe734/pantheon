@@ -289,5 +289,15 @@
       ],
       "scope": "local mocked controller behavior only; not hosted evidence"
     }
+  },
+  "pending_address_orphan_discoverability": {
+    "summary": "addresses create now records owned-pending metadata (labels, project, region) in the address description; staging_destroy.sh orphan sweep and release-scoped query strictly recognise it (unlabelled address, staging/automatic, release+owner present, project/region match, name == pantheon-stg-ip-<release_id>) so a runner killed between create and label update leaves a TTL-reclaimable address. Foreign/unlabelled/malformed/mismatched addresses remain protected.",
+    "files": [
+      "scripts/deploy/staging_provision.sh",
+      "scripts/deploy/staging_destroy.sh",
+      "tests/deployment/test_staging_release.py"
+    ],
+    "verification": "python3 -m unittest tests.deployment.test_staging_release -k pending_address -k test_address -k cross_run: Ran 4 tests, OK (local mock only; not hosted evidence)",
+    "hosted_acceptance": "still pending; Stage 0 of 2, Prod 0 of 2"
   }
 }
