@@ -111,6 +111,22 @@
       "parity": true,
       "payload_bytes": 2421870,
       "note": "~21% store-level gain only; not hosted latency and not a p95 claim. Hosted 6.7MB/1.8s owner floor is not shown to be fixed."
-    }
+    },
+    "superseded_by": "registry_flat_select_python_assembly"
+  },
+  "registry_flat_select_python_assembly": {
+    "hosted_proof": false,
+    "context": "Root replay of b57222c05 (verified caller, 4869 versions, bindings match original, 3,136,996B) still owner 1215.3/1496.6ms with SQL execute 1057/1139ms: the cost was SQL jsonb object construction, not the DTO.",
+    "change": "Postgres owner now SELECTs the ~45 binding leaves as plain columns (payload #> path, missing leaf = printable COALESCE sentinel, JSON null preserved) plus two container-type columns, and assembles the same flat rows in Python (pg_store.persona_binding_select_sql / persona_binding_rows_from_columns, foundation PostgresJsonOwnerStore.list_all_selected). Replaces many per-field jsonb_build_object concatenations and list_all_projected. Same row set, legacy string payload unwrapping, ordering, auth/tenant/state filters, route and payload shape; no new endpoint/cache/fallback.",
+    "finding_during_work": "Dropping the `payload || '{}'` normalization made it 2378ms (per-lookup detoast); a per-leaf null-flag array cost ~200ms; both avoided in the final form.",
+    "tests": "real local postgres:16 (task-owned container, TEST_DATABASE_URL in RAM): registry test_owner_durability.py+test_service.py 111 passed incl. SQL-vs-Python projection parity over missing/null/non-dict/nested/legacy-string shapes; BFF persona_fleet_contract+management_read_budget+research_knowledge_source_ports 92 passed; git diff --check clean",
+    "local_benchmark": {
+      "scope": "store level, local isolated Postgres, 4800 synthetic rows (~1.2KB spec body), median of 7, same fixture and script for both",
+      "previous_head_b57222c05_ms": 1067.5,
+      "new_ms": 599.0,
+      "output_sha_identical": true,
+      "note": "~44% store-level reduction on loopback; not hosted latency, no p95 claimed. Whole-fleet warm <=1000ms still unproven; root replay of this head required."
+    },
+    "requires": "Root bounded read-only actual-profile replay of this head; final hosted task owns release and p95."
   }
 }

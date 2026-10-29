@@ -48,7 +48,7 @@ def persona_binding_entry(entry: RegistryEntry) -> RegistryEntry:
 
     Same entry and version row; only the heavy spec body, evaluation summary
     and approval evidence are dropped. The Postgres owner computes the same
-    shape in SQL (``pg_store.persona_binding_projection_sql``).
+    shape in SQL (``pg_store.persona_binding_select_sql``).
     """
     meta = entry.metadata if isinstance(entry.metadata, dict) else {}
     light_meta = {k: meta[k] for k in PERSONA_BINDING_META_KEYS if k in meta}

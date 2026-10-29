@@ -390,38 +390,28 @@ class PostgresJsonOwnerStore:
                 records.append(decoded)
         return records
 
-    def list_all_projected(
+    def list_all_selected(
         self,
-        projection_sql: str,
+        columns_sql: str,
         *,
         conn: Optional[Any] = None,
-    ) -> List[Dict[str, Any]]:
-        """List every object row's payload reduced by a SQL/JSONB projection.
+    ) -> List[tuple]:
+        """Select code-defined column expressions over each object row's payload.
 
-        ``projection_sql`` is a trusted, code-defined jsonb expression over the
-        normalized ``payload`` column (never request input). Legacy
-        string-encoded payloads are unwrapped and non-object rows skipped, as
-        in :meth:`list_all`, but the projection runs in Postgres so unselected
-        fields are neither transferred nor JSON-decoded.
+        Same row set, legacy string-payload unwrapping and ``updated_at``
+        ordering as :meth:`list_all`, but only ``columns_sql`` (trusted, never
+        request input; expressions reference ``payload``) is fetched, with no
+        per-row payload decode.
         """
         sql = (
-            f"SELECT {projection_sql} FROM ("
+            f"SELECT {columns_sql} FROM ("
             "SELECT CASE WHEN jsonb_typeof(payload) = 'string' "
             "THEN (payload #>> '{}')::jsonb ELSE payload || '{}'::jsonb END AS payload, updated_at "
-            # OFFSET 0 keeps the normalized (detoasted once) payload from being
-            # inlined and re-evaluated at every reference in the projection.
             f"FROM {self.table} OFFSET 0) AS rows "
             "WHERE jsonb_typeof(payload) = 'object' ORDER BY updated_at ASC"
         )
         with self._use_conn(conn) as conn:
-            cursor = conn.execute(sql)
-            rows = cursor.fetchall()
-        records: List[Dict[str, Any]] = []
-        for row in rows:
-            decoded = self._decode_payload(row[0] if isinstance(row, tuple) else next(iter(row.values())))
-            if decoded is not None:
-                records.append(decoded)
-        return records
+            return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in conn.execute(sql).fetchall()]
 
     def count(self, *, conn: Optional[Any] = None) -> int:
         """Count the number of rows in this owner-store table without hydrating payloads."""

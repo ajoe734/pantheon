@@ -807,7 +807,9 @@ class PostgresRegistryStore:
 
     def list_persona_binding_rows(self) -> list[dict]:
         """Persona-binding flat rows projected inside Postgres (no entry rebuild)."""
-        return self._entries.list_all_projected(persona_binding_projection_sql())
+        return persona_binding_rows_from_columns(
+            self._entries.list_all_selected(persona_binding_select_sql())
+        )
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         entries = self.list_by_strategy(strategy_id)
@@ -822,52 +824,75 @@ class PostgresRegistryStore:
         return approved[0]
 
 
+def _binding_leaf_paths() -> list[tuple[str, ...]]:
+    """Leaf paths read for a persona-binding row, in assembly order."""
+    meta = ("metadata",)
+    spec = ("metadata", "strategy_spec")
+    spec_meta = spec + ("metadata",)
+    return (
+        [(k,) for k in PERSONA_BINDING_ROW_KEYS]
+        + [meta + (k,) for k in PERSONA_BINDING_META_KEYS]
+        + [meta + ("provenance", "created_at")]
+        + [spec + (k,) for k in PERSONA_BINDING_SPEC_KEYS]
+        + [spec + ("provenance", "created_at")]
+        + [spec_meta + (k,) for k in PERSONA_BINDING_INNER_META_KEYS]
+    )
+
+
 def _sql_node(path: tuple[str, ...]) -> str:
     return "payload #> '{" + ",".join(path) + "}'"
 
 
-def _sql_pick(path: tuple[str, ...], keys: tuple[str, ...]) -> str:
-    """jsonb object holding only the present ``keys`` under ``path`` (``{}`` if none)."""
-    return " || ".join(
-        f"CASE WHEN {_sql_node(path + (k,))} IS NOT NULL "
-        f"THEN jsonb_build_object('{k}', {_sql_node(path + (k,))}) ELSE '{{}}'::jsonb END"
-        for k in keys
-    )
+_BINDING_ABSENT = "~pb-absent-7c1f~"
 
 
-def _sql_created_at_only(path: tuple[str, ...]) -> str:
-    created = _sql_node(path + ("provenance", "created_at"))
-    return (
-        f"CASE WHEN {created} IS NOT NULL THEN jsonb_build_object('provenance', "
-        f"jsonb_build_object('created_at', {created})) ELSE '{{}}'::jsonb END"
-    )
+def persona_binding_select_sql() -> str:
+    """Plain column list over ``payload``: one jsonb leaf per binding field.
 
-
-def persona_binding_projection_sql() -> str:
-    """jsonb expression over ``payload`` equal to ``persona_binding_row(...)``.
-
-    Path lookups run inside Postgres on the already-decoded row, so the heavy
-    spec body, evaluation summary and approval evidence are never transferred
-    or JSON-decoded by Python. Built only from the module's constant key
-    tuples (no request input).
+    No jsonb construction in SQL. A missing leaf comes back as the
+    ``_BINDING_ABSENT`` sentinel (JSON ``null`` stays ``None``), so presence is
+    known without a second lookup; the two container-shape facts Python needs
+    (is ``strategy_spec`` / ``strategy_spec.metadata`` an object) are two
+    trailing columns. Built only from constant key tuples (no request input).
     """
-    meta = ("metadata",)
-    spec = ("metadata", "strategy_spec")
-    spec_meta = ("metadata", "strategy_spec", "metadata")
-    spec_light = (
-        f"{_sql_pick(spec, PERSONA_BINDING_SPEC_KEYS)} || {_sql_created_at_only(spec)} || "
-        f"CASE WHEN jsonb_typeof({_sql_node(spec_meta)}) = 'object' THEN jsonb_build_object('metadata', "
-        f"{_sql_pick(spec_meta, PERSONA_BINDING_INNER_META_KEYS)}) ELSE '{{}}'::jsonb END"
+    cols = ", ".join(
+        f"COALESCE({_sql_node(p)}, '\"{_BINDING_ABSENT}\"'::jsonb)" for p in _binding_leaf_paths()
     )
-    light_meta = (
-        f"{_sql_pick(meta, PERSONA_BINDING_META_KEYS)} || {_sql_created_at_only(meta)} || "
-        f"CASE WHEN jsonb_typeof({_sql_node(spec)}) = 'object' "
-        f"THEN jsonb_build_object('strategy_spec', {spec_light}) ELSE '{{}}'::jsonb END"
+    shapes = ", ".join(
+        f"jsonb_typeof({_sql_node(p)})"
+        for p in (("metadata", "strategy_spec"), ("metadata", "strategy_spec", "metadata"))
     )
-    return (
-        f"({_sql_pick((), PERSONA_BINDING_ROW_KEYS)} "
-        f"|| jsonb_build_object('metadata', {light_meta}))"
-    )
+    return f"{cols}, {shapes}"
+
+
+def persona_binding_rows_from_columns(rows) -> list[dict]:
+    """Assemble ``persona_binding_row``-shaped dicts from the select columns."""
+    n = len(_binding_leaf_paths())
+    i_meta = len(PERSONA_BINDING_ROW_KEYS)
+    i_prov = i_meta + len(PERSONA_BINDING_META_KEYS)
+    i_spec = i_prov + 1
+    i_spec_prov = i_spec + len(PERSONA_BINDING_SPEC_KEYS)
+    i_inner = i_spec_prov + 1
+    absent = _BINDING_ABSENT
+    out: list[dict] = []
+    for r in rows:
+        def pick(keys, start):
+            return {k: r[start + j] for j, k in enumerate(keys) if r[start + j] != absent}
+
+        row = pick(PERSONA_BINDING_ROW_KEYS, 0)
+        meta = pick(PERSONA_BINDING_META_KEYS, i_meta)
+        if r[i_prov] != absent:
+            meta["provenance"] = {"created_at": r[i_prov]}
+        if r[n] == "object":
+            spec = pick(PERSONA_BINDING_SPEC_KEYS, i_spec)
+            if r[i_spec_prov] != absent:
+                spec["provenance"] = {"created_at": r[i_spec_prov]}
+            if r[n + 1] == "object":
+                spec["metadata"] = pick(PERSONA_BINDING_INNER_META_KEYS, i_inner)
+            meta["strategy_spec"] = spec
+        row["metadata"] = meta
+        out.append(row)
+    return out
 
 
 def _registry_backend() -> str:
