@@ -152,5 +152,15 @@
     },
     "dominant_stage": "single PG execute wait ~472ms; fetch+json decode of 11369 values ~96ms",
     "note": "Owner stage only (~2.3x faster, 4869->211 rows, 22.4MB->0.14MB). Not whole-fleet latency, not hosted p95; warm <=1000ms still unproven. Final hosted task owns release and p95."
+  },
+  "residual_defect_repair": {
+    "sentinel_collision": "missing leaves are SQL NULL, JSON null is text 'null'; no magic value; regression uses registry_id/status equal to former sentinel",
+    "visibility_before_family": "visible owner population + strategy_spec type applied before family eligibility in one SQL snapshot and in memory; regressions cover other-tenant v1 + own unbound v2 (dropped) and builtin-bound v1 + own unbound v2 (both kept)",
+    "count_contract": "service-level getattr/full-list fallback removed; None count raises TypeError",
+    "verification": {
+      "registry_owner_durability_service_foundation": "175 passed (local pfl-pg-test)",
+      "bff_fleet_contract_read_budget_ports": "92 passed; +2 targeted"
+    },
+    "not_run": "no hosted/whole-API p95 measurement; owned by original hosted task"
   }
 }
