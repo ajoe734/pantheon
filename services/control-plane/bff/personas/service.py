@@ -23,6 +23,7 @@ import socket
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Any,
     Callable,
@@ -53,7 +54,7 @@ BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 from services.control_plane.cron.persona_cron_registrar import (
     DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
 )
-from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope, selected_tenant
+from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope, selected_tenant, submit_owner_read
 
 from ..models import (
     ActionCommandStatus,
@@ -2371,8 +2372,17 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
     return len(items)
 
 
+def _all_strategy_specs_once() -> List[Dict[str, Any]]:
+    """Unfiltered strategy-spec read, shared per request (value or failure)."""
+    store = _get_active_read_store()
+    return cached_owner_call(
+        ("persona_all_strategy_specs", id(store), selected_tenant.get()),
+        lambda: store.list_strategy_specs(),
+    )
+
+
 def _routed_strategy_counts_by_persona() -> Dict[str, int]:
-    items = _get_active_read_store().list_strategy_specs() or []
+    items = _all_strategy_specs_once() or []
     counts: Dict[str, int] = {}
     for item in items:
         if not isinstance(item, Mapping):
@@ -2393,11 +2403,44 @@ def _routed_strategy_counts_by_persona() -> Dict[str, int]:
     return counts
 
 
+# --- _persona_fleet_prefetch_independent_reads ---
+_PERSONA_FLEET_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="bff-persona-fleet-read",
+)
+
+
+def _persona_fleet_prefetch_independent_reads() -> None:
+    """Start the fleet's slow, independent network owner reads together.
+
+    Measured on the deployed path the strategy-spec registry read (~3.4s) and
+    the first source-ingest registry read (~0.9s) ran back to back on the
+    request thread. The strategy read is request-cached and the source truth is
+    TTL-cached on the service, so the sequential code below keeps its call sites
+    and finds the value (or the cached failure) already read. Each prefetch runs
+    in a copy of the caller context (tenant, authorization, deadline).
+    """
+    service = _current_persona_service.get()
+    if service is None:
+        return
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        _all_strategy_specs_once,
+        warm_key="persona_fleet_strategy_specs",
+    )
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        service._source_ingest_truth_by_connector,
+        warm_key="persona_fleet_source_truth",
+    )
+
+
 # --- _list_persona_records ---
 def _list_persona_records(
     tenant_id: Optional[str] = None,
     *,
     read_store: Optional[Any] = None,
+    reuse_request_read: bool = False,
 ) -> List[Dict[str, Any]]:
     """Combine canonical personas with durable store and overlay records created via /bff.
 
@@ -2423,10 +2466,17 @@ def _list_persona_records(
     clean_tenant = str(tenant_id or "").strip()
     store = _persona_provisioning_store()
     try:
-        if clean_tenant:
-            prov_records = store.list_by_tenant(clean_tenant)
+        read_prov = store.list_by_tenant if clean_tenant else store.list_all
+        read_args = (clean_tenant,) if clean_tenant else ()
+        if reuse_request_read:
+            # Read-only callers sharing one request read the durable ledger
+            # once; a failure is cached too, so every caller sees it.
+            prov_records = cached_owner_call(
+                ("persona_provisioning_records", id(store), clean_tenant),
+                lambda: list(read_prov(*read_args)),
+            )
         else:
-            prov_records = store.list_all()
+            prov_records = read_prov(*read_args)
     except Exception as exc:
         log.warning("Persona provisioning store list failed for dependency %s", "persona_provisioning_store")
         raise _bff_error(
@@ -2487,13 +2537,14 @@ def _get_persona_directory_snapshot(
     tenant_id: Optional[str] = None,
     *,
     snapshot_at: Optional[str] = None,
+    reuse_request_read: bool = False,
 ) -> PersonaDirectorySnapshot:
     snapshot_timestamp = snapshot_at or utc_now()
     clean_tenant = str(tenant_id or "").strip()
     records_by_id: Dict[str, Dict[str, Any]] = {}
     catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
 
-    for raw in _list_persona_records(clean_tenant):
+    for raw in _list_persona_records(clean_tenant, reuse_request_read=reuse_request_read):
         if not isinstance(raw, dict):
             continue
         rec_tenant = _persona_record_tenant_id(raw)
@@ -6443,8 +6494,9 @@ def _pm12_persona_league_rows(
     include_allowed_actions: bool = True,
     routed_strategy_counts: Optional[Mapping[str, int]] = None,
     include_advisory: bool = False,
+    reuse_request_read: bool = False,
 ) -> List[Dict[str, Any]]:
-    raw_records = _list_persona_records(tenant_id)
+    raw_records = _list_persona_records(tenant_id, reuse_request_read=reuse_request_read)
     if not include_advisory:
         # Classify from canonical raw metadata before projection drops it, so
         # every league consumer shares one trading-only cohort.
@@ -8549,6 +8601,7 @@ def _persona_fleet_slim_list_payload(
     # quarterly endpoint uses this same read path; doing it first prevents a
     # later degraded persona-service read from silently restoring league rank.
     quarter_window = _pm12_quarter_window(None, snapshot_at)
+    _persona_fleet_prefetch_independent_reads()
     telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     telemetry_list_loaded = False
     try:
@@ -8575,6 +8628,7 @@ def _persona_fleet_slim_list_payload(
         include_route_policy=False,
         include_health=False,
         include_allowed_actions=False,
+        reuse_request_read=True,
     )
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
@@ -8585,7 +8639,7 @@ def _persona_fleet_slim_list_payload(
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
-    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at, reuse_request_read=True)
     # Enforce the user-private owner policy before rows or population counts.
     visible_records = {
         pid: raw

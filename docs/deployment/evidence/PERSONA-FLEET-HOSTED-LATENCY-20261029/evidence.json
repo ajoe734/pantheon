@@ -6,9 +6,69 @@
   "request": "purpose=trading&data_scope=regular&archived=exclude&page_size=20",
   "measured_cause": "_pm12_quarterly_ranking_governance_state re-read the whole command log (file I/O) and scanned every command once per ranked persona (archived history included): O(personas x commands). Profile: 1004 calls, 24.7s cumulative of 26.0s (profiler-inflated) at 1000 archived.",
   "fix": "Read the command log once per ranking pass and bucket it by persona id prefix (_pm12_quarterly_governance_command_index); per-persona scan only visits its own records. Rank, scores, governance_state semantics unchanged (equivalence test incl. hyphen-prefix ids and case).",
-  "warm_ms_before": {"archived_100": [4008, 4093, 4158], "archived_1000": [41840, 42453, 42493]},
-  "warm_ms_after": {"archived_100": [112, 218, 110], "archived_1000": [668, 629, 641]},
+  "warm_ms_before": {
+    "archived_100": [
+      4008,
+      4093,
+      4158
+    ],
+    "archived_1000": [
+      41840,
+      42453,
+      42493
+    ]
+  },
+  "warm_ms_after": {
+    "archived_100": [
+      112,
+      218,
+      110
+    ],
+    "archived_1000": [
+      668,
+      629,
+      641
+    ]
+  },
   "owner_call_budget": "unchanged; command log reads per request: before = ranked persona count, after = 1",
-  "tests": "pytest test_pathreon_market_persona_fleet_contract.py tests/test_management_read_budget.py: 47 passed; new command-log regressions fail on uncorrected source (3 failed) and pass on corrected source",
-  "api_contract_changed": false
+  "tests": "pytest test_pathreon_market_persona_fleet_contract.py tests/test_management_read_budget.py: 51 passed; new ledger-once/overlap/prefetch-failure regressions fail on base source (ledger reads 2 vs 1; strategy read on main thread) and pass after; git diff --check clean",
+  "api_contract_changed": false,
+  "actual_profile_inputs": {
+    "source": "root read-only diagnostic profiles (not hosted acceptance): baseline-U6YYXI/result.json p95=6007ms; actual-deployed-fleet-read-profile.json replay 6796.5ms cold / 4495.5ms warm",
+    "stages_ms_cold_warm": {
+      "list_strategy_specs (one registry GET 1333/1081 + 4763 entry normalizations)": [
+        3379.8,
+        2395.6
+      ],
+      "duplicate _list_persona_records (2 calls, 5036 json.loads)": [
+        981.2,
+        946.0
+      ],
+      "first source-ingest registry read (TTL cached afterwards)": [
+        939.7,
+        null
+      ]
+    },
+    "multiplicity": "strategy specs 1 HTTP + 1 normalization pass; persona ledger read 2x per request; source registry 1 per TTL"
+  },
+  "actual_cost_corrections": [
+    {
+      "stage": "duplicate durable persona ledger read",
+      "fix": "_list_persona_records(reuse_request_read=True) caches the ledger read in the existing request read cache for the read-only fleet path (value or failure); writers unchanged",
+      "calls_before_after": "2 -> 1",
+      "expected_saving_ms": "~490 of 981/946 (profile-derived)"
+    },
+    {
+      "stage": "strategy-spec registry read and first source-ingest registry read ran serially on request thread",
+      "fix": "_persona_fleet_prefetch_independent_reads starts both via existing submit_owner_read in a copied caller context (tenant, authorization, deadline); request cache/TTL cache and original call sites unchanged, so failures surface where they did before",
+      "expected_saving_ms": "overlaps up to ~0.9s source read with the strategy read; the strategy read itself is upstream-bound and remains"
+    }
+  ],
+  "isolated_overlap_fixture": {
+    "command": "pytest test_pathreon_market_persona_fleet_contract.py -k overlaps --durations=1 (0.4s injected delay on strategy-spec read)",
+    "call_seconds_before": 2.11,
+    "call_seconds_after": 1.45,
+    "note": "fixture timing, not hosted"
+  },
+  "residual_unreduced": "Upstream registry strategy-spec HTTP (1.1-1.3s) and per-entry normalization (~0.3-0.9s CPU) are not changed; whether the <=1s warm p95 target is met must be shown by the final hosted task. Not claimed here."
 }

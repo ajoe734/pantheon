@@ -2206,6 +2206,94 @@ def test_fleet_reads_command_log_once_regardless_of_ranked_population(archived_c
     assert reads["n"] <= 1, reads
 
 
+class _LedgerCounter:
+    """Delegating provisioning-ledger proxy counting durable reads."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.reads = 0
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if name not in ("list_by_tenant", "list_all"):
+            return attr
+
+        def wrapped(*args, **kwargs):
+            self.reads += 1
+            return attr(*args, **kwargs)
+
+        return wrapped
+
+
+@pytest.mark.parametrize("archived_count", [100, 1000])
+def test_fleet_reads_durable_persona_ledger_once_per_request(archived_count, monkeypatch):
+    # Measured cost pattern: the deployed fleet read the whole durable persona
+    # ledger twice (league rows, then directory snapshot), ~0.5s each.
+    counter = _LedgerCounter(personas_service._persona_provisioning_store())
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: counter)
+    with _client_with_store(_seed_fleet_classification_store(archived_count)) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert body["data"]["summary"]["population"]["archived_total"] == archived_count
+    assert counter.reads == 1, counter.reads
+
+
+def test_fleet_overlaps_strategy_spec_and_source_registry_reads(monkeypatch):
+    # Measured cost pattern: strategy-spec registry (~3.4s) and the first
+    # source-ingest registry read (~0.9s) ran serially on the request thread.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    delay = 0.4
+    spans = {}
+
+    def timed(name, fn):
+        def wrapped(*args, **kwargs):
+            start = _time.monotonic()
+            _time.sleep(delay)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                spans[name] = (start, _time.monotonic(), threading.current_thread() is threading.main_thread())
+
+        return wrapped
+
+    monkeypatch.setattr(store, "list_strategy_specs", timed("specs", store.list_strategy_specs))
+    monkeypatch.setattr(store, "get_source_connector_registry", timed("source", store.get_source_connector_registry), raising=False)
+    with _client_with_store(store) as client:
+        started = _time.monotonic()
+        _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+        elapsed = _time.monotonic() - started
+    assert "specs" in spans
+    # The slow registry read starts off the request thread (caller context copied).
+    assert spans["specs"][2] is False, spans
+    for name, (start, end, _) in spans.items():
+        assert end - start >= delay, name
+    if "source" in spans:
+        # The two slow reads overlap instead of running back to back.
+        assert max(s for s, _, _ in spans.values()) < min(e for _, e, _ in spans.values()), spans
+        assert elapsed < len(spans) * delay + 0.35, (elapsed, spans)
+
+
+def test_fleet_strategy_spec_prefetch_failure_stays_failure(monkeypatch):
+    store = _seed_fleet_classification_store(100)
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise RuntimeError("strategy registry down")
+
+    monkeypatch.setattr(store, "list_strategy_specs", boom)
+    with _client_with_store(store) as client:
+        try:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "trading", "page_size": 20})
+        except RuntimeError as exc:
+            assert "strategy registry down" in str(exc)
+        else:
+            assert response.status_code >= 500 or response.json().get("data", {}).get("summary", {}).get("population") is not None
+    assert calls["n"] == 1, calls
+
+
 def test_ranking_governance_state_is_identical_with_shared_command_log(monkeypatch):
     commands = [
         {
