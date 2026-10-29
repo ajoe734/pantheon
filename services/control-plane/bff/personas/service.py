@@ -8879,8 +8879,19 @@ def _persona_fleet_slim_list_payload(
         return rows
 
     rows = apply_row_filters(rows)
+    # Empty cohorts from a failed/unavailable owner read are not a factual zero:
+    # reuse the cached persona source state (no extra owner call).
+    personas_owner_surface = _composed_dataset_surface_status(
+        "personas",
+        all_personas,
+        snapshot_at=snapshot_at,
+        source="composed_market_persona_defaults",
+        service_surface_rules=True,
+    )
     filtered_archived_total: Optional[int] = (
-        None if archived_cohort_rows is None else len(apply_row_filters(list(archived_cohort_rows)))
+        None
+        if archived_cohort_rows is None or personas_owner_surface.get("status") == "unavailable"
+        else len(apply_row_filters(list(archived_cohort_rows)))
     )
 
     total_personas = len(rows)

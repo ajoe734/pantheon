@@ -2284,6 +2284,35 @@ def test_filtered_archived_total_is_null_when_owner_read_fails(monkeypatch) -> N
     assert body["data"]["summary"]["population"]["archived_total"] == 3
 
 
+def _store_with_persona_owner(records_provider):
+    from services.control_plane.bff.ports.persona_capital_runtime import PersonaFleetPort
+
+    store = _make_store(allow_local_snapshot_fallback=False)
+    store.persona_capital_runtime.persona = PersonaFleetPort(records_provider=records_provider)
+    return store
+
+
+@pytest.mark.parametrize("archived", ["exclude", "only", "include"])
+def test_filtered_archived_total_is_null_when_real_persona_port_fails(archived) -> None:
+    calls = []
+
+    def failed_owner():
+        calls.append(1)
+        raise RuntimeError("persona owner down")
+
+    with _client_with_store(_store_with_persona_owner(failed_owner)) as client:
+        body = _fleet(client, archived=archived)
+    assert body["data"]["summary"]["filtered_archived_total"] is None
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("archived", ["exclude", "only", "include"])
+def test_filtered_archived_total_is_zero_for_healthy_empty_owner(archived) -> None:
+    with _client_with_store(_store_with_persona_owner(lambda: [])) as client:
+        body = _fleet(client, archived=archived)
+    assert body["data"]["summary"]["filtered_archived_total"] == 0
+
+
 def test_advisory_record_never_enters_league_rows():
     with _client_with_store(_seed_fleet_classification_store(0)) as client:
         body = client.get("/bff/management/quarterly-ranking", headers=HEADERS, params={"page_size": 200}).json()
