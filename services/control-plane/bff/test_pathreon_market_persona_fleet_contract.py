@@ -2125,3 +2125,26 @@ def test_canonical_binding_precedence_and_mixed_topology(
 
     assert ranking_rows[persona_test]["eligible"] is True
     assert ranking_rows[persona_test]["source_confidence"] == "formal"
+
+
+@pytest.mark.parametrize("archived_count", [100, 1000])
+def test_fleet_detail_projection_is_page_bounded(archived_count, monkeypatch):
+    calls = {"detail": 0}
+    original = personas_service._project_persona_fleet_list_row
+
+    def counting(**kwargs):
+        calls["detail"] += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(personas_service, "_project_persona_fleet_list_row", counting)
+    with _client_with_store(_seed_fleet_classification_store(archived_count)) as client:
+        body = _fleet(client, purpose="trading", archived="include", page_size=20)
+    assert len(body["data"]["items"]) <= 20
+    assert body["page_info"]["total"] >= archived_count
+    assert calls["detail"] <= 20
+
+
+def test_advisory_record_never_enters_league_rows():
+    with _client_with_store(_seed_fleet_classification_store(0)) as client:
+        body = client.get("/bff/management/quarterly-ranking", headers=HEADERS, params={"page_size": 200}).json()
+    assert "p-servant" not in [r.get("persona_id") for r in body["data"]["items"]]
