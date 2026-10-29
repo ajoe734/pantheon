@@ -757,6 +757,44 @@ for _ in $(seq 1 "${STAGING_READY_TRIES:-30}"); do
   fi
   sleep "${STAGING_READY_INTERVAL:-1}"
 done
+emit_bff_not_ready_diagnostics() {
+  # Best-effort, bounded actual BFF state + log tail; never prints Config.Env and never changes the original failure.
+  local cid state logs
+  cid="$(run_compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -a -q operator-bff 2>/dev/null | head -n1)" || return 0
+  [[ -n "$cid" ]] || { echo "BFF_DIAG container=missing" >&2; return 0; }
+  state="$(run_priv timeout 10 "$DOCKER_BIN" inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} restart_count={{.RestartCount}} error={{.State.Error}}' "$cid" 2>&1 | head -c 1024)" || true
+  logs="$(run_priv timeout 10 "$DOCKER_BIN" logs --tail 100 "$cid" 2>&1 | tail -c 16384)" || true
+  # Mask real private values (from the VM-local secret files) before anything is printed.
+  {
+    printf 'BFF_DIAG state: %s\nBFF_DIAG logs_tail_begin\n' "$state"
+    printf '%s\n' "$logs" | run_priv python3 -c '
+import re, sys
+text = sys.stdin.read()
+vals = set()
+for path in sys.argv[1:]:
+    try:
+        raw = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        continue
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        v = line.split("=", 1)[1] if "=" in line and path.endswith(".env") else line
+        v = v.strip().strip("\"\x27")
+        if len(v) >= 4:
+            vals.add(v)
+for v in sorted(vals, key=len, reverse=True):
+    text = text.replace(v, "***")
+sys.stdout.write(text)
+' "${STAGING_SECRETS_ENV_FILE}" "${STAGING_POSTGRES_PASSWORD_FILE}" 2>/dev/null || echo "BFF_DIAG logs_redaction_failed (logs withheld)"
+    printf 'BFF_DIAG logs_tail_end\n'
+  } >&2 || true
+  return 0
+}
+if [[ "$READY_CODE" != "200" ]]; then
+  emit_bff_not_ready_diagnostics || true
+fi
 [[ "$READY_CODE" == "200" ]] || fail "BFF_NOT_READY" "/bff/readyz returned HTTP ${READY_CODE} on port ${STAGING_BFF_PORT}"
 
 READYZ_BODY="$("$CURL_BIN" -fsS -m 5 "http://127.0.0.1:${STAGING_BFF_PORT}/bff/readyz")" || fail "BFF_READYZ_FETCH" "Failed to read /bff/readyz body"
