@@ -394,7 +394,9 @@ class PostgresJsonOwnerStore:
         self,
         columns_sql: str,
         *,
-        keep_sql: Optional[str] = None,
+        visible_sql: Optional[str] = None,
+        family_sql: Optional[str] = None,
+        bound_sql: Optional[str] = None,
         keep_params: Optional[tuple] = None,
         conn: Optional[Any] = None,
     ) -> List[tuple]:
@@ -403,22 +405,43 @@ class PostgresJsonOwnerStore:
         Same row set, legacy string-payload unwrapping and ``updated_at``
         ordering as :meth:`list_all`, but only ``columns_sql`` (trusted, never
         request input; expressions reference ``payload``) is fetched, with no
-        per-row payload decode. ``keep_sql`` (trusted boolean expression over
-        ``payload``, may use window functions) narrows the rows before
-        ``columns_sql`` is evaluated, in the same statement/snapshot; request
-        derived values must travel in ``keep_params`` (``%s`` placeholders).
+        per-row payload decode.
+
+        With ``visible_sql`` (trusted boolean over ``payload``; request derived
+        values travel in ``keep_params`` as ``%s`` placeholders) the visible
+        population is selected first. ``family_sql`` / ``bound_sql`` (trusted
+        scalar / boolean over ``payload``) then keep only visible rows of
+        families with at least one bound visible row (rows without a family are
+        kept), all in one statement/snapshot. Only small per-row facts are
+        grouped; ``columns_sql`` is evaluated for the kept rows alone, so the
+        wide payload is neither sorted nor spilled.
         """
-        keep = f"WHERE keep " if keep_sql else ""
-        keep_col = f", ({keep_sql}) AS keep" if keep_sql else ""
-        sql = (
-            f"SELECT {columns_sql} FROM ("
-            f"SELECT payload, updated_at{keep_col} FROM ("
-            "SELECT CASE WHEN jsonb_typeof(payload) = 'string' "
-            "THEN (payload #>> '{}')::jsonb ELSE payload || '{}'::jsonb END AS payload, updated_at "
-            f"FROM {self.table} OFFSET 0) AS base "
-            "WHERE jsonb_typeof(payload) = 'object' OFFSET 0"
-            f") AS rows {keep}ORDER BY updated_at ASC"
+        unwrap = (
+            "CASE WHEN jsonb_typeof(payload) = 'string' "
+            "THEN (payload #>> '{}')::jsonb ELSE payload || '{}'::jsonb END"
         )
+        if visible_sql is None:
+            sql = (
+                f"SELECT {columns_sql} FROM ("
+                f"SELECT {unwrap} AS payload, updated_at FROM {self.table} OFFSET 0"
+                ") AS rows WHERE jsonb_typeof(payload) = 'object' ORDER BY updated_at ASC"
+            )
+        else:
+            fam = family_sql or "NULL::text"
+            bound = bound_sql or "FALSE"
+            sql = (
+                "WITH facts AS MATERIALIZED ("
+                f"SELECT record_id, ({visible_sql}) AS vis, ({fam}) AS fam, ({bound}) AS bound "
+                f"FROM (SELECT record_id, {unwrap} AS payload FROM {self.table} OFFSET 0) AS base "
+                "WHERE jsonb_typeof(payload) = 'object'), "
+                "families AS (SELECT fam FROM facts WHERE vis AND fam IS NOT NULL "
+                "GROUP BY fam HAVING bool_or(bound)) "
+                f"SELECT {columns_sql} FROM ("
+                f"SELECT {unwrap} AS payload, updated_at FROM {self.table} "
+                "WHERE record_id IN (SELECT record_id FROM facts WHERE vis "
+                "AND (fam IS NULL OR fam IN (SELECT fam FROM families))) OFFSET 0"
+                ") AS rows ORDER BY updated_at ASC"
+            )
         with self._use_conn(conn) as conn:
             cursor = conn.execute(sql, keep_params) if keep_params else conn.execute(sql)
             return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in cursor.fetchall()]
