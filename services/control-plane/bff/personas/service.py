@@ -8656,10 +8656,11 @@ def _persona_fleet_slim_list_payload(
 
     rows: List[Dict[str, Any]] = []
     detail_inputs: Dict[str, Dict[str, Any]] = {}
-    for persona in personas:
+
+    def build_cohort_row(persona: Dict[str, Any], *, keep_detail: bool = True) -> Optional[Dict[str, Any]]:
         persona_id = _persona_id(persona)
         if not persona_id:
-            continue
+            return None
         raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
         context_metadata, context_persona = _persona_fleet_context_overlay(
             persona,
@@ -8784,8 +8785,39 @@ def _persona_fleet_slim_list_payload(
         row = _project_persona_fleet_cohort_row(**row_kwargs)
         if row is not None:
             finalize_row(row, persona_id, is_retired_persona, persona)
-            detail_inputs[persona_id] = row_kwargs
-            rows.append(row)
+            if keep_detail:
+                detail_inputs[persona_id] = row_kwargs
+        return row
+
+    for persona in personas:
+        cohort_row = build_cohort_row(persona)
+        if cohort_row is not None:
+            rows.append(cohort_row)
+
+    # Archived-scope count: retired records matching purpose/data_scope are
+    # projected with the cheap cohort row only (never the list row) so the
+    # same state/health/stage/market/q predicates can describe them even in
+    # the ordinary archived=exclude view. A failed read yields None, not 0.
+    archived_cohort_rows: Optional[List[Dict[str, Any]]] = None
+    if archived_filter == "exclude":
+        try:
+            archived_cohort_rows = []
+            for persona in all_personas:
+                if _persona_record_projected_state(persona) != "retired":
+                    continue
+                cls = classifications.get(_persona_id(persona)) or _fleet_cls.persona_classification(persona)
+                if not _fleet_cls.matches_scope(cls, purpose=purpose_filter, data_scope=data_scope_filter):
+                    continue
+                archived_row = build_cohort_row(persona, keep_detail=False)
+                if archived_row is not None:
+                    archived_cohort_rows.append(archived_row)
+        except Exception:
+            archived_cohort_rows = None
+    elif archived_filter == "only":
+        archived_cohort_rows = rows
+    else:
+        archived_cohort_rows = [item for item in rows if item.get("archived")]
+
 
     rows = sorted(
         rows,
@@ -8796,52 +8828,60 @@ def _persona_fleet_slim_list_payload(
     )
     available_personas = len(rows)
 
-    requested_states = _persona_fleet_query_filter(state)
-    if requested_states:
-        rows = [
-            item for item in rows
-            if str(item.get("state") or item.get("status") or "").strip().lower() in requested_states
-        ]
+    def apply_row_filters(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        requested_states = _persona_fleet_query_filter(state)
+        if requested_states:
+            rows = [
+                item for item in rows
+                if str(item.get("state") or item.get("status") or "").strip().lower() in requested_states
+            ]
 
-    requested_health = _persona_fleet_query_filter(health)
-    if requested_health:
-        rows = [
-            item for item in rows
-            if str(item.get("health") or item.get("status") or "").strip().lower() in requested_health
-        ]
+        requested_health = _persona_fleet_query_filter(health)
+        if requested_health:
+            rows = [
+                item for item in rows
+                if str(item.get("health") or item.get("status") or "").strip().lower() in requested_health
+            ]
 
-    requested_stages = _persona_fleet_query_filter(deployment_stage)
-    if requested_stages:
-        rows = [
-            item for item in rows
-            if str(item.get("deployment_stage") or item.get("mode") or "").strip().lower() in requested_stages
-        ]
+        requested_stages = _persona_fleet_query_filter(deployment_stage)
+        if requested_stages:
+            rows = [
+                item for item in rows
+                if str(item.get("deployment_stage") or item.get("mode") or "").strip().lower() in requested_stages
+            ]
 
-    requested_markets = {
-        token.strip().upper()
-        for token in (market_scope.split(",") if market_scope else [])
-        if token.strip()
-    }
-    if requested_markets:
-        rows = [
-            item for item in rows
-            if requested_markets.intersection({str(scope).upper() for scope in item.get("market_scope") or []})
-        ]
+        requested_markets = {
+            token.strip().upper()
+            for token in (market_scope.split(",") if market_scope else [])
+            if token.strip()
+        }
+        if requested_markets:
+            rows = [
+                item for item in rows
+                if requested_markets.intersection({str(scope).upper() for scope in item.get("market_scope") or []})
+            ]
 
-    search_text = str(q or "").strip().lower()
-    if search_text:
-        rows = [
-            item for item in rows
-            if search_text in " ".join(
-                [
-                    str(item.get("persona_id") or ""),
-                    str(item.get("name") or ""),
-                    str(item.get("owner") or ""),
-                    str(item.get("current_work") or ""),
-                    " ".join(str(scope) for scope in item.get("market_scope") or []),
-                ]
-            ).lower()
-        ]
+        search_text = str(q or "").strip().lower()
+        if search_text:
+            rows = [
+                item for item in rows
+                if search_text in " ".join(
+                    [
+                        str(item.get("persona_id") or ""),
+                        str(item.get("name") or ""),
+                        str(item.get("owner") or ""),
+                        str(item.get("current_work") or ""),
+                        " ".join(str(scope) for scope in item.get("market_scope") or []),
+                    ]
+                ).lower()
+            ]
+
+        return rows
+
+    rows = apply_row_filters(rows)
+    filtered_archived_total: Optional[int] = (
+        None if archived_cohort_rows is None else len(apply_row_filters(list(archived_cohort_rows)))
+    )
 
     total_personas = len(rows)
     page_items, next_page_token = _page_slice(rows, page_token, page_size)
@@ -8878,6 +8918,7 @@ def _persona_fleet_slim_list_payload(
             "by_purpose": population_counts["by_purpose"],
             "by_data_scope": population_counts["by_data_scope"],
         },
+        "filtered_archived_total": filtered_archived_total,
         "filters": {
             "purpose": purpose_filter,
             "data_scope": data_scope_filter,
