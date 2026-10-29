@@ -390,14 +390,18 @@ PY
 
     # 1. Create remote bundle directory safely over IAP SSH before SCP transfer.
     REMOTE_MKDIR_CMD="set -euo pipefail; rm -rf '${REMOTE_BUNDLE_DIR}' && mkdir -p '${REMOTE_BUNDLE_DIR}' && chmod 0700 '${REMOTE_BUNDLE_DIR}'"
-    if ! "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
-      --project="${STAGING_GCP_PROJECT_ID}" \
-      --zone="${STAGING_GCP_ZONE}" \
-      --tunnel-through-iap \
-      --quiet \
-      --command="${REMOTE_MKDIR_CMD}" >/dev/null 2>&1; then
+    SSH_MKDIR_RC=0
+    SSH_MKDIR_OUT="$(
+      "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
+        --project="${STAGING_GCP_PROJECT_ID}" \
+        --zone="${STAGING_GCP_ZONE}" \
+        --tunnel-through-iap \
+        --quiet \
+        --command="${REMOTE_MKDIR_CMD}" 2>&1
+    )" || SSH_MKDIR_RC=$?
+    if [[ "${SSH_MKDIR_RC}" -ne 0 ]]; then
       rm -rf "${STAGE_BUNDLE_DIR}"
-      die_json "HOST_SSH_MKDIR_FAILED" "Failed to prepare ${REMOTE_BUNDLE_DIR} on ${VM_NAME} over IAP SSH"
+      die_json "HOST_SSH_MKDIR_FAILED" "Failed to prepare ${REMOTE_BUNDLE_DIR} on ${VM_NAME} over IAP SSH (rc=${SSH_MKDIR_RC}): $(printf '%s' "$SSH_MKDIR_OUT" | tail -n 5 | tr '\n"\\' '   ' | cut -c1-1000)"
     fi
 
     # 2. Transfer immutable FE tarballs (candidate + baseline), manifest, compose overlay, Caddy template, bootstrap.sh, and gate collector over IAP SCP.

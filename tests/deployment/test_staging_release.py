@@ -2428,6 +2428,11 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 )
                 self.assertNotEqual(fail_res.returncode, 0)
                 self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", fail_res.stderr)
+                if fail_token == "compute ssh":
+                    self.assertIn("HOST_SSH_MKDIR_FAILED", fail_res.stderr)
+                    self.assertIn("rc=1", fail_res.stderr)
+                    self.assertIn("simulated gcloud failure on compute ssh", fail_res.stderr)
+                    self.assertFalse(any("compute scp" in c for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines()))
                 cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
                 self.assertEqual(cloud_state["instances"], [])
                 self.assertEqual(cloud_state["disks"], [])
