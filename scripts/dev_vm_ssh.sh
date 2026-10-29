@@ -109,6 +109,7 @@ case "$command_name" in
     [[ "$#" -eq 1 && -n "$1" ]] || usage
     load_transport_credentials
     ssh_options=(
+      -F /dev/null
       -i "$key_file"
       -p "$port"
       -T
@@ -132,6 +133,7 @@ case "$command_name" in
     [[ "$remote_path" != *$'\n'* && "$local_path" != *$'\n'* ]] \
       || error "copy paths cannot contain newlines"
     scp_options=(
+      -F /dev/null
       -i "$key_file"
       -P "$port"
       -o BatchMode=yes

@@ -83,6 +83,7 @@ def test_prepare_and_exec_use_pinned_direct_ssh_without_gcloud(tmp_path: Path) -
 
     assert result.returncode == 0, result.stderr
     args = Path(f"{capture}.args").read_text(encoding="utf-8").splitlines()
+    assert args[args.index("-F") + 1] == "/dev/null"
     assert "StrictHostKeyChecking=yes" in args
     assert f"UserKnownHostsFile={prepared['DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE']}" in args
     assert "pantheon-ci@203.0.113.10" in args
@@ -115,6 +116,7 @@ def test_copy_from_uses_same_pinned_transport(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     args = Path(f"{capture}.args").read_text(encoding="utf-8").splitlines()
+    assert args[args.index("-F") + 1] == "/dev/null"
     assert "deploy-user@203.0.113.11:/tmp/evidence.json" in args
     assert args[-1] == str(tmp_path / "evidence.json")
 
