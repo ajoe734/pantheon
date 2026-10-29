@@ -82,5 +82,12 @@
     "tests": "read_budget + research_knowledge_source ports + fleet contract suites: 91 passed locally",
     "hosted_proof": false,
     "note": "No hosted p95 claimed; final hosted acceptance task owns it."
+  },
+  "registry_light_binding_projection": {
+    "hosted_proof": false,
+    "change": "Optional view=persona_binding on existing GET /api/registry/strategy-specs (same rows, tenant/_can_read filtering, all versions; drops spec bodies, evaluation_summary, approval_evidence). Count-only BFF port requests it; default full DTO route unchanged. No fallback to the full read; 401/403/5xx/malformed stay failures.",
+    "motivation": "root snapshot profile: one full Registry GET 1188/1201ms dominated the 2823/3009ms count path",
+    "tests": "services/registry/test_service.py 94 passed (new: light vs full equality of persona fields, tenant privacy, >3x smaller payload, unauth and bad view rejected); BFF research_knowledge_source_ports + management_read_budget + persona_fleet_contract 92 passed (new: light URL requested only by count port, errors not swallowed)",
+    "requires": "Final hosted owner must serve the matching Registry owner; candidate performance of the new projection is not yet measured (root profile needs candidate Registry + BFF)."
   }
 }
