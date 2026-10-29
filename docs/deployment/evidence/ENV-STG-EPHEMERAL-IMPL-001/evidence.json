@@ -299,5 +299,14 @@
     ],
     "verification": "python3 -m unittest tests.deployment.test_staging_release -k pending_address -k test_address -k cross_run: Ran 4 tests, OK (local mock only; not hosted evidence)",
     "hosted_acceptance": "still pending; Stage 0 of 2, Prod 0 of 2"
+  },
+  "first_iap_ssh_diagnostic_capture": {
+    "summary": "Actual run40865600337 first IAP SSH mkdir failure lost stderr and real rc (staging_ops.sh redirected to /dev/null, generic rc 1). The mkdir ssh now captures stdout+stderr and the real CLI rc and reports a bounded tail (last 5 lines, 1000 chars, quotes/backslashes stripped) in HOST_SSH_MKDIR_FAILED. No retry/wait/IAM/provider change; underlying SSH root cause is NOT claimed repaired. Failure still stops before SCP/active lease; existing compensation, ownership and TTL unchanged.",
+    "files": [
+      "scripts/deploy/staging_ops.sh",
+      "tests/deployment/test_staging_release.py"
+    ],
+    "verification": "bash -n scripts/deploy/staging_ops.sh; python3 -m unittest tests.deployment.test_staging_release.StagingControllerLifecycleTests.test_real_gcloud_invocation_attachment_and_error_propagation: Ran 1 test OK (local mock only; not hosted evidence)",
+    "hosted_acceptance": "still pending; Stage 0 of 2, Prod 0 of 2"
   }
 }

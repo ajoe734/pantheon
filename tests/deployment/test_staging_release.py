@@ -800,6 +800,16 @@ with log_file.open("a", encoding="utf-8") as lf:
 fail_on = os.environ.get("GCLOUD_FAIL_ON", "").strip()
 if fail_on and fail_on in " ".join(raw_args):
     print(f"simulated gcloud failure on {fail_on}", file=sys.stderr)
+    if fail_on == "compute ssh":
+        for hint in (
+            "",
+            "Recommendation: To check for possible causes of SSH connectivity issues and get",
+            "recommendations, rerun the ssh command with the --troubleshoot option.",
+            "gcloud compute ssh x --troubleshoot --tunnel-through-iap",
+            "Or, to investigate an IAP tunneling issue:",
+            "https://cloud.google.com/iap/docs/using-tcp-forwarding#tunneling_with_ssh",
+        ):
+            print(hint, file=sys.stderr)
     raise SystemExit(1)
 
 if os.environ.get("GCLOUD_RETURN_EMPTY_IDENTITY") == "true" and "create" in args:
@@ -2428,6 +2438,11 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 )
                 self.assertNotEqual(fail_res.returncode, 0)
                 self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", fail_res.stderr)
+                if fail_token == "compute ssh":
+                    self.assertIn("HOST_SSH_MKDIR_FAILED", fail_res.stderr)
+                    self.assertIn("rc=1", fail_res.stderr)
+                    self.assertIn("simulated gcloud failure on compute ssh", fail_res.stderr)
+                    self.assertFalse(any("compute scp" in c for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines()))
                 cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
                 self.assertEqual(cloud_state["instances"], [])
                 self.assertEqual(cloud_state["disks"], [])
