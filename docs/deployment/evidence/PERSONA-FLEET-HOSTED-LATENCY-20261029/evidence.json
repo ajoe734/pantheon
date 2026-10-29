@@ -75,5 +75,12 @@
     "finding": "prefetch worker and request thread both read a cold/expired source registry concurrently (2 reads vs expected 1) when registry is the slowest stage",
     "fix": "per-instance lock with double-checked TTL cache in PersonaService._source_ingest_truth_by_connector; waiters reuse the first read; failure semantics unchanged (swallowed -> cached empty, as before)",
     "tests": "test_fleet_cold_source_truth_single_flight_when_registry_slowest (ok + registry failure) fail on previous head, pass now; contract+read_budget suites 53 passed; reviewer probe passes (1 read)"
+  },
+  "count_only_persona_binding_read": {
+    "finding": "fleet routed-strategy counts used a full persona-binding list read/projection although only per-persona current-version counts are needed",
+    "fix": "research_knowledge_source.count_strategy_persona_bindings (count-only, current-version), request-cached in read_surface_ports; fleet counts consume it. Multi-version regression keeps counts exact",
+    "tests": "read_budget + research_knowledge_source ports + fleet contract suites: 91 passed locally",
+    "hosted_proof": false,
+    "note": "No hosted p95 claimed; final hosted acceptance task owns it."
   }
 }
