@@ -1,0 +1,12 @@
+{
+  "task_id": "PERSONA-ARCHIVE-COUNT-BFF-20261029",
+  "field": "data.summary.filtered_archived_total",
+  "type": "integer|null",
+  "scope": "source and local validation only; no deploy, no hosted acceptance",
+  "commands": [
+    "/tmp/civenv/bin/python -m pytest test_pathreon_market_persona_fleet_contract.py tests/test_management_read_budget.py -q (cwd services/control-plane/bff)"
+  ],
+  "result": "44 passed (incl. real PersonaFleetPort failure for archived=exclude/only/include -> null, healthy-empty -> 0)",
+  "budget": "existing owner-call tests (100 vs 1000 archived) unchanged and passing; no preexisting failures observed",
+  "hosted_acceptance_owner": "PERSONA-FLEET-DEV-ACCEPTANCE-20261029"
+}

@@ -800,6 +800,16 @@ with log_file.open("a", encoding="utf-8") as lf:
 fail_on = os.environ.get("GCLOUD_FAIL_ON", "").strip()
 if fail_on and fail_on in " ".join(raw_args):
     print(f"simulated gcloud failure on {fail_on}", file=sys.stderr)
+    if fail_on == "compute ssh":
+        for hint in (
+            "",
+            "Recommendation: To check for possible causes of SSH connectivity issues and get",
+            "recommendations, rerun the ssh command with the --troubleshoot option.",
+            "gcloud compute ssh x --troubleshoot --tunnel-through-iap",
+            "Or, to investigate an IAP tunneling issue:",
+            "https://cloud.google.com/iap/docs/using-tcp-forwarding#tunneling_with_ssh",
+        ):
+            print(hint, file=sys.stderr)
     raise SystemExit(1)
 
 if os.environ.get("GCLOUD_RETURN_EMPTY_IDENTITY") == "true" and "create" in args:
@@ -881,7 +891,10 @@ if args[:3] == ["compute", "addresses", "create"]:
     name = args[3]
     project = parse_flag("--project")
     region = parse_flag("--region")
-    labels = parse_labels(parse_flag("--labels"))
+    if any(t == "--labels" or t.startswith("--labels=") for t in args):
+        print("ERROR: (gcloud.compute.addresses.create) unrecognized arguments: --labels", file=sys.stderr)
+        raise SystemExit(2)
+    labels = {}
     ip_val = f"203.0.113.{10 + len(state['addresses'])}"
     obj = {
         "id": str(1000 + len(state["addresses"])),
@@ -891,11 +904,31 @@ if args[:3] == ["compute", "addresses", "create"]:
         "address": ip_val,
         "selfLink": f"https://www.googleapis.com/compute/v1/projects/{project}/regions/{region}/addresses/{name}",
         "labels": labels,
+        "description": parse_flag("--description"),
         "status": "RESERVED",
     }
     state["addresses"] = [a for a in state["addresses"] if a["name"] != name] + [obj]
     save_state()
     print(json.dumps(obj))
+    raise SystemExit(0)
+
+if args[:3] == ["compute", "addresses", "update"]:
+    name = args[3]
+    match = [a for a in state["addresses"] if a["name"] == name]
+    if not match:
+        print(f"address {name} not found", file=sys.stderr)
+        raise SystemExit(1)
+    match[0]["labels"] = {**match[0]["labels"], **parse_labels(parse_flag("--update-labels"))}
+    save_state()
+    print(json.dumps(match[0]))
+    raise SystemExit(0)
+
+if args[:3] == ["compute", "addresses", "describe"]:
+    match = [a for a in state["addresses"] if a["name"] == args[3]]
+    if not match:
+        print(f"address {args[3]} not found", file=sys.stderr)
+        raise SystemExit(1)
+    print(json.dumps(match[0]))
     raise SystemExit(0)
 
 if args[:3] == ["compute", "addresses", "list"]:
@@ -945,6 +978,17 @@ if args[:3] == ["compute", "disks", "delete"]:
     print(json.dumps({"deleted": name}))
     raise SystemExit(0)
 
+if args[:3] == ["compute", "instance-templates", "describe"]:
+    if os.environ.get("GCLOUD_TEMPLATE_NO_SUBNET") == "true":
+        nic = {"network": "https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging"}
+    else:
+        nic = {
+            "network": "https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging",
+            "subnetwork": "https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1",
+        }
+    print(json.dumps({"name": args[3], "properties": {"networkInterfaces": [nic], "serviceAccounts": [{"email": "template-sa@example.invalid", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}]}}))
+    raise SystemExit(0)
+
 if args[:3] == ["compute", "instances", "create"]:
     name = args[3]
     project = parse_flag("--project")
@@ -973,9 +1017,13 @@ if args[:3] == ["compute", "instances", "create"]:
         "selfLink": f"https://www.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{name}",
         "labels": labels,
         "disks": disks_attached,
-        "serviceAccounts": [{"email": sa_email, "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
+        # Real gcloud fills the 7 default scopes (no cloud-platform) unless --scopes is given.
+        "serviceAccounts": [{"email": sa_email, "scopes": (parse_flag("--scopes").split(",") if parse_flag("--scopes") and os.environ.get("GCLOUD_IGNORE_SCOPES") != "true" else ["https://www.googleapis.com/auth/devstorage.read_only", "https://www.googleapis.com/auth/logging.write"])}],
         "networkInterfaces": [
             {
+                # Real gcloud falls back to the default network/subnet when the NIC is not restated.
+                "network": (None if os.environ.get("GCLOUD_IGNORE_NIC_FLAGS") == "true" else parse_flag("--network")) or f"https://www.googleapis.com/compute/v1/projects/{project}/global/networks/default",
+                "subnetwork": (None if os.environ.get("GCLOUD_IGNORE_NIC_FLAGS") == "true" else parse_flag("--subnet")) or f"https://www.googleapis.com/compute/v1/projects/{project}/regions/asia-east1/subnetworks/default",
                 "accessConfigs": [{"natIP": address}],
             }
         ],
@@ -1040,6 +1088,19 @@ if args[:2] == ["compute", "ssh"]:
     if not cmd:
         print("compute ssh missing --command", file=sys.stderr)
         raise SystemExit(1)
+    if state.get("ssh_4047_remaining", 0) > 0:
+        state["ssh_4047_remaining"] -= 1
+        save_state()
+        print("ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4047: 'Failed to lookup instance'].", file=sys.stderr)
+        raise SystemExit(255)
+    if state.get("ssh_4003_remaining", 0) > 0:
+        state["ssh_4003_remaining"] -= 1
+        save_state()
+        print("ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend'].", file=sys.stderr)
+        raise SystemExit(255)
+    if state.get("ssh_nonretryable"):
+        print("ERROR: [4033: 'permission denied']", file=sys.stderr)
+        raise SystemExit(255)
     if "mkdir -p '/tmp/pantheon-staging-bundle'" in cmd or "mkdir -p /tmp/pantheon-staging-bundle" in cmd:
         state.setdefault("vm_mkdir_ready", {})[vm_name] = True
         save_state()
@@ -2387,6 +2448,13 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(any("compute disks create pantheon-stg-pantheon-20261024-001-boot" in c for c in cmds))
         inst_create_cmd = next(c for c in cmds if "compute instances create pantheon-stg-pantheon-20261024-001" in c)
         self.assertIn("--address=203.0.113.10", inst_create_cmd)
+        self.assertIn("--network=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging", inst_create_cmd)
+        self.assertIn("--subnet=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1", inst_create_cmd)
+        live_nic = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"][0]["networkInterfaces"][0]
+        self.assertTrue(live_nic["network"].endswith("/networks/pantheon-staging"))
+        self.assertTrue(live_nic["subnetwork"].endswith("/subnetworks/pantheon-staging-asia-east1"))
+        self.assertEqual(live_nic["accessConfigs"][0]["natIP"], "203.0.113.10")
+        self.assertIn("--scopes=https://www.googleapis.com/auth/cloud-platform", inst_create_cmd)
         self.assertIn("--service-account=pantheon-stg-runtime@pantheon-stg-20260902.iam.gserviceaccount.com", inst_create_cmd)
         self.assertIn("name=pantheon-stg-pantheon-20261024-001-boot,device-name=pantheon-stg-pantheon-20261024-001-boot,boot=yes,mode=rw,auto-delete=no", inst_create_cmd)
         self.assertIn("name=pantheon-stg-data-pantheon-20261024-001,device-name=staging-data,mode=rw,auto-delete=no", inst_create_cmd)
@@ -2405,10 +2473,75 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 )
                 self.assertNotEqual(fail_res.returncode, 0)
                 self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", fail_res.stderr)
+                if fail_token == "compute ssh":
+                    self.assertIn("HOST_SSH_MKDIR_FAILED", fail_res.stderr)
+                    self.assertIn("rc=1", fail_res.stderr)
+                    self.assertIn("simulated gcloud failure on compute ssh", fail_res.stderr)
+                    self.assertFalse(any("compute scp" in c for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines()))
                 cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
                 self.assertEqual(cloud_state["instances"], [])
                 self.assertEqual(cloud_state["disks"], [])
                 self.assertEqual(cloud_state["addresses"], [])
+
+        # Template without an explicit subnetwork fails closed before any VM is created
+        self.setUp()
+        no_nic = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(GCLOUD_TEMPLATE_NO_SUBNET="true"), capture_output=True, text=True)
+        self.assertNotEqual(no_nic.returncode, 0)
+        self.assertIn("explicit network and subnetwork", no_nic.stderr)
+        self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
+
+        # Returned NIC differing from the template (default VPC) is rejected and compensated before any lease
+        self.setUp()
+        bad_nic = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(GCLOUD_IGNORE_NIC_FLAGS="true"), capture_output=True, text=True)
+        self.assertNotEqual(bad_nic.returncode, 0)
+        self.assertIn("does not match template network/subnetwork", bad_nic.stderr)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", bad_nic.stderr)
+        self.assertFalse(any("compute ssh" in c or "compute scp" in c for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines()))
+        bad_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(bad_state["instances"], [])
+        self.assertEqual(bad_state["disks"], [])
+        self.assertEqual(bad_state["addresses"], [])
+
+        # Returned SA scopes differing from the template (gcloud defaults) are rejected and compensated
+        self.setUp()
+        bad_scopes = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(GCLOUD_IGNORE_SCOPES="true"), capture_output=True, text=True)
+        self.assertNotEqual(bad_scopes.returncode, 0)
+        self.assertIn("do not match template scopes", bad_scopes.stderr)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", bad_scopes.stderr)
+        self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
+
+        # First IAP SSH: only exact transient 4047/4003 is retried (fake sleep keeps wall time at zero)
+        fake_sleep_dir = self.tmp_path / "fake-sleep-bin"
+        fake_sleep_dir.mkdir()
+        (fake_sleep_dir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_sleep_dir / "sleep").chmod(0o755)
+        sleep_env = {"PATH": f"{fake_sleep_dir}:{os.environ['PATH']}"}
+        for label, state_patch, expect_ok, expect_mkdirs in (
+            ("transient", {"ssh_4047_remaining": 2}, True, 3),
+            ("transient_4003_then_4047", {"ssh_4003_remaining": 2, "ssh_4047_remaining": 1}, True, 4),
+            ("exhausted", {"ssh_4047_remaining": 99}, False, 6),
+            ("exhausted_4003", {"ssh_4003_remaining": 99}, False, 6),
+            ("nonretryable", {"ssh_nonretryable": True}, False, 1),
+        ):
+            with self.subTest(ssh_retry=label):
+                self.setUp()
+                st = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+                st.update(state_patch)
+                self.gcloud_state_file.write_text(json.dumps(st), encoding="utf-8")
+                res = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(**sleep_env), capture_output=True, text=True)
+                mkdir_calls = [c for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines() if "compute ssh" in c and "rm -rf" in c]
+                self.assertEqual(len(mkdir_calls), expect_mkdirs)
+                self.assertEqual(len(set(mkdir_calls)), 1)
+                if expect_ok:
+                    self.assertEqual(res.returncode, 0, res.stderr)
+                    self.assertEqual(res.stderr.count("HOST_SSH_MKDIR_RETRY"), expect_mkdirs - 1)
+                else:
+                    self.assertNotEqual(res.returncode, 0)
+                    self.assertIn("HOST_SSH_MKDIR_FAILED", res.stderr)
+                    self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res.stderr)
+                    self.assertIn("rc=255", res.stderr)
+                    self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
+                    self.assertEqual(res.stderr.count("HOST_SSH_MKDIR_RETRY"), 0 if label == "nonretryable" else 5)
 
         # Test post-delete readback failure propagation when cloud resource lingers after delete
         self.setUp()
@@ -2421,6 +2554,142 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         self.assertNotEqual(lingering_res.returncode, 0)
         self.assertIn("POST_DELETE_READBACK_FAILED", lingering_res.stderr)
+
+    def test_address_labels_applied_by_update_after_unlabelled_create(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        cmds = self.gcloud_log_file.read_text(encoding="utf-8").splitlines()
+        create_cmd = next(c for c in cmds if "compute addresses create" in c)
+        self.assertNotIn("--labels", create_cmd)
+        self.assertTrue(any("compute addresses update pantheon-stg-ip-pantheon-20261024-001" in c and "--update-labels=" in c for c in cmds))
+        inv = json.loads((self.state_dir / "inventory" / "pantheon-20261024-001.json").read_text(encoding="utf-8"))
+        addr = next(r for r in inv["resources"] if r["type"] == "address")
+        self.assertEqual(addr["state"], "provisioned")
+        self.assertEqual(addr["resource_id"], "1000")
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(cloud_state["addresses"][0]["labels"]["release_id"], "pantheon-20261024-001")
+
+    def test_address_label_update_failure_compensates_only_exact_created_address(self) -> None:
+        env = self._base_env(GCLOUD_FAIL_ON="compute addresses update")
+        self.gcloud_state_file.write_text(
+            json.dumps({
+                "addresses": [{
+                    "id": "9",
+                    "name": "foreign-unlabelled",
+                    "project_id": "pantheon-stg-20260902",
+                    "region": "us-central1",
+                    "address": "203.0.113.99",
+                    "selfLink": "https://example.invalid/foreign",
+                    "labels": {},
+                    "status": "RESERVED",
+                }],
+                "disks": [], "instances": [], "iam_bindings": [], "images": {}, "gcs_blobs": {}, "vm_mkdir_ready": {},
+            }),
+            encoding="utf-8",
+        )
+        res = subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res.stderr)
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual([a["name"] for a in cloud_state["addresses"]], ["foreign-unlabelled"])
+
+    def test_orphan_sweep_reclaims_expired_pending_address_without_local_journal(self) -> None:
+        # Provision, then simulate a runner killed between create and label update: no labels, no local journal.
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        addr = cloud_state["addresses"][0]
+        self.assertTrue(addr["description"].startswith("pantheon-pending-v1:"))
+        addr["labels"] = {}
+        foreign = {**addr, "id": "77", "name": "foreign-pending", "description": "pantheon-pending-v1:{}"}
+        mismatch = {**addr, "id": "78", "name": "pantheon-stg-ip-other-release"}
+        cloud_state["addresses"] += [foreign, mismatch]
+        cloud_state["instances"] = []
+        cloud_state["disks"] = []
+        self.gcloud_state_file.write_text(json.dumps(cloud_state), encoding="utf-8")
+        shutil.rmtree(self.state_dir)
+        res = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "orphan-sweep"],
+            env=self._base_env(
+                STAGING_STATE_DIR=str(self.tmp_path / "fresh-runner-state"),
+                STAGING_ORPHAN_CLEANUP_ENABLED="true",
+                STAGING_NOW_EPOCH="1792836001",
+            ),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        out = json.loads(res.stdout)
+        self.assertEqual([d["name"] for d in out["deleted_resources"]], ["pantheon-stg-ip-pantheon-20261024-001"])
+        final = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(a["name"] for a in final["addresses"]), ["foreign-pending", "pantheon-stg-ip-other-release"])
+
+    def test_orphan_sweep_protects_foreign_replacement_of_journaled_pending_address(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        inv_path = self.state_dir / "inventory" / "pantheon-20261024-001.json"
+        inv = json.loads(inv_path.read_text(encoding="utf-8"))
+        for r in inv["resources"]:
+            if r["type"] == "address":
+                r["state"] = "label_pending"
+                r["resource_id"] = "original-created-id"
+        inv_path.write_text(json.dumps(inv), encoding="utf-8")
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        for a in cloud_state["addresses"]:
+            a["id"] = "different-foreign-id"
+            a["labels"] = {}
+            a["description"] = "unrelated"
+        cloud_state["instances"] = []
+        cloud_state["disks"] = []
+        self.gcloud_state_file.write_text(json.dumps(cloud_state), encoding="utf-8")
+        res = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "orphan-sweep"],
+            env=self._base_env(STAGING_ORPHAN_CLEANUP_ENABLED="true", STAGING_NOW_EPOCH="1792836001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        out = json.loads(res.stdout)
+        self.assertFalse(any(d["type"] == "address" for d in out["deleted_resources"]))
+        final = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual([a["id"] for a in final["addresses"]], ["different-foreign-id"])
+
+    def test_fresh_runner_rejects_unexpired_pending_address_of_other_release(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        for a in cloud_state["addresses"]:
+            a["labels"] = {}
+        cloud_state["instances"] = []
+        cloud_state["disks"] = []
+        self.gcloud_state_file.write_text(json.dumps(cloud_state), encoding="utf-8")
+        res = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(
+                RELEASE_ID="pantheon-20261024-002",
+                WORKFLOW_RUN_ID="other-run",
+                STAGING_STATE_DIR=str(self.tmp_path / "fresh-runner-state"),
+            ),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("already_provisioned", res.stdout)
+
+    def test_teardown_protects_unlabelled_address_with_different_id(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        inv_path = self.state_dir / "inventory" / "pantheon-20261024-001.json"
+        inv = json.loads(inv_path.read_text(encoding="utf-8"))
+        for r in inv["resources"]:
+            if r["type"] == "address":
+                r["state"] = "label_pending"
+                r["resource_id"] = "stale-other-id"
+        inv_path.write_text(json.dumps(inv), encoding="utf-8")
+        res = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "teardown", "--result", "success", "--reason", "completed"],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        out = json.loads(res.stdout)
+        self.assertTrue(any(s["type"] == "address" for s in out["skipped_unowned_resources"]))
 
     def test_valid_gcp_cloud_labels_and_ttl_epochs(self) -> None:
         subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)

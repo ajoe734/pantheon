@@ -45,6 +45,21 @@ from .common import PersonaRouteContext, make_context_dependency
 log = logging.getLogger(__name__)
 
 
+def _fleet_viewer_user_id(identity: Any, tenant_id: str, utc_now: Any) -> str:
+    """Resolve the private-visibility user via the shared Agora identity scope.
+
+    Fails closed (empty viewer, i.e. no private rows) if scope resolution fails.
+    """
+    from ...agora.identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
+
+    try:
+        return resolve_agora_user_scope(
+            identity, utc_now=utc_now, requested_tenant_id=tenant_id
+        ).user_id
+    except AgoraScopeResolutionError:
+        return ""
+
+
 def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
     router = APIRouter(tags=["personas"], dependencies=[make_context_dependency(ctx)])
 
@@ -410,6 +425,9 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         deployment_stage: Optional[str] = None,
         market_scope: Optional[str] = None,
         q: Optional[str] = None,
+        purpose: Optional[str] = None,
+        data_scope: Optional[str] = None,
+        archived: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -429,7 +447,19 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 q=q,
                 page_token=page_token,
                 page_size=page_size,
+                purpose=purpose,
+                data_scope=data_scope,
+                archived=archived,
+                viewer_user_id=_fleet_viewer_user_id(identity, tenant_id, utc_now),
             )
+        except ValueError as exc:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid persona fleet filter",
+                str(exc),
+                precondition_failed="fleet_filter",
+            ) from exc
         except PaperReconcilerUnavailableError as exc:
             raise _bff_error(
                 503,
