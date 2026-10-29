@@ -324,6 +324,11 @@ if tool == "docker":
         print(json.dumps([{"Id": img}]))
         raise SystemExit(0)
 
+    if args[:1] == ["logs"]:
+        secret = Path(os.environ["STAGING_POSTGRES_PASSWORD_FILE"]).read_text().strip()
+        print("Traceback: boom connecting with password=" + secret)
+        raise SystemExit(0)
+
     if args[:1] == ["inspect"]:
         cid = args[-1]
         fmt = ""
@@ -352,6 +357,8 @@ if tool == "docker":
                 counter.write_text(str(n + 1))
                 health = "unhealthy" if mode == "unhealthy" else ("healthy" if n >= 2 else "starting")
             print(running + (" " + health if health else ""))
+        elif "State.Status" in fmt:
+            print("status=running exit_code=0 oom_killed=false restart_count=0 error=")
         elif "Config.Env" in fmt:
             for k, v in sorted(cinfo.get("env", {}).items()):
                 print(f"{k}={v}")
@@ -2177,6 +2184,17 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 )
                 self.assertNotEqual(res.returncode, 0)
                 self.assertIn("routing override", res.stderr + res.stdout)
+
+    def test_bff_not_ready_emits_bounded_redacted_diagnostics_and_keeps_original_error(self) -> None:
+        res = subprocess.run(
+            [str(PROVISION_SCRIPT)], env=self._base_env(FAKE_BFF_UNHEALTHY="true"), capture_output=True, text=True
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("BFF_NOT_READY", res.stderr)
+        self.assertIn("BFF_DIAG state:", res.stderr)
+        self.assertIn("Traceback: boom", res.stderr)
+        self.assertNotIn("password=stg-pg-pass", res.stderr)
+        self.assertNotIn("PANTHEON_ENV=", res.stderr)
 
     def test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates(self) -> None:
         # 1. Missing runtime binary when apt install is disabled fails closed with RUNTIME_BINARY_MISSING

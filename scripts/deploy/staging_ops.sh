@@ -474,6 +474,7 @@ PY
         --quiet \
         --command="${REMOTE_DEPLOY_CMD}" 2>&1
     )"; then
+      printf 'HOST_SSH_DEPLOY_DIAGNOSTIC_BEGIN\n%s\nHOST_SSH_DEPLOY_DIAGNOSTIC_END\n' "$(printf '%s' "$SSH_DEPLOY_OUT" | tail -c 32768)" >&2
       die_json "HOST_SSH_DEPLOY_FAILED" "Remote staging deployment command failed on ${VM_NAME}: $(printf '%s' "$SSH_DEPLOY_OUT" | tail -n 5 | tr '\n"' '  ')"
     fi
 
