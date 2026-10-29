@@ -800,6 +800,16 @@ with log_file.open("a", encoding="utf-8") as lf:
 fail_on = os.environ.get("GCLOUD_FAIL_ON", "").strip()
 if fail_on and fail_on in " ".join(raw_args):
     print(f"simulated gcloud failure on {fail_on}", file=sys.stderr)
+    if fail_on == "compute ssh":
+        for hint in (
+            "",
+            "Recommendation: To check for possible causes of SSH connectivity issues and get",
+            "recommendations, rerun the ssh command with the --troubleshoot option.",
+            "gcloud compute ssh x --troubleshoot --tunnel-through-iap",
+            "Or, to investigate an IAP tunneling issue:",
+            "https://cloud.google.com/iap/docs/using-tcp-forwarding#tunneling_with_ssh",
+        ):
+            print(hint, file=sys.stderr)
     raise SystemExit(1)
 
 if os.environ.get("GCLOUD_RETURN_EMPTY_IDENTITY") == "true" and "create" in args:

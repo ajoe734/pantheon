@@ -401,6 +401,8 @@ PY
     )" || SSH_MKDIR_RC=$?
     if [[ "${SSH_MKDIR_RC}" -ne 0 ]]; then
       rm -rf "${STAGE_BUNDLE_DIR}"
+      # gcloud prints recommendation boilerplate after the real cause; keep the captured body (bounded) before the short JSON.
+      printf 'HOST_SSH_MKDIR_FAILED diagnostic body (rc=%s, first 32768 chars):\n%s\n' "${SSH_MKDIR_RC}" "${SSH_MKDIR_OUT:0:32768}" >&2
       die_json "HOST_SSH_MKDIR_FAILED" "Failed to prepare ${REMOTE_BUNDLE_DIR} on ${VM_NAME} over IAP SSH (rc=${SSH_MKDIR_RC}): $(printf '%s' "$SSH_MKDIR_OUT" | tail -n 5 | tr '\n"\\' '   ' | cut -c1-1000)"
     fi
 
