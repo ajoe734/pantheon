@@ -169,5 +169,10 @@
     "none_count_contract": "ReadSurfacePorts.count_strategy_persona_bindings raises TypeError on non-dict; valid empty dict stays valid; composed-path regression in test_pathreon_market_persona_fleet_contract.py",
     "validation": "BFF fleet/read_budget/research ports 95 passed exit0; reviewer probe now raises TypeError for None count",
     "hosted_proof": false
+  },
+  "incident_evolution_overlap": {
+    "change": "Fleet slim path now prefetches list_incidents and list_evolution_decisions through the existing submit_owner_read/cached_owner_call request cache (value or failure shared, tenant/auth context copied, no cross-request cache); foreground consumers read the cached result. Executor max_workers 4->6 for the two added prefetches.",
+    "tests": "test_fleet_overlaps_incident_and_evolution_reads_and_fetches_each_once fails on uncorrected source (serial reads) and passes corrected; failure-stays-failure tests for both reads pass. BFF persona_fleet_contract+management_read_budget+research_knowledge_source_ports: 98 passed.",
+    "not_claimed": "Local overlap proof only; no HTTP p95 or hosted claim. Root replay of the changed candidate is required."
   }
 }

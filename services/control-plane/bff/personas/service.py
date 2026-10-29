@@ -2389,9 +2389,29 @@ def _routed_strategy_counts_by_persona() -> Dict[str, int]:
 
 # --- _persona_fleet_prefetch_independent_reads ---
 _PERSONA_FLEET_READ_EXECUTOR = ThreadPoolExecutor(
-    max_workers=4,
+    max_workers=6,
     thread_name_prefix="bff-persona-fleet-read",
 )
+
+
+def _fleet_incidents() -> List[Dict[str, Any]]:
+    """Fleet incident read, shared per request (value or failure) with its prefetch."""
+    store = _get_active_read_store()
+    return cached_owner_call(
+        ("persona_fleet_incidents", id(store), selected_tenant.get()),
+        store.list_incidents,
+    )
+
+
+def _fleet_evolution_decisions() -> List[Dict[str, Any]]:
+    """Fleet evolution-decision read, shared per request (value or failure) with its prefetch."""
+    store = _get_active_read_store()
+    return list(
+        cached_owner_call(
+            ("persona_fleet_evolution_decisions", id(store), selected_tenant.get()),
+            lambda: list(store.list_evolution_decisions() or []),
+        )
+    )
 
 
 def _persona_fleet_prefetch_independent_reads() -> None:
@@ -2416,6 +2436,16 @@ def _persona_fleet_prefetch_independent_reads() -> None:
         _PERSONA_FLEET_READ_EXECUTOR,
         service._source_ingest_truth_by_connector,
         warm_key="persona_fleet_source_truth",
+    )
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        _fleet_incidents,
+        warm_key="persona_fleet_incidents",
+    )
+    submit_owner_read(
+        _PERSONA_FLEET_READ_EXECUTOR,
+        _fleet_evolution_decisions,
+        warm_key="persona_fleet_evolution_decisions",
     )
 
 
@@ -8672,8 +8702,8 @@ def _persona_fleet_slim_list_payload(
     bindings = _get_active_read_store().list_bindings(include_market_persona_defaults=True)
     runtimes = _get_active_read_store().list_runtime_bindings(include_market_persona_defaults=True)
     pools = _get_active_read_store().list_capital_pools(include_market_persona_defaults=True)
-    incidents = _get_active_read_store().list_incidents()
-    evolution_decisions = list(_get_active_read_store().list_evolution_decisions() or [])
+    incidents = _fleet_incidents()
+    evolution_decisions = _fleet_evolution_decisions()
     context_defaults = _persona_fleet_context_defaults_by_market(all_personas)
 
     league_by_persona = {

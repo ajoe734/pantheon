@@ -2328,6 +2328,61 @@ def test_fleet_strategy_spec_prefetch_failure_stays_failure(monkeypatch):
     assert calls["n"] == 1, calls
 
 
+def test_fleet_overlaps_incident_and_evolution_reads_and_fetches_each_once(monkeypatch):
+    # Measured cost pattern: GET incidents (~6MB) then evolution proposals (~1MB)
+    # ran serially after the other reads. Each is fetched once, off the request thread.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    delay = 0.4
+    spans = {}
+    calls = {"incidents": 0, "evolution": 0}
+    lock = threading.Lock()
+
+    def timed(name, fn):
+        def wrapped(*args, **kwargs):
+            start = _time.monotonic()
+            with lock:
+                calls[name] += 1
+            _time.sleep(delay)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                spans[name] = (start, _time.monotonic(), threading.current_thread() is threading.main_thread())
+
+        return wrapped
+
+    monkeypatch.setattr(store, "list_incidents", timed("incidents", store.list_incidents))
+    monkeypatch.setattr(store, "list_evolution_decisions", timed("evolution", store.list_evolution_decisions))
+    with _client_with_store(store) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert calls == {"incidents": 1, "evolution": 1}, calls
+    assert spans["incidents"][2] is False and spans["evolution"][2] is False, spans
+    assert spans["incidents"][0] < spans["evolution"][1] and spans["evolution"][0] < spans["incidents"][1], spans
+    assert body["data"]["summary"]["population"]["archived_total"] == 100
+
+
+@pytest.mark.parametrize("failing", ["list_incidents", "list_evolution_decisions"])
+def test_fleet_incident_evolution_prefetch_failure_stays_failure(monkeypatch, failing):
+    store = _seed_fleet_classification_store(100)
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise RuntimeError("owner read down")
+
+    monkeypatch.setattr(store, failing, boom)
+    with _client_with_store(store) as client:
+        try:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "trading", "page_size": 20})
+        except RuntimeError as exc:
+            assert "owner read down" in str(exc)
+        else:
+            assert response.status_code >= 500 or response.json().get("data", {}).get("summary", {}).get("population") is not None
+    assert calls["n"] == 1, calls
+
+
 def test_routed_strategy_counts_require_explicit_count_contract(monkeypatch):
     store = _seed_fleet_classification_store(3)
     monkeypatch.setattr(store, "count_strategy_persona_bindings", lambda: None)
