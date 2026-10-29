@@ -94,6 +94,15 @@ def persona_binding_has_binding(row: dict) -> bool:
     )
 
 
+def persona_binding_row_visible(
+    row: dict, visible_tenants: Optional[frozenset], artifact_type: Optional[str],
+) -> bool:
+    """Row is in the verified visible owner population (``None`` tenants = all)."""
+    if artifact_type is not None and row.get("artifact_type") != artifact_type:
+        return False
+    return visible_tenants is None or row.get("owner_tenant") in visible_tenants
+
+
 def persona_binding_candidate_family_rows(rows: list[dict]) -> list[dict]:
     """Keep every version of each strategy family with any bound version.
 
@@ -317,9 +326,12 @@ class RegistryStore:
                 for entry in self._entries.values()
             ]
 
-    def list_persona_binding_rows(self) -> list[dict]:
+    def list_persona_binding_rows(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+    ) -> list[dict]:
+        rows = [persona_binding_row(entry) for entry in self.list_all_entries()]
         return persona_binding_candidate_family_rows(
-            [persona_binding_row(entry) for entry in self.list_all_entries()]
+            [r for r in rows if persona_binding_row_visible(r, visible_tenants, artifact_type)]
         )
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:

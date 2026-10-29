@@ -2382,31 +2382,9 @@ def _routed_strategy_counts_by_persona() -> Dict[str, int]:
     return dict(
         cached_owner_call(
             ("persona_routed_strategy_counts", id(store), selected_tenant.get()),
-            lambda: _read_routed_strategy_counts(store),
+            store.count_strategy_persona_bindings,
         )
-        or {}
     )
-
-
-def _read_routed_strategy_counts(store: Any) -> Dict[str, int]:
-    counter = getattr(store, "count_strategy_persona_bindings", None)
-    if callable(counter):
-        return dict(counter() or {})
-    counts: Dict[str, int] = {}
-    for item in store.list_strategy_specs() or []:
-        if not isinstance(item, Mapping):
-            continue
-        raw_ids = item.get("persona_ids") or item.get("personaIds")
-        if not raw_ids and isinstance(item.get("versions"), list) and item["versions"]:
-            first_ver = item["versions"][0]
-            if isinstance(first_ver, Mapping):
-                raw_ids = first_ver.get("persona_ids") or first_ver.get("personaIds")
-        if not isinstance(raw_ids, list):
-            continue
-        for pid in {str(raw_pid or "").strip() for raw_pid in raw_ids}:
-            if pid:
-                counts[pid] = counts.get(pid, 0) + 1
-    return counts
 
 
 # --- _persona_fleet_prefetch_independent_reads ---

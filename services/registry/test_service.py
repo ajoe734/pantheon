@@ -3216,3 +3216,43 @@ def test_strategy_spec_persona_binding_view_keeps_whole_bound_families_only(stri
     # Every version of the bound family (incl. unbound latest) is kept; the fully
     # unbound family is dropped; tenant-b's bound family never leaks into tenant-a.
     assert got == [("pbf-bound-old", "1.0.0"), ("pbf-bound-old", "2.0.0")]
+
+
+def _seed_binding_visibility_scenario(store):
+    """Distinct versions per tenant; a legal registry_id equal to the old sentinel."""
+    def make(rid, sid, version, metadata, tenant):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec", strategy_id=sid, version=version,
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d", metadata=metadata,
+            ),
+            rid, actor={"tenant": tenant},
+        )
+
+    # Other tenant binds v1 of a family; own tenant only has an unbound v2.
+    make("other-v1", "fam-x", "1.0.0", {"persona_ids": ["p9"]}, "tenant-b")
+    make("own-v2", "fam-x", "2.0.0", {"persona_ids": []}, "tenant-a")
+    # Visible builtin-bound old version + own unbound latest: both retained.
+    make("builtin-v1", "fam-y", "1.0.0", {"persona_ids": ["p1"]}, "__builtin__")
+    make("own-y-v2", "fam-y", "2.0.0", {"persona_ids": []}, "tenant-a")
+    # Legal field values equal to the former absent-sentinel survive verbatim.
+    make("~pb-absent-7c1f~", "fam-z", "1.0.0", {"persona_ids": ["p2"], "status": "~pb-absent-7c1f~"}, "tenant-a")
+    return {"tenant-a", "__builtin__"}
+
+
+def _assert_binding_visibility_scenario(rows):
+    ids = {r["registry_id"] for r in rows}
+    assert ids == {"builtin-v1", "own-y-v2", "~pb-absent-7c1f~"}
+    sentinel = next(r for r in rows if r["strategy_id"] == "fam-z")
+    assert sentinel["metadata"]["status"] == "~pb-absent-7c1f~"
+    assert "tenant_id" not in sentinel["metadata"]
+
+
+def test_memory_persona_binding_visible_population_precedes_family_eligibility():
+    from .storage import RegistryStore
+
+    store = RegistryStore()
+    tenants = _seed_binding_visibility_scenario(store)
+    rows = store.list_persona_binding_rows(visible_tenants=frozenset(tenants), artifact_type="strategy_spec")
+    _assert_binding_visibility_scenario(rows)

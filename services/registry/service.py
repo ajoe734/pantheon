@@ -21,7 +21,6 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from typing import Any, Callable, Literal, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
@@ -1525,19 +1524,31 @@ def _filter_strategy_spec_views(
     ]
 
 
+def _persona_binding_visible_tenants(ctx: AuthContext, header_tenant: Optional[str]) -> Optional[frozenset]:
+    """Owner tenants the caller may read (``None`` = every tenant), as ``_can_read_entry`` + header scope."""
+    visible = None if "admin" in ctx.roles else frozenset({BUILTIN_TENANT, _caller_tenant(ctx)})
+    if header_tenant is not None:
+        scoped = frozenset({header_tenant, BUILTIN_TENANT})
+        visible = scoped if visible is None else visible & scoped
+    return visible
+
+
 def _persona_binding_rows(
     authorization: Optional[str], x_tenant_id: Optional[str], artifact_state: Optional[ArtifactState],
 ) -> list[dict]:
-    """Flat persona-binding rows with the same scope filters as the full list."""
+    """Flat persona-binding rows with the same scope filters as the full list.
+
+    The visible owner population is applied by the owner store before persona
+    family eligibility, so another tenant's bound version cannot make a family
+    (and its unbound visible versions) appear.
+    """
     ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
     wanted_state = artifact_state.value if artifact_state is not None else None
-    return [
-        {"entry": row} for row in get_registry_service().list_persona_binding_rows()
-        if row.get("artifact_type") == ArtifactType.STRATEGY_SPEC.value
-        and _can_read_entry(ctx, SimpleNamespace(owner_tenant=row.get("owner_tenant")))
-        and (header_tenant is None or row.get("owner_tenant") in (header_tenant, BUILTIN_TENANT))
-        and (wanted_state is None or row.get("artifact_state") == wanted_state)
-    ]
+    rows = get_registry_service().list_persona_binding_rows(
+        visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+        artifact_type=ArtifactType.STRATEGY_SPEC.value,
+    )
+    return [{"entry": row} for row in rows if wanted_state is None or row.get("artifact_state") == wanted_state]
 
 
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])

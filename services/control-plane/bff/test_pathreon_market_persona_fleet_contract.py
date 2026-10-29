@@ -2328,6 +2328,14 @@ def test_fleet_strategy_spec_prefetch_failure_stays_failure(monkeypatch):
     assert calls["n"] == 1, calls
 
 
+def test_routed_strategy_counts_require_explicit_count_contract(monkeypatch):
+    store = _seed_fleet_classification_store(3)
+    monkeypatch.setattr(store, "count_strategy_persona_bindings", lambda: None)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda: store)
+    with pytest.raises(TypeError):
+        personas_service._routed_strategy_counts_by_persona()
+
+
 def test_ranking_governance_state_is_identical_with_shared_command_log(monkeypatch):
     commands = [
         {

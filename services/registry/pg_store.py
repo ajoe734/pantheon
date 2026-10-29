@@ -805,16 +805,20 @@ class PostgresRegistryStore:
             for raw in self._entries.list_all()
         ]
 
-    def list_persona_binding_rows(self) -> list[dict]:
+    def list_persona_binding_rows(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+    ) -> list[dict]:
         """Persona-binding flat rows projected inside Postgres (no entry rebuild).
 
-        Only strategy families with at least one bound version are returned
-        (every version of such a family, bound or not), decided in the same
-        statement as the projection.
+        The visible owner population is selected first; only strategy families
+        with at least one bound visible version are returned (every visible
+        version of such a family, bound or not), decided in the same statement
+        as the projection.
         """
+        keep_sql, keep_params = persona_binding_family_keep_sql(visible_tenants, artifact_type)
         return persona_binding_rows_from_columns(
             self._entries.list_all_selected(
-                persona_binding_select_sql(), keep_sql=persona_binding_family_keep_sql(),
+                persona_binding_select_sql(), keep_sql=keep_sql, keep_params=keep_params,
             )
         )
 
@@ -850,21 +854,16 @@ def _sql_node(path: tuple[str, ...]) -> str:
     return "payload #> '{" + ",".join(path) + "}'"
 
 
-_BINDING_ABSENT = "~pb-absent-7c1f~"
-
-
 def persona_binding_select_sql() -> str:
-    """Plain column list over ``payload``: one jsonb leaf per binding field.
+    """Plain column list over ``payload``: one jsonb leaf (as text) per binding field.
 
-    No jsonb construction in SQL. A missing leaf comes back as the
-    ``_BINDING_ABSENT`` sentinel (JSON ``null`` stays ``None``), so presence is
-    known without a second lookup; the two container-shape facts Python needs
-    (is ``strategy_spec`` / ``strategy_spec.metadata`` an object) are two
+    No jsonb construction in SQL. A missing leaf is SQL ``NULL``; a JSON ``null``
+    leaf is the text ``null``, so presence is known without a second lookup and
+    no field value can collide with it. The two container-shape facts Python
+    needs (is ``strategy_spec`` / ``strategy_spec.metadata`` an object) are two
     trailing columns. Built only from constant key tuples (no request input).
     """
-    cols = ", ".join(
-        f"COALESCE({_sql_node(p)}, '\"{_BINDING_ABSENT}\"'::jsonb)" for p in _binding_leaf_paths()
-    )
+    cols = ", ".join(f"({_sql_node(p)})::text" for p in _binding_leaf_paths())
     shapes = ", ".join(
         f"jsonb_typeof({_sql_node(p)})"
         for p in (("metadata", "strategy_spec"), ("metadata", "strategy_spec", "metadata"))
@@ -872,12 +871,17 @@ def persona_binding_select_sql() -> str:
     return f"{cols}, {shapes}"
 
 
-def persona_binding_family_keep_sql() -> str:
-    """Boolean expression: row belongs to a strategy family with any bound version.
+def persona_binding_family_keep_sql(
+    visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+) -> tuple[str, tuple]:
+    """``(boolean expression, params)``: row is visible and in a family with a visible bound version.
 
-    Mirrors ``storage.persona_binding_has_binding`` (a version is bound when any
-    persona-id source is truthy). A row without a ``strategy_id`` is always kept.
-    Constant paths only; over-inclusion is the safe direction.
+    The verified visible owner population (``visible_tenants`` / ``artifact_type``)
+    is applied first; family eligibility is then decided only over those rows, in
+    the same statement. Mirrors ``storage.persona_binding_has_binding`` (a version
+    is bound when any persona-id source is truthy). A visible row without a
+    ``strategy_id`` is always kept. Request-derived values are bound parameters;
+    paths are constant; over-inclusion of the binding test is the safe direction.
     """
     empty = "'null'::jsonb, '[]'::jsonb, '{}'::jsonb, '\"\"'::jsonb, 'false'::jsonb, '0'::jsonb"
     bound = " OR ".join(
@@ -890,8 +894,24 @@ def persona_binding_family_keep_sql() -> str:
             ("metadata", "strategy_spec", "metadata", "persona_id"),
         )
     )
+    visible, params = [], []
+    if artifact_type is not None:
+        visible.append("payload ->> 'artifact_type' = %s")
+        params.append(artifact_type)
+    if visible_tenants is not None:
+        named = sorted(t for t in visible_tenants if t is not None)
+        clauses = ["payload ->> 'owner_tenant' = ANY(%s::text[])"]
+        params.append(named)
+        if None in visible_tenants:
+            clauses.append("payload ->> 'owner_tenant' IS NULL")
+        visible.append("(" + " OR ".join(clauses) + ")")
+    visible_sql = " AND ".join(visible) or "TRUE"
     fam = "payload ->> 'strategy_id'"
-    return f"{fam} IS NULL OR bool_or({bound}) OVER (PARTITION BY {fam})"
+    sql = (
+        f"({visible_sql}) AND ({fam} IS NULL OR "
+        f"COALESCE(bool_or({bound}) FILTER (WHERE {visible_sql}) OVER (PARTITION BY {fam}), FALSE))"
+    )
+    return sql, tuple(params) * 2
 
 
 def persona_binding_rows_from_columns(rows) -> list[dict]:
@@ -902,20 +922,22 @@ def persona_binding_rows_from_columns(rows) -> list[dict]:
     i_spec = i_prov + 1
     i_spec_prov = i_spec + len(PERSONA_BINDING_SPEC_KEYS)
     i_inner = i_spec_prov + 1
-    absent = _BINDING_ABSENT
     out: list[dict] = []
     for r in rows:
+        def val(i):
+            return json.loads(r[i])
+
         def pick(keys, start):
-            return {k: r[start + j] for j, k in enumerate(keys) if r[start + j] != absent}
+            return {k: val(start + j) for j, k in enumerate(keys) if r[start + j] is not None}
 
         row = pick(PERSONA_BINDING_ROW_KEYS, 0)
         meta = pick(PERSONA_BINDING_META_KEYS, i_meta)
-        if r[i_prov] != absent:
-            meta["provenance"] = {"created_at": r[i_prov]}
+        if r[i_prov] is not None:
+            meta["provenance"] = {"created_at": val(i_prov)}
         if r[n] == "object":
             spec = pick(PERSONA_BINDING_SPEC_KEYS, i_spec)
-            if r[i_spec_prov] != absent:
-                spec["provenance"] = {"created_at": r[i_spec_prov]}
+            if r[i_spec_prov] is not None:
+                spec["provenance"] = {"created_at": val(i_spec_prov)}
             if r[n + 1] == "object":
                 spec["metadata"] = pick(PERSONA_BINDING_INNER_META_KEYS, i_inner)
             meta["strategy_spec"] = spec

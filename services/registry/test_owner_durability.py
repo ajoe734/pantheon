@@ -28,6 +28,7 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 from . import service as service_module
 from .models import RegistryEntryCreate
+from .test_service import _assert_binding_visibility_scenario, _seed_binding_visibility_scenario
 from .storage import (
     PERSONA_BINDING_ROW_KEYS, get_store, persona_binding_candidate_family_rows,
     persona_binding_row, reset_store,
@@ -204,6 +205,15 @@ def test_persona_binding_family_narrowing_keeps_all_versions_of_bound_families(p
         "old-bound", "new-unbound", "tie-1", "tie-2", "retired-latest",
         "nested-bound", "inner-meta-bound",
     }
+
+
+def test_persona_binding_visible_population_precedes_family_eligibility_in_sql(pg_app):
+    store = get_store()
+    tenants = _seed_binding_visibility_scenario(store)
+    rows = store.list_persona_binding_rows(visible_tenants=frozenset(tenants), artifact_type="strategy_spec")
+    _assert_binding_visibility_scenario(rows)
+    # Unscoped read still sees every bound family (other tenant's v1 included).
+    assert {r["registry_id"] for r in store.list_persona_binding_rows()} >= {"other-v1", "own-v2"}
 
 
 def test_register_and_readback_survive_fresh_process_restart(pg_app):

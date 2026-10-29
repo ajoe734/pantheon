@@ -395,6 +395,7 @@ class PostgresJsonOwnerStore:
         columns_sql: str,
         *,
         keep_sql: Optional[str] = None,
+        keep_params: Optional[tuple] = None,
         conn: Optional[Any] = None,
     ) -> List[tuple]:
         """Select code-defined column expressions over each object row's payload.
@@ -404,7 +405,8 @@ class PostgresJsonOwnerStore:
         request input; expressions reference ``payload``) is fetched, with no
         per-row payload decode. ``keep_sql`` (trusted boolean expression over
         ``payload``, may use window functions) narrows the rows before
-        ``columns_sql`` is evaluated, in the same statement/snapshot.
+        ``columns_sql`` is evaluated, in the same statement/snapshot; request
+        derived values must travel in ``keep_params`` (``%s`` placeholders).
         """
         keep = f"WHERE keep " if keep_sql else ""
         keep_col = f", ({keep_sql}) AS keep" if keep_sql else ""
@@ -418,7 +420,8 @@ class PostgresJsonOwnerStore:
             f") AS rows {keep}ORDER BY updated_at ASC"
         )
         with self._use_conn(conn) as conn:
-            return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in conn.execute(sql).fetchall()]
+            cursor = conn.execute(sql, keep_params) if keep_params else conn.execute(sql)
+            return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in cursor.fetchall()]
 
     def count(self, *, conn: Optional[Any] = None) -> int:
         """Count the number of rows in this owner-store table without hydrating payloads."""
