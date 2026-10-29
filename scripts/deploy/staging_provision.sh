@@ -426,6 +426,8 @@ run_gcloud_resource_create() {
   EXPECTED_DATA_DISK="$DATA_DISK_NAME" \
   EXPECTED_RESERVED_IP="${RESERVED_IP:-}" \
   EXPECTED_RUNTIME_SA="${STAGING_RUNTIME_SERVICE_ACCOUNT}" \
+  EXPECTED_NIC_NETWORK="${TEMPLATE_NIC_NETWORK:-}" \
+  EXPECTED_NIC_SUBNET="${TEMPLATE_NIC_SUBNET:-}" \
   python3 - <<'PY'
 import json
 import os
@@ -528,6 +530,23 @@ if not dry_run:
                 file=sys.stderr,
             )
             raise SystemExit(1)
+        expected_net = os.environ["EXPECTED_NIC_NETWORK"]
+        expected_sub = os.environ["EXPECTED_NIC_SUBNET"]
+        if not expected_net or not expected_sub:
+            print(f"Instance {r_name} has no template NIC expectation to read back", file=sys.stderr)
+            raise SystemExit(1)
+        nic_pairs = [
+            (str(nic.get("network") or ""), str(nic.get("subnetwork") or ""))
+            for nic in nics
+            if isinstance(nic, dict)
+        ]
+        if nic_pairs != [(expected_net, expected_sub)]:
+            print(
+                f"Instance {r_name} NIC {nic_pairs} does not match template network/subnetwork "
+                f"({expected_net!r}, {expected_sub!r})",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
         sas = parsed.get("serviceAccounts") or []
         sa_emails = [sa.get("email") for sa in sas if isinstance(sa, dict) and sa.get("email")]
         if sa_emails and expected_sa not in sa_emails:
@@ -539,6 +558,8 @@ if not dry_run:
         entry["attached_boot_disk"] = expected_boot
         entry["attached_data_disk"] = expected_data
         entry["nat_ip"] = expected_ip
+        entry["network"] = expected_net
+        entry["subnetwork"] = expected_sub
         entry["service_account"] = expected_sa
 else:
     if r_type == "address":

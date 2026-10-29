@@ -1021,8 +1021,8 @@ if args[:3] == ["compute", "instances", "create"]:
         "networkInterfaces": [
             {
                 # Real gcloud falls back to the default network/subnet when the NIC is not restated.
-                "network": parse_flag("--network") or f"https://www.googleapis.com/compute/v1/projects/{project}/global/networks/default",
-                "subnetwork": parse_flag("--subnet") or f"https://www.googleapis.com/compute/v1/projects/{project}/regions/asia-east1/subnetworks/default",
+                "network": (None if os.environ.get("GCLOUD_IGNORE_NIC_FLAGS") == "true" else parse_flag("--network")) or f"https://www.googleapis.com/compute/v1/projects/{project}/global/networks/default",
+                "subnetwork": (None if os.environ.get("GCLOUD_IGNORE_NIC_FLAGS") == "true" else parse_flag("--subnet")) or f"https://www.googleapis.com/compute/v1/projects/{project}/regions/asia-east1/subnetworks/default",
                 "accessConfigs": [{"natIP": address}],
             }
         ],
@@ -2482,6 +2482,18 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertNotEqual(no_nic.returncode, 0)
         self.assertIn("explicit network and subnetwork", no_nic.stderr)
         self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
+
+        # Returned NIC differing from the template (default VPC) is rejected and compensated before any lease
+        self.setUp()
+        bad_nic = subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(GCLOUD_IGNORE_NIC_FLAGS="true"), capture_output=True, text=True)
+        self.assertNotEqual(bad_nic.returncode, 0)
+        self.assertIn("does not match template network/subnetwork", bad_nic.stderr)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", bad_nic.stderr)
+        self.assertFalse(any("compute ssh" in c or "compute scp" in c for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines()))
+        bad_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(bad_state["instances"], [])
+        self.assertEqual(bad_state["disks"], [])
+        self.assertEqual(bad_state["addresses"], [])
 
         # First IAP SSH: only exact transient 4047 is retried (fake sleep keeps wall time at zero)
         fake_sleep_dir = self.tmp_path / "fake-sleep-bin"
