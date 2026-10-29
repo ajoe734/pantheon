@@ -426,6 +426,8 @@ run_gcloud_resource_create() {
   EXPECTED_DATA_DISK="$DATA_DISK_NAME" \
   EXPECTED_RESERVED_IP="${RESERVED_IP:-}" \
   EXPECTED_RUNTIME_SA="${STAGING_RUNTIME_SERVICE_ACCOUNT}" \
+  EXPECTED_NIC_NETWORK="${TEMPLATE_NIC_NETWORK:-}" \
+  EXPECTED_NIC_SUBNET="${TEMPLATE_NIC_SUBNET:-}" \
   python3 - <<'PY'
 import json
 import os
@@ -528,6 +530,23 @@ if not dry_run:
                 file=sys.stderr,
             )
             raise SystemExit(1)
+        expected_net = os.environ["EXPECTED_NIC_NETWORK"]
+        expected_sub = os.environ["EXPECTED_NIC_SUBNET"]
+        if not expected_net or not expected_sub:
+            print(f"Instance {r_name} has no template NIC expectation to read back", file=sys.stderr)
+            raise SystemExit(1)
+        nic_pairs = [
+            (str(nic.get("network") or ""), str(nic.get("subnetwork") or ""))
+            for nic in nics
+            if isinstance(nic, dict)
+        ]
+        if nic_pairs != [(expected_net, expected_sub)]:
+            print(
+                f"Instance {r_name} NIC {nic_pairs} does not match template network/subnetwork "
+                f"({expected_net!r}, {expected_sub!r})",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
         sas = parsed.get("serviceAccounts") or []
         sa_emails = [sa.get("email") for sa in sas if isinstance(sa, dict) and sa.get("email")]
         if sa_emails and expected_sa not in sa_emails:
@@ -539,6 +558,8 @@ if not dry_run:
         entry["attached_boot_disk"] = expected_boot
         entry["attached_data_disk"] = expected_data
         entry["nat_ip"] = expected_ip
+        entry["network"] = expected_net
+        entry["subnetwork"] = expected_sub
         entry["service_account"] = expected_sa
 else:
     if r_type == "address":
@@ -656,6 +677,29 @@ fi
 # Step 4: Create ephemeral VM from template attaching reserved IP, boot disk, sanitized data disk, and runtime SA.
 # Note: Project-level IAM is pre-provisioned in the staging foundation; the deploy SA only uses
 # iam.serviceAccountUser on the runtime SA and never mutates project IAM bindings at provision time.
+# gcloud resets the NIC to the default network when --address is given alone, so read the template NIC once and re-state it.
+TEMPLATE_NIC_NETWORK=""
+TEMPLATE_NIC_SUBNET=""
+if [[ "${DRY_RUN}" != "true" ]]; then
+  TEMPLATE_NIC_JSON="$("${GCLOUD_BIN}" compute instance-templates describe "${STAGING_INSTANCE_TEMPLATE}" \
+    --project="${STAGING_GCP_PROJECT_ID}" --format=json)"
+  TEMPLATE_NIC_PAIR="$(TEMPLATE_NIC_JSON="$TEMPLATE_NIC_JSON" python3 - <<'PY'
+import json
+import os
+
+nics = json.loads(os.environ["TEMPLATE_NIC_JSON"]).get("properties", {}).get("networkInterfaces") or []
+if len(nics) != 1 or not nics[0].get("network") or not nics[0].get("subnetwork"):
+    raise SystemExit("Instance template must define exactly one NIC with explicit network and subnetwork")
+print(nics[0]["network"], nics[0]["subnetwork"])
+PY
+)"
+  read -r TEMPLATE_NIC_NETWORK TEMPLATE_NIC_SUBNET <<<"${TEMPLATE_NIC_PAIR}"
+fi
+NIC_ARGS=()
+if [[ -n "${TEMPLATE_NIC_NETWORK}" ]]; then
+  NIC_ARGS=(--network="${TEMPLATE_NIC_NETWORK}" --subnet="${TEMPLATE_NIC_SUBNET}")
+fi
+
 run_gcloud_resource_create "instance" "${VM_NAME}" \
   compute instances create "${VM_NAME}" \
   --project="${STAGING_GCP_PROJECT_ID}" \
@@ -663,6 +707,7 @@ run_gcloud_resource_create "instance" "${VM_NAME}" \
   --source-instance-template="${STAGING_INSTANCE_TEMPLATE}" \
   --machine-type="${STAGING_MACHINE_TYPE:-e2-standard-2}" \
   --service-account="${STAGING_RUNTIME_SERVICE_ACCOUNT}" \
+  "${NIC_ARGS[@]}" \
   --address="${RESERVED_IP}" \
   --disk="name=${BOOT_DISK_NAME},device-name=${BOOT_DISK_NAME},boot=yes,mode=rw,auto-delete=no" \
   --disk="name=${DATA_DISK_NAME},device-name=staging-data,mode=rw,auto-delete=no" \
