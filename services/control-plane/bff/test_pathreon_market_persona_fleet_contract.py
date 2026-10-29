@@ -1277,6 +1277,107 @@ def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_on
     assert "persona_league" not in data
 
 
+def _seed_fleet_classification_store(archived_count: int = 105):
+    store = _make_store(allow_local_snapshot_fallback=False)
+
+    def add(pid, state, metadata, tenant="pantheon-dev"):
+        store.create_persona(
+            persona_id=pid,
+            tenant_id=tenant,
+            name=pid,
+            actor_id="pantheon-dev-browser",
+            lifecycle_state=state,
+            created_at="2026-06-03T08:27:44Z",
+            metadata={"owner": "pantheon-dev-browser", **metadata},
+        )
+
+    prov = {"provisioning_idempotency_key": "k", "capital_mode": "paper"}
+    add("p-draft", "draft", {"provisioning_idempotency_key": "k"})
+    add("p-paper", "paper", prov)
+    add("p-test", "paper", {**prov, "data_scope": "test"})
+    add("p-legacy", "paper", {})
+    add(
+        "p-servant",
+        "paper",
+        {"persona_class": "agora_servant", "agora_user_id": "u1", "execution_authority": "none"},
+    )
+    add("p-other-tenant", "paper", prov, tenant="other-tenant")
+    for i in range(archived_count):
+        add(f"p-old-{i:04d}", "retired", prov)
+    return store
+
+
+def _fleet(client, **params):
+    response = client.get("/bff/management/persona-fleet", headers=HEADERS, params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_persona_fleet_purpose_data_scope_and_archive_filters() -> None:
+    store = _seed_fleet_classification_store()
+    with _client_with_store(store) as client:
+        default = _fleet(client, page_size=200)
+        trading = _fleet(client, purpose="trading", data_scope="regular", archived="exclude")
+        archived = _fleet(client, archived="only", page_size=20)
+        unknown = _fleet(client, data_scope="unknown", archived="exclude")
+        test = _fleet(client, data_scope="test", archived="exclude")
+        advisory = _fleet(client, purpose="advisory_assistant", archived="exclude")
+
+    # Omitted parameters keep the historical contents (everything, incl. retired).
+    assert default["page_info"]["total"] == 110
+    ids = {i["persona_id"] for i in trading["data"]["items"]}
+    assert ids == {"p-draft", "p-paper"}
+    assert "p-other-tenant" not in {i["persona_id"] for i in default["data"]["items"]}
+    draft = next(i for i in trading["data"]["items"] if i["persona_id"] == "p-draft")
+    assert draft["persona_purpose"] == "trading" and draft["data_scope"] == "regular"
+    # Archive count is global, not just the page.
+    pop = trading["data"]["summary"]["population"]
+    assert pop["archived_total"] == 105 and pop["authorized_total"] == 110
+    assert archived["page_info"]["total"] == 105
+    assert len(archived["data"]["items"]) == 20 and archived["page_info"]["next_page_token"]
+    assert {i["persona_id"] for i in unknown["data"]["items"]} == {"p-legacy"}
+    assert {i["persona_id"] for i in test["data"]["items"]} == {"p-test"}
+    servant = advisory["data"]["items"][0]
+    assert servant["persona_id"] == "p-servant"
+    for key in ("league_rank", "rank", "paper_ledger_id", "paper_ledger", "capital_mode", "deployment_stage"):
+        assert servant[key] is None
+    assert servant["state"] == "advisory" and servant["health"] == "not_applicable"
+
+
+def test_persona_fleet_archived_pages_traverse_stably_beyond_100() -> None:
+    store = _seed_fleet_classification_store(archived_count=105)
+    seen = []
+    with _client_with_store(store) as client:
+        token = None
+        while True:
+            params = {"archived": "only", "page_size": 40}
+            if token:
+                params["page_token"] = token
+            body = _fleet(client, **params)
+            seen.extend(i["persona_id"] for i in body["data"]["items"])
+            token = body["page_info"]["next_page_token"]
+            if not token:
+                break
+    assert len(seen) == 105 and len(set(seen)) == 105
+
+
+def test_persona_fleet_servant_excluded_from_trading_ranks_and_invalid_filter_rejected() -> None:
+    store = _seed_fleet_classification_store(archived_count=0)
+    with _client_with_store(store) as client:
+        body = _fleet(client, archived="exclude", page_size=200)
+        bad = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "bogus"})
+    ranked = [
+        i["rank"]["league_rank"]
+        for i in body["data"]["items"]
+        if isinstance(i.get("rank"), dict) and i["rank"].get("league_rank") is not None
+    ]
+    assert "p-servant" not in {
+        i["persona_id"] for i in body["data"]["items"] if i.get("rank")
+    }
+    assert len(ranked) == len(set(ranked))
+    assert bad.status_code == 422, bad.text
+
+
 def test_unadmitted_catalog_defaults_do_not_fabricate_ghost_fleet_rows_or_detail() -> None:
     store = _make_store(allow_local_snapshot_fallback=False)
     with _client_with_store(store) as client:
@@ -2024,3 +2125,167 @@ def test_canonical_binding_precedence_and_mixed_topology(
 
     assert ranking_rows[persona_test]["eligible"] is True
     assert ranking_rows[persona_test]["source_confidence"] == "formal"
+
+
+@pytest.mark.parametrize("archived_count", [100, 1000])
+def test_fleet_detail_projection_is_page_bounded(archived_count, monkeypatch):
+    calls = {"detail": 0}
+    original = personas_service._project_persona_fleet_list_row
+
+    def counting(**kwargs):
+        calls["detail"] += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(personas_service, "_project_persona_fleet_list_row", counting)
+    with _client_with_store(_seed_fleet_classification_store(archived_count)) as client:
+        body = _fleet(client, purpose="trading", archived="include", page_size=20)
+    assert len(body["data"]["items"]) <= 20
+    assert body["page_info"]["total"] >= archived_count
+    assert calls["detail"] <= 20
+
+
+class _OwnerCallCounter:
+    """Delegating proxy that counts every owner method invoked on the store."""
+
+    def __init__(self, inner, fail=None):
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "calls", {})
+        object.__setattr__(self, "_fail", fail or {})
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if not callable(attr):
+            return attr
+
+        def wrapped(*args, **kwargs):
+            self.calls[name] = self.calls.get(name, 0) + 1
+            if name in self._fail:
+                raise self._fail[name]
+            return attr(*args, **kwargs)
+
+        return wrapped
+
+
+def _owner_calls(archived_count, fail=None, **params):
+    proxy = _OwnerCallCounter(_seed_fleet_classification_store(archived_count), fail=fail)
+    with _client_with_store(proxy) as client:
+        try:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS, params=params)
+        except RuntimeError as exc:  # owner failure surfaces truthfully, never as healthy data
+            return proxy.calls, exc
+    return proxy.calls, response
+
+
+@pytest.mark.parametrize("params", [
+    {"purpose": "trading", "archived": "include", "page_size": 20},
+    {"purpose": "trading", "archived": "exclude", "page_size": 20},
+    {"page_size": 20},
+])
+def test_fleet_owner_transport_calls_are_independent_of_archive_size(params):
+    small, small_resp = _owner_calls(100, **params)
+    large, large_resp = _owner_calls(1000, **params)
+    assert small_resp.status_code == large_resp.status_code == 200
+    # Same owner methods, same call counts: no per-persona / per-archived-record N+1.
+    assert small == large, (small, large)
+
+
+@pytest.mark.parametrize("failing", ["list_telemetry_summaries", "list_runtime_bindings", "list_incidents"])
+def test_fleet_owner_failure_keeps_fixed_call_budget(failing):
+    outcomes = []
+    for count in (100, 1000):
+        calls, response = _owner_calls(
+            count, fail={failing: RuntimeError(f"{failing} owner down")},
+            purpose="trading", archived="include", page_size=20,
+        )
+        outcomes.append((calls, type(response).__name__ if isinstance(response, Exception) else response.status_code))
+    # Failure must not fan out retries/lookups with archive size.
+    assert outcomes[0] == outcomes[1], outcomes
+
+
+def test_advisory_record_never_enters_league_rows():
+    with _client_with_store(_seed_fleet_classification_store(0)) as client:
+        body = client.get("/bff/management/quarterly-ranking", headers=HEADERS, params={"page_size": 200}).json()
+    assert "p-servant" not in [r.get("persona_id") for r in body["data"]["items"]]
+
+
+def _private_servant_store():
+    store = _seed_fleet_classification_store(0)
+    store.create_persona(
+        persona_id="p-private-servant", tenant_id="pantheon-dev", name="Private servant",
+        actor_id="u1", lifecycle_state="paper", created_at="2026-06-03T08:27:44Z",
+        metadata={
+            "persona_class": "agora_servant", "agora_user_id": "u1",
+            "owner_scope": "user_private", "visibility_scope": "private",
+            "deployment_stage": "paper", "environment_ceiling": "paper",
+            "execution_authority": "none",
+        },
+    )
+    return store
+
+
+def test_advisory_servant_has_no_nested_trading_facts_and_is_owner_private():
+    seen = {}
+    with _client_with_store(_private_servant_store()) as client:
+        for caller in ("u1", "u2"):
+            body = client.get(
+                "/bff/management/persona-fleet",
+                headers={"Authorization": f"Bearer {caller}:operator"},
+                params={"purpose": "advisory_assistant"},
+            ).json()["data"]
+            seen[caller] = body
+    ids_u2 = [r["persona_id"] for r in seen["u2"]["items"]]
+    assert "p-private-servant" not in ids_u2
+    assert seen["u2"]["summary"]["population"]["authorized_total"] == (
+        seen["u1"]["summary"]["population"]["authorized_total"] - 1
+    )
+    row = next(r for r in seen["u1"]["items"] if r["persona_id"] == "p-private-servant")
+    for key in ("capital_scope", "capital_scope_id", "binding_state", "capital_binding",
+                "runtime_binding", "paper_ledger_id", "stage", "capital_mode"):
+        assert row.get(key) is None, key
+
+
+def _verified_jwt_header(monkeypatch, *, sub: str, user_id: str) -> dict:
+    import time
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "test-only-persona-fleet-secret"
+    for key, value in {
+        "PANTHEON_BFF_AUTH_STUB": "", "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_JWT_SECRET": secret,
+        "PANTHEON_BFF_JWT_ISSUER": "https://auth.pantheon.local",
+        "PANTHEON_BFF_JWT_AUDIENCE": "pantheon-bff",
+    }.items():
+        monkeypatch.setenv(key, value)
+    claims = {
+        "sub": sub, "userId": user_id, "tenant_id": "pantheon-dev", "roles": ["operator"],
+        "iss": "https://auth.pantheon.local", "aud": "pantheon-bff",
+        "iat": int(time.time()), "exp": int(time.time()) + 300,
+    }
+    return {"Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret)}
+
+
+@pytest.mark.parametrize(
+    "sub,user_id,visible",
+    [("u1", "u2", False), ("u2", "u1", True)],
+)
+def test_private_servant_visibility_uses_agora_user_scope_for_verified_jwt(
+    monkeypatch, sub, user_id, visible
+):
+    with _client_with_store(_private_servant_store()) as client:
+        other = client.get(
+            "/bff/management/persona-fleet",
+            headers={"Authorization": "Bearer u9:operator"},
+            params={"purpose": "advisory_assistant"},
+        ).json()["data"]["summary"]["population"]["authorized_total"]
+    headers = _verified_jwt_header(monkeypatch, sub=sub, user_id=user_id)
+    with _client_with_store(_private_servant_store()) as client:
+        resp = client.get(
+            "/bff/management/persona-fleet", headers=headers,
+            params={"purpose": "advisory_assistant"},
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    ids = [r["persona_id"] for r in body["items"]]
+    assert ("p-private-servant" in ids) is visible
+    total = body["summary"]["population"]["authorized_total"]
+    assert total == other + (1 if visible else 0)

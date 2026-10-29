@@ -97,6 +97,7 @@ from ..models import (
 )
 
 from ..pm12 import evaluator_results
+from . import fleet_classification as _fleet_cls
 from ..pm12.service import _management_runtime_is_terminal
 
 try:
@@ -464,7 +465,7 @@ def _ppl_alloc_009_paper_eligibility_context(
             precondition="paper_only_persona",
         )
 
-    league_rows = _pm12_persona_league_rows(q=persona_id, tenant_id=caller_tenant, include_route_policy=False, include_health=False, include_allowed_actions=False)
+    league_rows = _pm12_persona_league_rows(q=persona_id, tenant_id=caller_tenant, include_route_policy=False, include_health=False, include_allowed_actions=False, include_advisory=True)
     matches = [
         row
         for row in league_rows
@@ -5168,6 +5169,10 @@ def _pm12_quarterly_ranking_items(
     quarter_window: Dict[str, Any],
     telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> List[Dict[str, Any]]:
+    # Explicit non-trading assistants never enter the trading cohort; ranks are
+    # computed over the whole trading cohort, not renumbered per page.
+    rows = [row for row in rows if not _fleet_cls.is_non_trading_persona(row)]
+
     def ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         if telemetry_cache is None:
             return _pm12_persona_league_ranking_item(row)
@@ -6379,8 +6384,13 @@ def _pm12_persona_league_rows(
     include_health: bool = True,
     include_allowed_actions: bool = True,
     routed_strategy_counts: Optional[Mapping[str, int]] = None,
+    include_advisory: bool = False,
 ) -> List[Dict[str, Any]]:
     raw_records = _list_persona_records(tenant_id)
+    if not include_advisory:
+        # Classify from canonical raw metadata before projection drops it, so
+        # every league consumer shares one trading-only cohort.
+        raw_records = [r for r in raw_records if not _fleet_cls.is_non_trading_persona(r)]
     norm_state = _normalize_lifecycle_state(state) if state else None
     needle = q.strip().lower()
     if norm_state or archetype or needle:
@@ -7957,8 +7967,19 @@ def _persona_fleet_review_projection(
 
 
 # --- _project_persona_fleet_list_row ---
-def _project_persona_fleet_list_row(
+def _project_persona_fleet_list_row(**kwargs: Any) -> Optional[Dict[str, Any]]:
+    """Full per-row detail projection; run only for rows on the returned page."""
+    return _project_persona_fleet_row_impl(detail=True, **kwargs)
+
+
+def _project_persona_fleet_cohort_row(**kwargs: Any) -> Optional[Dict[str, Any]]:
+    """Minimal sort/filter/summary inputs for every row in the filtered cohort."""
+    return _project_persona_fleet_row_impl(detail=False, **kwargs)
+
+
+def _project_persona_fleet_row_impl(
     *,
+    detail: bool,
     persona: Dict[str, Any],
     league_entry: Dict[str, Any],
     binding: Dict[str, Any],
@@ -8082,7 +8103,7 @@ def _project_persona_fleet_list_row(
         binding=binding,
         runtime=runtime,
     )
-    paper_ledger = _persona_fleet_paper_ledger(
+    paper_ledger = None if not detail else _persona_fleet_paper_ledger(
         paper_ledger_id=paper_ledger_id,
         persona_id=persona_id,
         league_entry=league_entry,
@@ -8146,7 +8167,11 @@ def _project_persona_fleet_list_row(
             has_runtime_or_binding=bool(runtime or binding or pool_id),
         )
     )
-    review_projection = _persona_fleet_review_projection(
+    review_projection = (
+        {"review_id": None, "review_type": None, "promotion_review_id": None,
+         "inbox_id": None, "review_status": None, "review": None}
+        if not detail
+        else _persona_fleet_review_projection(
         persona_id=persona_id,
         league_entry=league_entry,
         raw_metadata=raw_metadata,
@@ -8154,7 +8179,7 @@ def _project_persona_fleet_list_row(
         runtime=runtime,
         human_needed=human_needed,
         recommendation=recommendation,
-    )
+    ))
     updated_at = (
         league_entry.get("updated_at")
         or persona.get("updated_at")
@@ -8243,7 +8268,7 @@ def _project_persona_fleet_list_row(
         if str(incident.get("incident_id") or incident.get("id") or "").strip()
     }
 
-    mutation_projection = _persona_fleet_mutation_projection(
+    mutation_projection = {} if not detail else _persona_fleet_mutation_projection(
         persona_id=persona_id,
         updated_at=updated_at,
         evolution_decisions=(
@@ -8254,7 +8279,7 @@ def _project_persona_fleet_list_row(
         artifact_ids=artifact_ids,
         incident_ids=incident_ids,
     )
-    capital_binding_projection = _persona_fleet_capital_binding_projection(
+    capital_binding_projection = {} if not detail else _persona_fleet_capital_binding_projection(
         persona_id=persona_id,
         capital_mode=capital_mode,
         deployment_stage=deployment_stage,
@@ -8394,6 +8419,53 @@ def _project_persona_fleet_list_row(
     }
 
 
+def _persona_fleet_strip_trading_facts(row: Dict[str, Any]) -> None:
+    """Advisory assistants have no trading runtime, rank, ledger or health.
+
+    Their paper ceiling is an authority ceiling only; nothing here is
+    fabricated, the trading facts are explicitly absent.
+    """
+    for key in (
+        "league_rank", "leagueRank", "league_score", "leagueScore", "rank",
+        "paper_ledger_id", "paperLedgerId", "paper_ledger", "paperLedger",
+        "legacy_paper_capital_pool_id", "legacyPaperCapitalPoolId",
+        "deployment_stage", "capital_mode", "runtime_health",
+        "stage", "mode", "capital_scope", "capital_scope_id", "capital_sleeve_id",
+        "current_weight", "target_weight", "binding_state", "capital_binding",
+        "runtime_binding", "capital_pool_id", "capitalPoolId", "capital_pool",
+        "capitalPool", "runtime_id", "runtime_binding_id",
+    ):
+        if key in row:
+            row[key] = None
+    row["state"] = "advisory"
+    row["status"] = "not_applicable"
+    row["health"] = "not_applicable"
+    row["score"] = None
+    row["human_needed"] = False
+    row["governance_required"] = False
+
+
+def _persona_fleet_record_visible_to(record: Dict[str, Any], viewer_user_id: Optional[str]) -> bool:
+    """User-private records are visible only to their owning Agora user."""
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+
+    def _val(*keys: str) -> str:
+        for source in (metadata, record):
+            for key in keys:
+                value = source.get(key)
+                if value not in (None, ""):
+                    return str(value).strip().lower()
+        return ""
+
+    if _val("owner_scope", "ownerScope") != "user_private" and _val("visibility_scope", "visibilityScope") != "private":
+        return True
+    owner = str(
+        metadata.get("agora_user_id") or metadata.get("agoraUserId")
+        or record.get("agora_user_id") or ""
+    ).strip()
+    return bool(owner) and owner == str(viewer_user_id or "").strip()
+
+
 # --- _persona_fleet_slim_list_payload ---
 @request_read_scope()
 def _persona_fleet_slim_list_payload(
@@ -8407,7 +8479,14 @@ def _persona_fleet_slim_list_payload(
     q: Optional[str],
     page_token: Optional[str],
     page_size: int,
+    purpose: Optional[str] = None,
+    data_scope: Optional[str] = None,
+    archived: Optional[str] = None,
+    viewer_user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    purpose_filter = _fleet_cls.normalize_filter(purpose, _fleet_cls.PURPOSE_FILTERS, "all", "purpose")
+    data_scope_filter = _fleet_cls.normalize_filter(data_scope, _fleet_cls.DATA_SCOPE_FILTERS, "all", "data_scope")
+    archived_filter = _fleet_cls.normalize_filter(archived, _fleet_cls.ARCHIVED_FILTERS, "include", "archived")
     # Capture the Paper ranking projection before the broader Fleet reads. The
     # quarterly endpoint uses this same read path; doing it first prevents a
     # later degraded persona-service read from silently restoring league rank.
@@ -8449,9 +8528,49 @@ def _persona_fleet_slim_list_payload(
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
     directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
-    personas = list(directory.records_by_id.values())
-    canonical_total = len(directory.records_by_id)
+    # Enforce the user-private owner policy before rows or population counts.
+    visible_records = {
+        pid: raw
+        for pid, raw in directory.records_by_id.items()
+        if _persona_fleet_record_visible_to(raw, viewer_user_id)
+    }
+    personas = list(visible_records.values())
+    canonical_total = len(visible_records)
     catalog_default_total = len(directory.catalog_defaults_by_id)
+    classifications = {
+        pid: _fleet_cls.persona_classification(raw)
+        for pid, raw in visible_records.items()
+    }
+    for pid, raw in directory.catalog_defaults_by_id.items():
+        classifications.setdefault(pid, _fleet_cls.persona_classification(raw, catalog_default=True))
+    # Identity/role/provenance/lifecycle filters run before any per-row
+    # projection so archived history and out-of-scope rows never pay for it.
+    # Population counts describe the whole authorized tenant population.
+    population_counts = {
+        "by_purpose": {},
+        "by_data_scope": {},
+        "archived": 0,
+        "active": 0,
+    }
+    scoped_personas: List[Dict[str, Any]] = []
+    for persona in personas:
+        pid = _persona_id(persona)
+        cls = classifications.get(pid) or _fleet_cls.persona_classification(persona)
+        is_archived = _persona_record_projected_state(persona) == "retired"
+        population_counts["archived" if is_archived else "active"] += 1
+        by_p = population_counts["by_purpose"]
+        by_p[cls["persona_purpose"]] = by_p.get(cls["persona_purpose"], 0) + 1
+        by_d = population_counts["by_data_scope"]
+        by_d[cls["data_scope"]] = by_d.get(cls["data_scope"], 0) + 1
+        if archived_filter == "exclude" and is_archived:
+            continue
+        if archived_filter == "only" and not is_archived:
+            continue
+        if not _fleet_cls.matches_scope(cls, purpose=purpose_filter, data_scope=data_scope_filter):
+            continue
+        scoped_personas.append(persona)
+    all_personas = personas
+    personas = scoped_personas
     routed_strategy_counts = {str(r.get("persona_id") or r.get("id") or "").strip(): int(r.get("routed_strategy_count") or 0) for r in league_rows if str(r.get("persona_id") or r.get("id") or "").strip()} if league_rows else (_routed_strategy_counts_by_persona() if personas else {})
     league = _get_active_read_store().list_persona_league(include_market_persona_defaults=True)
     bindings = _get_active_read_store().list_bindings(include_market_persona_defaults=True)
@@ -8459,7 +8578,7 @@ def _persona_fleet_slim_list_payload(
     pools = _get_active_read_store().list_capital_pools(include_market_persona_defaults=True)
     incidents = _get_active_read_store().list_incidents()
     evolution_decisions = list(_get_active_read_store().list_evolution_decisions() or [])
-    context_defaults = _persona_fleet_context_defaults_by_market(personas)
+    context_defaults = _persona_fleet_context_defaults_by_market(all_personas)
 
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
@@ -8497,7 +8616,46 @@ def _persona_fleet_slim_list_payload(
         if candidate
     }
 
+    runtimes_by_persona_id: Dict[str, List[Dict[str, Any]]] = {}
+    for runtime in runtimes:
+        owner_id = str(runtime.get("persona_id") or "").strip()
+        if owner_id:
+            runtimes_by_persona_id.setdefault(owner_id, []).append(runtime)
+
+    def finalize_row(row: Dict[str, Any], persona_id: str, is_retired_persona: bool, persona: Dict[str, Any]) -> None:
+        cls = classifications.get(persona_id) or _fleet_cls.persona_classification(persona)
+        row.update(
+            {
+                "persona_purpose": cls["persona_purpose"],
+                "data_scope": cls["data_scope"],
+                "classification_source": cls["classification_source"],
+                "classification_confirmed": cls["classification_confirmed"],
+                "archived": is_retired_persona,
+            }
+        )
+        if cls["persona_purpose"] == _fleet_cls.PURPOSE_ADVISORY:
+            _persona_fleet_strip_trading_facts(row)
+        elif row.get("capital_mode") == "paper":
+            paper_ranking = paper_rankings.get(persona_id)
+            if paper_ranking:
+                paper_rank = _persona_fleet_optional_int(paper_ranking.get("rank"))
+                paper_score = _management_number(
+                    paper_ranking.get("score") or paper_ranking.get("overall_score")
+                )
+                row["league_rank"] = paper_rank
+                row["leagueRank"] = paper_rank
+                row["league_score"] = paper_score
+                row["leagueScore"] = paper_score
+                row["rank"] = {
+                    "league_rank": paper_rank,
+                    "league_score": paper_score,
+                    "basis": "quarterly_ranking",
+                    "period": "quarter",
+                    "quarter": quarter_window["quarter"],
+                }
+
     rows: List[Dict[str, Any]] = []
+    detail_inputs: Dict[str, Dict[str, Any]] = {}
     for persona in personas:
         persona_id = _persona_id(persona)
         if not persona_id:
@@ -8551,10 +8709,9 @@ def _persona_fleet_slim_list_payload(
         # Gather all runtimes associated with this persona (handle multiple runtimes)
         persona_runtimes = []
         seen_r_ids = set()
-        for r in runtimes:
+        for r in runtimes_by_persona_id.get(persona_id, ()):
             r_id = str(r.get("runtime_id") or r.get("id") or "").strip()
-            is_associated = (str(r.get("persona_id") or "").strip() == persona_id)
-            if is_associated and r_id and r_id not in seen_r_ids:
+            if r_id and r_id not in seen_r_ids:
                 persona_runtimes.append(r)
                 seen_r_ids.add(r_id)
 
@@ -8611,7 +8768,7 @@ def _persona_fleet_slim_list_payload(
             summary = telemetry_cache.get(runtime_id)
             if summary:
                 telemetry_summaries.append(summary)
-        row = _project_persona_fleet_list_row(
+        row_kwargs = dict(
             persona=persona,
             league_entry=league_entry,
             binding=binding,
@@ -8624,25 +8781,10 @@ def _persona_fleet_slim_list_payload(
             evolution_decisions=evolution_decisions,
             routed_strategies=int(routed_strategy_counts.get(persona_id, 0)),
         )
+        row = _project_persona_fleet_cohort_row(**row_kwargs)
         if row is not None:
-            if row.get("capital_mode") == "paper":
-                paper_ranking = paper_rankings.get(persona_id)
-                if paper_ranking:
-                    paper_rank = _persona_fleet_optional_int(paper_ranking.get("rank"))
-                    paper_score = _management_number(
-                        paper_ranking.get("score") or paper_ranking.get("overall_score")
-                    )
-                    row["league_rank"] = paper_rank
-                    row["leagueRank"] = paper_rank
-                    row["league_score"] = paper_score
-                    row["leagueScore"] = paper_score
-                    row["rank"] = {
-                        "league_rank": paper_rank,
-                        "league_score": paper_score,
-                        "basis": "quarterly_ranking",
-                        "period": "quarter",
-                        "quarter": quarter_window["quarter"],
-                    }
+            finalize_row(row, persona_id, is_retired_persona, persona)
+            detail_inputs[persona_id] = row_kwargs
             rows.append(row)
 
     rows = sorted(
@@ -8703,6 +8845,18 @@ def _persona_fleet_slim_list_payload(
 
     total_personas = len(rows)
     page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    # Expensive row detail runs only for the selected page.
+    detailed_items: List[Dict[str, Any]] = []
+    for lite_row in page_items:
+        lite_id = str(lite_row.get("persona_id") or "")
+        kwargs = detail_inputs.get(lite_id)
+        full_row = _project_persona_fleet_list_row(**kwargs) if kwargs else None
+        if full_row is None:
+            detailed_items.append(lite_row)
+            continue
+        finalize_row(full_row, lite_id, bool(lite_row.get("archived")), kwargs["persona"])
+        detailed_items.append(full_row)
+    page_items = detailed_items
     pending_human_gate = [
         item
         for item in league
@@ -8717,6 +8871,18 @@ def _persona_fleet_slim_list_payload(
     }
     summary = {
         "available_personas": available_personas,
+        "population": {
+            "authorized_total": canonical_total,
+            "active_total": population_counts["active"],
+            "archived_total": population_counts["archived"],
+            "by_purpose": population_counts["by_purpose"],
+            "by_data_scope": population_counts["by_data_scope"],
+        },
+        "filters": {
+            "purpose": purpose_filter,
+            "data_scope": data_scope_filter,
+            "archived": archived_filter,
+        },
         "total_personas": total_personas,
         "canonical_total": canonical_total,
         "filtered_total": total_personas,
@@ -15364,6 +15530,7 @@ class PersonaService:
         snap = snapshot_at or self._utc_now()
         slice_fn = page_slice_fn or _page_slice
         all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
+        all_rows = [r for r in all_rows if not _fleet_cls.is_non_trading_persona(r)]
         ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
             [_pm12_persona_league_ranking_item(row) for row in all_rows],
             surface="rolling",
