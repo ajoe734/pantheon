@@ -8374,6 +8374,7 @@ def _project_persona_fleet_row_impl(
             data_source_status,
             data_sources,
             required_data_sources=required_data_sources,
+            thin=not detail,
         )
     data_source_refs = (
         context_metadata.get("data_source_refs")
@@ -13681,7 +13682,12 @@ def _provider_status_from_truth(health: Dict[str, Any], connector: Dict[str, Any
     return "connector_configured_no_health"
 
 
-def _source_truth_projection(connector_id: str, truth: Dict[str, Any]) -> Dict[str, Any]:
+def _source_truth_projection(
+    connector_id: str,
+    truth: Dict[str, Any],
+    *,
+    thin: bool = False,
+) -> Dict[str, Any]:
     health = truth.get("health") if isinstance(truth.get("health"), dict) else {}
     connector = truth.get("connector") if isinstance(truth.get("connector"), dict) else {}
     schedule = connector.get("schedule") if isinstance(connector.get("schedule"), dict) else {}
@@ -13733,13 +13739,19 @@ def _source_truth_projection(connector_id: str, truth: Dict[str, Any]) -> Dict[s
         "rowCountLastRun": health.get("row_count_last_run"),
         "rejected_count_last_run": health.get("rejected_count_last_run"),
         "rejectedCountLastRun": health.get("rejected_count_last_run"),
+    }
+    if thin:
+        # Scalar status only: callers that never expose the rich connector
+        # schedule/freshness/health/usage blobs skip cloning them.
+        return projection
+    projection.update({
         "connector_schedule": json.loads(json.dumps(schedule)),
         "connectorSchedule": json.loads(json.dumps(schedule)),
         "connector_freshness": json.loads(json.dumps(freshness)),
         "connectorFreshness": json.loads(json.dumps(freshness)),
         "source_health": json.loads(json.dumps(health)),
         "sourceHealth": json.loads(json.dumps(health)),
-    }
+    })
     if isinstance(truth.get("usage_aggregate_30d"), dict):
         projection["usage_aggregate_30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
         projection["usageAggregate30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
@@ -13824,6 +13836,7 @@ def _overlay_source_health_truth(
     data_sources: Any,
     *,
     required_data_sources: Optional[List[Dict[str, Any]]] = None,
+    thin: bool = False,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Resolve through the active PersonaService instance.
 
@@ -13837,6 +13850,7 @@ def _overlay_source_health_truth(
         data_source_status,
         data_sources,
         required_data_sources=required_data_sources,
+        thin=thin,
     )
 
 
@@ -14480,8 +14494,14 @@ class PersonaService:
         data_sources: Any,
         *,
         required_data_sources: Optional[List[Dict[str, Any]]] = None,
+        thin: bool = False,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Sole implementation of the source-health overlay projection.
+
+        ``thin=True`` keeps every scalar/status/binding-availability result but
+        omits the rich connector health blobs (``connector_health``,
+        ``required_source_health``, bindings detail) for list-style callers
+        that never expose them; the default rich result is unchanged.
 
         Within one request read scope, identical inputs resolved against the
         same truth snapshot reuse one computed overlay; every caller still
@@ -14492,6 +14512,7 @@ class PersonaService:
         try:
             request_key = (
                 "persona_source_health_overlay",
+                thin,
                 id(self),
                 id(truth_by_connector),
                 json.dumps(
@@ -14502,7 +14523,7 @@ class PersonaService:
             )
         except (TypeError, ValueError):
             return self._compute_source_health_overlay(
-                data_source_status, data_sources, required_data_sources, truth_by_connector
+                data_source_status, data_sources, required_data_sources, truth_by_connector, thin
             )
         # The truth snapshot is held in the cached value so its id stays unique.
         _, shared = cached_owner_call(
@@ -14510,7 +14531,7 @@ class PersonaService:
             lambda: (
                 truth_by_connector,
                 self._compute_source_health_overlay(
-                    data_source_status, data_sources, required_data_sources, truth_by_connector
+                    data_source_status, data_sources, required_data_sources, truth_by_connector, thin
                 ),
             ),
         )
@@ -14522,6 +14543,7 @@ class PersonaService:
         data_sources: Any,
         required_data_sources: Optional[List[Dict[str, Any]]],
         truth_by_connector: Dict[str, Dict[str, Any]],
+        thin: bool = False,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
         dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
         srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
@@ -14542,7 +14564,7 @@ class PersonaService:
                 truth_by_connector,
             )
             if connector_id and truth:
-                projection = _source_truth_projection(connector_id, truth)
+                projection = _source_truth_projection(connector_id, truth, thin=thin)
                 has_live_health = bool(projection.get("source_health_available"))
                 original_status = source.get("status")
                 original_reason = source.get("reason")
@@ -14583,19 +14605,37 @@ class PersonaService:
                 if provider_key in _SOURCE_PROVIDER_CONNECTOR_CANDIDATES:
                     static_source_labels.append(provider_key)
 
-        bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
-        has_live_truth = bool(connector_health) or any(binding.get("health_source") == "source_ingest" for binding in bindings)
+        if thin:
+            bindings = []
+            has_bound_truth = any(
+                isinstance(requirement, dict)
+                and _select_source_truth(
+                    [
+                        str(candidate).strip()
+                        for candidate in (requirement.get("connector_candidates") or [])
+                        if str(candidate).strip()
+                    ],
+                    truth_by_connector,
+                )[1]
+                for requirement in (required_data_sources or [])
+            )
+        else:
+            bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
+            has_bound_truth = any(binding.get("health_source") == "source_ingest" for binding in bindings)
+        has_live_truth = bool(connector_health) or has_bound_truth
         dss["source_health_source"] = "source_ingest" if has_live_truth else "static_metadata"
         dss["sourceHealthSource"] = dss["source_health_source"]
         dss["live_ingestion_enabled"] = bool(has_live_truth)
-        dss["connector_health"] = json.loads(json.dumps(connector_health))
-        dss["connectorHealth"] = json.loads(json.dumps(connector_health))
+        if not thin:
+            dss["connector_health"] = json.loads(json.dumps(connector_health))
+            dss["connectorHealth"] = json.loads(json.dumps(connector_health))
         dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
         dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
         dss["static_source_labels"] = sorted(set(static_source_labels))
         dss["staticSourceLabels"] = dss["static_source_labels"]
-        dss["required_source_health"] = json.loads(json.dumps(bindings))
-        dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
+        if not thin:
+            dss["required_source_health"] = json.loads(json.dumps(bindings))
+            dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
         _upgrade_all_green_data_source_state(dss)
         return dss, srcs, bindings
 
