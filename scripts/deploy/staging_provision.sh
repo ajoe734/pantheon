@@ -459,6 +459,9 @@ if not dry_run:
             print(f"Reserved address {r_name} missing observed IPv4 address field", file=sys.stderr)
             raise SystemExit(1)
         entry["address"] = addr
+        # GA `compute addresses create` has no --labels; labels are applied by a
+        # follow-up update, so the journal keeps the create receipt until then.
+        entry["state"] = "label_pending"
 
     elif r_type == "instance":
         expected_boot = os.environ["EXPECTED_BOOT_DISK"]
@@ -536,8 +539,37 @@ PY
 run_gcloud_resource_create "address" "${IP_NAME}" \
   compute addresses create "${IP_NAME}" \
   --project="${STAGING_GCP_PROJECT_ID}" \
-  --region="${STAGING_GCP_REGION}" \
-  --labels="${GCP_LABELS_CSV}"
+  --region="${STAGING_GCP_REGION}"
+
+# Step 1b: Label the address just created (journaled above) and verify actual labels + identity.
+if [[ "${DRY_RUN}" != "true" ]]; then
+  "${GCLOUD_BIN}" compute addresses update "${IP_NAME}" \
+    --project="${STAGING_GCP_PROJECT_ID}" \
+    --region="${STAGING_GCP_REGION}" \
+    --update-labels="${GCP_LABELS_CSV}" >/dev/null
+  ADDRESS_READBACK="$("${GCLOUD_BIN}" compute addresses describe "${IP_NAME}" \
+    --project="${STAGING_GCP_PROJECT_ID}" \
+    --region="${STAGING_GCP_REGION}" \
+    --format=json)"
+  INVENTORY_FILE="$INVENTORY_FILE" IP_NAME="$IP_NAME" ADDRESS_READBACK="$ADDRESS_READBACK" python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+inv_path = Path(os.environ["INVENTORY_FILE"])
+inv = json.loads(inv_path.read_text(encoding="utf-8"))
+observed = json.loads(os.environ["ADDRESS_READBACK"])
+entry = next(r for r in inv["resources"] if r["type"] == "address" and r["name"] == os.environ["IP_NAME"])
+actual = observed.get("labels") or {}
+missing = {k: v for k, v in inv["labels"].items() if actual.get(k) != v}
+if str(observed.get("id") or "") != entry["resource_id"] or missing:
+    print(f"Address {entry['name']} label readback mismatch (id/labels): {sorted(missing)}", file=sys.stderr)
+    raise SystemExit(1)
+entry["state"] = "provisioned"
+inv_path.write_text(json.dumps(inv, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+fi
 
 RESERVED_IP="$(
   INVENTORY_FILE="$INVENTORY_FILE" IP_NAME="$IP_NAME" python3 - <<'PY'

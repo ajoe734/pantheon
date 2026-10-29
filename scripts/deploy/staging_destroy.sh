@@ -539,6 +539,7 @@ if (
 deleted = []
 skipped_unowned = []
 remaining = []
+exact_pending_addresses = []
 
 for res in reversed(inv.get("resources", [])):
     if res.get("state") == "deleted":
@@ -573,6 +574,22 @@ for res in reversed(inv.get("resources", [])):
         remaining.append(res)
         continue
 
+    if not dry_run and r_type == "address" and res.get("state") == "label_pending":
+        # Created by this run but never labelled in the cloud: delete only the exact journaled id.
+        live = next(
+            (a for a in json.loads(run_gcloud(["compute", "addresses", "list", f"--project={res_project}", f"--regions={res_region}"]) or "[]")
+             if isinstance(a, dict) and a.get("name") == r_name),
+            None,
+        )
+        if live is None:
+            res["state"] = "deleted"
+            continue
+        if str(live.get("id") or "") != str(res.get("resource_id") or ""):
+            skipped_unowned.append({"name": r_name, "type": r_type, "reason": "unowned_or_unlabeled_resource_protected"})
+            remaining.append(res)
+            continue
+        exact_pending_addresses.append((r_name, str(res.get("resource_id")), res_project, res_region))
+
     if not dry_run:
         if r_type == "iam_binding":
             member = res.get("member")
@@ -601,6 +618,10 @@ if not dry_run:
     post_cloud = query_cloud_release_resources()
     deleted_keys = {(d["type"], d["name"]) for d in deleted if d["type"] in ("instance", "disk", "address")}
     lingering_items = [r["name"] for r in post_cloud if (r["type"], r["name"]) in deleted_keys]
+    for p_name, p_id, p_project, p_region in exact_pending_addresses:
+        for a in json.loads(run_gcloud(["compute", "addresses", "list", f"--project={p_project}", f"--regions={p_region}"]) or "[]"):
+            if isinstance(a, dict) and a.get("name") == p_name and str(a.get("id") or "") == p_id:
+                lingering_items.append(p_name)
     if lingering_items:
         print(
             json.dumps({

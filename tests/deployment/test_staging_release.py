@@ -881,7 +881,10 @@ if args[:3] == ["compute", "addresses", "create"]:
     name = args[3]
     project = parse_flag("--project")
     region = parse_flag("--region")
-    labels = parse_labels(parse_flag("--labels"))
+    if any(t == "--labels" or t.startswith("--labels=") for t in args):
+        print("ERROR: (gcloud.compute.addresses.create) unrecognized arguments: --labels", file=sys.stderr)
+        raise SystemExit(2)
+    labels = {}
     ip_val = f"203.0.113.{10 + len(state['addresses'])}"
     obj = {
         "id": str(1000 + len(state["addresses"])),
@@ -896,6 +899,25 @@ if args[:3] == ["compute", "addresses", "create"]:
     state["addresses"] = [a for a in state["addresses"] if a["name"] != name] + [obj]
     save_state()
     print(json.dumps(obj))
+    raise SystemExit(0)
+
+if args[:3] == ["compute", "addresses", "update"]:
+    name = args[3]
+    match = [a for a in state["addresses"] if a["name"] == name]
+    if not match:
+        print(f"address {name} not found", file=sys.stderr)
+        raise SystemExit(1)
+    match[0]["labels"] = {**match[0]["labels"], **parse_labels(parse_flag("--update-labels"))}
+    save_state()
+    print(json.dumps(match[0]))
+    raise SystemExit(0)
+
+if args[:3] == ["compute", "addresses", "describe"]:
+    match = [a for a in state["addresses"] if a["name"] == args[3]]
+    if not match:
+        print(f"address {args[3]} not found", file=sys.stderr)
+        raise SystemExit(1)
+    print(json.dumps(match[0]))
     raise SystemExit(0)
 
 if args[:3] == ["compute", "addresses", "list"]:
@@ -2421,6 +2443,62 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         )
         self.assertNotEqual(lingering_res.returncode, 0)
         self.assertIn("POST_DELETE_READBACK_FAILED", lingering_res.stderr)
+
+    def test_address_labels_applied_by_update_after_unlabelled_create(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        cmds = self.gcloud_log_file.read_text(encoding="utf-8").splitlines()
+        create_cmd = next(c for c in cmds if "compute addresses create" in c)
+        self.assertNotIn("--labels", create_cmd)
+        self.assertTrue(any("compute addresses update pantheon-stg-ip-pantheon-20261024-001" in c and "--update-labels=" in c for c in cmds))
+        inv = json.loads((self.state_dir / "inventory" / "pantheon-20261024-001.json").read_text(encoding="utf-8"))
+        addr = next(r for r in inv["resources"] if r["type"] == "address")
+        self.assertEqual(addr["state"], "provisioned")
+        self.assertEqual(addr["resource_id"], "1000")
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(cloud_state["addresses"][0]["labels"]["release_id"], "pantheon-20261024-001")
+
+    def test_address_label_update_failure_compensates_only_exact_created_address(self) -> None:
+        env = self._base_env(GCLOUD_FAIL_ON="compute addresses update")
+        self.gcloud_state_file.write_text(
+            json.dumps({
+                "addresses": [{
+                    "id": "9",
+                    "name": "foreign-unlabelled",
+                    "project_id": "pantheon-stg-20260902",
+                    "region": "us-central1",
+                    "address": "203.0.113.99",
+                    "selfLink": "https://example.invalid/foreign",
+                    "labels": {},
+                    "status": "RESERVED",
+                }],
+                "disks": [], "instances": [], "iam_bindings": [], "images": {}, "gcs_blobs": {}, "vm_mkdir_ready": {},
+            }),
+            encoding="utf-8",
+        )
+        res = subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res.stderr)
+        cloud_state = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual([a["name"] for a in cloud_state["addresses"]], ["foreign-unlabelled"])
+
+    def test_teardown_protects_unlabelled_address_with_different_id(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        inv_path = self.state_dir / "inventory" / "pantheon-20261024-001.json"
+        inv = json.loads(inv_path.read_text(encoding="utf-8"))
+        for r in inv["resources"]:
+            if r["type"] == "address":
+                r["state"] = "label_pending"
+                r["resource_id"] = "stale-other-id"
+        inv_path.write_text(json.dumps(inv), encoding="utf-8")
+        res = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "teardown", "--result", "success", "--reason", "completed"],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        out = json.loads(res.stdout)
+        self.assertTrue(any(s["type"] == "address" for s in out["skipped_unowned_resources"]))
 
     def test_valid_gcp_cloud_labels_and_ttl_epochs(self) -> None:
         subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
