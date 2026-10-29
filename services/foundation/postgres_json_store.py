@@ -390,6 +390,39 @@ class PostgresJsonOwnerStore:
                 records.append(decoded)
         return records
 
+    def list_all_selected(
+        self,
+        columns_sql: str,
+        *,
+        keep_sql: Optional[str] = None,
+        keep_params: Optional[tuple] = None,
+        conn: Optional[Any] = None,
+    ) -> List[tuple]:
+        """Select code-defined column expressions over each object row's payload.
+
+        Same row set, legacy string-payload unwrapping and ``updated_at``
+        ordering as :meth:`list_all`, but only ``columns_sql`` (trusted, never
+        request input; expressions reference ``payload``) is fetched, with no
+        per-row payload decode. ``keep_sql`` (trusted boolean expression over
+        ``payload``, may use window functions) narrows the rows before
+        ``columns_sql`` is evaluated, in the same statement/snapshot; request
+        derived values must travel in ``keep_params`` (``%s`` placeholders).
+        """
+        keep = f"WHERE keep " if keep_sql else ""
+        keep_col = f", ({keep_sql}) AS keep" if keep_sql else ""
+        sql = (
+            f"SELECT {columns_sql} FROM ("
+            f"SELECT payload, updated_at{keep_col} FROM ("
+            "SELECT CASE WHEN jsonb_typeof(payload) = 'string' "
+            "THEN (payload #>> '{}')::jsonb ELSE payload || '{}'::jsonb END AS payload, updated_at "
+            f"FROM {self.table} OFFSET 0) AS base "
+            "WHERE jsonb_typeof(payload) = 'object' OFFSET 0"
+            f") AS rows {keep}ORDER BY updated_at ASC"
+        )
+        with self._use_conn(conn) as conn:
+            cursor = conn.execute(sql, keep_params) if keep_params else conn.execute(sql)
+            return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in cursor.fetchall()]
+
     def count(self, *, conn: Optional[Any] = None) -> int:
         """Count the number of rows in this owner-store table without hydrating payloads."""
         if self.count_index:

@@ -10,6 +10,7 @@ needs no changes to select between them.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import threading
 from typing import Any, Callable, Optional
@@ -21,6 +22,95 @@ from .models import (
     RegistryEntryCreate,
     utc_now_iso,
 )
+
+
+# Fields the persona-binding view keeps (current-version selection, lifecycle
+# filter and persona extraction read exactly these); everything else in the
+# entry metadata, plus evaluation_summary / approval_evidence, is dropped.
+PERSONA_BINDING_META_KEYS = (
+    "spec_version_id", "tenant_id", "spec_version", "version", "personaIds",
+    "persona_ids", "persona_id", "lifecycle_state", "state", "status",
+)
+PERSONA_BINDING_SPEC_KEYS = (
+    "persona_ids", "spec_version", "lifecycle_state", "strategy_id", "created_at",
+)
+PERSONA_BINDING_INNER_META_KEYS = ("tenant_id", "persona_id")
+# Top-level identity/version/tenant/state fields the count path needs; no
+# lineage, storage, evidence or audit fields are carried.
+PERSONA_BINDING_ROW_KEYS = (
+    "registry_id", "artifact_type", "artifact_state", "strategy_id", "version",
+    "owner_tenant", "created_at", "updated_at",
+)
+
+
+def persona_binding_entry(entry: RegistryEntry) -> RegistryEntry:
+    """Light projection of a StrategySpec entry for persona-binding counts.
+
+    Same entry and version row; only the heavy spec body, evaluation summary
+    and approval evidence are dropped. The Postgres owner computes the same
+    shape in SQL (``pg_store.persona_binding_select_sql``).
+    """
+    meta = entry.metadata if isinstance(entry.metadata, dict) else {}
+    light_meta = {k: meta[k] for k in PERSONA_BINDING_META_KEYS if k in meta}
+    prov = meta.get("provenance")
+    if isinstance(prov, dict) and "created_at" in prov:
+        light_meta["provenance"] = {"created_at": prov["created_at"]}
+    inner = meta.get("strategy_spec")
+    if isinstance(inner, dict):
+        light_inner = {k: inner[k] for k in PERSONA_BINDING_SPEC_KEYS if k in inner}
+        inner_prov = inner.get("provenance")
+        if isinstance(inner_prov, dict) and "created_at" in inner_prov:
+            light_inner["provenance"] = {"created_at": inner_prov["created_at"]}
+        inner_meta = inner.get("metadata")
+        if isinstance(inner_meta, dict):
+            light_inner["metadata"] = {
+                k: inner_meta[k] for k in PERSONA_BINDING_INNER_META_KEYS if k in inner_meta
+            }
+        light_meta["strategy_spec"] = light_inner
+    return dataclasses.replace(
+        entry, metadata=light_meta, evaluation_summary=None, approval_evidence=None,
+    )
+
+
+def persona_binding_row(entry: RegistryEntry) -> dict:
+    """Flat minimal row (identity, version, tenant, state, binding metadata)."""
+    full = persona_binding_entry(entry).to_dict()
+    row = {k: full[k] for k in PERSONA_BINDING_ROW_KEYS if k in full}
+    row["metadata"] = full.get("metadata")
+    return row
+
+
+def persona_binding_has_binding(row: dict) -> bool:
+    """True when any persona-id source of a flat binding row is truthy."""
+    meta = row.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    inner = meta.get("strategy_spec")
+    inner = inner if isinstance(inner, dict) else {}
+    inner_meta = inner.get("metadata")
+    inner_meta = inner_meta if isinstance(inner_meta, dict) else {}
+    return bool(
+        inner.get("persona_ids") or meta.get("personaIds") or meta.get("persona_ids")
+        or meta.get("persona_id") or inner_meta.get("persona_id")
+    )
+
+
+def persona_binding_row_visible(
+    row: dict, visible_tenants: Optional[frozenset], artifact_type: Optional[str],
+) -> bool:
+    """Row is in the verified visible owner population (``None`` tenants = all)."""
+    if artifact_type is not None and row.get("artifact_type") != artifact_type:
+        return False
+    return visible_tenants is None or row.get("owner_tenant") in visible_tenants
+
+
+def persona_binding_candidate_family_rows(rows: list[dict]) -> list[dict]:
+    """Keep every version of each strategy family with any bound version.
+
+    Families whose whole version history is unbound are dropped; rows without a
+    ``strategy_id`` are kept. Order is preserved.
+    """
+    bound = {r.get("strategy_id") for r in rows if persona_binding_has_binding(r)}
+    return [r for r in rows if r.get("strategy_id") is None or r.get("strategy_id") in bound]
 
 
 class RegistryUniqueViolationError(ValueError):
@@ -235,6 +325,14 @@ class RegistryStore:
                 RegistryEntry.from_dict(entry.to_dict())
                 for entry in self._entries.values()
             ]
+
+    def list_persona_binding_rows(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+    ) -> list[dict]:
+        rows = [persona_binding_row(entry) for entry in self.list_all_entries()]
+        return persona_binding_candidate_family_rows(
+            [r for r in rows if persona_binding_row_visible(r, visible_tenants, artifact_type)]
+        )
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""

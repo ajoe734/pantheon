@@ -1,0 +1,6 @@
+{
+  "task": "INTEGRATION-UNBLOCK-ENV-STG-EPHEMERAL-IMPL-001-HEAD-BRANCH-MISMATCH-EA53D3D20F98",
+  "root_cause": "PR #6859 head branch task/ENV-STG-EPHEMERAL-IMPL-001-bff-ready-diag-20261029 is neither task/ENV-STG-EPHEMERAL-IMPL-001 nor a -v<N> variant, so validate_pr in scripts/git/auto_integrator.py returned head-branch-mismatch.",
+  "resolution": "Published identical commit e02d73d99518874f58decc5bbde2c2a0694f6bb1 as task/ENV-STG-EPHEMERAL-IMPL-001-v5 (v4 already existed), opened PR #6861, closed #6859 as superseded.",
+  "integrator_code_changed": false
+}

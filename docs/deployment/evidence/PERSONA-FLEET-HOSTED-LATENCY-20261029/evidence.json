@@ -1,0 +1,178 @@
+{
+  "task": "PERSONA-FLEET-HOSTED-LATENCY-20261029",
+  "kind": "source_only_local_fixture_measurement",
+  "hosted_proof": false,
+  "note": "Local isolated fixture timings via the real /bff/management/persona-fleet route (TestClient, in-memory read store, file-backed CommandStore with 5000 records). NOT hosted performance; the final hosted acceptance task owns exact-pair p95.",
+  "request": "purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+  "measured_cause": "_pm12_quarterly_ranking_governance_state re-read the whole command log (file I/O) and scanned every command once per ranked persona (archived history included): O(personas x commands). Profile: 1004 calls, 24.7s cumulative of 26.0s (profiler-inflated) at 1000 archived.",
+  "fix": "Read the command log once per ranking pass and bucket it by persona id prefix (_pm12_quarterly_governance_command_index); per-persona scan only visits its own records. Rank, scores, governance_state semantics unchanged (equivalence test incl. hyphen-prefix ids and case).",
+  "warm_ms_before": {
+    "archived_100": [
+      4008,
+      4093,
+      4158
+    ],
+    "archived_1000": [
+      41840,
+      42453,
+      42493
+    ]
+  },
+  "warm_ms_after": {
+    "archived_100": [
+      112,
+      218,
+      110
+    ],
+    "archived_1000": [
+      668,
+      629,
+      641
+    ]
+  },
+  "owner_call_budget": "unchanged; command log reads per request: before = ranked persona count, after = 1",
+  "tests": "pytest test_pathreon_market_persona_fleet_contract.py tests/test_management_read_budget.py: 51 passed; new ledger-once/overlap/prefetch-failure regressions fail on base source (ledger reads 2 vs 1; strategy read on main thread) and pass after; git diff --check clean",
+  "api_contract_changed": false,
+  "actual_profile_inputs": {
+    "source": "root read-only diagnostic profiles (not hosted acceptance): baseline-U6YYXI/result.json p95=6007ms; actual-deployed-fleet-read-profile.json replay 6796.5ms cold / 4495.5ms warm",
+    "stages_ms_cold_warm": {
+      "list_strategy_specs (one registry GET 1333/1081 + 4763 entry normalizations)": [
+        3379.8,
+        2395.6
+      ],
+      "duplicate _list_persona_records (2 calls, 5036 json.loads)": [
+        981.2,
+        946.0
+      ],
+      "first source-ingest registry read (TTL cached afterwards)": [
+        939.7,
+        null
+      ]
+    },
+    "multiplicity": "strategy specs 1 HTTP + 1 normalization pass; persona ledger read 2x per request; source registry 1 per TTL"
+  },
+  "actual_cost_corrections": [
+    {
+      "stage": "duplicate durable persona ledger read",
+      "fix": "_list_persona_records(reuse_request_read=True) caches the ledger read in the existing request read cache for the read-only fleet path (value or failure); writers unchanged",
+      "calls_before_after": "2 -> 1",
+      "expected_saving_ms": "~490 of 981/946 (profile-derived)"
+    },
+    {
+      "stage": "strategy-spec registry read and first source-ingest registry read ran serially on request thread",
+      "fix": "_persona_fleet_prefetch_independent_reads starts both via existing submit_owner_read in a copied caller context (tenant, authorization, deadline); request cache/TTL cache and original call sites unchanged, so failures surface where they did before",
+      "expected_saving_ms": "overlaps up to ~0.9s source read with the strategy read; the strategy read itself is upstream-bound and remains"
+    }
+  ],
+  "isolated_overlap_fixture": {
+    "command": "pytest test_pathreon_market_persona_fleet_contract.py -k overlaps --durations=1 (0.4s injected delay on strategy-spec read)",
+    "call_seconds_before": 2.11,
+    "call_seconds_after": 1.45,
+    "note": "fixture timing, not hosted"
+  },
+  "residual_unreduced": "Upstream registry strategy-spec HTTP (1.1-1.3s) and per-entry normalization (~0.3-0.9s CPU) are not changed; whether the <=1s warm p95 target is met must be shown by the final hosted task. Not claimed here.",
+  "source_truth_single_flight": {
+    "finding": "prefetch worker and request thread both read a cold/expired source registry concurrently (2 reads vs expected 1) when registry is the slowest stage",
+    "fix": "per-instance lock with double-checked TTL cache in PersonaService._source_ingest_truth_by_connector; waiters reuse the first read; failure semantics unchanged (swallowed -> cached empty, as before)",
+    "tests": "test_fleet_cold_source_truth_single_flight_when_registry_slowest (ok + registry failure) fail on previous head, pass now; contract+read_budget suites 53 passed; reviewer probe passes (1 read)"
+  },
+  "count_only_persona_binding_read": {
+    "finding": "fleet routed-strategy counts used a full persona-binding list read/projection although only per-persona current-version counts are needed",
+    "fix": "research_knowledge_source.count_strategy_persona_bindings (count-only, current-version), request-cached in read_surface_ports; fleet counts consume it. Multi-version regression keeps counts exact",
+    "tests": "read_budget + research_knowledge_source ports + fleet contract suites: 91 passed locally",
+    "hosted_proof": false,
+    "note": "No hosted p95 claimed; final hosted acceptance task owns it."
+  },
+  "registry_light_binding_projection": {
+    "hosted_proof": false,
+    "change": "Optional view=persona_binding on existing GET /api/registry/strategy-specs (same rows, tenant/_can_read filtering, all versions; drops spec bodies, evaluation_summary, approval_evidence). Count-only BFF port requests it; default full DTO route unchanged. No fallback to the full read; 401/403/5xx/malformed stay failures.",
+    "motivation": "root snapshot profile: one full Registry GET 1188/1201ms dominated the 2823/3009ms count path",
+    "tests": "services/registry/test_service.py 94 passed (new: light vs full equality of persona fields, tenant privacy, >3x smaller payload, unauth and bad view rejected); BFF research_knowledge_source_ports + management_read_budget + persona_fleet_contract 92 passed (new: light URL requested only by count port, errors not swallowed)",
+    "requires": "Final hosted owner must serve the matching Registry owner; candidate performance of the new projection is not yet measured (root profile needs candidate Registry + BFF)."
+  },
+  "registry_owner_sql_projection": {
+    "hosted_proof": false,
+    "finding": "root profile: view=persona_binding still 1483/1690ms owner; full DB list_all 938/1161ms (query wait ~450ms + 5083 json.loads ~437ms + from_dict ~107ms) because the light view projected after full decode",
+    "change": "Postgres owner computes the same light entry in SQL/JSONB (PostgresJsonOwnerStore.list_all_projected + registry pg_store.persona_binding_projection_sql, path lookups on constant key tuples) so evaluation_summary/approval_evidence/spec bodies are neither transferred nor json-decoded; memory store keeps the Python projection (storage.persona_binding_entry); no new endpoint/cache/fallback; default full DTO route unchanged; legacy string-encoded payload rows and non-object rows handled as in list_all",
+    "tests": "test_owner_durability::test_persona_binding_sql_projection_matches_python_projection (real postgres:16 isolated container, TEST_DATABASE_URL) proves SQL light entries == Python projection for missing/null/non-dict/nested/legacy-string metadata shapes; registry suite 281 passed (4 deployment_view failures only from missing flask in local venv, unrelated)",
+    "local_microbench_not_hosted": "9027 rows ~4.6KB on loopback docker postgres: full list_all_entries 0.8-1.1s vs light ~1.0-1.1s server+decode; loopback has no network transfer so the benefit (22MB -> ~6MB payload, no 5083 json.loads) must be measured by root replay against the hosted read-only DB; no p95 claimed",
+    "requires": "Root replay of EXACT candidate Registry owner+serializer with verified caller, bootstrap False, read-only DB; compare binding counts/versions to the full result and profile 2 samples. Final hosted task owns release and p95."
+  },
+  "registry_flat_binding_rows": {
+    "hosted_proof": false,
+    "context": "Root actual-profile replay of 51431b441 (verified caller, read-only PG, 4869 versions, binding inputs match original) showed no gain: 6.7MB, owner+serializer 1837.3/1526.5ms. Whole-fleet warm <=1000ms remains a KNOWN FAIL from the single owner floor until a new candidate is replayed.",
+    "change": "view=persona_binding now returns flat minimal rows: top-level registry_id/artifact_type/artifact_state/strategy_id/version/owner_tenant/created_at/updated_at plus binding metadata only (no lineage, storage_ref, checksum, deployment_summary, last_actor). Postgres builds them in SQL; no RegistryEntry.from_dict, no RegistryEntryView, no pydantic response_model serialization on this path. Same auth, _can_read_entry, X-Tenant-Id and artifact_state filters; default full DTO route unchanged; BFF count semantics unchanged.",
+    "tests": "services/registry test_service.py+test_owner_durability.py 94 passed/17 skipped without PG; with an isolated local Postgres (pgserver, TEST_DATABASE_URL) test_owner_durability.py 17 passed incl. test_persona_binding_sql_projection_matches_python_projection (flat rows). BFF persona_fleet_contract+management_read_budget+research_knowledge_source_ports 92 passed in the repaired venv (flask installed). deployment_view tests: 3 in registry test_service.py + 1 in test_registry_auth_wiring.py passed; no preexisting-failure label.",
+    "requires": "Root bounded read-only profile of this head; no p95 claimed. Whole-fleet warm <=1000ms remains unproven.",
+    "local_benchmark": {
+      "scope": "store level, local isolated Postgres, 4800 synthetic rows (~1.2KB spec body each), median of 5",
+      "sql_projection_ms": 358.6,
+      "full_read_python_projection_ms": 452.0,
+      "parity": true,
+      "payload_bytes": 2421870,
+      "note": "~21% store-level gain only; not hosted latency and not a p95 claim. Hosted 6.7MB/1.8s owner floor is not shown to be fixed."
+    },
+    "superseded_by": "registry_flat_select_python_assembly"
+  },
+  "registry_flat_select_python_assembly": {
+    "hosted_proof": false,
+    "context": "Root replay of b57222c05 (verified caller, 4869 versions, bindings match original, 3,136,996B) still owner 1215.3/1496.6ms with SQL execute 1057/1139ms: the cost was SQL jsonb object construction, not the DTO.",
+    "change": "Postgres owner now SELECTs the ~45 binding leaves as plain columns (payload #> path, missing leaf = printable COALESCE sentinel, JSON null preserved) plus two container-type columns, and assembles the same flat rows in Python (pg_store.persona_binding_select_sql / persona_binding_rows_from_columns, foundation PostgresJsonOwnerStore.list_all_selected). Replaces many per-field jsonb_build_object concatenations and list_all_projected. Same row set, legacy string payload unwrapping, ordering, auth/tenant/state filters, route and payload shape; no new endpoint/cache/fallback.",
+    "finding_during_work": "Dropping the `payload || '{}'` normalization made it 2378ms (per-lookup detoast); a per-leaf null-flag array cost ~200ms; both avoided in the final form.",
+    "tests": "real local postgres:16 (task-owned container, TEST_DATABASE_URL in RAM): registry test_owner_durability.py+test_service.py 111 passed incl. SQL-vs-Python projection parity over missing/null/non-dict/nested/legacy-string shapes; BFF persona_fleet_contract+management_read_budget+research_knowledge_source_ports 92 passed; git diff --check clean",
+    "local_benchmark": {
+      "scope": "store level, local isolated Postgres, 4800 synthetic rows (~1.2KB spec body), median of 7, same fixture and script for both",
+      "previous_head_b57222c05_ms": 1067.5,
+      "new_ms": 599.0,
+      "output_sha_identical": true,
+      "note": "~44% store-level reduction on loopback; not hosted latency, no p95 claimed. Whole-fleet warm <=1000ms still unproven; root replay of this head required."
+    },
+    "requires": "Root bounded read-only actual-profile replay of this head; final hosted task owns release and p95."
+  },
+  "root_actual_profile_replay_35fa16d6a": {
+    "source": "/tmp/pantheon-persona-fleet-20261029/candidate-registry-owner-read-profile-35fa16d6aad3.json (root read-only, actual owner data, no HTTP/writes)",
+    "candidate_sha": "35fa16d6aad30b7ad0b8ac2242aeda810d8a9047",
+    "baseline_owner_read": {
+      "source": "actual-registry-owner-read-profile.json",
+      "handler_ms": [
+        1076.6,
+        1320.4
+      ],
+      "rows": 4869,
+      "response_bytes": 22430629
+    },
+    "candidate_owner_read": {
+      "handler_ms": [
+        587.7,
+        526.5
+      ],
+      "rows": 211,
+      "binding_inputs_match_original": true,
+      "response_bytes": 138528
+    },
+    "dominant_stage": "single PG execute wait ~472ms; fetch+json decode of 11369 values ~96ms",
+    "note": "Owner stage only (~2.3x faster, 4869->211 rows, 22.4MB->0.14MB). Not whole-fleet latency, not hosted p95; warm <=1000ms still unproven. Final hosted task owns release and p95."
+  },
+  "residual_defect_repair": {
+    "sentinel_collision": "missing leaves are SQL NULL, JSON null is text 'null'; no magic value; regression uses registry_id/status equal to former sentinel",
+    "visibility_before_family": "visible owner population + strategy_spec type applied before family eligibility in one SQL snapshot and in memory; regressions cover other-tenant v1 + own unbound v2 (dropped) and builtin-bound v1 + own unbound v2 (both kept)",
+    "count_contract": "service-level getattr/full-list fallback removed; None count raises TypeError",
+    "verification": {
+      "registry_owner_durability_service_foundation": "175 passed (local pfl-pg-test)",
+      "bff_fleet_contract_read_budget_ports": "92 passed; +2 targeted"
+    },
+    "not_run": "no hosted/whole-API p95 measurement; owned by original hosted task"
+  },
+  "review_findings_repair": {
+    "base_review_head": "92c17d2b9130e8ecd7afdffe3adfbea805102b87",
+    "persona_id_normalization": "count_strategy_persona_bindings strips ids before dedup, matching frozen-base fleet count; regression in test_research_knowledge_source_ports.py",
+    "none_count_contract": "ReadSurfacePorts.count_strategy_persona_bindings raises TypeError on non-dict; valid empty dict stays valid; composed-path regression in test_pathreon_market_persona_fleet_contract.py",
+    "validation": "BFF fleet/read_budget/research ports 95 passed exit0; reviewer probe now raises TypeError for None count",
+    "hosted_proof": false
+  },
+  "incident_evolution_overlap": {
+    "change": "Fleet slim path now prefetches list_incidents and list_evolution_decisions through the existing submit_owner_read/cached_owner_call request cache (value or failure shared, tenant/auth context copied, no cross-request cache); foreground consumers read the cached result. Executor max_workers 4->6 for the two added prefetches.",
+    "tests": "test_fleet_overlaps_incident_and_evolution_reads_and_fetches_each_once fails on uncorrected source (serial reads) and passes corrected; failure-stays-failure tests for both reads pass. BFF persona_fleet_contract+management_read_budget+research_knowledge_source_ports: 98 passed.",
+    "not_claimed": "Local overlap proof only; no HTTP p95 or hosted claim. Root replay of the changed candidate is required."
+  }
+}

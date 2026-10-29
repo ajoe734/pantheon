@@ -2189,6 +2189,302 @@ def test_fleet_owner_transport_calls_are_independent_of_archive_size(params):
     assert small == large, (small, large)
 
 
+@pytest.mark.parametrize("archived_count", [100, 1000])
+def test_fleet_reads_command_log_once_regardless_of_ranked_population(archived_count, monkeypatch):
+    # Measured cost pattern: quarterly-rank governance state used to re-read the
+    # whole command log once per ranked persona (archived history included).
+    reads = {"n": 0}
+
+    def counting(self):
+        reads["n"] += 1
+        return []
+
+    monkeypatch.setattr(_FakeCommandStore, "_get_all_commands", counting)
+    with _client_with_store(_seed_fleet_classification_store(archived_count)) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert body["data"]["summary"]["population"]["archived_total"] == archived_count
+    assert reads["n"] <= 1, reads
+
+
+class _LedgerCounter:
+    """Delegating provisioning-ledger proxy counting durable reads."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.reads = 0
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if name not in ("list_by_tenant", "list_all"):
+            return attr
+
+        def wrapped(*args, **kwargs):
+            self.reads += 1
+            return attr(*args, **kwargs)
+
+        return wrapped
+
+
+@pytest.mark.parametrize("archived_count", [100, 1000])
+def test_fleet_reads_durable_persona_ledger_once_per_request(archived_count, monkeypatch):
+    # Measured cost pattern: the deployed fleet read the whole durable persona
+    # ledger twice (league rows, then directory snapshot), ~0.5s each.
+    counter = _LedgerCounter(personas_service._persona_provisioning_store())
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: counter)
+    with _client_with_store(_seed_fleet_classification_store(archived_count)) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert body["data"]["summary"]["population"]["archived_total"] == archived_count
+    assert counter.reads == 1, counter.reads
+
+
+def test_fleet_overlaps_provisioning_ledger_with_canonical_personas_read(monkeypatch):
+    # Measured cost pattern: durable provisioning list_by_tenant (~0.2-0.45s)
+    # started only after the canonical /api/personas read finished.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    delay = 0.4
+    spans = {}
+
+    def timed(name, fn):
+        def wrapped(*args, **kwargs):
+            start = _time.monotonic()
+            _time.sleep(delay)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                spans.setdefault(name, (start, _time.monotonic(), threading.current_thread() is threading.main_thread()))
+
+        return wrapped
+
+    counter = _LedgerCounter(personas_service._persona_provisioning_store())
+    real_list = counter.list_by_tenant
+    counter.list_by_tenant = timed("ledger", real_list)
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: counter)
+    monkeypatch.setattr(store, "list_personas", timed("personas", store.list_personas))
+    with _client_with_store(store) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert body["data"]["summary"]["population"]["archived_total"] == 100
+    assert counter.reads == 1, counter.reads
+    assert spans["ledger"][2] is False, spans
+    assert spans["ledger"][0] < spans["personas"][1] and spans["personas"][0] < spans["ledger"][1], spans
+
+
+def test_fleet_provisioning_prefetch_failure_stays_failure(monkeypatch):
+    store = _seed_fleet_classification_store(5)
+    counter = _LedgerCounter(personas_service._persona_provisioning_store())
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise RuntimeError("ledger down")
+
+    counter.list_by_tenant = boom
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: counter)
+    with _client_with_store(store) as client:
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "trading", "page_size": 20})
+    assert response.status_code == 503, response.text
+    assert calls["n"] == 1, calls
+
+
+def test_fleet_overlaps_strategy_spec_and_source_registry_reads(monkeypatch):
+    # Measured cost pattern: strategy-spec registry (~3.4s) and the first
+    # source-ingest registry read (~0.9s) ran serially on the request thread.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    delay = 0.4
+    spans = {}
+
+    def timed(name, fn):
+        def wrapped(*args, **kwargs):
+            start = _time.monotonic()
+            _time.sleep(delay)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                spans[name] = (start, _time.monotonic(), threading.current_thread() is threading.main_thread())
+
+        return wrapped
+
+    monkeypatch.setattr(store, "count_strategy_persona_bindings", timed("specs", store.count_strategy_persona_bindings))
+    monkeypatch.setattr(store, "get_source_connector_registry", timed("source", store.get_source_connector_registry), raising=False)
+    with _client_with_store(store) as client:
+        started = _time.monotonic()
+        _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+        elapsed = _time.monotonic() - started
+    assert "specs" in spans
+    # The slow registry read starts off the request thread (caller context copied).
+    assert spans["specs"][2] is False, spans
+    for name, (start, end, _) in spans.items():
+        assert end - start >= delay, name
+    if "source" in spans:
+        # The two slow reads overlap instead of running back to back.
+        assert max(s for s, _, _ in spans.values()) < min(e for _, e, _ in spans.values()), spans
+        assert elapsed < len(spans) * delay + 0.35, (elapsed, spans)
+
+
+@pytest.mark.parametrize("fail_registry", [False, True])
+def test_fleet_cold_source_truth_single_flight_when_registry_slowest(monkeypatch, fail_registry):
+    # Reverse latency: the source registry is slower than every other stage, so the
+    # prefetch worker and the request thread both want the cold source truth.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    reads = {"registry": 0, "health": 0}
+    lock = threading.Lock()
+    original_registry = store.get_source_connector_registry
+    original_health = store.get_source_health_usage_snapshot
+
+    def slow_registry():
+        with lock:
+            reads["registry"] += 1
+        _time.sleep(0.6)
+        if fail_registry:
+            raise RuntimeError("registry unavailable")
+        return original_registry()
+
+    def counted_health():
+        with lock:
+            reads["health"] += 1
+        return original_health()
+
+    monkeypatch.setattr(store, "get_source_connector_registry", slow_registry)
+    monkeypatch.setattr(store, "get_source_health_usage_snapshot", counted_health)
+    with _client_with_store(store) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert reads == {"registry": 1, "health": 1}, reads
+    assert body["data"]["summary"]["population"]["archived_total"] == 100
+
+
+def test_fleet_strategy_spec_prefetch_failure_stays_failure(monkeypatch):
+    store = _seed_fleet_classification_store(100)
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise RuntimeError("strategy registry down")
+
+    monkeypatch.setattr(store, "count_strategy_persona_bindings", boom)
+    with _client_with_store(store) as client:
+        try:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "trading", "page_size": 20})
+        except RuntimeError as exc:
+            assert "strategy registry down" in str(exc)
+        else:
+            assert response.status_code >= 500 or response.json().get("data", {}).get("summary", {}).get("population") is not None
+    assert calls["n"] == 1, calls
+
+
+def test_fleet_overlaps_incident_and_evolution_reads_and_fetches_each_once(monkeypatch):
+    # Measured cost pattern: GET incidents (~6MB) then evolution proposals (~1MB)
+    # ran serially after the other reads. Each is fetched once, off the request thread.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    delay = 0.4
+    spans = {}
+    calls = {"incidents": 0, "evolution": 0}
+    lock = threading.Lock()
+
+    def timed(name, fn):
+        def wrapped(*args, **kwargs):
+            start = _time.monotonic()
+            with lock:
+                calls[name] += 1
+            _time.sleep(delay)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                spans[name] = (start, _time.monotonic(), threading.current_thread() is threading.main_thread())
+
+        return wrapped
+
+    monkeypatch.setattr(store, "list_incidents", timed("incidents", store.list_incidents))
+    monkeypatch.setattr(store, "list_evolution_decisions", timed("evolution", store.list_evolution_decisions))
+    with _client_with_store(store) as client:
+        body = _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert calls == {"incidents": 1, "evolution": 1}, calls
+    assert spans["incidents"][2] is False and spans["evolution"][2] is False, spans
+    assert spans["incidents"][0] < spans["evolution"][1] and spans["evolution"][0] < spans["incidents"][1], spans
+    assert body["data"]["summary"]["population"]["archived_total"] == 100
+
+
+@pytest.mark.parametrize("failing", ["list_incidents", "list_evolution_decisions"])
+def test_fleet_incident_evolution_prefetch_failure_stays_failure(monkeypatch, failing):
+    store = _seed_fleet_classification_store(100)
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise RuntimeError("owner read down")
+
+    monkeypatch.setattr(store, failing, boom)
+    with _client_with_store(store) as client:
+        try:
+            response = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"purpose": "trading", "page_size": 20})
+        except RuntimeError as exc:
+            assert "owner read down" in str(exc)
+        else:
+            assert response.status_code >= 500 or response.json().get("data", {}).get("summary", {}).get("population") is not None
+    assert calls["n"] == 1, calls
+
+
+def test_routed_strategy_counts_require_explicit_count_contract(monkeypatch):
+    store = _seed_fleet_classification_store(3)
+    monkeypatch.setattr(store, "count_strategy_persona_bindings", lambda: None)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda: store)
+    with pytest.raises(TypeError):
+        personas_service._routed_strategy_counts_by_persona()
+
+
+def test_ranking_governance_state_is_identical_with_shared_command_log(monkeypatch):
+    commands = [
+        {
+            "type": "QuarterlyRankingRecommendationSubmit",
+            "status": "executed",
+            "params": {"recommendation_id": "pm12-2026q4-p-a-1"},
+        },
+        {
+            "type": "HumanGateDecision",
+            "status": "executed",
+            "target": {"type": personas_service.ObjectType.HUMAN_GATE_ITEM.value, "id": "promotion_review:pm12-2026q4-p-b-1"},
+            "params": {"decision": "reject"},
+        },
+    ]
+
+    class _Store:
+        def _get_all_commands(self):
+            return commands
+
+    monkeypatch.setattr(personas_service, "_get_active_command_store", lambda explicit=None: _Store())
+    commands += [
+        # Hyphenated ids sharing a prefix must not bleed into each other.
+        {
+            "type": "QuarterlyRankingRecommendationSubmit",
+            "status": "blocked",
+            "params": {"recommendationId": "PM12-2026Q4-p-a-b-1"},
+        },
+        {
+            "type": "HumanGateDecision",
+            "status": "applied",
+            "target": {"type": personas_service.ObjectType.HUMAN_GATE_ITEM.value, "id": "promotion_review:pm12-2026q4-p-a-b-9"},
+            "params": {"decision": "approve"},
+        },
+        {"type": "Other", "status": "executed", "params": {"recommendation_id": "pm12-2026q4-p-a-1"}},
+    ]
+    fn = personas_service._pm12_quarterly_ranking_governance_state
+    index = personas_service._pm12_quarterly_governance_command_index(commands, "2026Q4")
+    for pid in ("p-a", "p-a-b", "p-b", "p-none", "P-A", "p"):
+        assert fn(pid, "2026q4") == fn(pid, "2026q4", commands) == fn(pid, "2026q4", index.get(pid, ())), pid
+    assert fn("p-a-b", "2026q4") == "applied receipt"
+    assert fn("p-none", "2026q4", commands) == "recommendation"
+
+
 @pytest.mark.parametrize("failing", ["list_telemetry_summaries", "list_runtime_bindings", "list_incidents"])
 def test_fleet_owner_failure_keeps_fixed_call_budget(failing):
     outcomes = []
@@ -2400,3 +2696,17 @@ def test_private_servant_visibility_uses_agora_user_scope_for_verified_jwt(
     assert ("p-private-servant" in ids) is visible
     total = body["summary"]["population"]["authorized_total"]
     assert total == other + (1 if visible else 0)
+
+
+def test_routed_strategy_counts_reject_none_through_real_read_surface(monkeypatch):
+    from types import SimpleNamespace
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    store = ReadSurfacePorts(research_knowledge_source=SimpleNamespace(count_strategy_persona_bindings=lambda: None))
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda: store)
+    with pytest.raises(TypeError):
+        personas_service._routed_strategy_counts_by_persona()
+
+    empty = ReadSurfacePorts(research_knowledge_source=SimpleNamespace(count_strategy_persona_bindings=lambda: {}))
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda: empty)
+    assert personas_service._routed_strategy_counts_by_persona() == {}

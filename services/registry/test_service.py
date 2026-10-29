@@ -3135,3 +3135,124 @@ def test_list_all_strategy_spec_entries_tenant_scoped_and_artifact_state_filter(
 
 
 
+
+
+def test_strategy_spec_list_persona_binding_view_is_light_and_scoped(strict_client):
+    token_a = _jwt(subject="pb-a", tenant="tenant-a")
+    token_b = _jwt(subject="pb-b", tenant="tenant-b")
+    first_ids: dict[str, str] = {}
+    for token, sid, version, personas in (
+        (token_a, "pb-strat-a", "1.0.0", ["p1"]),
+        (token_a, "pb-strat-a", "1.1.0", ["p1", "p2"]),
+        (token_b, "pb-strat-b", "1.0.0", ["p9"]),
+    ):
+        lineage = {"source_run_ids": ["run-1"]}
+        if sid in first_ids:
+            lineage["parent_registry_ids"] = [first_ids[sid]]
+        resp = strict_client.post(
+            "/api/registry/strategy-specs",
+            json={
+                "strategy_id": sid,
+                "version": version,
+                "lineage": lineage,
+                "strategy_spec": _valid_spec(sid, bulk="x" * 5000, rev=version),
+                "metadata": {"persona_ids": personas, "tenant_id": "ignored"},
+            },
+            headers=_bearer(token),
+        )
+        assert resp.status_code == 200, resp.text
+        first_ids.setdefault(sid, resp.json()["entry"]["registry_id"])
+
+    path = "/api/registry/strategy-specs"
+    full = strict_client.get(path, headers=_bearer(token_a))
+    light = strict_client.get(f"{path}?view=persona_binding", headers=_bearer(token_a))
+    assert full.status_code == light.status_code == 200
+    full_by_id = {e["entry"]["registry_id"]: e["entry"] for e in full.json()}
+    light_by_id = {e["entry"]["registry_id"]: e["entry"] for e in light.json()}
+    assert set(light_by_id) == set(full_by_id)  # same rows, all versions, tenant-scoped
+    assert not any(e["strategy_id"] == "pb-strat-b" for e in light_by_id.values())
+    for rid, le in light_by_id.items():
+        fe = full_by_id[rid]
+        for key in ("strategy_id", "version", "artifact_state", "owner_tenant", "created_at"):
+            assert le[key] == fe[key]
+        assert le["metadata"].get("persona_ids") == fe["metadata"].get("persona_ids")
+        assert "bulk" not in str(le["metadata"])
+    assert len(light.text) < len(full.text) / 3
+
+    # Unauthenticated and bad view are rejected, never silently full/empty.
+    assert strict_client.get(f"{path}?view=persona_binding").status_code in (401, 403)
+    assert strict_client.get(f"{path}?view=bogus", headers=_bearer(token_a)).status_code == 422
+
+
+def test_strategy_spec_persona_binding_view_keeps_whole_bound_families_only(strict_client):
+    token_a = _jwt(subject="pbf-a", tenant="tenant-a")
+    token_b = _jwt(subject="pbf-b", tenant="tenant-b")
+    first_ids: dict[tuple[str, str], str] = {}
+    for token, tenant, sid, version, personas in (
+        (token_a, "a", "pbf-bound-old", "1.0.0", ["p1"]),
+        (token_a, "a", "pbf-bound-old", "2.0.0", []),
+        (token_a, "a", "pbf-unbound", "1.0.0", []),
+        (token_b, "b", "pbf-other-tenant", "1.0.0", ["p9"]),
+    ):
+        lineage = {"source_run_ids": ["run-1"]}
+        if (tenant, sid) in first_ids:
+            lineage["parent_registry_ids"] = [first_ids[(tenant, sid)]]
+        resp = strict_client.post(
+            "/api/registry/strategy-specs",
+            json={
+                "strategy_id": sid, "version": version, "lineage": lineage,
+                "strategy_spec": _valid_spec(sid, rev=version),
+                "metadata": {"persona_ids": personas},
+            },
+            headers=_bearer(token),
+        )
+        assert resp.status_code == 200, resp.text
+        first_ids.setdefault((tenant, sid), resp.json()["entry"]["registry_id"])
+
+    path = "/api/registry/strategy-specs"
+    light = strict_client.get(f"{path}?view=persona_binding", headers=_bearer(token_a))
+    assert light.status_code == 200
+    got = sorted((e["entry"]["strategy_id"], e["entry"]["version"]) for e in light.json())
+    # Every version of the bound family (incl. unbound latest) is kept; the fully
+    # unbound family is dropped; tenant-b's bound family never leaks into tenant-a.
+    assert got == [("pbf-bound-old", "1.0.0"), ("pbf-bound-old", "2.0.0")]
+
+
+def _seed_binding_visibility_scenario(store):
+    """Distinct versions per tenant; a legal registry_id equal to the old sentinel."""
+    def make(rid, sid, version, metadata, tenant):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec", strategy_id=sid, version=version,
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d", metadata=metadata,
+            ),
+            rid, actor={"tenant": tenant},
+        )
+
+    # Other tenant binds v1 of a family; own tenant only has an unbound v2.
+    make("other-v1", "fam-x", "1.0.0", {"persona_ids": ["p9"]}, "tenant-b")
+    make("own-v2", "fam-x", "2.0.0", {"persona_ids": []}, "tenant-a")
+    # Visible builtin-bound old version + own unbound latest: both retained.
+    make("builtin-v1", "fam-y", "1.0.0", {"persona_ids": ["p1"]}, "__builtin__")
+    make("own-y-v2", "fam-y", "2.0.0", {"persona_ids": []}, "tenant-a")
+    # Legal field values equal to the former absent-sentinel survive verbatim.
+    make("~pb-absent-7c1f~", "fam-z", "1.0.0", {"persona_ids": ["p2"], "status": "~pb-absent-7c1f~"}, "tenant-a")
+    return {"tenant-a", "__builtin__"}
+
+
+def _assert_binding_visibility_scenario(rows):
+    ids = {r["registry_id"] for r in rows}
+    assert ids == {"builtin-v1", "own-y-v2", "~pb-absent-7c1f~"}
+    sentinel = next(r for r in rows if r["strategy_id"] == "fam-z")
+    assert sentinel["metadata"]["status"] == "~pb-absent-7c1f~"
+    assert "tenant_id" not in sentinel["metadata"]
+
+
+def test_memory_persona_binding_visible_population_precedes_family_eligibility():
+    from .storage import RegistryStore
+
+    store = RegistryStore()
+    tenants = _seed_binding_visibility_scenario(store)
+    rows = store.list_persona_binding_rows(visible_tenants=frozenset(tenants), artifact_type="strategy_spec")
+    _assert_binding_visibility_scenario(rows)

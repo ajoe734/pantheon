@@ -474,7 +474,10 @@ PY
         --quiet \
         --command="${REMOTE_DEPLOY_CMD}" 2>&1
     )"; then
-      die_json "HOST_SSH_DEPLOY_FAILED" "Remote staging deployment command failed on ${VM_NAME}: $(printf '%s' "$SSH_DEPLOY_OUT" | tail -n 5 | tr '\n"' '  ')"
+      # Public-output boundary: replay only structural BFF_DIAG lines and the bootstrap error_code; never the raw SSH body.
+      printf '%s\n' "$SSH_DEPLOY_OUT" | grep -E '^BFF_DIAG (status=[a-z]+ exit_code=-?[0-9]+ oom_killed=(true|false) restart_count=[0-9]+ error_present=(true|false)|state=unavailable|container=missing|frame=/workspace/[A-Za-z0-9_./-]+\.py:[0-9]+|exception_type=[A-Za-z_][A-Za-z0-9_.]*)$' | tail -n 40 >&2 || true
+      REMOTE_ERR_CODE="$(printf '%s\n' "$SSH_DEPLOY_OUT" | grep -oE '"error_code": "[A-Z0-9_]{1,64}"' | tail -n1 | cut -d'"' -f4 || true)"
+      die_json "HOST_SSH_DEPLOY_FAILED" "Remote staging deployment command failed on ${VM_NAME}: ${REMOTE_ERR_CODE:-unknown}"
     fi
 
     OBSERVED_DEPLOY_FILE="${OBSERVED_DEPLOY_FILE}" \
@@ -597,7 +600,8 @@ PY
         --quiet \
         --command="${REMOTE_VERIFY_CMD}" 2>&1
     )"; then
-      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via IAP SSH: $(printf '%s' "$SSH_VERIFY_OUT" | tail -n 5 | tr '\n"' '  ')"
+      REMOTE_ERROR_CODES="$(printf '%s' "$SSH_VERIFY_OUT" | grep -oE '"error_code" *: *"[A-Z][A-Z0-9_]{2,63}"' | sed -E 's/.*"([A-Z0-9_]+)"$/\1/' | sort -u | tr '\n' ' ' || true)"
+      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via IAP SSH; remote error_code: ${REMOTE_ERROR_CODES:-unknown}"
     fi
 
     GATE_OUT_DIR="${STATE_DIR}/observed-gates/${RELEASE_ID}"
