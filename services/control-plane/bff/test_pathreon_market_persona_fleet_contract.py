@@ -2148,3 +2148,39 @@ def test_advisory_record_never_enters_league_rows():
     with _client_with_store(_seed_fleet_classification_store(0)) as client:
         body = client.get("/bff/management/quarterly-ranking", headers=HEADERS, params={"page_size": 200}).json()
     assert "p-servant" not in [r.get("persona_id") for r in body["data"]["items"]]
+
+
+def _private_servant_store():
+    store = _seed_fleet_classification_store(0)
+    store.create_persona(
+        persona_id="p-private-servant", tenant_id="pantheon-dev", name="Private servant",
+        actor_id="u1", lifecycle_state="paper", created_at="2026-06-03T08:27:44Z",
+        metadata={
+            "persona_class": "agora_servant", "agora_user_id": "u1",
+            "owner_scope": "user_private", "visibility_scope": "private",
+            "deployment_stage": "paper", "environment_ceiling": "paper",
+            "execution_authority": "none",
+        },
+    )
+    return store
+
+
+def test_advisory_servant_has_no_nested_trading_facts_and_is_owner_private():
+    seen = {}
+    with _client_with_store(_private_servant_store()) as client:
+        for caller in ("u1", "u2"):
+            body = client.get(
+                "/bff/management/persona-fleet",
+                headers={"Authorization": f"Bearer {caller}:operator"},
+                params={"purpose": "advisory_assistant"},
+            ).json()["data"]
+            seen[caller] = body
+    ids_u2 = [r["persona_id"] for r in seen["u2"]["items"]]
+    assert "p-private-servant" not in ids_u2
+    assert seen["u2"]["summary"]["population"]["authorized_total"] == (
+        seen["u1"]["summary"]["population"]["authorized_total"] - 1
+    )
+    row = next(r for r in seen["u1"]["items"] if r["persona_id"] == "p-private-servant")
+    for key in ("capital_scope", "capital_scope_id", "binding_state", "capital_binding",
+                "runtime_binding", "paper_ledger_id", "stage", "capital_mode"):
+        assert row.get(key) is None, key

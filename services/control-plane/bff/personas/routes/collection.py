@@ -435,6 +435,11 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 purpose=purpose,
                 data_scope=data_scope,
                 archived=archived,
+                viewer_user_id=str(
+                    (getattr(identity, "claims", None) or {}).get("user_id")
+                    or getattr(identity, "operator_id", "")
+                    or ""
+                ),
             )
         except ValueError as exc:
             raise _bff_error(

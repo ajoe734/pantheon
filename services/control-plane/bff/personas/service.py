@@ -8430,6 +8430,10 @@ def _persona_fleet_strip_trading_facts(row: Dict[str, Any]) -> None:
         "paper_ledger_id", "paperLedgerId", "paper_ledger", "paperLedger",
         "legacy_paper_capital_pool_id", "legacyPaperCapitalPoolId",
         "deployment_stage", "capital_mode", "runtime_health",
+        "stage", "mode", "capital_scope", "capital_scope_id", "capital_sleeve_id",
+        "current_weight", "target_weight", "binding_state", "capital_binding",
+        "runtime_binding", "capital_pool_id", "capitalPoolId", "capital_pool",
+        "capitalPool", "runtime_id", "runtime_binding_id",
     ):
         if key in row:
             row[key] = None
@@ -8439,6 +8443,27 @@ def _persona_fleet_strip_trading_facts(row: Dict[str, Any]) -> None:
     row["score"] = None
     row["human_needed"] = False
     row["governance_required"] = False
+
+
+def _persona_fleet_record_visible_to(record: Dict[str, Any], viewer_user_id: Optional[str]) -> bool:
+    """User-private records are visible only to their owning Agora user."""
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+
+    def _val(*keys: str) -> str:
+        for source in (metadata, record):
+            for key in keys:
+                value = source.get(key)
+                if value not in (None, ""):
+                    return str(value).strip().lower()
+        return ""
+
+    if _val("owner_scope", "ownerScope") != "user_private" and _val("visibility_scope", "visibilityScope") != "private":
+        return True
+    owner = str(
+        metadata.get("agora_user_id") or metadata.get("agoraUserId")
+        or record.get("agora_user_id") or ""
+    ).strip()
+    return bool(owner) and owner == str(viewer_user_id or "").strip()
 
 
 # --- _persona_fleet_slim_list_payload ---
@@ -8457,6 +8482,7 @@ def _persona_fleet_slim_list_payload(
     purpose: Optional[str] = None,
     data_scope: Optional[str] = None,
     archived: Optional[str] = None,
+    viewer_user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     purpose_filter = _fleet_cls.normalize_filter(purpose, _fleet_cls.PURPOSE_FILTERS, "all", "purpose")
     data_scope_filter = _fleet_cls.normalize_filter(data_scope, _fleet_cls.DATA_SCOPE_FILTERS, "all", "data_scope")
@@ -8502,12 +8528,18 @@ def _persona_fleet_slim_list_payload(
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
     directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
-    personas = list(directory.records_by_id.values())
-    canonical_total = len(directory.records_by_id)
+    # Enforce the user-private owner policy before rows or population counts.
+    visible_records = {
+        pid: raw
+        for pid, raw in directory.records_by_id.items()
+        if _persona_fleet_record_visible_to(raw, viewer_user_id)
+    }
+    personas = list(visible_records.values())
+    canonical_total = len(visible_records)
     catalog_default_total = len(directory.catalog_defaults_by_id)
     classifications = {
         pid: _fleet_cls.persona_classification(raw)
-        for pid, raw in directory.records_by_id.items()
+        for pid, raw in visible_records.items()
     }
     for pid, raw in directory.catalog_defaults_by_id.items():
         classifications.setdefault(pid, _fleet_cls.persona_classification(raw, catalog_default=True))

@@ -14,5 +14,5 @@
   "archived1000_include": 416
  },
  "contract": "docs/bff/execution-tasks/2026-10-29-persona-fleet/API_CONTRACT.md",
- "repair": "Exclude advisory raw records at _pm12_persona_league_rows source (all league consumers); fleet list builds cohort rows for sort/filter/summary then runs full detail projection only for the page; runtime lookup indexed by persona."
+ "repair": "Review round 2: nested advisory trading facts removed; user-private owner visibility enforced before rows/counts (two-user route test). Exclude advisory raw records at _pm12_persona_league_rows source (all league consumers); fleet list builds cohort rows for sort/filter/summary then runs full detail projection only for the page; runtime lookup indexed by persona."
 }
