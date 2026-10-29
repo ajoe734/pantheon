@@ -762,7 +762,7 @@ if tool in ("psql", "pg_dump", "pg_restore"):
             sql_file = args[i + 1]
     if sql_file:
         if os.environ.get("FAKE_FAIL_MIGRATION_SQL") == "true":
-            print("ERROR: syntax or lock error executing migration SQL", file=sys.stderr)
+            print("ERROR: syntax or lock error executing migration SQL order_id=ORD-SYNTH-7788 buyer@synthetic.example", file=sys.stderr)
             raise SystemExit(1)
         if os.environ.get("FAKE_SKIP_SCHEMA_MUTATION") != "true":
             applied = Path(sql_file).read_text(encoding="utf-8")
@@ -2266,6 +2266,8 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertNotEqual(ver.returncode, 0)
                 self.assertIn("LIVE_GATE_COLLECTION_FAILED", ver.stderr)
                 self.assertIn(expected_err, ver.stderr)
+                self.assertNotIn("ORD-SYNTH-7788", ver.stderr)
+                self.assertNotIn("buyer@synthetic.example", ver.stderr)
 
     def test_collector_rejects_tampered_migration_files_and_missing_owner_store(self) -> None:
         subprocess.run(

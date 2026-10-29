@@ -600,7 +600,8 @@ PY
         --quiet \
         --command="${REMOTE_VERIFY_CMD}" 2>&1
     )"; then
-      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via IAP SSH: $(printf '%s' "$SSH_VERIFY_OUT" | tail -n 5 | tr '\n"' '  ')"
+      REMOTE_ERROR_CODES="$(printf '%s' "$SSH_VERIFY_OUT" | grep -oE '"error_code" *: *"[A-Z][A-Z0-9_]{2,63}"' | sed -E 's/.*"([A-Z0-9_]+)"$/\1/' | sort -u | tr '\n' ' ' || true)"
+      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via IAP SSH; remote error_code: ${REMOTE_ERROR_CODES:-unknown}"
     fi
 
     GATE_OUT_DIR="${STATE_DIR}/observed-gates/${RELEASE_ID}"
