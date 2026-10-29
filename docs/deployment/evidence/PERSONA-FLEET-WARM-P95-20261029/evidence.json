@@ -4,7 +4,28 @@
   "baseline_hosted_failure": {
     "warm_p95_ms": 2643,
     "target_ms": 1000,
-    "samples_ms_preserved": [1352,1336,891,1328,1117,1528,1207,963,1237,943,1811,1420,1046,1162,1046,1330,1285,979,4590,2643]
+    "samples_ms_preserved": [
+      1352,
+      1336,
+      891,
+      1328,
+      1117,
+      1528,
+      1207,
+      963,
+      1237,
+      943,
+      1811,
+      1420,
+      1046,
+      1162,
+      1046,
+      1330,
+      1285,
+      979,
+      4590,
+      2643
+    ]
   },
   "measured_critical_path_deployed_timeline_71829313_iteration_1_822.8ms": {
     "registry_strategy_specs_view_persona_binding_headers_ms": 502.1,
@@ -22,15 +43,33 @@
     {
       "layer": "Registry list_all_selected / persona_binding_family_keep_sql",
       "change": "Decide visible-population then family eligibility over small per-row facts (hash aggregate) and fetch/project payload only for kept rows by primary key, instead of a window function whose sort carried every wide payload and spilled to disk. Same single statement/snapshot; semantics unchanged.",
-      "synthetic_ab_ms_pfl_pg_test": {"before": "385-406", "after": "275-283", "rows_both": 417, "sort_spill_before_kb": 35904, "sort_spill_after": 0},
+      "synthetic_ab_ms_pfl_pg_test": {
+        "before": "385-406",
+        "after": "275-283",
+        "rows_both": 417,
+        "sort_spill_before_kb": 35904,
+        "sort_spill_after": 0
+      },
       "limitation": "Synthetic 4869-row/35MB table on the isolated pfl-pg-test container, relative A/B only; not production data and not an HTTP p95."
+    },
+    {
+      "layer": "BFF personas/service.py (fleet list rows)",
+      "change": "Cohort projection reuse, request-local source-health overlay reuse, and a thin overlay for non-detail fleet rows that skips the rich connector health/freshness/usage clones and required_source_health bindings the list DTO discards (data_source_summary/data_sources are built only from scalar status). Detail/default rich overlay unchanged.",
+      "deployed_shape_evidence": "actual read-only 5-row request: per overlay 821832B dss output (required_source_health + requiredSourceHealth 410677B each) x10 overlays/request; first overlay 49.66ms then 11.2-15.0ms; final row only 5.1-5.6KB, data_source_summary 247B.",
+      "limitation": "No local timing on the real deployed shape; Root bounded actual replay and original 20-warm/3-cold hosted acceptance remain required."
     }
   ],
-  "not_changed": ["classification/archive/lazy-fetch/paging contracts", "visible-before-family semantics", "no new cache/fallback/gate/timeout policy", "cohort+list per-row projections (shared recompute would risk detail/lite parity; ~130ms left for a follow-up if hosted retest still fails)"],
+  "not_changed": [
+    "classification/archive/lazy-fetch/paging contracts",
+    "visible-before-family semantics",
+    "no new cache/fallback/gate/timeout policy",
+    "cohort+list per-row projections (shared recompute would risk detail/lite parity; ~130ms left for a follow-up if hosted retest still fails)"
+  ],
   "verification": {
     "services/registry/test_owner_durability.py (TEST_DATABASE_URL=pfl-pg-test)": "20 passed",
     "services/registry full suite": "311 passed; 3 failures in test_owner_durability_real_process.py (rapid_same_second, allocation_typed x2) are pre-existing and fail identically on base 718293136",
     "bff fleet contract + read budget + research ports": "101 passed (incl. new directory-overlap regression, fails on uncorrected source)",
-    "new registry regression test_persona_binding_family_selection_does_not_sort_or_spill_wide_payloads": "passes; old-API negative control not directly runnable (signature changed), old SQL spill shown by EXPLAIN on synthetic table"
+    "new registry regression test_persona_binding_family_selection_does_not_sort_or_spill_wide_payloads": "passes; old-API negative control not directly runnable (signature changed), old SQL spill shown by EXPLAIN on synthetic table",
+    "persona_fleet_final_candidate": "worker-test-python pytest -B: fleet contract + test_bff_b3_persona_fleet + test_management_read_budget + test_research_knowledge_source_ports = 115 passed, 13 warnings (86.57s), exit 0; includes new thin-vs-rich overlay parity test"
   }
 }
