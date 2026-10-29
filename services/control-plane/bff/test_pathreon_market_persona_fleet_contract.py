@@ -2202,6 +2202,117 @@ def test_fleet_owner_failure_keeps_fixed_call_budget(failing):
     assert outcomes[0] == outcomes[1], outcomes
 
 
+def _filtered_archived(client, **params):
+    return _fleet(client, **params)["data"]["summary"]["filtered_archived_total"]
+
+
+def test_filtered_archived_total_scopes_and_ignores_paging(monkeypatch) -> None:
+    store = _seed_fleet_classification_store(archived_count=10)
+    store.create_persona(
+        persona_id="p-old-test", tenant_id="pantheon-dev", name="p-old-test",
+        actor_id="pantheon-dev-browser", lifecycle_state="retired",
+        created_at="2026-06-03T08:27:44Z",
+        metadata={"owner": "pantheon-dev-browser", "provisioning_idempotency_key": "k",
+                  "capital_mode": "paper", "data_scope": "test"},
+    )
+    store.create_persona(
+        persona_id="p-old-unknown", tenant_id="pantheon-dev", name="p-old-unknown",
+        actor_id="pantheon-dev-browser", lifecycle_state="retired",
+        created_at="2026-06-03T08:27:44Z", metadata={"owner": "pantheon-dev-browser"},
+    )
+    store.create_persona(
+        persona_id="p-old-other", tenant_id="other-tenant", name="p-old-other",
+        actor_id="x", lifecycle_state="retired", created_at="2026-06-03T08:27:44Z",
+        metadata={"provisioning_idempotency_key": "k", "capital_mode": "paper"},
+    )
+    detail_ids = []
+    original = personas_service._project_persona_fleet_list_row
+
+    def spy(**kwargs):
+        detail_ids.append(personas_service._persona_id(kwargs["persona"]))
+        return original(**kwargs)
+
+    monkeypatch.setattr(personas_service, "_project_persona_fleet_list_row", spy)
+    with _client_with_store(store) as client:
+        regular = _filtered_archived(client, data_scope="regular", archived="exclude")
+        test = _filtered_archived(client, data_scope="test", archived="exclude")
+        unknown = _filtered_archived(client, purpose="unknown", data_scope="unknown", archived="exclude")
+        paged = _filtered_archived(client, data_scope="regular", archived="exclude", page_size=1)
+        assert not any(pid.startswith("p-old") for pid in detail_ids)
+        only = _filtered_archived(client, data_scope="regular", archived="only", page_size=2)
+        include = _filtered_archived(client, data_scope="regular", archived="include", page_size=3)
+        detail_ids.clear()
+        queried = _filtered_archived(client, q="p-old-000", archived="exclude")
+        miss = _filtered_archived(client, q="no-such-persona", archived="exclude")
+        staged = _filtered_archived(client, state="draft", archived="exclude")
+        ordinary = _fleet(client, archived="exclude", page_size=50)
+
+    assert regular == 10 and test == 1 and unknown == 1
+    assert paged == only == include == regular
+    assert queried == 10 and miss == 0 and staged == 0
+    # Global population is unchanged and other-tenant retired is excluded.
+    assert ordinary["data"]["summary"]["population"]["archived_total"] == 12
+    assert not any(pid.startswith("p-old") for pid in detail_ids)
+    assert not any(i["persona_id"].startswith("p-old") for i in ordinary["data"]["items"])
+
+
+def test_filtered_archived_total_excludes_other_users_private_records() -> None:
+    store = _seed_fleet_classification_store(archived_count=2)
+    store.create_persona(
+        persona_id="p-old-private", tenant_id="pantheon-dev", name="p-old-private",
+        actor_id="u-other", lifecycle_state="retired", created_at="2026-06-03T08:27:44Z",
+        metadata={"provisioning_idempotency_key": "k", "capital_mode": "paper",
+                  "owner_scope": "user_private", "agora_user_id": "u-other"},
+    )
+    with _client_with_store(store) as client:
+        assert _filtered_archived(client, archived="exclude") == 2
+
+
+def test_filtered_archived_total_is_null_when_owner_read_fails(monkeypatch) -> None:
+    store = _seed_fleet_classification_store(archived_count=3)
+
+    def boom(**kwargs):
+        if kwargs["persona"].get("lifecycle_state") == "retired" or kwargs["persona"].get("status") == "retired":
+            raise RuntimeError("cohort projection down")
+        return original(**kwargs)
+
+    original = personas_service._project_persona_fleet_cohort_row
+    monkeypatch.setattr(personas_service, "_project_persona_fleet_cohort_row", boom)
+    with _client_with_store(store) as client:
+        body = _fleet(client, archived="exclude")
+    assert body["data"]["summary"]["filtered_archived_total"] is None
+    assert body["data"]["summary"]["population"]["archived_total"] == 3
+
+
+def _store_with_persona_owner(records_provider):
+    from services.control_plane.bff.ports.persona_capital_runtime import PersonaFleetPort
+
+    store = _make_store(allow_local_snapshot_fallback=False)
+    store.persona_capital_runtime.persona = PersonaFleetPort(records_provider=records_provider)
+    return store
+
+
+@pytest.mark.parametrize("archived", ["exclude", "only", "include"])
+def test_filtered_archived_total_is_null_when_real_persona_port_fails(archived) -> None:
+    calls = []
+
+    def failed_owner():
+        calls.append(1)
+        raise RuntimeError("persona owner down")
+
+    with _client_with_store(_store_with_persona_owner(failed_owner)) as client:
+        body = _fleet(client, archived=archived)
+    assert body["data"]["summary"]["filtered_archived_total"] is None
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("archived", ["exclude", "only", "include"])
+def test_filtered_archived_total_is_zero_for_healthy_empty_owner(archived) -> None:
+    with _client_with_store(_store_with_persona_owner(lambda: [])) as client:
+        body = _fleet(client, archived=archived)
+    assert body["data"]["summary"]["filtered_archived_total"] == 0
+
+
 def test_advisory_record_never_enters_league_rows():
     with _client_with_store(_seed_fleet_classification_store(0)) as client:
         body = client.get("/bff/management/quarterly-ranking", headers=HEADERS, params={"page_size": 200}).json()

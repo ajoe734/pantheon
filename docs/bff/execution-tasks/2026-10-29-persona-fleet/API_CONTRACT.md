@@ -31,6 +31,7 @@ Privacy: records with `owner_scope=user_private` or `visibility_scope=private` a
 ## Envelope / counts
 `page_info`: `{next_page_token, total, canonical_total, filtered_total, catalog_default_total, page_size}`; `total`/`filtered_total` count the filtered authorized population, not the page.
 `data.summary.population`: `{authorized_total, active_total, archived_total, by_purpose{}, by_data_scope{}}` over the whole tenant population (independent of filters).
+`data.summary.filtered_archived_total`: `integer >= 0 | null`. Number of authorized retired records matching the current `purpose`, `data_scope`, `q`, `state`, `health`, `deployment_stage` and `market_scope` filters, independent of the `archived` view (in `archived=exclude` it still counts the retired records those other filters match) and of `page_token`/`page_size`. Computed from cheap cohort rows only; retired list/detail DTOs are never projected for it. Tenant and user-private authorization apply. If the retired cohort cannot be read, or the authoritative persona owner read is failed/unavailable (`meta.surfaces.personas.status=unavailable`, e.g. a failed `PersonaFleetPort`), the value is `null` (unavailable), never a fabricated `0`; a healthy empty owner yields `0`. Source availability is taken from the request's cached owner read (no extra owner call). Global `population.archived_total` is unchanged and unfiltered.
 `data.summary.filters` echoes the applied `{purpose, data_scope, archived}`.
 Ordering is unchanged (score desc, persona_id asc) and page traversal is deterministic.
 
