@@ -34,6 +34,7 @@ from .models import (
 from .storage import (
     PERSONA_BINDING_INNER_META_KEYS,
     PERSONA_BINDING_META_KEYS,
+    PERSONA_BINDING_ROW_KEYS,
     PERSONA_BINDING_SPEC_KEYS,
     RegistryConcurrentUpdateError,
 )
@@ -804,12 +805,9 @@ class PostgresRegistryStore:
             for raw in self._entries.list_all()
         ]
 
-    def list_persona_binding_entries(self) -> list[RegistryEntry]:
-        """Persona-binding light entries projected inside Postgres (no full-body decode)."""
-        return [
-            RegistryEntry.from_dict(raw)
-            for raw in self._entries.list_all_projected(persona_binding_projection_sql())
-        ]
+    def list_persona_binding_rows(self) -> list[dict]:
+        """Persona-binding flat rows projected inside Postgres (no entry rebuild)."""
+        return self._entries.list_all_projected(persona_binding_projection_sql())
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         entries = self.list_by_strategy(strategy_id)
@@ -846,7 +844,7 @@ def _sql_created_at_only(path: tuple[str, ...]) -> str:
 
 
 def persona_binding_projection_sql() -> str:
-    """jsonb expression over ``payload`` equal to ``persona_binding_entry(...).to_dict()``.
+    """jsonb expression over ``payload`` equal to ``persona_binding_row(...)``.
 
     Path lookups run inside Postgres on the already-decoded row, so the heavy
     spec body, evaluation summary and approval evidence are never transferred
@@ -867,7 +865,7 @@ def persona_binding_projection_sql() -> str:
         f"THEN jsonb_build_object('strategy_spec', {spec_light}) ELSE '{{}}'::jsonb END"
     )
     return (
-        "((payload - ARRAY['evaluation_summary', 'approval_evidence', 'metadata']) "
+        f"({_sql_pick((), PERSONA_BINDING_ROW_KEYS)} "
         f"|| jsonb_build_object('metadata', {light_meta}))"
     )
 

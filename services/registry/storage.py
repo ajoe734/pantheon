@@ -35,6 +35,12 @@ PERSONA_BINDING_SPEC_KEYS = (
     "persona_ids", "spec_version", "lifecycle_state", "strategy_id", "created_at",
 )
 PERSONA_BINDING_INNER_META_KEYS = ("tenant_id", "persona_id")
+# Top-level identity/version/tenant/state fields the count path needs; no
+# lineage, storage, evidence or audit fields are carried.
+PERSONA_BINDING_ROW_KEYS = (
+    "registry_id", "artifact_type", "artifact_state", "strategy_id", "version",
+    "owner_tenant", "created_at", "updated_at",
+)
 
 
 def persona_binding_entry(entry: RegistryEntry) -> RegistryEntry:
@@ -64,6 +70,14 @@ def persona_binding_entry(entry: RegistryEntry) -> RegistryEntry:
     return dataclasses.replace(
         entry, metadata=light_meta, evaluation_summary=None, approval_evidence=None,
     )
+
+
+def persona_binding_row(entry: RegistryEntry) -> dict:
+    """Flat minimal row (identity, version, tenant, state, binding metadata)."""
+    full = persona_binding_entry(entry).to_dict()
+    row = {k: full[k] for k in PERSONA_BINDING_ROW_KEYS if k in full}
+    row["metadata"] = full.get("metadata")
+    return row
 
 
 class RegistryUniqueViolationError(ValueError):
@@ -279,8 +293,8 @@ class RegistryStore:
                 for entry in self._entries.values()
             ]
 
-    def list_persona_binding_entries(self) -> list[RegistryEntry]:
-        return [persona_binding_entry(entry) for entry in self.list_all_entries()]
+    def list_persona_binding_rows(self) -> list[dict]:
+        return [persona_binding_row(entry) for entry in self.list_all_entries()]
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""

@@ -28,7 +28,7 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 from . import service as service_module
 from .models import RegistryEntryCreate
-from .storage import get_store, persona_binding_entry, reset_store
+from .storage import PERSONA_BINDING_ROW_KEYS, get_store, persona_binding_row, reset_store
 
 # Reviewer finding 2: once the durable Postgres backend is selected, the
 # service now fails closed (500) unless auth is explicitly strict with a
@@ -157,12 +157,12 @@ def test_persona_binding_sql_projection_matches_python_projection(pg_app):
     legacy = dict(raw, registry_id=legacy_id, strategy_id="pb-sql-legacy")
     entries.put(legacy_id, json.dumps(legacy))
 
-    expected = [persona_binding_entry(e) for e in store.list_all_entries()]
-    got = store.list_persona_binding_entries()
+    expected = [persona_binding_row(e) for e in store.list_all_entries()]
+    got = store.list_persona_binding_rows()
     assert got == expected
     assert len(got) == len(shapes) + 1
-    assert all(e.evaluation_summary is None and e.approval_evidence is None for e in got)
-    assert "huge" not in str([e.metadata for e in got])
+    assert all(set(r) <= set(PERSONA_BINDING_ROW_KEYS) | {"metadata"} for r in got)
+    assert "huge" not in str([r["metadata"] for r in got])
 
 
 def test_register_and_readback_survive_fresh_process_restart(pg_app):

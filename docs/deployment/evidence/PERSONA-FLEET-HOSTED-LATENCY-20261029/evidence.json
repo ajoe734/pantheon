@@ -97,5 +97,12 @@
     "tests": "test_owner_durability::test_persona_binding_sql_projection_matches_python_projection (real postgres:16 isolated container, TEST_DATABASE_URL) proves SQL light entries == Python projection for missing/null/non-dict/nested/legacy-string metadata shapes; registry suite 281 passed (4 deployment_view failures only from missing flask in local venv, unrelated)",
     "local_microbench_not_hosted": "9027 rows ~4.6KB on loopback docker postgres: full list_all_entries 0.8-1.1s vs light ~1.0-1.1s server+decode; loopback has no network transfer so the benefit (22MB -> ~6MB payload, no 5083 json.loads) must be measured by root replay against the hosted read-only DB; no p95 claimed",
     "requires": "Root replay of EXACT candidate Registry owner+serializer with verified caller, bootstrap False, read-only DB; compare binding counts/versions to the full result and profile 2 samples. Final hosted task owns release and p95."
+  },
+  "registry_flat_binding_rows": {
+    "hosted_proof": false,
+    "context": "Root actual-profile replay of 51431b441 (verified caller, read-only PG, 4869 versions, binding inputs match original) showed no gain: 6.7MB, owner+serializer 1837.3/1526.5ms. Whole-fleet warm <=1000ms remains a KNOWN FAIL from the single owner floor until a new candidate is replayed.",
+    "change": "view=persona_binding now returns flat minimal rows: top-level registry_id/artifact_type/artifact_state/strategy_id/version/owner_tenant/created_at/updated_at plus binding metadata only (no lineage, storage_ref, checksum, deployment_summary, last_actor). Postgres builds them in SQL; no RegistryEntry.from_dict, no RegistryEntryView, no pydantic response_model serialization on this path. Same auth, _can_read_entry, X-Tenant-Id and artifact_state filters; default full DTO route unchanged; BFF count semantics unchanged.",
+    "tests": "services/registry/test_service.py + test_owner_durability.py 94 passed/17 skipped; BFF research_knowledge_source_ports+management_read_budget+persona_fleet_contract 268 passed. Real-Postgres parity test (test_persona_binding_sql_projection_matches_python_projection) updated to flat rows but NOT re-run: docker run for an isolated postgres was denied in this session, so TEST_DATABASE_URL was unavailable.",
+    "requires": "Run the PG parity test and a realistic ~4800-row benchmark, then root bounded read-only profile of this head; no p95 claimed."
   }
 }
