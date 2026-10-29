@@ -248,5 +248,14 @@
     "bounded_qa_window": "staging-ephemeral-deploy.yml: optional qa_window_seconds dispatch input (default 0, only 0 or 300) with one sleep step after successful real verify and before always-destroy. No new gate, collector, cleanup, TTL, cancellation or artifact change.",
     "validation": "Existing focused tests passed previously (201.018s); unchanged broad suites not rerun. Workflow validated by actionlint/existing CI only.",
     "hosted_acceptance": "Still external_wait; no cloud, secret, GitHub-setting or product action taken."
+  },
+  "pr6844_source_merge_and_102_declaration": {
+    "recorded_at": "2026-10-29",
+    "source_pr": "https://github.com/ajoe734/pantheon/pull/6844",
+    "source_head_sha": "4834056a7058c2cd5a934584692d6eec87dff692",
+    "merge_commit_sha": "4ed7e502e43c6b417e7a7e48a5517d746c6ba8c9",
+    "release_declaration": "deploy/staging/releases/pantheon-20261028-102.json (manifest sha256 617e2936f3534a1f425e8c71726750826979c5b1d98cf767fec2fdb0c728bcf3, unchanged) plus .qualification-evidence.json sidecar; 101 files unchanged",
+    "pending_hosted_truth": "Source-only. Hosted Stage 0 of 2 and Prod 0 of 2 remain unaccepted; 2 pending Paper baseline images NOT published (approval unanswered); 100 retained Dev baseline is NOT a healthy Prod baseline; no new all12/stimulus/ACK claims; no cloud, secret, GitHub-setting or product action taken.",
+    "local_verification": "native manifest/JSON-schema/SHA checks only; deployment suites and Dev qualification not rerun."
   }
 }
