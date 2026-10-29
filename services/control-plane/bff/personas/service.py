@@ -8647,6 +8647,9 @@ def _persona_fleet_slim_list_payload(
         telemetry_list_loaded = True
     except Exception:
         telemetry_cache = {}
+    # The directory read needs no routed-strategy count, so it runs while the
+    # prefetched Registry count is still in flight instead of after the league.
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at, reuse_request_read=True)
     league_rows = _pm12_persona_league_rows(
         state=None,
         archetype=None,
@@ -8666,7 +8669,6 @@ def _persona_fleet_slim_list_payload(
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
-    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at, reuse_request_read=True)
     # Enforce the user-private owner policy before rows or population counts.
     visible_records = {
         pid: raw

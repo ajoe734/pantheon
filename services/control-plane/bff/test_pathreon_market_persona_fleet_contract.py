@@ -2326,6 +2326,36 @@ def test_fleet_overlaps_strategy_spec_and_source_registry_reads(monkeypatch):
         assert elapsed < len(spans) * delay + 0.35, (elapsed, spans)
 
 
+def test_fleet_directory_read_runs_while_registry_count_is_in_flight(monkeypatch):
+    # Warm-p95: the directory snapshot (~60ms) used to start only after the
+    # league had waited for the slow Registry count, so it extended the path.
+    import time as _time
+
+    store = _seed_fleet_classification_store(20)
+    marks = {}
+    original_count = store.count_strategy_persona_bindings
+    original_list = store.list_personas
+
+    def slow_count():
+        marks["count_start"] = _time.monotonic()
+        _time.sleep(0.5)
+        try:
+            return original_count()
+        finally:
+            marks["count_end"] = _time.monotonic()
+
+    def list_personas(*args, **kwargs):
+        if kwargs.get("include_market_persona_defaults"):
+            marks.setdefault("defaults_start", _time.monotonic())
+        return original_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "count_strategy_persona_bindings", slow_count)
+    monkeypatch.setattr(store, "list_personas", list_personas)
+    with _client_with_store(store) as client:
+        _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert marks["defaults_start"] < marks["count_end"], marks
+
+
 @pytest.mark.parametrize("fail_registry", [False, True])
 def test_fleet_cold_source_truth_single_flight_when_registry_slowest(monkeypatch, fail_registry):
     # Reverse latency: the source registry is slower than every other stage, so the
