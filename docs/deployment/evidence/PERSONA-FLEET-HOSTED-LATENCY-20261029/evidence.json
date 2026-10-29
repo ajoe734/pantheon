@@ -102,7 +102,15 @@
     "hosted_proof": false,
     "context": "Root actual-profile replay of 51431b441 (verified caller, read-only PG, 4869 versions, binding inputs match original) showed no gain: 6.7MB, owner+serializer 1837.3/1526.5ms. Whole-fleet warm <=1000ms remains a KNOWN FAIL from the single owner floor until a new candidate is replayed.",
     "change": "view=persona_binding now returns flat minimal rows: top-level registry_id/artifact_type/artifact_state/strategy_id/version/owner_tenant/created_at/updated_at plus binding metadata only (no lineage, storage_ref, checksum, deployment_summary, last_actor). Postgres builds them in SQL; no RegistryEntry.from_dict, no RegistryEntryView, no pydantic response_model serialization on this path. Same auth, _can_read_entry, X-Tenant-Id and artifact_state filters; default full DTO route unchanged; BFF count semantics unchanged.",
-    "tests": "services/registry/test_service.py + test_owner_durability.py 94 passed/17 skipped; BFF research_knowledge_source_ports+management_read_budget+persona_fleet_contract 268 passed. Real-Postgres parity test (test_persona_binding_sql_projection_matches_python_projection) updated to flat rows but NOT re-run: docker run for an isolated postgres was denied in this session, so TEST_DATABASE_URL was unavailable.",
-    "requires": "Run the PG parity test and a realistic ~4800-row benchmark, then root bounded read-only profile of this head; no p95 claimed."
+    "tests": "services/registry test_service.py+test_owner_durability.py 94 passed/17 skipped without PG; with an isolated local Postgres (pgserver, TEST_DATABASE_URL) test_owner_durability.py 17 passed incl. test_persona_binding_sql_projection_matches_python_projection (flat rows). BFF persona_fleet_contract+management_read_budget+research_knowledge_source_ports 92 passed in the repaired venv (flask installed). deployment_view tests: 3 in registry test_service.py + 1 in test_registry_auth_wiring.py passed; no preexisting-failure label.",
+    "requires": "Root bounded read-only profile of this head; no p95 claimed. Whole-fleet warm <=1000ms remains unproven.",
+    "local_benchmark": {
+      "scope": "store level, local isolated Postgres, 4800 synthetic rows (~1.2KB spec body each), median of 5",
+      "sql_projection_ms": 358.6,
+      "full_read_python_projection_ms": 452.0,
+      "parity": true,
+      "payload_bytes": 2421870,
+      "note": "~21% store-level gain only; not hosted latency and not a p95 claim. Hosted 6.7MB/1.8s owner floor is not shown to be fixed."
+    }
   }
 }
