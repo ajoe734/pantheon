@@ -119,3 +119,15 @@ for n in (100, 1000):
         except Exception as e: out.append({"archived": n, "params": params, "error": repr(e)[:200]})
 print(json.dumps(out, indent=1))
 ```
+
+## Health-monitor I/O and directory reads (PERSONA-FLEET-HEALTH-IO-20261030)
+
+No response-shape change. Internally, the downstream health monitor's durable
+SQLite calls on async paths (`_probe_all`, probe-result handling, error-rate
+emission, Loop 12 state gather) now run via `asyncio.to_thread`, so a held WAL
+writer no longer blocks request handlers such as `/bff/version`. A recorded
+request outcome uses one connection/transaction, and every store connection is
+closed on exit; WAL and `synchronous=FULL` are unchanged. The fleet read path
+(`reuse_request_read=True`) shares one persona-directory list per request;
+default owner APIs still return independent copies, with no cross-request or
+cross-tenant cache.

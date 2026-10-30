@@ -99,6 +99,23 @@ def cached_owner_call(key: Any, fn: Any) -> Any:
     return val
 
 
+def shared_persona_directory_list(owner: Any, read_persona_list: Any) -> Any:
+    """One persona-directory read per request for read-only callers.
+
+    ``list_personas`` deep-copies the whole directory on every call. Read-only
+    fleet callers within one request reuse a single result (value or failure);
+    they must not mutate nested values. Without a request cache this is one
+    ordinary read, so default owner APIs keep independent mutable outputs.
+    ``owner`` is the stable store the list is read from; the key includes its
+    identity so a different explicit store in the same request never receives
+    another owner's snapshot.
+    """
+    return cached_owner_call(
+        ("persona_directory_list_shared", id(owner), selected_tenant.get()),
+        read_persona_list,
+    )
+
+
 def submit_owner_read(executor: Any, fn: Any, *, warm_key: Optional[str] = None) -> Any:
     """Submit one owner read in a copy of the request context.
 
