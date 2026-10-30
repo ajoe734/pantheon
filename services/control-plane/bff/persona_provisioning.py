@@ -502,6 +502,53 @@ class PostgresPersonaProvisioningStore:
             rows = cur.fetchall()
             return [self._record(row) for row in rows]
 
+    # Read-only fleet projection.  The fleet list consumes only a handful of
+    # ``references`` keys and ``result.paper_running/status``; the historical
+    # remainder (multi-KB owner receipts per row) is dropped inside SQL so it is
+    # never transported or JSON-decoded.  ``authoritative_readback`` is only
+    # tested for being an object, so an object is replaced by ``{}``.  Rows whose
+    # JSON is not an object are returned untouched so malformed data stays
+    # truthful.  Default get/list/readback/coordinator reads keep full records.
+    _FLEET_REFERENCE_KEYS = (
+        "runtime_binding_id",
+        "runtime_id",
+        "authoritative_readback",
+        "provisioning_readback_started_at",
+        "first_evaluation_schedule_cleanup",
+    )
+    _FLEET_RESULT_KEYS = ("paper_running", "status")
+    _FLEET_COLUMNS = (
+        "tenant_id,idempotency_key,request_hash,normalized_name,persona_id,"
+        "request_payload,state,current_step,"
+        + "CASE WHEN jsonb_typeof(\"references\")='object' THEN ("
+        "SELECT COALESCE(jsonb_object_agg(e.key, CASE WHEN e.key='authoritative_readback' "
+        "THEN (CASE WHEN jsonb_typeof(e.value)='object' THEN '{}'::jsonb ELSE 'null'::jsonb END) "
+        "ELSE e.value END),'{}'::jsonb) FROM jsonb_each(\"references\") e WHERE e.key IN ("
+        + ",".join(f"'{k}'" for k in _FLEET_REFERENCE_KEYS)
+        + ")) ELSE \"references\" END AS \"references\","
+        "CASE WHEN jsonb_typeof(result)='object' THEN ("
+        "SELECT COALESCE(jsonb_object_agg(e.key, e.value),'{}'::jsonb) "
+        "FROM jsonb_each(result) e WHERE e.key IN ("
+        + ",".join(f"'{k}'" for k in _FLEET_RESULT_KEYS)
+        + ")) ELSE result END AS result,"
+        "error,compensation,created_at,updated_at,lease_owner,lease_expires_at,attempt_count"
+    )
+
+    def list_by_tenant_for_fleet(self, tenant_id: str) -> list[ProvisioningRecord]:
+        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {self._FLEET_COLUMNS} FROM {self.table} WHERE tenant_id=%s ORDER BY created_at ASC, persona_id ASC",
+                (tenant_id,),
+            )
+            return [self._record(row) for row in cur.fetchall()]
+
+    def list_all_for_fleet(self) -> list[ProvisioningRecord]:
+        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {self._FLEET_COLUMNS} FROM {self.table} ORDER BY created_at ASC, persona_id ASC"
+            )
+            return [self._record(row) for row in cur.fetchall()]
+
     def acquire(
         self,
         tenant_id: str,

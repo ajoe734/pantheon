@@ -2458,10 +2458,16 @@ def _persona_fleet_prefetch_independent_reads(tenant_id: Optional[str] = None) -
 # --- _persona_provisioning_records_shared ---
 def _persona_provisioning_records_shared(store: Any, clean_tenant: str) -> List[Any]:
     """Durable provisioning ledger read, shared per request (value or failure)."""
-    read_prov = store.list_by_tenant if clean_tenant else store.list_all
+    # The fleet projection needs only a slim subset of each ledger row; stores
+    # that can project it server-side expose ``*_for_fleet`` (others return full).
+    read_prov = (
+        getattr(store, "list_by_tenant_for_fleet", None) or store.list_by_tenant
+        if clean_tenant
+        else getattr(store, "list_all_for_fleet", None) or store.list_all
+    )
     read_args = (clean_tenant,) if clean_tenant else ()
     return cached_owner_call(
-        ("persona_provisioning_records", id(store), clean_tenant),
+        ("persona_provisioning_records", "fleet_slim", id(store), clean_tenant),
         lambda: list(read_prov(*read_args)),
     )
 
