@@ -401,5 +401,95 @@
       }
     ],
     "cold_pass": true
+  },
+  "latest_batch_808ab01c": {
+    "pair": {
+      "backend": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+      "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+      "root_run": 41139527088,
+      "served_pairId": "97a0f619757e345885b6f3517a6f19f2fea72b746dd0cad82197c0eda54d8e8c",
+      "bff_image_digest": "sha256:438b31a8fb042c26307195bdb2a1ef63c161150c242dc98fdaa51f0c23b6c5fb"
+    },
+    "warm_ms": [
+      749,
+      453,
+      1007,
+      519,
+      533,
+      672,
+      797,
+      553,
+      599,
+      876,
+      425,
+      768,
+      777,
+      489,
+      484,
+      502,
+      896,
+      541,
+      542,
+      1222
+    ],
+    "warm_sorted_ms": [
+      425,
+      453,
+      484,
+      489,
+      502,
+      519,
+      533,
+      541,
+      542,
+      553,
+      599,
+      672,
+      749,
+      768,
+      777,
+      797,
+      876,
+      896,
+      1007,
+      1222
+    ],
+    "warm_p95_nearest_rank_ms": 1007,
+    "warm_target_ms": 1000,
+    "warm_pass": false,
+    "note": "n=20, nearest-rank p95 = 19th sorted sample = 1007 ms; max 1222 ms. No outlier discarded.",
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 952,
+        "initial_post_login_API_ms": 1303,
+        "login_to_initial_usable_ms": 1944,
+        "api_ms": 905,
+        "usable_ms": 1609,
+        "row_count": 5
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 925,
+        "initial_post_login_API_ms": 635,
+        "login_to_initial_usable_ms": 1187,
+        "api_ms": 1055,
+        "usable_ms": 1751,
+        "row_count": 5
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 872,
+        "initial_post_login_API_ms": 788,
+        "login_to_initial_usable_ms": 1605,
+        "api_ms": 927,
+        "usable_ms": 1638,
+        "row_count": 5
+      }
+    ],
+    "cold_pass": true
   }
 }

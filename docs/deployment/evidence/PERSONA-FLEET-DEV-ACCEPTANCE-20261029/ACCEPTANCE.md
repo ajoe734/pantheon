@@ -27,3 +27,12 @@ Status: release DONE on the final pair; hosted acceptance NOT passed (warm p95 s
 - **Warm: 20 samples, nearest-rank p95 = 1475 ms vs 1000 ms: FAIL.** 19 samples 548–1475 ms (median 823 ms; 5 of them >1000 ms); sample 9 = **54536 ms** outlier, retained. Target not waived.
 - The harness reported completed_subset=false / exit 1; the full finance-runtime probe, local privacy rerun and Registry file-hash proof were NOT rerun for this pair. Hosted milestone remains NOT done.
 - Next: investigate the 54.5 s stall and residual >1 s warm reads via the responsible source task.
+
+## Update 2026-10-30: PR #6874 (HEALTH-IO) deployed — warm p95 1007 ms, still FAIL by 7 ms
+
+- Release: Pantheon Nonprod Deploy run 41139527088 success, `Dev release 808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca + 56bec9ad581d7731551d685dbeeba0d7ba28eca3` (dev head after HEALTH-IO merge #6874; Branch CI Gate on that SHA passed before dispatch). `/bff/version` source_commit_sha = 808ab01cd, image sha256:438b31a8fb042c26307195bdb2a1ef63c161150c242dc98fdaa51f0c23b6c5fb; served pairId `97a0f619757e345885b6f3517a6f19f2fea72b746dd0cad82197c0eda54d8e8c`, identical before and after QA.
+- Read-only QA (same client): login/logout 200, post-logout me 401, no blocked writes, no page errors, no unsolicited archived-only fetch, Agora servant 404 -> 尚未建立, operational readiness reported unavailable (not claimed healthy). Raw: `hosted-ui-readonly-result.json`, `timings.json` `latest_batch_808ab01c`.
+- Cold (3 fresh contexts): API 905/1055/927 ms, usable 1609/1751/1638 ms — within targets.
+- **Warm: 20 samples, nearest-rank p95 = 1007 ms vs 1000 ms: FAIL.** Sorted 425–1222 ms, median ~660 ms; two samples >1000 ms (1007, 1222). Large improvement over fa656a8c (1475 ms, 54.5 s stall) — no stall this time — but the target is not waived.
+- Harness reported completed_subset=false / exit 1. Finance-runtime probe, local privacy rerun on this SHA and Registry file-hash proof were NOT rerun for this pair. Hosted milestone remains NOT done.
+- Next: report blocker and reopen responsible warm-path source task for the residual ~7 ms / tail samples.

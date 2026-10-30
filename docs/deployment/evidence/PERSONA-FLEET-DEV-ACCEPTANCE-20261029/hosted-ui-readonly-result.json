@@ -1,16 +1,16 @@
 {
-  "started_at": "2026-10-30T04:22:43.632Z",
+  "started_at": "2026-10-30T23:34:07.050Z",
   "harness_sha256": "a6105ca8e17c36a0a8f9754145e37caa13b3bed934f03ce8c96d6765ec9bc83b",
   "cold_method": "Three fresh browser contexts each perform real login and finish the initial authenticated fleet render, then enter fleet in a new page. Login, first post-login API/render, and fresh-page API/render are recorded separately. The backend is not restarted.",
   "cold": [
     {
       "entry": 1,
       "login_HTTP": 200,
-      "login_to_shell_ms": 951,
-      "initial_post_login_API_ms": 1246,
-      "login_to_initial_usable_ms": 1872,
-      "api_ms": 1018,
-      "usable_ms": 1755,
+      "login_to_shell_ms": 952,
+      "initial_post_login_API_ms": 1303,
+      "login_to_initial_usable_ms": 1944,
+      "api_ms": 905,
+      "usable_ms": 1609,
       "row_count": 5,
       "initial_fleet_queries": [
         "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
@@ -20,11 +20,11 @@
     {
       "entry": 2,
       "login_HTTP": 200,
-      "login_to_shell_ms": 883,
-      "initial_post_login_API_ms": 737,
-      "login_to_initial_usable_ms": 1313,
-      "api_ms": 1118,
-      "usable_ms": 1836,
+      "login_to_shell_ms": 925,
+      "initial_post_login_API_ms": 635,
+      "login_to_initial_usable_ms": 1187,
+      "api_ms": 1055,
+      "usable_ms": 1751,
       "row_count": 5,
       "initial_fleet_queries": [
         "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
@@ -34,11 +34,11 @@
     {
       "entry": 3,
       "login_HTTP": 200,
-      "login_to_shell_ms": 891,
-      "initial_post_login_API_ms": 1206,
-      "login_to_initial_usable_ms": 1764,
-      "api_ms": 857,
-      "usable_ms": 1589,
+      "login_to_shell_ms": 872,
+      "initial_post_login_API_ms": 788,
+      "login_to_initial_usable_ms": 1605,
+      "api_ms": 927,
+      "usable_ms": 1638,
       "row_count": 5,
       "initial_fleet_queries": [
         "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
@@ -50,140 +50,140 @@
     {
       "sample": 1,
       "HTTP": 200,
-      "elapsed_ms": 973,
+      "elapsed_ms": 749,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 2,
       "HTTP": 200,
-      "elapsed_ms": 823,
+      "elapsed_ms": 453,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 3,
       "HTTP": 200,
-      "elapsed_ms": 921,
+      "elapsed_ms": 1007,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 4,
       "HTTP": 200,
-      "elapsed_ms": 1107,
+      "elapsed_ms": 519,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 5,
       "HTTP": 200,
-      "elapsed_ms": 1021,
+      "elapsed_ms": 533,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 6,
       "HTTP": 200,
-      "elapsed_ms": 1002,
+      "elapsed_ms": 672,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 7,
       "HTTP": 200,
-      "elapsed_ms": 714,
+      "elapsed_ms": 797,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 8,
       "HTTP": 200,
-      "elapsed_ms": 930,
+      "elapsed_ms": 553,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 9,
       "HTTP": 200,
-      "elapsed_ms": 54536,
+      "elapsed_ms": 599,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 10,
       "HTTP": 200,
-      "elapsed_ms": 1475,
+      "elapsed_ms": 876,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 11,
       "HTTP": 200,
-      "elapsed_ms": 678,
+      "elapsed_ms": 425,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 12,
       "HTTP": 200,
-      "elapsed_ms": 730,
+      "elapsed_ms": 768,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 13,
       "HTTP": 200,
-      "elapsed_ms": 649,
+      "elapsed_ms": 777,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 14,
       "HTTP": 200,
-      "elapsed_ms": 660,
+      "elapsed_ms": 489,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 15,
       "HTTP": 200,
-      "elapsed_ms": 654,
+      "elapsed_ms": 484,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 16,
       "HTTP": 200,
-      "elapsed_ms": 693,
+      "elapsed_ms": 502,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 17,
       "HTTP": 200,
-      "elapsed_ms": 1027,
+      "elapsed_ms": 896,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 18,
       "HTTP": 200,
-      "elapsed_ms": 574,
+      "elapsed_ms": 541,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 19,
       "HTTP": 200,
-      "elapsed_ms": 987,
+      "elapsed_ms": 542,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 20,
       "HTTP": 200,
-      "elapsed_ms": 548,
+      "elapsed_ms": 1222,
       "rows": 5,
       "total": 5
     }
@@ -352,11 +352,11 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 1,
-            "league_score": 52.495,
+            "league_rank": 109,
+            "league_score": 27.495,
             "rank": {
-              "league_rank": 1,
-              "league_score": 52.495,
+              "league_rank": 109,
+              "league_score": 27.495,
               "basis": "quarterly_ranking",
               "period": "quarter",
               "quarter": "2026-Q4"
@@ -371,7 +371,7 @@
               "runtime_statuses": [
                 "active"
               ],
-              "latest_telemetry_at": "2026-10-30T04:24:07Z",
+              "latest_telemetry_at": "2026-10-30T23:34:33Z",
               "active_incident_count": 0
             },
             "data_source_summary": {
@@ -401,10 +401,10 @@
               "sharpe": null,
               "max_drawdown": 0.0001,
               "violation_count": 0,
-              "total_trades": 2,
+              "total_trades": 3,
               "source": "telemetry_summaries",
               "telemetry_runtime_count": 1,
-              "latest_telemetry_at": "2026-10-30T04:24:07Z"
+              "latest_telemetry_at": "2026-10-30T23:34:33Z"
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
@@ -467,8 +467,8 @@
             },
             "classification_confirmed": true,
             "archived": false,
-            "leagueRank": 1,
-            "leagueScore": 52.495
+            "leagueRank": 109,
+            "leagueScore": 27.495
           },
           {
             "id": "persona-449df3119ecf0f4c4a1e",
@@ -547,10 +547,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 4,
+            "league_rank": 3,
             "league_score": 50.125,
             "rank": {
-              "league_rank": 4,
+              "league_rank": 3,
               "league_score": 50.125,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -662,7 +662,7 @@
             },
             "classification_confirmed": true,
             "archived": false,
-            "leagueRank": 4,
+            "leagueRank": 3,
             "leagueScore": 50.125
           },
           {
@@ -742,10 +742,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 2,
+            "league_rank": 1,
             "league_score": 50.125,
             "rank": {
-              "league_rank": 2,
+              "league_rank": 1,
               "league_score": 50.125,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -856,7 +856,7 @@
             },
             "classification_confirmed": true,
             "archived": false,
-            "leagueRank": 2,
+            "leagueRank": 1,
             "leagueScore": 50.125
           },
           {
@@ -936,10 +936,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 5,
+            "league_rank": 4,
             "league_score": 50.125,
             "rank": {
-              "league_rank": 5,
+              "league_rank": 4,
               "league_score": 50.125,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -1049,7 +1049,7 @@
             },
             "classification_confirmed": true,
             "archived": false,
-            "leagueRank": 5,
+            "leagueRank": 4,
             "leagueScore": 50.125
           },
           {
@@ -1129,10 +1129,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 3,
+            "league_rank": 2,
             "league_score": 50.125,
             "rank": {
-              "league_rank": 3,
+              "league_rank": 2,
               "league_score": 50.125,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -1242,7 +1242,7 @@
             },
             "classification_confirmed": true,
             "archived": false,
-            "leagueRank": 3,
+            "leagueRank": 2,
             "leagueScore": 50.125
           }
         ]
@@ -1259,7 +1259,7 @@
               "persona-c5f206af82206aaf4157"
             ],
             "total": 5,
-            "pager": "第 1–5 筆，共 5 筆 · 截至 2026-10-30T04:24:07.868Z\n上一頁\n第 1 頁\n下一頁"
+            "pager": "第 1–5 筆，共 5 筆 · 截至 2026-10-30T23:34:35.007Z\n上一頁\n第 1 頁\n下一頁"
           }
         ],
         "unique_rows": 5
@@ -1890,10 +1890,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 107,
+            "league_rank": 106,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 107,
+              "league_rank": 106,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -2002,7 +2002,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 107,
+            "leagueRank": 106,
             "leagueScore": 49.375
           },
           {
@@ -2082,10 +2082,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 106,
+            "league_rank": 105,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 106,
+              "league_rank": 105,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -2198,7 +2198,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 106,
+            "leagueRank": 105,
             "leagueScore": 49.375
           },
           {
@@ -2278,10 +2278,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 105,
+            "league_rank": 104,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 105,
+              "league_rank": 104,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -2394,7 +2394,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 105,
+            "leagueRank": 104,
             "leagueScore": 49.375
           },
           {
@@ -2474,10 +2474,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 104,
+            "league_rank": 103,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 104,
+              "league_rank": 103,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -2590,7 +2590,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 104,
+            "leagueRank": 103,
             "leagueScore": 49.375
           },
           {
@@ -2670,10 +2670,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 103,
+            "league_rank": 102,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 103,
+              "league_rank": 102,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -2786,7 +2786,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 103,
+            "leagueRank": 102,
             "leagueScore": 49.375
           },
           {
@@ -2866,10 +2866,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 102,
+            "league_rank": 101,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 102,
+              "league_rank": 101,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -2978,7 +2978,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 102,
+            "leagueRank": 101,
             "leagueScore": 49.375
           },
           {
@@ -3058,10 +3058,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 101,
+            "league_rank": 100,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 101,
+              "league_rank": 100,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -3172,7 +3172,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 101,
+            "leagueRank": 100,
             "leagueScore": 49.375
           },
           {
@@ -3252,10 +3252,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 100,
+            "league_rank": 99,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 100,
+              "league_rank": 99,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -3368,7 +3368,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 100,
+            "leagueRank": 99,
             "leagueScore": 49.375
           },
           {
@@ -3448,10 +3448,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 99,
+            "league_rank": 98,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 99,
+              "league_rank": 98,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -3564,7 +3564,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 99,
+            "leagueRank": 98,
             "leagueScore": 49.375
           },
           {
@@ -3644,10 +3644,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 98,
+            "league_rank": 97,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 98,
+              "league_rank": 97,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -3760,7 +3760,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 98,
+            "leagueRank": 97,
             "leagueScore": 49.375
           },
           {
@@ -3840,10 +3840,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 97,
+            "league_rank": 96,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 97,
+              "league_rank": 96,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -3956,7 +3956,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 97,
+            "leagueRank": 96,
             "leagueScore": 49.375
           },
           {
@@ -4036,10 +4036,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 96,
+            "league_rank": 95,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 96,
+              "league_rank": 95,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -4152,7 +4152,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 96,
+            "leagueRank": 95,
             "leagueScore": 49.375
           },
           {
@@ -4232,10 +4232,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 95,
+            "league_rank": 94,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 95,
+              "league_rank": 94,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -4344,7 +4344,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 95,
+            "leagueRank": 94,
             "leagueScore": 49.375
           },
           {
@@ -4424,10 +4424,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 94,
+            "league_rank": 93,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 94,
+              "league_rank": 93,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -4540,7 +4540,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 94,
+            "leagueRank": 93,
             "leagueScore": 49.375
           },
           {
@@ -4620,10 +4620,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 93,
+            "league_rank": 92,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 93,
+              "league_rank": 92,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -4736,7 +4736,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 93,
+            "leagueRank": 92,
             "leagueScore": 49.375
           },
           {
@@ -4816,10 +4816,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 92,
+            "league_rank": 91,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 92,
+              "league_rank": 91,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -4932,7 +4932,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 92,
+            "leagueRank": 91,
             "leagueScore": 49.375
           },
           {
@@ -5012,10 +5012,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 91,
+            "league_rank": 90,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 91,
+              "league_rank": 90,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -5128,7 +5128,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 91,
+            "leagueRank": 90,
             "leagueScore": 49.375
           },
           {
@@ -5208,10 +5208,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 90,
+            "league_rank": 89,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 90,
+              "league_rank": 89,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -5320,7 +5320,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 90,
+            "leagueRank": 89,
             "leagueScore": 49.375
           },
           {
@@ -5400,10 +5400,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 89,
+            "league_rank": 88,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 89,
+              "league_rank": 88,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -5516,7 +5516,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 89,
+            "leagueRank": 88,
             "leagueScore": 49.375
           },
           {
@@ -5596,10 +5596,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 88,
+            "league_rank": 87,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 88,
+              "league_rank": 87,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -5712,7 +5712,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 88,
+            "leagueRank": 87,
             "leagueScore": 49.375
           },
           {
@@ -5792,10 +5792,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 87,
+            "league_rank": 86,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 87,
+              "league_rank": 86,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -5904,7 +5904,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 87,
+            "leagueRank": 86,
             "leagueScore": 49.375
           },
           {
@@ -5984,10 +5984,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 86,
+            "league_rank": 85,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 86,
+              "league_rank": 85,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -6100,7 +6100,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 86,
+            "leagueRank": 85,
             "leagueScore": 49.375
           },
           {
@@ -6180,10 +6180,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 85,
+            "league_rank": 84,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 85,
+              "league_rank": 84,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -6296,7 +6296,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 85,
+            "leagueRank": 84,
             "leagueScore": 49.375
           },
           {
@@ -6376,10 +6376,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 84,
+            "league_rank": 83,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 84,
+              "league_rank": 83,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -6488,7 +6488,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 84,
+            "leagueRank": 83,
             "leagueScore": 49.375
           },
           {
@@ -6568,10 +6568,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 83,
+            "league_rank": 82,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 83,
+              "league_rank": 82,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -6684,7 +6684,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 83,
+            "leagueRank": 82,
             "leagueScore": 49.375
           },
           {
@@ -6764,10 +6764,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 82,
+            "league_rank": 81,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 82,
+              "league_rank": 81,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -6880,7 +6880,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 82,
+            "leagueRank": 81,
             "leagueScore": 49.375
           },
           {
@@ -6960,10 +6960,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 81,
+            "league_rank": 80,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 81,
+              "league_rank": 80,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -7074,7 +7074,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 81,
+            "leagueRank": 80,
             "leagueScore": 49.375
           },
           {
@@ -7154,10 +7154,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 80,
+            "league_rank": 79,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 80,
+              "league_rank": 79,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -7270,7 +7270,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 80,
+            "leagueRank": 79,
             "leagueScore": 49.375
           },
           {
@@ -7350,10 +7350,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 79,
+            "league_rank": 78,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 79,
+              "league_rank": 78,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -7466,7 +7466,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 79,
+            "leagueRank": 78,
             "leagueScore": 49.375
           },
           {
@@ -7546,10 +7546,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 78,
+            "league_rank": 77,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 78,
+              "league_rank": 77,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -7658,7 +7658,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 78,
+            "leagueRank": 77,
             "leagueScore": 49.375
           },
           {
@@ -7738,10 +7738,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 77,
+            "league_rank": 76,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 77,
+              "league_rank": 76,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -7854,7 +7854,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 77,
+            "leagueRank": 76,
             "leagueScore": 49.375
           },
           {
@@ -7934,10 +7934,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 76,
+            "league_rank": 75,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 76,
+              "league_rank": 75,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -8046,7 +8046,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 76,
+            "leagueRank": 75,
             "leagueScore": 49.375
           },
           {
@@ -8126,10 +8126,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 75,
+            "league_rank": 74,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 75,
+              "league_rank": 74,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -8242,7 +8242,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 75,
+            "leagueRank": 74,
             "leagueScore": 49.375
           },
           {
@@ -8322,10 +8322,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 74,
+            "league_rank": 73,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 74,
+              "league_rank": 73,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -8438,7 +8438,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 74,
+            "leagueRank": 73,
             "leagueScore": 49.375
           },
           {
@@ -8518,10 +8518,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 73,
+            "league_rank": 72,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 73,
+              "league_rank": 72,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -8634,7 +8634,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 73,
+            "leagueRank": 72,
             "leagueScore": 49.375
           },
           {
@@ -8714,10 +8714,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 72,
+            "league_rank": 71,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 72,
+              "league_rank": 71,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -8830,7 +8830,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 72,
+            "leagueRank": 71,
             "leagueScore": 49.375
           },
           {
@@ -8910,10 +8910,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 71,
+            "league_rank": 70,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 71,
+              "league_rank": 70,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -9026,7 +9026,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 71,
+            "leagueRank": 70,
             "leagueScore": 49.375
           },
           {
@@ -9106,10 +9106,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 70,
+            "league_rank": 69,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 70,
+              "league_rank": 69,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -9218,7 +9218,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 70,
+            "leagueRank": 69,
             "leagueScore": 49.375
           },
           {
@@ -9298,10 +9298,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 69,
+            "league_rank": 68,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 69,
+              "league_rank": 68,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -9410,7 +9410,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 69,
+            "leagueRank": 68,
             "leagueScore": 49.375
           },
           {
@@ -9490,10 +9490,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 68,
+            "league_rank": 67,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 68,
+              "league_rank": 67,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -9602,7 +9602,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 68,
+            "leagueRank": 67,
             "leagueScore": 49.375
           },
           {
@@ -9682,10 +9682,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 67,
+            "league_rank": 66,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 67,
+              "league_rank": 66,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -9798,7 +9798,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 67,
+            "leagueRank": 66,
             "leagueScore": 49.375
           },
           {
@@ -9878,10 +9878,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 66,
+            "league_rank": 65,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 66,
+              "league_rank": 65,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -9994,7 +9994,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 66,
+            "leagueRank": 65,
             "leagueScore": 49.375
           },
           {
@@ -10074,10 +10074,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 65,
+            "league_rank": 64,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 65,
+              "league_rank": 64,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -10186,7 +10186,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 65,
+            "leagueRank": 64,
             "leagueScore": 49.375
           },
           {
@@ -10266,10 +10266,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 64,
+            "league_rank": 63,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 64,
+              "league_rank": 63,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -10382,7 +10382,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 64,
+            "leagueRank": 63,
             "leagueScore": 49.375
           },
           {
@@ -10462,10 +10462,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 63,
+            "league_rank": 62,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 63,
+              "league_rank": 62,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -10574,7 +10574,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 63,
+            "leagueRank": 62,
             "leagueScore": 49.375
           },
           {
@@ -10654,10 +10654,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 62,
+            "league_rank": 61,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 62,
+              "league_rank": 61,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -10766,7 +10766,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 62,
+            "leagueRank": 61,
             "leagueScore": 49.375
           },
           {
@@ -10846,10 +10846,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 61,
+            "league_rank": 60,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 61,
+              "league_rank": 60,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -10962,7 +10962,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 61,
+            "leagueRank": 60,
             "leagueScore": 49.375
           },
           {
@@ -11042,10 +11042,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 60,
+            "league_rank": 59,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 60,
+              "league_rank": 59,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -11154,7 +11154,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 60,
+            "leagueRank": 59,
             "leagueScore": 49.375
           },
           {
@@ -11234,10 +11234,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 59,
+            "league_rank": 58,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 59,
+              "league_rank": 58,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -11346,7 +11346,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 59,
+            "leagueRank": 58,
             "leagueScore": 49.375
           },
           {
@@ -11426,10 +11426,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 58,
+            "league_rank": 57,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 58,
+              "league_rank": 57,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -11538,7 +11538,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 58,
+            "leagueRank": 57,
             "leagueScore": 49.375
           },
           {
@@ -11618,10 +11618,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 57,
+            "league_rank": 56,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 57,
+              "league_rank": 56,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -11734,7 +11734,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 57,
+            "leagueRank": 56,
             "leagueScore": 49.375
           },
           {
@@ -11814,10 +11814,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 56,
+            "league_rank": 55,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 56,
+              "league_rank": 55,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -11930,7 +11930,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 56,
+            "leagueRank": 55,
             "leagueScore": 49.375
           },
           {
@@ -12010,10 +12010,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 55,
+            "league_rank": 54,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 55,
+              "league_rank": 54,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -12122,7 +12122,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 55,
+            "leagueRank": 54,
             "leagueScore": 49.375
           },
           {
@@ -12202,10 +12202,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 54,
+            "league_rank": 53,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 54,
+              "league_rank": 53,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -12314,7 +12314,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 54,
+            "leagueRank": 53,
             "leagueScore": 49.375
           },
           {
@@ -12394,10 +12394,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 53,
+            "league_rank": 52,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 53,
+              "league_rank": 52,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -12506,7 +12506,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 53,
+            "leagueRank": 52,
             "leagueScore": 49.375
           },
           {
@@ -12586,10 +12586,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 52,
+            "league_rank": 51,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 52,
+              "league_rank": 51,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -12702,7 +12702,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 52,
+            "leagueRank": 51,
             "leagueScore": 49.375
           },
           {
@@ -12782,10 +12782,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 51,
+            "league_rank": 50,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 51,
+              "league_rank": 50,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -12898,7 +12898,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 51,
+            "leagueRank": 50,
             "leagueScore": 49.375
           },
           {
@@ -12978,10 +12978,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 50,
+            "league_rank": 49,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 50,
+              "league_rank": 49,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -13094,7 +13094,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 50,
+            "leagueRank": 49,
             "leagueScore": 49.375
           },
           {
@@ -13174,10 +13174,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 49,
+            "league_rank": 48,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 49,
+              "league_rank": 48,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -13290,7 +13290,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 49,
+            "leagueRank": 48,
             "leagueScore": 49.375
           },
           {
@@ -13370,10 +13370,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 48,
+            "league_rank": 47,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 48,
+              "league_rank": 47,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -13482,7 +13482,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 48,
+            "leagueRank": 47,
             "leagueScore": 49.375
           },
           {
@@ -13562,10 +13562,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 47,
+            "league_rank": 46,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 47,
+              "league_rank": 46,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -13678,7 +13678,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 47,
+            "leagueRank": 46,
             "leagueScore": 49.375
           },
           {
@@ -13758,10 +13758,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 46,
+            "league_rank": 45,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 46,
+              "league_rank": 45,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -13874,7 +13874,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 46,
+            "leagueRank": 45,
             "leagueScore": 49.375
           },
           {
@@ -13954,10 +13954,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 45,
+            "league_rank": 44,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 45,
+              "league_rank": 44,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -14070,7 +14070,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 45,
+            "leagueRank": 44,
             "leagueScore": 49.375
           },
           {
@@ -14150,10 +14150,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 44,
+            "league_rank": 43,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 44,
+              "league_rank": 43,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -14262,7 +14262,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 44,
+            "leagueRank": 43,
             "leagueScore": 49.375
           },
           {
@@ -14342,10 +14342,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 43,
+            "league_rank": 42,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 43,
+              "league_rank": 42,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -14458,7 +14458,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 43,
+            "leagueRank": 42,
             "leagueScore": 49.375
           },
           {
@@ -14538,10 +14538,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 42,
+            "league_rank": 41,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 42,
+              "league_rank": 41,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -14654,7 +14654,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 42,
+            "leagueRank": 41,
             "leagueScore": 49.375
           },
           {
@@ -14734,10 +14734,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 41,
+            "league_rank": 40,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 41,
+              "league_rank": 40,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -14846,7 +14846,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 41,
+            "leagueRank": 40,
             "leagueScore": 49.375
           },
           {
@@ -14926,10 +14926,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 40,
+            "league_rank": 39,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 40,
+              "league_rank": 39,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -15038,7 +15038,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 40,
+            "leagueRank": 39,
             "leagueScore": 49.375
           },
           {
@@ -15118,10 +15118,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 39,
+            "league_rank": 38,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 39,
+              "league_rank": 38,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -15230,7 +15230,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 39,
+            "leagueRank": 38,
             "leagueScore": 49.375
           },
           {
@@ -15310,10 +15310,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 38,
+            "league_rank": 37,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 38,
+              "league_rank": 37,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -15422,7 +15422,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 38,
+            "leagueRank": 37,
             "leagueScore": 49.375
           },
           {
@@ -15502,10 +15502,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 37,
+            "league_rank": 36,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 37,
+              "league_rank": 36,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -15618,7 +15618,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 37,
+            "leagueRank": 36,
             "leagueScore": 49.375
           },
           {
@@ -15698,10 +15698,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 36,
+            "league_rank": 35,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 36,
+              "league_rank": 35,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -15810,7 +15810,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 36,
+            "leagueRank": 35,
             "leagueScore": 49.375
           },
           {
@@ -15890,10 +15890,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 35,
+            "league_rank": 34,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 35,
+              "league_rank": 34,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -16006,7 +16006,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 35,
+            "leagueRank": 34,
             "leagueScore": 49.375
           },
           {
@@ -16086,10 +16086,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 34,
+            "league_rank": 33,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 34,
+              "league_rank": 33,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -16202,7 +16202,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 34,
+            "leagueRank": 33,
             "leagueScore": 49.375
           },
           {
@@ -16282,10 +16282,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 33,
+            "league_rank": 32,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 33,
+              "league_rank": 32,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -16398,7 +16398,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 33,
+            "leagueRank": 32,
             "leagueScore": 49.375
           },
           {
@@ -16478,10 +16478,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 32,
+            "league_rank": 31,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 32,
+              "league_rank": 31,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -16594,7 +16594,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 32,
+            "leagueRank": 31,
             "leagueScore": 49.375
           },
           {
@@ -16674,10 +16674,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 31,
+            "league_rank": 30,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 31,
+              "league_rank": 30,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -16790,7 +16790,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 31,
+            "leagueRank": 30,
             "leagueScore": 49.375
           },
           {
@@ -16870,10 +16870,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 30,
+            "league_rank": 29,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 30,
+              "league_rank": 29,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -16986,7 +16986,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 30,
+            "leagueRank": 29,
             "leagueScore": 49.375
           },
           {
@@ -17066,10 +17066,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 29,
+            "league_rank": 28,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 29,
+              "league_rank": 28,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -17123,7 +17123,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-30T04:24:12Z",
+            "updated_at": "2026-10-30T23:34:39Z",
             "links": {
               "detail": "/personas/persona-c6ef44745087d11cc138",
               "runtime": "/management/runtimes/rt-bf737b54",
@@ -17178,7 +17178,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 29,
+            "leagueRank": 28,
             "leagueScore": 49.375
           },
           {
@@ -17258,10 +17258,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 28,
+            "league_rank": 27,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 28,
+              "league_rank": 27,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -17374,7 +17374,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 28,
+            "leagueRank": 27,
             "leagueScore": 49.375
           },
           {
@@ -17454,10 +17454,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 27,
+            "league_rank": 26,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 27,
+              "league_rank": 26,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -17566,7 +17566,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 27,
+            "leagueRank": 26,
             "leagueScore": 49.375
           },
           {
@@ -17646,10 +17646,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 26,
+            "league_rank": 25,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 26,
+              "league_rank": 25,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -17762,7 +17762,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 26,
+            "leagueRank": 25,
             "leagueScore": 49.375
           },
           {
@@ -17842,10 +17842,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 25,
+            "league_rank": 24,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 25,
+              "league_rank": 24,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -17958,7 +17958,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 25,
+            "leagueRank": 24,
             "leagueScore": 49.375
           },
           {
@@ -18038,10 +18038,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 24,
+            "league_rank": 23,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 24,
+              "league_rank": 23,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -18154,7 +18154,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 24,
+            "leagueRank": 23,
             "leagueScore": 49.375
           },
           {
@@ -18234,10 +18234,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 23,
+            "league_rank": 22,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 23,
+              "league_rank": 22,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -18350,7 +18350,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 23,
+            "leagueRank": 22,
             "leagueScore": 49.375
           },
           {
@@ -18430,10 +18430,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 22,
+            "league_rank": 21,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 22,
+              "league_rank": 21,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -18544,7 +18544,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 22,
+            "leagueRank": 21,
             "leagueScore": 49.375
           },
           {
@@ -18624,10 +18624,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 21,
+            "league_rank": 20,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 21,
+              "league_rank": 20,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -18740,7 +18740,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 21,
+            "leagueRank": 20,
             "leagueScore": 49.375
           },
           {
@@ -18820,10 +18820,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 20,
+            "league_rank": 19,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 20,
+              "league_rank": 19,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -18932,7 +18932,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 20,
+            "leagueRank": 19,
             "leagueScore": 49.375
           },
           {
@@ -19012,10 +19012,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 18,
+            "league_rank": 17,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 18,
+              "league_rank": 17,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -19124,7 +19124,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 18,
+            "leagueRank": 17,
             "leagueScore": 49.375
           },
           {
@@ -19204,10 +19204,10 @@
               "route": "/bff/management/human-inbox",
               "requires_human_gate": false
             },
-            "league_rank": 17,
+            "league_rank": 16,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 17,
+              "league_rank": 16,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -19320,7 +19320,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 17,
+            "leagueRank": 16,
             "leagueScore": 49.375
           },
           {
@@ -19400,10 +19400,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 16,
+            "league_rank": 15,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 16,
+              "league_rank": 15,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -19516,7 +19516,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 16,
+            "leagueRank": 15,
             "leagueScore": 49.375
           },
           {
@@ -19596,10 +19596,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 15,
+            "league_rank": 14,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 15,
+              "league_rank": 14,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -19708,7 +19708,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 15,
+            "leagueRank": 14,
             "leagueScore": 49.375
           },
           {
@@ -19788,10 +19788,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 14,
+            "league_rank": 13,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 14,
+              "league_rank": 13,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -19904,7 +19904,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 14,
+            "leagueRank": 13,
             "leagueScore": 49.375
           },
           {
@@ -19984,10 +19984,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 13,
+            "league_rank": 12,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 13,
+              "league_rank": 12,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -20096,7 +20096,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 13,
+            "leagueRank": 12,
             "leagueScore": 49.375
           },
           {
@@ -20176,10 +20176,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 12,
+            "league_rank": 11,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 12,
+              "league_rank": 11,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -20288,7 +20288,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 12,
+            "leagueRank": 11,
             "leagueScore": 49.375
           },
           {
@@ -20368,10 +20368,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 11,
+            "league_rank": 10,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 11,
+              "league_rank": 10,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -20480,7 +20480,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 11,
+            "leagueRank": 10,
             "leagueScore": 49.375
           },
           {
@@ -20560,10 +20560,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 10,
+            "league_rank": 9,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 10,
+              "league_rank": 9,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -20676,7 +20676,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 10,
+            "leagueRank": 9,
             "leagueScore": 49.375
           },
           {
@@ -20756,10 +20756,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 9,
+            "league_rank": 8,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 9,
+              "league_rank": 8,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -20872,7 +20872,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 9,
+            "leagueRank": 8,
             "leagueScore": 49.375
           },
           {
@@ -20952,10 +20952,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 8,
+            "league_rank": 7,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 8,
+              "league_rank": 7,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -21064,7 +21064,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 8,
+            "leagueRank": 7,
             "leagueScore": 49.375
           },
           {
@@ -21144,10 +21144,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 7,
+            "league_rank": 6,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 7,
+              "league_rank": 6,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -21256,7 +21256,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 7,
+            "leagueRank": 6,
             "leagueScore": 49.375
           },
           {
@@ -21336,10 +21336,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 6,
+            "league_rank": 5,
             "league_score": 49.375,
             "rank": {
-              "league_rank": 6,
+              "league_rank": 5,
               "league_score": 49.375,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -21448,7 +21448,7 @@
             },
             "classification_confirmed": true,
             "archived": true,
-            "leagueRank": 6,
+            "leagueRank": 5,
             "leagueScore": 49.375
           }
         ]
@@ -21480,7 +21480,7 @@
               "persona-34c856860d59d103760c"
             ],
             "total": 101,
-            "pager": "第 1–20 筆，共 101 筆 · 截至 2026-10-30T04:24:09.699Z\n上一頁\n第 1 頁\n下一頁"
+            "pager": "第 1–20 筆，共 101 筆 · 截至 2026-10-30T23:34:36.951Z\n上一頁\n第 1 頁\n下一頁"
           },
           {
             "page": 2,
@@ -21507,7 +21507,7 @@
               "persona-6e0e6e51e442cd21d1e2"
             ],
             "total": 101,
-            "pager": "第 21–40 筆，共 101 筆 · 截至 2026-10-30T04:24:15.640Z\n上一頁\n第 2 頁\n下一頁"
+            "pager": "第 21–40 筆，共 101 筆 · 截至 2026-10-30T23:34:42.790Z\n上一頁\n第 2 頁\n下一頁"
           },
           {
             "page": 3,
@@ -21534,7 +21534,7 @@
               "persona-99ff93a7710682dc7bbe"
             ],
             "total": 101,
-            "pager": "第 41–60 筆，共 101 筆 · 截至 2026-10-30T04:24:16.667Z\n上一頁\n第 3 頁\n下一頁"
+            "pager": "第 41–60 筆，共 101 筆 · 截至 2026-10-30T23:34:43.717Z\n上一頁\n第 3 頁\n下一頁"
           },
           {
             "page": 4,
@@ -21561,7 +21561,7 @@
               "persona-c9b07e3f1d38fffd42dc"
             ],
             "total": 101,
-            "pager": "第 61–80 筆，共 101 筆 · 截至 2026-10-30T04:24:17.540Z\n上一頁\n第 4 頁\n下一頁"
+            "pager": "第 61–80 筆，共 101 筆 · 截至 2026-10-30T23:34:45.132Z\n上一頁\n第 4 頁\n下一頁"
           },
           {
             "page": 5,
@@ -21588,7 +21588,7 @@
               "persona-f53892bd88d08b49d240"
             ],
             "total": 101,
-            "pager": "第 81–100 筆，共 101 筆 · 截至 2026-10-30T04:24:18.348Z\n上一頁\n第 5 頁\n下一頁"
+            "pager": "第 81–100 筆，共 101 筆 · 截至 2026-10-30T23:34:45.919Z\n上一頁\n第 5 頁\n下一頁"
           },
           {
             "page": 6,
@@ -21596,7 +21596,7 @@
               "persona-fbb03ab8a4d7a235361b"
             ],
             "total": 101,
-            "pager": "第 101–101 筆，共 101 筆 · 截至 2026-10-30T04:24:19.472Z\n上一頁\n第 6 頁\n下一頁"
+            "pager": "第 101–101 筆，共 101 筆 · 截至 2026-10-30T23:34:46.651Z\n上一頁\n第 6 頁\n下一頁"
           }
         ],
         "unique_rows": 101
@@ -22544,10 +22544,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 109,
+            "league_rank": 108,
             "league_score": 46.875,
             "rank": {
-              "league_rank": 109,
+              "league_rank": 108,
               "league_score": 46.875,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -22601,7 +22601,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-30T04:24:37Z",
+            "updated_at": "2026-10-30T23:35:02Z",
             "links": {
               "detail": "/personas/persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
               "runtime": "/management/runtimes/rt-eb295fe2",
@@ -22656,7 +22656,7 @@
             },
             "classification_confirmed": false,
             "archived": false,
-            "leagueRank": 109,
+            "leagueRank": 108,
             "leagueScore": 46.875
           },
           {
@@ -22777,7 +22777,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-30T04:24:37Z",
+            "updated_at": "2026-10-30T23:35:02Z",
             "links": {
               "detail": "/personas/persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
               "runtime": null,
@@ -22791,8 +22791,8 @@
             },
             "last_mutation_label": "2026-10-30",
             "lastMutationLabel": "2026-10-30",
-            "last_mutation_at": "2026-10-30T04:24:37Z",
-            "lastMutationAt": "2026-10-30T04:24:37Z",
+            "last_mutation_at": "2026-10-30T23:35:02Z",
+            "lastMutationAt": "2026-10-30T23:35:02Z",
             "last_mutation_kind": "fleet_summary",
             "lastMutationKind": "fleet_summary",
             "mutation_entry_id": null,
@@ -22849,7 +22849,7 @@
               "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
             ],
             "total": 3,
-            "pager": "第 1–3 筆，共 3 筆 · 截至 2026-10-30T04:24:37.781Z\n上一頁\n第 1 頁\n下一頁"
+            "pager": "第 1–3 筆，共 3 筆 · 截至 2026-10-30T23:35:02.788Z\n上一頁\n第 1 頁\n下一頁"
           }
         ],
         "unique_rows": 3
@@ -22955,21 +22955,21 @@
       "environment": "pantheon-dev-fe",
       "repository": "ajoe734/execute-plans",
       "profile": "read-only",
-      "pairId": "73a4ea0123edf0abcb8021a5575b7dd4f34c589a4643e5cfc4920b0d5add0a47",
+      "pairId": "97a0f619757e345885b6f3517a6f19f2fea72b746dd0cad82197c0eda54d8e8c",
       "releaseAdmission": {
         "schemaVersion": "pantheon.dev-release-candidate-admission.v1",
-        "releaseCandidateId": "ca34eb53c49a5d24721bfa27206ea4cb4e2b23e1aef91c09581078cf13f82abe",
+        "releaseCandidateId": "740d47a73c79e72109f8f61730e2ea5692973f2dfc6a7096c8650b2a49b22e55",
         "compatibilityStatus": "compatible",
-        "compatibilityManifestSha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
+        "compatibilityManifestSha256": "77d98430e8f832d6a33ea23ced99cdaa1065e07d83059796a3de7a75e7ccf463",
         "controller": {
           "repository": "ajoe734/pantheon",
           "workflow": "nonprod-deploy.yml",
-          "runId": "40996778825"
+          "runId": "41139527088"
         },
         "backend": {
           "repository": "ajoe734/pantheon",
           "branch": "dev",
-          "commitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516"
+          "commitSha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca"
         },
         "frontend": {
           "repository": "ajoe734/execute-plans",
@@ -22986,20 +22986,20 @@
         "commitSha": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
       },
       "bffHost": "https://api.dev.mvl-cap.tw",
-      "bffCommit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-      "bffSourceCommitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "bffCommit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+      "bffSourceCommitSha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
       "bffCommitEvidence": true,
       "bff": {
         "baseUrl": "https://api.dev.mvl-cap.tw",
-        "sourceCommitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+        "sourceCommitSha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
         "sourceCommitKnown": true
       },
       "gate": {
         "workflow": "pantheon-integration-gate.yml",
-        "runId": "40998949523",
-        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/40998949523"
+        "runId": "41141848742",
+        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/41141848742"
       },
-      "integrationGateRunId": "40998949523",
+      "integrationGateRunId": "41141848742",
       "artifactDigest": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
       "artifactDigestSha256": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
       "buildMode": {
@@ -23010,28 +23010,28 @@
         "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
       },
       "deploymentState": "accepted",
-      "releaseName": "20261030T041825Z-56bec9ad581d-gate-40998949523-41000806767-1-3406260",
-      "deployedAt": "20261030T041825Z",
+      "releaseName": "20261030T233022Z-56bec9ad581d-gate-41141848742-41143340647-1-1363975",
+      "deployedAt": "20261030T233022Z",
       "previousCommit": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
       "previousArtifactDigest": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
-      "previousReleaseName": "20261030T011144Z-56bec9ad581d-gate-40981037760-40982883283-1-2235053",
-      "githubArtifactDigest": "sha256:d2e7c5b8ab4793b5ef34996ee87e1a98f9dfe385342956d31ce1f000fa8e3b31",
+      "previousReleaseName": "20261030T041825Z-56bec9ad581d-gate-40998949523-41000806767-1-3406260",
+      "githubArtifactDigest": "sha256:83423941fbfc696cc41ee5e10d7d0e16e1f54e781a3ead52c0071e090ae5f949",
       "agoraCompatibility": {
         "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
         "contract_family": "agora.v1.13",
         "environment": "dev",
         "compatibility_status": "accepted",
         "blocking_reasons": [],
-        "manifest_sha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
+        "manifest_sha256": "77d98430e8f832d6a33ea23ced99cdaa1065e07d83059796a3de7a75e7ccf463",
         "gate_controller": {
           "repo": "ajoe734/pantheon",
-          "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-          "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
+          "commit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+          "tree": "e518ff9155e8a24ef4ac408e40677ee9d0d5e049"
         },
         "backend": {
           "repo": "ajoe734/pantheon",
-          "runtime_commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-          "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
+          "runtime_commit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+          "tree": "e518ff9155e8a24ef4ac408e40677ee9d0d5e049"
         },
         "frontend": {
           "repo": "ajoe734/execute-plans",
@@ -23061,14 +23061,14 @@
           "compatibility_manifest": {
             "contract_family": "agora.v1.13",
             "manifest_version": "1.0",
-            "sha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
+            "sha256": "77d98430e8f832d6a33ea23ced99cdaa1065e07d83059796a3de7a75e7ccf463",
             "source_status": "accepted"
           },
           "backend": {
             "repository": "ajoe734/pantheon",
             "branch": "dev",
-            "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-            "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
+            "commit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+            "tree": "e518ff9155e8a24ef4ac408e40677ee9d0d5e049"
           },
           "frontend": {
             "repository": "ajoe734/execute-plans",
@@ -23076,12 +23076,12 @@
             "commit": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
             "tree": "ed9b5f639a89a869a6ac5b6bb556d28ec64aa3cf"
           },
-          "release_candidate_id": "ca34eb53c49a5d24721bfa27206ea4cb4e2b23e1aef91c09581078cf13f82abe"
+          "release_candidate_id": "740d47a73c79e72109f8f61730e2ea5692973f2dfc6a7096c8650b2a49b22e55"
         }
       },
       "deploymentProfile": "read-only",
       "pair": {
-        "pairId": "73a4ea0123edf0abcb8021a5575b7dd4f34c589a4643e5cfc4920b0d5add0a47",
+        "pairId": "97a0f619757e345885b6f3517a6f19f2fea72b746dd0cad82197c0eda54d8e8c",
         "readOnlyArtifactDigestSha256": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
         "operatorLiveArtifactDigestSha256": "92b8e5d9f39863fcd1c5f93b91480b319a1f913a669e34904ae84811f8e140f4",
         "writeProofArtifactDigestSha256": "51e0b7deaf2ae2f94bd9861ffa30953e1a7d6c6bc150be02cb3c722ff3768018"
@@ -23091,7 +23091,7 @@
         "actor": null,
         "reasonSha256": null
       },
-      "acceptedAt": "2026-10-30T04:21:08Z",
+      "acceptedAt": "2026-10-30T23:32:51Z",
       "probes": {
         "candidatePreSwitch": "passed",
         "postSwitch": "passed",
@@ -23101,11 +23101,11 @@
     "version": {
       "service": "operator-bff",
       "version": "0.2.0",
-      "source_commit_sha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-      "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "source_commit_sha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+      "commit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
       "source_commit_known": true,
-      "image_digest": "sha256:c93c3c2ca123b41e42d3035d650634c50a2fc5609c67a2feda918c24ddeb6893",
-      "build_time": "2026-10-30T03:22:27Z",
+      "image_digest": "sha256:438b31a8fb042c26307195bdb2a1ef63c161150c242dc98fdaa51f0c23b6c5fb",
+      "build_time": "2026-10-30T22:41:40Z",
       "environment": "dev",
       "config_posture": {
         "auth_stub": false,
@@ -23119,7 +23119,7 @@
     }
   },
   "no_unsolicited_archives": true,
-  "p95_nearest_rank_ms": 1475,
+  "p95_nearest_rank_ms": 1007,
   "unknown_purpose": [
     {
       "purpose": "unknown",
@@ -23763,10 +23763,10 @@
               "route": null,
               "requires_human_gate": false
             },
-            "league_rank": 109,
+            "league_rank": 108,
             "league_score": 46.875,
             "rank": {
-              "league_rank": 109,
+              "league_rank": 108,
               "league_score": 46.875,
               "basis": "quarterly_ranking",
               "period": "quarter",
@@ -23820,7 +23820,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-30T04:24:37Z",
+            "updated_at": "2026-10-30T23:35:02Z",
             "links": {
               "detail": "/personas/persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
               "runtime": "/management/runtimes/rt-eb295fe2",
@@ -23875,7 +23875,7 @@
             },
             "classification_confirmed": false,
             "archived": false,
-            "leagueRank": 109,
+            "leagueRank": 108,
             "leagueScore": 46.875
           },
           {
@@ -23996,7 +23996,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-30T04:24:37Z",
+            "updated_at": "2026-10-30T23:35:02Z",
             "links": {
               "detail": "/personas/persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
               "runtime": null,
@@ -24010,8 +24010,8 @@
             },
             "last_mutation_label": "2026-10-30",
             "lastMutationLabel": "2026-10-30",
-            "last_mutation_at": "2026-10-30T04:24:37Z",
-            "lastMutationAt": "2026-10-30T04:24:37Z",
+            "last_mutation_at": "2026-10-30T23:35:02Z",
+            "lastMutationAt": "2026-10-30T23:35:02Z",
             "last_mutation_kind": "fleet_summary",
             "lastMutationKind": "fleet_summary",
             "mutation_entry_id": null,
@@ -24068,7 +24068,7 @@
               "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
             ],
             "total": 3,
-            "pager": "第 1–3 筆，共 3 筆 · 截至 2026-10-30T04:24:37.781Z\n上一頁\n第 1 頁\n下一頁"
+            "pager": "第 1–3 筆，共 3 筆 · 截至 2026-10-30T23:35:02.788Z\n上一頁\n第 1 頁\n下一頁"
           }
         ],
         "unique_rows": 3
@@ -24818,10 +24818,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 107,
+        "league_rank": 106,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 107,
+          "league_rank": 106,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -24930,7 +24930,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 107,
+        "leagueRank": 106,
         "leagueScore": 49.375
       },
       {
@@ -25010,10 +25010,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 106,
+        "league_rank": 105,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 106,
+          "league_rank": 105,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -25126,7 +25126,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 106,
+        "leagueRank": 105,
         "leagueScore": 49.375
       },
       {
@@ -25206,10 +25206,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 105,
+        "league_rank": 104,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 105,
+          "league_rank": 104,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -25322,7 +25322,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 105,
+        "leagueRank": 104,
         "leagueScore": 49.375
       },
       {
@@ -25402,10 +25402,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 104,
+        "league_rank": 103,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 104,
+          "league_rank": 103,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -25518,7 +25518,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 104,
+        "leagueRank": 103,
         "leagueScore": 49.375
       },
       {
@@ -25598,10 +25598,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 103,
+        "league_rank": 102,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 103,
+          "league_rank": 102,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -25714,7 +25714,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 103,
+        "leagueRank": 102,
         "leagueScore": 49.375
       },
       {
@@ -25794,10 +25794,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 102,
+        "league_rank": 101,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 102,
+          "league_rank": 101,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -25906,7 +25906,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 102,
+        "leagueRank": 101,
         "leagueScore": 49.375
       },
       {
@@ -25986,10 +25986,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 101,
+        "league_rank": 100,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 101,
+          "league_rank": 100,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -26100,7 +26100,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 101,
+        "leagueRank": 100,
         "leagueScore": 49.375
       },
       {
@@ -26180,11 +26180,11 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 1,
-        "league_score": 52.495,
+        "league_rank": 109,
+        "league_score": 27.495,
         "rank": {
-          "league_rank": 1,
-          "league_score": 52.495,
+          "league_rank": 109,
+          "league_score": 27.495,
           "basis": "quarterly_ranking",
           "period": "quarter",
           "quarter": "2026-Q4"
@@ -26199,7 +26199,7 @@
           "runtime_statuses": [
             "active"
           ],
-          "latest_telemetry_at": "2026-10-30T04:24:40Z",
+          "latest_telemetry_at": "2026-10-30T23:35:04Z",
           "active_incident_count": 0
         },
         "data_source_summary": {
@@ -26229,10 +26229,10 @@
           "sharpe": null,
           "max_drawdown": 0.0001,
           "violation_count": 0,
-          "total_trades": 2,
+          "total_trades": 3,
           "source": "telemetry_summaries",
           "telemetry_runtime_count": 1,
-          "latest_telemetry_at": "2026-10-30T04:24:40Z"
+          "latest_telemetry_at": "2026-10-30T23:35:04Z"
         },
         "risk_flag_count": 0,
         "active_incident_count": 0,
@@ -26295,8 +26295,8 @@
         },
         "classification_confirmed": true,
         "archived": false,
-        "leagueRank": 1,
-        "leagueScore": 52.495
+        "leagueRank": 109,
+        "leagueScore": 27.495
       },
       {
         "id": "persona-10948e484776211f785b",
@@ -26375,10 +26375,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 100,
+        "league_rank": 99,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 100,
+          "league_rank": 99,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -26491,7 +26491,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 100,
+        "leagueRank": 99,
         "leagueScore": 49.375
       },
       {
@@ -26571,10 +26571,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 99,
+        "league_rank": 98,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 99,
+          "league_rank": 98,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -26687,7 +26687,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 99,
+        "leagueRank": 98,
         "leagueScore": 49.375
       },
       {
@@ -26767,10 +26767,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 98,
+        "league_rank": 97,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 98,
+          "league_rank": 97,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -26883,7 +26883,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 98,
+        "leagueRank": 97,
         "leagueScore": 49.375
       },
       {
@@ -26963,10 +26963,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 97,
+        "league_rank": 96,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 97,
+          "league_rank": 96,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -27079,7 +27079,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 97,
+        "leagueRank": 96,
         "leagueScore": 49.375
       },
       {
@@ -27159,10 +27159,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 96,
+        "league_rank": 95,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 96,
+          "league_rank": 95,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -27275,7 +27275,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 96,
+        "leagueRank": 95,
         "leagueScore": 49.375
       },
       {
@@ -27355,10 +27355,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 95,
+        "league_rank": 94,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 95,
+          "league_rank": 94,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -27467,7 +27467,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 95,
+        "leagueRank": 94,
         "leagueScore": 49.375
       },
       {
@@ -27547,10 +27547,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 94,
+        "league_rank": 93,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 94,
+          "league_rank": 93,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -27663,7 +27663,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 94,
+        "leagueRank": 93,
         "leagueScore": 49.375
       },
       {
@@ -27743,10 +27743,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 93,
+        "league_rank": 92,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 93,
+          "league_rank": 92,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -27859,7 +27859,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 93,
+        "leagueRank": 92,
         "leagueScore": 49.375
       },
       {
@@ -27939,10 +27939,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 92,
+        "league_rank": 91,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 92,
+          "league_rank": 91,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -28055,7 +28055,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 92,
+        "leagueRank": 91,
         "leagueScore": 49.375
       },
       {
@@ -28135,10 +28135,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 91,
+        "league_rank": 90,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 91,
+          "league_rank": 90,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -28251,7 +28251,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 91,
+        "leagueRank": 90,
         "leagueScore": 49.375
       },
       {
@@ -28331,10 +28331,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 90,
+        "league_rank": 89,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 90,
+          "league_rank": 89,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -28443,7 +28443,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 90,
+        "leagueRank": 89,
         "leagueScore": 49.375
       },
       {
@@ -28523,10 +28523,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 89,
+        "league_rank": 88,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 89,
+          "league_rank": 88,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -28639,7 +28639,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 89,
+        "leagueRank": 88,
         "leagueScore": 49.375
       },
       {
@@ -28719,10 +28719,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 88,
+        "league_rank": 87,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 88,
+          "league_rank": 87,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -28835,7 +28835,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 88,
+        "leagueRank": 87,
         "leagueScore": 49.375
       },
       {
@@ -28915,10 +28915,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 87,
+        "league_rank": 86,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 87,
+          "league_rank": 86,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -29027,7 +29027,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 87,
+        "leagueRank": 86,
         "leagueScore": 49.375
       },
       {
@@ -29107,10 +29107,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 86,
+        "league_rank": 85,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 86,
+          "league_rank": 85,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -29223,7 +29223,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 86,
+        "leagueRank": 85,
         "leagueScore": 49.375
       },
       {
@@ -29303,10 +29303,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 85,
+        "league_rank": 84,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 85,
+          "league_rank": 84,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -29419,7 +29419,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 85,
+        "leagueRank": 84,
         "leagueScore": 49.375
       },
       {
@@ -29499,10 +29499,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 84,
+        "league_rank": 83,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 84,
+          "league_rank": 83,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -29611,7 +29611,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 84,
+        "leagueRank": 83,
         "leagueScore": 49.375
       },
       {
@@ -29691,10 +29691,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 83,
+        "league_rank": 82,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 83,
+          "league_rank": 82,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -29807,7 +29807,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 83,
+        "leagueRank": 82,
         "leagueScore": 49.375
       },
       {
@@ -29887,10 +29887,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 82,
+        "league_rank": 81,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 82,
+          "league_rank": 81,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -30003,7 +30003,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 82,
+        "leagueRank": 81,
         "leagueScore": 49.375
       },
       {
@@ -30083,10 +30083,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 81,
+        "league_rank": 80,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 81,
+          "league_rank": 80,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -30197,7 +30197,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 81,
+        "leagueRank": 80,
         "leagueScore": 49.375
       },
       {
@@ -30277,10 +30277,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 4,
+        "league_rank": 3,
         "league_score": 50.125,
         "rank": {
-          "league_rank": 4,
+          "league_rank": 3,
           "league_score": 50.125,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -30392,7 +30392,7 @@
         },
         "classification_confirmed": true,
         "archived": false,
-        "leagueRank": 4,
+        "leagueRank": 3,
         "leagueScore": 50.125
       },
       {
@@ -30472,10 +30472,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 80,
+        "league_rank": 79,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 80,
+          "league_rank": 79,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -30588,7 +30588,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 80,
+        "leagueRank": 79,
         "leagueScore": 49.375
       },
       {
@@ -30668,10 +30668,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 79,
+        "league_rank": 78,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 79,
+          "league_rank": 78,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -30784,7 +30784,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 79,
+        "leagueRank": 78,
         "leagueScore": 49.375
       },
       {
@@ -30864,10 +30864,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 78,
+        "league_rank": 77,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 78,
+          "league_rank": 77,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -30976,7 +30976,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 78,
+        "leagueRank": 77,
         "leagueScore": 49.375
       },
       {
@@ -31056,10 +31056,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 77,
+        "league_rank": 76,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 77,
+          "league_rank": 76,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -31172,7 +31172,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 77,
+        "leagueRank": 76,
         "leagueScore": 49.375
       },
       {
@@ -31252,10 +31252,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 76,
+        "league_rank": 75,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 76,
+          "league_rank": 75,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -31364,7 +31364,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 76,
+        "leagueRank": 75,
         "leagueScore": 49.375
       },
       {
@@ -31444,10 +31444,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 75,
+        "league_rank": 74,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 75,
+          "league_rank": 74,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -31560,7 +31560,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 75,
+        "leagueRank": 74,
         "leagueScore": 49.375
       },
       {
@@ -31640,10 +31640,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 74,
+        "league_rank": 73,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 74,
+          "league_rank": 73,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -31756,7 +31756,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 74,
+        "leagueRank": 73,
         "leagueScore": 49.375
       },
       {
@@ -31836,10 +31836,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 73,
+        "league_rank": 72,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 73,
+          "league_rank": 72,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -31952,7 +31952,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 73,
+        "leagueRank": 72,
         "leagueScore": 49.375
       },
       {
@@ -32032,10 +32032,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 72,
+        "league_rank": 71,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 72,
+          "league_rank": 71,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -32148,7 +32148,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 72,
+        "leagueRank": 71,
         "leagueScore": 49.375
       },
       {
@@ -32228,10 +32228,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 71,
+        "league_rank": 70,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 71,
+          "league_rank": 70,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -32344,7 +32344,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 71,
+        "leagueRank": 70,
         "leagueScore": 49.375
       },
       {
@@ -32424,10 +32424,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 70,
+        "league_rank": 69,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 70,
+          "league_rank": 69,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -32536,7 +32536,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 70,
+        "leagueRank": 69,
         "leagueScore": 49.375
       },
       {
@@ -32616,10 +32616,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 69,
+        "league_rank": 68,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 69,
+          "league_rank": 68,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -32728,7 +32728,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 69,
+        "leagueRank": 68,
         "leagueScore": 49.375
       },
       {
@@ -32808,10 +32808,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 68,
+        "league_rank": 67,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 68,
+          "league_rank": 67,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -32920,7 +32920,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 68,
+        "leagueRank": 67,
         "leagueScore": 49.375
       },
       {
@@ -33000,10 +33000,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 67,
+        "league_rank": 66,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 67,
+          "league_rank": 66,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -33116,7 +33116,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 67,
+        "leagueRank": 66,
         "leagueScore": 49.375
       },
       {
@@ -33196,10 +33196,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 66,
+        "league_rank": 65,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 66,
+          "league_rank": 65,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -33312,7 +33312,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 66,
+        "leagueRank": 65,
         "leagueScore": 49.375
       },
       {
@@ -33392,10 +33392,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 65,
+        "league_rank": 64,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 65,
+          "league_rank": 64,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -33504,7 +33504,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 65,
+        "leagueRank": 64,
         "leagueScore": 49.375
       },
       {
@@ -33584,10 +33584,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 64,
+        "league_rank": 63,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 64,
+          "league_rank": 63,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -33700,7 +33700,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 64,
+        "leagueRank": 63,
         "leagueScore": 49.375
       },
       {
@@ -33780,10 +33780,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 63,
+        "league_rank": 62,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 63,
+          "league_rank": 62,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -33892,7 +33892,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 63,
+        "leagueRank": 62,
         "leagueScore": 49.375
       },
       {
@@ -33972,10 +33972,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 62,
+        "league_rank": 61,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 62,
+          "league_rank": 61,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -34084,7 +34084,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 62,
+        "leagueRank": 61,
         "leagueScore": 49.375
       },
       {
@@ -34164,10 +34164,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 61,
+        "league_rank": 60,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 61,
+          "league_rank": 60,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -34280,7 +34280,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 61,
+        "leagueRank": 60,
         "leagueScore": 49.375
       },
       {
@@ -34360,10 +34360,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 60,
+        "league_rank": 59,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 60,
+          "league_rank": 59,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -34472,7 +34472,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 60,
+        "leagueRank": 59,
         "leagueScore": 49.375
       },
       {
@@ -34552,10 +34552,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 59,
+        "league_rank": 58,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 59,
+          "league_rank": 58,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -34664,7 +34664,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 59,
+        "leagueRank": 58,
         "leagueScore": 49.375
       },
       {
@@ -34744,10 +34744,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 58,
+        "league_rank": 57,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 58,
+          "league_rank": 57,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -34856,7 +34856,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 58,
+        "leagueRank": 57,
         "leagueScore": 49.375
       },
       {
@@ -34936,10 +34936,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 57,
+        "league_rank": 56,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 57,
+          "league_rank": 56,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -35052,7 +35052,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 57,
+        "leagueRank": 56,
         "leagueScore": 49.375
       },
       {
@@ -35132,10 +35132,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 56,
+        "league_rank": 55,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 56,
+          "league_rank": 55,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -35248,7 +35248,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 56,
+        "leagueRank": 55,
         "leagueScore": 49.375
       },
       {
@@ -35328,10 +35328,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 55,
+        "league_rank": 54,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 55,
+          "league_rank": 54,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -35440,7 +35440,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 55,
+        "leagueRank": 54,
         "leagueScore": 49.375
       },
       {
@@ -35520,10 +35520,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 54,
+        "league_rank": 53,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 54,
+          "league_rank": 53,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -35632,7 +35632,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 54,
+        "leagueRank": 53,
         "leagueScore": 49.375
       },
       {
@@ -35712,10 +35712,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 53,
+        "league_rank": 52,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 53,
+          "league_rank": 52,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -35824,7 +35824,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 53,
+        "leagueRank": 52,
         "leagueScore": 49.375
       },
       {
@@ -35904,10 +35904,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 52,
+        "league_rank": 51,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 52,
+          "league_rank": 51,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -36020,7 +36020,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 52,
+        "leagueRank": 51,
         "leagueScore": 49.375
       },
       {
@@ -36100,10 +36100,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 51,
+        "league_rank": 50,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 51,
+          "league_rank": 50,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -36216,7 +36216,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 51,
+        "leagueRank": 50,
         "leagueScore": 49.375
       },
       {
@@ -36296,10 +36296,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 50,
+        "league_rank": 49,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 50,
+          "league_rank": 49,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -36412,7 +36412,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 50,
+        "leagueRank": 49,
         "leagueScore": 49.375
       },
       {
@@ -36492,10 +36492,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 49,
+        "league_rank": 48,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 49,
+          "league_rank": 48,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -36608,7 +36608,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 49,
+        "leagueRank": 48,
         "leagueScore": 49.375
       },
       {
@@ -36688,10 +36688,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 48,
+        "league_rank": 47,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 48,
+          "league_rank": 47,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -36800,7 +36800,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 48,
+        "leagueRank": 47,
         "leagueScore": 49.375
       },
       {
@@ -36880,10 +36880,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 47,
+        "league_rank": 46,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 47,
+          "league_rank": 46,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -36996,7 +36996,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 47,
+        "leagueRank": 46,
         "leagueScore": 49.375
       },
       {
@@ -37076,10 +37076,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 46,
+        "league_rank": 45,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 46,
+          "league_rank": 45,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -37192,7 +37192,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 46,
+        "leagueRank": 45,
         "leagueScore": 49.375
       },
       {
@@ -37272,10 +37272,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 45,
+        "league_rank": 44,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 45,
+          "league_rank": 44,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -37388,7 +37388,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 45,
+        "leagueRank": 44,
         "leagueScore": 49.375
       },
       {
@@ -37468,10 +37468,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 44,
+        "league_rank": 43,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 44,
+          "league_rank": 43,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -37580,7 +37580,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 44,
+        "leagueRank": 43,
         "leagueScore": 49.375
       },
       {
@@ -37660,10 +37660,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 43,
+        "league_rank": 42,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 43,
+          "league_rank": 42,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -37776,7 +37776,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 43,
+        "leagueRank": 42,
         "leagueScore": 49.375
       },
       {
@@ -37856,10 +37856,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 42,
+        "league_rank": 41,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 42,
+          "league_rank": 41,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -37972,7 +37972,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 42,
+        "leagueRank": 41,
         "leagueScore": 49.375
       },
       {
@@ -38052,10 +38052,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 41,
+        "league_rank": 40,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 41,
+          "league_rank": 40,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -38164,7 +38164,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 41,
+        "leagueRank": 40,
         "leagueScore": 49.375
       },
       {
@@ -38244,10 +38244,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 40,
+        "league_rank": 39,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 40,
+          "league_rank": 39,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -38356,7 +38356,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 40,
+        "leagueRank": 39,
         "leagueScore": 49.375
       },
       {
@@ -38436,10 +38436,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 39,
+        "league_rank": 38,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 39,
+          "league_rank": 38,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -38548,7 +38548,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 39,
+        "leagueRank": 38,
         "leagueScore": 49.375
       },
       {
@@ -38628,10 +38628,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 38,
+        "league_rank": 37,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 38,
+          "league_rank": 37,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -38740,7 +38740,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 38,
+        "leagueRank": 37,
         "leagueScore": 49.375
       },
       {
@@ -38820,10 +38820,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 37,
+        "league_rank": 36,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 37,
+          "league_rank": 36,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -38936,7 +38936,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 37,
+        "leagueRank": 36,
         "leagueScore": 49.375
       },
       {
@@ -39016,10 +39016,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 36,
+        "league_rank": 35,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 36,
+          "league_rank": 35,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -39128,7 +39128,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 36,
+        "leagueRank": 35,
         "leagueScore": 49.375
       },
       {
@@ -39208,10 +39208,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 35,
+        "league_rank": 34,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 35,
+          "league_rank": 34,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -39324,7 +39324,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 35,
+        "leagueRank": 34,
         "leagueScore": 49.375
       },
       {
@@ -39404,10 +39404,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 34,
+        "league_rank": 33,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 34,
+          "league_rank": 33,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -39520,7 +39520,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 34,
+        "leagueRank": 33,
         "leagueScore": 49.375
       },
       {
@@ -39600,10 +39600,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 33,
+        "league_rank": 32,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 33,
+          "league_rank": 32,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -39716,7 +39716,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 33,
+        "leagueRank": 32,
         "leagueScore": 49.375
       },
       {
@@ -39796,10 +39796,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 32,
+        "league_rank": 31,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 32,
+          "league_rank": 31,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -39912,7 +39912,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 32,
+        "leagueRank": 31,
         "leagueScore": 49.375
       },
       {
@@ -39992,10 +39992,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 31,
+        "league_rank": 30,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 31,
+          "league_rank": 30,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -40108,7 +40108,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 31,
+        "leagueRank": 30,
         "leagueScore": 49.375
       },
       {
@@ -40188,10 +40188,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 30,
+        "league_rank": 29,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 30,
+          "league_rank": 29,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -40304,7 +40304,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 30,
+        "leagueRank": 29,
         "leagueScore": 49.375
       },
       {
@@ -40384,10 +40384,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 29,
+        "league_rank": 28,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 29,
+          "league_rank": 28,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -40441,7 +40441,7 @@
         },
         "risk_flag_count": 0,
         "active_incident_count": 0,
-        "updated_at": "2026-10-30T04:24:43Z",
+        "updated_at": "2026-10-30T23:35:09Z",
         "links": {
           "detail": "/personas/persona-c6ef44745087d11cc138",
           "runtime": "/management/runtimes/rt-bf737b54",
@@ -40496,7 +40496,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 29,
+        "leagueRank": 28,
         "leagueScore": 49.375
       },
       {
@@ -40576,10 +40576,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 28,
+        "league_rank": 27,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 28,
+          "league_rank": 27,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -40692,7 +40692,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 28,
+        "leagueRank": 27,
         "leagueScore": 49.375
       },
       {
@@ -40772,10 +40772,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 27,
+        "league_rank": 26,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 27,
+          "league_rank": 26,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -40884,7 +40884,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 27,
+        "leagueRank": 26,
         "leagueScore": 49.375
       },
       {
@@ -40964,10 +40964,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 26,
+        "league_rank": 25,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 26,
+          "league_rank": 25,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -41080,7 +41080,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 26,
+        "leagueRank": 25,
         "leagueScore": 49.375
       },
       {
@@ -41160,10 +41160,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 25,
+        "league_rank": 24,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 25,
+          "league_rank": 24,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -41276,7 +41276,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 25,
+        "leagueRank": 24,
         "leagueScore": 49.375
       },
       {
@@ -41356,10 +41356,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 24,
+        "league_rank": 23,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 24,
+          "league_rank": 23,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -41472,7 +41472,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 24,
+        "leagueRank": 23,
         "leagueScore": 49.375
       },
       {
@@ -41552,10 +41552,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 23,
+        "league_rank": 22,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 23,
+          "league_rank": 22,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -41668,7 +41668,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 23,
+        "leagueRank": 22,
         "leagueScore": 49.375
       },
       {
@@ -41748,10 +41748,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 22,
+        "league_rank": 21,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 22,
+          "league_rank": 21,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -41862,7 +41862,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 22,
+        "leagueRank": 21,
         "leagueScore": 49.375
       },
       {
@@ -41942,10 +41942,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 21,
+        "league_rank": 20,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 21,
+          "league_rank": 20,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -42058,7 +42058,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 21,
+        "leagueRank": 20,
         "leagueScore": 49.375
       },
       {
@@ -42138,10 +42138,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 20,
+        "league_rank": 19,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 20,
+          "league_rank": 19,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -42250,7 +42250,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 20,
+        "leagueRank": 19,
         "leagueScore": 49.375
       },
       {
@@ -42508,10 +42508,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 18,
+        "league_rank": 17,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 18,
+          "league_rank": 17,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -42620,7 +42620,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 18,
+        "leagueRank": 17,
         "leagueScore": 49.375
       },
       {
@@ -42700,10 +42700,10 @@
           "route": "/bff/management/human-inbox",
           "requires_human_gate": false
         },
-        "league_rank": 17,
+        "league_rank": 16,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 17,
+          "league_rank": 16,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -42816,7 +42816,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 17,
+        "leagueRank": 16,
         "leagueScore": 49.375
       },
       {
@@ -42896,10 +42896,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 2,
+        "league_rank": 1,
         "league_score": 50.125,
         "rank": {
-          "league_rank": 2,
+          "league_rank": 1,
           "league_score": 50.125,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -43010,7 +43010,7 @@
         },
         "classification_confirmed": true,
         "archived": false,
-        "leagueRank": 2,
+        "leagueRank": 1,
         "leagueScore": 50.125
       },
       {
@@ -43090,10 +43090,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 16,
+        "league_rank": 15,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 16,
+          "league_rank": 15,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -43206,7 +43206,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 16,
+        "leagueRank": 15,
         "leagueScore": 49.375
       },
       {
@@ -43286,10 +43286,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 15,
+        "league_rank": 14,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 15,
+          "league_rank": 14,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -43398,7 +43398,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 15,
+        "leagueRank": 14,
         "leagueScore": 49.375
       },
       {
@@ -43478,10 +43478,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 14,
+        "league_rank": 13,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 14,
+          "league_rank": 13,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -43594,7 +43594,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 14,
+        "leagueRank": 13,
         "leagueScore": 49.375
       },
       {
@@ -43674,10 +43674,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 13,
+        "league_rank": 12,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 13,
+          "league_rank": 12,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -43786,7 +43786,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 13,
+        "leagueRank": 12,
         "leagueScore": 49.375
       },
       {
@@ -43866,10 +43866,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 12,
+        "league_rank": 11,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 12,
+          "league_rank": 11,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -43978,7 +43978,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 12,
+        "leagueRank": 11,
         "leagueScore": 49.375
       },
       {
@@ -44058,10 +44058,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 11,
+        "league_rank": 10,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 11,
+          "league_rank": 10,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -44170,7 +44170,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 11,
+        "leagueRank": 10,
         "leagueScore": 49.375
       },
       {
@@ -44250,10 +44250,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 10,
+        "league_rank": 9,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 10,
+          "league_rank": 9,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -44366,7 +44366,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 10,
+        "leagueRank": 9,
         "leagueScore": 49.375
       },
       {
@@ -44446,10 +44446,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 9,
+        "league_rank": 8,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 9,
+          "league_rank": 8,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -44562,7 +44562,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 9,
+        "leagueRank": 8,
         "leagueScore": 49.375
       },
       {
@@ -44642,10 +44642,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 8,
+        "league_rank": 7,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 8,
+          "league_rank": 7,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -44754,7 +44754,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 8,
+        "leagueRank": 7,
         "leagueScore": 49.375
       },
       {
@@ -44834,10 +44834,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 7,
+        "league_rank": 6,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 7,
+          "league_rank": 6,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -44946,7 +44946,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 7,
+        "leagueRank": 6,
         "leagueScore": 49.375
       },
       {
@@ -45026,10 +45026,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 6,
+        "league_rank": 5,
         "league_score": 49.375,
         "rank": {
-          "league_rank": 6,
+          "league_rank": 5,
           "league_score": 49.375,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -45138,7 +45138,7 @@
         },
         "classification_confirmed": true,
         "archived": true,
-        "leagueRank": 6,
+        "leagueRank": 5,
         "leagueScore": 49.375
       },
       {
@@ -45218,10 +45218,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 109,
+        "league_rank": 108,
         "league_score": 46.875,
         "rank": {
-          "league_rank": 109,
+          "league_rank": 108,
           "league_score": 46.875,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -45275,7 +45275,7 @@
         },
         "risk_flag_count": 0,
         "active_incident_count": 0,
-        "updated_at": "2026-10-30T04:24:44Z",
+        "updated_at": "2026-10-30T23:35:10Z",
         "links": {
           "detail": "/personas/persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
           "runtime": "/management/runtimes/rt-eb295fe2",
@@ -45330,7 +45330,7 @@
         },
         "classification_confirmed": false,
         "archived": false,
-        "leagueRank": 109,
+        "leagueRank": 108,
         "leagueScore": 46.875
       },
       {
@@ -45451,7 +45451,7 @@
         },
         "risk_flag_count": 0,
         "active_incident_count": 0,
-        "updated_at": "2026-10-30T04:24:44Z",
+        "updated_at": "2026-10-30T23:35:10Z",
         "links": {
           "detail": "/personas/persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
           "runtime": null,
@@ -45465,8 +45465,8 @@
         },
         "last_mutation_label": "2026-10-30",
         "lastMutationLabel": "2026-10-30",
-        "last_mutation_at": "2026-10-30T04:24:44Z",
-        "lastMutationAt": "2026-10-30T04:24:44Z",
+        "last_mutation_at": "2026-10-30T23:35:10Z",
+        "lastMutationAt": "2026-10-30T23:35:10Z",
         "last_mutation_kind": "fleet_summary",
         "lastMutationKind": "fleet_summary",
         "mutation_entry_id": null,
@@ -45588,10 +45588,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 5,
+        "league_rank": 4,
         "league_score": 50.125,
         "rank": {
-          "league_rank": 5,
+          "league_rank": 4,
           "league_score": 50.125,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -45701,7 +45701,7 @@
         },
         "classification_confirmed": true,
         "archived": false,
-        "leagueRank": 5,
+        "leagueRank": 4,
         "leagueScore": 50.125
       },
       {
@@ -45781,10 +45781,10 @@
           "route": null,
           "requires_human_gate": false
         },
-        "league_rank": 3,
+        "league_rank": 2,
         "league_score": 50.125,
         "rank": {
-          "league_rank": 3,
+          "league_rank": 2,
           "league_score": 50.125,
           "basis": "quarterly_ranking",
           "period": "quarter",
@@ -45894,7 +45894,7 @@
         },
         "classification_confirmed": true,
         "archived": false,
-        "leagueRank": 3,
+        "leagueRank": 2,
         "leagueScore": 50.125
       }
     ]
@@ -45966,8 +45966,8 @@
             "capital_binding"
           ]
         },
-        "created_at": "2026-10-30T04:24:47Z",
-        "expires_at": "2026-10-30T04:52:52Z",
+        "created_at": "2026-10-30T23:35:12Z",
+        "expires_at": "2026-10-31T00:04:16Z",
         "policy_refs": [
           "docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md#5.1",
           "docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/C2_persona_schema_normalization_plan.md"
@@ -45982,7 +45982,7 @@
         }
       },
       "meta": {
-        "snapshot_at": "2026-10-30T04:24:47Z",
+        "snapshot_at": "2026-10-30T23:35:12Z",
         "capability": "agora.identity.v1",
         "audience": "tenant:tenant-dev:user:pantheon-dev-admin-test"
       }
@@ -46104,7 +46104,7 @@
         }
       },
       "meta": {
-        "snapshot_at": "2026-10-30T04:24:47Z",
+        "snapshot_at": "2026-10-30T23:35:12Z",
         "capability": "agora.identity.v1",
         "audience": "tenant:tenant-dev:user:pantheon-dev-admin-test"
       }
@@ -46126,7 +46126,7 @@
         }
       },
       "meta": {
-        "correlationId": "2e0979c1-a54a-4c0b-b84e-250ee340e4a4"
+        "correlationId": "49cf360f-4585-47fa-a422-6e32a77a1871"
       }
     }
   },
@@ -46151,9 +46151,9 @@
           "status": "unavailable",
           "producer_id": "paper-signal-producer",
           "active_binding": "rb-0831403a5eee42628bc736a293248cf4",
-          "consumed_snapshot_id": "mss-728588940b47d8338a0163c2",
-          "last_success_at": "2026-10-29T13:04:24Z",
-          "enqueued": 1,
+          "consumed_snapshot_id": "mss-f95a3aa91217727ccbc5d65a",
+          "last_success_at": "2026-10-30T13:52:11Z",
+          "enqueued": 2,
           "reason": "source_unavailable"
         },
         "surfaces": {
@@ -46187,21 +46187,21 @@
           },
           "performance": {
             "status": "unavailable",
-            "count": 157983,
+            "count": 157984,
             "reason": "upstream_unavailable",
             "freshness": "unavailable",
-            "cursor": "eyJhZnRlciI6WyIyMDI2LTEwLTI5VDEzOjA5OjE0LjEyNDM3MFoiLCJ0al9lNzE5ZjliMi03NjkxLTU1NTctYmFjMi0yMTFhNGJhNWNmZmUiXSwiZW52aXJvbm1lbnQiOiJwYXBlciIsImZpbHRlcnMiOnt9LCJraW5kIjoiam91cm5leXMiLCJzb3J0IjoidXBkYXRlZF9hdF9kZXNjIiwidGVuYW50X2lkIjoidGVuYW50LWRldiIsInYiOjF9.SoAQsIB0qxhcLY9zXelWNJCWNnC9Hg-P4N5VdM8QJ68"
+            "cursor": "eyJhZnRlciI6WyIyMDI2LTEwLTMwVDEzOjUzOjI5LjUwMTgzM1oiLCJ0al9lMGJkNzJlNy02NDk0LTViNjMtYWNmYS1mNWFmNmRhNDIyZDkiXSwiZW52aXJvbm1lbnQiOiJwYXBlciIsImZpbHRlcnMiOnt9LCJraW5kIjoiam91cm5leXMiLCJzb3J0IjoidXBkYXRlZF9hdF9kZXNjIiwidGVuYW50X2lkIjoidGVuYW50LWRldiIsInYiOjF9.EIgrhiWaFws7tHdII_jaRvy9kYqV48PdvEP6r72d8m8"
           }
         },
         "deployment": {
           "service": "pantheon-bff",
           "environment": "dev",
-          "source_commit_sha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+          "source_commit_sha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
           "bundle_version": "v1.13"
         }
       },
       "meta": {
-        "snapshot_at": "2026-10-30T04:24:47Z",
+        "snapshot_at": "2026-10-30T23:35:13Z",
         "capability": "agora.operational_readiness.v1",
         "requiredForAuthentication": false,
         "no_order_route_proof": "agora_operational_readiness_read_only",
@@ -46218,21 +46218,21 @@
       "environment": "pantheon-dev-fe",
       "repository": "ajoe734/execute-plans",
       "profile": "read-only",
-      "pairId": "73a4ea0123edf0abcb8021a5575b7dd4f34c589a4643e5cfc4920b0d5add0a47",
+      "pairId": "97a0f619757e345885b6f3517a6f19f2fea72b746dd0cad82197c0eda54d8e8c",
       "releaseAdmission": {
         "schemaVersion": "pantheon.dev-release-candidate-admission.v1",
-        "releaseCandidateId": "ca34eb53c49a5d24721bfa27206ea4cb4e2b23e1aef91c09581078cf13f82abe",
+        "releaseCandidateId": "740d47a73c79e72109f8f61730e2ea5692973f2dfc6a7096c8650b2a49b22e55",
         "compatibilityStatus": "compatible",
-        "compatibilityManifestSha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
+        "compatibilityManifestSha256": "77d98430e8f832d6a33ea23ced99cdaa1065e07d83059796a3de7a75e7ccf463",
         "controller": {
           "repository": "ajoe734/pantheon",
           "workflow": "nonprod-deploy.yml",
-          "runId": "40996778825"
+          "runId": "41139527088"
         },
         "backend": {
           "repository": "ajoe734/pantheon",
           "branch": "dev",
-          "commitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516"
+          "commitSha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca"
         },
         "frontend": {
           "repository": "ajoe734/execute-plans",
@@ -46249,20 +46249,20 @@
         "commitSha": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
       },
       "bffHost": "https://api.dev.mvl-cap.tw",
-      "bffCommit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-      "bffSourceCommitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "bffCommit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+      "bffSourceCommitSha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
       "bffCommitEvidence": true,
       "bff": {
         "baseUrl": "https://api.dev.mvl-cap.tw",
-        "sourceCommitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+        "sourceCommitSha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
         "sourceCommitKnown": true
       },
       "gate": {
         "workflow": "pantheon-integration-gate.yml",
-        "runId": "40998949523",
-        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/40998949523"
+        "runId": "41141848742",
+        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/41141848742"
       },
-      "integrationGateRunId": "40998949523",
+      "integrationGateRunId": "41141848742",
       "artifactDigest": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
       "artifactDigestSha256": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
       "buildMode": {
@@ -46273,28 +46273,28 @@
         "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
       },
       "deploymentState": "accepted",
-      "releaseName": "20261030T041825Z-56bec9ad581d-gate-40998949523-41000806767-1-3406260",
-      "deployedAt": "20261030T041825Z",
+      "releaseName": "20261030T233022Z-56bec9ad581d-gate-41141848742-41143340647-1-1363975",
+      "deployedAt": "20261030T233022Z",
       "previousCommit": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
       "previousArtifactDigest": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
-      "previousReleaseName": "20261030T011144Z-56bec9ad581d-gate-40981037760-40982883283-1-2235053",
-      "githubArtifactDigest": "sha256:d2e7c5b8ab4793b5ef34996ee87e1a98f9dfe385342956d31ce1f000fa8e3b31",
+      "previousReleaseName": "20261030T041825Z-56bec9ad581d-gate-40998949523-41000806767-1-3406260",
+      "githubArtifactDigest": "sha256:83423941fbfc696cc41ee5e10d7d0e16e1f54e781a3ead52c0071e090ae5f949",
       "agoraCompatibility": {
         "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
         "contract_family": "agora.v1.13",
         "environment": "dev",
         "compatibility_status": "accepted",
         "blocking_reasons": [],
-        "manifest_sha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
+        "manifest_sha256": "77d98430e8f832d6a33ea23ced99cdaa1065e07d83059796a3de7a75e7ccf463",
         "gate_controller": {
           "repo": "ajoe734/pantheon",
-          "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-          "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
+          "commit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+          "tree": "e518ff9155e8a24ef4ac408e40677ee9d0d5e049"
         },
         "backend": {
           "repo": "ajoe734/pantheon",
-          "runtime_commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-          "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
+          "runtime_commit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+          "tree": "e518ff9155e8a24ef4ac408e40677ee9d0d5e049"
         },
         "frontend": {
           "repo": "ajoe734/execute-plans",
@@ -46324,14 +46324,14 @@
           "compatibility_manifest": {
             "contract_family": "agora.v1.13",
             "manifest_version": "1.0",
-            "sha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
+            "sha256": "77d98430e8f832d6a33ea23ced99cdaa1065e07d83059796a3de7a75e7ccf463",
             "source_status": "accepted"
           },
           "backend": {
             "repository": "ajoe734/pantheon",
             "branch": "dev",
-            "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-            "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
+            "commit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+            "tree": "e518ff9155e8a24ef4ac408e40677ee9d0d5e049"
           },
           "frontend": {
             "repository": "ajoe734/execute-plans",
@@ -46339,12 +46339,12 @@
             "commit": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
             "tree": "ed9b5f639a89a869a6ac5b6bb556d28ec64aa3cf"
           },
-          "release_candidate_id": "ca34eb53c49a5d24721bfa27206ea4cb4e2b23e1aef91c09581078cf13f82abe"
+          "release_candidate_id": "740d47a73c79e72109f8f61730e2ea5692973f2dfc6a7096c8650b2a49b22e55"
         }
       },
       "deploymentProfile": "read-only",
       "pair": {
-        "pairId": "73a4ea0123edf0abcb8021a5575b7dd4f34c589a4643e5cfc4920b0d5add0a47",
+        "pairId": "97a0f619757e345885b6f3517a6f19f2fea72b746dd0cad82197c0eda54d8e8c",
         "readOnlyArtifactDigestSha256": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
         "operatorLiveArtifactDigestSha256": "92b8e5d9f39863fcd1c5f93b91480b319a1f913a669e34904ae84811f8e140f4",
         "writeProofArtifactDigestSha256": "51e0b7deaf2ae2f94bd9861ffa30953e1a7d6c6bc150be02cb3c722ff3768018"
@@ -46354,7 +46354,7 @@
         "actor": null,
         "reasonSha256": null
       },
-      "acceptedAt": "2026-10-30T04:21:08Z",
+      "acceptedAt": "2026-10-30T23:32:51Z",
       "probes": {
         "candidatePreSwitch": "passed",
         "postSwitch": "passed",
@@ -46364,11 +46364,11 @@
     "version": {
       "service": "operator-bff",
       "version": "0.2.0",
-      "source_commit_sha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
-      "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "source_commit_sha": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+      "commit": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
       "source_commit_known": true,
-      "image_digest": "sha256:c93c3c2ca123b41e42d3035d650634c50a2fc5609c67a2feda918c24ddeb6893",
-      "build_time": "2026-10-30T03:22:27Z",
+      "image_digest": "sha256:438b31a8fb042c26307195bdb2a1ef63c161150c242dc98fdaa51f0c23b6c5fb",
+      "build_time": "2026-10-30T22:41:40Z",
       "environment": "dev",
       "config_posture": {
         "auth_stub": false,
@@ -46386,5 +46386,5 @@
   "performance_pass": false,
   "completed_subset": false,
   "scope_limit": "Independent fleet/browser subset. Original hosted owner still owns official release/image identities, actual Agora readiness UI, runtime/finance missing values and privacy regression evidence.",
-  "finished_at": "2026-10-30T04:24:50.736Z"
+  "finished_at": "2026-10-30T23:35:16.584Z"
 }
