@@ -374,6 +374,85 @@ run_priv python3 "${LOCAL_WORK_DIR}/validate_secrets.py" \
   "${STAGING_POSTGRES_DB}" \
   || fail "SECRET_CONTENT_INVALID" "Staging secrets failed isolation/required-key validation"
 
+# Runtime-manager inbound auth rejects opaque bearers (403/401 AUTH_TOKEN_FORMAT / AUTH_JWT_DECODE_FAILED), which
+# silently breaks the Paper fleet reconciler/signal producer. Derive the VM-local caller credential from the isolated
+# Runtime JWT signing key + configured issuer/audience (same HS256 format services/runtime_auth_inbound.py verifies),
+# bounded to the staging lifetime, and replace the placeholder in the private secrets env. No GSM/key material changes.
+cat > "${LOCAL_WORK_DIR}/mint_runtime_manager_token.py" <<'PY'
+import base64, hashlib, hmac, json, os, sys, tempfile, time
+from pathlib import Path
+
+env_path = Path(sys.argv[1])
+issuer, audience, tenant_id, ttl_raw = sys.argv[2:6]
+ttl = int(ttl_raw)
+if not 0 < ttl <= 86400:
+    raise SystemExit(f"runtime-manager token ttl {ttl} outside (0, 86400]")
+
+lines = env_path.read_text(encoding="utf-8").splitlines()
+secret = ""
+for raw in lines:
+    k, sep, v = raw.strip().partition("=")
+    if sep and k.strip() == "PANTHEON_RUNTIME_JWT_SECRET":
+        secret = v.strip().strip('"').strip("'")
+if not secret:
+    raise SystemExit("PANTHEON_RUNTIME_JWT_SECRET missing; cannot derive runtime-manager token")
+
+
+def b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+now = int(time.time())
+header = b64(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+payload = b64(json.dumps({
+    "iss": issuer,
+    "aud": audience,
+    "sub": "svc:staging-paper-runtime-caller",
+    "tenant_id": tenant_id,
+    "allowed_tenants": [tenant_id],
+    "roles": ["operator"],
+    "iat": now,
+    "nbf": now - 5,
+    "exp": now + ttl,
+}, separators=(",", ":"), sort_keys=True).encode())
+sig = hmac.new(secret.encode(), f"{header}.{payload}".encode("ascii"), hashlib.sha256).digest()
+token = f"{header}.{payload}.{b64(sig)}"
+
+out, replaced = [], False
+for raw in lines:
+    if raw.strip().partition("=")[0].strip() == "PANTHEON_RUNTIME_MANAGER_TOKEN":
+        if not replaced:
+            out.append(f"PANTHEON_RUNTIME_MANAGER_TOKEN={token}")
+        replaced = True
+    else:
+        out.append(raw)
+if not replaced:
+    out.append(f"PANTHEON_RUNTIME_MANAGER_TOKEN={token}")
+
+st = env_path.stat()
+fd, tmp = tempfile.mkstemp(dir=str(env_path.parent), prefix=".rm-token.")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out) + "\n")
+    os.chmod(tmp, st.st_mode & 0o7777)
+    try:
+        os.chown(tmp, st.st_uid, st.st_gid)
+    except PermissionError:
+        pass
+    os.replace(tmp, env_path)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
+PY
+run_priv python3 "${LOCAL_WORK_DIR}/mint_runtime_manager_token.py" \
+  "${STAGING_SECRETS_ENV_FILE}" \
+  "${STAGING_JWT_ISSUER}" \
+  "${STAGING_JWT_AUDIENCE}" \
+  "${STAGING_TENANT_ID}" \
+  "${STAGING_TTL_SECONDS:-7200}" \
+  || fail "RUNTIME_TOKEN_MINT_FAILED" "Could not derive bounded runtime-manager caller token"
+
 # 5. Validate manifest owner closure & pre-pull immutable digest-pinned images (candidate + baseline).
 MANIFEST_VARS="$(python3 - "${BUNDLE_DIR}/manifest.json" "${RELEASE_ID}" "${FE_SHA}" "${BFF_IMAGE}" "${STAGING_POSTGRES_IMAGE}" "${STAGING_NATS_IMAGE}" <<'PY'
 import json, os, re, shlex, sys
