@@ -319,5 +319,12 @@
     "trigger": "Actual Stage run 40872570260 at ce26fa2f2: VM created on regions/asia-east1/subnetworks/default (audit VM 8496409057929626699) and first IAP SSH failed rc255 [4047 Failed to lookup instance] 21.3s after create.",
     "unchanged": "GCP template, default VPC, manifest, images, business code, IAM, GHA config.",
     "validation": "test_real_gcloud_invocation_attachment_and_error_propagation (local fake CLI) only; not hosted evidence. Hosted acceptance remains external_wait."
+  },
+  "runtime_manager_token_shape_correction": {
+    "recorded_at": "2026-10-30T00:00:00Z",
+    "root_cause": "Existing staging Paper workers hold a non-JWT PANTHEON_RUNTIME_MANAGER_TOKEN; runtime-manager permissive inbound auth returns 403 AUTH_TOKEN_FORMAT for any bearer that is neither actor:role nor JWT (read-only readback actual-Stage14-Paper-existing-token-same-GET-auth-readback-20261030.json).",
+    "source_change": "deploy/staging/bootstrap.sh validate_secrets now rejects a PANTHEON_RUNTIME_MANAGER_TOKEN that is not JWT-shaped (SECRET_CONTENT_INVALID) before any deploy; fixture + negative subtest in tests/deployment/test_staging_release.py.",
+    "validation": "test_product_owner_inputs_fail_closed and test_bare_debian_bootstrap_secrets_and_real_collector_negative_gates pass locally (controller behaviour only, not hosted evidence). test_dsn_query_routing_override_rejected fails identically on base without this change in this sandbox.",
+    "not_done": "No credential minted or rotated, no VM/workflow mutation. The already-running retained staging still needs a genuine JWT runtime-manager credential supplied through the approved secret path; that remains external_wait."
   }
 }
