@@ -2,7 +2,9 @@ import ast
 import copy
 import json
 import os
+import re
 import sys
+import uuid
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
@@ -2846,3 +2848,217 @@ def test_routed_strategy_counts_reject_none_through_real_read_surface(monkeypatc
     empty = ReadSurfacePorts(research_knowledge_source=SimpleNamespace(count_strategy_persona_bindings=lambda: {}))
     monkeypatch.setattr(personas_service, "_get_active_read_store", lambda: empty)
     assert personas_service._routed_strategy_counts_by_persona() == {}
+
+
+# --- Slim fleet ledger reader: final-DTO parity, byte/query budget, request scope ---
+_SLIM_DSN = os.getenv("PANTHEON_TEST_POSTGRES_DSN", "").strip()
+
+
+class _FullOnlyLedger:
+    """Hides the ``*_for_fleet`` projection so the fleet takes the old full reader."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.calls = []
+        self.bytes = 0
+
+    def __getattr__(self, name):
+        if name.endswith("_for_fleet"):
+            raise AttributeError(name)
+        attr = getattr(self._inner, name)
+        if name not in ("list_by_tenant", "list_all"):
+            return attr
+
+        def wrapped(*args, **kwargs):
+            rows = attr(*args, **kwargs)
+            self.calls.append(name)
+            self.bytes += sum(len(json.dumps(r.to_dict())) for r in rows)
+            return rows
+
+        return wrapped
+
+
+class _SlimLedger(_FullOnlyLedger):
+    def __getattr__(self, name):
+        if not name.endswith("_for_fleet"):
+            return super().__getattr__(name)
+        attr = getattr(self._inner, name)
+
+        def wrapped(*args, **kwargs):
+            rows = attr(*args, **kwargs)
+            self.calls.append(name)
+            self.bytes += sum(len(json.dumps(r.to_dict())) for r in rows)
+            return rows
+
+        return wrapped
+
+
+def _seed_large_ledger(store, *, malformed_tenant=None):
+    """Production-shaped rows: big historical receipts beside the few consumed facts."""
+    blob = {"rows": ["x" * 400 for _ in range(500)]}  # ~200KB per receipt
+
+    def put(tenant, pid, key, state, references, result=None, error=None, compensation=None):
+        store.reserve(
+            tenant_id=tenant, idempotency_key=key, request_hash=f"h-{key}",
+            normalized_name=f"n-{key}", persona_id=pid,
+            request_payload={"name": pid, "requested_by": "pantheon-dev-browser"},
+        )
+        rec = store.acquire(tenant, key, lease_owner="w", lease_seconds=60)
+        rec.state, rec.references, rec.result = state, references, result
+        rec.error, rec.compensation = error, compensation
+        store.checkpoint(rec, lease_owner="w", lease_seconds=60)
+
+    ok_refs = {
+        "runtime_binding_id": "rb", "runtime_id": "rt",
+        "authoritative_readback": {"rows": blob},
+        "provisioning_readback_started_at": "2026-10-30T00:00:00Z",
+        "first_evaluation_schedule_cleanup": {"registered": False},
+        "deployment_dispatch": blob, "owner_receipts": blob,
+        "retirement": {"at": "2026-10-30T00:00:00Z"},
+    }
+    ok_result = {"paper_running": True, "status": "paper_running", "evidence": blob}
+    put("pantheon-dev", "p-paper", "k-paper", "succeeded", ok_refs, ok_result)
+    put("pantheon-dev", "p-test", "k-test", "failed", {"deployment_dispatch": blob},
+        None, {"code": "X", "detail": "boom"}, {"steps": ["a"]})
+    put("pantheon-dev", "p-draft", "k-draft", "reserved", {"owner_receipts": blob})
+    put("pantheon-dev", "p-legacy", "k-legacy", "succeeded",
+        {**ok_refs, "authoritative_readback": "not-an-object"}, ok_result)  # presence not satisfied
+    for i in range(3):
+        put("pantheon-dev", f"p-old-{i:04d}", f"k-old-{i}", "retired", ok_refs, ok_result)
+    put("other-tenant", "p-other-tenant", "k-other", "succeeded", ok_refs, ok_result)
+
+
+_PARITY_PARAMS = [
+    {"page_size": 200},
+    {"purpose": "trading", "data_scope": "regular", "archived": "exclude", "page_size": 20},
+    {"archived": "only", "page_size": 20},
+    {"data_scope": "unknown", "archived": "exclude"},
+    {"data_scope": "test", "archived": "exclude"},
+    {"state": "draft", "archived": "exclude"},
+]
+
+
+@pytest.fixture
+def _pg_ledger():
+    if not _SLIM_DSN:
+        pytest.skip("PANTHEON_TEST_POSTGRES_DSN is not configured")
+    import psycopg
+    from services.control_plane.bff.persona_provisioning import PostgresPersonaProvisioningStore
+
+    schema = f"bff_fleet_slim_{uuid.uuid4().hex[:16]}"
+    try:
+        store = PostgresPersonaProvisioningStore(_SLIM_DSN, schema=schema)
+        _seed_large_ledger(store)
+        yield store
+    finally:
+        with psycopg.connect(_SLIM_DSN, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+
+def _fleet_with_ledger(monkeypatch, ledger, params):
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: ledger)
+    with _client_with_store(_seed_fleet_classification_store(5)) as client:
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS, params=params)
+    return response.status_code, response.json()
+
+
+def _scrub_volatile(body):
+    # Only wall-clock stamps (identical ledger rows feed both runs) are scrubbed.
+    text = json.dumps(body, sort_keys=True)
+    return json.loads(re.sub(r'"((?:request_id|generated_at|as_of|source_as_of|snapshot_at|last_known_at|updated_at|lastMutationAt|last_mutation_at))":\s*"[^"]*"', r'"\1": "-"', text))
+
+
+@pytest.mark.parametrize("params", _PARITY_PARAMS)
+def test_fleet_final_dto_identical_for_full_and_slim_ledger_reader(params, monkeypatch, _pg_ledger):
+    full = _FullOnlyLedger(_pg_ledger)
+    slim = _SlimLedger(_pg_ledger)
+    full_status, full_body = _fleet_with_ledger(monkeypatch, full, params)
+    slim_status, slim_body = _fleet_with_ledger(monkeypatch, slim, params)
+    assert full_status == slim_status == 200
+    assert _scrub_volatile(full_body) == _scrub_volatile(slim_body)
+    # One durable ledger query each; slim decodes a fraction of the bytes.
+    assert full.calls == ["list_by_tenant"] and slim.calls == ["list_by_tenant_for_fleet"]
+    assert full.bytes > 1_000_000
+    assert slim.bytes * 20 < full.bytes, (slim.bytes, full.bytes)
+
+
+def test_fleet_slim_reader_malformed_ledger_json_stays_truthful(monkeypatch, _pg_ledger):
+    import psycopg
+
+    with psycopg.connect(_SLIM_DSN, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE {_pg_ledger.table} SET \"references\"='[1,2]'::jsonb WHERE idempotency_key='k-paper'"
+        )
+    outcomes = []
+    for ledger in (_FullOnlyLedger(_pg_ledger), _SlimLedger(_pg_ledger)):
+        monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda ledger=ledger: ledger)
+        with _client_with_store(_seed_fleet_classification_store(5)) as client:
+            r = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"page_size": 20})
+        outcomes.append((r.status_code, _scrub_volatile(r.json())))
+    assert outcomes[0] == outcomes[1]
+
+
+def test_fleet_tenant_mismatch_ledger_row_never_reaches_final_dto(monkeypatch, _pg_ledger):
+    _, body = _fleet_with_ledger(monkeypatch, _SlimLedger(_pg_ledger), {"page_size": 200})
+    assert "p-other-tenant" not in {i["persona_id"] for i in body["data"]["items"]}
+
+
+class _VariantStore:
+    """Memory-backed ledger exposing both readers so request sharing can be counted."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.calls = []
+        self.fail = False
+
+    def list_by_tenant(self, tenant_id):
+        self.calls.append("full")
+        return self._inner.list_by_tenant(tenant_id)
+
+    def list_all(self):
+        self.calls.append("full_all")
+        return self._inner.list_all()
+
+    def list_by_tenant_for_fleet(self, tenant_id):
+        self.calls.append("slim")
+        if self.fail:
+            raise RuntimeError("ledger down")
+        return self._inner.list_by_tenant(tenant_id)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_fleet_request_reads_slim_ledger_once_and_shares_failure(monkeypatch):
+    variant = _VariantStore(personas_service._persona_provisioning_store())
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: variant)
+    with _client_with_store(_seed_fleet_classification_store(20)) as client:
+        ok = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"page_size": 20})
+        assert ok.status_code == 200
+        assert variant.calls == ["slim"], variant.calls  # one slim read, no full read
+        # A second request is a separate scope: no cross-request cache.
+        client.get("/bff/management/persona-fleet", headers=HEADERS, params={"page_size": 20})
+        assert variant.calls == ["slim", "slim"], variant.calls
+        variant.calls.clear()
+        variant.fail = True
+        bad = client.get("/bff/management/persona-fleet", headers=HEADERS, params={"page_size": 20})
+    assert bad.status_code == 503
+    assert variant.calls == ["slim"], variant.calls  # failure shared, not retried per caller
+
+
+def test_fleet_slim_ledger_read_is_request_scoped_and_final_records_are_independent(monkeypatch):
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+
+    store = _VariantStore(personas_service._persona_provisioning_store())
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: store)
+    with _client_with_store(_seed_fleet_classification_store(5)):
+        with request_read_scope():
+            a = personas_service._list_persona_records("pantheon-dev", reuse_request_read=True)
+            b = personas_service._list_persona_records("pantheon-dev", reuse_request_read=True)
+            assert a and a == b
+            a[0]["name"] = "mutated"
+            assert b[0]["name"] != "mutated"  # independent final results
+            assert store.calls == ["slim"], store.calls  # one shared slim read
+        with request_read_scope():  # a new scope never sees the previous read
+            personas_service._list_persona_records("pantheon-dev", reuse_request_read=True)
+            assert store.calls == ["slim", "slim"], store.calls

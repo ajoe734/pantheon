@@ -1740,3 +1740,37 @@ def test_explicit_market_context_preserves_through_paper_running_evaluation(
     assert state == "paper_running"
     assert persona["metadata"]["market"] == "US"
 
+
+
+def test_shared_fleet_ledger_read_prefers_slim_reader_and_falls_back_to_full() -> None:
+    from services.control_plane.bff.personas import service as svc
+
+    class Slim:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def list_by_tenant(self, tenant_id):
+            self.calls.append("full")
+            return ["full"]
+
+        def list_by_tenant_for_fleet(self, tenant_id):
+            self.calls.append("slim")
+            return ["slim"]
+
+        def list_all(self):
+            self.calls.append("full_all")
+            return ["full"]
+
+        def list_all_for_fleet(self):
+            self.calls.append("slim_all")
+            return ["slim"]
+
+    class Full:
+        def list_by_tenant(self, tenant_id):
+            return ["full"]
+
+    slim = Slim()
+    assert svc._persona_provisioning_records_shared(slim, "t") == ["slim"]
+    assert svc._persona_provisioning_records_shared(slim, "") == ["slim"]
+    assert slim.calls == ["slim", "slim_all"]
+    assert svc._persona_provisioning_records_shared(Full(), "t") == ["full"]
