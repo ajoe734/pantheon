@@ -1,0 +1,12 @@
+{
+  "task": "PERSONA-FLEET-LEDGER-PAYLOAD-20261030",
+  "change": "PostgresPersonaProvisioningStore.list_by_tenant_for_fleet/list_all_for_fleet: server-side slim projection used only by the request-shared fleet ledger read (personas.service._persona_provisioning_records_shared). Keeps references keys runtime_binding_id, runtime_id, authoritative_readback (object -> {}), provisioning_readback_started_at, first_evaluation_schedule_cleanup and result.paper_running/status; request_payload, error, compensation, state, lease and timestamps unchanged. Default get/list/list_all/coordinator/reconciler readers unchanged; non-object JSON passes through untouched; no migration/schema/API change.",
+  "consumer_proof": "personas.service._persona_record_for_provisioning and _persona_provisioning_metadata read only the kept references/result keys (service.py ~4273, ~11708, ~11780, ~11791).",
+  "monitor_change": "not made (optional; ledger fix addressed the measured dominant cost)",
+  "root_measurement": {"references_bytes_106_rows": 8872759, "source": "actual-provisioning-column-sizes-3867.json"},
+  "tests": {
+    "postgres_pfl_pg_test": "test_persona_provisioning_postgres_integration.py 2 passed (slim parity, ~20x smaller references, tenant filter, malformed passthrough, full reader regression)",
+    "suites": "readback/store/fleet-contract/b3-fleet/capital-runtime-ports/management-read-budget: 183 passed"
+  },
+  "limits": "No production-latency claim; Root must run the bounded actual read-only comparison and the hosted acceptance."
+}
