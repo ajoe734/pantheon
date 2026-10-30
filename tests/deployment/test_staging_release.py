@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import unittest
 
 import jsonschema
@@ -1850,12 +1851,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 f"{k}=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging\n"
                 for k in PRODUCT_DSN_KEYS
             )
-            + "".join(
-                f"{k}=stg-fixture-{k.lower()}-value\n"
-                for k in PRODUCT_SECRET_KEYS
-                if k != "PANTHEON_RUNTIME_MANAGER_TOKEN"
-            )
-            + "PANTHEON_RUNTIME_MANAGER_TOKEN=stg.fixture.runtime-manager-token\n",
+            + "".join(f"{k}=stg-fixture-{k.lower()}-value\n" for k in PRODUCT_SECRET_KEYS),
             encoding="utf-8",
         )
         self.secrets_env_file.chmod(0o600)
@@ -2166,7 +2162,6 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         for key, bad in (
             ("EVOLUTION_AUTH_TOKEN", "pantheon-local-evolution-service"),
             ("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-service-internal"),
-            ("PANTHEON_RUNTIME_MANAGER_TOKEN", "opaque-random-bearer-without-jwt-shape"),
             ("PERSONA_STORE_DSN", ""),
             ("AGORA_RESEARCH_STORE_DSN", "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"),
         ):
@@ -2183,6 +2178,85 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 )
                 self.assertNotEqual(res.returncode, 0)
                 self.assertIn("SECRET_CONTENT_INVALID", res.stderr + res.stdout)
+
+    def _mint_runtime_manager_token(self, ttl: str = "7200", secret: str = "stg-runtime-signing-key") -> tuple[str, str]:
+        from services import runtime_auth_inbound as inbound
+
+        text = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
+        match = re.search(r"<<'PY'\n(import base64.*?)\nPY\n", text, re.S)
+        self.assertIsNotNone(match, "mint_runtime_manager_token heredoc missing")
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / "staging.secrets.env"
+            env_file.write_text(
+                f"PANTHEON_RUNTIME_JWT_SECRET={secret}\nPANTHEON_RUNTIME_MANAGER_TOKEN=opaque-placeholder\n",
+                encoding="utf-8",
+            )
+            env_file.chmod(0o600)
+            script = Path(tmp) / "mint.py"
+            script.write_text(match.group(1) + "\n", encoding="utf-8")
+            res = subprocess.run(
+                ["python3", str(script), str(env_file), "https://auth.stg.pantheon.internal",
+                 "pantheon-staging-api", "tenant-stg", ttl],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual(env_file.stat().st_mode & 0o777, 0o600)
+            kv = dict(l.split("=", 1) for l in env_file.read_text(encoding="utf-8").splitlines())
+            self.assertEqual(sum(1 for l in env_file.read_text(encoding="utf-8").splitlines()
+                                 if l.startswith("PANTHEON_RUNTIME_MANAGER_TOKEN=")), 1)
+            return kv["PANTHEON_RUNTIME_MANAGER_TOKEN"], inbound
+
+    def test_bootstrap_renders_runtime_manager_token_accepted_by_native_verifier(self) -> None:
+        token, inbound = self._mint_runtime_manager_token()
+        env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": "stg-runtime-signing-key",
+            "PANTHEON_RUNTIME_JWT_ISSUER": "https://auth.stg.pantheon.internal",
+            "PANTHEON_RUNTIME_JWT_AUDIENCE": "pantheon-staging-api",
+        }
+        ctx = inbound.validate_request_auth(
+            authorization=f"Bearer {token}", required_roles=("operator",), env=env
+        )
+        self.assertEqual(ctx.actor_id, "svc:staging-paper-runtime-caller")
+        self.assertIn("operator", ctx.roles)
+        self.assertEqual(ctx.claims["tenant_id"], "tenant-stg")
+        self.assertLessEqual(ctx.claims["exp"] - ctx.claims["iat"], 7200)
+        for key, bad in (
+            ("PANTHEON_RUNTIME_JWT_SECRET", "other-key"),
+            ("PANTHEON_RUNTIME_JWT_ISSUER", "https://evil.example"),
+            ("PANTHEON_RUNTIME_JWT_AUDIENCE", "other-aud"),
+        ):
+            with self.subTest(key=key):
+                with self.assertRaises(inbound.AuthError):
+                    inbound.validate_request_auth(
+                        authorization=f"Bearer {token}", required_roles=("operator",), env={**env, key: bad}
+                    )
+        with self.assertRaises(inbound.AuthError):
+            inbound.validate_request_auth(
+                authorization=f"Bearer {token}", required_roles=("risk_owner",), env=env
+            )
+        with self.assertRaises(inbound.AuthError):
+            inbound._verify_jwt_hs256(
+                token, secret=env["PANTHEON_RUNTIME_JWT_SECRET"], issuer=env["PANTHEON_RUNTIME_JWT_ISSUER"],
+                audience=env["PANTHEON_RUNTIME_JWT_AUDIENCE"], now=time.time() + 7300,
+            )
+
+    def test_sanitizer_preserves_exact_public_builtin_provenance_only(self) -> None:
+        ref = staging_sanitize.PUBLIC_BUILTIN_HISTORICAL_PROVENANCE_REFS[0]
+        registration_text = (
+            REPO_ROOT / "services/registry/strategy-artifacts/tw-session-momentum-v1.registration.json"
+        ).read_text(encoding="utf-8")
+        self.assertIn(json.dumps(ref)[1:-1], registration_text)
+        staging_sanitize._check_no_retired_identifiers(json.loads(registration_text))
+        staging_sanitize._check_no_retired_identifiers({"provenance_refs": [ref]})
+        for bad in (
+            {"provenance_refs": [ref.replace("b9f439", "000000")]},
+            {"provenance_refs": [ref], "runtime_path": "/home/lupin/paper-loop"},
+            {"host": "35.201.204.12"},
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(staging_sanitize.SanitizationError):
+                    staging_sanitize._check_no_retired_identifiers(bad)
 
     def test_dsn_query_routing_override_rejected(self) -> None:
         self._unlock_vm_env_dir()
