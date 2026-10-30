@@ -250,9 +250,7 @@ def _scrub_value(value: Any) -> Any:
                 if v is not None:
                     cleaned[k] = REDACTED
                 continue
-            cleaned_v = _scrub_value(v)
-            if cleaned_v is not None:
-                cleaned[k] = cleaned_v
+            cleaned[k] = _scrub_value(v)
         return cleaned
     if isinstance(value, list):
         return [_scrub_value(item) for item in value if item is not None]

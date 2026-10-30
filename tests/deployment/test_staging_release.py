@@ -1275,7 +1275,7 @@ def _sample_raw_dataset(mig_sha: str = "sha256:" + ("4" * 64)) -> dict:
                         "correlation_id": "corr-001",
                         "token": "secret-jwt-token",
                         "auth": "Bearer secret",
-                        "nested": {"broker_secret": "drop-me", "latency_ms": 42},
+                        "nested": {"broker_secret": "drop-me", "latency_ms": 42, "legit_null": None},
                     },
                     "created_at": "2026-10-24T07:00:00Z",
                     "ingested_at": "2026-10-24T07:00:01Z",
@@ -1449,6 +1449,8 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         self.assertNotIn("auth", payload)
         self.assertNotIn("broker_secret", payload["nested"])
         self.assertEqual(payload["nested"]["latency_ms"], 42)
+        self.assertIn("legit_null", payload["nested"])
+        self.assertIsNone(payload["nested"]["legit_null"])
         loop = sanitized["tables"]["public.loop_controller_records"][0]
         self.assertNotIn("api_key", loop["payload"])
         self.assertNotIn("access_token", loop["evidence_refs"][0])
