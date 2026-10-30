@@ -1,4 +1,5 @@
 import ast
+import copy
 import json
 import os
 import sys
@@ -1469,6 +1470,74 @@ def test_overlay_live_finmind_health_noop_when_unavailable(monkeypatch):
     assert out_dss["state"] == "partial_readback"
 
 
+def test_source_health_truth_overlay_thin_matches_rich_for_list_rows():
+    big = {"blob": ["x" * 64] * 2000}
+    truths = {
+        "tw-finmind-broker-daily-report": {
+            "health": {
+                "source_id": "tw-finmind-broker-daily-report",
+                "status": "ok",
+                "last_success_at": "2026-06-27T05:00:00Z",
+                "row_count_last_run": 3,
+                "metadata": big,
+            },
+            "connector": {
+                "connector_id": "tw-finmind-broker-daily-report",
+                "status": "enabled",
+                "schedule": {"configured": True, "enabled": True},
+                "freshness": {"status": "fresh", **big},
+                "health_metrics": big,
+            },
+        },
+    }
+    required = [
+        {
+            "dataset": "tw_broker_top",
+            "source_class": "live_push",
+            "connector_candidates": ["tw-finmind-broker-daily-report"],
+        }
+    ]
+    sources = [
+        {"provider_key": "finmind", "status": "read_unavailable"},
+        {"provider_key": "twse", "status": "credential_unavailable", "secret_ref": "ref"},
+    ]
+    dss = {"state": "partial_readback", "provider_statuses": {"finmind": "read_unavailable"}}
+
+    def run(thin):
+        service = PersonaService(
+            write_owner=create_persona_registry_write_owner(),
+            ranking_write_owner=object(),
+            read_store=_SourceTruthReadStore(truths),
+            command_store=object(),
+        )
+        return service.overlay_source_health_truth(
+            dss, sources, required_data_sources=required, thin=thin
+        )
+
+    rich_dss, rich_sources, _ = run(False)
+    thin_dss, thin_sources, thin_bindings = run(True)
+
+    assert thin_bindings == []
+    assert "required_source_health" not in thin_dss
+    assert "connector_health" not in thin_dss
+    assert rich_dss["required_source_health"]
+    for key in (
+        "state",
+        "provider_statuses",
+        "source_health_source",
+        "live_ingestion_enabled",
+        "live_source_connector_ids",
+        "static_source_labels",
+    ):
+        assert thin_dss[key] == rich_dss[key]
+    assert [s["status"] for s in thin_sources] == [s["status"] for s in rich_sources]
+    assert (
+        personas_service._persona_fleet_list_data_sources(thin_sources)
+        == personas_service._persona_fleet_list_data_sources(rich_sources)
+    )
+    assert len(json.dumps(thin_dss)) < len(json.dumps(rich_dss)) / 10
+
+
 def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch):
     dss = {
         "state": "partial_readback",
@@ -2144,6 +2213,43 @@ def test_fleet_detail_projection_is_page_bounded(archived_count, monkeypatch):
     assert calls["detail"] <= 20
 
 
+def test_fleet_page_rows_reuse_cohort_projection_and_match_full_projection(monkeypatch):
+    # Warm-p95: the page rows used to re-run the whole shared projection (health,
+    # telemetry rollup, data-source overlay) already done for the cohort pass.
+    calls = {"health": 0}
+    original_health = personas_service._project_persona_fleet_health
+
+    def counting_health(**kwargs):
+        calls["health"] += 1
+        return original_health(**kwargs)
+
+    monkeypatch.setattr(personas_service, "_project_persona_fleet_health", counting_health)
+    with _client_with_store(_seed_fleet_classification_store(20)) as client:
+        body = _fleet(client, purpose="trading", archived="include", page_size=20)
+    items = body["data"]["items"]
+    assert items
+    # One health projection per cohort row; page rows add none.
+    assert calls["health"] <= body["page_info"]["total"]
+
+    # Parity: reused rows equal a from-scratch full projection of the same inputs.
+    captured = {}
+    original_list = personas_service._project_persona_fleet_list_row
+
+    def spy(**kwargs):
+        reused = original_list(**kwargs)
+        scratch = {k: v for k, v in kwargs.items() if k != "cohort_capture"}
+        fresh = original_list(**scratch)
+        captured[reused["persona_id"]] = (copy.deepcopy(reused), fresh)
+        return reused
+
+    monkeypatch.setattr(personas_service, "_project_persona_fleet_list_row", spy)
+    with _client_with_store(_seed_fleet_classification_store(20)) as client:
+        _fleet(client, purpose="trading", archived="include", page_size=20)
+    assert captured
+    for reused, fresh in captured.values():
+        assert reused == fresh
+
+
 class _OwnerCallCounter:
     """Delegating proxy that counts every owner method invoked on the store."""
 
@@ -2324,6 +2430,36 @@ def test_fleet_overlaps_strategy_spec_and_source_registry_reads(monkeypatch):
         # The two slow reads overlap instead of running back to back.
         assert max(s for s, _, _ in spans.values()) < min(e for _, e, _ in spans.values()), spans
         assert elapsed < len(spans) * delay + 0.35, (elapsed, spans)
+
+
+def test_fleet_directory_read_runs_while_registry_count_is_in_flight(monkeypatch):
+    # Warm-p95: the directory snapshot (~60ms) used to start only after the
+    # league had waited for the slow Registry count, so it extended the path.
+    import time as _time
+
+    store = _seed_fleet_classification_store(20)
+    marks = {}
+    original_count = store.count_strategy_persona_bindings
+    original_list = store.list_personas
+
+    def slow_count():
+        marks["count_start"] = _time.monotonic()
+        _time.sleep(0.5)
+        try:
+            return original_count()
+        finally:
+            marks["count_end"] = _time.monotonic()
+
+    def list_personas(*args, **kwargs):
+        if kwargs.get("include_market_persona_defaults"):
+            marks.setdefault("defaults_start", _time.monotonic())
+        return original_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "count_strategy_persona_bindings", slow_count)
+    monkeypatch.setattr(store, "list_personas", list_personas)
+    with _client_with_store(store) as client:
+        _fleet(client, purpose="trading", data_scope="regular", archived="exclude", page_size=20)
+    assert marks["defaults_start"] < marks["count_end"], marks
 
 
 @pytest.mark.parametrize("fail_registry", [False, True])

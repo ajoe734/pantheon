@@ -1,0 +1,11 @@
+{
+  "task": "PERSONA-FLEET-REGISTRY-READ-20261030",
+  "scope": "Source only. Local pfl-pg-test diagnostics on synthetic ~23KB toasted jsonb rows (5081 rows); not hosted p95, not a deployment.",
+  "finding": "list_all_selected referenced the raw wide payload column twice per row (jsonb_typeof type check, then payload || '{}'), detoasting every row twice in the facts scan. Removing the copy entirely is slower (each fact expression detoasts again), consistent with the actual EXPLAIN (321ms of 369ms in facts scan).",
+  "change": "services/foundation/postgres_json_store.py: payload || '{}' is computed once as the detoasted value; the raw column is re-read only when that result is an array (legacy string-encoded payload or a real array), so object rows detoast once. Same row set, ordering, legacy-string unwrapping, visible-then-family snapshot semantics.",
+  "local_facts_scan_ms": {"before": [342, 399], "no_copy_rejected": [1849, 1952], "after": [215, 229]},
+  "buffer_hits_full_statement": {"before": 1119, "after_ok_threshold": "<= 1.25 x single-pass floor (550)"},
+  "regression": "services/registry/test_owner_durability.py::test_list_all_selected_detoasts_wide_payload_once_and_keeps_payload_shapes (block hits; fails on old, passes on new; also covers legacy string/array/scalar payload shapes)",
+  "tests": {"registry+foundation": "129 passed", "bff persona fleet/read budget/research ports": "115 passed"},
+  "unchanged": "BFF request path, default full strategy API, family/visibility semantics, no cache/migration/fallback."
+}

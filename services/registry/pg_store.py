@@ -815,10 +815,13 @@ class PostgresRegistryStore:
         version of such a family, bound or not), decided in the same statement
         as the projection.
         """
-        keep_sql, keep_params = persona_binding_family_keep_sql(visible_tenants, artifact_type)
+        visible_sql, family_sql, bound_sql, keep_params = persona_binding_family_keep_sql(
+            visible_tenants, artifact_type,
+        )
         return persona_binding_rows_from_columns(
             self._entries.list_all_selected(
-                persona_binding_select_sql(), keep_sql=keep_sql, keep_params=keep_params,
+                persona_binding_select_sql(), visible_sql=visible_sql, family_sql=family_sql,
+                bound_sql=bound_sql, keep_params=keep_params,
             )
         )
 
@@ -873,8 +876,8 @@ def persona_binding_select_sql() -> str:
 
 def persona_binding_family_keep_sql(
     visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
-) -> tuple[str, tuple]:
-    """``(boolean expression, params)``: row is visible and in a family with a visible bound version.
+) -> tuple[str, str, str, tuple]:
+    """``(visible, family, bound, params)`` SQL facts for the visible-then-family row selection.
 
     The verified visible owner population (``visible_tenants`` / ``artifact_type``)
     is applied first; family eligibility is then decided only over those rows, in
@@ -906,12 +909,7 @@ def persona_binding_family_keep_sql(
             clauses.append("payload ->> 'owner_tenant' IS NULL")
         visible.append("(" + " OR ".join(clauses) + ")")
     visible_sql = " AND ".join(visible) or "TRUE"
-    fam = "payload ->> 'strategy_id'"
-    sql = (
-        f"({visible_sql}) AND ({fam} IS NULL OR "
-        f"COALESCE(bool_or({bound}) FILTER (WHERE {visible_sql}) OVER (PARTITION BY {fam}), FALSE))"
-    )
-    return sql, tuple(params) * 2
+    return visible_sql, "payload ->> 'strategy_id'", f"({bound})", tuple(params)
 
 
 def persona_binding_rows_from_columns(rows) -> list[dict]:

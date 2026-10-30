@@ -1112,6 +1112,11 @@ if args[:2] == ["compute", "ssh"]:
         save_state()
         print("ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend'].", file=sys.stderr)
         raise SystemExit(255)
+    if state.get("ssh_publickey_remaining", 0) > 0:
+        state["ssh_publickey_remaining"] -= 1
+        save_state()
+        print("deploy@10.0.0.1: Permission denied (publickey).", file=sys.stderr)
+        raise SystemExit(255)
     if state.get("ssh_nonretryable"):
         print("ERROR: [4033: 'permission denied']", file=sys.stderr)
         raise SystemExit(255)
@@ -2551,6 +2556,8 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             ("transient_4003_then_4047", {"ssh_4003_remaining": 2, "ssh_4047_remaining": 1}, True, 4),
             ("exhausted", {"ssh_4047_remaining": 99}, False, 6),
             ("exhausted_4003", {"ssh_4003_remaining": 99}, False, 6),
+            ("transient_publickey", {"ssh_4047_remaining": 1, "ssh_publickey_remaining": 1}, True, 3),
+            ("exhausted_publickey", {"ssh_publickey_remaining": 99}, False, 6),
             ("nonretryable", {"ssh_nonretryable": True}, False, 1),
         ):
             with self.subTest(ssh_retry=label):
