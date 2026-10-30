@@ -1850,7 +1850,12 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 f"{k}=postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging\n"
                 for k in PRODUCT_DSN_KEYS
             )
-            + "".join(f"{k}=stg-fixture-{k.lower()}-value\n" for k in PRODUCT_SECRET_KEYS),
+            + "".join(
+                f"{k}=stg-fixture-{k.lower()}-value\n"
+                for k in PRODUCT_SECRET_KEYS
+                if k != "PANTHEON_RUNTIME_MANAGER_TOKEN"
+            )
+            + "PANTHEON_RUNTIME_MANAGER_TOKEN=stg.fixture.runtime-manager-token\n",
             encoding="utf-8",
         )
         self.secrets_env_file.chmod(0o600)
@@ -2161,6 +2166,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         for key, bad in (
             ("EVOLUTION_AUTH_TOKEN", "pantheon-local-evolution-service"),
             ("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-service-internal"),
+            ("PANTHEON_RUNTIME_MANAGER_TOKEN", "opaque-random-bearer-without-jwt-shape"),
             ("PERSONA_STORE_DSN", ""),
             ("AGORA_RESEARCH_STORE_DSN", "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"),
         ):

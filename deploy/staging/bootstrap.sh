@@ -355,6 +355,13 @@ for token_key in PRODUCT_SECRET_KEYS:
     if kv[token_key].startswith("pantheon-local") or kv[token_key].endswith("-internal"):
         raise SystemExit(f"{token_key} carries a well-known Dev default credential")
 
+# Runtime-manager runs permissive/strict inbound auth: a bare random bearer is rejected with 403/401
+# AUTH_TOKEN_FORMAT, which silently breaks the Paper fleet reconciler/signal producer. Require a JWT-shaped
+# credential (verified by PANTHEON_RUNTIME_JWT_SECRET/issuer/audience) instead of discovering it at the Paper gate.
+rm_parts = kv["PANTHEON_RUNTIME_MANAGER_TOKEN"].split(".")
+if len(rm_parts) != 3 or not all(rm_parts):
+    raise SystemExit("PANTHEON_RUNTIME_MANAGER_TOKEN must be a JWT-shaped runtime-manager bearer (AUTH_TOKEN_FORMAT)")
+
 for unsafe_key in (
     "PANTHEON_LIVE_BROKER_ENABLED",
     "PANTHEON_PROVIDER_ENABLED",
