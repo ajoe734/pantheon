@@ -3062,3 +3062,123 @@ def test_fleet_slim_ledger_read_is_request_scoped_and_final_records_are_independ
         with request_read_scope():  # a new scope never sees the previous read
             personas_service._list_persona_records("pantheon-dev", reuse_request_read=True)
             assert store.calls == ["slim", "slim"], store.calls
+
+
+# --- PERSONA-FLEET-HEALTH-IO-20261030: one directory copy per fleet request ---
+
+
+class _CountingDirectoryStore:
+    """Read store whose ``list_personas`` deep-copies like the real port."""
+
+    def __init__(self, records: list) -> None:
+        self._records = records
+        self.list_calls = 0
+
+    def list_personas(self, **_kwargs: Any) -> list:
+        self.list_calls += 1
+        return deepcopy(self._records)
+
+
+class _EmptyProvisioningStore:
+    def list_all(self) -> list:
+        return []
+
+    def list_by_tenant(self, _tenant: str) -> list:
+        return []
+
+
+def _directory_fixture(monkeypatch, tenant_id: str = "tenant-a"):
+    records = [
+        {
+            "persona_id": f"persona-{i}",
+            "name": f"Persona {i}",
+            "tenant_id": tenant_id,
+            "created_at": f"2026-10-0{i + 1}T00:00:00Z",
+            "metadata": {"tags": ["x"], "blob": {"nested": [i] * 50}},
+        }
+        for i in range(3)
+    ]
+    store = _CountingDirectoryStore(records)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda explicit=None: store)
+    monkeypatch.setattr(
+        personas_service, "_persona_provisioning_store", lambda: _EmptyProvisioningStore()
+    )
+    return store, records
+
+
+def test_fleet_directory_reads_share_one_request_copy(monkeypatch):
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+
+    store, records = _directory_fixture(monkeypatch)
+    with request_read_scope():
+        first = personas_service._list_persona_records("tenant-a", reuse_request_read=True)
+        second = personas_service._list_persona_records("tenant-a", reuse_request_read=True)
+    # Old behaviour copied the whole directory once per fleet read.
+    assert store.list_calls == 1
+    assert [r["persona_id"] for r in first] == [r["persona_id"] for r in second]
+    assert first == second == sorted(
+        records, key=lambda r: (r["created_at"], r["persona_id"])
+    )
+    # Top-level records are independent per caller.
+    first[0]["name"] = "mutated"
+    assert second[0]["name"] != "mutated"
+
+
+def test_default_directory_reads_keep_independent_nested_copies(monkeypatch):
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+
+    store, _records = _directory_fixture(monkeypatch)
+    with request_read_scope():
+        first = personas_service._list_persona_records("tenant-a")
+        second = personas_service._list_persona_records("tenant-a")
+        first[0]["metadata"]["tags"].append("mutated")
+    assert store.list_calls == 2
+    assert "mutated" not in second[0]["metadata"]["tags"]
+
+
+def test_shared_directory_does_not_cross_requests_or_tenants(monkeypatch):
+    from services.control_plane.bff.core.owner_reads import (
+        request_read_scope,
+        selected_tenant,
+    )
+
+    store, _records = _directory_fixture(monkeypatch)
+    with request_read_scope():
+        personas_service._list_persona_records("tenant-a", reuse_request_read=True)
+    with request_read_scope():
+        personas_service._list_persona_records("tenant-a", reuse_request_read=True)
+    assert store.list_calls == 2  # no cross-request cache
+
+    store.list_calls = 0
+    with request_read_scope():
+        token = selected_tenant.set("tenant-a")
+        try:
+            personas_service._list_persona_records("tenant-a", reuse_request_read=True)
+        finally:
+            selected_tenant.reset(token)
+        token = selected_tenant.set("tenant-b")
+        try:
+            other = personas_service._list_persona_records(
+                "tenant-b", reuse_request_read=True
+            )
+        finally:
+            selected_tenant.reset(token)
+    assert store.list_calls == 2  # selected tenant keys the shared read
+    assert other == []  # tenant-b still sees only its own records
+
+
+def test_shared_directory_failure_is_shared_not_hidden(monkeypatch):
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+
+    store, _records = _directory_fixture(monkeypatch)
+
+    def _boom(**_kwargs: Any):
+        store.list_calls += 1
+        raise RuntimeError("owner down")
+
+    store.list_personas = _boom  # type: ignore[assignment]
+    with request_read_scope():
+        for _ in range(2):
+            with pytest.raises(RuntimeError, match="owner down"):
+                personas_service._list_persona_records("tenant-a", reuse_request_read=True)
+    assert store.list_calls == 1
