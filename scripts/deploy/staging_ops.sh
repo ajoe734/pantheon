@@ -603,7 +603,43 @@ PY
         --command="${REMOTE_VERIFY_CMD}" 2>&1
     )"; then
       REMOTE_ERROR_CODES="$(printf '%s' "$SSH_VERIFY_OUT" | grep -oE '"error_code" *: *"[A-Z][A-Z0-9_]{2,63}"' | sed -E 's/.*"([A-Z0-9_]+)"$/\1/' | sort -u | tr '\n' ' ' || true)"
-      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via IAP SSH; remote error_code: ${REMOTE_ERROR_CODES:-unknown}"
+      # Only for PRODUCT_OWNER_UNSERVED: keep the structural service-name list (every name validated
+      # against PRODUCT_OWNER_IMAGE_KEYS); anything malformed/unknown stays generic. Never echo raw output.
+      UNSERVED_OWNERS="$(
+        SSH_VERIFY_OUT="${SSH_VERIFY_OUT}" PYTHONPATH="${REPO_ROOT}" python3 -I - <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["PYTHONPATH"])
+from scripts.deploy.staging_sanitize import PRODUCT_OWNER_IMAGE_KEYS
+
+prefix = "Product owners not running/healthy: "
+allowed = {k.replace("_", "-") for k in PRODUCT_OWNER_IMAGE_KEYS}
+for line in reversed(os.environ["SSH_VERIFY_OUT"].splitlines()):
+    line = line.strip()
+    if not (line.startswith("{") and line.endswith("}")):
+        continue
+    try:
+        doc = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if not isinstance(doc, dict) or doc.get("error_code") != "PRODUCT_OWNER_UNSERVED":
+        continue
+    msg = doc.get("message")
+    if not isinstance(msg, str) or not msg.startswith(prefix):
+        break
+    names = msg[len(prefix):].split(", ")
+    if names and all(n in allowed for n in names):
+        print(",".join(sorted(set(names))))
+    break
+PY
+      )"
+      UNSERVED_SUFFIX=""
+      if [[ -n "${UNSERVED_OWNERS}" ]]; then
+        UNSERVED_SUFFIX="; unserved_product_owner_services: ${UNSERVED_OWNERS}"
+      fi
+      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via IAP SSH; remote error_code: ${REMOTE_ERROR_CODES:-unknown}${UNSERVED_SUFFIX}"
     fi
 
     GATE_OUT_DIR="${STATE_DIR}/observed-gates/${RELEASE_ID}"
