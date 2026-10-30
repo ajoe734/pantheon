@@ -3,10 +3,26 @@
   "change": "PostgresPersonaProvisioningStore.list_by_tenant_for_fleet/list_all_for_fleet: server-side slim projection used only by the request-shared fleet ledger read (personas.service._persona_provisioning_records_shared). Keeps references keys runtime_binding_id, runtime_id, authoritative_readback (object -> {}), provisioning_readback_started_at, first_evaluation_schedule_cleanup and result.paper_running/status; request_payload, error, compensation, state, lease and timestamps unchanged. Default get/list/list_all/coordinator/reconciler readers unchanged; non-object JSON passes through untouched; no migration/schema/API change.",
   "consumer_proof": "personas.service._persona_record_for_provisioning and _persona_provisioning_metadata read only the kept references/result keys (service.py ~4273, ~11708, ~11780, ~11791).",
   "monitor_change": "not made (optional; ledger fix addressed the measured dominant cost)",
-  "root_measurement": {"references_bytes_106_rows": 8872759, "source": "actual-provisioning-column-sizes-3867.json"},
-  "tests": {
-    "postgres_pfl_pg_test": "test_persona_provisioning_postgres_integration.py 2 passed (slim parity, ~20x smaller references, tenant filter, malformed passthrough, full reader regression)",
-    "suites": "readback/store/fleet-contract/b3-fleet/capital-runtime-ports/management-read-budget: 183 passed"
+  "root_measurement": {
+    "references_bytes_106_rows": 8872759,
+    "source": "actual-provisioning-column-sizes-3867.json"
   },
-  "limits": "No production-latency claim; Root must run the bounded actual read-only comparison and the hosted acceptance."
+  "tests": {
+    "command": "worker-test-python -B -m pytest <7 suites> -q (PANTHEON_TEST_POSTGRES_DSN -> owned isolated pfl-pg-test)",
+    "result": "195 passed, 13 warnings in 138.37s, exit 0; git diff --check clean",
+    "suites": [
+      "test_persona_provisioning_postgres_integration.py",
+      "test_persona_provisioning_store.py",
+      "test_persona_provisioning_readback.py",
+      "test_pathreon_market_persona_fleet_contract.py",
+      "tests/test_bff_b3_persona_fleet.py",
+      "tests/test_persona_capital_runtime_ports.py",
+      "tests/test_management_read_budget.py"
+    ],
+    "final_dto_parity": "test_fleet_final_dto_identical_for_full_and_slim_ledger_reader x6 param sets (default/trading-regular/archived-only/unknown/test/draft) through the real /bff/management/persona-fleet path on real Postgres with ~200KB receipts per row; rows cover succeeded+readback, failed+compensation, reserved, readback-not-object (presence), retired, other-tenant. Mutation check: dropping runtime_id from the slim projection fails 3 of 6.",
+    "budget": "one ledger query per request each; slim decoded bytes * 20 < full decoded bytes (full > 1MB) asserted by json size of returned records",
+    "request_scope": "test_fleet_request_reads_slim_ledger_once_and_shares_failure (one slim read, failure shared and 503, no cross-request cache); test_fleet_slim_ledger_read_is_request_scoped_and_final_records_are_independent (request_read_scope, mutation of one final result does not leak)",
+    "malformed_and_tenant": "malformed ledger JSON: full and slim readers fail identically (store level) and Fleet outcome identical; other-tenant row never reaches final DTO"
+  },
+  "limits": "No production-latency claim. BFF has no 'focus' query parameter (FE-only); covered by archived/state/data_scope filters. Root bounded actual read-only comparison including persona_provisioning and hosted acceptance remain separate obligations."
 }

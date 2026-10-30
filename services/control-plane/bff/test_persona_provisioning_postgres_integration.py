@@ -201,19 +201,16 @@ def test_fleet_slim_reader_drops_historical_payload_but_keeps_consumed_facts() -
         with psycopg.connect(DSN, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(
                 f"UPDATE {schema}.persona_provisioning SET \"references\"='[1,2]'::jsonb, "
-                "result='\"odd\"'::jsonb WHERE tenant_id=%s AND idempotency_key='k2'",
+                "result='[3]'::jsonb WHERE tenant_id=%s AND idempotency_key='k2'",
                 (other_tenant,),
             )
-        raw = store._connect  # noqa: SLF001 - confirm raw rows below
-        assert raw is not None
-        with psycopg.connect(DSN) as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT {store._FLEET_COLUMNS} FROM {schema}.persona_provisioning "  # noqa: SLF001
-                "WHERE tenant_id=%s",
-                (other_tenant,),
-            )
-            row = cur.fetchone()
-            assert row[8] == [1, 2] and row[9] == "odd"
+        # Malformed JSON is not repaired or invented: full and slim readers fail alike.
+        errors = []
+        for reader in (store.list_by_tenant, store.list_by_tenant_for_fleet):
+            with pytest.raises((TypeError, ValueError)) as excinfo:
+                reader(other_tenant)
+            errors.append(type(excinfo.value))
+        assert errors[0] is errors[1]
     finally:
         with psycopg.connect(DSN, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
