@@ -391,7 +391,7 @@ PY
     # 1. Create remote bundle directory safely over IAP SSH before SCP transfer.
     REMOTE_MKDIR_CMD="set -euo pipefail; rm -rf '${REMOTE_BUNDLE_DIR}' && mkdir -p '${REMOTE_BUNDLE_DIR}' && chmod 0700 '${REMOTE_BUNDLE_DIR}'"
     # A freshly created VM can answer IAP 4047 (lookup) or 4003 (backend port 22 not listening yet) before sshd is up:
-    # retry only those two transport codes, same args, within a short total budget that includes the command runtime.
+    # retry only those two transport codes plus the initial publickey denial, same args, within a short total budget that includes the command runtime.
     SSH_MKDIR_RC=0
     SSH_MKDIR_BUDGET_S=120
     SSH_MKDIR_MAX_ATTEMPTS=6
@@ -416,6 +416,8 @@ PY
         SSH_MKDIR_REASON="IAP 4047 Failed to lookup instance"
       elif grep -q '4003' <<<"${SSH_MKDIR_OUT}" && grep -qi 'failed to connect to backend' <<<"${SSH_MKDIR_OUT}"; then
         SSH_MKDIR_REASON="IAP 4003 failed to connect to backend port 22"
+      elif grep -q 'Permission denied (publickey)' <<<"${SSH_MKDIR_OUT}"; then
+        SSH_MKDIR_REASON="SSH Permission denied (publickey) on new VM"
       fi
       if [[ -z "${SSH_MKDIR_REASON}" || "${SSH_MKDIR_ATTEMPT}" -eq "${SSH_MKDIR_MAX_ATTEMPTS}" || $((SECONDS - SSH_MKDIR_START + 8)) -ge "${SSH_MKDIR_BUDGET_S}" ]]; then
         break
