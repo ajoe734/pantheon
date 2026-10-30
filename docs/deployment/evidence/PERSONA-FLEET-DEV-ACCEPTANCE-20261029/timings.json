@@ -301,5 +301,105 @@
       }
     ],
     "servedPairId": "0b9f25a1bf78e7f36534b0753635d970785ecc2166ccb7a176dec33735e02fb8"
+  },
+  "latest_batch_fa656a8c": {
+    "pair": {
+      "backend": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+      "root_run": 40996778825
+    },
+    "warm_ms": [
+      973,
+      823,
+      921,
+      1107,
+      1021,
+      1002,
+      714,
+      930,
+      54536,
+      1475,
+      678,
+      730,
+      649,
+      660,
+      654,
+      693,
+      1027,
+      574,
+      987,
+      548
+    ],
+    "warm_sorted_ms": [
+      548,
+      574,
+      649,
+      654,
+      660,
+      678,
+      693,
+      714,
+      730,
+      823,
+      921,
+      930,
+      973,
+      987,
+      1002,
+      1021,
+      1027,
+      1107,
+      1475,
+      54536
+    ],
+    "warm_p95_nearest_rank_ms": 1475,
+    "warm_target_ms": 1000,
+    "warm_pass": false,
+    "note": "sample 9 = 54536 ms outlier retained, not discarded",
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 951,
+        "initial_post_login_API_ms": 1246,
+        "login_to_initial_usable_ms": 1872,
+        "api_ms": 1018,
+        "usable_ms": 1755,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 883,
+        "initial_post_login_API_ms": 737,
+        "login_to_initial_usable_ms": 1313,
+        "api_ms": 1118,
+        "usable_ms": 1836,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 891,
+        "initial_post_login_API_ms": 1206,
+        "login_to_initial_usable_ms": 1764,
+        "api_ms": 857,
+        "usable_ms": 1589,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      }
+    ],
+    "cold_pass": true
   }
 }

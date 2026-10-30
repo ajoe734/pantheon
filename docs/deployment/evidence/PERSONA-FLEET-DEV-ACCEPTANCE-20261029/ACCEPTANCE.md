@@ -18,3 +18,12 @@ Status: release DONE on the final pair; hosted acceptance NOT passed (warm p95 s
 - Cold (3 fresh contexts): API 984/1187/1376 ms, usable 1827/1938/2074 ms — within targets.
 - **Warm: 20 samples, nearest-rank p95 = 1679 ms vs 1000 ms: FAIL** (previous pair 1500 ms; not an improvement). Sorted: 633–1803 ms, median ~1085 ms. Raw samples in timings.json `latest_batch_3867ec9b`. Target not waived.
 - Not rerun in this batch: finance/runtime probe, local privacy regression, Registry file-hash identity proof. Hosted milestone remains NOT done.
+
+## Update 2026-10-30: PR #6873 (ledger payload) deployed — warm p95 still FAIL
+
+- Release: Pantheon Nonprod Deploy run 40996778825 success, `Dev release fa656a8c19ae2db595e7815ce2a10b0c1ab7b516 + 56bec9ad581d7731551d685dbeeba0d7ba28eca3` (BFF includes PR #6873 merge; Branch CI Gate on that SHA passed before dispatch). `/bff/version` source_commit_sha = fa656a8c1, image sha256:c93c3c2ca123b41e42d3035d650634c50a2fc5609c67a2feda918c24ddeb6893. FE sha equals execute-plans dev head. FE gate/deploy runs 40998949523 / 41000806767 (candidate ca34eb53...) succeeded.
+- Read-only QA (same client): login/logout 200, post-logout me 401, no blocked writes. Raw: `hosted-ui-readonly-result.json`, `timings.json` `latest_batch_fa656a8c`.
+- Cold (3 fresh contexts): API 1018/1118/857 ms, usable 1755/1836/1589 ms — within targets.
+- **Warm: 20 samples, nearest-rank p95 = 1475 ms vs 1000 ms: FAIL.** 19 samples 548–1475 ms (median ~930 ms; 3 samples >1000 besides the outlier); sample 9 = **54536 ms** outlier, retained. Target not waived.
+- The harness reported completed_subset=false / exit 1; the full finance-runtime probe, local privacy rerun and Registry file-hash proof were NOT rerun for this pair. Hosted milestone remains NOT done.
+- Next: investigate the 54.5 s stall and residual >1 s warm reads via the responsible source task.

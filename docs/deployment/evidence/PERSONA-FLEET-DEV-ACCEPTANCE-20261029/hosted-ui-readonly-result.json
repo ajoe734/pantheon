@@ -1,16 +1,16 @@
 {
-  "started_at": "2026-10-29T23:00:19.688Z",
-  "harness_sha256": "3960cdfd167251e5d3ea7d5e9aa1319a1563eaad2f31f42702c7dac8e9c42a8f",
+  "started_at": "2026-10-30T04:22:43.632Z",
+  "harness_sha256": "a6105ca8e17c36a0a8f9754145e37caa13b3bed934f03ce8c96d6765ec9bc83b",
   "cold_method": "Three fresh browser contexts each perform real login and finish the initial authenticated fleet render, then enter fleet in a new page. Login, first post-login API/render, and fresh-page API/render are recorded separately. The backend is not restarted.",
   "cold": [
     {
       "entry": 1,
       "login_HTTP": 200,
-      "login_to_shell_ms": 938,
-      "initial_post_login_API_ms": 1824,
-      "login_to_initial_usable_ms": 2634,
-      "api_ms": 1115,
-      "usable_ms": 1836,
+      "login_to_shell_ms": 951,
+      "initial_post_login_API_ms": 1246,
+      "login_to_initial_usable_ms": 1872,
+      "api_ms": 1018,
+      "usable_ms": 1755,
       "row_count": 5,
       "initial_fleet_queries": [
         "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
@@ -21,10 +21,10 @@
       "entry": 2,
       "login_HTTP": 200,
       "login_to_shell_ms": 883,
-      "initial_post_login_API_ms": 1381,
-      "login_to_initial_usable_ms": 1954,
-      "api_ms": 1320,
-      "usable_ms": 2076,
+      "initial_post_login_API_ms": 737,
+      "login_to_initial_usable_ms": 1313,
+      "api_ms": 1118,
+      "usable_ms": 1836,
       "row_count": 5,
       "initial_fleet_queries": [
         "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
@@ -34,11 +34,11 @@
     {
       "entry": 3,
       "login_HTTP": 200,
-      "login_to_shell_ms": 931,
-      "initial_post_login_API_ms": 1240,
-      "login_to_initial_usable_ms": 1805,
-      "api_ms": 740,
-      "usable_ms": 1525,
+      "login_to_shell_ms": 891,
+      "initial_post_login_API_ms": 1206,
+      "login_to_initial_usable_ms": 1764,
+      "api_ms": 857,
+      "usable_ms": 1589,
       "row_count": 5,
       "initial_fleet_queries": [
         "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
@@ -50,140 +50,140 @@
     {
       "sample": 1,
       "HTTP": 200,
-      "elapsed_ms": 1126,
+      "elapsed_ms": 973,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 2,
       "HTTP": 200,
-      "elapsed_ms": 1460,
+      "elapsed_ms": 823,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 3,
       "HTTP": 200,
-      "elapsed_ms": 707,
+      "elapsed_ms": 921,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 4,
       "HTTP": 200,
-      "elapsed_ms": 1491,
+      "elapsed_ms": 1107,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 5,
       "HTTP": 200,
-      "elapsed_ms": 1427,
+      "elapsed_ms": 1021,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 6,
       "HTTP": 200,
-      "elapsed_ms": 1740,
+      "elapsed_ms": 1002,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 7,
       "HTTP": 200,
-      "elapsed_ms": 979,
+      "elapsed_ms": 714,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 8,
       "HTTP": 200,
-      "elapsed_ms": 1072,
+      "elapsed_ms": 930,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 9,
       "HTTP": 200,
-      "elapsed_ms": 1199,
+      "elapsed_ms": 54536,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 10,
       "HTTP": 200,
-      "elapsed_ms": 734,
+      "elapsed_ms": 1475,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 11,
       "HTTP": 200,
-      "elapsed_ms": 1500,
+      "elapsed_ms": 678,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 12,
       "HTTP": 200,
-      "elapsed_ms": 862,
+      "elapsed_ms": 730,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 13,
       "HTTP": 200,
-      "elapsed_ms": 1032,
+      "elapsed_ms": 649,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 14,
       "HTTP": 200,
-      "elapsed_ms": 1062,
+      "elapsed_ms": 660,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 15,
       "HTTP": 200,
-      "elapsed_ms": 777,
+      "elapsed_ms": 654,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 16,
       "HTTP": 200,
-      "elapsed_ms": 1275,
+      "elapsed_ms": 693,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 17,
       "HTTP": 200,
-      "elapsed_ms": 1005,
+      "elapsed_ms": 1027,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 18,
       "HTTP": 200,
-      "elapsed_ms": 1324,
+      "elapsed_ms": 574,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 19,
       "HTTP": 200,
-      "elapsed_ms": 929,
+      "elapsed_ms": 987,
       "rows": 5,
       "total": 5
     },
     {
       "sample": 20,
       "HTTP": 200,
-      "elapsed_ms": 1077,
+      "elapsed_ms": 548,
       "rows": 5,
       "total": 5
     }
@@ -371,7 +371,7 @@
               "runtime_statuses": [
                 "active"
               ],
-              "latest_telemetry_at": "2026-10-29T23:00:57Z",
+              "latest_telemetry_at": "2026-10-30T04:24:07Z",
               "active_incident_count": 0
             },
             "data_source_summary": {
@@ -404,7 +404,7 @@
               "total_trades": 2,
               "source": "telemetry_summaries",
               "telemetry_runtime_count": 1,
-              "latest_telemetry_at": "2026-10-29T23:00:57Z"
+              "latest_telemetry_at": "2026-10-30T04:24:07Z"
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
@@ -1259,7 +1259,7 @@
               "persona-c5f206af82206aaf4157"
             ],
             "total": 5,
-            "pager": "第 1–5 筆，共 5 筆 · 截至 2026-10-29T23:00:58.152Z\n上一頁\n第 1 頁\n下一頁"
+            "pager": "第 1–5 筆，共 5 筆 · 截至 2026-10-30T04:24:07.868Z\n上一頁\n第 1 頁\n下一頁"
           }
         ],
         "unique_rows": 5
@@ -17009,7 +17009,7 @@
             "seed_row": false,
             "seedRow": false,
             "human_needed": false,
-            "last_mutation": "2026-10-29",
+            "last_mutation": "2026-10-30",
             "state": "retired",
             "current_work": null,
             "routed_strategies": 0,
@@ -17123,7 +17123,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-29T23:01:03Z",
+            "updated_at": "2026-10-30T04:24:12Z",
             "links": {
               "detail": "/personas/persona-c6ef44745087d11cc138",
               "runtime": "/management/runtimes/rt-bf737b54",
@@ -21480,7 +21480,7 @@
               "persona-34c856860d59d103760c"
             ],
             "total": 101,
-            "pager": "第 1–20 筆，共 101 筆 · 截至 2026-10-29T23:01:00.367Z\n上一頁\n第 1 頁\n下一頁"
+            "pager": "第 1–20 筆，共 101 筆 · 截至 2026-10-30T04:24:09.699Z\n上一頁\n第 1 頁\n下一頁"
           },
           {
             "page": 2,
@@ -21507,7 +21507,7 @@
               "persona-6e0e6e51e442cd21d1e2"
             ],
             "total": 101,
-            "pager": "第 21–40 筆，共 101 筆 · 截至 2026-10-29T23:01:08.104Z\n上一頁\n第 2 頁\n下一頁"
+            "pager": "第 21–40 筆，共 101 筆 · 截至 2026-10-30T04:24:15.640Z\n上一頁\n第 2 頁\n下一頁"
           },
           {
             "page": 3,
@@ -21534,7 +21534,7 @@
               "persona-99ff93a7710682dc7bbe"
             ],
             "total": 101,
-            "pager": "第 41–60 筆，共 101 筆 · 截至 2026-10-29T23:01:09.382Z\n上一頁\n第 3 頁\n下一頁"
+            "pager": "第 41–60 筆，共 101 筆 · 截至 2026-10-30T04:24:16.667Z\n上一頁\n第 3 頁\n下一頁"
           },
           {
             "page": 4,
@@ -21561,7 +21561,7 @@
               "persona-c9b07e3f1d38fffd42dc"
             ],
             "total": 101,
-            "pager": "第 61–80 筆，共 101 筆 · 截至 2026-10-29T23:01:10.988Z\n上一頁\n第 4 頁\n下一頁"
+            "pager": "第 61–80 筆，共 101 筆 · 截至 2026-10-30T04:24:17.540Z\n上一頁\n第 4 頁\n下一頁"
           },
           {
             "page": 5,
@@ -21588,7 +21588,7 @@
               "persona-f53892bd88d08b49d240"
             ],
             "total": 101,
-            "pager": "第 81–100 筆，共 101 筆 · 截至 2026-10-29T23:01:12.048Z\n上一頁\n第 5 頁\n下一頁"
+            "pager": "第 81–100 筆，共 101 筆 · 截至 2026-10-30T04:24:18.348Z\n上一頁\n第 5 頁\n下一頁"
           },
           {
             "page": 6,
@@ -21596,7 +21596,7 @@
               "persona-fbb03ab8a4d7a235361b"
             ],
             "total": 101,
-            "pager": "第 101–101 筆，共 101 筆 · 截至 2026-10-29T23:01:13.346Z\n上一頁\n第 6 頁\n下一頁"
+            "pager": "第 101–101 筆，共 101 筆 · 截至 2026-10-30T04:24:19.472Z\n上一頁\n第 6 頁\n下一頁"
           }
         ],
         "unique_rows": 101
@@ -22487,7 +22487,7 @@
             "seed_row": false,
             "seedRow": false,
             "human_needed": false,
-            "last_mutation": "2026-10-29",
+            "last_mutation": "2026-10-30",
             "state": "draft",
             "current_work": null,
             "routed_strategies": 0,
@@ -22601,7 +22601,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-29T23:01:37Z",
+            "updated_at": "2026-10-30T04:24:37Z",
             "links": {
               "detail": "/personas/persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
               "runtime": "/management/runtimes/rt-eb295fe2",
@@ -22679,7 +22679,7 @@
             "seed_row": false,
             "seedRow": false,
             "human_needed": false,
-            "last_mutation": "2026-10-29",
+            "last_mutation": "2026-10-30",
             "state": "draft",
             "current_work": null,
             "routed_strategies": 0,
@@ -22777,7 +22777,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-29T23:01:37Z",
+            "updated_at": "2026-10-30T04:24:37Z",
             "links": {
               "detail": "/personas/persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
               "runtime": null,
@@ -22789,10 +22789,10 @@
               "runtime_id": null,
               "persona_id": "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
             },
-            "last_mutation_label": "2026-10-29",
-            "lastMutationLabel": "2026-10-29",
-            "last_mutation_at": "2026-10-29T23:01:37Z",
-            "lastMutationAt": "2026-10-29T23:01:37Z",
+            "last_mutation_label": "2026-10-30",
+            "lastMutationLabel": "2026-10-30",
+            "last_mutation_at": "2026-10-30T04:24:37Z",
+            "lastMutationAt": "2026-10-30T04:24:37Z",
             "last_mutation_kind": "fleet_summary",
             "lastMutationKind": "fleet_summary",
             "mutation_entry_id": null,
@@ -22849,7 +22849,7 @@
               "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
             ],
             "total": 3,
-            "pager": "第 1–3 筆，共 3 筆 · 截至 2026-10-29T23:01:37.382Z\n上一頁\n第 1 頁\n下一頁"
+            "pager": "第 1–3 筆，共 3 筆 · 截至 2026-10-30T04:24:37.781Z\n上一頁\n第 1 頁\n下一頁"
           }
         ],
         "unique_rows": 3
@@ -22955,21 +22955,21 @@
       "environment": "pantheon-dev-fe",
       "repository": "ajoe734/execute-plans",
       "profile": "read-only",
-      "pairId": "0c9dce09831413cfafa2d1b4e885688bdfb29d48df23182181a871f5d35a95c2",
+      "pairId": "73a4ea0123edf0abcb8021a5575b7dd4f34c589a4643e5cfc4920b0d5add0a47",
       "releaseAdmission": {
         "schemaVersion": "pantheon.dev-release-candidate-admission.v1",
-        "releaseCandidateId": "3ed9e7441cbc27b80866f73d542f6afc24bf0253bec08ca0da44784761305adc",
+        "releaseCandidateId": "ca34eb53c49a5d24721bfa27206ea4cb4e2b23e1aef91c09581078cf13f82abe",
         "compatibilityStatus": "compatible",
-        "compatibilityManifestSha256": "d762385fe0aec9e528bef27fc87b8f889d0243b95fc3e7803582fb26727a8fc6",
+        "compatibilityManifestSha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
         "controller": {
           "repository": "ajoe734/pantheon",
           "workflow": "nonprod-deploy.yml",
-          "runId": "40961611194"
+          "runId": "40996778825"
         },
         "backend": {
           "repository": "ajoe734/pantheon",
           "branch": "dev",
-          "commitSha": "fd3c0ba1f968243228208350c599f314ef86fbba"
+          "commitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516"
         },
         "frontend": {
           "repository": "ajoe734/execute-plans",
@@ -22986,20 +22986,20 @@
         "commitSha": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
       },
       "bffHost": "https://api.dev.mvl-cap.tw",
-      "bffCommit": "fd3c0ba1f968243228208350c599f314ef86fbba",
-      "bffSourceCommitSha": "fd3c0ba1f968243228208350c599f314ef86fbba",
+      "bffCommit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "bffSourceCommitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
       "bffCommitEvidence": true,
       "bff": {
         "baseUrl": "https://api.dev.mvl-cap.tw",
-        "sourceCommitSha": "fd3c0ba1f968243228208350c599f314ef86fbba",
+        "sourceCommitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
         "sourceCommitKnown": true
       },
       "gate": {
         "workflow": "pantheon-integration-gate.yml",
-        "runId": "40964934138",
-        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/40964934138"
+        "runId": "40998949523",
+        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/40998949523"
       },
-      "integrationGateRunId": "40964934138",
+      "integrationGateRunId": "40998949523",
       "artifactDigest": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
       "artifactDigestSha256": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
       "buildMode": {
@@ -23010,28 +23010,28 @@
         "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
       },
       "deploymentState": "accepted",
-      "releaseName": "20261029T225453Z-56bec9ad581d-gate-40964934138-40967612403-1-1343877",
-      "deployedAt": "20261029T225453Z",
+      "releaseName": "20261030T041825Z-56bec9ad581d-gate-40998949523-41000806767-1-3406260",
+      "deployedAt": "20261030T041825Z",
       "previousCommit": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
       "previousArtifactDigest": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
-      "previousReleaseName": "20261029T202353Z-56bec9ad581d-gate-40943936949-40946457944-1-374627",
-      "githubArtifactDigest": "sha256:812b3ef47118d7496b4594dae9e2350f0294d5543086c43d67df2ff0b0bafe83",
+      "previousReleaseName": "20261030T011144Z-56bec9ad581d-gate-40981037760-40982883283-1-2235053",
+      "githubArtifactDigest": "sha256:d2e7c5b8ab4793b5ef34996ee87e1a98f9dfe385342956d31ce1f000fa8e3b31",
       "agoraCompatibility": {
         "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
         "contract_family": "agora.v1.13",
         "environment": "dev",
         "compatibility_status": "accepted",
         "blocking_reasons": [],
-        "manifest_sha256": "d762385fe0aec9e528bef27fc87b8f889d0243b95fc3e7803582fb26727a8fc6",
+        "manifest_sha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
         "gate_controller": {
           "repo": "ajoe734/pantheon",
-          "commit": "fd3c0ba1f968243228208350c599f314ef86fbba",
-          "tree": "31c32f2ea5d9044b845028b0b838547839e65489"
+          "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+          "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
         },
         "backend": {
           "repo": "ajoe734/pantheon",
-          "runtime_commit": "fd3c0ba1f968243228208350c599f314ef86fbba",
-          "tree": "31c32f2ea5d9044b845028b0b838547839e65489"
+          "runtime_commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+          "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
         },
         "frontend": {
           "repo": "ajoe734/execute-plans",
@@ -23061,14 +23061,14 @@
           "compatibility_manifest": {
             "contract_family": "agora.v1.13",
             "manifest_version": "1.0",
-            "sha256": "d762385fe0aec9e528bef27fc87b8f889d0243b95fc3e7803582fb26727a8fc6",
+            "sha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
             "source_status": "accepted"
           },
           "backend": {
             "repository": "ajoe734/pantheon",
             "branch": "dev",
-            "commit": "fd3c0ba1f968243228208350c599f314ef86fbba",
-            "tree": "31c32f2ea5d9044b845028b0b838547839e65489"
+            "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+            "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
           },
           "frontend": {
             "repository": "ajoe734/execute-plans",
@@ -23076,12 +23076,12 @@
             "commit": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
             "tree": "ed9b5f639a89a869a6ac5b6bb556d28ec64aa3cf"
           },
-          "release_candidate_id": "3ed9e7441cbc27b80866f73d542f6afc24bf0253bec08ca0da44784761305adc"
+          "release_candidate_id": "ca34eb53c49a5d24721bfa27206ea4cb4e2b23e1aef91c09581078cf13f82abe"
         }
       },
       "deploymentProfile": "read-only",
       "pair": {
-        "pairId": "0c9dce09831413cfafa2d1b4e885688bdfb29d48df23182181a871f5d35a95c2",
+        "pairId": "73a4ea0123edf0abcb8021a5575b7dd4f34c589a4643e5cfc4920b0d5add0a47",
         "readOnlyArtifactDigestSha256": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
         "operatorLiveArtifactDigestSha256": "92b8e5d9f39863fcd1c5f93b91480b319a1f913a669e34904ae84811f8e140f4",
         "writeProofArtifactDigestSha256": "51e0b7deaf2ae2f94bd9861ffa30953e1a7d6c6bc150be02cb3c722ff3768018"
@@ -23091,7 +23091,7 @@
         "actor": null,
         "reasonSha256": null
       },
-      "acceptedAt": "2026-10-29T22:57:50Z",
+      "acceptedAt": "2026-10-30T04:21:08Z",
       "probes": {
         "candidatePreSwitch": "passed",
         "postSwitch": "passed",
@@ -23101,11 +23101,11 @@
     "version": {
       "service": "operator-bff",
       "version": "0.2.0",
-      "source_commit_sha": "fd3c0ba1f968243228208350c599f314ef86fbba",
-      "commit": "fd3c0ba1f968243228208350c599f314ef86fbba",
+      "source_commit_sha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
       "source_commit_known": true,
-      "image_digest": "sha256:6d2a8aaedc92f8d73cadf85742e2cfa5467a431183e37ca0cb1edf97e42ba2c8",
-      "build_time": "2026-10-29T21:56:46Z",
+      "image_digest": "sha256:c93c3c2ca123b41e42d3035d650634c50a2fc5609c67a2feda918c24ddeb6893",
+      "build_time": "2026-10-30T03:22:27Z",
       "environment": "dev",
       "config_posture": {
         "auth_stub": false,
@@ -23119,7 +23119,7 @@
     }
   },
   "no_unsolicited_archives": true,
-  "p95_nearest_rank_ms": 1500,
+  "p95_nearest_rank_ms": 1475,
   "unknown_purpose": [
     {
       "purpose": "unknown",
@@ -23706,7 +23706,7 @@
             "seed_row": false,
             "seedRow": false,
             "human_needed": false,
-            "last_mutation": "2026-10-29",
+            "last_mutation": "2026-10-30",
             "state": "draft",
             "current_work": null,
             "routed_strategies": 0,
@@ -23820,7 +23820,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-29T23:01:37Z",
+            "updated_at": "2026-10-30T04:24:37Z",
             "links": {
               "detail": "/personas/persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
               "runtime": "/management/runtimes/rt-eb295fe2",
@@ -23898,7 +23898,7 @@
             "seed_row": false,
             "seedRow": false,
             "human_needed": false,
-            "last_mutation": "2026-10-29",
+            "last_mutation": "2026-10-30",
             "state": "draft",
             "current_work": null,
             "routed_strategies": 0,
@@ -23996,7 +23996,7 @@
             },
             "risk_flag_count": 0,
             "active_incident_count": 0,
-            "updated_at": "2026-10-29T23:01:37Z",
+            "updated_at": "2026-10-30T04:24:37Z",
             "links": {
               "detail": "/personas/persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
               "runtime": null,
@@ -24008,10 +24008,10 @@
               "runtime_id": null,
               "persona_id": "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
             },
-            "last_mutation_label": "2026-10-29",
-            "lastMutationLabel": "2026-10-29",
-            "last_mutation_at": "2026-10-29T23:01:37Z",
-            "lastMutationAt": "2026-10-29T23:01:37Z",
+            "last_mutation_label": "2026-10-30",
+            "lastMutationLabel": "2026-10-30",
+            "last_mutation_at": "2026-10-30T04:24:37Z",
+            "lastMutationAt": "2026-10-30T04:24:37Z",
             "last_mutation_kind": "fleet_summary",
             "lastMutationKind": "fleet_summary",
             "mutation_entry_id": null,
@@ -24068,7 +24068,7 @@
               "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
             ],
             "total": 3,
-            "pager": "第 1–3 筆，共 3 筆 · 截至 2026-10-29T23:01:37.382Z\n上一頁\n第 1 頁\n下一頁"
+            "pager": "第 1–3 筆，共 3 筆 · 截至 2026-10-30T04:24:37.781Z\n上一頁\n第 1 頁\n下一頁"
           }
         ],
         "unique_rows": 3
@@ -26199,7 +26199,7 @@
           "runtime_statuses": [
             "active"
           ],
-          "latest_telemetry_at": "2026-10-29T23:01:40Z",
+          "latest_telemetry_at": "2026-10-30T04:24:40Z",
           "active_incident_count": 0
         },
         "data_source_summary": {
@@ -26232,7 +26232,7 @@
           "total_trades": 2,
           "source": "telemetry_summaries",
           "telemetry_runtime_count": 1,
-          "latest_telemetry_at": "2026-10-29T23:01:40Z"
+          "latest_telemetry_at": "2026-10-30T04:24:40Z"
         },
         "risk_flag_count": 0,
         "active_incident_count": 0,
@@ -40327,7 +40327,7 @@
         "seed_row": false,
         "seedRow": false,
         "human_needed": false,
-        "last_mutation": "2026-10-29",
+        "last_mutation": "2026-10-30",
         "state": "retired",
         "current_work": null,
         "routed_strategies": 0,
@@ -40441,7 +40441,7 @@
         },
         "risk_flag_count": 0,
         "active_incident_count": 0,
-        "updated_at": "2026-10-29T23:01:44Z",
+        "updated_at": "2026-10-30T04:24:43Z",
         "links": {
           "detail": "/personas/persona-c6ef44745087d11cc138",
           "runtime": "/management/runtimes/rt-bf737b54",
@@ -45161,7 +45161,7 @@
         "seed_row": false,
         "seedRow": false,
         "human_needed": false,
-        "last_mutation": "2026-10-29",
+        "last_mutation": "2026-10-30",
         "state": "draft",
         "current_work": null,
         "routed_strategies": 0,
@@ -45275,7 +45275,7 @@
         },
         "risk_flag_count": 0,
         "active_incident_count": 0,
-        "updated_at": "2026-10-29T23:01:46Z",
+        "updated_at": "2026-10-30T04:24:44Z",
         "links": {
           "detail": "/personas/persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
           "runtime": "/management/runtimes/rt-eb295fe2",
@@ -45353,7 +45353,7 @@
         "seed_row": false,
         "seedRow": false,
         "human_needed": false,
-        "last_mutation": "2026-10-29",
+        "last_mutation": "2026-10-30",
         "state": "draft",
         "current_work": null,
         "routed_strategies": 0,
@@ -45451,7 +45451,7 @@
         },
         "risk_flag_count": 0,
         "active_incident_count": 0,
-        "updated_at": "2026-10-29T23:01:46Z",
+        "updated_at": "2026-10-30T04:24:44Z",
         "links": {
           "detail": "/personas/persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
           "runtime": null,
@@ -45463,10 +45463,10 @@
           "runtime_id": null,
           "persona_id": "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
         },
-        "last_mutation_label": "2026-10-29",
-        "lastMutationLabel": "2026-10-29",
-        "last_mutation_at": "2026-10-29T23:01:46Z",
-        "lastMutationAt": "2026-10-29T23:01:46Z",
+        "last_mutation_label": "2026-10-30",
+        "lastMutationLabel": "2026-10-30",
+        "last_mutation_at": "2026-10-30T04:24:44Z",
+        "lastMutationAt": "2026-10-30T04:24:44Z",
         "last_mutation_kind": "fleet_summary",
         "lastMutationKind": "fleet_summary",
         "mutation_entry_id": null,
@@ -45966,8 +45966,8 @@
             "capital_binding"
           ]
         },
-        "created_at": "2026-10-29T23:01:49Z",
-        "expires_at": "2026-10-29T23:30:30Z",
+        "created_at": "2026-10-30T04:24:47Z",
+        "expires_at": "2026-10-30T04:52:52Z",
         "policy_refs": [
           "docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md#5.1",
           "docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/C2_persona_schema_normalization_plan.md"
@@ -45982,7 +45982,7 @@
         }
       },
       "meta": {
-        "snapshot_at": "2026-10-29T23:01:49Z",
+        "snapshot_at": "2026-10-30T04:24:47Z",
         "capability": "agora.identity.v1",
         "audience": "tenant:tenant-dev:user:pantheon-dev-admin-test"
       }
@@ -46104,7 +46104,7 @@
         }
       },
       "meta": {
-        "snapshot_at": "2026-10-29T23:01:49Z",
+        "snapshot_at": "2026-10-30T04:24:47Z",
         "capability": "agora.identity.v1",
         "audience": "tenant:tenant-dev:user:pantheon-dev-admin-test"
       }
@@ -46126,7 +46126,7 @@
         }
       },
       "meta": {
-        "correlationId": "974a0fb4-4c84-4047-b6da-41bed78b8c8c"
+        "correlationId": "2e0979c1-a54a-4c0b-b84e-250ee340e4a4"
       }
     }
   },
@@ -46196,12 +46196,12 @@
         "deployment": {
           "service": "pantheon-bff",
           "environment": "dev",
-          "source_commit_sha": "fd3c0ba1f968243228208350c599f314ef86fbba",
+          "source_commit_sha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
           "bundle_version": "v1.13"
         }
       },
       "meta": {
-        "snapshot_at": "2026-10-29T23:01:49Z",
+        "snapshot_at": "2026-10-30T04:24:47Z",
         "capability": "agora.operational_readiness.v1",
         "requiredForAuthentication": false,
         "no_order_route_proof": "agora_operational_readiness_read_only",
@@ -46218,21 +46218,21 @@
       "environment": "pantheon-dev-fe",
       "repository": "ajoe734/execute-plans",
       "profile": "read-only",
-      "pairId": "0c9dce09831413cfafa2d1b4e885688bdfb29d48df23182181a871f5d35a95c2",
+      "pairId": "73a4ea0123edf0abcb8021a5575b7dd4f34c589a4643e5cfc4920b0d5add0a47",
       "releaseAdmission": {
         "schemaVersion": "pantheon.dev-release-candidate-admission.v1",
-        "releaseCandidateId": "3ed9e7441cbc27b80866f73d542f6afc24bf0253bec08ca0da44784761305adc",
+        "releaseCandidateId": "ca34eb53c49a5d24721bfa27206ea4cb4e2b23e1aef91c09581078cf13f82abe",
         "compatibilityStatus": "compatible",
-        "compatibilityManifestSha256": "d762385fe0aec9e528bef27fc87b8f889d0243b95fc3e7803582fb26727a8fc6",
+        "compatibilityManifestSha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
         "controller": {
           "repository": "ajoe734/pantheon",
           "workflow": "nonprod-deploy.yml",
-          "runId": "40961611194"
+          "runId": "40996778825"
         },
         "backend": {
           "repository": "ajoe734/pantheon",
           "branch": "dev",
-          "commitSha": "fd3c0ba1f968243228208350c599f314ef86fbba"
+          "commitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516"
         },
         "frontend": {
           "repository": "ajoe734/execute-plans",
@@ -46249,20 +46249,20 @@
         "commitSha": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
       },
       "bffHost": "https://api.dev.mvl-cap.tw",
-      "bffCommit": "fd3c0ba1f968243228208350c599f314ef86fbba",
-      "bffSourceCommitSha": "fd3c0ba1f968243228208350c599f314ef86fbba",
+      "bffCommit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "bffSourceCommitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
       "bffCommitEvidence": true,
       "bff": {
         "baseUrl": "https://api.dev.mvl-cap.tw",
-        "sourceCommitSha": "fd3c0ba1f968243228208350c599f314ef86fbba",
+        "sourceCommitSha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
         "sourceCommitKnown": true
       },
       "gate": {
         "workflow": "pantheon-integration-gate.yml",
-        "runId": "40964934138",
-        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/40964934138"
+        "runId": "40998949523",
+        "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/40998949523"
       },
-      "integrationGateRunId": "40964934138",
+      "integrationGateRunId": "40998949523",
       "artifactDigest": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
       "artifactDigestSha256": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
       "buildMode": {
@@ -46273,28 +46273,28 @@
         "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
       },
       "deploymentState": "accepted",
-      "releaseName": "20261029T225453Z-56bec9ad581d-gate-40964934138-40967612403-1-1343877",
-      "deployedAt": "20261029T225453Z",
+      "releaseName": "20261030T041825Z-56bec9ad581d-gate-40998949523-41000806767-1-3406260",
+      "deployedAt": "20261030T041825Z",
       "previousCommit": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
       "previousArtifactDigest": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
-      "previousReleaseName": "20261029T202353Z-56bec9ad581d-gate-40943936949-40946457944-1-374627",
-      "githubArtifactDigest": "sha256:812b3ef47118d7496b4594dae9e2350f0294d5543086c43d67df2ff0b0bafe83",
+      "previousReleaseName": "20261030T011144Z-56bec9ad581d-gate-40981037760-40982883283-1-2235053",
+      "githubArtifactDigest": "sha256:d2e7c5b8ab4793b5ef34996ee87e1a98f9dfe385342956d31ce1f000fa8e3b31",
       "agoraCompatibility": {
         "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
         "contract_family": "agora.v1.13",
         "environment": "dev",
         "compatibility_status": "accepted",
         "blocking_reasons": [],
-        "manifest_sha256": "d762385fe0aec9e528bef27fc87b8f889d0243b95fc3e7803582fb26727a8fc6",
+        "manifest_sha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
         "gate_controller": {
           "repo": "ajoe734/pantheon",
-          "commit": "fd3c0ba1f968243228208350c599f314ef86fbba",
-          "tree": "31c32f2ea5d9044b845028b0b838547839e65489"
+          "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+          "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
         },
         "backend": {
           "repo": "ajoe734/pantheon",
-          "runtime_commit": "fd3c0ba1f968243228208350c599f314ef86fbba",
-          "tree": "31c32f2ea5d9044b845028b0b838547839e65489"
+          "runtime_commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+          "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
         },
         "frontend": {
           "repo": "ajoe734/execute-plans",
@@ -46324,14 +46324,14 @@
           "compatibility_manifest": {
             "contract_family": "agora.v1.13",
             "manifest_version": "1.0",
-            "sha256": "d762385fe0aec9e528bef27fc87b8f889d0243b95fc3e7803582fb26727a8fc6",
+            "sha256": "be9d7f5485ff5238d3362dc893ce8293401dc21b8a6bf4c22bcfc00931f40ffb",
             "source_status": "accepted"
           },
           "backend": {
             "repository": "ajoe734/pantheon",
             "branch": "dev",
-            "commit": "fd3c0ba1f968243228208350c599f314ef86fbba",
-            "tree": "31c32f2ea5d9044b845028b0b838547839e65489"
+            "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+            "tree": "781563a36cae5ebb1e7a62c552962c60ac8bebb0"
           },
           "frontend": {
             "repository": "ajoe734/execute-plans",
@@ -46339,12 +46339,12 @@
             "commit": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
             "tree": "ed9b5f639a89a869a6ac5b6bb556d28ec64aa3cf"
           },
-          "release_candidate_id": "3ed9e7441cbc27b80866f73d542f6afc24bf0253bec08ca0da44784761305adc"
+          "release_candidate_id": "ca34eb53c49a5d24721bfa27206ea4cb4e2b23e1aef91c09581078cf13f82abe"
         }
       },
       "deploymentProfile": "read-only",
       "pair": {
-        "pairId": "0c9dce09831413cfafa2d1b4e885688bdfb29d48df23182181a871f5d35a95c2",
+        "pairId": "73a4ea0123edf0abcb8021a5575b7dd4f34c589a4643e5cfc4920b0d5add0a47",
         "readOnlyArtifactDigestSha256": "f840d18420e4ab08937277d962a5c57038c28071608124e58884cd31b7db4838",
         "operatorLiveArtifactDigestSha256": "92b8e5d9f39863fcd1c5f93b91480b319a1f913a669e34904ae84811f8e140f4",
         "writeProofArtifactDigestSha256": "51e0b7deaf2ae2f94bd9861ffa30953e1a7d6c6bc150be02cb3c722ff3768018"
@@ -46354,7 +46354,7 @@
         "actor": null,
         "reasonSha256": null
       },
-      "acceptedAt": "2026-10-29T22:57:50Z",
+      "acceptedAt": "2026-10-30T04:21:08Z",
       "probes": {
         "candidatePreSwitch": "passed",
         "postSwitch": "passed",
@@ -46364,11 +46364,11 @@
     "version": {
       "service": "operator-bff",
       "version": "0.2.0",
-      "source_commit_sha": "fd3c0ba1f968243228208350c599f314ef86fbba",
-      "commit": "fd3c0ba1f968243228208350c599f314ef86fbba",
+      "source_commit_sha": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "commit": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
       "source_commit_known": true,
-      "image_digest": "sha256:6d2a8aaedc92f8d73cadf85742e2cfa5467a431183e37ca0cb1edf97e42ba2c8",
-      "build_time": "2026-10-29T21:56:46Z",
+      "image_digest": "sha256:c93c3c2ca123b41e42d3035d650634c50a2fc5609c67a2feda918c24ddeb6893",
+      "build_time": "2026-10-30T03:22:27Z",
       "environment": "dev",
       "config_posture": {
         "auth_stub": false,
@@ -46386,5 +46386,5 @@
   "performance_pass": false,
   "completed_subset": false,
   "scope_limit": "Independent fleet/browser subset. Original hosted owner still owns official release/image identities, actual Agora readiness UI, runtime/finance missing values and privacy regression evidence.",
-  "finished_at": "2026-10-29T23:01:53.075Z"
+  "finished_at": "2026-10-30T04:24:50.736Z"
 }
