@@ -54,7 +54,7 @@ BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 from services.control_plane.cron.persona_cron_registrar import (
     DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
 )
-from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope, selected_tenant, submit_owner_read
+from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope, selected_tenant, shared_persona_directory_list, submit_owner_read
 
 from ..models import (
     ActionCommandStatus,
@@ -2487,7 +2487,13 @@ def _list_persona_records(
     context-bound service and the module-level fallback.
     """
     active_store = _get_active_read_store(explicit=read_store)
-    if active_store is not None and hasattr(active_store, "list_personas"):
+    if reuse_request_read and active_store is not None:
+        # Read-only fleet callers share one directory copy per request; each
+        # record is still shallow-copied below, never handed out as-is.
+        items = list(
+            shared_persona_directory_list(lambda: active_store.list_personas()) or []
+        )
+    elif active_store is not None and hasattr(active_store, "list_personas"):
         items = list(active_store.list_personas() or [])
     elif active_store is not None:
         items = list(active_store.list_personas() or [])

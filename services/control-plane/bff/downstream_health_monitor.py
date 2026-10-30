@@ -23,6 +23,7 @@ Key guarantees
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import hashlib
 import json
@@ -38,7 +39,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
 
 import services.background_worker_health as _background_worker_health
 import services.evolution.worker_health as _evolution_worker_health
@@ -655,17 +656,30 @@ class _DurableHealthStore:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """Yield a connection with sqlite's commit/rollback semantics, then close it."""
         connection = sqlite3.connect(
             self.path,
             timeout=10.0,
             isolation_level=None,
         )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA synchronous = FULL")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout = 10000")
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = FULL")
+            try:
+                yield connection
+            except BaseException:
+                if connection.in_transaction:
+                    connection.rollback()
+                raise
+            else:
+                if connection.in_transaction:
+                    connection.commit()
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -998,53 +1012,60 @@ class _DurableHealthStore:
     def record_probe(self, result: DownstreamProbeResult) -> DownstreamProbeResult:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            previous = connection.execute(
-                "SELECT ok, consecutive_failures FROM probe_state WHERE target_name=?",
-                (result.target_name,),
-            ).fetchone()
-            if result.ok:
-                consecutive_failures = 0
-            elif previous is not None and not bool(previous["ok"]):
-                consecutive_failures = int(previous["consecutive_failures"]) + 1
-            else:
-                consecutive_failures = max(1, result.consecutive_failures)
-            result.consecutive_failures = consecutive_failures
-            connection.execute(
-                """
-                INSERT INTO probe_state(
-                    target_name, ok, status_code, latency_ms, checked_at,
-                    failure_reason, consecutive_failures, probe_kind,
-                    window_started_at, sample_count, failure_count, error_rate
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(target_name) DO UPDATE SET
-                    ok=excluded.ok,
-                    status_code=excluded.status_code,
-                    latency_ms=excluded.latency_ms,
-                    checked_at=excluded.checked_at,
-                    failure_reason=excluded.failure_reason,
-                    consecutive_failures=excluded.consecutive_failures,
-                    probe_kind=excluded.probe_kind,
-                    window_started_at=excluded.window_started_at,
-                    sample_count=excluded.sample_count,
-                    failure_count=excluded.failure_count,
-                    error_rate=excluded.error_rate
-                """,
-                (
-                    result.target_name,
-                    1 if result.ok else 0,
-                    result.status_code,
-                    result.latency_ms,
-                    result.checked_at,
-                    result.failure_reason,
-                    result.consecutive_failures,
-                    result.probe_kind,
-                    result.window_started_at,
-                    result.sample_count,
-                    result.failure_count,
-                    result.error_rate,
-                ),
-            )
+            self._record_probe_in(connection, result)
             connection.commit()
+        return result
+
+    @staticmethod
+    def _record_probe_in(
+        connection: sqlite3.Connection, result: DownstreamProbeResult
+    ) -> DownstreamProbeResult:
+        previous = connection.execute(
+            "SELECT ok, consecutive_failures FROM probe_state WHERE target_name=?",
+            (result.target_name,),
+        ).fetchone()
+        if result.ok:
+            consecutive_failures = 0
+        elif previous is not None and not bool(previous["ok"]):
+            consecutive_failures = int(previous["consecutive_failures"]) + 1
+        else:
+            consecutive_failures = max(1, result.consecutive_failures)
+        result.consecutive_failures = consecutive_failures
+        connection.execute(
+            """
+            INSERT INTO probe_state(
+                target_name, ok, status_code, latency_ms, checked_at,
+                failure_reason, consecutive_failures, probe_kind,
+                window_started_at, sample_count, failure_count, error_rate
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(target_name) DO UPDATE SET
+                ok=excluded.ok,
+                status_code=excluded.status_code,
+                latency_ms=excluded.latency_ms,
+                checked_at=excluded.checked_at,
+                failure_reason=excluded.failure_reason,
+                consecutive_failures=excluded.consecutive_failures,
+                probe_kind=excluded.probe_kind,
+                window_started_at=excluded.window_started_at,
+                sample_count=excluded.sample_count,
+                failure_count=excluded.failure_count,
+                error_rate=excluded.error_rate
+            """,
+            (
+                result.target_name,
+                1 if result.ok else 0,
+                result.status_code,
+                result.latency_ms,
+                result.checked_at,
+                result.failure_reason,
+                result.consecutive_failures,
+                result.probe_kind,
+                result.window_started_at,
+                result.sample_count,
+                result.failure_count,
+                result.error_rate,
+            ),
+        )
         return result
 
     def append_error_sample(
@@ -1060,39 +1081,92 @@ class _DurableHealthStore:
     ) -> Dict[str, Any]:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                """
-                INSERT INTO error_windows(
-                    target_name, window_started_at, sample_count, failure_count,
-                    latency_total_ms, last_status_code, last_detail,
-                    last_observed_at
-                ) VALUES (?, ?, 1, ?, ?, ?, ?, ?)
-                ON CONFLICT(target_name, window_started_at) DO UPDATE SET
-                    sample_count=error_windows.sample_count + 1,
-                    failure_count=error_windows.failure_count + excluded.failure_count,
-                    latency_total_ms=error_windows.latency_total_ms + excluded.latency_total_ms,
-                    last_status_code=excluded.last_status_code,
-                    last_detail=excluded.last_detail,
-                    last_observed_at=excluded.last_observed_at
-                """,
-                (
-                    target_name,
-                    window_started_at,
-                    0 if ok else 1,
-                    max(0.0, latency_ms),
-                    status_code,
-                    detail,
-                    observed_at,
-                ),
+            value = self._append_error_sample_in(
+                connection,
+                target_name=target_name,
+                window_started_at=window_started_at,
+                ok=ok,
+                latency_ms=latency_ms,
+                status_code=status_code,
+                detail=detail,
+                observed_at=observed_at,
             )
-            row = connection.execute(
-                """
-                SELECT * FROM error_windows
-                WHERE target_name=? AND window_started_at=?
-                """,
-                (target_name, window_started_at),
-            ).fetchone()
             connection.commit()
+        return value
+
+    def record_outcome(
+        self,
+        *,
+        target_name: str,
+        window_started_at: str,
+        ok: bool,
+        latency_ms: float,
+        status_code: int,
+        detail: Optional[str],
+        observed_at: str,
+        probe: DownstreamProbeResult,
+    ) -> Dict[str, Any]:
+        """Append the error sample and latest probe state in one transaction."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            value = self._append_error_sample_in(
+                connection,
+                target_name=target_name,
+                window_started_at=window_started_at,
+                ok=ok,
+                latency_ms=latency_ms,
+                status_code=status_code,
+                detail=detail,
+                observed_at=observed_at,
+            )
+            self._record_probe_in(connection, probe)
+            connection.commit()
+        return value
+
+    @staticmethod
+    def _append_error_sample_in(
+        connection: sqlite3.Connection,
+        *,
+        target_name: str,
+        window_started_at: str,
+        ok: bool,
+        latency_ms: float,
+        status_code: int,
+        detail: Optional[str],
+        observed_at: str,
+    ) -> Dict[str, Any]:
+        connection.execute(
+            """
+            INSERT INTO error_windows(
+                target_name, window_started_at, sample_count, failure_count,
+                latency_total_ms, last_status_code, last_detail,
+                last_observed_at
+            ) VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+            ON CONFLICT(target_name, window_started_at) DO UPDATE SET
+                sample_count=error_windows.sample_count + 1,
+                failure_count=error_windows.failure_count + excluded.failure_count,
+                latency_total_ms=error_windows.latency_total_ms + excluded.latency_total_ms,
+                last_status_code=excluded.last_status_code,
+                last_detail=excluded.last_detail,
+                last_observed_at=excluded.last_observed_at
+            """,
+            (
+                target_name,
+                window_started_at,
+                0 if ok else 1,
+                max(0.0, latency_ms),
+                status_code,
+                detail,
+                observed_at,
+            ),
+        )
+        row = connection.execute(
+            """
+            SELECT * FROM error_windows
+            WHERE target_name=? AND window_started_at=?
+            """,
+            (target_name, window_started_at),
+        ).fetchone()
         value = dict(row)
         value["error_rate"] = (
             int(value["failure_count"]) / int(value["sample_count"])
@@ -2105,7 +2179,8 @@ class DownstreamHealthMonitor:
         window_started_at = _window_start(observed_at, self._probe_interval)
         claimed: List[DownstreamTarget] = []
         for target in targets.values():
-            if self._store.claim_window(
+            if await asyncio.to_thread(
+                self._store.claim_window,
                 target_name=target.name,
                 probe_kind="interval_probe",
                 window_started_at=window_started_at,
@@ -2130,7 +2205,8 @@ class DownstreamHealthMonitor:
             try:
                 await self._handle_probe_result(result)
             finally:
-                self._store.complete_window(
+                await asyncio.to_thread(
+                    self._store.complete_window,
                     target_name=result.target_name,
                     probe_kind="interval_probe",
                     window_started_at=result.window_started_at,
@@ -2138,14 +2214,20 @@ class DownstreamHealthMonitor:
                 )
         await asyncio.to_thread(self._deliver_due_sync)
         try:
-            self.publish_loop_12_controller_truth()
+            # get_state reads several durable tables; gather it off-loop and
+            # keep only the heartbeat scheduling on the event loop.
+            state = await asyncio.to_thread(self.get_state)
+            self.publish_loop_12_controller_truth(state=state)
         except Exception as exc:  # noqa: BLE001
             log.warning("publish_loop_12_controller_truth error: %s", exc)
 
-    def publish_loop_12_controller_truth(self) -> Dict[str, Any]:
+    def publish_loop_12_controller_truth(
+        self, *, state: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Publish Loop 12 (bff_health_monitoring) controller truth."""
         now_iso = _utc_now_rfc3339()
-        state = self.get_state()
+        if state is None:
+            state = self.get_state()
         overall_ok = state.get("overall_ok", True)
         targets = state.get("targets", {})
         total_targets = len(targets)
@@ -2295,7 +2377,9 @@ class DownstreamHealthMonitor:
             )
         latency_ms = (time.monotonic() - started) * 1000.0
         observed_at = checked_at or _utc_now_rfc3339()
-        previous = self._store.get_probe(name) or self._state.get(name)
+        previous = (
+            await asyncio.to_thread(self._store.get_probe, name)
+        ) or self._state.get(name)
         consecutive = (
             0
             if ok
@@ -2443,6 +2527,25 @@ class DownstreamHealthMonitor:
         return f"{self._incidents_url.rstrip('/')}/{path.lstrip('/')}"
 
     async def _handle_probe_result(self, result: DownstreamProbeResult) -> None:
+        # Durable SQLite work blocks on the WAL writer lock, so keep it off the
+        # event loop that also serves BFF requests.
+        error_window = await asyncio.to_thread(
+            self._record_probe_result_sync, result
+        )
+        await asyncio.to_thread(self._deliver_due_sync)
+
+        if (
+            int(error_window["sample_count"]) >= self._error_rate_min_samples
+            and float(error_window["error_rate"]) >= self._error_rate_threshold
+        ):
+            await self._emit_error_rate_window(
+                target_name=result.target_name,
+                window=error_window,
+            )
+
+    def _record_probe_result_sync(
+        self, result: DownstreamProbeResult
+    ) -> Dict[str, Any]:
         previous = self._store.get_probe(result.target_name)
         recorded = self._store.record_probe(result)
         self._state[result.target_name] = recorded
@@ -2585,16 +2688,7 @@ class DownstreamHealthMonitor:
                 event_id=event_id,
             )
 
-        await asyncio.to_thread(self._deliver_due_sync)
-
-        if (
-            int(error_window["sample_count"]) >= self._error_rate_min_samples
-            and float(error_window["error_rate"]) >= self._error_rate_threshold
-        ):
-            await self._emit_error_rate_window(
-                target_name=recorded.target_name,
-                window=error_window,
-            )
+        return error_window
 
     async def _emit_error_rate_window(
         self,
@@ -2607,15 +2701,36 @@ class DownstreamHealthMonitor:
         if flight_key in self._error_windows_in_flight:
             return
         self._error_windows_in_flight.add(flight_key)
-        if not self._store.claim_window(
+        claimed = await asyncio.to_thread(
+            self._store.claim_window,
             target_name=target_name,
             probe_kind="error_rate",
             window_started_at=window_started_at,
             owner_id=self._instance_id,
             lease_seconds=max(self._http_timeout * 2, self._probe_interval),
-        ):
+        )
+        if not claimed:
             self._error_windows_in_flight.discard(flight_key)
             return
+        try:
+            await asyncio.to_thread(
+                self._queue_error_rate_window_sync, target_name, window
+            )
+            await asyncio.to_thread(self._deliver_due_sync)
+        finally:
+            await asyncio.to_thread(
+                self._store.complete_window,
+                target_name=target_name,
+                probe_kind="error_rate",
+                window_started_at=window_started_at,
+                owner_id=self._instance_id,
+            )
+            self._error_windows_in_flight.discard(flight_key)
+
+    def _queue_error_rate_window_sync(
+        self, target_name: str, window: Mapping[str, Any]
+    ) -> None:
+        window_started_at = str(window["window_started_at"])
         result = DownstreamProbeResult(
             target_name=target_name,
             ok=False,
@@ -2634,60 +2749,50 @@ class DownstreamHealthMonitor:
             failure_count=int(window["failure_count"]),
             error_rate=float(window["error_rate"]),
         )
-        try:
-            # Avoid recording the aggregate as the latest interval state; it is
-            # a second trigger over the same durable samples.
-            incident, incident_created = self._store.reserve_incident(
+        # Avoid recording the aggregate as the latest interval state; it is
+        # a second trigger over the same durable samples.
+        incident, incident_created = self._store.reserve_incident(
+            target_name=target_name,
+            event_id=str(
+                self._event_for_result(result, incident_ref=None)["event_id"]
+            ),
+        )
+        self._open_incident_ids[target_name] = str(incident["incident_id"])
+        event = self._event_for_result(
+            result,
+            incident_ref=str(incident["incident_id"]),
+        )
+        event_id = str(event["event_id"])
+        telemetry_delivery_id: Optional[str] = None
+        if self._telemetry_url:
+            telemetry_delivery_id = f"telemetry:{event_id}"
+            self._store.queue_delivery(
+                delivery_id=telemetry_delivery_id,
+                event_id=event_id,
+                channel="telemetry",
                 target_name=target_name,
-                event_id=str(
-                    self._event_for_result(result, incident_ref=None)["event_id"]
+                url=self._telemetry_delivery_url(),
+                body=event,
+                dependency_ids=[],
+                max_attempts=self._delivery_max_attempts,
+            )
+        if self._incidents_url and incident_created:
+            self._store.queue_delivery(
+                delivery_id=str(incident["create_delivery_id"]),
+                event_id=event_id,
+                channel="incident_open",
+                target_name=target_name,
+                url=self._incident_create_url(),
+                body=self._incident_body(
+                    result=result,
+                    incident_id=str(incident["incident_id"]),
+                    event_id=event_id,
                 ),
+                dependency_ids=[telemetry_delivery_id]
+                if telemetry_delivery_id
+                else [],
+                max_attempts=self._delivery_max_attempts,
             )
-            self._open_incident_ids[target_name] = str(incident["incident_id"])
-            event = self._event_for_result(
-                result,
-                incident_ref=str(incident["incident_id"]),
-            )
-            event_id = str(event["event_id"])
-            telemetry_delivery_id: Optional[str] = None
-            if self._telemetry_url:
-                telemetry_delivery_id = f"telemetry:{event_id}"
-                self._store.queue_delivery(
-                    delivery_id=telemetry_delivery_id,
-                    event_id=event_id,
-                    channel="telemetry",
-                    target_name=target_name,
-                    url=self._telemetry_delivery_url(),
-                    body=event,
-                    dependency_ids=[],
-                    max_attempts=self._delivery_max_attempts,
-                )
-            if self._incidents_url and incident_created:
-                self._store.queue_delivery(
-                    delivery_id=str(incident["create_delivery_id"]),
-                    event_id=event_id,
-                    channel="incident_open",
-                    target_name=target_name,
-                    url=self._incident_create_url(),
-                    body=self._incident_body(
-                        result=result,
-                        incident_id=str(incident["incident_id"]),
-                        event_id=event_id,
-                    ),
-                    dependency_ids=[telemetry_delivery_id]
-                    if telemetry_delivery_id
-                    else [],
-                    max_attempts=self._delivery_max_attempts,
-                )
-            await asyncio.to_thread(self._deliver_due_sync)
-        finally:
-            self._store.complete_window(
-                target_name=target_name,
-                probe_kind="error_rate",
-                window_started_at=window_started_at,
-                owner_id=self._instance_id,
-            )
-            self._error_windows_in_flight.discard(flight_key)
 
     def record_downstream_outcome(
         self,
@@ -2710,7 +2815,7 @@ class DownstreamHealthMonitor:
             raise ValueError(f"unknown downstream health target: {target_name}")
         timestamp = observed_at or _utc_now_rfc3339()
         window_start = _window_start(timestamp, self._error_rate_window)
-        window = self._store.append_error_sample(
+        window = self._store.record_outcome(
             target_name=target_name,
             window_started_at=window_start,
             ok=ok,
@@ -2718,9 +2823,7 @@ class DownstreamHealthMonitor:
             status_code=status_code,
             detail=detail,
             observed_at=timestamp,
-        )
-        self._store.record_probe(
-            DownstreamProbeResult(
+            probe=DownstreamProbeResult(
                 target_name=target_name,
                 ok=ok,
                 status_code=status_code,
@@ -2728,7 +2831,7 @@ class DownstreamHealthMonitor:
                 checked_at=timestamp,
                 failure_reason=detail if not ok else None,
                 consecutive_failures=0 if ok else 1,
-            )
+            ),
         )
         if (
             int(window["sample_count"]) >= self._error_rate_min_samples

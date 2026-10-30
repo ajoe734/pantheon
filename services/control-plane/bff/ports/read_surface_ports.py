@@ -9,13 +9,14 @@ Crucially, this module does NOT import, instantiate, or delegate to `ReadSurface
 Every method is cleanly resolved through its respective domain port.
 """
 from __future__ import annotations
+import copy
 import json
 import os
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import urllib.error
 import urllib.request
 
-from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_cache, selected_tenant
+from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_cache, selected_tenant, shared_persona_directory_list
 from services.control_plane.bff.ports.operations_consultation import (
     CompositeOperationsConsultationPort,
     DomainConsultationPort,
@@ -978,7 +979,7 @@ class ReadSurfacePorts:
             store = getattr(p_port, "_store", None) if p_port is not None else None
             if hasattr(self.persona_training, "list_capability_snapshots") or hasattr(p_port, "list_capability_snapshots") or hasattr(store, "list_capability_snapshots") or hasattr(store, "_request"):
                 def _load_batch() -> Dict[str, Dict[str, Any]]:
-                    by_pid = {str(p.get("persona_id") or p.get("id") or "").strip(): dict(snap) for p in (self.list_personas() or []) for snap in [p.get("capability_snapshot") or (p.get("metadata") or {}).get("capability_snapshot")] if str(p.get("persona_id") or p.get("id") or "").strip() and isinstance(snap, Mapping)}
+                    by_pid = {str(p.get("persona_id") or p.get("id") or "").strip(): copy.deepcopy(dict(snap)) for p in (shared_persona_directory_list(self.list_personas) or []) for snap in [p.get("capability_snapshot") or (p.get("metadata") or {}).get("capability_snapshot")] if str(p.get("persona_id") or p.get("id") or "").strip() and isinstance(snap, Mapping)}
                     raw_snaps: Any = []
                     for obj in (self.persona_training, p_port, store):
                         if obj is not None and hasattr(obj, "list_capability_snapshots"):
