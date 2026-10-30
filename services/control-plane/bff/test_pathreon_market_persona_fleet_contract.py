@@ -3182,3 +3182,56 @@ def test_shared_directory_failure_is_shared_not_hidden(monkeypatch):
             with pytest.raises(RuntimeError, match="owner down"):
                 personas_service._list_persona_records("tenant-a", reuse_request_read=True)
     assert store.list_calls == 1
+
+
+def test_shared_directory_explicit_read_stores_do_not_share_snapshots(monkeypatch):
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+
+    store_a, _ = _directory_fixture(monkeypatch)
+    store_b = _CountingDirectoryStore(
+        [{"persona_id": "other", "name": "Other", "tenant_id": "tenant-a", "created_at": "2026-10-01T00:00:00Z"}]
+    )
+    monkeypatch.setattr(
+        personas_service, "_get_active_read_store", lambda explicit=None: explicit or store_a
+    )
+    with request_read_scope():
+        a = personas_service._list_persona_records("tenant-a", read_store=store_a, reuse_request_read=True)
+        b = personas_service._list_persona_records("tenant-a", read_store=store_b, reuse_request_read=True)
+        a2 = personas_service._list_persona_records("tenant-a", read_store=store_a, reuse_request_read=True)
+    assert [r["persona_id"] for r in b] == ["other"]
+    assert len(a) == len(a2) == 3
+    assert (store_a.list_calls, store_b.list_calls) == (1, 1)
+
+
+def test_capability_batch_shares_directory_read_and_isolates_nested_snapshots():
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    calls = {"n": 0}
+    records = [
+        {"persona_id": f"p{i}", "metadata": {"capability_snapshot": {"skills": [f"s{i}"]}}}
+        for i in range(3)
+    ]
+
+    class _Runtime:
+        def list_personas(self, **_kw):
+            calls["n"] += 1
+            return deepcopy(records)
+
+    class _Training:
+        def list_capability_snapshots(self):
+            return []
+
+    ports = ReadSurfacePorts(persona_capital_runtime=_Runtime(), persona_training=_Training())
+    with request_read_scope():
+        first = ports.get_capability_snapshot_for_persona("p0")
+        first["skills"].append("mutated")
+        second = ports.get_capability_snapshot_for_persona("p1")
+        again = ports.get_capability_snapshot_for_persona("p2")
+    assert calls["n"] == 1  # old behaviour: one deep copy per batch load
+    assert second == {"skills": ["s1"]} and again == {"skills": ["s2"]}
+    # Snapshots handed out are independent of the shared directory copy.
+    with request_read_scope():
+        ports2 = ports.get_capability_snapshot_for_persona("p0")
+    assert ports2 == {"skills": ["s0"]}
+    assert calls["n"] == 2  # no cross-request cache

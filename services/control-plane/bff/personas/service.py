@@ -2491,7 +2491,7 @@ def _list_persona_records(
         # Read-only fleet callers share one directory copy per request; each
         # record is still shallow-copied below, never handed out as-is.
         items = list(
-            shared_persona_directory_list(lambda: active_store.list_personas()) or []
+            shared_persona_directory_list(active_store, lambda: active_store.list_personas()) or []
         )
     elif active_store is not None and hasattr(active_store, "list_personas"):
         items = list(active_store.list_personas() or [])
