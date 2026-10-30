@@ -1,132 +1,305 @@
 {
- "pair": {
-  "bff": "fd3c0ba1f968243228208350c599f314ef86fbba",
-  "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
- },
- "method": "20 sequential browser warm GETs of fleet query trading/regular/exclude page_size=20; nearest-rank p95; cold = 3 fresh browser contexts, login latency excluded",
- "run_started": "2026-10-29T23:00:19.688Z",
- "warm_ms": [
-  1126,
-  1460,
-  707,
-  1491,
-  1427,
-  1740,
-  979,
-  1072,
-  1199,
-  734,
-  1500,
-  862,
-  1032,
-  1062,
-  777,
-  1275,
-  1005,
-  1324,
-  929,
-  1077
- ],
- "warm_sorted_ms": [
-  707,
-  734,
-  777,
-  862,
-  929,
-  979,
-  1005,
-  1032,
-  1062,
-  1072,
-  1077,
-  1126,
-  1199,
-  1275,
-  1324,
-  1427,
-  1460,
-  1491,
-  1500,
-  1740
- ],
- "warm_p95_nearest_rank_ms": 1500,
- "warm_target_ms": 1000,
- "warm_pass": false,
- "cold": [
-  {
-   "entry": 1,
-   "login_HTTP": 200,
-   "login_to_shell_ms": 938,
-   "initial_post_login_API_ms": 1824,
-   "login_to_initial_usable_ms": 2634,
-   "api_ms": 1115,
-   "usable_ms": 1836,
-   "row_count": 5,
-   "initial_fleet_queries": [
-    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
-    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
-   ]
-  },
-  {
-   "entry": 2,
-   "login_HTTP": 200,
-   "login_to_shell_ms": 883,
-   "initial_post_login_API_ms": 1381,
-   "login_to_initial_usable_ms": 1954,
-   "api_ms": 1320,
-   "usable_ms": 2076,
-   "row_count": 5,
-   "initial_fleet_queries": [
-    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
-    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
-   ]
-  },
-  {
-   "entry": 3,
-   "login_HTTP": 200,
-   "login_to_shell_ms": 931,
-   "initial_post_login_API_ms": 1240,
-   "login_to_initial_usable_ms": 1805,
-   "api_ms": 740,
-   "usable_ms": 1525,
-   "row_count": 5,
-   "initial_fleet_queries": [
-    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
-    "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
-   ]
-  }
- ],
- "cold_api_target_ms": 2000,
- "cold_usable_target_ms": 2500,
- "cold_pass": true,
- "aborted_first_attempt": "hosted-ui first attempt 22:59Z failed with TimeoutError 30s on first API GET before any sample; no samples; rerun below",
- "previous_pair_batch": {
   "pair": {
-   "bff": "71829313630064996553693bf9766a8dd2009e9c",
-   "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+    "bff": "fd3c0ba1f968243228208350c599f314ef86fbba",
+    "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
   },
+  "method": "20 sequential browser warm GETs of fleet query trading/regular/exclude page_size=20; nearest-rank p95; cold = 3 fresh browser contexts, login latency excluded",
+  "run_started": "2026-10-29T23:00:19.688Z",
   "warm_ms": [
-   1352,
-   1336,
-   891,
-   1328,
-   1117,
-   1528,
-   1207,
-   963,
-   1237,
-   943,
-   1811,
-   1420,
-   1046,
-   1162,
-   1046,
-   1330,
-   1285,
-   979,
-   4590,
-   2643
+    1126,
+    1460,
+    707,
+    1491,
+    1427,
+    1740,
+    979,
+    1072,
+    1199,
+    734,
+    1500,
+    862,
+    1032,
+    1062,
+    777,
+    1275,
+    1005,
+    1324,
+    929,
+    1077
   ],
-  "warm_p95_nearest_rank_ms": 2643
- }
+  "warm_sorted_ms": [
+    707,
+    734,
+    777,
+    862,
+    929,
+    979,
+    1005,
+    1032,
+    1062,
+    1072,
+    1077,
+    1126,
+    1199,
+    1275,
+    1324,
+    1427,
+    1460,
+    1491,
+    1500,
+    1740
+  ],
+  "warm_p95_nearest_rank_ms": 1500,
+  "warm_target_ms": 1000,
+  "warm_pass": false,
+  "cold": [
+    {
+      "entry": 1,
+      "login_HTTP": 200,
+      "login_to_shell_ms": 938,
+      "initial_post_login_API_ms": 1824,
+      "login_to_initial_usable_ms": 2634,
+      "api_ms": 1115,
+      "usable_ms": 1836,
+      "row_count": 5,
+      "initial_fleet_queries": [
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+      ]
+    },
+    {
+      "entry": 2,
+      "login_HTTP": 200,
+      "login_to_shell_ms": 883,
+      "initial_post_login_API_ms": 1381,
+      "login_to_initial_usable_ms": 1954,
+      "api_ms": 1320,
+      "usable_ms": 2076,
+      "row_count": 5,
+      "initial_fleet_queries": [
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+      ]
+    },
+    {
+      "entry": 3,
+      "login_HTTP": 200,
+      "login_to_shell_ms": 931,
+      "initial_post_login_API_ms": 1240,
+      "login_to_initial_usable_ms": 1805,
+      "api_ms": 740,
+      "usable_ms": 1525,
+      "row_count": 5,
+      "initial_fleet_queries": [
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+      ]
+    }
+  ],
+  "cold_api_target_ms": 2000,
+  "cold_usable_target_ms": 2500,
+  "cold_pass": true,
+  "aborted_first_attempt": "hosted-ui first attempt 22:59Z failed with TimeoutError 30s on first API GET before any sample; no samples; rerun below",
+  "previous_pair_batch": {
+    "pair": {
+      "bff": "71829313630064996553693bf9766a8dd2009e9c",
+      "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+    },
+    "warm_ms": [
+      1352,
+      1336,
+      891,
+      1328,
+      1117,
+      1528,
+      1207,
+      963,
+      1237,
+      943,
+      1811,
+      1420,
+      1046,
+      1162,
+      1046,
+      1330,
+      1285,
+      979,
+      4590,
+      2643
+    ],
+    "warm_p95_nearest_rank_ms": 2643
+  },
+  "previous_pair_batch_fd3c0ba1": {
+    "pair": {
+      "bff": "fd3c0ba1f968243228208350c599f314ef86fbba",
+      "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+    },
+    "warm_ms": [
+      1126,
+      1460,
+      707,
+      1491,
+      1427,
+      1740,
+      979,
+      1072,
+      1199,
+      734,
+      1500,
+      862,
+      1032,
+      1062,
+      777,
+      1275,
+      1005,
+      1324,
+      929,
+      1077
+    ],
+    "warm_sorted_ms": [
+      707,
+      734,
+      777,
+      862,
+      929,
+      979,
+      1005,
+      1032,
+      1062,
+      1072,
+      1077,
+      1126,
+      1199,
+      1275,
+      1324,
+      1427,
+      1460,
+      1491,
+      1500,
+      1740
+    ],
+    "warm_p95_nearest_rank_ms": 1500,
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 938,
+        "initial_post_login_API_ms": 1824,
+        "login_to_initial_usable_ms": 2634,
+        "api_ms": 1115,
+        "usable_ms": 1836,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 883,
+        "initial_post_login_API_ms": 1381,
+        "login_to_initial_usable_ms": 1954,
+        "api_ms": 1320,
+        "usable_ms": 2076,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 931,
+        "initial_post_login_API_ms": 1240,
+        "login_to_initial_usable_ms": 1805,
+        "api_ms": 740,
+        "usable_ms": 1525,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      }
+    ]
+  },
+  "latest_batch_3867ec9b": {
+    "pair": {
+      "bff": "3867ec9b4c3d0eb950af2a77ae290c5f78da818d",
+      "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+    },
+    "root_run": 40978598720,
+    "run_started": "2026-10-30T01:14:54.977Z",
+    "warm_ms": [
+      1327,
+      684,
+      1344,
+      633,
+      1075,
+      686,
+      681,
+      1679,
+      1609,
+      1095,
+      1803,
+      1579,
+      1220,
+      668,
+      1055,
+      754,
+      1327,
+      1151,
+      1044,
+      695
+    ],
+    "warm_p95_nearest_rank_ms": 1679,
+    "warm_target_ms": 1000,
+    "warm_pass": false,
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 938,
+        "initial_post_login_API_ms": 1836,
+        "login_to_initial_usable_ms": 2443,
+        "api_ms": 984,
+        "usable_ms": 1827,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 896,
+        "initial_post_login_API_ms": 1195,
+        "login_to_initial_usable_ms": 1857,
+        "api_ms": 1187,
+        "usable_ms": 1938,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 898,
+        "initial_post_login_API_ms": 1171,
+        "login_to_initial_usable_ms": 1751,
+        "api_ms": 1376,
+        "usable_ms": 2074,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      }
+    ],
+    "servedPairId": "0b9f25a1bf78e7f36534b0753635d970785ecc2166ccb7a176dec33735e02fb8"
+  }
 }
