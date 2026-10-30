@@ -2276,6 +2276,57 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertNotIn("ORD-SYNTH-7788", ver.stderr)
                 self.assertNotIn("buyer@synthetic.example", ver.stderr)
 
+    def test_collect_gates_preserves_only_validated_unserved_owner_names(self) -> None:
+        subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        cases = (
+            ("registry, agora-interaction-worker", "unserved_product_owner_services: agora-interaction-worker,registry"),
+            ("registry, not-a-real-owner", None),
+            ("registry; echo SECRET-TOKEN-1", None),
+        )
+        for idx, (names, expected) in enumerate(cases):
+            with self.subTest(names=names):
+                payload = json.dumps(
+                    {
+                        "status": "error",
+                        "step": "collect-verify-gates",
+                        "error_code": "PRODUCT_OWNER_UNSERVED",
+                        "message": f"Product owners not running/healthy: {names}",
+                    }
+                )
+                wrapper = self.tmp_path / f"unserved-gcloud-{idx}.py"
+                wrapper.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import os, sys\n"
+                    "args = sys.argv[1:]\n"
+                    "if args[:2] == ['compute', 'ssh'] and any('collect-gates' in a for a in args):\n"
+                    f"    print({payload!r})\n"
+                    "    raise SystemExit(1)\n"
+                    f"os.execv({str(self.gcloud_bin)!r}, [{str(self.gcloud_bin)!r}] + args)\n",
+                    encoding="utf-8",
+                )
+                wrapper.chmod(0o755)
+                ver = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(RELEASE_ID="pantheon-20261024-001", GCLOUD_BIN=str(wrapper)),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver.returncode, 0)
+                self.assertIn("LIVE_GATE_COLLECTION_FAILED", ver.stderr)
+                self.assertIn("PRODUCT_OWNER_UNSERVED", ver.stderr)
+                self.assertNotIn("SECRET-TOKEN-1", ver.stderr)
+                self.assertNotIn("not-a-real-owner", ver.stderr)
+                if expected:
+                    self.assertIn(expected, ver.stderr)
+                else:
+                    self.assertNotIn("unserved_product_owner_services", ver.stderr)
+
     def test_collector_rejects_tampered_migration_files_and_missing_owner_store(self) -> None:
         subprocess.run(
             [str(PROVISION_SCRIPT)],
