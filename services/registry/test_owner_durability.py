@@ -28,6 +28,7 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 from . import service as service_module
 from .models import RegistryEntryCreate
+from .pg_store import persona_binding_family_keep_sql, persona_binding_select_sql
 from .test_service import _assert_binding_visibility_scenario, _seed_binding_visibility_scenario
 from .storage import (
     PERSONA_BINDING_ROW_KEYS, get_store, persona_binding_candidate_family_rows,
@@ -714,3 +715,102 @@ def test_mixed_keyed_and_unkeyed_create_paths_do_not_deadlock(pg_app):
     statuses = [r.status_code for r in results]
     assert all(status in (200, 409) for status in statuses), statuses
     assert all(status != 500 for status in statuses), statuses
+
+
+def test_persona_binding_family_selection_does_not_sort_or_spill_wide_payloads(pg_app):
+    """Family eligibility is decided over small per-row facts; the wide payload
+    must not travel through a sort (warm-p95: it spilled ~36MB to disk)."""
+    store = get_store()
+    for i in range(300):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec", strategy_id=f"wide-fam-{i % 100}", version=f"1.0.{i}",
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d",
+                metadata={"persona_ids": ["p1"] if i < 150 else [],
+                          "blob": [uuid4().hex for _ in range(1500)]},
+            ),
+            f"wide-{i}",
+        )
+    entries = store._entries
+    executed: list[tuple] = []
+
+    class _Spy:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, params=None):
+            executed.append((sql, params))
+            return self._conn.execute(sql, params) if params else self._conn.execute(sql)
+
+    with entries.transaction() as conn:
+        conn.execute("SET LOCAL work_mem = '1MB'")
+        rows = entries.list_all_selected(
+            persona_binding_select_sql(), conn=_Spy(conn),
+            **dict(zip(
+                ("visible_sql", "family_sql", "bound_sql", "keep_params"),
+                persona_binding_family_keep_sql(None, "strategy_spec"),
+            )),
+        )
+        sql, params = executed[-1]
+        plan = conn.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + sql, params).fetchone()[0]
+    assert len(rows) == 300
+    assert '"Sort Space Type": "Disk"' not in json.dumps(plan)
+
+
+def test_list_all_selected_detoasts_wide_payload_once_and_keeps_payload_shapes(pg_app):
+    """Each wide payload is detoasted once per row (not once for the type check and
+    again for the facts); legacy string-encoded objects are still unwrapped and
+    non-object payloads (array/scalar/string-of-non-object) are still skipped."""
+    store = get_store()
+    for i in range(60):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec", strategy_id=f"once-fam-{i}", version="1.0.0",
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d",
+                metadata={"persona_ids": ["p1"], "blob": [uuid4().hex for _ in range(1500)]},
+            ),
+            f"once-{i}",
+        )
+    entries = store._entries
+    legacy = dict(entries.list_all()[0], registry_id="once-legacy", strategy_id="once-legacy-fam")
+    entries.put("once-legacy", json.dumps(legacy))
+    entries.put("once-array", ["once-array"])
+    entries.put("once-scalar", 7)
+    entries.put("once-string", json.dumps(["not-an-object"]))
+
+    ids = lambda rows: sorted(r[0] for r in rows)  # noqa: E731
+    cols = "payload ->> 'registry_id'"
+    assert ids(entries.list_all_selected(cols)) == sorted(
+        [f"once-{i}" for i in range(60)] + ["once-legacy"]
+    )
+    kept = entries.list_all_selected(cols, visible_sql="TRUE", family_sql="payload ->> 'strategy_id'", bound_sql="TRUE")
+    assert ids(kept) == ids(entries.list_all_selected(cols))
+
+    executed: list[tuple] = []
+
+    class _Spy:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, params=None):
+            executed.append((sql, params))
+            return self._conn.execute(sql, params) if params else self._conn.execute(sql)
+
+    with entries.transaction() as conn:
+        entries.list_all_selected(
+            cols, visible_sql="TRUE", family_sql="payload ->> 'strategy_id'", bound_sql="payload ->> 'registry_id' = 'once-0'",
+            conn=_Spy(conn),
+        )
+        plan = conn.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + executed[-1][0]).fetchone()[0]
+        one_pass = conn.execute(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+            f"SELECT count(*) FROM {entries.table} WHERE payload ->> 'strategy_id' IS NOT NULL"
+        ).fetchone()[0]
+    # One detoast per wide row is the single-pass floor; a second detoast of every row
+    # (type check, then facts) doubles the block hits. Block hits, not wallclock.
+    def _blocks(p):
+        return p[0]["Plan"]["Shared Hit Blocks"] + p[0]["Plan"]["Shared Read Blocks"]
+
+    assert _blocks(plan) <= _blocks(one_pass) * 1.25
