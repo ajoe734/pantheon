@@ -910,3 +910,226 @@ class TestFileWorkerHealthProbes:
         ok, code, reason = _probe_file_health(str(f), target_name="evolution-daily-sweep-scheduler")
         assert ok is True
         assert code == 200
+
+
+# ---------------------------------------------------------------------------
+# PERSONA-FLEET-HEALTH-IO-20261030: durable I/O stays off the event loop
+# ---------------------------------------------------------------------------
+
+
+def _io_monitor(tmp_path, **kwargs) -> DownstreamHealthMonitor:
+    return DownstreamHealthMonitor(
+        telemetry_url="http://telemetry:8080",
+        incidents_url="http://incidents:8090",
+        telemetry_service_jwt="test-service-jwt",
+        tenant_id="tenant-test",
+        probe_interval_seconds=9999,
+        failure_threshold=3,
+        state_path=str(tmp_path / "health.sqlite3"),
+        **kwargs,
+    )
+
+
+def _spy_connections(monkeypatch) -> List[Any]:
+    import sqlite3
+
+    from services.control_plane.bff import downstream_health_monitor as mod
+
+    opened: List[Any] = []
+    real_connect = sqlite3.connect
+
+    def _connect(*args: Any, **kw: Any):
+        connection = real_connect(*args, **kw)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(mod.sqlite3, "connect", _connect)
+    return opened
+
+
+def _is_closed(connection) -> bool:
+    import sqlite3
+
+    try:
+        connection.execute("SELECT 1")
+    except sqlite3.ProgrammingError:
+        return True
+    return False
+
+
+def test_recorded_outcome_uses_one_connection_and_closes_it(tmp_path, monkeypatch):
+    monitor = _io_monitor(tmp_path)
+    opened = _spy_connections(monkeypatch)
+    monitor._resolve_target_registry = lambda: {"telemetry": object()}  # type: ignore[assignment]
+
+    window = monitor.record_downstream_outcome(
+        target_name="telemetry", ok=False, status_code=503, detail="HTTP 503"
+    )
+
+    assert len(opened) == 1
+    assert all(_is_closed(c) for c in opened)
+    # Both durable facts were written by that one transaction.
+    probe = monitor._store.get_probe("telemetry")
+    assert probe is not None and probe.ok is False and probe.consecutive_failures == 1
+    assert monitor._store.append_error_sample(
+        target_name="telemetry",
+        window_started_at=_window_for(monitor),
+        ok=True,
+        latency_ms=0.0,
+        status_code=200,
+        detail=None,
+        observed_at=_utc_now_rfc3339(),
+    )["sample_count"] >= 2
+    assert window is None or window["target_name"] == "telemetry"
+
+
+def _window_for(monitor: DownstreamHealthMonitor) -> str:
+    from services.control_plane.bff.downstream_health_monitor import _window_start
+
+    return _window_start(_utc_now_rfc3339(), monitor._error_rate_window)
+
+
+def test_store_connections_are_closed_deterministically(tmp_path, monkeypatch):
+    monitor = _io_monitor(tmp_path)
+    opened = _spy_connections(monkeypatch)
+
+    monitor._store.list_probes()
+    monitor._store.delivery_counts()
+    monitor._store.claim_window(
+        target_name="telemetry",
+        probe_kind="interval_probe",
+        window_started_at="2026-10-30T00:00:00Z",
+        owner_id="a",
+        lease_seconds=5,
+    )
+    with pytest.raises(RuntimeError):
+        with monitor._store._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            raise RuntimeError("boom")
+
+    assert opened and all(_is_closed(c) for c in opened)
+    # The failed transaction rolled back and released the writer lock.
+    monitor._store.complete_window(
+        target_name="telemetry",
+        probe_kind="interval_probe",
+        window_started_at="2026-10-30T00:00:00Z",
+        owner_id="a",
+    )
+    row = monitor._store.claim_window(
+        target_name="telemetry",
+        probe_kind="interval_probe",
+        window_started_at="2026-10-30T00:00:00Z",
+        owner_id="a",
+        lease_seconds=5,
+    )
+    assert row is False  # completed window is not claimable again
+
+
+def test_synchronous_full_and_wal_are_preserved(tmp_path):
+    monitor = _io_monitor(tmp_path)
+    with monitor._store._connect() as connection:
+        assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def _hold_writer(path: str, seconds: float):
+    """Hold the SQLite writer lock from another connection for ``seconds``."""
+    import sqlite3
+    import threading
+
+    holder = sqlite3.connect(
+        path, isolation_level=None, timeout=10.0, check_same_thread=False
+    )
+    holder.execute("BEGIN IMMEDIATE")
+    threading.Timer(seconds, lambda: (holder.rollback(), holder.close())).start()
+    return holder
+
+
+async def _max_loop_gap(duration: float) -> float:
+    gap = 0.0
+    end = time.monotonic() + duration
+    last = time.monotonic()
+    while time.monotonic() < end:
+        await asyncio.sleep(0.01)
+        now = time.monotonic()
+        gap = max(gap, now - last)
+        last = now
+    return gap
+
+
+def test_held_sqlite_writer_does_not_stall_event_loop_and_write_lands(tmp_path):
+    monitor = _io_monitor(tmp_path)
+    result = DownstreamProbeResult(
+        target_name="telemetry",
+        ok=False,
+        status_code=503,
+        latency_ms=5.0,
+        checked_at=_utc_now_rfc3339(),
+        failure_reason="HTTP 503",
+        consecutive_failures=1,
+    )
+
+    async def scenario():
+        _hold_writer(monitor.state_path, 1.0)
+        handler = asyncio.ensure_future(monitor._handle_probe_result(result))
+        gap = await _max_loop_gap(0.8)
+        assert not handler.done()  # still waiting for the writer, loop is free
+        await handler
+        return gap
+
+    gap = _run(scenario())
+
+    assert gap < 0.4, f"event loop stalled {gap:.2f}s behind the SQLite writer"
+    stored = monitor._store.get_probe("telemetry")
+    assert stored is not None and stored.ok is False
+    assert stored.consecutive_failures == 1
+
+
+def test_probe_all_window_claims_and_truth_do_not_block_loop(tmp_path, monkeypatch):
+    monitor = _io_monitor(tmp_path)
+    monitor._resolve_target_registry = lambda: {  # type: ignore[assignment]
+        "svc": __import__(
+            "services.control_plane.bff.downstream_health_monitor",
+            fromlist=["DownstreamTarget"],
+        ).DownstreamTarget(name="svc", base_url="http://svc:1", health_path="/h")
+    }
+
+    async def _ok_probe(*_a: Any, **_k: Any):
+        return True, 200, ""
+
+    monkeypatch.setattr(
+        "services.control_plane.bff.downstream_health_monitor._probe_http",
+        lambda *a, **k: (True, 200, ""),
+    )
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    async def scenario():
+        _hold_writer(monitor.state_path, 1.0)
+        probe = asyncio.ensure_future(monitor._probe_all())
+        gap = await _max_loop_gap(0.8)
+        await probe
+        return gap
+
+    gap = _run(scenario())
+
+    assert gap < 0.4, f"_probe_all stalled the event loop {gap:.2f}s"
+    stored = monitor._store.get_probe("svc")
+    assert stored is not None and stored.ok is True
+
+
+def test_durable_write_failure_still_propagates(tmp_path, monkeypatch):
+    monitor = _io_monitor(tmp_path)
+
+    def _boom(_result):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(monitor._store, "record_probe", _boom)
+    result = DownstreamProbeResult(
+        target_name="telemetry",
+        ok=True,
+        status_code=200,
+        latency_ms=1.0,
+        checked_at=_utc_now_rfc3339(),
+    )
+    with pytest.raises(RuntimeError, match="disk full"):
+        _run(monitor._handle_probe_result(result))

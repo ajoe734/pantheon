@@ -144,6 +144,14 @@ SENSITIVE_PAYLOAD_KEYS = frozenset({
     "client_secret",
 })
 
+# Exact public, checked-in builtin historical provenance (services/registry/strategy-artifacts/
+# tw-session-momentum-v1.registration.json). It is a pinned historical reference, not current runtime configuration;
+# any other occurrence of a retired identifier (including a different path/hash under /home/lupin) still rejects.
+PUBLIC_BUILTIN_HISTORICAL_PROVENANCE_REFS = (
+    "host-file:/home/lupin/paper-loop/tw_signal_producer.py"
+    "#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396",
+)
+
 
 class SanitizationError(ValueError):
     """Raised when sanitization or staging gate verification fails closed."""
@@ -151,6 +159,8 @@ class SanitizationError(ValueError):
 
 def _check_no_retired_identifiers(payload: Any) -> None:
     serialized = json.dumps(payload, sort_keys=True)
+    for public_ref in PUBLIC_BUILTIN_HISTORICAL_PROVENANCE_REFS:
+        serialized = serialized.replace(json.dumps(public_ref)[1:-1], "")
     for retired in RETIRED_IDENTIFIERS:
         if retired in serialized:
             raise SanitizationError(

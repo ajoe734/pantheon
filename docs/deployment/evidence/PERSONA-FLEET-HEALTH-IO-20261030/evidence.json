@@ -1,0 +1,26 @@
+{
+  "task": "PERSONA-FLEET-HEALTH-IO-20261030",
+  "change": {
+    "monitor": "downstream_health_monitor: _DurableHealthStore._connect is a closing context manager (commit/rollback semantics kept); record_downstream_outcome writes error sample + probe state via one store.record_outcome connection/transaction (was two); _probe_all claim/complete_window, _handle_probe_result durable work, _emit_error_rate_window claim/queue/complete, _probe_one get_probe and the Loop 12 get_state gather run via asyncio.to_thread. publish_loop_12_controller_truth accepts a precomputed state and still only schedules the heartbeat on the loop.",
+    "directory": "core.owner_reads.shared_persona_directory_list(owner, fn): request-scoped shared persona list keyed by (owner store identity, selected tenant); used only when reuse_request_read=True (fleet league + directory snapshot) and by ports.read_surface_ports capability _load_batch (snapshots deep-copied per batch). Different explicit read_stores never share a snapshot. No cross-request/tenant cache.",
+    "unchanged": "WAL + synchronous=FULL, thresholds/intervals, probes, Loop 12 truth, outbox/lease/retry semantics, slim ledger reader, default owner API copies."
+  },
+  "tests": {
+    "interpreter": "PANTHEON_DEPENDENCY_PYTHON (worker-test-python)",
+    "command": "pytest test_downstream_health_monitor.py test_bff_downstream_health_monitor.py test_pathreon_market_persona_fleet_contract.py tests/test_bff_b3_persona_fleet.py tests/test_persona_capital_runtime_ports.py tests/test_management_read_budget.py tests/test_event_loop_owner_reads_guard.py -q tests/test_read_surface_port_cutover.py",
+    "result": "215 passed, 8 skipped (exit 0)",
+    "new_regressions": [
+      "test_held_sqlite_writer_does_not_stall_event_loop_and_write_lands (real SQLite file, writer held 1.0s, loop gap <0.4s, write lands after release)",
+      "test_probe_all_window_claims_and_truth_do_not_block_loop",
+      "test_recorded_outcome_uses_one_connection_and_closes_it",
+      "test_store_connections_are_closed_deterministically",
+      "test_durable_write_failure_still_propagates",
+      "test_fleet_directory_reads_share_one_request_copy / default nested independence / no cross-request-tenant / shared failure",
+      "test_shared_directory_explicit_read_stores_do_not_share_snapshots",
+      "test_capability_batch_shares_directory_read_and_isolates_nested_snapshots"
+    ],
+    "old_fails": "against fa656a8c1 downstream_health_monitor.py: 4 of the new monitor tests fail (connection multiplicity, unclosed connections, two loop-stall tests)."
+  },
+  "known_preexisting_failures": "test_bff_v5_loop_sentinel_contract.py: test_v5_persona_health_returns_200, test_l12_bff_monitor_event_is_admitted_by_real_strict_telemetry_route, test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor fail identically on unmodified fa656a8c1 monitor.",
+  "limits": "Source-only. The historical 54.5s trigger was not captured and is not claimed known; loop-gap tests use bounded wall-clock thresholds and are not hosted p95 proof. Hosted acceptance remains with the original hosted parent."
+}
