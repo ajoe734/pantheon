@@ -20,7 +20,7 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Collection, Mapping
 
 from services.research.experiment_orchestrator.authority import (
     AuthoritativeRunReceipt,
@@ -273,6 +273,17 @@ class AlphaRevalidationWorker:
                             or entry["strategy_spec_id"]
                         )
                         terminal_output_id = run_id
+                        if teaching_receipt.get("baseline_applicable"):
+                            baseline_state = self._ensure_teaching_baseline(
+                                session_id,
+                                tenant_id=tenant,
+                                readback=session_readback,
+                            )
+                        else:
+                            baseline_state = {
+                                "status": "skipped",
+                                "reason": "no_training_owner_session",
+                            }
                         loop_record = {
                             "loop_id": "alpha_replication",
                             "loop_index": 3,
@@ -292,6 +303,7 @@ class AlphaRevalidationWorker:
                             "owner_worker_identity": self._worker_id,
                             "durable_reload_readback": session_readback,
                             "recorded_at": tick_at,
+                            "teaching_baseline": baseline_state,
                         }
                         self._save_loop_record(loop_record)
                         created_authority_task_ids.append(authority_task_id)
@@ -343,6 +355,14 @@ class AlphaRevalidationWorker:
                                 "failure_acknowledged": failed_acknowledged,
                             }
                         )
+
+        try:
+            self._reensure_teaching_baselines(
+                set(tenants) if tenant_id is not None else None,
+                skip_session_ids=set(created_teaching_session_ids),
+            )
+        except Exception:  # noqa: BLE001 - baseline retry never fails the tick.
+            pass
 
         if created_authority_run_ids:
             self._metrics.run_count += len(created_authority_run_ids)
@@ -957,6 +977,127 @@ class AlphaRevalidationWorker:
             )
         return payload_data
 
+    def _post_teaching_baseline_job(
+        self,
+        session_id: str,
+        *,
+        tenant_id: str,
+    ) -> Mapping[str, Any]:
+        canonical_id = _require_text(session_id, "session_id")
+        url = (
+            f"{self._training_session_url}/api/training/sessions/"
+            f"{urllib.parse.quote(canonical_id, safe='')}/preview-jobs"
+        )
+        headers = self._teaching_headers(tenant_id)
+        headers["Idempotency-Key"] = f"teaching-baseline-{canonical_id}"
+        body = json.dumps({"mode": "refresh", "terminalize_session": False})
+        request = urllib.request.Request(
+            url,
+            data=body.encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                status = getattr(response, "status", None) or response.getcode()
+                if status not in (200, 201):
+                    raise RevalidationAttemptError(
+                        f"Teaching baseline queue returned unexpected HTTP {status}"
+                    )
+                payload_data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                err_body = exc.read().decode("utf-8")
+            except Exception:
+                err_body = ""
+            raise RevalidationAttemptError(
+                f"Teaching baseline queue failed for {canonical_id} with HTTP "
+                f"{exc.code}: {err_body or exc.reason}"
+            ) from exc
+        except RevalidationAttemptError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - network/transport boundary failures.
+            raise RevalidationAttemptError(
+                f"Teaching baseline queue failed for {canonical_id}: {exc}"
+            ) from exc
+        if not isinstance(payload_data, Mapping) or not payload_data.get("job_id"):
+            raise RevalidationAttemptError(
+                f"Teaching baseline queue for {canonical_id} returned no job_id"
+            )
+        return payload_data
+
+    def _ensure_teaching_baseline(
+        self,
+        session_id: str,
+        *,
+        tenant_id: str,
+        readback: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Queue one baseline preview job; never raises.
+
+        Returns a baseline state: ``queued`` (job recorded), ``skipped`` with a
+        reason (not active / already evaluated), or ``failed`` with a named
+        error so a later tick can retry. The Training owner replays the same
+        idempotency key, so retries never create a second job.
+        """
+
+        status = str(readback.get("status") or "").strip().lower()
+        if status != "active":
+            return {"status": "skipped", "reason": "session_not_active"}
+        if readback.get("evaluation_result") or readback.get("eval_identity"):
+            return {"status": "skipped", "reason": "evaluation_present"}
+        try:
+            job = self._post_teaching_baseline_job(session_id, tenant_id=tenant_id)
+        except Exception as exc:  # noqa: BLE001 - baseline never fails revalidation.
+            return {
+                "status": "failed",
+                "failure": "teaching_baseline_queue_failed",
+                "error": str(exc) or exc.__class__.__name__,
+                "attempted_at": _utc_now(),
+            }
+        return {
+            "status": "queued",
+            "job_id": str(job["job_id"]),
+            "eval_id": str(job.get("eval_id") or ""),
+            "idempotency_key": f"teaching-baseline-{session_id}",
+            "queued_at": _utc_now(),
+        }
+
+    def _reensure_teaching_baselines(self, tenant_ids: Collection[str] | None, *, skip_session_ids: Collection[str]) -> None:
+        """Retry the baseline for own loop records that never queued one."""
+
+        for key, record in list(self._loop_records.items()):
+            tenant = str(record.get("tenant_id") or "")
+            if (tenant_ids is not None and tenant not in tenant_ids) or str(
+                record.get("next_consumer_receipt_id") or ""
+            ) in skip_session_ids:
+                continue
+            baseline = record.get("teaching_baseline")
+            if not isinstance(baseline, Mapping) or baseline.get("status") not in (
+                "failed",
+                "pending",
+            ):
+                continue
+            session_id = str(record.get("next_consumer_receipt_id") or "")
+            if not session_id:
+                continue
+            try:
+                readback = self._fetch_teaching_session(session_id, tenant_id=tenant)
+            except Exception as exc:  # noqa: BLE001 - retried on a later tick.
+                state: dict[str, Any] = {
+                    "status": "failed",
+                    "failure": "teaching_baseline_readback_failed",
+                    "error": str(exc) or exc.__class__.__name__,
+                    "attempted_at": _utc_now(),
+                }
+            else:
+                state = self._ensure_teaching_baseline(
+                    session_id, tenant_id=tenant, readback=readback
+                )
+            updated = dict(record)
+            updated["teaching_baseline"] = state
+            self._save_loop_record(updated)
+
     def _invoke_persona_teaching(
         self,
         entry: Mapping[str, Any],
@@ -1021,7 +1162,11 @@ class AlphaRevalidationWorker:
                 raise RevalidationAttemptError(
                     f"Authority get_teaching_session readback failed for {session_id}"
                 )
-            return {"session_id": session_id, "readback": dict(readback)}
+            return {
+                "session_id": session_id,
+                "readback": dict(readback),
+                "baseline_applicable": True,
+            }
         elif (
             (
                 hasattr(self._authority, "tasks")
@@ -1043,7 +1188,11 @@ class AlphaRevalidationWorker:
                 "context_refs": payload["context_refs"],
                 "created_at": tick_at,
             }
-            return {"session_id": session_id, "readback": readback}
+            return {
+                "session_id": session_id,
+                "readback": readback,
+                "baseline_applicable": False,
+            }
         else:
             created = self._post_teaching_session(payload, tenant_id=tenant)
             if not isinstance(created, Mapping) or not (
@@ -1058,7 +1207,11 @@ class AlphaRevalidationWorker:
                 raise RevalidationAttemptError(
                     f"Persona Teaching readback failed for {session_id}"
                 )
-            return {"session_id": session_id, "readback": dict(readback)}
+            return {
+                "session_id": session_id,
+                "readback": dict(readback),
+                "baseline_applicable": True,
+            }
 
 
 __all__ = [

@@ -291,6 +291,15 @@ rule and no same-subject rule applies (section 0). The harness never invents an 
   `A_research:pre_edit_evaluation_absent`). A post-edit evaluation is never used, no metric is synthesised, no
   event is relabelled, and the replay issues no PATCH or preview job and does not recreate A resources.
 
+  **Source of the pre-edit evaluation on a fresh chain (2026-10-31, `TEACHING-BASELINE-EVAL-ON-OPEN-20261031`).**
+  The pre-edit evaluation of a fresh chain is a product baseline, not a harness artefact: when the Alpha
+  revalidation worker opens the evaluation-mode TeachingSession it queues one baseline preview job through the
+  Training owner (`POST /api/training/sessions/{id}/preview-jobs`, `{"mode": "refresh", "terminalize_session":
+  false}`, `Idempotency-Key: teaching-baseline-{session_id}`). Later worker ticks re-ensure it for its own active,
+  unevaluated sessions; a queue failure is recorded on the loop record (`teaching_baseline.failure`) and never fails
+  revalidation. The hosted harness behaviour is unchanged: it still never writes before a pre-edit evaluation exists
+  and reads it from the terminal readback as `pre_edit_eval_id`.
+
 ## 6. Genuine Persona Pattern positives (acceptance 6)
 
 The original six Pattern conditions (any legitimate dev Persona with at least two uncovered, naturally
