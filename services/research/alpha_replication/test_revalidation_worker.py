@@ -1291,3 +1291,70 @@ def test_baseline_queue_failure_is_recorded_and_retried_later(
     assert record["teaching_baseline"]["status"] == "queued"
     assert list(baseline_owner.jobs) == ["teaching-baseline-trn-0001"]
     assert authority.create_teaching_session_calls == 1
+
+
+def _legacy_record(worker):
+    record = dict(worker.list_loop_records()[0])
+    record.pop("teaching_baseline", None)
+    worker._save_loop_record(record)
+
+
+def test_legacy_record_without_baseline_is_reensured_once(
+    tmp_path, baseline_owner
+) -> None:
+    baseline_owner.fail = True
+    authority, worker, payload, _ = _open_session(tmp_path)
+    _legacy_record(worker)
+    baseline_owner.fail = False
+    baseline_owner.sessions["trn-0001"] = {"session_id": "trn-0001", "status": "active"}
+    baseline_owner.requests.clear()
+
+    worker.run_once(tenant_id=payload["tenant_id"])
+    assert worker.list_loop_records()[0]["teaching_baseline"]["status"] == "queued"
+    assert len(baseline_owner.requests) == 1
+
+    worker.run_once(tenant_id=payload["tenant_id"])
+    assert len(baseline_owner.requests) == 1
+    assert list(baseline_owner.jobs) == ["teaching-baseline-trn-0001"]
+    assert authority.create_teaching_session_calls == 1
+
+
+def test_baseline_skipped_when_controls_already_edited(
+    tmp_path, baseline_owner
+) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.requests.clear()
+    state = worker._ensure_teaching_baseline(
+        "trn-0009",
+        tenant_id=payload["tenant_id"],
+        readback={
+            "status": "active",
+            "events": [
+                {"event_type": "preview_requested"},
+                {"event_type": "control_patch"},
+            ],
+        },
+    )
+    assert state == {"status": "skipped", "reason": "controls_already_edited"}
+    assert baseline_owner.requests == []
+
+
+def test_reensure_skips_session_with_evaluation_result(
+    tmp_path, baseline_owner
+) -> None:
+    baseline_owner.fail = True
+    _, worker, payload, _ = _open_session(tmp_path)
+    _legacy_record(worker)
+    baseline_owner.fail = False
+    baseline_owner.sessions["trn-0001"] = {
+        "session_id": "trn-0001",
+        "status": "active",
+        "evaluation_result": {"eval_identity": "e1"},
+    }
+    baseline_owner.requests.clear()
+    worker.run_once(tenant_id=payload["tenant_id"])
+    assert baseline_owner.requests == []
+    assert worker.list_loop_records()[0]["teaching_baseline"] == {
+        "status": "skipped",
+        "reason": "evaluation_present",
+    }

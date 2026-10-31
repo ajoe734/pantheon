@@ -1046,6 +1046,14 @@ class AlphaRevalidationWorker:
             return {"status": "skipped", "reason": "session_not_active"}
         if readback.get("evaluation_result") or readback.get("eval_identity"):
             return {"status": "skipped", "reason": "evaluation_present"}
+        events = readback.get("events")
+        if isinstance(events, (list, tuple)) and any(
+            isinstance(event, Mapping)
+            and "control_patch"
+            in (event.get("type"), event.get("event_type"), event.get("kind"))
+            for event in events
+        ):
+            return {"status": "skipped", "reason": "controls_already_edited"}
         try:
             job = self._post_teaching_baseline_job(session_id, tenant_id=tenant_id)
         except Exception as exc:  # noqa: BLE001 - baseline never fails revalidation.
@@ -1073,9 +1081,12 @@ class AlphaRevalidationWorker:
             ) in skip_session_ids:
                 continue
             baseline = record.get("teaching_baseline")
-            if not isinstance(baseline, Mapping) or baseline.get("status") not in (
-                "failed",
-                "pending",
+            # Legacy records written before the baseline existed carry no
+            # teaching_baseline; treat them like pending. Only queued and
+            # skipped are final.
+            if isinstance(baseline, Mapping) and baseline.get("status") in (
+                "queued",
+                "skipped",
             ):
                 continue
             session_id = str(record.get("next_consumer_receipt_id") or "")
