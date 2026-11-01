@@ -43,6 +43,7 @@ from fastapi import (
 from fastapi.sse import EventSourceResponse, ServerSentEvent, format_sse_event
 from starlette.responses import JSONResponse, StreamingResponse
 
+from . import shutdown as _sse_shutdown
 from .service import EventStreamService
 
 from services.control_plane.bff.models import ErrorCode, OperatorIdentity
@@ -468,7 +469,9 @@ async def _default_frontend_bff_event_stream(
         )
     )
     while True:
-        await asyncio.sleep(15.0)
+        stopped, _ = await _sse_shutdown.race(asyncio.sleep(15.0))
+        if stopped:
+            return
         yield _frontend_sse_format(
             _frontend_sse_event(
                 channel="system",

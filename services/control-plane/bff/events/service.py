@@ -18,6 +18,8 @@ from typing import Any, AsyncGenerator, Callable, Dict, Iterable, Optional, Sequ
 
 from fastapi.encoders import jsonable_encoder
 from fastapi.sse import EventSourceResponse, ServerSentEvent, format_sse_event
+
+from . import shutdown as _sse_shutdown
 from starlette.responses import StreamingResponse
 
 
@@ -319,8 +321,8 @@ class EventStreamService:
                     continue
                 yield self.to_server_sent_event(event)
             while True:
-                event = await queue.get()
-                if event is None:
+                stopped, event = await _sse_shutdown.race(queue.get())
+                if stopped or event is None:
                     break
                 if isinstance(event, ServerSentEvent) and event.raw_data == "[DONE]":
                     yield event

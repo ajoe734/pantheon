@@ -235,9 +235,16 @@ def create_lifespan(
             )
         app.state.persona_provisioning_reconciler_task = reconciler_task
 
+        from ..events import shutdown as _sse_shutdown
+
+        _sse_shutdown.reset()
+        restore_signals = _sse_shutdown.install_signal_hooks()
+
         try:
             yield
         finally:
+            _sse_shutdown.begin_shutdown()
+            restore_signals()
             if reconciler_task is not None:
                 reconciler_task.cancel()
                 with suppress(asyncio.CancelledError):

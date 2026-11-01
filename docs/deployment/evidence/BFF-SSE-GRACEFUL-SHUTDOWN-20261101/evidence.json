@@ -1,0 +1,16 @@
+{
+  "task": "BFF-SSE-GRACEFUL-SHUTDOWN-20261101",
+  "root_cause": "uvicorn waits for open streaming responses before lifespan shutdown and had no --timeout-graceful-shutdown, so docker SIGKILLed the BFF after 30s.",
+  "fix": [
+    "events/shutdown.py: process-wide shutdown signal; lifespan startup chains SIGTERM/SIGINT handler that sets it",
+    "EventStreamService.stream and the liveness stream race their waits against the signal and end cleanly",
+    "Dockerfile: uvicorn --timeout-graceful-shutdown 8 as upper bound"
+  ],
+  "tests": "test_sse_shutdown.py (4) + test_sse_backpressure.py + test_events_router.py + test_bff_lifespan_background_work.py: all pass",
+  "measurements": {
+    "method": "local uvicorn on a minimal app using the real SSE generators and shutdown hooks, one open curl SSE client, SIGTERM",
+    "stop_seconds": {"liveness_stream": 0.21, "replay_stream": 0.16, "liveness_with_graceful_timeout_8": 0.16},
+    "readiness_seconds": null
+  },
+  "not_verified": "Full docker compose restart of operator-bff and verify_trade_journey_residual_dev.sh readiness were NOT reproduced: the full BFF app needs a Postgres DSN (ValueError: Postgres DSN is required) unavailable in this worker. Acceptance 2 (measured compose stop/readiness time) must be confirmed on the dev VM deploy. Deploy gate budgets unchanged."
+}
