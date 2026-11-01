@@ -1502,3 +1502,72 @@ def test_model_bound_preview_runs_real_backend_on_derived_candidate(consultation
     assert model["symbols"] == ["2330.TW"]
     assert proof["candidate_binding"]["model"]
     assert {c["parameter_key"] for c in proof["controls"]} == {"lookback_bars", "momentum_threshold"}
+
+
+def _unchanged_controls(module, session_id: str) -> None:
+    seed_changed_supported_controls(module, session_id)
+    record = module.store.get_controls(session_id)
+    for control in record["controls"]:
+        control["current_value"] = control["baseline_value"]
+    module.store.put_controls(session_id, record)
+
+
+def _queue_and_run(client, session_id: str, mode: str, key: str) -> dict:
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={"mode": mode, "requested_by": "operator-baseline"},
+        headers={"Idempotency-Key": key},
+    )
+    assert queued.status_code == 201, queued.text
+    run = client.post(f"/api/training/preview-jobs/{queued.json()['job_id']}/run", json={})
+    assert run.status_code == 200, run.text
+    return run.json()
+
+
+def _new_session(client) -> str:
+    created = client.post(
+        "/api/training/sessions",
+        json={"persona_id": "persona-alpha", "objective": "baseline", "actor_id": "operator-baseline"},
+    )
+    assert created.status_code == 201
+    return created.json()["session_id"]
+
+
+def test_baseline_mode_evaluates_unchanged_controls_and_is_never_commit_eligible() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = _new_session(client)
+    _unchanged_controls(module, session_id)
+
+    refresh = _queue_and_run(client, session_id, "refresh", "refresh-unchanged")
+    assert refresh["status"] == "failed"
+    assert "do not contain an effective change" in refresh["failure_reason"]
+
+    job = _queue_and_run(client, session_id, "baseline", "teaching-baseline-eval-1")
+    assert job["status"] == "completed", job
+    preview = client.get(f"/api/training/previews/{session_id}").json()
+    evaluation = preview["evaluations"][job["eval_id"]]
+    result = evaluation["evaluation_result"]
+    assert evaluation["mode"] == "baseline"
+    assert evaluation["evaluation_kind"] == "baseline"
+    assert result["evaluation_kind"] == "baseline"
+    assert result["eval_id"] == job["eval_id"] and result["evaluated_at"]
+    assert all(isinstance(result["metrics"][k], float) for k in ("total_return", "sharpe_ratio", "max_drawdown"))
+    proof = evaluation["evaluation_proof"]
+    assert proof["evaluation_kind"] == "baseline"
+    assert proof["commit_eligible"] is False
+
+    again = _queue_and_run(client, session_id, "baseline", "teaching-baseline-eval-2")
+    assert again["status"] == "failed"
+    assert "baseline evaluation already completed" in again["failure_reason"]
+
+
+def test_baseline_mode_rejects_edited_controls() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = _new_session(client)
+    seed_changed_supported_controls(module, session_id)
+
+    job = _queue_and_run(client, session_id, "baseline", "teaching-baseline-eval-edited")
+    assert job["status"] == "failed"
+    assert "requires controls that match their baseline values" in job["failure_reason"]

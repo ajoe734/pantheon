@@ -113,6 +113,16 @@ Trainer preview can run through a durable async job queue:
   whether the attempt reclaimed an expired lease and whether a failed attempt
   remains retryable.
 
+Preview jobs normally require an effective control change
+(`candidate controls do not contain an effective change` otherwise). The one
+exception is the explicit `baseline` mode, which evaluates the unedited current
+controls of an active session so a pre-edit evaluation exists. It is rejected
+when any control already differs from its baseline value or when the session
+already holds a completed baseline evaluation. The result and proof are marked
+`evaluation_kind: baseline`, the proof is never `commit_eligible` (no replay
+commit can use it), and no consultation request is raised. The evaluation keeps
+the normal `evaluations[eval_id].evaluation_result` shape.
+
 `services/training-session/preview_eval_worker.py` polls claimable jobs over HTTP.
 Docker Compose starts it by default with `restart: unless-stopped`, mounts the
 durable `training-session-data` volume, and health-checks a recent worker alive
