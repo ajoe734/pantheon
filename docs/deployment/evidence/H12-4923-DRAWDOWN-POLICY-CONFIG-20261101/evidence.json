@@ -1,0 +1,72 @@
+{
+  "task_id": "H12-4923-DRAWDOWN-POLICY-CONFIG-20261101",
+  "kind": "low_risk_paper_policy_config",
+  "status": "proposed_pending_reviewer_decision",
+  "authored_by": "Claude",
+  "reviewer": "Antigravity",
+  "approved_by": null,
+  "approval_recorded": false,
+  "policy_path": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 6.1 low-risk, Reviewer on Duty",
+  "subject": {
+    "artifact_id": "hosted-all12-h12-claude-20261027-4923-execution-artifact",
+    "version": "1.0.0",
+    "strategy_id": "strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a",
+    "symbol": "2330.TW",
+    "stage": "paper",
+    "runtime_id": "rt-824ff162",
+    "binding_id": "rb-de37d167f15649618d0916899573a4e3",
+    "registry_checksum": "sha256:db3d764e77031c82745deb9d5ab92ae676c2eb0175f33cd1b059c4ec682b9d83",
+    "approval_decision_id": "apv-07db6c62179bfb41bcb790001c955022535fe863aa003a8458e1eea8d62c7574",
+    "initial_cash_twd": 100000.0
+  },
+  "config": {
+    "file": "services/evolution/config/threshold_sweep_baselines.json",
+    "expected_drawdown": 0.0325,
+    "policy_source": "docs/deployment/evidence/H12-4923-DRAWDOWN-POLICY-CONFIG-20261101/policy.md#reviewer-decision",
+    "breach_multiplier_unchanged": 1.25,
+    "implied_breach_trigger": 0.040625
+  },
+  "inputs_sha256": {
+    "source_snapshot_line_2791_json": "a4ccb57b4ec7dbc652d6f94f0b02a496da42b54207af35cd755023d7ad8567ee",
+    "source_snapshot_state_checksum": "8b91a86d7e4d07958ea9024bd3c32e85c1f5bbdc2996484399c40b9617c61a33",
+    "source_store_sha256": "21e5605f8658048b6a09b2ad26a43b6df3db45aa85ea694fab135b1cd56de347",
+    "source_store_sha256_txt": "6ae0b0c5064140b6f6bc68cd81145211d8bc13624a68389b2d3b6694f23664cb",
+    "execution_artifact_readback_json": "76809a5e5996a4e599809f7ecb1ad6ba3379c85c6c3fa538fa36714780bdddf7",
+    "committed_input_json": "cbee8947196d4b451cca54f3f946e34610de7c4e44635f38b543b1c7254ecd2a",
+    "calc_py_20261025_unchanged": "966b31ed2b7ad006bdc31361321351e728c4e5f5ae1b4e68ce0f0a45875f3d55",
+    "series_json_file": "01c358ae203a5bec0ec9095be5b526a9393936985fcf3006f101dabf59d82137",
+    "series_canonical_sha256": "7e64acb2c95319e9d3585f029ba2ae5b4f99cb2d0675e87bd31fd854cfb0f4d3"
+  },
+  "basis": {
+    "snapshot_id": "mss-5141f1a45068784037802d7d",
+    "snapshot_observed_at": "2026-11-01T07:29:48Z",
+    "command_runtime_tree": "c8513d2819dad3cc37b48d3f11268f7f1fb6d656",
+    "bars": 53,
+    "first_bar": "2026-08-12",
+    "last_bar": "2026-10-30",
+    "observations": 52,
+    "simulated_fills": 52,
+    "actions": {"BUY": 11, "SELL": 41},
+    "final_simulated_position_shares": -30.0,
+    "max_pnl_twd": 1815.0,
+    "min_pnl_twd": -2935.0,
+    "final_pnl_twd": 1815.0,
+    "max_observed_drawdown": 0.032494393222028406,
+    "max_drawdown_date": "2026-10-06",
+    "rounding": "ceil(max_observed * 10000) / 10000",
+    "proposed_expected_drawdown": 0.0325,
+    "as_of_time_utc_assumption": "05:30:00",
+    "rolling_window_calendar_days": 20,
+    "gross_ledger": true,
+    "coordinator_pre_review_match": true,
+    "learning_eligible": false
+  },
+  "not_claimed": [
+    "policy approval",
+    "hosted fills or hosted -30 share position",
+    "20 observed hosted trading days",
+    "net-of-fee policy",
+    "live profit or alpha quality acceptance"
+  ],
+  "delivery": "Operator publishes the merged config later via Root deploy after section 6.1 reviewer approval and merge."
+}
