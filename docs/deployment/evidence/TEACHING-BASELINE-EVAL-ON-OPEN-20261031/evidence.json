@@ -1,0 +1,19 @@
+{
+  "task_id": "TEACHING-BASELINE-EVAL-ON-OPEN-20261031",
+  "verification": {
+    "command": "python -m pytest services/research/alpha_replication -q",
+    "result": "60 passed",
+    "new_tests": [
+      "test_baseline_queued_once_on_first_open",
+      "test_baseline_replay_never_creates_second_job_or_session",
+      "test_baseline_skipped_when_session_already_evaluated",
+      "test_baseline_skipped_when_session_not_active",
+      "test_baseline_queue_failure_is_recorded_and_retried_later",
+      "test_legacy_record_without_baseline_is_reensured_once",
+      "test_baseline_skipped_when_controls_already_edited",
+      "test_reensure_skips_session_with_evaluation_result"
+    ]
+  },
+  "not_verified": "Hosted verification (existing session gets one completed baseline; A_research records it) is operator-owned after the next Root deploy.",
+  "unchanged": ["services/training-session", "BFF", "tests/integration/l12", "hosted harness"]
+}
