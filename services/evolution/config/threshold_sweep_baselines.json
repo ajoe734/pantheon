@@ -18,6 +18,10 @@
     "hosted-all12-h12-01a11-20261023-9aeb-execution-artifact": {
       "expected_drawdown": 0.0325,
       "policy_source": "docs/deployment/evidence/H12-DRAWDOWN-POLICY-CONFIG-20261025/policy.md#reviewer-decision"
+    },
+    "hosted-all12-h12-claude-20261027-4923-execution-artifact": {
+      "expected_drawdown": 0.0325,
+      "policy_source": "docs/deployment/evidence/H12-4923-DRAWDOWN-POLICY-CONFIG-20261101/policy.md#reviewer-decision"
     }
   }
 }
