@@ -101,7 +101,11 @@ class PostgresRegistryStore:
         bootstrap: bool = True,
     ) -> None:
         self._entries = PostgresJsonOwnerStore(
-            dsn=dsn, table=entries_table, owner_service="registry-svc", bootstrap=bootstrap,
+            dsn=dsn,
+            table=entries_table,
+            owner_service="registry-svc",
+            bootstrap=bootstrap,
+            family_keep_index_sql=(PERSONA_BINDING_FAMILY_SQL, PERSONA_BINDING_BOUND_SQL),
         )
         self._receipts = PostgresJsonOwnerStore(
             dsn=dsn, table=receipts_table, owner_service="registry-svc", bootstrap=bootstrap,
@@ -874,6 +878,24 @@ def persona_binding_select_sql() -> str:
     return f"{cols}, {shapes}"
 
 
+_EMPTY_JSONB_VALUES = "'null'::jsonb, '[]'::jsonb, '{}'::jsonb, '\"\"'::jsonb, 'false'::jsonb, '0'::jsonb"
+PERSONA_BINDING_FAMILY_SQL = "payload ->> 'strategy_id'"
+PERSONA_BINDING_BOUND_SQL = (
+    "("
+    + " OR ".join(
+        f"COALESCE({_sql_node(p)}, 'null'::jsonb) NOT IN ({_EMPTY_JSONB_VALUES})"
+        for p in (
+            ("metadata", "strategy_spec", "persona_ids"),
+            ("metadata", "personaIds"),
+            ("metadata", "persona_ids"),
+            ("metadata", "persona_id"),
+            ("metadata", "strategy_spec", "metadata", "persona_id"),
+        )
+    )
+    + ")"
+)
+
+
 def persona_binding_family_keep_sql(
     visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
 ) -> tuple[str, str, str, tuple]:
@@ -886,17 +908,6 @@ def persona_binding_family_keep_sql(
     ``strategy_id`` is always kept. Request-derived values are bound parameters;
     paths are constant; over-inclusion of the binding test is the safe direction.
     """
-    empty = "'null'::jsonb, '[]'::jsonb, '{}'::jsonb, '\"\"'::jsonb, 'false'::jsonb, '0'::jsonb"
-    bound = " OR ".join(
-        f"COALESCE({_sql_node(p)}, 'null'::jsonb) NOT IN ({empty})"
-        for p in (
-            ("metadata", "strategy_spec", "persona_ids"),
-            ("metadata", "personaIds"),
-            ("metadata", "persona_ids"),
-            ("metadata", "persona_id"),
-            ("metadata", "strategy_spec", "metadata", "persona_id"),
-        )
-    )
     visible, params = [], []
     if artifact_type is not None:
         visible.append("payload ->> 'artifact_type' = %s")
@@ -909,7 +920,7 @@ def persona_binding_family_keep_sql(
             clauses.append("payload ->> 'owner_tenant' IS NULL")
         visible.append("(" + " OR ".join(clauses) + ")")
     visible_sql = " AND ".join(visible) or "TRUE"
-    return visible_sql, "payload ->> 'strategy_id'", f"({bound})", tuple(params)
+    return visible_sql, PERSONA_BINDING_FAMILY_SQL, PERSONA_BINDING_BOUND_SQL, tuple(params)
 
 
 def persona_binding_rows_from_columns(rows) -> list[dict]:

@@ -814,3 +814,102 @@ def test_list_all_selected_detoasts_wide_payload_once_and_keeps_payload_shapes(p
         return p[0]["Plan"]["Shared Hit Blocks"] + p[0]["Plan"]["Shared Read Blocks"]
 
     assert _blocks(plan) <= _blocks(one_pass) * 1.25
+
+
+def test_postgres_persona_binding_counts_view_parity_and_indexed_scan(pg_app):
+    """Postgres ``view=persona_binding_counts`` matches ``view=persona_binding`` and
+    uses the ``family_keep_idx`` expression index to avoid detoasting unbound families."""
+    from .pg_store import persona_binding_family_keep_sql, persona_binding_select_sql
+    from .storage import persona_binding_counts
+    from .test_service import _bff_reference_counts
+
+    store = get_store()
+    entries = store._entries
+    for i in range(60):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec",
+                strategy_id=f"idx-fam-{i}",
+                version="1.0.0",
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d",
+                metadata={
+                    "persona_ids": ["p1", " p2 ", "p1"] if i == 0 else [],
+                    "blob": [uuid4().hex for _ in range(1500)],
+                },
+            ),
+            f"idx-{i}-v1",
+            actor={"tenant": "tenant-a"},
+        )
+    # Superseded version on idx-fam-0, retired family, other-tenant family, legacy shapes:
+    store.create(
+        RegistryEntryCreate(
+            artifact_type="strategy_spec", strategy_id="idx-fam-0", version="0.9.0",
+            storage_ref={"backend": "object_store", "path": "spec.json"},
+            checksum="sha256:cafef00d", metadata={"persona_ids": ["p-superseded"]},
+        ),
+        "idx-0-v0", actor={"tenant": "tenant-a"},
+    )
+    store.create(
+        RegistryEntryCreate(
+            artifact_type="strategy_spec", strategy_id="idx-retired", version="1.0.0",
+            artifact_state="retired",
+            storage_ref={"backend": "object_store", "path": "spec.json"},
+            checksum="sha256:cafef00d", metadata={"persona_ids": ["p1"]},
+        ),
+        "idx-ret-v1", actor={"tenant": "tenant-a"},
+    )
+    store.create(
+        RegistryEntryCreate(
+            artifact_type="strategy_spec", strategy_id="idx-fam-1", version="2.0.0",
+            storage_ref={"backend": "object_store", "path": "spec.json"},
+            checksum="sha256:cafef00d", metadata={"persona_ids": ["p-other-tenant"]},
+        ),
+        "idx-1-v2-other", actor={"tenant": "tenant-b"},
+    )
+    legacy_row = dict(
+        entries.get("idx-0-v1"),
+        registry_id="idx-legacy-str",
+        strategy_id="idx-legacy-fam",
+        metadata={"personaIds": ["p3"]},
+    )
+    entries.put("idx-legacy-str", json.dumps(legacy_row))
+
+    visible = frozenset({"tenant-a", "__builtin__"})
+    rows = store.list_persona_binding_rows(visible_tenants=visible, artifact_type="strategy_spec")
+    counts = persona_binding_counts(rows)
+    assert counts == {"p1": 1, "p2": 1, "p3": 1}
+    assert counts == _bff_reference_counts(rows)
+
+    executed: list[tuple] = []
+
+    class _Spy:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, params=None):
+            executed.append((sql, params))
+            return self._conn.execute(sql, params) if params else self._conn.execute(sql)
+
+    with entries.transaction() as conn:
+        entries.list_all_selected(
+            persona_binding_select_sql(),
+            conn=_Spy(conn),
+            **dict(zip(
+                ("visible_sql", "family_sql", "bound_sql", "keep_params"),
+                persona_binding_family_keep_sql(visible, "strategy_spec"),
+            )),
+        )
+        sql, params = executed[-1]
+        plan = conn.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + sql, params).fetchone()[0]
+        conn.execute("SET LOCAL enable_seqscan = on")
+        one_pass = conn.execute(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+            f"SELECT count(*) FROM {entries.table} WHERE payload ->> 'checksum' IS NOT NULL"
+        ).fetchone()[0]
+
+    def _blocks(p):
+        return p[0]["Plan"]["Shared Hit Blocks"] + p[0]["Plan"]["Shared Read Blocks"]
+
+    assert entries.family_keep_index_name.strip('"') in json.dumps(plan)
+    assert _blocks(plan) < _blocks(one_pass) * 0.25

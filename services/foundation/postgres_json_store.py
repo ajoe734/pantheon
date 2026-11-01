@@ -78,6 +78,7 @@ class PostgresJsonOwnerStore:
         bootstrap: bool = True,
         read_only: bool = False,
         count_index: bool = False,
+        family_keep_index_sql: Optional[tuple[str, str]] = None,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required")
@@ -91,8 +92,19 @@ class PostgresJsonOwnerStore:
         self.count_index_name = quote_pg_identifier(
             f"{table.split('.')[-1][:48]}_count_idx"
         )
+        self.family_keep_index_sql = family_keep_index_sql
+        self.family_keep_index_name = quote_pg_identifier(
+            f"{table.split('.')[-1][:42]}_family_keep_idx"
+        )
         if bootstrap and not read_only:
             self.bootstrap()
+
+    @staticmethod
+    def _family_keep_pred_sql(family_sql: str, bound_sql: str) -> str:
+        return (
+            f"COALESCE(({bound_sql}) OR ({family_sql}) IS NULL "
+            "OR jsonb_typeof(payload) <> 'object', TRUE)"
+        )
 
     def _connect(self):
         try:
@@ -170,6 +182,19 @@ class PostgresJsonOwnerStore:
                         f"CREATE INDEX IF NOT EXISTS {self.count_index_name} "
                         f"ON {self.table} ((jsonb_typeof(payload))) "
                         "WHERE jsonb_typeof(payload) IN ('object', 'string')"
+                    )
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", "") not in ("23505", "42P07"):
+                        raise
+                    if hasattr(conn, "rollback"):
+                        conn.rollback()
+            if self.family_keep_index_sql:
+                fam_sql, bnd_sql = self.family_keep_index_sql
+                pred_sql = self._family_keep_pred_sql(fam_sql, bnd_sql)
+                try:
+                    conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS {self.family_keep_index_name} "
+                        f"ON {self.table} (({pred_sql}), ({fam_sql}))"
                     )
                 except Exception as exc:
                     if getattr(exc, "sqlstate", "") not in ("23505", "42P07"):
@@ -430,11 +455,44 @@ class PostgresJsonOwnerStore:
                 f"FROM {self.table} {where} OFFSET 0) AS raw OFFSET 0"
             )
 
+        use_keep_index = bool(
+            visible_sql is not None
+            and self.family_keep_index_sql
+            and (family_sql, bound_sql) == self.family_keep_index_sql
+        )
         if visible_sql is None:
             sql = (
                 f"SELECT {columns_sql} FROM ({unwrapped('updated_at')}"
                 ") AS rows WHERE jsonb_typeof(payload) = 'object' ORDER BY updated_at ASC"
             )
+        elif use_keep_index:
+            assert family_sql is not None and bound_sql is not None
+            pred = self._family_keep_pred_sql(family_sql, bound_sql)
+            sql = (
+                "WITH seed AS MATERIALIZED ("
+                f"SELECT updated_at, payload, ({visible_sql}) AS vis, "
+                f"({family_sql}) AS fam, ({bound_sql}) AS bound "
+                f"FROM ({unwrapped('updated_at', f'WHERE ({pred}) = TRUE')}) AS base "
+                "WHERE jsonb_typeof(payload) = 'object'), "
+                "families AS (SELECT COALESCE(array_agg(DISTINCT fam) "
+                "FILTER (WHERE vis AND fam IS NOT NULL AND bound), ARRAY[]::text[]) "
+                "AS fams FROM seed), "
+                "siblings AS MATERIALIZED ("
+                "SELECT base.updated_at, base.payload FROM ("
+                + unwrapped(
+                    "updated_at",
+                    f"CROSS JOIN families WHERE ({pred}) = FALSE "
+                    f"AND ({family_sql}) = ANY(families.fams)",
+                )
+                + f") AS base WHERE jsonb_typeof(payload) = 'object' AND ({visible_sql})), "
+                "kept AS ("
+                "SELECT seed.updated_at, seed.payload FROM seed, families "
+                "WHERE seed.vis AND (seed.fam IS NULL OR seed.fam = ANY(families.fams)) "
+                "UNION ALL SELECT updated_at, payload FROM siblings) "
+                f"SELECT {columns_sql} FROM kept AS rows ORDER BY updated_at ASC"
+            )
+            if keep_params:
+                keep_params = keep_params + keep_params
         else:
             fam = family_sql or "NULL::text"
             bound = bound_sql or "FALSE"
@@ -454,6 +512,8 @@ class PostgresJsonOwnerStore:
                 + ") AS rows ORDER BY updated_at ASC"
             )
         with self._use_conn(conn) as conn:
+            if use_keep_index:
+                conn.execute("SET LOCAL enable_seqscan = off")
             cursor = conn.execute(sql, keep_params) if keep_params else conn.execute(sql)
             return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in cursor.fetchall()]
 
