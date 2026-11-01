@@ -24,4 +24,5 @@ ENV BUILD_TIME=$BUILD_TIME
 
 EXPOSE 8001
 
-CMD ["uvicorn", "services.control_plane.bff.main:app", "--host", "0.0.0.0", "--port", "8001"]
+# Bound graceful shutdown so open SSE streams cannot outlast docker stop (docker stop grace is 30s).
+CMD ["uvicorn", "services.control_plane.bff.main:app", "--host", "0.0.0.0", "--port", "8001", "--timeout-graceful-shutdown", "8"]

@@ -49,8 +49,34 @@ DEFAULT_BACKEND_ID = "replication_gate"
 TEACHING_BASELINE_MODE = "baseline"
 
 
-def _baseline_idempotency_key(session_id: str) -> str:
-    return f"teaching-baseline-eval-{session_id}"
+TEACHING_BASELINE_RETRY_BACKOFF_SECONDS = 3600
+# Training owner reasons that no later attempt can change.
+_FINAL_BASELINE_REASONS = (
+    "controls that match their baseline values",
+    "baseline evaluation already completed",
+)
+
+
+def _baseline_idempotency_key(session_id: str, attempt: int = 1) -> str:
+    # Attempt 1 keeps the key already recorded on hosted; the Training owner
+    # replays a failed job for the same key, so each retry needs its own.
+    base = f"teaching-baseline-eval-{session_id}"
+    return base if attempt <= 1 else f"{base}-r{attempt}"
+
+
+def _is_final_baseline_reason(reason: str) -> bool:
+    lowered = reason.lower()
+    return any(marker in lowered for marker in _FINAL_BASELINE_REASONS)
+
+
+def _seconds_since(timestamp: Any) -> float | None:
+    try:
+        parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - parsed).total_seconds()
 
 
 def _utc_now() -> str:
@@ -989,6 +1015,7 @@ class AlphaRevalidationWorker:
         session_id: str,
         *,
         tenant_id: str,
+        attempt: int = 1,
     ) -> Mapping[str, Any]:
         canonical_id = _require_text(session_id, "session_id")
         url = (
@@ -996,7 +1023,7 @@ class AlphaRevalidationWorker:
             f"{urllib.parse.quote(canonical_id, safe='')}/preview-jobs"
         )
         headers = self._teaching_headers(tenant_id)
-        headers["Idempotency-Key"] = _baseline_idempotency_key(canonical_id)
+        headers["Idempotency-Key"] = _baseline_idempotency_key(canonical_id, attempt)
         body = json.dumps({"mode": TEACHING_BASELINE_MODE, "terminalize_session": False})
         request = urllib.request.Request(
             url,
@@ -1033,12 +1060,32 @@ class AlphaRevalidationWorker:
             )
         return payload_data
 
+    def _fetch_preview_job(self, job_id: str, *, tenant_id: str) -> Mapping[str, Any]:
+        url = (
+            f"{self._training_session_url}/api/training/preview-jobs/"
+            f"{urllib.parse.quote(_require_text(job_id, 'job_id'), safe='')}"
+        )
+        headers = self._teaching_headers(tenant_id)
+        headers.pop("Content-Type", None)
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(request, timeout=10) as response:
+            status = getattr(response, "status", None) or response.getcode()
+            if status != 200:
+                raise RevalidationAttemptError(
+                    f"Preview job readback returned unexpected HTTP {status}"
+                )
+            payload_data = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload_data, Mapping):
+            raise RevalidationAttemptError("Preview job readback was not a mapping")
+        return payload_data
+
     def _ensure_teaching_baseline(
         self,
         session_id: str,
         *,
         tenant_id: str,
         readback: Mapping[str, Any],
+        attempt: int = 1,
     ) -> dict[str, Any]:
         """Queue one baseline preview job; never raises.
 
@@ -1062,7 +1109,9 @@ class AlphaRevalidationWorker:
         ):
             return {"status": "skipped", "reason": "controls_already_edited"}
         try:
-            job = self._post_teaching_baseline_job(session_id, tenant_id=tenant_id)
+            job = self._post_teaching_baseline_job(
+                session_id, tenant_id=tenant_id, attempt=attempt
+            )
         except Exception as exc:  # noqa: BLE001 - baseline never fails revalidation.
             return {
                 "status": "failed",
@@ -1075,9 +1124,55 @@ class AlphaRevalidationWorker:
             "job_id": str(job["job_id"]),
             "eval_id": str(job.get("eval_id") or ""),
             "mode": TEACHING_BASELINE_MODE,
-            "idempotency_key": _baseline_idempotency_key(session_id),
+            "idempotency_key": _baseline_idempotency_key(session_id, attempt),
+            "attempt": attempt,
             "queued_at": _utc_now(),
         }
+
+    def _follow_queued_baseline(
+        self, record: Mapping[str, Any], baseline: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        """Read a queued baseline job; return the new state, or None to leave it.
+
+        completed is final, queued/running is left alone, and a failed job is
+        retried under a new idempotency key once the last attempt is an hour
+        old unless the Training owner named a reason no attempt can change.
+        """
+
+        tenant = str(record.get("tenant_id") or "")
+        session_id = str(record.get("next_consumer_receipt_id") or "")
+        job_id = str(baseline.get("job_id") or "")
+        if not job_id:
+            return None
+        job = self._fetch_preview_job(job_id, tenant_id=tenant)
+        job_status = str(job.get("status") or "").strip().lower()
+        if job_status == "completed":
+            return {**baseline, "status": "completed", "completed_at": _utc_now()}
+        if job_status != "failed":
+            return None
+        error_code = str(job.get("error_code") or "")
+        reason = str(job.get("failure_reason") or "")
+        state = {
+            **baseline,
+            "last_error_code": error_code,
+            "last_failure_reason": reason,
+        }
+        if _is_final_baseline_reason(reason):
+            return {**state, "status": "failed_final"}
+        elapsed = _seconds_since(baseline.get("queued_at"))
+        if elapsed is not None and elapsed < TEACHING_BASELINE_RETRY_BACKOFF_SECONDS:
+            return state if state != dict(baseline) else None
+        attempt = int(baseline.get("attempt") or 1) + 1
+        readback = self._fetch_teaching_session(session_id, tenant_id=tenant)
+        retried = self._ensure_teaching_baseline(
+            session_id, tenant_id=tenant, readback=readback, attempt=attempt
+        )
+        if retried.get("status") == "failed":
+            # The queue call failed: keep the job we know and try again later.
+            return {**state, "last_retry_error": retried.get("error", "")}
+        retried["last_error_code"] = error_code
+        retried["last_failure_reason"] = reason
+        return retried
 
     def _reensure_teaching_baselines(self, tenant_ids: Collection[str] | None, *, skip_session_ids: Collection[str]) -> None:
         """Retry the baseline for own loop records that never queued one."""
@@ -1089,13 +1184,28 @@ class AlphaRevalidationWorker:
             ) in skip_session_ids:
                 continue
             baseline = record.get("teaching_baseline")
+            if (
+                isinstance(baseline, Mapping)
+                and baseline.get("status") == "queued"
+                and baseline.get("mode") == TEACHING_BASELINE_MODE
+            ):
+                try:
+                    followed = self._follow_queued_baseline(record, baseline)
+                except Exception:  # noqa: BLE001 - followed again on a later tick.
+                    followed = None
+                if followed is not None and followed != baseline:
+                    updated = dict(record)
+                    updated["teaching_baseline"] = followed
+                    self._save_loop_record(updated)
+                continue
             # Legacy records written before the baseline existed carry no
             # teaching_baseline; treat them like pending. Only queued and
-            # skipped are final.
+            # skipped, completed and failed_final are final; queued is
+            # followed above.
             # Queued records from before the explicit baseline mode (no
             # mode baseline) were rejected by the Training owner; re-ensure.
             if isinstance(baseline, Mapping) and (
-                baseline.get("status") == "skipped"
+                baseline.get("status") in ("skipped", "completed", "failed_final")
                 or (
                     baseline.get("status") == "queued"
                     and baseline.get("mode") == TEACHING_BASELINE_MODE

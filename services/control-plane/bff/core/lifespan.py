@@ -235,9 +235,16 @@ def create_lifespan(
             )
         app.state.persona_provisioning_reconciler_task = reconciler_task
 
+        from ..events import router as _events_router
+
+        _events_router.reset_sse_shutdown()
+        restore_signals = _events_router.install_sse_signal_hooks()
+
         try:
             yield
         finally:
+            _events_router.begin_sse_shutdown()
+            restore_signals()
             if reconciler_task is not None:
                 reconciler_task.cancel()
                 with suppress(asyncio.CancelledError):
