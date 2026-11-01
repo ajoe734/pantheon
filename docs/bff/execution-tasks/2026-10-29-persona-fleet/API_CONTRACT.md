@@ -131,3 +131,20 @@ closed on exit; WAL and `synchronous=FULL` are unchanged. The fleet read path
 (`reuse_request_read=True`) shares one persona-directory list per request;
 default owner APIs still return independent copies, with no cross-request or
 cross-tenant cache.
+
+## Routed strategy count source (PERSONA-FLEET-STRATEGY-COUNT-READ-20261101)
+
+The fleet's per-persona routed-strategy count is read from the Registry owner
+at `GET /api/registry/strategy-specs?view=persona_binding_counts`, which returns
+`{persona_id: count}` (non-negative integer counts). Semantics are identical to
+`count_strategy_persona_bindings`: tenant visibility is applied before family
+eligibility, the current version is the highest `(semver, created_at, registry_id)`,
+a retired current version is excluded, each strategy counts once per distinct
+persona id, and malformed entries (missing strategy/registry id or version)
+fail closed with `503`. On Postgres, `PostgresJsonOwnerStore` creates the
+additive expression index `<entries>_family_keep_idx` over the persona-binding
+predicate and `strategy_id` so `list_all_selected` reads bound seed rows and
+their same-family siblings via index scans without detoasting unbound strategy
+families. No cross-request cache, fallback, or retry; owner failures surface as
+403/503. The default full strategy-spec response and the `view=persona_binding`
+rows are unchanged.

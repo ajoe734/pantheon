@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import threading
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from .models import (
@@ -111,6 +112,88 @@ def persona_binding_candidate_family_rows(rows: list[dict]) -> list[dict]:
     """
     bound = {r.get("strategy_id") for r in rows if persona_binding_has_binding(r)}
     return [r for r in rows if r.get("strategy_id") is None or r.get("strategy_id") in bound]
+
+
+_BINDING_LIFECYCLE = {
+    "draft": "draft", "candidate": "candidate", "approved": "approved",
+    "retired": "retired", "active": "approved",
+}
+
+
+def _binding_dict(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _binding_utc(value: Any) -> datetime:
+    """Naive-UTC parse of an RFC3339 string; ``datetime.min`` when absent/invalid."""
+    if not value or not isinstance(value, str) or not value.strip():
+        return datetime.min
+    raw = value.strip()
+    try:
+        dt = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+    except (ValueError, TypeError):
+        return datetime.min
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
+def _binding_version(row: dict) -> Optional[tuple]:
+    """``(sort_key, state, persona_ids)`` of one binding row, or ``None`` if unidentifiable."""
+    meta = _binding_dict(row.get("metadata"))
+    inner = _binding_dict(meta.get("strategy_spec"))
+    inner_meta = _binding_dict(inner.get("metadata"))
+    reg_id = str(row.get("registry_id") or meta.get("spec_version_id") or "").strip()
+    semver = str(
+        row.get("version") or inner.get("spec_version") or meta.get("spec_version")
+        or meta.get("version") or ""
+    ).strip()
+    if not reg_id or not semver:
+        return None
+    prov = (
+        inner["provenance"] if isinstance(inner.get("provenance"), dict)
+        else _binding_dict(meta.get("provenance"))
+    )
+    created_at = row.get("created_at") or prov.get("created_at")
+    persona_ids = list(
+        inner.get("persona_ids") or meta.get("personaIds") or meta.get("persona_ids")
+        or ([meta["persona_id"]] if meta.get("persona_id") else (
+            [inner_meta["persona_id"]] if inner_meta.get("persona_id") else []))
+    )
+    state = (
+        row.get("artifact_state") or inner.get("lifecycle_state") or meta.get("lifecycle_state")
+        or meta.get("state") or meta.get("status") or "draft"
+    )
+    key = (
+        tuple(int(p) for p in semver.lstrip("v").split(".") if p.isdigit()),
+        _binding_utc(created_at), reg_id,
+    )
+    return key, _BINDING_LIFECYCLE.get(str(state or "").strip().lower(), "draft"), persona_ids
+
+
+def persona_binding_counts(rows: list[dict]) -> dict[str, int]:
+    """Per-persona count of non-retired strategies whose current version binds it.
+
+    ``rows`` are the visible-then-family persona-binding rows. The current version of
+    a family is its highest ``(semver, created_at, registry_id)``; a retired current
+    version contributes nothing; a strategy counts once per distinct persona id.
+    """
+    current: dict[Any, tuple] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("artifact_type") not in (None, "strategy_spec"):
+            raise ValueError("Invalid strategy registry entry")
+        sid = str(row.get("strategy_id") or _binding_dict(
+            _binding_dict(row.get("metadata")).get("strategy_spec")).get("strategy_id") or "").strip()
+        version = _binding_version(row)
+        if not sid or version is None:
+            raise ValueError("Invalid strategy registry entry")
+        if sid not in current or version[0] > current[sid][0]:
+            current[sid] = version
+    counts: dict[str, int] = {}
+    for _key, state, persona_ids in current.values():
+        if state == "retired":
+            continue
+        for persona_id in {str(v).strip() for v in persona_ids if str(v).strip()}:
+            counts[persona_id] = counts.get(persona_id, 0) + 1
+    return counts
 
 
 class RegistryUniqueViolationError(ValueError):

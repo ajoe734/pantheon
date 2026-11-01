@@ -3256,3 +3256,90 @@ def test_memory_persona_binding_visible_population_precedes_family_eligibility()
     tenants = _seed_binding_visibility_scenario(store)
     rows = store.list_persona_binding_rows(visible_tenants=frozenset(tenants), artifact_type="strategy_spec")
     _assert_binding_visibility_scenario(rows)
+
+
+def _bff_reference_counts(rows):
+    """Count via the BFF reference path (grouping + ``count_strategy_persona_bindings``)."""
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort as P
+
+    grouped: dict = {}
+    for r in rows:
+        meta = r.get("metadata") or {}
+        inner = meta.get("strategy_spec") or {}
+        inner_meta = inner.get("metadata") or {}
+        pids = list(inner.get("persona_ids") or meta.get("personaIds") or meta.get("persona_ids")
+                    or ([meta["persona_id"]] if meta.get("persona_id") else (
+                        [inner_meta["persona_id"]] if inner_meta.get("persona_id") else [])))
+        prov = inner.get("provenance") if isinstance(inner.get("provenance"), dict) else (meta.get("provenance") or {})
+        grouped.setdefault(r["strategy_id"], []).append({
+            "strategy_id": r["strategy_id"], "spec_version_id": r["registry_id"],
+            "spec_version": r["version"], "lifecycle_state": r.get("artifact_state") or "draft",
+            "persona_ids": pids, "created_at": r.get("created_at") or prov.get("created_at"),
+        })
+    specs = []
+    for sid, versions in grouped.items():
+        ordered = P._kw05_sort_versions(versions)
+        specs.append({"strategy_id": sid, "current_spec_version_id": ordered[0]["spec_version_id"], "versions": ordered})
+    return P(strategy_specs_store={s["strategy_id"]: s for s in specs}).count_strategy_persona_bindings()
+
+
+def test_persona_binding_counts_match_reference_for_versions_retired_and_legacy_shapes():
+    from .storage import RegistryStore, persona_binding_counts
+
+    store = RegistryStore()
+
+    def make(rid, sid, version, metadata, tenant, state=None):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec", strategy_id=sid, version=version,
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d", metadata=metadata,
+            ),
+            rid, actor={"tenant": tenant},
+        )
+        if state:
+            import dataclasses
+            store._entries[rid] = dataclasses.replace(store._entries[rid], artifact_state=ArtifactState(state))
+
+    make("s1-v1", "s1", "1.0.0", {"persona_ids": ["p-old"]}, "tenant-a")        # superseded
+    make("s1-v10", "s1", "1.10.0", {"persona_ids": ["p1", "p2", " p1 "]}, "tenant-a")  # semver 10 > 2
+    make("s1-v2", "s1", "1.2.0", {"persona_ids": ["p-mid"]}, "tenant-a")
+    make("s2-v1", "s2", "1.0.0", {"persona_ids": ["p1"]}, "tenant-a", state="retired")
+    make("s3-v1", "s3", "1.0.0", {"personaIds": ["p3"]}, "tenant-a")             # legacy camel
+    make("s4-v1", "s4", "1.0.0", {"persona_id": "p4"}, "tenant-a")                # legacy scalar
+    make("s5-v1", "s5", "1.0.0", {"persona_ids": ["p9"]}, "tenant-b")             # other tenant
+    make("s5-v2", "s5", "2.0.0", {"persona_ids": []}, "tenant-a")                 # unbound latest, visible
+    make("s6-v1", "s6", "1.0.0", {"persona_ids": ["p1"]}, "__builtin__")
+    visible = frozenset({"tenant-a", "__builtin__"})
+    rows = store.list_persona_binding_rows(visible_tenants=visible, artifact_type="strategy_spec")
+    counts = persona_binding_counts(rows)
+    assert counts == {"p1": 2, "p2": 1, "p3": 1, "p4": 1}  # s1 current=1.10.0; s2 retired; s5 tenant-b bind invisible
+    assert counts == _bff_reference_counts(rows)
+    all_rows = store.list_persona_binding_rows()
+    assert persona_binding_counts(all_rows) == _bff_reference_counts(all_rows)
+    for bad in ({"strategy_id": "s", "version": "1.0.0"}, {"registry_id": "r", "version": "1.0.0"},
+                {"registry_id": "r", "strategy_id": "s", "version": "1.0.0", "artifact_type": "model"}):
+        with pytest.raises(ValueError, match="Invalid strategy registry entry"):
+            persona_binding_counts([bad])
+
+
+def test_strategy_spec_persona_binding_counts_view_is_scoped_and_matches_rows(strict_client):
+    from .storage import persona_binding_counts
+
+    token_a = _jwt(subject="pbc-a", tenant="tenant-a")
+    token_b = _jwt(subject="pbc-b", tenant="tenant-b")
+    for token, sid, personas in ((token_a, "pbc-a1", ["p1", "p2"]), (token_a, "pbc-a2", ["p1"]), (token_b, "pbc-b1", ["p9"])):
+        resp = strict_client.post(
+            "/api/registry/strategy-specs",
+            json={"strategy_id": sid, "version": "1.0.0", "lineage": {"source_run_ids": ["run-1"]},
+                  "strategy_spec": _valid_spec(sid, rev="1.0.0"), "metadata": {"persona_ids": personas}},
+            headers=_bearer(token),
+        )
+        assert resp.status_code == 200, resp.text
+    path = "/api/registry/strategy-specs"
+    counts = strict_client.get(f"{path}?view=persona_binding_counts", headers=_bearer(token_a))
+    rows = strict_client.get(f"{path}?view=persona_binding", headers=_bearer(token_a))
+    assert counts.status_code == rows.status_code == 200
+    assert counts.json() == {"p1": 2, "p2": 1}  # tenant-b's p9 never leaks
+    assert counts.json() == persona_binding_counts([e["entry"] for e in rows.json()])
+    assert strict_client.get(f"{path}?view=persona_binding_counts").status_code in (401, 403)
