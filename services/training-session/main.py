@@ -552,6 +552,16 @@ class ReplayDecisionBody(BaseModel):
     decided_at: Optional[str] = None
 
 
+BASELINE_EVAL_MODE = "baseline"
+BASELINE_EVALUATION_OPERATION = "baseline_evaluation"
+
+
+def _evaluation_operation(mode: Any) -> str:
+    if str(mode or "").lower() == BASELINE_EVAL_MODE:
+        return BASELINE_EVALUATION_OPERATION
+    return "preview_evaluation"
+
+
 app = FastAPI(title="Pantheon Training Session Service", version="0.2.0")
 STORE_BACKEND = os.getenv("TRAINING_SESSION_EVENT_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
 PERSISTENCE_POSTURE = require_persistence_posture("training-session")
@@ -628,6 +638,28 @@ def _is_completed_negative_preview(result: Dict[str, Any]) -> bool:
     return False
 
 
+def _is_baseline_evaluation_result(result: Dict[str, Any]) -> bool:
+    """Baseline evaluations are reported but never degrade readiness."""
+    if not isinstance(result, dict):
+        return False
+    operation = str(result.get("operation") or "").lower()
+    if operation == BASELINE_EVALUATION_OPERATION:
+        return True
+    if operation != "preview_evaluation":
+        return False
+    detail = result.get("detail")
+    if not isinstance(detail, dict):
+        return False
+    job_id = str(detail.get("job_id") or "").strip()
+    if not job_id:
+        return False
+    try:
+        job = store.get_preview_job(job_id)
+    except Exception:  # noqa: BLE001 - unknown job stays a counted failure.
+        return False
+    return isinstance(job, dict) and str(job.get("mode") or "").lower() == BASELINE_EVAL_MODE
+
+
 def _functional_health() -> Dict[str, Any]:
     try:
         raw_results = store.list_functional_results()
@@ -638,17 +670,21 @@ def _functional_health() -> Dict[str, Any]:
             "failure_count": 1,
             "error": type(exc).__name__,
         }
-    failures = [
+    failed = [
         result
         for result in raw_results
         if str(result.get("status") or "").lower() not in {"ok", "passed", "completed"}
         and not _is_completed_negative_preview(result)
     ]
+    exempt_failures = [result for result in failed if _is_baseline_evaluation_result(result)]
+    failures = [result for result in failed if not _is_baseline_evaluation_result(result)]
     return {
         "status": "degraded" if failures else "ok",
         "result_count": len(raw_results),
         "failure_count": len(failures),
         "failures": failures[-10:],
+        "baseline_exempt_failure_count": len(exempt_failures),
+        "baseline_exempt_failures": exempt_failures[-10:],
     }
 
 
@@ -1178,7 +1214,6 @@ def _parse_utc_timestamp(value: Any, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-BASELINE_EVAL_MODE = "baseline"
 
 
 def _canonical_controls(session_id: str, *, baseline_mode: bool = False) -> List[Dict[str, Any]]:
@@ -2069,21 +2104,21 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
         )
     except AuthorityValidationError as exc:
         _record_functional_result(
-            "preview_evaluation",
+            _evaluation_operation(body.mode),
             status="failed",
             detail={"session_id": session_id, "error_code": "evaluation_admission_rejected"},
         )
         raise HTTPException(status_code=409, detail=f"preview evaluation rejected: {exc}") from exc
     except OSError as exc:
         _record_functional_result(
-            "preview_evaluation",
+            _evaluation_operation(body.mode),
             status="failed",
             detail={"session_id": session_id, "error_code": "preview_evidence_unavailable"},
         )
         raise HTTPException(status_code=503, detail=f"preview evidence unavailable: {exc}") from exc
     proof = preview.get("evaluation_proof") or {}
     _record_functional_result(
-        "preview_evaluation",
+        _evaluation_operation(body.mode),
         status="ok",
         detail={
             "session_id": session_id,
@@ -2382,7 +2417,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
     session_id = str(job.get("session_id") or "").strip()
     if job.get("status") == "failed":
         _record_functional_result(
-            "preview_evaluation",
+            _evaluation_operation(job.get("mode")),
             status="failed",
             detail={
                 "job_id": job_id,
@@ -2479,7 +2514,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
 
         failed_job = store.mutate_preview_job(job_id, fail)
         _record_functional_result(
-            "preview_evaluation",
+            _evaluation_operation(job.get("mode")),
             status="failed",
             detail={
                 "job_id": job_id,
@@ -2519,7 +2554,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
 
     completed_job = store.mutate_preview_job(job_id, complete)
     _record_functional_result(
-        "preview_evaluation",
+        _evaluation_operation(job.get("mode")),
         status="ok",
         detail={
             "job_id": job_id,
