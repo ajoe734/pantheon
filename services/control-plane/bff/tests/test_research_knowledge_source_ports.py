@@ -1289,7 +1289,7 @@ def test_count_strategy_persona_bindings_matches_list_and_skips_version_normaliz
     assert normalized["n"] == 9  # full list normalizes every non-retired current version
 
 
-def test_count_strategy_persona_bindings_requests_light_registry_view_and_matches_full_list(monkeypatch):
+def test_count_strategy_persona_bindings_requests_registry_counts_and_matches_full_list(monkeypatch):
     import urllib.error
     from fastapi import HTTPException
     from services.control_plane.bff.command_adapters import base as adapter_base
@@ -1301,8 +1301,12 @@ def test_count_strategy_persona_bindings_requests_light_registry_view_and_matche
     urls: list[str] = []
     payload = [_original_workshop_registry_entry("tenant-dev")]
 
+    from services.registry.storage import persona_binding_counts
+
     def fake(url, **kwargs):
         urls.append(url)
+        if url.endswith("view=persona_binding_counts"):
+            return persona_binding_counts([e.get("entry", e) for e in payload])
         return payload
 
     monkeypatch.setattr(adapter_base, "http_request_json", fake)
@@ -1313,7 +1317,7 @@ def test_count_strategy_persona_bindings_requests_light_registry_view_and_matche
         counts = port.count_strategy_persona_bindings()
         full = port.list_strategy_specs()
         assert urls == [
-            "http://registry.internal/api/registry/strategy-specs?view=persona_binding",
+            "http://registry.internal/api/registry/strategy-specs?view=persona_binding_counts",
             "http://registry.internal/api/registry/strategy-specs",
         ]
         expected: dict = {}
@@ -1333,12 +1337,13 @@ def test_count_strategy_persona_bindings_requests_light_registry_view_and_matche
             with pytest.raises(HTTPException) as exc:
                 port.count_strategy_persona_bindings()
             assert exc.value.status_code == status
-        assert all(u.endswith("?view=persona_binding") for u in urls) and len(urls) == 3
+        assert all(u.endswith("?view=persona_binding_counts") for u in urls) and len(urls) == 3
 
-        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: {"items": []})
-        with pytest.raises(HTTPException) as bad:
-            port.count_strategy_persona_bindings()
-        assert bad.value.status_code == 503
+        for invalid_payload in ([], {"p1": True}, {"p1": -1}, {"p1": "1"}):
+            monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, _p=invalid_payload, **k: _p)
+            with pytest.raises(HTTPException) as bad:
+                port.count_strategy_persona_bindings()
+            assert bad.value.status_code == 503
     finally:
         owner_reads.authorization.reset(tok_auth)
         owner_reads.selected_tenant.reset(tok_tenant)

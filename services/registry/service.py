@@ -1554,13 +1554,24 @@ def _persona_binding_rows(
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
-    view: Optional[Literal["persona_binding"]] = None,
+    view: Optional[Literal["persona_binding", "persona_binding_counts"]] = None,
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
     if view == "persona_binding":
         # Bypasses RegistryEntryView reconstruction/validation: rows are already flat.
         return JSONResponse(_persona_binding_rows(authorization, x_tenant_id, artifact_state))
+    if view == "persona_binding_counts":
+        # Per-persona active strategy counts only; same scope as the binding view.
+        ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+        try:
+            counts = get_registry_service().count_persona_bindings(
+                visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+                artifact_type=ArtifactType.STRATEGY_SPEC.value,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return JSONResponse(counts)
     return _filter_strategy_spec_views(None, authorization, x_tenant_id, artifact_state)
 
 
