@@ -31,7 +31,7 @@ from .models import (
     utc_now_iso,
 )
 from .pg_store import DivergentCommandReplayError
-from .storage import RegistryConcurrentUpdateError, RegistryStore, RegistryUniqueViolationError
+from .storage import persona_binding_counts, RegistryConcurrentUpdateError, RegistryStore, RegistryUniqueViolationError
 
 # ``register_if_absent`` is called from two kinds of places: real API routes
 # (service.py), which always pass a verified caller's ``actor`` explicitly,
@@ -358,6 +358,14 @@ class RegistryService:
         return self.store.list_persona_binding_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
         )
+
+    def count_persona_bindings(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+    ) -> dict[str, int]:
+        """Per-persona active strategy counts over the same rows as :meth:`list_persona_binding_rows`."""
+        return persona_binding_counts(self.list_persona_binding_rows(
+            visible_tenants=visible_tenants, artifact_type=artifact_type,
+        ))
 
     def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:
         """Return the entry exactly as it was at its first successful

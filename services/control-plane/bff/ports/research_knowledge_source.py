@@ -1756,11 +1756,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
         # Same source, current-version selection, lifecycle filter and persona
         # extraction as list_strategy_specs(), without per-version normalization.
-        source_specs = (
-            list(self._strategy_specs.values())
-            if self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
-            else self._fetch_canonical_strategy_specs(binding_view=True)
-        )
+        if not (self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))):
+            return self._fetch_canonical_persona_binding_counts()
+        source_specs = list(self._strategy_specs.values())
         counts: Dict[str, int] = {}
         for strategy_spec in source_specs:
             if not isinstance(strategy_spec, dict):
@@ -1803,7 +1801,35 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         from fastapi import HTTPException
         return HTTPException(status_code=status, detail={"error": {"code": code, "message": message, "reason": reason, "status_code": status}})
 
-    def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None, *, binding_view: bool = False) -> List[Dict[str, Any]]:
+    def _fetch_canonical_persona_binding_counts(self) -> Dict[str, int]:
+        """Registry-owned per-persona counts; the Registry applies tenant scope and current-version selection."""
+        import urllib.error
+        from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
+        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
+
+        auth = authorization.get()
+        if not auth:
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback requires caller authorization", "strategy_store_unavailable")
+        try:
+            caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+            raw = http_request_json(registry_url("/api/registry/strategy-specs?view=persona_binding_counts"), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch") from exc
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback is unavailable", f"strategy_registry_http_{exc.code}") from exc
+        except ActionUnavailableError as exc:
+            if exc.status_code == 403:
+                raise self._strategy_owner_error(403, "FORBIDDEN", str(exc.detail), "strategy_audience_mismatch") from exc
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", str(exc.detail), "strategy_store_unavailable") from exc
+        except Exception as exc:
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback is unavailable", str(exc) or "strategy_store_unavailable") from exc
+        if not isinstance(raw, dict) or not all(
+            isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in raw.values()
+        ):
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry count payload", "strategy_store_unavailable")
+        return {str(k): int(v) for k, v in raw.items()}
+
+    def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
         sid = str(strategy_id).strip() if strategy_id is not None else ""
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
@@ -1815,9 +1841,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
             path = f"/api/registry/strategies/{urllib.parse.quote(sid, safe='')}/strategy-specs" if sid else "/api/registry/strategy-specs"
-            if binding_view and not sid:
-                # Registry-owned light projection: same rows/tenant filter, no spec bodies.
-                path += "?view=persona_binding"
             raw_entries = http_request_json(registry_url(path), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
