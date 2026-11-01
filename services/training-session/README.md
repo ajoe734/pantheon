@@ -209,3 +209,11 @@ result per tenant. A failed or governance-rejected evaluation, or a commit
 without exact terminal readback, marks functional health `degraded`;
 `/readyz` returns `503`. A later successful result for that operation and
 tenant is the only path back to `ok`.
+
+Baseline evaluations (preview jobs with `mode: baseline`) record under their own
+operation key, `baseline_evaluation`, so they can never overwrite or clear a
+`preview_evaluation` or commit result. Baseline failures stay visible in
+functional health (`baseline_exempt_failures`, with `job_id` and `error_code`)
+but never set `degraded` and never make `/readyz` return `503`. A stored
+`preview_evaluation` failure whose `detail.job_id` refers to a baseline job is
+treated the same way. Every other preview mode and commit keep the rule above.

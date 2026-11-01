@@ -1,0 +1,15 @@
+{
+  "task_id": "TRAINING-BASELINE-HEALTH-EXEMPT-20261101",
+  "verification": {
+    "command": "python -m pytest services/training-session -q",
+    "result": "247 passed, 2 skipped (before final test tightening; baseline tests re-run green)"
+  },
+  "acceptance": {
+    "1": "baseline jobs record under baseline_evaluation (_evaluation_operation)",
+    "2": "baseline failures reported in baseline_exempt_failures, never degrade /readyz",
+    "3": "stored preview_evaluation failure with baseline job_id is exempt",
+    "4": "other modes/commit still degrade; baseline write does not clear them",
+    "5": "tests in test_http_service.py; README Functional Health updated"
+  },
+  "hosted_verification": "pending operator after next Root deploy"
+}

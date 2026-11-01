@@ -1,0 +1,16 @@
+{
+  "task_id": "TEACHING-BASELINE-RETRY-20261101",
+  "verification": {
+    "command": "python -m pytest services/research/alpha_replication -q",
+    "result": "66 passed, 1 failed (test_controller_discovers_canonical_id_and_reads_authority_before_success), the same test that fails on the unmodified base commit in this environment.",
+    "new_tests": [
+      "test_queued_baseline_completed_job_becomes_final",
+      "test_queued_baseline_running_job_is_left_alone",
+      "test_failed_baseline_retried_with_new_key_after_backoff",
+      "test_failed_baseline_not_retried_before_backoff",
+      "test_failed_baseline_with_final_reason_is_never_retried"
+    ]
+  },
+  "not_verified": "Hosted verification (the two failed sessions get a new attempt after the weekday connector refresh) is operator-owned after the next Root deploy.",
+  "unchanged": ["services/training-session", "BFF", "tests/integration/l12"]
+}

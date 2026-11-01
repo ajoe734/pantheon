@@ -1157,6 +1157,7 @@ class _BaselineOwner:
         self.jobs: dict[str, dict[str, Any]] = {}
         self.fail = False
         self.sessions: dict[str, dict[str, Any]] = {}
+        self.job_states: dict[str, dict[str, Any]] = {}
 
     def urlopen(self, req, timeout=10):
         from unittest.mock import MagicMock
@@ -1180,6 +1181,13 @@ class _BaselineOwner:
             )
             resp.status = 201
             resp.read.return_value = json.dumps(job).encode("utf-8")
+        elif method == "GET" and "/preview-jobs/" in url:
+            job_id = url.rsplit("/", 1)[-1]
+            resp.status = 200
+            state = self.job_states.get(job_id, {"status": "queued"})
+            resp.read.return_value = json.dumps({"job_id": job_id, **state}).encode(
+                "utf-8"
+            )
         elif method == "GET":
             session_id = url.rsplit("/", 1)[-1]
             resp.status = 200
@@ -1383,3 +1391,127 @@ def test_reensure_skips_session_with_evaluation_result(
         "status": "skipped",
         "reason": "evaluation_present",
     }
+
+
+# --- Failed baseline job is retried with backoff ----------------------------
+
+_FRESHNESS_REASON = (
+    "source DatasetVersion authority rejected: connector freshness is not terminal fresh"
+)
+
+
+def _age_baseline(worker, hours: float) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    record = dict(worker.list_loop_records()[0])
+    baseline = dict(record["teaching_baseline"])
+    baseline["queued_at"] = (
+        (datetime.now(timezone.utc) - timedelta(hours=hours))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    record["teaching_baseline"] = baseline
+    worker._save_loop_record(record)
+
+
+def _tick(worker, payload):
+    worker.run_once(tenant_id=payload["tenant_id"])
+    return worker.list_loop_records()[0]["teaching_baseline"]
+
+
+def test_queued_baseline_completed_job_becomes_final(tmp_path, baseline_owner) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.job_states["job-1"] = {"status": "completed"}
+    baseline = _tick(worker, payload)
+    assert baseline["status"] == "completed"
+    baseline_owner.requests.clear()
+    assert _tick(worker, payload)["status"] == "completed"
+    assert baseline_owner.requests == []
+
+
+def test_queued_baseline_running_job_is_left_alone(tmp_path, baseline_owner) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    before = worker.list_loop_records()[0]["teaching_baseline"]
+    baseline_owner.job_states["job-1"] = {"status": "running"}
+    _age_baseline(worker, 5)
+    before = worker.list_loop_records()[0]["teaching_baseline"]
+    baseline_owner.requests.clear()
+    assert _tick(worker, payload) == before
+    assert baseline_owner.requests == []
+
+
+def test_failed_baseline_retried_with_new_key_after_backoff(
+    tmp_path, baseline_owner
+) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.sessions["trn-0001"] = {"session_id": "trn-0001", "status": "active"}
+    baseline_owner.job_states["job-1"] = {
+        "status": "failed",
+        "error_code": "evaluation_admission_rejected",
+        "failure_reason": _FRESHNESS_REASON,
+    }
+    _age_baseline(worker, 1.5)
+    baseline_owner.requests.clear()
+
+    baseline = _tick(worker, payload)
+    assert len(baseline_owner.requests) == 1
+    assert (
+        baseline_owner.requests[0]["headers"]["Idempotency-key"]
+        == "teaching-baseline-eval-trn-0001-r2"
+    )
+    assert baseline["status"] == "queued"
+    assert baseline["attempt"] == 2
+    assert baseline["job_id"] == "job-2"
+    assert baseline["last_error_code"] == "evaluation_admission_rejected"
+    assert baseline["last_failure_reason"] == _FRESHNESS_REASON
+
+    # The second attempt is fresh, so a still-failed job waits for its own hour.
+    baseline_owner.job_states["job-2"] = dict(baseline_owner.job_states["job-1"])
+    baseline_owner.requests.clear()
+    assert _tick(worker, payload)["attempt"] == 2
+    assert baseline_owner.requests == []
+
+
+def test_failed_baseline_not_retried_before_backoff(tmp_path, baseline_owner) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.sessions["trn-0001"] = {"session_id": "trn-0001", "status": "active"}
+    baseline_owner.job_states["job-1"] = {
+        "status": "failed",
+        "error_code": "evaluation_admission_rejected",
+        "failure_reason": _FRESHNESS_REASON,
+    }
+    _age_baseline(worker, 0.25)
+    baseline_owner.requests.clear()
+    baseline = _tick(worker, payload)
+    assert baseline_owner.requests == []
+    assert baseline["status"] == "queued"
+    assert baseline["attempt"] == 1
+    assert baseline["last_error_code"] == "evaluation_admission_rejected"
+    assert baseline["last_failure_reason"] == _FRESHNESS_REASON
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "baseline evaluation requires controls that match their baseline values",
+        "baseline evaluation already completed for this session",
+    ],
+)
+def test_failed_baseline_with_final_reason_is_never_retried(
+    tmp_path, baseline_owner, reason
+) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.sessions["trn-0001"] = {"session_id": "trn-0001", "status": "active"}
+    baseline_owner.job_states["job-1"] = {
+        "status": "failed",
+        "error_code": "evaluation_admission_rejected",
+        "failure_reason": reason,
+    }
+    _age_baseline(worker, 5)
+    baseline_owner.requests.clear()
+    baseline = _tick(worker, payload)
+    assert baseline["status"] == "failed_final"
+    assert baseline["last_failure_reason"] == reason
+    _tick(worker, payload)
+    assert baseline_owner.requests == []

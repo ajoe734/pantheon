@@ -312,6 +312,17 @@ rule and no same-subject rule applies (section 0). The harness never invents an 
   pending or queued without mode `baseline` (the old key `teaching-baseline-{session_id}` carries a different request
   hash, hence the new key).
 
+  **Baseline retry (2026-11-01, `TEACHING-BASELINE-RETRY-20261101`).** A weekend run showed the Training owner rejecting
+  the baseline job with `evaluation_admission_rejected` / `connector freshness is not terminal fresh` while the TW
+  connector was `due`. Each tick the Alpha worker now reads a queued baseline job from
+  `GET /api/training/preview-jobs/{job_id}`: `completed` becomes the final `teaching_baseline.status = completed`,
+  `queued`/`running` is left alone. A `failed` job is retried by queueing a new `baseline` job with
+  `Idempotency-Key: teaching-baseline-eval-{session_id}-r{attempt}` (the owner replays a failed job for the same key)
+  only when the last attempt is at least one hour old and the session is still active with no evaluation and no
+  `control_patch`. The record keeps `attempt`, `last_error_code` and `last_failure_reason`. A failure reason that says
+  controls already differ from their baseline values or that a baseline evaluation already completed is final
+  (`failed_final`) and never retried. A readback or queue error never fails the tick.
+
 ## 6. Genuine Persona Pattern positives (acceptance 6)
 
 The original six Pattern conditions (any legitimate dev Persona with at least two uncovered, naturally

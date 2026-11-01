@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import os
+import signal
+import threading
 from pathlib import Path
 from collections import deque
 from datetime import datetime, timezone
@@ -18,6 +20,7 @@ from dataclasses import dataclass
 from typing import (
     Any,
     AsyncGenerator,
+    Awaitable,
     Callable,
     Dict,
     List,
@@ -456,6 +459,126 @@ def _frontend_sse_format(event: Dict[str, Any]) -> str:
     return format_sse_event(data_str=data_str, id=event_id if event_id else None).decode("utf-8")
 
 
+# --- SSE shutdown signal -----------------------------------------------------
+# uvicorn waits for open streaming responses before it runs the ASGI lifespan
+# shutdown, so the lifespan alone cannot end SSE generators. The lifespan
+# startup chains a SIGTERM/SIGINT hook that calls ``begin_sse_shutdown``; every
+# SSE generator in this router ends cleanly once it fires.
+_shutdown_event: Optional[asyncio.Event] = None
+_shutdown_loop: Optional[asyncio.AbstractEventLoop] = None
+_shutdown_requested = False
+
+
+def _get_shutdown_event() -> asyncio.Event:
+    global _shutdown_event, _shutdown_loop
+    loop = asyncio.get_running_loop()
+    if _shutdown_event is None or _shutdown_loop is not loop:
+        _shutdown_event = asyncio.Event()
+        _shutdown_loop = loop
+        if _shutdown_requested:
+            _shutdown_event.set()
+    return _shutdown_event
+
+
+def begin_sse_shutdown() -> None:
+    """Signal all SSE generators to end. Safe to call from any thread."""
+    global _shutdown_requested
+    _shutdown_requested = True
+    event, loop = _shutdown_event, _shutdown_loop
+    if event is None or loop is None or loop.is_closed():
+        return
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        event.set()
+    else:
+        loop.call_soon_threadsafe(event.set)
+
+
+def reset_sse_shutdown() -> None:
+    global _shutdown_event, _shutdown_loop, _shutdown_requested
+    _shutdown_event, _shutdown_loop, _shutdown_requested = None, None, False
+
+
+async def _race_shutdown(awaitable: Awaitable[Any]) -> Tuple[bool, Any]:
+    """Await ``awaitable`` unless shutdown fires first: (stopped, result)."""
+    task = asyncio.ensure_future(awaitable)
+    if _shutdown_requested:
+        task.cancel()
+        return True, None
+    stop = asyncio.ensure_future(_get_shutdown_event().wait())
+    try:
+        await asyncio.wait({task, stop}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        stop.cancel()
+        if not task.done():
+            task.cancel()
+            # Let the cancelled awaitable unwind so a wrapped generator is
+            # no longer "running" when the caller closes it.
+            await asyncio.gather(task, return_exceptions=True)
+    if task.done() and not task.cancelled():
+        return False, task.result()
+    return True, None
+
+
+async def _end_on_shutdown(source: AsyncGenerator[Any, None]) -> AsyncGenerator[Any, None]:
+    """Relay ``source`` until shutdown, then close it (running its cleanup)."""
+    iterator = source.__aiter__()
+    try:
+        while True:
+            stopped, item = await _race_shutdown(iterator.__anext__())
+            if stopped:
+                return
+            yield item
+    except StopAsyncIteration:
+        return
+    finally:
+        aclose = getattr(iterator, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+
+def install_sse_signal_hooks() -> Callable[[], None]:
+    """Chain begin_sse_shutdown() in front of the SIGTERM/SIGINT handlers.
+
+    Returns a callable restoring the previous handlers. No-op off the main
+    thread (signal.signal is main-thread only).
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+    previous: Dict[int, Any] = {}
+
+    def _make(prev: Any) -> Callable[[int, Any], None]:
+        def _handler(signum: int, frame: Any) -> None:
+            begin_sse_shutdown()
+            if callable(prev):
+                prev(signum, frame)
+            elif prev == signal.SIG_DFL:
+                signal.signal(signum, signal.SIG_DFL)
+                signal.raise_signal(signum)
+
+        return _handler
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            prev = signal.getsignal(sig)
+            signal.signal(sig, _make(prev))
+            previous[sig] = prev
+        except (ValueError, OSError):
+            pass
+
+    def _restore() -> None:
+        for sig, prev in previous.items():
+            try:
+                signal.signal(sig, prev)
+            except (ValueError, OSError):
+                pass
+
+    return _restore
+
+
 async def _default_frontend_bff_event_stream(
     channels: Tuple[str, ...],
 ) -> AsyncGenerator[str, None]:
@@ -778,8 +901,10 @@ def create_events_router(
         buffer = _buffers.get(sub.channel)
         subscribers = _subscribers.get(sub.channel)
         if hasattr(_event_stream, "stream"):
-            async for event in _event_stream.stream(
-                sub.channel, buffer, subscribers, sub.cursor, event_filter=sub.filter_func
+            async for event in _end_on_shutdown(
+                _event_stream.stream(
+                    sub.channel, buffer, subscribers, sub.cursor, event_filter=sub.filter_func
+                )
             ):
                 yield event
         elif hasattr(_event_stream, "stream_response"):
@@ -790,7 +915,7 @@ def create_events_router(
                 conflict_code=ErrorCode.RESOURCE_CONFLICT,
                 event_filter=sub.filter_func,
             )
-            async for chunk in resp.body_iterator:
+            async for chunk in _end_on_shutdown(resp.body_iterator):
                 yield _parse_sse_wire_chunk(chunk)
 
     @router.get(
@@ -808,7 +933,7 @@ def create_events_router(
         cookie or Bearer callers use the real replay-capable SSE substrate.
         """
         if sub.is_liveness:
-            async for chunk in _frontend_stream(sub.requested_channels):
+            async for chunk in _end_on_shutdown(_frontend_stream(sub.requested_channels)):
                 yield _parse_sse_wire_chunk(chunk)
         else:
             async for event in _stream_events(sub):
