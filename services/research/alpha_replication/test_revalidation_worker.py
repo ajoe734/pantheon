@@ -1144,3 +1144,217 @@ def test_alpha_teaching_invocation_with_real_training_inbound_and_issued_princip
         )
     assert "HTTP 403" in str(exc_info.value)
 
+
+
+# --- Baseline Teaching evaluation queued when Alpha opens a session ---------
+
+
+class _BaselineOwner:
+    """In-memory Training owner preview-jobs API keyed by idempotency key."""
+
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self.jobs: dict[str, dict[str, Any]] = {}
+        self.fail = False
+        self.sessions: dict[str, dict[str, Any]] = {}
+
+    def urlopen(self, req, timeout=10):
+        from unittest.mock import MagicMock
+
+        method, url = req.get_method(), req.full_url
+        resp = MagicMock()
+        resp.__enter__.return_value = resp
+        if method == "POST" and url.endswith("/preview-jobs"):
+            self.requests.append(
+                {
+                    "url": url,
+                    "headers": dict(req.header_items()),
+                    "body": json.loads(req.data.decode("utf-8")),
+                }
+            )
+            if self.fail:
+                raise OSError("training owner unreachable")
+            key = req.get_header("Idempotency-key")
+            job = self.jobs.setdefault(
+                key, {"job_id": f"job-{len(self.jobs) + 1}", "eval_id": "teval-1"}
+            )
+            resp.status = 201
+            resp.read.return_value = json.dumps(job).encode("utf-8")
+        elif method == "GET":
+            session_id = url.rsplit("/", 1)[-1]
+            resp.status = 200
+            resp.read.return_value = json.dumps(self.sessions[session_id]).encode(
+                "utf-8"
+            )
+        else:
+            raise AssertionError(f"unexpected request {method} {url}")
+        resp.getcode.return_value = resp.status
+        return resp
+
+
+@pytest.fixture
+def baseline_owner(monkeypatch):
+    owner = _BaselineOwner()
+    monkeypatch.setattr("urllib.request.urlopen", owner.urlopen)
+    return owner
+
+
+def _open_session(tmp_path):
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    result = _run_with_registry(worker, _registry_entry(payload))
+    return authority, worker, payload, result
+
+
+def test_baseline_queued_once_on_first_open(tmp_path, baseline_owner) -> None:
+    authority, worker, payload, result = _open_session(tmp_path)
+
+    assert result["errors"] == []
+    assert authority.create_teaching_session_calls == 1
+    assert len(baseline_owner.requests) == 1
+    request = baseline_owner.requests[0]
+    assert request["url"].endswith("/api/training/sessions/trn-0001/preview-jobs")
+    assert request["body"] == {"mode": "refresh", "terminalize_session": False}
+    assert request["headers"]["Idempotency-key"] == "teaching-baseline-trn-0001"
+    assert request["headers"]["X-tenant-id"] == payload["tenant_id"]
+    baseline = result["loop_records"][0]["teaching_baseline"]
+    assert baseline["status"] == "queued"
+    assert baseline["job_id"] == "job-1"
+
+
+def test_baseline_replay_never_creates_second_job_or_session(
+    tmp_path, baseline_owner
+) -> None:
+    authority, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.sessions["trn-0001"] = {"session_id": "trn-0001", "status": "active"}
+
+    first = worker._ensure_teaching_baseline(
+        "trn-0001",
+        tenant_id=payload["tenant_id"],
+        readback={"status": "active"},
+    )
+    assert first["job_id"] == "job-1"
+    assert len(baseline_owner.jobs) == 1
+    worker.run_once(tenant_id=payload["tenant_id"])
+    assert len(baseline_owner.jobs) == 1
+    assert authority.create_teaching_session_calls == 1
+
+
+def test_baseline_skipped_when_session_already_evaluated(
+    tmp_path, baseline_owner
+) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.requests.clear()
+    state = worker._ensure_teaching_baseline(
+        "trn-0009",
+        tenant_id=payload["tenant_id"],
+        readback={"status": "active", "evaluation_result": {"eval_identity": "e1"}},
+    )
+    assert state == {"status": "skipped", "reason": "evaluation_present"}
+    assert baseline_owner.requests == []
+
+
+def test_baseline_skipped_when_session_not_active(tmp_path, baseline_owner) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.requests.clear()
+    state = worker._ensure_teaching_baseline(
+        "trn-0009",
+        tenant_id=payload["tenant_id"],
+        readback={"status": "completed"},
+    )
+    assert state == {"status": "skipped", "reason": "session_not_active"}
+    assert baseline_owner.requests == []
+
+
+def test_baseline_queue_failure_is_recorded_and_retried_later(
+    tmp_path, baseline_owner
+) -> None:
+    baseline_owner.fail = True
+    authority, worker, payload, result = _open_session(tmp_path)
+
+    # Revalidation still succeeded, one session only, failure named on record.
+    assert result["errors"] == []
+    assert result["created_teaching_session_ids"] == ["trn-0001"]
+    assert authority.create_teaching_session_calls == 1
+    record = worker.list_loop_records()[0]
+    assert record["teaching_baseline"]["status"] == "failed"
+    assert record["teaching_baseline"]["failure"] == "teaching_baseline_queue_failed"
+    assert worker.get_metrics()["error_count"] == 0
+
+    # Later tick: owner recovers, same session gets exactly one baseline job.
+    baseline_owner.fail = False
+    baseline_owner.sessions["trn-0001"] = {"session_id": "trn-0001", "status": "active"}
+    worker.run_once(tenant_id=payload["tenant_id"])
+    record = worker.list_loop_records()[0]
+    assert record["teaching_baseline"]["status"] == "queued"
+    assert list(baseline_owner.jobs) == ["teaching-baseline-trn-0001"]
+    assert authority.create_teaching_session_calls == 1
+
+
+def _legacy_record(worker):
+    record = dict(worker.list_loop_records()[0])
+    record.pop("teaching_baseline", None)
+    worker._save_loop_record(record)
+
+
+def test_legacy_record_without_baseline_is_reensured_once(
+    tmp_path, baseline_owner
+) -> None:
+    baseline_owner.fail = True
+    authority, worker, payload, _ = _open_session(tmp_path)
+    _legacy_record(worker)
+    baseline_owner.fail = False
+    baseline_owner.sessions["trn-0001"] = {"session_id": "trn-0001", "status": "active"}
+    baseline_owner.requests.clear()
+
+    worker.run_once(tenant_id=payload["tenant_id"])
+    assert worker.list_loop_records()[0]["teaching_baseline"]["status"] == "queued"
+    assert len(baseline_owner.requests) == 1
+
+    worker.run_once(tenant_id=payload["tenant_id"])
+    assert len(baseline_owner.requests) == 1
+    assert list(baseline_owner.jobs) == ["teaching-baseline-trn-0001"]
+    assert authority.create_teaching_session_calls == 1
+
+
+def test_baseline_skipped_when_controls_already_edited(
+    tmp_path, baseline_owner
+) -> None:
+    _, worker, payload, _ = _open_session(tmp_path)
+    baseline_owner.requests.clear()
+    state = worker._ensure_teaching_baseline(
+        "trn-0009",
+        tenant_id=payload["tenant_id"],
+        readback={
+            "status": "active",
+            "events": [
+                {"event_type": "preview_requested"},
+                {"event_type": "control_patch"},
+            ],
+        },
+    )
+    assert state == {"status": "skipped", "reason": "controls_already_edited"}
+    assert baseline_owner.requests == []
+
+
+def test_reensure_skips_session_with_evaluation_result(
+    tmp_path, baseline_owner
+) -> None:
+    baseline_owner.fail = True
+    _, worker, payload, _ = _open_session(tmp_path)
+    _legacy_record(worker)
+    baseline_owner.fail = False
+    baseline_owner.sessions["trn-0001"] = {
+        "session_id": "trn-0001",
+        "status": "active",
+        "evaluation_result": {"eval_identity": "e1"},
+    }
+    baseline_owner.requests.clear()
+    worker.run_once(tenant_id=payload["tenant_id"])
+    assert baseline_owner.requests == []
+    assert worker.list_loop_records()[0]["teaching_baseline"] == {
+        "status": "skipped",
+        "reason": "evaluation_present",
+    }
