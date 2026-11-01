@@ -1571,3 +1571,70 @@ def test_baseline_mode_rejects_edited_controls() -> None:
     job = _queue_and_run(client, session_id, "baseline", "teaching-baseline-eval-edited")
     assert job["status"] == "failed"
     assert "requires controls that match their baseline values" in job["failure_reason"]
+
+
+def _functional_ops(module) -> dict:
+    return {r["operation"]: r for r in module.store.list_functional_results()}
+
+
+def test_baseline_failure_is_recorded_separately_and_never_degrades_readiness() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = _new_session(client)
+    seed_changed_supported_controls(module, session_id)
+
+    job = _queue_and_run(client, session_id, "baseline", "baseline-health-exempt-1")
+    assert job["status"] == "failed"
+    assert job["error_code"] == "evaluation_admission_rejected"
+
+    ops = _functional_ops(module)
+    assert "preview_evaluation" not in ops
+    assert ops["baseline_evaluation"]["status"] == "failed"
+    assert ops["baseline_evaluation"]["detail"]["job_id"] == job["job_id"]
+    assert ops["baseline_evaluation"]["detail"]["error_code"] == "evaluation_admission_rejected"
+
+    ready = client.get("/readyz")
+    assert ready.status_code == 200
+    functional = ready.json()["dependencies"]["functional"]
+    assert functional["status"] == "ok"
+    assert functional["baseline_exempt_failure_count"] == 1
+    assert functional["baseline_exempt_failures"][0]["detail"]["job_id"] == job["job_id"]
+
+
+def test_stored_preview_failure_for_baseline_job_is_exempt_but_other_modes_degrade() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = _new_session(client)
+    seed_changed_supported_controls(module, session_id)
+    baseline_job = _queue_and_run(client, session_id, "baseline", "baseline-health-exempt-2")
+
+    legacy = {
+        "status": "failed",
+        "checked_at": "2026-11-01T02:18:12Z",
+        "actor_service": "training-session-preview-worker",
+        "detail": {
+            "job_id": baseline_job["job_id"],
+            "session_id": session_id,
+            "error_code": "evaluation_admission_rejected",
+            "retryable": False,
+        },
+    }
+    module.store.put_functional_result("preview_evaluation", "tenant-dev", legacy)
+    health = module._functional_health()
+    assert health["status"] == "ok"
+    assert health["failure_count"] == 0
+
+    # A refresh-mode failure under the shared key degrades, and a baseline
+    # result written afterwards must not clear it.
+    refresh_job = _queue_and_run(client, session_id, "refresh", "refresh-health-1")
+    module.store.put_functional_result(
+        "preview_evaluation",
+        "tenant-dev",
+        {**legacy, "detail": {**legacy["detail"], "job_id": refresh_job["job_id"]}},
+    )
+    _queue_and_run(client, session_id, "baseline", "baseline-health-exempt-3")
+    health = module._functional_health()
+    assert health["status"] == "degraded"
+    assert health["failure_count"] == 1
+    assert health["failures"][0]["operation"] == "preview_evaluation"
+    assert client.get("/readyz").status_code == 503
