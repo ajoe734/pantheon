@@ -1216,8 +1216,8 @@ def test_baseline_queued_once_on_first_open(tmp_path, baseline_owner) -> None:
     assert len(baseline_owner.requests) == 1
     request = baseline_owner.requests[0]
     assert request["url"].endswith("/api/training/sessions/trn-0001/preview-jobs")
-    assert request["body"] == {"mode": "refresh", "terminalize_session": False}
-    assert request["headers"]["Idempotency-key"] == "teaching-baseline-trn-0001"
+    assert request["body"] == {"mode": "baseline", "terminalize_session": False}
+    assert request["headers"]["Idempotency-key"] == "teaching-baseline-eval-trn-0001"
     assert request["headers"]["X-tenant-id"] == payload["tenant_id"]
     baseline = result["loop_records"][0]["teaching_baseline"]
     assert baseline["status"] == "queued"
@@ -1289,7 +1289,7 @@ def test_baseline_queue_failure_is_recorded_and_retried_later(
     worker.run_once(tenant_id=payload["tenant_id"])
     record = worker.list_loop_records()[0]
     assert record["teaching_baseline"]["status"] == "queued"
-    assert list(baseline_owner.jobs) == ["teaching-baseline-trn-0001"]
+    assert list(baseline_owner.jobs) == ["teaching-baseline-eval-trn-0001"]
     assert authority.create_teaching_session_calls == 1
 
 
@@ -1315,8 +1315,33 @@ def test_legacy_record_without_baseline_is_reensured_once(
 
     worker.run_once(tenant_id=payload["tenant_id"])
     assert len(baseline_owner.requests) == 1
-    assert list(baseline_owner.jobs) == ["teaching-baseline-trn-0001"]
+    assert list(baseline_owner.jobs) == ["teaching-baseline-eval-trn-0001"]
     assert authority.create_teaching_session_calls == 1
+
+
+def test_prior_queued_without_baseline_mode_is_reensured(
+    tmp_path, baseline_owner
+) -> None:
+    authority, worker, payload, _ = _open_session(tmp_path)
+    record = dict(worker.list_loop_records()[0])
+    record["teaching_baseline"] = {
+        "status": "queued",
+        "job_id": "pvjob-old",
+        "idempotency_key": "teaching-baseline-trn-0001",
+    }
+    worker._save_loop_record(record)
+    baseline_owner.sessions["trn-0001"] = {"session_id": "trn-0001", "status": "active"}
+    baseline_owner.requests.clear()
+
+    worker.run_once(tenant_id=payload["tenant_id"])
+    baseline = worker.list_loop_records()[0]["teaching_baseline"]
+    assert baseline["status"] == "queued"
+    assert baseline["mode"] == "baseline"
+    assert baseline["idempotency_key"] == "teaching-baseline-eval-trn-0001"
+    assert len(baseline_owner.requests) == 1
+
+    worker.run_once(tenant_id=payload["tenant_id"])
+    assert len(baseline_owner.requests) == 1
 
 
 def test_baseline_skipped_when_controls_already_edited(

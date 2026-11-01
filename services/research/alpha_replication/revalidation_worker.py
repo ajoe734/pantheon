@@ -46,6 +46,13 @@ DEFAULT_TASK_TYPE = "rapid_eval"
 DEFAULT_BACKEND_ID = "replication_gate"
 
 
+TEACHING_BASELINE_MODE = "baseline"
+
+
+def _baseline_idempotency_key(session_id: str) -> str:
+    return f"teaching-baseline-eval-{session_id}"
+
+
 def _utc_now() -> str:
     return (
         datetime.now(timezone.utc)
@@ -989,8 +996,8 @@ class AlphaRevalidationWorker:
             f"{urllib.parse.quote(canonical_id, safe='')}/preview-jobs"
         )
         headers = self._teaching_headers(tenant_id)
-        headers["Idempotency-Key"] = f"teaching-baseline-{canonical_id}"
-        body = json.dumps({"mode": "refresh", "terminalize_session": False})
+        headers["Idempotency-Key"] = _baseline_idempotency_key(canonical_id)
+        body = json.dumps({"mode": TEACHING_BASELINE_MODE, "terminalize_session": False})
         request = urllib.request.Request(
             url,
             data=body.encode("utf-8"),
@@ -1067,7 +1074,8 @@ class AlphaRevalidationWorker:
             "status": "queued",
             "job_id": str(job["job_id"]),
             "eval_id": str(job.get("eval_id") or ""),
-            "idempotency_key": f"teaching-baseline-{session_id}",
+            "mode": TEACHING_BASELINE_MODE,
+            "idempotency_key": _baseline_idempotency_key(session_id),
             "queued_at": _utc_now(),
         }
 
@@ -1084,9 +1092,14 @@ class AlphaRevalidationWorker:
             # Legacy records written before the baseline existed carry no
             # teaching_baseline; treat them like pending. Only queued and
             # skipped are final.
-            if isinstance(baseline, Mapping) and baseline.get("status") in (
-                "queued",
-                "skipped",
+            # Queued records from before the explicit baseline mode (no
+            # mode baseline) were rejected by the Training owner; re-ensure.
+            if isinstance(baseline, Mapping) and (
+                baseline.get("status") == "skipped"
+                or (
+                    baseline.get("status") == "queued"
+                    and baseline.get("mode") == TEACHING_BASELINE_MODE
+                )
             ):
                 continue
             session_id = str(record.get("next_consumer_receipt_id") or "")
