@@ -1178,7 +1178,10 @@ def _parse_utc_timestamp(value: Any, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _canonical_controls(session_id: str) -> List[Dict[str, Any]]:
+BASELINE_EVAL_MODE = "baseline"
+
+
+def _canonical_controls(session_id: str, *, baseline_mode: bool = False) -> List[Dict[str, Any]]:
     controls_record = store.get_controls(session_id) or {}
     _require_tenant_record(controls_record, "trainer controls not found")
     raw_controls = controls_record.get("controls") or []
@@ -1208,7 +1211,12 @@ def _canonical_controls(session_id: str) -> List[Dict[str, Any]]:
                 "current_value": current,
             }
         )
-    if not changed:
+    if baseline_mode:
+        if changed:
+            raise AuthorityValidationError(
+                "baseline evaluation requires controls that match their baseline values"
+            )
+    elif not changed:
         raise AuthorityValidationError("candidate controls do not contain an effective change")
     return sorted(controls, key=lambda control: control["parameter_key"])
 
@@ -1405,6 +1413,7 @@ def _build_preview_evaluation_proof(
     attempt_count: Optional[int],
     validation_status: str,
     validation_errors: List[str],
+    baseline: bool = False,
 ) -> Dict[str, Any]:
     authority_payload = authority.to_dict()
     authority_payload.pop("vectorbt_dataset", None)
@@ -1484,9 +1493,11 @@ def _build_preview_evaluation_proof(
             },
         ],
         "required_for_commit": True,
-        "commit_eligible": validation_status == "passed",
+        "commit_eligible": validation_status == "passed" and not baseline,
         "direct_live_influence": False,
     }
+    if baseline:
+        proof["evaluation_kind"] = BASELINE_EVAL_MODE
     proof["proof_digest"] = _proof_digest(proof)
     return proof
 
@@ -1505,7 +1516,20 @@ def _run_preview_evaluation(
 ) -> Dict[str, Any]:
     trusted_now = _parse_utc_timestamp(timestamp, "evaluation timestamp")
     eval_id = eval_id or f"teval-{uuid.uuid4().hex[:12]}"
-    controls = _canonical_controls(session_id)
+    is_baseline = mode == BASELINE_EVAL_MODE
+    if is_baseline:
+        existing_bundle = store.get_preview_bundle(session_id) or {}
+        _require_tenant_record(existing_bundle, "trainer preview not found")
+        prior = existing_bundle.get("evaluations")
+        if isinstance(prior, dict) and any(
+            isinstance(item, dict)
+            and item.get("mode") == BASELINE_EVAL_MODE
+            and item.get("status") == "completed"
+            and item.get("eval_id") != eval_id
+            for item in prior.values()
+        ):
+            raise AuthorityValidationError("baseline evaluation already completed for this session")
+    controls = _canonical_controls(session_id, baseline_mode=is_baseline)
     model = _frozen_model(session)
     config = _backtest_config(controls, requested_by, model)
     authority = _load_authority_snapshot(
@@ -1621,6 +1645,9 @@ def _run_preview_evaluation(
         "validation_status": validation_status,
         "validation_errors": validation_errors,
     }
+    if is_baseline:
+        preview["evaluation_kind"] = BASELINE_EVAL_MODE
+        preview["commit_eligible"] = False
     proof = _build_preview_evaluation_proof(
         session_id=session_id,
         eval_id=eval_id,
@@ -1644,6 +1671,7 @@ def _run_preview_evaluation(
         attempt_count=attempt_count,
         validation_status=validation_status,
         validation_errors=validation_errors,
+        baseline=is_baseline,
     )
     if job_id:
         active_job = store.get_preview_job(job_id)
@@ -1694,7 +1722,7 @@ def _run_preview_evaluation(
     # Teaching policy determines whether advisory consultation is required (e.g. evaluation failed thresholds or explicit review mode).
     # When consultation_required=True, Teaching creates a ConsultRequest via TrainingConsultationClient and stores the receipt.
     # Teaching MUST NOT write a ConsultMemo (memo authority belongs to Consultation domain).
-    consultation_required = (
+    consultation_required = not is_baseline and (
         validation_status == "failed"
         or mode in ("consultation_required", "review_required")
         or bool(session.get("consultation_required"))
@@ -1750,6 +1778,8 @@ def _run_preview_evaluation(
     }
     preview["evaluation_proof"] = proof
     preview["evaluation_result"] = eval_result.to_dict()
+    if is_baseline:
+        preview["evaluation_result"]["evaluation_kind"] = BASELINE_EVAL_MODE
     preview["eval_identity"] = eval_identity
     preview["governance_gate"] = {
         "gate_id": proof["governance_gate_id"],

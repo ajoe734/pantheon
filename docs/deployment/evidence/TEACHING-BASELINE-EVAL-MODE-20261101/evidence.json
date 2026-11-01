@@ -1,0 +1,14 @@
+{
+  "task_id": "TEACHING-BASELINE-EVAL-MODE-20261101",
+  "verification": {
+    "command": "python -m pytest services/training-session services/research/alpha_replication -q",
+    "result": "Training: 2 failed (test_model_bound_preview_runs_real_backend_on_derived_candidate, test_idle_tick_publishes_admissible_controller_truth), 240 passed; Alpha: 1 failed (test_controller_discovers_canonical_id_and_reads_authority_before_success), 60 passed. The same 3 tests fail on the unmodified base commit in this environment.",
+    "new_tests": [
+      "test_baseline_mode_evaluates_unchanged_controls_and_is_never_commit_eligible",
+      "test_baseline_mode_rejects_edited_controls",
+      "test_prior_queued_without_baseline_mode_is_reensured"
+    ]
+  },
+  "not_verified": "Hosted verification (the two failed sessions get one completed baseline; A_research/B_learning read it) is operator-owned after the next Root deploy.",
+  "unchanged": ["BFF", "tests/integration/l12", "hosted harness"]
+}

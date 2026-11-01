@@ -300,6 +300,18 @@ rule and no same-subject rule applies (section 0). The harness never invents an 
   revalidation. The hosted harness behaviour is unchanged: it still never writes before a pre-edit evaluation exists
   and reads it from the terminal readback as `pre_edit_eval_id`.
 
+  **Explicit `baseline` mode (2026-11-01, `TEACHING-BASELINE-EVAL-MODE-20261101`).** The `refresh` baseline above was
+  rejected by the Training owner (`candidate controls do not contain an effective change`), because an unedited session
+  has no changed control. The Training owner now has an explicit preview mode `baseline`: only it may evaluate
+  unchanged controls (every other mode keeps the effective-change rule), at most once per session, and it is rejected
+  with a named reason if any control already differs from its baseline value or a completed baseline evaluation exists.
+  The result and proof carry `evaluation_kind: baseline` and the proof is never `commit_eligible`, so no replay commit
+  can be based on it. It keeps the normal evaluation shape for the A_research/B_learning readbacks. The Alpha worker
+  now queues `{"mode": "baseline", ...}` with `Idempotency-Key: teaching-baseline-eval-{session_id}`, records
+  `teaching_baseline.mode = baseline`, and re-ensures own records whose `teaching_baseline` is missing, failed,
+  pending or queued without mode `baseline` (the old key `teaching-baseline-{session_id}` carries a different request
+  hash, hence the new key).
+
 ## 6. Genuine Persona Pattern positives (acceptance 6)
 
 The original six Pattern conditions (any legitimate dev Persona with at least two uncovered, naturally
