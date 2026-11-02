@@ -551,12 +551,12 @@ class RuntimeSummaryProjectionStore:
                 current["_retired_binding_ids"] = sorted(retired_binding_ids)
                 # Reset old metrics, positions, and history to prevent carrying them across rollover
                 keys_to_clear = [
-                    "pnl", "pnl_at", "pnl_binding_id",
-                    "drawdown", "drawdown_at", "drawdown_binding_id",
-                    "sharpe_ratio", "sharpe_ratio_at", "sharpe_ratio_binding_id",
-                    "fill_rate", "fill_rate_at", "fill_rate_binding_id",
-                    "avg_slippage_bps", "avg_slippage_bps_at", "avg_slippage_bps_binding_id",
-                    "total_trades", "total_trades_at", "total_trades_binding_id",
+                    "pnl", "pnl_at", "pnl_binding_id", "pnl_event_id",
+                    "drawdown", "drawdown_at", "drawdown_binding_id", "drawdown_event_id",
+                    "sharpe_ratio", "sharpe_ratio_at", "sharpe_ratio_binding_id", "sharpe_ratio_event_id",
+                    "fill_rate", "fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id",
+                    "avg_slippage_bps", "avg_slippage_bps_at", "avg_slippage_bps_binding_id", "avg_slippage_bps_event_id",
+                    "total_trades", "total_trades_at", "total_trades_binding_id", "total_trades_event_id",
                     "executed_trade_count",
                     "last_fill",
                     "_positions_by_symbol", "_marks_by_symbol", "_valuation_failure", "_valuation_attempt_at", "positions", "position_count",
@@ -765,6 +765,8 @@ class RuntimeSummaryProjectionStore:
                         current[target_key] = metrics[source_key]
                         current[f"{target_key}_at"] = metric_as_of
                         current[f"{target_key}_binding_id"] = binding_id
+                        if event.get("event_id"):
+                            current[f"{target_key}_event_id"] = str(event["event_id"])
                         break
 
             if event_type in ("pnl_snapshot", "drawdown_snapshot") and not is_derived_metric_echo:

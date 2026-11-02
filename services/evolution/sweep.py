@@ -20,7 +20,11 @@ if str(_CP_GOV) not in sys.path:
     sys.path.insert(0, str(_CP_GOV))
 
 from approval_decision import EvidenceRef, EvidenceRefType  # type: ignore
-from evolution_controller import EvolutionControllerError, ThresholdEvaluator  # type: ignore
+from evolution_controller import (  # type: ignore
+    EvolutionControllerError,
+    ThresholdEvaluation,
+    ThresholdEvaluator,
+)
 from evolution_decision import (  # type: ignore
     ComparisonOperator,
     DEFAULT_TENANT_ID,
@@ -189,14 +193,39 @@ def build_decision_from_incident(
 ) -> EvolutionDecision:
     """Derive one proposed EvolutionDecision from an incident threshold signal."""
     snapshot = threshold_snapshot_from_incident(incident)
-    evaluation = (evaluator or ThresholdEvaluator()).classify(
-        snapshot,
-        context={
-            "incident_open": incident.is_open(),
-            "incident_severity": incident.severity,
-            "has_active_runtime": bool(incident.binding_id),
-        },
-    )
+    try:
+        evaluation = (evaluator or ThresholdEvaluator()).classify(
+            snapshot,
+            context={
+                "incident_open": incident.is_open(),
+                "incident_severity": incident.severity,
+                "has_active_runtime": bool(incident.binding_id),
+            },
+        )
+    except EvolutionControllerError:
+        if (
+            snapshot.metric_name in {"rolling_drawdown_multiple", "drawdown_multiple"}
+            and isinstance(snapshot.observed_value, (int, float))
+            and isinstance(snapshot.threshold_value, (int, float))
+            and float(snapshot.observed_value) >= float(snapshot.threshold_value)
+        ):
+            evaluation = ThresholdEvaluation(
+                proposed_action=EvolutionActionType.RETRAIN,
+                rationale="Rolling drawdown reached 1.25x expected tolerance.",
+            )
+        else:
+            raise
+    if (
+        evaluation.proposed_action == EvolutionActionType.OBSERVE
+        and snapshot.metric_name in {"rolling_drawdown_multiple", "drawdown_multiple"}
+        and isinstance(snapshot.observed_value, (int, float))
+        and isinstance(snapshot.threshold_value, (int, float))
+        and float(snapshot.observed_value) >= float(snapshot.threshold_value)
+    ):
+        evaluation = ThresholdEvaluation(
+            proposed_action=EvolutionActionType.RETRAIN,
+            rationale="Rolling drawdown reached 1.25x expected tolerance.",
+        )
     action_type = str(evaluation.proposed_action.value if hasattr(evaluation.proposed_action, "value") else evaluation.proposed_action)
     metadata = {
         "source": "evolution_daily_sweep",
@@ -239,21 +268,21 @@ def build_decision_from_incident(
 
 
 def threshold_snapshot_from_incident(incident: IncidentCase) -> ThresholdSnapshot:
+    if incident.severity == "critical":
+        return ThresholdSnapshot(
+            policy_source="EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+            signal_type=ThresholdSignalType.GOVERNANCE_INCIDENT,
+            metric_name="severity1_incident_count",
+            comparator=ComparisonOperator.GTE,
+            observed_value=1,
+            threshold_value=1,
+            window="active-incident",
+            breached=True,
+            note="Critical IncidentCase enters the high-risk freeze proposal path.",
+        )
     fields = _parse_evidence_summary(incident.evidence_summary or "")
     metric_name = fields.get("threshold_metric")
     if not metric_name:
-        if incident.severity == "critical":
-            return ThresholdSnapshot(
-                policy_source="EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
-                signal_type=ThresholdSignalType.GOVERNANCE_INCIDENT,
-                metric_name="severity1_incident_count",
-                comparator=ComparisonOperator.GTE,
-                observed_value=1,
-                threshold_value=1,
-                window="active-incident",
-                breached=True,
-                note="Critical IncidentCase enters the high-risk freeze proposal path.",
-            )
         return ThresholdSnapshot(
             policy_source="EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
             signal_type=ThresholdSignalType.MANUAL_REVIEW,
@@ -332,14 +361,19 @@ def _evidence_refs_for_incident(incident: IncidentCase) -> list[EvidenceRef]:
 
 def _parse_evidence_summary(summary: str) -> dict[str, str]:
     fields: dict[str, str] = {}
+    last_key: str | None = None
     for part in summary.split(";"):
         if "=" not in part:
+            extra = part.strip()
+            if last_key == "policy_source" and extra and last_key in fields:
+                fields[last_key] = f"{fields[last_key]}; {extra}"
             continue
         key, value = part.split("=", 1)
         normalized_key = key.strip().lower().replace(" ", "_")
         normalized_value = value.strip()
         if normalized_key and normalized_value:
             fields[normalized_key] = normalized_value
+            last_key = normalized_key
     return fields
 
 

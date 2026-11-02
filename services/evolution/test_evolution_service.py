@@ -2441,6 +2441,208 @@ def test_daily_sweep_reports_existing_for_legacy_linked_id_in_tenant_scope_only(
     assert other_tenant.existing_decisions == 0
 
 
+def test_daily_sweep_from_reconciliation_drift_drawdown_incident_derives_retrain_at_125x_and_freeze_at_150x():
+    """AC4 & AC7: DriftReport built from RuntimeTelemetryEmitter + RuntimeSummaryProjectionStore
+    feeds build_incident_from_drift_report and Evolution daily sweep:
+    - [1.25x, 1.5x) medium drift incident derives RETRAIN at LOW risk
+    - >= 1.5x critical drift incident keeps the existing FREEZE path
+    """
+    from services.execution.lean_runtime.paper_runtime import (
+        RuntimeIdentity,
+        RuntimeTelemetryEmitter,
+    )
+    from services.incidents.consumer import build_incident_from_drift_report
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    def _make_emitter(runtime_id: str, binding_id: str, plan_id: str, pool_id: str, pcb_id: str, artifact_id: str, trace_id: str):
+        identity = RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "paper",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": runtime_id,
+                "PANTHEON_WORKSPACE_REF": f"workspace-{runtime_id}",
+                "PANTHEON_AUTH_PROFILE_REF": f"auth-{runtime_id}",
+                "PANTHEON_PERSONA_ID": f"persona-{runtime_id}",
+                "PANTHEON_SESSION_ID": f"session-{runtime_id}",
+                "PANTHEON_TRACE_ID": trace_id,
+                "PANTHEON_REQUEST_ID": f"req-{runtime_id}",
+            }
+        )
+
+        class _Resolver:
+            def resolve(self):
+                return {
+                    "binding_id": binding_id,
+                    "runtime_id": runtime_id,
+                    "plan_id": plan_id,
+                    "capital_pool_id": pool_id,
+                    "persona_capital_binding_id": pcb_id,
+                    "artifact_id": artifact_id,
+                    "artifact_version": "1.0.0",
+                    "deployment_stage": "paper",
+                    "deployment_mode": "paper",
+                    "effective_at": "2026-11-02T00:00:00Z",
+                }
+
+        return RuntimeTelemetryEmitter(identity, _Resolver())
+
+    # 1. 1.25x / 1.3x medium drawdown incident -> RETRAIN at LOW risk
+    emitter_medium = _make_emitter(
+        "runtime-evo-dd-med-001",
+        "binding-evo-dd-med-001",
+        "plan-evo-dd-med-001",
+        "pool-evo-dd-med-001",
+        "pcb-evo-dd-med-001",
+        "artifact-tw-session-momentum-v1",
+        "trace-evo-dd-med-001",
+    )
+    store_medium = RuntimeSummaryProjectionStore(path=None)
+    store_medium.project_event(
+        emitter_medium.build_event(
+            "heartbeat",
+            {"queue_lag_ms": 2.0, "delivery_lag_ms": 4.0},
+            created_at="2026-11-02T09:00:00Z",
+        )
+    )
+    dd_med_evt = emitter_medium.build_event(
+        "drawdown_snapshot",
+        {"drawdown": 0.052, "drawdown_as_of": "2026-11-02T09:01:00Z"},
+        created_at="2026-11-02T09:01:00Z",
+    )
+    summary_med = store_medium.project_event(dd_med_evt)
+    assert summary_med["drawdown_event_id"] == dd_med_evt["event_id"]
+
+    drift_report_med = {
+        "drift_report_id": "drift-dd-med-001",
+        "recon_run_id": "recon-dd-med-001",
+        "incident_cluster_id": "drift:drawdown",
+        "drift_type": "pnl",
+        "status": "open",
+        "severity": "medium",
+        "scope_ref": summary_med["binding_id"],
+        "binding_id": summary_med["binding_id"],
+        "runtime_id": summary_med["runtime_id"],
+        "deployment_stage": summary_med["deployment_stage"],
+        "deployment_plan_id": summary_med["plan_id"],
+        "capital_pool_id": summary_med["capital_pool_id"],
+        "persona_capital_binding_id": summary_med["persona_capital_binding_id"],
+        "artifact_id": summary_med["artifact_id"],
+        "artifact_version": summary_med["artifact_version"],
+        "trace_id": dd_med_evt["trace_id"],
+        "telemetry_event_ids": [summary_med["drawdown_event_id"]],
+        "threshold_metric": "rolling_drawdown_multiple",
+        "observed": 1.25,
+        "comparator": "gt",
+        "threshold_value": 1.25,
+        "threshold_window": "paper-daily-sweep",
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1;services/evolution/config/threshold_sweep_thresholds.json",
+        "metrics": {
+            "worst_metric": "drawdown",
+            "breached_metric_ids": ["drawdown"],
+            "threshold_metric": "rolling_drawdown_multiple",
+            "observed": 1.25,
+            "comparator": "gt",
+            "threshold_value": 1.25,
+            "threshold_window": "paper-daily-sweep",
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1;services/evolution/config/threshold_sweep_thresholds.json",
+        },
+        "evidence_refs": [
+            f"telemetry_event:{summary_med['drawdown_event_id']}",
+            "drift_report:drift-dd-med-001",
+            "reconciliation_record:recon-dd-med-001",
+        ],
+        "generated_at": "2026-11-02T09:02:00Z",
+    }
+    incident_med = build_incident_from_drift_report(drift_report_med)
+    evo_main.incident_store.create_incident(incident_med)
+
+    # 2. 1.6x critical drawdown incident -> FREEZE path
+    emitter_crit = _make_emitter(
+        "runtime-evo-dd-crit-001",
+        "binding-evo-dd-crit-001",
+        "plan-evo-dd-crit-001",
+        "pool-evo-dd-crit-001",
+        "pcb-evo-dd-crit-001",
+        "artifact-us-intraday-reversion-v1",
+        "trace-evo-dd-crit-001",
+    )
+    store_crit = RuntimeSummaryProjectionStore(path=None)
+    dd_crit_evt = emitter_crit.build_event(
+        "drawdown_snapshot",
+        {"drawdown": 0.08, "drawdown_as_of": "2026-11-02T09:03:00Z"},
+        created_at="2026-11-02T09:03:00Z",
+    )
+    summary_crit = store_crit.project_event(dd_crit_evt)
+    assert summary_crit["drawdown_event_id"] == dd_crit_evt["event_id"]
+
+    drift_report_crit = {
+        "drift_report_id": "drift-dd-crit-001",
+        "recon_run_id": "recon-dd-crit-001",
+        "incident_cluster_id": "drift:drawdown",
+        "drift_type": "pnl",
+        "status": "open",
+        "severity": "critical",
+        "scope_ref": summary_crit["binding_id"],
+        "binding_id": summary_crit["binding_id"],
+        "runtime_id": summary_crit["runtime_id"],
+        "deployment_stage": summary_crit["deployment_stage"],
+        "deployment_plan_id": summary_crit["plan_id"],
+        "capital_pool_id": summary_crit["capital_pool_id"],
+        "persona_capital_binding_id": summary_crit["persona_capital_binding_id"],
+        "artifact_id": summary_crit["artifact_id"],
+        "artifact_version": summary_crit["artifact_version"],
+        "trace_id": dd_crit_evt["trace_id"],
+        "telemetry_event_ids": [summary_crit["drawdown_event_id"]],
+        "threshold_metric": "rolling_drawdown_multiple",
+        "observed": 1.6,
+        "comparator": "gt",
+        "threshold_value": 1.25,
+        "threshold_window": "paper-daily-sweep",
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1;services/evolution/config/threshold_sweep_thresholds.json",
+        "metrics": {
+            "worst_metric": "drawdown",
+            "breached_metric_ids": ["drawdown"],
+            "threshold_metric": "rolling_drawdown_multiple",
+            "observed": 1.6,
+            "comparator": "gt",
+            "threshold_value": 1.25,
+            "threshold_window": "paper-daily-sweep",
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1;services/evolution/config/threshold_sweep_thresholds.json",
+        },
+        "evidence_refs": [
+            f"telemetry_event:{summary_crit['drawdown_event_id']}",
+            "drift_report:drift-dd-crit-001",
+            "reconciliation_record:recon-dd-crit-001",
+        ],
+        "generated_at": "2026-11-02T09:04:00Z",
+    }
+    incident_crit = build_incident_from_drift_report(drift_report_crit)
+    evo_main.incident_store.create_incident(incident_crit)
+
+    r = client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [incident_med.incident_id, incident_crit.incident_id]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created_decisions"] == 2
+    by_inc = {item["incident_id"]: item for item in body["items"]}
+
+    med_item = by_inc[incident_med.incident_id]
+    assert med_item["status"] == "created"
+    assert med_item["action_type"] == "retrain"
+    med_decision = evo_main.store.get(med_item["decision_id"])
+    assert str(getattr(med_decision.action_type, "value", med_decision.action_type)) == "retrain"
+    assert str(getattr(med_decision.risk_level, "value", med_decision.risk_level)) == "low"
+    assert med_decision.threshold_snapshots[0].metric_name == "rolling_drawdown_multiple"
+
+    crit_item = by_inc[incident_crit.incident_id]
+    assert crit_item["action_type"] == "freeze"
+    crit_decision = evo_main.store.get(crit_item["decision_id"])
+    assert str(getattr(crit_decision.action_type, "value", crit_decision.action_type)) == "freeze"
+    assert crit_decision.threshold_snapshots[0].metric_name == "severity1_incident_count"
+
+
 # ---------------------------------------------------------------------------
 # EVOLUTION-TELEMETRY-AUTH-WIRING-20261018: GET /api/evolution/input-coverage
 # against real strict Flask Telemetry HTTP authority boundary

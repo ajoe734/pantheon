@@ -401,6 +401,37 @@ def _load_approved_baselines() -> Dict[str, Dict[str, Any]]:
     return sweep.load_baselines(_approved_baselines_path())
 
 
+def _governed_thresholds_path() -> str | None:
+    return (
+        os.getenv("RECONCILIATION_DRIFT_GOVERNED_THRESHOLDS_PATH")
+        or os.getenv("EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH")
+        or None
+    )
+
+
+def _load_governed_threshold_for_metric(
+    metric: str,
+    baseline_key: str | None = None,
+) -> Dict[str, Any] | None:
+    """Read the governed Evolution threshold entry for ``metric`` from live config.
+
+    Reads ``services/evolution/config/threshold_sweep_thresholds.json`` through
+    ``threshold_sweep_worker.load_thresholds`` so ``reconciliation-drift`` uses
+    the exact section 7.1 multiple without a copied constant.
+    """
+    try:
+        from services.evolution import threshold_sweep_worker as sweep
+    except ImportError:  # pragma: no cover - image always ships services/evolution
+        return None
+    for entry in sweep.load_thresholds(_governed_thresholds_path()):
+        if str(entry.get("summary_field") or "") != metric:
+            continue
+        if baseline_key and str(entry.get("ratio_baseline_key") or "") != baseline_key:
+            continue
+        return dict(entry)
+    return None
+
+
 def _approved_artifact_baselines(
     artifact_id: Any,
     all_baselines: Dict[str, Dict[str, Any]] | None = None,
@@ -476,6 +507,37 @@ def _drift_checks(
             status = "warning"
         else:
             status = "ok"
+        governed_threshold_fields: Dict[str, Any] = {}
+        if metric in (baseline_sources or {}) and baseline > 0:
+            source_info = (baseline_sources or {})[metric]
+            governed = _load_governed_threshold_for_metric(
+                metric,
+                source_info.get("baseline_key"),
+            )
+            threshold_multiple = (
+                _numeric(governed.get("threshold_value"))
+                if isinstance(governed, dict)
+                else None
+            )
+            if (
+                isinstance(governed, dict)
+                and threshold_multiple is not None
+                and threshold_multiple > 0
+            ):
+                observed_multiple = observed / baseline
+                governed_breached = observed_multiple >= threshold_multiple
+                if governed_breached and status == "ok":
+                    status = "warning"
+                governed_threshold_fields = {
+                    "governed_threshold_breached": governed_breached,
+                    "observed_multiple": observed_multiple,
+                    "threshold_metric": str(governed["metric_name"]),
+                    "comparator": str(governed["comparator"]),
+                    "threshold_value": threshold_multiple,
+                    "threshold_window": str(governed.get("window") or "paper-daily-sweep"),
+                    "policy_source": str(governed["policy_source"]),
+                    "signal_type": str(governed.get("signal_type") or "performance_degradation"),
+                }
         checks.append(
             {
                 "metric": metric,
@@ -498,6 +560,7 @@ def _drift_checks(
                     if metric in (baseline_sources or {})
                     else {}
                 ),
+                **governed_threshold_fields,
             }
         )
     return checks
@@ -1821,7 +1884,18 @@ def _trigger_evaluation_id(trigger_id: str, binding_id: str) -> str:
 
 def _summary_telemetry_event_ids(summary: Dict[str, Any]) -> List[str]:
     values: List[Any] = list(summary.get("telemetry_event_ids") or [])
-    values.extend((summary.get("last_event_id"), summary.get("last_heartbeat_event_id")))
+    values.extend(
+        (
+            summary.get("drawdown_event_id"),
+            summary.get("pnl_event_id"),
+            summary.get("sharpe_ratio_event_id"),
+            summary.get("fill_rate_event_id"),
+            summary.get("avg_slippage_bps_event_id"),
+            summary.get("total_trades_event_id"),
+            summary.get("last_event_id"),
+            summary.get("last_heartbeat_event_id"),
+        )
+    )
     return list(dict.fromkeys(str(value) for value in values if value))
 
 
@@ -2771,8 +2845,12 @@ def _scheduled_drift_report(
         check
         for check in [*evaluation.get("drift_checks", []), *evaluation.get("reconciliation_checks", [])]
         if check.get("status") in {"warning", "critical"}
-        # Governed approved-baseline drift is observe-only at warning level.
-        and not (check.get("status") == "warning" and check.get("baseline_source"))
+        # Governed approved-baseline drift stays observe-only below the section 7.1 multiple.
+        and not (
+            check.get("status") == "warning"
+            and check.get("baseline_source")
+            and not check.get("governed_threshold_breached")
+        )
     ]
     if not failing_checks:
         return None
@@ -2791,26 +2869,64 @@ def _scheduled_drift_report(
         return None
     worst = max(failing_checks, key=lambda item: _status_rank(str(item.get("status") or "ok")))
     metric = str(worst.get("metric") or worst.get("check") or "runtime_health")
+    has_baseline_source = bool(worst.get("baseline_source"))
     worst_source = worst.get("baseline_source")
     if not isinstance(worst_source, dict):
         worst_source = None
     is_health = "lag" in metric or "runtime" in metric
-    causal_anchor = (
-        summary.get("last_heartbeat_event_id")
-        if is_health
-        else summary.get("last_event_id")
-    )
-    if causal_anchor:
-        if causal_anchor not in telemetry_event_ids:
+    if has_baseline_source:
+        metric_binding_id = str(summary.get(f"{metric}_binding_id") or "").strip()
+        if metric_binding_id and metric_binding_id != str(required["binding_id"]):
             return None
-        causal_event_id = causal_anchor
-    elif len(telemetry_event_ids) == 1:
-        causal_event_id = telemetry_event_ids[0]
+        metric_event_id = str(summary.get(f"{metric}_event_id") or "").strip()
+        heartbeat_event_id = str(summary.get("last_heartbeat_event_id") or "").strip()
+        if (
+            not metric_event_id
+            or (heartbeat_event_id and metric_event_id == heartbeat_event_id)
+            or metric_event_id not in telemetry_event_ids
+        ):
+            return None
+        causal_event_id = metric_event_id
     else:
-        return None
+        causal_anchor = (
+            summary.get("last_heartbeat_event_id")
+            if is_health
+            else summary.get("last_event_id")
+        )
+        if causal_anchor:
+            if causal_anchor not in telemetry_event_ids:
+                return None
+            causal_event_id = str(causal_anchor)
+        elif len(telemetry_event_ids) == 1:
+            causal_event_id = telemetry_event_ids[0]
+        else:
+            return None
     report_id = f"drift-{_safe_id_component(causal_event_id)}-{_safe_id_component(metric)}"
     cluster_id = f"drift:{_safe_id_component(metric)}"
     severity = _incident_severity(str(worst.get("status") or "warning"))
+    threshold_fields: Dict[str, Any] = {}
+    if worst.get("threshold_metric"):
+        observed_multiple = worst.get("observed_multiple")
+        threshold_fields = {
+            "threshold_metric": worst["threshold_metric"],
+            "observed": observed_multiple,
+            "observed_multiple": observed_multiple,
+            "comparator": worst["comparator"],
+            "threshold_value": worst["threshold_value"],
+            "threshold_window": worst["threshold_window"],
+            "policy_source": worst["policy_source"],
+            "threshold_snapshot": {
+                "policy_source": worst["policy_source"],
+                "signal_type": worst.get("signal_type") or "performance_degradation",
+                "metric_name": worst["threshold_metric"],
+                "comparator": worst["comparator"],
+                "raw_observed_value": worst.get("observed"),
+                "observed_value": observed_multiple,
+                "threshold_value": worst["threshold_value"],
+                "window": worst["threshold_window"],
+                "breached": True,
+            },
+        }
     return {
         "id": report_id,
         "drift_report_id": report_id,
@@ -2832,6 +2948,7 @@ def _scheduled_drift_report(
         "severity": severity,
         "status": "open",
         "recommended_action": "open_incident",
+        **threshold_fields,
         "metrics": {
             "baseline_metrics": evaluation.get("baseline_metrics", {}),
             "current_metrics": evaluation.get("observed_metrics", {}),

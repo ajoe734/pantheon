@@ -777,6 +777,9 @@ def build_incident_from_drift_report(payload: Mapping[str, Any]) -> IncidentCase
     )
     if worst_metric:
         evidence_summary = f"{evidence_summary}; worst_metric={worst_metric}"
+    threshold_notes = _drift_threshold_notes(payload)
+    if threshold_notes:
+        evidence_summary = f"{evidence_summary}; {threshold_notes}"
 
     return IncidentCase(
         incident_id=_drift_incident_id(payload, binding_id, runtime_id, cluster_id),
@@ -924,6 +927,80 @@ def _drift_metric(payload: Mapping[str, Any]) -> str:
             if item not in (None, ""):
                 return str(item)
     return ""
+
+
+def _drift_threshold_notes(payload: Mapping[str, Any]) -> str:
+    snapshot = _mapping(payload.get("threshold_snapshot")) or {}
+    metrics = _mapping(payload.get("metrics")) or {}
+    worst_name = _drift_metric(payload)
+    worst_check: Mapping[str, Any] = {}
+    drift_checks = metrics.get("drift_checks")
+    if isinstance(drift_checks, Sequence) and not isinstance(drift_checks, (str, bytes, bytearray)):
+        for item in drift_checks:
+            mapping = _mapping(item)
+            if mapping is None:
+                continue
+            if worst_name and str(mapping.get("metric") or mapping.get("check") or "") == worst_name:
+                worst_check = mapping
+                break
+            if not worst_check and mapping.get("threshold_metric"):
+                worst_check = mapping
+
+    threshold_metric = _first_value(
+        payload,
+        snapshot,
+        worst_check,
+        keys=("threshold_metric", "metric_name"),
+    )
+    if not threshold_metric:
+        return ""
+
+    observed = next(
+        (
+            candidate
+            for candidate in (
+                payload.get("observed"),
+                payload.get("observed_multiple"),
+                snapshot.get("observed_value"),
+                snapshot.get("observed"),
+                worst_check.get("observed_multiple"),
+            )
+            if candidate not in (None, "")
+        ),
+        None,
+    )
+    comparator = _first_value(payload, snapshot, worst_check, keys=("comparator",))
+    threshold_value = next(
+        (
+            candidate
+            for candidate in (
+                payload.get("threshold_value"),
+                snapshot.get("threshold_value"),
+                worst_check.get("threshold_value"),
+            )
+            if candidate not in (None, "")
+        ),
+        None,
+    )
+    threshold_window = _first_value(
+        payload,
+        snapshot,
+        worst_check,
+        keys=("threshold_window", "window"),
+    )
+    policy_source = _first_value(payload, snapshot, worst_check, keys=("policy_source",))
+
+    parts = [f"threshold_metric={threshold_metric}"]
+    for label, value in (
+        ("observed", observed),
+        ("comparator", comparator),
+        ("threshold_value", threshold_value),
+        ("threshold_window", threshold_window),
+        ("policy_source", policy_source),
+    ):
+        if value not in (None, ""):
+            parts.append(f"{label}={value}")
+    return "; ".join(parts)
 
 
 def _drift_incident_id(

@@ -3422,29 +3422,182 @@ def _write_approved_baselines(path: Path, expected_drawdown: float) -> None:
     )
 
 
+def _project_paper_emitter_drawdown_summary(
+    *,
+    drawdown: float | None,
+    artifact_id: str = _APPROVED_ARTIFACT_ID,
+    baseline_metrics: dict | None = None,
+    emit_derived_echo_drawdown: float | None = None,
+) -> tuple[dict, dict[str, dict]]:
+    from services.execution.lean_runtime.paper_runtime import (
+        RuntimeIdentity,
+        RuntimeTelemetryEmitter,
+    )
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    binding_id = "rtb-sched-healthy-001"
+    runtime_id = "runtime-sched-healthy-001"
+    identity = RuntimeIdentity.from_env(
+        {
+            "PANTHEON_RUNTIME_ROLE": "paper",
+            "PANTHEON_RUNTIME_MODE": "paper",
+            "PANTHEON_RUNTIME_ID": runtime_id,
+            "PANTHEON_WORKSPACE_REF": "workspace-sched-001",
+            "PANTHEON_AUTH_PROFILE_REF": "auth-sched-001",
+            "PANTHEON_PERSONA_ID": "persona-sched-001",
+            "PANTHEON_SESSION_ID": "session-sched-001",
+            "PANTHEON_TRACE_ID": str(uuid.uuid4()),
+            "PANTHEON_REQUEST_ID": "request-sched-001",
+        }
+    )
+
+    class _Resolver:
+        def resolve(self):
+            return {
+                "binding_id": binding_id,
+                "runtime_id": runtime_id,
+                "capital_pool_id": "pool-sched-001",
+                "artifact_id": artifact_id,
+                "artifact_version": "1.0.0",
+                "plan_id": "plan-sched-001",
+                "persona_capital_binding_id": "pcb-sched-001",
+                "deployment_stage": "paper",
+                "deployment_mode": "paper",
+                "effective_at": "2026-10-10T00:00:00Z",
+                "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                "engine_bridge_path": "pantheon/lean",
+                "engine_bridge_commit": "abc1234",
+            }
+
+    emitter = RuntimeTelemetryEmitter(identity, _Resolver())
+    store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=10_000_000_000)
+    emitted: dict[str, dict] = {}
+
+    fill_event = emitter.build_event(
+        "paper_fill_simulated",
+        {
+            "action": "BUY",
+            "fill_quantity": 10.0,
+            "fill_price": 100.0,
+            "submitted_to_broker": False,
+        },
+        metadata={
+            "symbol": "2330.TW",
+            "side": "buy",
+            "ledger_committed": True,
+            "ledger_fill_count": 1,
+            "position_quantity": 10.0,
+        },
+        created_at="2026-10-10T00:00:01Z",
+    )
+    position_event = emitter.build_event(
+        "position_snapshot",
+        {"position_qty": 10.0, "price": 101.5, "cash": 9000.0},
+        metadata={
+            "symbol": "2330.TW",
+            "ledger_committed": True,
+            "ledger_fill_count": 1,
+        },
+        created_at="2026-10-10T00:00:02Z",
+    )
+    pnl_event = emitter.build_event(
+        "pnl_snapshot",
+        {"pnl": 125.5, "pnl_as_of": "2026-10-10T00:00:03Z", "valuation_fill_count": 1},
+        created_at="2026-10-10T00:00:03Z",
+    )
+    store.project_event(fill_event)
+    store.project_event(position_event)
+    store.project_event(pnl_event)
+    emitted["fill"] = fill_event
+    emitted["position"] = position_event
+    emitted["pnl"] = pnl_event
+
+    if drawdown is not None:
+        drawdown_event = emitter.build_event(
+            "drawdown_snapshot",
+            {
+                "drawdown": drawdown,
+                "drawdown_as_of": "2026-10-10T00:00:04Z",
+                "valuation_fill_count": 1,
+            },
+            created_at="2026-10-10T00:00:04Z",
+        )
+        store.project_event(drawdown_event)
+        emitted["drawdown"] = drawdown_event
+
+    if emit_derived_echo_drawdown is not None:
+        echo_event = emitter.build_event(
+            "drawdown_snapshot",
+            {
+                "drawdown": emit_derived_echo_drawdown,
+                "drawdown_as_of": "2026-10-10T00:00:05Z",
+                "valuation_fill_count": 1,
+            },
+            metadata={"derived_from_threshold_evaluation": True},
+            created_at="2026-10-10T00:00:05Z",
+        )
+        store.project_event(echo_event)
+        emitted["echo"] = echo_event
+
+    # Project a later heartbeat so last_event_id and last_heartbeat_event_id
+    # differ from drawdown_event_id.
+    heartbeat_event = emitter.build_event(
+        "heartbeat",
+        {"queue_lag_ms": 120.0, "delivery_lag_ms": 240.0},
+        metadata={
+            "runtime_package": "paper_execution_runtime",
+            "runtime_heartbeat": {
+                "connectivity_status": "connected",
+                "broker_status": "paper_simulated",
+                "queue_lag_ms": 120.0,
+                "event_delivery_lag_ms": 240.0,
+                "health_summary": {
+                    "paper_runtime": "ok",
+                    "telemetry": "ok",
+                    "execution_guard": "ok",
+                },
+            }
+        },
+        created_at="2026-10-10T00:00:09Z",
+    )
+    summary = store.project_event(heartbeat_event)
+    emitted["heartbeat"] = heartbeat_event
+    summary["trace_id"] = (
+        emitted["drawdown"]["trace_id"]
+        if "drawdown" in emitted
+        else heartbeat_event["trace_id"]
+    )
+    summary["committed_position_snapshot"] = {
+        "event_id": position_event["event_id"],
+        "event_type": "position_snapshot",
+        "position_qty": 10.0,
+        "price": 101.5,
+        "cash": 9000.0,
+    }
+    if baseline_metrics is not None:
+        summary["baseline_metrics"] = baseline_metrics
+    return summary, emitted
+
+
 def _run_drawdown_tick(
     baselines_path: Path,
     *,
-    drawdown: float,
+    drawdown: float | None,
     artifact_id: str = _APPROVED_ARTIFACT_ID,
     baseline_metrics: dict | None = None,
+    emit_derived_echo_drawdown: float | None = None,
+    summary_Transform=None,
 ):
     from fastapi.testclient import TestClient
 
-    # Real enriched paper summary shape: drawdown is a top-level runtime-summary
-    # aggregate while the committed position snapshot only carries qty/price/cash.
-    summary = _healthy_runtime_summary(
-        artifact_id=artifact_id,
+    summary, emitted = _project_paper_emitter_drawdown_summary(
         drawdown=drawdown,
-        baseline_metrics=baseline_metrics or {},
-        committed_position_snapshot={
-            "event_id": "evt-sched-001",
-            "event_type": "position_snapshot",
-            "position_qty": 10.0,
-            "price": 101.5,
-            "cash": 9000.0,
-        },
+        artifact_id=artifact_id,
+        baseline_metrics=baseline_metrics,
+        emit_derived_echo_drawdown=emit_derived_echo_drawdown,
     )
+    if summary_Transform is not None:
+        summary_Transform(summary, emitted)
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
         client = TestClient(svc.app)
@@ -3485,25 +3638,66 @@ def test_drawdown_half_of_approved_baseline_is_ok_and_raises_no_incident(tmp_pat
     assert check["baseline"] == 0.04
     assert check["relative_delta"] == 0.0
     assert check["signed_relative_delta"] < 0
+    assert check["governed_threshold_breached"] is False
     assert payload["incident_ids"] == []
     assert reports == []
     assert classify.call_count == 0
 
 
-def test_drawdown_1_3x_approved_baseline_is_warning_observe_only(tmp_path) -> None:
+def test_drawdown_below_section_7_1_multiple_warning_stays_observe_only(tmp_path) -> None:
     baselines = tmp_path / "baselines.json"
     _write_approved_baselines(baselines, 0.04)
-    payload, evaluation, reports, classify = _run_drawdown_tick(baselines, drawdown=0.052)
-    assert _drawdown_check(evaluation)["status"] == "warning"
+    # 0.049 / 0.04 = 1.225x: in [1.2x, 1.25x), warning stays observe-only.
+    payload, evaluation, reports, classify = _run_drawdown_tick(baselines, drawdown=0.049)
+    check = _drawdown_check(evaluation)
+    assert check["status"] == "warning"
+    assert check["governed_threshold_breached"] is False
     assert reports == []
     assert payload["incident_ids"] == []
     assert classify.call_count == 0
+
+
+def test_drawdown_1_3x_approved_baseline_builds_governed_medium_report_and_cites_causal_metric_event(
+    tmp_path,
+) -> None:
+    baselines = tmp_path / "baselines.json"
+    _write_approved_baselines(baselines, 0.04)
+    seen_events: dict[str, dict] = {}
+    payload, evaluation, reports, classify = _run_drawdown_tick(
+        baselines,
+        drawdown=0.052,
+        summary_Transform=lambda _summary, emitted: seen_events.update(emitted),
+    )
+    check = _drawdown_check(evaluation)
+    assert check["status"] == "warning"
+    assert check["governed_threshold_breached"] is True
+    assert check["threshold_metric"] == "rolling_drawdown_multiple"
+    assert check["threshold_value"] == 1.25
+    assert round(check["observed_multiple"], 4) == 1.3
+    assert len(reports) == 1
+    report = reports[0]
+    assert report["severity"] == "medium"
+    assert report["threshold_metric"] == "rolling_drawdown_multiple"
+    assert round(report["observed"], 4) == 1.3
+    assert report["comparator"] == "gt"
+    assert report["threshold_value"] == 1.25
+    assert report["threshold_window"] == "paper-daily-sweep"
+    assert "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1" in report["policy_source"]
+    assert report["telemetry_event_ids"] == [seen_events["drawdown"]["event_id"]]
+    assert seen_events["heartbeat"]["event_id"] not in report["telemetry_event_ids"]
+    assert classify.call_count == 1
+    assert payload["incident_ids"] == ["inc-drawdown-001"]
 
 
 def test_drawdown_1_6x_approved_baseline_is_critical_with_incident_candidate(tmp_path) -> None:
     baselines = tmp_path / "baselines.json"
     _write_approved_baselines(baselines, 0.04)
-    payload, evaluation, reports, classify = _run_drawdown_tick(baselines, drawdown=0.064)
+    seen_events: dict[str, dict] = {}
+    payload, evaluation, reports, classify = _run_drawdown_tick(
+        baselines,
+        drawdown=0.064,
+        summary_Transform=lambda _summary, emitted: seen_events.update(emitted),
+    )
     check = _drawdown_check(evaluation)
     assert check["status"] == "critical"
     assert check["baseline_source"] == {
@@ -3514,10 +3708,56 @@ def test_drawdown_1_6x_approved_baseline_is_critical_with_incident_candidate(tmp
     assert len(reports) == 1
     report = reports[0]
     assert report["severity"] == "critical"
+    assert report["telemetry_event_ids"] == [seen_events["drawdown"]["event_id"]]
+    assert seen_events["heartbeat"]["event_id"] not in report["telemetry_event_ids"]
+    assert report["threshold_metric"] == "rolling_drawdown_multiple"
+    assert round(report["observed"], 4) == 1.6
     assert _APPROVED_ARTIFACT_ID in report["baseline_ref"]
     assert _APPROVED_POLICY_SOURCE in report["baseline_ref"]
     assert classify.call_count == 1
     assert payload["incident_ids"] == ["inc-drawdown-001"]
+
+
+def test_drawdown_heartbeat_only_and_derived_echo_never_build_report_or_cite_heartbeat(
+    tmp_path,
+) -> None:
+    baselines = tmp_path / "baselines.json"
+    _write_approved_baselines(baselines, 0.04)
+
+    # 1. Summary with drawdown number but no drawdown_event_id (or heartbeat-only)
+    payload_no_event_id, _, reports_no_event_id, classify_no_event_id = _run_drawdown_tick(
+        baselines,
+        drawdown=None,
+        summary_Transform=lambda summary, _emitted: summary.update({"drawdown": 0.064}),
+    )
+    assert reports_no_event_id == []
+    assert payload_no_event_id["incident_ids"] == []
+    assert classify_no_event_id.call_count == 0
+
+    # 2. Summary where drawdown_event_id was forged to the heartbeat event ID
+    payload_hb_forged, _, reports_hb_forged, classify_hb_forged = _run_drawdown_tick(
+        baselines,
+        drawdown=None,
+        summary_Transform=lambda summary, emitted: summary.update(
+            {
+                "drawdown": 0.064,
+                "drawdown_event_id": emitted["heartbeat"]["event_id"],
+            }
+        ),
+    )
+    assert reports_hb_forged == []
+    assert payload_hb_forged["incident_ids"] == []
+    assert classify_hb_forged.call_count == 0
+
+    # 3. Derived echo event projected onto a healthy summary never moves drawdown or drawdown_event_id
+    payload_echo, _, reports_echo, classify_echo = _run_drawdown_tick(
+        baselines,
+        drawdown=0.02,
+        emit_derived_echo_drawdown=0.064,
+    )
+    assert reports_echo == []
+    assert payload_echo["incident_ids"] == []
+    assert classify_echo.call_count == 0
 
 
 def test_artifact_without_approved_baseline_stays_unmeasured(tmp_path) -> None:
