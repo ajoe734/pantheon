@@ -48,20 +48,58 @@ import time
 from typing import Any
 
 
-def _fail(code: str, message: str) -> "NoReturn":
+def _fail(code: str, message: str, **extra: Any) -> "NoReturn":
+    payload: dict[str, Any] = {
+        "status": "error",
+        "step": "collect-verify-gates",
+        "error_code": code,
+        "message": message,
+    }
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
     print(
         json.dumps(
-            {
-                "status": "error",
-                "step": "collect-verify-gates",
-                "error_code": code,
-                "message": message,
-            },
+            payload,
             sort_keys=True,
         ),
         file=sys.stderr,
     )
     raise SystemExit(1)
+
+
+def _build_rollback_phase_timings(
+    t0: float,
+    *,
+    drain_end: float,
+    baseline_up_end: float,
+    owners_healthy_end: float,
+    readyz_200_end: float | None = None,
+    readback_end: float | None = None,
+    total_duration: float | None = None,
+) -> dict[str, float]:
+    def _ms_floor(start: float, end: float) -> float:
+        return int(max(0.0, end - start) * 1000) / 1000.0
+
+    timings: dict[str, float] = {
+        "drain": _ms_floor(t0, drain_end),
+        "baseline_up": _ms_floor(drain_end, baseline_up_end),
+        "owners_healthy": _ms_floor(baseline_up_end, owners_healthy_end),
+        "readyz_200": _ms_floor(owners_healthy_end, readyz_200_end) if readyz_200_end is not None else 0.0,
+        "readback": (
+            _ms_floor(readyz_200_end, readback_end)
+            if readyz_200_end is not None and readback_end is not None
+            else 0.0
+        ),
+    }
+    if total_duration is not None:
+        while sum(timings.values()) > total_duration:
+            largest_key = max(timings, key=lambda k: timings[k])
+            if timings[largest_key] <= 0.0:
+                break
+            excess = max(0.001, round(sum(timings.values()) - total_duration, 3))
+            timings[largest_key] = max(0.0, round(timings[largest_key] - excess, 3))
+    return timings
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -1415,6 +1453,7 @@ def main() -> int:
             compose_cmd("--profile", "core", "rm", "-fsv", absent_key.replace("_", "-")),
             error_code="ROLLBACK_ABSENT_OWNER_REMOVE_FAILED",
         )
+    t_after_drain = time.monotonic()
     if current_fe.is_symlink() or current_fe.exists():
         current_fe.unlink()
     current_fe.symlink_to(baseline_fe_dir)
@@ -1439,13 +1478,27 @@ def main() -> int:
         ],
         error_code="ROLLBACK_COMPOSE_UP_FAILED",
     )
+    t_after_baseline_up = time.monotonic()
 
     # Baseline owners must be running/healthy (not just carry the baseline Config.Image) before
     # any rollback evidence or duration is recorded.
     unserved = _wait_product_owners(frozenset(baseline_absent_owners))
+    t_after_owners_healthy = time.monotonic()
     if unserved:
-        _fail("ROLLBACK_BASELINE_UNHEALTHY", f"Baseline product owners not running/healthy after rollback: {', '.join(unserved)}")
+        _fail(
+            "ROLLBACK_BASELINE_UNHEALTHY",
+            f"Baseline product owners not running/healthy after rollback: {', '.join(unserved)}",
+            rollback_duration_seconds=round(t_after_owners_healthy - t0, 3),
+            bff_healthy=False,
+            phase_timings_seconds=_build_rollback_phase_timings(
+                t0,
+                drain_end=t_after_drain,
+                baseline_up_end=t_after_baseline_up,
+                owners_healthy_end=t_after_owners_healthy,
+            ),
+        )
     rb_ready = _wait_bff_ready(curl_bin, bff_port) == 200
+    t_after_readyz = time.monotonic()
     rb_version = _http_json(curl_bin, f"http://127.0.0.1:{bff_port}/bff/version", error_code="ROLLBACK_VERSION_FAILED")
     served_backend_images: dict[str, str] = {}
     for absent_key in sorted(baseline_absent_owners):
@@ -1472,7 +1525,17 @@ def main() -> int:
     ]
     rb_fe_sha = (current_fe / ".artifact_sha256").read_text(encoding="utf-8").strip()
     rb_dep_json = json.loads((current_fe / "deployment.json").read_text(encoding="utf-8"))
-    rollback_duration = round(time.monotonic() - t0, 3)
+    t_after_readback = time.monotonic()
+    rollback_duration = round(t_after_readback - t0, 3)
+    rollback_phase_timings = _build_rollback_phase_timings(
+        t0,
+        drain_end=t_after_drain,
+        baseline_up_end=t_after_baseline_up,
+        owners_healthy_end=t_after_owners_healthy,
+        readyz_200_end=t_after_readyz,
+        readback_end=t_after_readback,
+        total_duration=rollback_duration,
+    )
 
     # Restore candidate pair across every required owner service after rollback readback
     _run(
@@ -1497,9 +1560,21 @@ def main() -> int:
     )
     unserved = _wait_product_owners()
     if unserved:
-        _fail("RESTORE_CANDIDATE_UNHEALTHY", f"Product owners not running/healthy after rollback rehearsal: {', '.join(unserved)}")
+        _fail(
+            "RESTORE_CANDIDATE_UNHEALTHY",
+            f"Product owners not running/healthy after rollback rehearsal: {', '.join(unserved)}",
+            rollback_duration_seconds=rollback_duration,
+            bff_healthy=rb_ready,
+            phase_timings_seconds=rollback_phase_timings,
+        )
     if _wait_bff_ready(curl_bin, bff_port) != 200:
-        _fail("RESTORE_CANDIDATE_UNHEALTHY", "Candidate BFF failed /bff/readyz after rollback rehearsal")
+        _fail(
+            "RESTORE_CANDIDATE_UNHEALTHY",
+            "Candidate BFF failed /bff/readyz after rollback rehearsal",
+            rollback_duration_seconds=rollback_duration,
+            bff_healthy=rb_ready,
+            phase_timings_seconds=rollback_phase_timings,
+        )
 
     rollback_readback = {
         "observed_from_live_vm": True,
@@ -1515,11 +1590,18 @@ def main() -> int:
         "bff_healthy": rb_ready,
         "singleton_worker_owner_unique": len(rb_singleton_cids) == 1,
         "rollback_duration_seconds": rollback_duration,
+        "phase_timings_seconds": rollback_phase_timings,
     }
     try:
         staging_sanitize.verify_exact_pair_rollback(rollback_baseline, rollback_readback)
     except Exception as exc:
-        _fail("ROLLBACK_VERIFICATION_FAILED", str(exc))
+        _fail(
+            "ROLLBACK_VERIFICATION_FAILED",
+            str(exc),
+            rollback_duration_seconds=rollback_duration,
+            bff_healthy=rb_ready,
+            phase_timings_seconds=rollback_phase_timings,
+        )
 
     # 6. Security, tenant isolation, RBAC, and safe-off readbacks against real operator-bff routes
     operator_token, viewer_token = _mint_probe_tokens()
