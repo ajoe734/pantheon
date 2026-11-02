@@ -22,8 +22,8 @@ from fastapi import HTTPException
 
 from .models import CommandStatus, CommandType
 from .command_adapters import ActionUnavailableError, dispatch_domain_command
+from .command_adapters.evolution_adapter import resolve_evolution_actor
 from .command_adapters.base import (
-    resolve_evolution_actor,
     _token_tenant,
     bound_tenant,
     get_base_url,

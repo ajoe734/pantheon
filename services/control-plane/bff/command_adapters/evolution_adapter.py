@@ -10,7 +10,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
 from .base import (
@@ -20,14 +20,78 @@ from .base import (
     build_domain_receipt,
     evolution_url,
     http_request_json as _base_http_request_json,
-    resolve_evolution_actor,
     utc_now,
 )
+
 
 
 http_request_json = _base_http_request_json
 
 log = logging.getLogger(__name__)
+
+_EVOLUTION_ACTOR_ROLE_PREFERENCE = (
+    "governance_committee",
+    "risk_owner",
+    "reviewer_on_duty",
+    "governance_reviewer",
+    "admin",
+    "approver",
+    "reviewer",
+    "operator",
+)
+
+
+def _evolution_forbidden(message: str) -> ActionUnavailableError:
+    return ActionUnavailableError(
+        message,
+        error_code="FORBIDDEN",
+        suggestion="Act with an identity that holds the required Evolution role.",
+        downstream_status=403,
+    )
+
+
+def resolve_evolution_actor(params: Dict[str, Any], auth_token: Optional[str]) -> Tuple[str, str]:
+    """Bind Evolution decision actor fields to the verified principal.
+
+    actor_id always comes from the verified identity; a client-supplied
+    actor_id/approved_by_id may only equal it. A client-named role must be one
+    the principal holds; with none named, pick a held role by preference.
+    """
+    try:
+        from services.control_plane.bff.auth.policy import extract_identity
+        raw = str(auth_token or "").strip()
+        if not raw:
+            raise ValueError("missing token")
+        if not raw.lower().startswith("bearer "):
+            raw = f"Bearer {raw}"
+        identity = extract_identity(raw)
+    except Exception as exc:
+        raise _evolution_forbidden("Evolution command requires a verified authenticated principal.") from exc
+    principal = str(identity.operator_id or "").strip()
+    held = [str(r).strip() for r in (identity.roles or []) if str(r).strip()]
+    if not principal:
+        raise _evolution_forbidden("Evolution command requires a verified authenticated principal.")
+    for key in ("actor_id", "approved_by_id"):
+        claimed = str(params.get(key) or "").strip()
+        if claimed and claimed != principal:
+            raise _evolution_forbidden(f"{key} does not match the authenticated principal.")
+    named = {
+        str(params.get(key)).strip()
+        for key in ("approved_by_role", "actor_role")
+        if str(params.get(key) or "").strip()
+    }
+    if len(named) > 1:
+        raise _evolution_forbidden("Conflicting actor_role and approved_by_role.")
+    if named:
+        role = next(iter(named))
+        if role not in held:
+            raise _evolution_forbidden(f"Authenticated principal does not hold role {role!r}.")
+        return principal, role
+    for preferred in _EVOLUTION_ACTOR_ROLE_PREFERENCE:
+        if preferred in held:
+            return principal, preferred
+    raise _evolution_forbidden("Authenticated principal holds no Evolution actor role.")
+
 
 _CMD_TO_ACTION_ID = {
     "SubmitEvolutionReview": "submit_evolution_review",
