@@ -1,6 +1,6 @@
 {
   "task_id": "EVOLUTION-ACTOR-ROLE-BINDING-20261102",
-  "summary": "Evolution decision commands (review/approve/reject/execute) now derive actor_id and actor_role from the verified principal (auth.policy.extract_identity) via command_adapters.base.resolve_evolution_actor; mismatching client actor_id/approved_by_id or unheld actor_role/approved_by_role -> 403 with nothing sent. Default role is chosen only among held roles (reviewer_on_duty in preference order). test_admin dev login gains reviewer_on_duty; unused divergent _DEV_LOGIN_IDENTITY_DEFS copy removed from personas/service.py. Evolution service unchanged.",
+  "summary": "Evolution decision commands (review/approve/reject/execute) now derive actor_id and actor_role from the verified principal (auth.policy.extract_identity) via command_adapters.evolution_adapter.resolve_evolution_actor (mfa_token threaded through so MFA-required environments resolve); mismatching client actor_id/approved_by_id or unheld actor_role/approved_by_role -> 403 with nothing sent. Default role is chosen only among held roles (reviewer_on_duty in preference order). test_admin dev login gains reviewer_on_duty; unused divergent _DEV_LOGIN_IDENTITY_DEFS copy removed from personas/service.py. Evolution service unchanged.",
   "entry_points_fixed": [
     "command_executor._actor_context (all callers)",
     "command_adapters/evolution_adapter._execute_proposal_review",
@@ -8,7 +8,7 @@
   ],
   "tests": {
     "command": "pytest services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_evolution_program_action_receipts.py services/control-plane/bff/tests/test_evolution_actor_role_binding.py",
-    "result": "152 passed"
+    "result": "153 passed"
   },
   "known_preexisting_failures_unchanged_on_base": [
     "test_governance_command_submission.py (4 *_mutation_published_payload)",
