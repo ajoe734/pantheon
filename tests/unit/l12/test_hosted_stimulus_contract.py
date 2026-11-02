@@ -1502,3 +1502,29 @@ def test_e_close_remaining_chain_active_binding_pauses(tmp_path):
     assert phase["phase_status"] == "paused" and phase["blocked_before"] == "E_close:cleanup_incomplete"
     assert hosted["all12_passed"] is False
 
+
+
+def test_chain_record_and_all12_claim_carry_l10_trigger_and_never_call_a_stimulus_natural(tmp_path) -> None:
+    runner = _runner(tmp_path, "E_close", FakeOwner({}))
+    runner.phases = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES}
+    runner.phases["E_close"]["baseline_fleet_check"] = "verified"
+    runner.loops = {loop_id: {"loop_id": loop_id} for loop_id in parent.CANONICAL_LOOP_IDS}
+    for trigger, natural in (("natural", True), ("operator_test_stimulus", False), (None, False)):
+        runner.l10_trigger = trigger
+        receipt = runner._receipt()
+        assert receipt["all12_passed"] is True
+        assert receipt["l10_trigger"] == trigger and receipt["all12_natural"] is natural
+
+
+def test_later_natural_d_report_never_downgrades_a_recorded_operator_stimulus(monkeypatch, tmp_path):
+    d_keys = [c[2] for c in parent.LOOP_CASES[7:10]]
+    report = _report("runtime", "D_observe", "paused", d_keys[:1], {}, "drift_incident_observation")
+    report["l10_trigger"] = "natural"
+    monkeypatch.setattr(subprocess, "run", FakeChild({"D_observe": report}))
+    done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:3]}
+    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "resource_ids": {}, "l10_trigger": "operator_test_stimulus"}}
+    runner = _runner(tmp_path, "D_observe", FakeOwner({}), prior=prior)
+    assert runner.l10_trigger == "operator_test_stimulus"
+    runner.run()
+    assert runner.l10_trigger == "operator_test_stimulus"
+    assert _receipt(tmp_path)["hosted"]["l10_trigger"] == "operator_test_stimulus"

@@ -64,6 +64,12 @@ from l12_owner_auth import (
 
 
 HOSTED_IDS_PATH_ENV = "PANTHEON_L12_HOSTED_CHAIN_IDS_PATH"
+L10_TRIGGER_NATURAL = "natural"
+L10_TRIGGER_OPERATOR_STIMULUS = "operator_test_stimulus"
+OPERATOR_STIMULUS_BASELINE_REF = "operator_test_stimulus"
+# Named explicitly: dict order of the fill metrics is not a contract.
+STIMULUS_METRIC = "fill_price"
+HOSTED_STIMULUS_WORKER = "hosted-operator-test-stimulus"
 
 
 class PersistedIds(dict):
@@ -1911,6 +1917,127 @@ class RuntimeChain:
                     return item, cited, ""
         return None, None, "; ".join(notes) or "no incident for binding"
 
+    def _hosted_stimulus_report(self, binding_id: str) -> Mapping[str, Any] | None:
+        """The DriftReport an operator test stimulus stored for this binding, if any (label is baseline_ref)."""
+        reports = self.http.request(
+            "reconciliation", "GET", "/api/reconciliation-drift/drift-reports",
+            query={"scope_ref": binding_id}, headers=self.reconciliation_headers,
+        )
+        reports = reports if isinstance(reports, list) else (reports or {}).get("drift_reports", [])
+        for report in reports if isinstance(reports, list) else []:
+            if isinstance(report, Mapping) and str(report.get("baseline_ref") or "").startswith(
+                f"{OPERATOR_STIMULUS_BASELINE_REF}:"
+            ):
+                return report
+        return None
+
+    def _hosted_stimulus_fill(
+        self, report: Mapping[str, Any], binding_id: str, runtime_id: str
+    ) -> Mapping[str, Any]:
+        """Read back the fill a stored stimulus report names; it must be this chain's paper fill."""
+        fill_id = str(report.get("baseline_ref") or "").split(":", 1)[1]
+        fill = self.http.request(
+            "telemetry", "GET", f"/api/telemetry/events/{fill_id}",
+            headers=self.telemetry_headers, expected={200, 404},
+        )
+        if (
+            not isinstance(fill, Mapping)
+            or fill.get("event_id") != fill_id
+            or fill.get("event_type") != "paper_fill_simulated"
+            or fill.get("binding_id") != binding_id
+            or fill.get("runtime_id") != runtime_id
+        ):
+            raise DeployedProofError(
+                f"operator stimulus report {report.get('drift_report_id')} names fill {fill_id!r} "
+                f"that is not this chain's paper_fill_simulated event: {fill!r}"
+            )
+        return fill
+
+    @staticmethod
+    def _stimulus_from_report(report: Mapping[str, Any], fill_event_id: str) -> dict[str, Any]:
+        """Recover baseline and thresholds from the real stored DriftReport shape."""
+        metrics = report.get("metrics") if isinstance(report.get("metrics"), Mapping) else {}
+        checks = [c for c in metrics.get("drift_checks") or [] if isinstance(c, Mapping)]
+        return {
+            "l10_trigger": L10_TRIGGER_OPERATOR_STIMULUS,
+            "fill_event_id": fill_event_id,
+            "baseline_metrics": metrics.get("baseline_metrics"),
+            "thresholds": {
+                str(c.get("metric")): {
+                    "warning_relative_delta": c.get("warning_relative_delta"),
+                    "critical_relative_delta": c.get("critical_relative_delta"),
+                }
+                for c in checks
+            },
+            "drift_report_id": report.get("drift_report_id"),
+        }
+
+    def _hosted_l10_operator_stimulus(
+        self, chain: Any, binding_id: str, event: Mapping[str, Any], ids: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Opt-in only: hand the chain's own paper fill, unchanged, to the Reconciliation consume route.
+
+        Drift builds the DriftReport and dispatches the Incident itself; this never writes to
+        incidents or evolution, never runs a sweep and never retries under another event id.
+        """
+        optin = chain.l10_operator_stimulus() or {}
+        fill_event_id = str(event.get("event_id") or "")
+        numeric = event.get("metrics", {}).get(STIMULUS_METRIC)
+        if isinstance(numeric, bool) or not isinstance(numeric, (int, float)):
+            raise DeployedProofError(f"paper fill event has no numeric {STIMULUS_METRIC} metric to stimulate")
+        baseline = float(numeric) + max(abs(float(numeric)), 1.0) * 10.0
+        thresholds = {STIMULUS_METRIC: {"warning_relative_delta": 0.01, "critical_relative_delta": 0.02}}
+        stimulus = {
+            "l10_trigger": L10_TRIGGER_OPERATOR_STIMULUS,
+            "decided_by": optin.get("decided_by"),
+            "decided_at": optin.get("decided_at"),
+            "metric": STIMULUS_METRIC,
+            "baseline_metrics": {STIMULUS_METRIC: baseline},
+            "thresholds": thresholds,
+            "fill_event_id": fill_event_id,
+        }
+        consumed = self.http.request(
+            "reconciliation",
+            "POST",
+            "/api/reconciliation-drift/telemetry-events/consume",
+            body={
+                "tenant_id": TENANT_ID,
+                "worker_id": f"{HOSTED_STIMULUS_WORKER}-{chain.chain_id}",
+                "events": [{**event, "baseline_ref": f"{OPERATOR_STIMULUS_BASELINE_REF}:{fill_event_id}"}],
+                "baseline_metrics": stimulus["baseline_metrics"],
+                "thresholds": thresholds,
+            },
+            headers=self.reconciliation_headers,
+            expected={201},
+        )
+        consumed = consumed if isinstance(consumed, Mapping) else {}
+        owner_response = {
+            key: consumed.get(key)
+            for key in (
+                "status", "drift_report_count", "incident_case_count", "duplicate_event_ids",
+                "deferred_event_ids", "ignored_event_ids",
+            )
+        }
+        stimulus["owner_response"] = owner_response
+        self.evidence.hosted["observations"]["l10_operator_stimulus"] = stimulus
+        reports = consumed.get("drift_reports") or []
+        cases = consumed.get("incident_cases") or []
+        if (
+            consumed.get("status") != "ok"
+            or consumed.get("duplicate_event_ids")
+            or consumed.get("deferred_event_ids")
+            or not reports
+            or not cases
+        ):
+            raise HostedPause(
+                "drift_incident_observation",
+                f"operator test stimulus for fill {fill_event_id} produced no new drift IncidentCase "
+                f"(owner response {owner_response!r}); not retried under another id",
+                ids,
+            )
+        stimulus["drift_report_id"] = reports[0].get("drift_report_id")
+        return stimulus
+
     def _hosted_observe(self, chain: Any, ids: dict[str, Any]) -> None:
         keys = ("runtime_binding_id", "runtime_id", "plan_id")
         wanted = {key: chain.predecessor(key) for key in keys}
@@ -1934,6 +2061,10 @@ class RuntimeChain:
         started = _utc_now()
         observed = self._hosted_paper_fill(binding, started, ids)
         event = observed["event"]
+        # A stimulus fired on an earlier fill stays the reference even after newer fills land.
+        prior_report = self._hosted_stimulus_report(binding_id)
+        if prior_report is not None:
+            event = self._hosted_stimulus_fill(prior_report, binding_id, wanted["runtime_id"])
         event_meta = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
         self.evidence.hosted["observations"]["same_chain_fill"] = {
             "event_id": str(event.get("event_id") or ""),
@@ -1973,12 +2104,22 @@ class RuntimeChain:
             self.evidence.hosted["observations"]["evolution_input_coverage"] = evolution_coverage
 
         # Loop 10/11 are natural owner outputs of the real runtime event: read them, never inject
-        # a baseline or run a sweep here. Absent evidence keeps the phase paused.
+        # a baseline or run a sweep here. Absent evidence keeps the phase paused. The single
+        # exception is an explicit operator opt-in (chain_input operator_test_stimuli.L10): the
+        # chain's own fill is then consumed with a test baseline, and every receipt says so.
         incidents = self.http.request("incidents", "GET", "/api/incidents", query={"binding_id": binding_id})
         incidents = incidents if isinstance(incidents, list) else incidents.get("incidents", [])
         incident, causal_event, incident_notes = self._hosted_causal_incident(
             incidents, binding_id, wanted["runtime_id"], event
         )
+        stimulus: dict[str, Any] | None = None
+        if incident is None and prior_report is None and chain.l10_operator_stimulus():
+            stimulus = self._hosted_l10_operator_stimulus(chain, binding_id, event, ids)
+            incidents = self.http.request("incidents", "GET", "/api/incidents", query={"binding_id": binding_id})
+            incidents = incidents if isinstance(incidents, list) else incidents.get("incidents", [])
+            incident, causal_event, incident_notes = self._hosted_causal_incident(
+                incidents, binding_id, wanted["runtime_id"], event
+            )
         if incident is None:
             eval_note = ""
             if reconciliation_eval is not None:
@@ -1998,6 +2139,12 @@ class RuntimeChain:
             )
         incident_id = str(incident.get("incident_id") or incident.get("id"))
         ids["incident_id"] = incident_id
+        if stimulus is None and prior_report is not None:
+            # A re-run that finds the Incident must still say an earlier stimulus made it.
+            stimulus = self._stimulus_from_report(prior_report, str(event["event_id"]))
+        l10_trigger = L10_TRIGGER_OPERATOR_STIMULUS if stimulus else L10_TRIGGER_NATURAL
+        self.evidence.hosted["observations"]["l10_trigger"] = l10_trigger
+        self.evidence.hosted["l10_trigger"] = l10_trigger
         self.evidence.add_case(
             "loop_10_telemetry_reconciliation_incident",
             loop=10,
@@ -2010,10 +2157,16 @@ class RuntimeChain:
                 "binding_id": binding_id,
                 "causal_metric_event_id": str(causal_event["event_id"]),
                 "same_chain_fill_event_id": str(event["event_id"]),
+                "l10_trigger": l10_trigger,
+                **({"operator_test_stimulus": stimulus} if stimulus else {}),
             },
             started_at=started,
             compose_services=["telemetry", "reconciliation-drift-svc", "incidents"],
-            assertions={"incident_id": incident_id, "real_runtime_event_preserved": True},
+            assertions={
+                "incident_id": incident_id,
+                "real_runtime_event_preserved": True,
+                "l10_trigger": l10_trigger,
+            },
         )
 
         if evolution_coverage is not None and evolution_coverage.get("target_found") and not evolution_coverage.get("evaluable"):
