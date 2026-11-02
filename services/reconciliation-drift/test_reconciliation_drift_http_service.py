@@ -297,6 +297,140 @@ class TestScheduledDriftReportCausalLineage(unittest.TestCase):
         )
         self.assertIsNone(report)
 
+    def test_scheduled_drift_report_approved_baseline_cites_drawdown_event_id_and_refuses_heartbeat_only(
+        self,
+    ) -> None:
+        from services.execution.lean_runtime.paper_runtime import (
+            RuntimeIdentity,
+            RuntimeTelemetryEmitter,
+        )
+        from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+        identity = RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "paper",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": "rt-sched-dd-001",
+                "PANTHEON_WORKSPACE_REF": "workspace-sched-dd",
+                "PANTHEON_AUTH_PROFILE_REF": "auth-sched-dd",
+                "PANTHEON_PERSONA_ID": "persona-sched-dd",
+                "PANTHEON_SESSION_ID": "session-sched-dd",
+                "PANTHEON_TRACE_ID": "trace-sched-dd-001",
+                "PANTHEON_REQUEST_ID": "request-sched-dd-001",
+            }
+        )
+
+        class _Resolver:
+            def resolve(self):
+                return {
+                    "binding_id": "bind-sched-dd-001",
+                    "runtime_id": "rt-sched-dd-001",
+                    "plan_id": "plan-sched-dd-001",
+                    "capital_pool_id": "pool-sched-dd-001",
+                    "persona_capital_binding_id": "pcb-sched-dd-001",
+                    "artifact_id": "artifact-tw-session-momentum-v1",
+                    "artifact_version": "1.0.0",
+                    "deployment_stage": "paper",
+                    "deployment_mode": "paper",
+                    "effective_at": "2026-10-10T00:00:00Z",
+                }
+
+        emitter = RuntimeTelemetryEmitter(identity, _Resolver())
+        summary_store = RuntimeSummaryProjectionStore(path=None)
+        hb_1 = emitter.build_event(
+            "heartbeat",
+            {"queue_lag_ms": 10.0, "delivery_lag_ms": 20.0},
+            created_at="2026-10-10T09:58:00Z",
+        )
+        hb_only_summary = summary_store.project_event(hb_1)
+        hb_only_summary["trace_id"] = hb_1["trace_id"]
+        hb_only_ids = _summary_telemetry_event_ids(hb_only_summary)
+
+        baseline_check = {
+            "metric": "drawdown",
+            "status": "warning",
+            "observed": 0.052,
+            "baseline": 0.04,
+            "delta": 0.012,
+            "relative_delta": 0.3,
+            "observed_multiple": 1.3,
+            "governed_threshold_breached": True,
+            "threshold_metric": "rolling_drawdown_multiple",
+            "comparator": "gt",
+            "threshold_value": 1.25,
+            "threshold_window": "paper-daily-sweep",
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1;services/evolution/config/threshold_sweep_thresholds.json",
+            "signal_type": "performance_degradation",
+            "baseline_source": "services/evolution/config/artifact_baselines.json#artifact-tw-session-momentum-v1@1.0.0",
+        }
+        eval_hb_only: Dict[str, Any] = {
+            "evaluation_id": "eval-sched-dd-hb-only",
+            "binding_id": "bind-sched-dd-001",
+            "runtime_id": "rt-sched-dd-001",
+            "tenant_id": "default",
+            "reconciliation_checks": [],
+            "drift_checks": [dict(baseline_check)],
+        }
+        # Heartbeat-only summary has no drawdown_event_id -> report must not be built
+        self.assertIsNone(hb_only_summary.get("drawdown_event_id"))
+        self.assertIsNone(
+            _scheduled_drift_report(
+                summary=hb_only_summary,
+                evaluation=eval_hb_only,
+                telemetry_event_ids=hb_only_ids,
+                timestamp="2026-10-10T10:00:00Z",
+            )
+        )
+
+        # Now project a real drawdown snapshot followed by a newer heartbeat
+        dd_evt = emitter.build_event(
+            "drawdown_snapshot",
+            {"drawdown": 0.052, "drawdown_as_of": "2026-10-10T09:59:00Z"},
+            created_at="2026-10-10T09:59:00Z",
+        )
+        hb_2 = emitter.build_event(
+            "heartbeat",
+            {"queue_lag_ms": 11.0, "delivery_lag_ms": 21.0},
+            created_at="2026-10-10T09:59:30Z",
+        )
+        summary_store.project_event(dd_evt)
+        summary_with_dd = summary_store.project_event(hb_2)
+        summary_with_dd["trace_id"] = dd_evt["trace_id"]
+        all_ids = _summary_telemetry_event_ids(summary_with_dd)
+        self.assertIn(dd_evt["event_id"], all_ids)
+
+        eval_dd: Dict[str, Any] = {
+            "evaluation_id": "eval-sched-dd-causal",
+            "binding_id": "bind-sched-dd-001",
+            "runtime_id": "rt-sched-dd-001",
+            "tenant_id": "default",
+            "reconciliation_checks": [],
+            "drift_checks": [dict(baseline_check)],
+        }
+        report = _scheduled_drift_report(
+            summary=summary_with_dd,
+            evaluation=eval_dd,
+            telemetry_event_ids=all_ids,
+            timestamp="2026-10-10T10:00:00Z",
+        )
+        self.assertIsNotNone(report)
+        assert report is not None
+        self.assertEqual(report["telemetry_event_ids"], [dd_evt["event_id"]])
+        self.assertNotIn(hb_1["event_id"], report["telemetry_event_ids"])
+        self.assertNotIn(hb_2["event_id"], report["telemetry_event_ids"])
+        self.assertEqual(report["severity"], "medium")
+        self.assertEqual(report["threshold_metric"], "rolling_drawdown_multiple")
+        self.assertAlmostEqual(report["observed"], 1.3)
+        self.assertEqual(report["comparator"], "gt")
+        self.assertAlmostEqual(report["threshold_value"], 1.25)
+        self.assertEqual(report["threshold_window"], "paper-daily-sweep")
+
+        incident = build_incident_from_drift_report(report)
+        self.assertEqual(incident.telemetry_event_ids, [dd_evt["event_id"]])
+        self.assertIn("threshold_metric=rolling_drawdown_multiple", incident.evidence_summary or "")
+        self.assertIn("observed=1.3", incident.evidence_summary or "")
+        self.assertIn("threshold_value=1.25", incident.evidence_summary or "")
+
 
 class TestAcceptedAppendVisibilityReason(unittest.TestCase):
     def setUp(self) -> None:

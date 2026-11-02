@@ -18,6 +18,32 @@ critical checks create a deterministic DriftReport and submit it to the
 Incidents owner; stable tick IDs and persisted evaluation delivery state make
 transport retries idempotent.
 
+For metrics judged against an approved artifact baseline (`expected_drawdown` in
+`services/evolution/config/threshold_sweep_baselines.json`),
+`reconciliation-drift` is the single producer of the governed drawdown `1.25x`
+incident (`EVOLUTION_REVIEW_AND_THRESHOLDS.md` section 7.1, read from
+`services/evolution/config/threshold_sweep_thresholds.json`
+`rolling_drawdown_multiple` without copying the constant):
+
+- At or below `1.25x` (including `[1.2x, 1.25x]` warning checks where the
+  governed `comparator: "gt"` is not breached), evaluation stays observe-only
+  and no `DriftReport` or `IncidentCase` is opened.
+- In `(1.25x, 1.5x)`, the scheduler builds a governed `DriftReport`
+  (`severity=medium`) carrying the threshold fields so the `IncidentCase`
+  `evidence_summary` drives an Evolution daily-sweep `RETRAIN` proposal at `LOW`
+  risk.
+- At or above `1.5x` (`relative_delta >= 0.5`), the `DriftReport` remains
+  `critical` and enters the existing critical `FREEZE` path.
+- Every baseline-judged `DriftReport` cites the metric's non-derived causal
+  `{metric}_event_id` (such as `drawdown_event_id`) as its single
+  `telemetry_event_id`; if the summary has no metric event ID for that metric,
+  no report is built and a heartbeat is never cited.
+- Evolution's `threshold_sweep_worker` neither admits a derived echo event nor
+  posts a duplicate incident for a threshold entry declaring
+  `"incident_owner": "reconciliation-drift"`, while
+  `GET /api/evolution/input-coverage` continues to report the artifact
+  evaluable.
+
 Generated DriftReports are readable at:
 
 ```text

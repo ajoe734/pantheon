@@ -314,7 +314,6 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                     "pnl_as_of": "2026-05-01T00:00:05Z",
                     "valuation_fill_count": 3,
                 },
-                event_id=str(uuid.uuid4()),
                 created_at="2026-05-01T00:01:00Z",
             )
             drawdown_event = emitter.build_event(
@@ -324,7 +323,6 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                     "drawdown_as_of": "2026-05-01T00:00:07Z",
                     "valuation_fill_count": 3,
                 },
-                event_id=str(uuid.uuid4()),
                 created_at="2026-05-01T00:01:01Z",
             )
             self.assertIsNotNone(pnl_event)
@@ -344,9 +342,9 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
             summary = svc.get_runtime_summary("rt-paper-contract")
             await svc.stop(graceful=True)
             stats = svc.stats()
-            return accepted, summary, stats
+            return accepted, summary, stats, pnl_event, drawdown_event
 
-        accepted, summary, stats = asyncio.run(scenario())
+        accepted, summary, stats, pnl_event, drawdown_event = asyncio.run(scenario())
 
         self.assertEqual(accepted, [True, True])
         self.assertEqual(stats["service"]["total_ingested"], 2)
@@ -354,8 +352,89 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertEqual(stats["writer"]["total_written"], 2)
         self.assertEqual(summary["pnl"], 125.75)
         self.assertEqual(summary["pnl_at"], "2026-05-01T00:00:05Z")
+        self.assertEqual(summary["pnl_event_id"], pnl_event["event_id"])
         self.assertEqual(summary["drawdown"], 0.0425)
         self.assertEqual(summary["drawdown_at"], "2026-05-01T00:00:07Z")
+        self.assertEqual(summary["drawdown_event_id"], drawdown_event["event_id"])
+
+    def test_metric_event_ids_ignore_heartbeat_out_of_order_and_derived_echo_events(self):
+        async def scenario():
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            emitter = RuntimeTelemetryEmitter(_runtime_identity(), _FakeBindingResolver())
+
+            heartbeat_only = emitter.build_event(
+                "heartbeat",
+                {"queue_lag_ms": 4.0, "delivery_lag_ms": 6.0},
+                created_at="2026-05-01T00:01:00Z",
+            )
+            await svc.ingest(heartbeat_only)
+            await asyncio.sleep(0.03)
+            hb_summary = dict(svc.get_runtime_summary("rt-paper-contract"))
+
+            pnl_event = emitter.build_event(
+                "pnl_snapshot",
+                {"pnl": -42.0, "pnl_as_of": "2026-05-01T00:01:10Z"},
+                created_at="2026-05-01T00:01:10Z",
+            )
+            drawdown_event = emitter.build_event(
+                "drawdown_snapshot",
+                {"drawdown": 0.045, "drawdown_as_of": "2026-05-01T00:01:12Z"},
+                created_at="2026-05-01T00:01:12Z",
+            )
+            stale_drawdown_event = emitter.build_event(
+                "drawdown_snapshot",
+                {"drawdown": 0.09, "drawdown_as_of": "2026-05-01T00:01:05Z"},
+                created_at="2026-05-01T00:01:20Z",
+            )
+            derived_echo_event = emitter.build_event(
+                "drawdown_snapshot",
+                {"drawdown": 0.09, "drawdown_as_of": "2026-05-01T00:01:30Z"},
+                metadata={"derived_from_threshold_evaluation": True},
+                created_at="2026-05-01T00:01:30Z",
+            )
+            later_heartbeat = emitter.build_event(
+                "heartbeat",
+                {"queue_lag_ms": 3.0, "delivery_lag_ms": 5.0},
+                created_at="2026-05-01T00:01:40Z",
+            )
+
+            for ev in (
+                pnl_event,
+                drawdown_event,
+                stale_drawdown_event,
+                derived_echo_event,
+                later_heartbeat,
+            ):
+                self.assertTrue(await svc.ingest(ev))
+            await asyncio.sleep(0.05)
+            final_summary = dict(svc.get_runtime_summary("rt-paper-contract"))
+            await svc.stop(graceful=True)
+            return hb_summary, final_summary, pnl_event, drawdown_event, later_heartbeat
+
+        hb_summary, final_summary, pnl_event, drawdown_event, later_heartbeat = asyncio.run(
+            scenario()
+        )
+        self.assertNotIn("pnl_event_id", hb_summary)
+        self.assertNotIn("drawdown_event_id", hb_summary)
+        self.assertEqual(final_summary["pnl_event_id"], pnl_event["event_id"])
+        self.assertEqual(final_summary["drawdown_event_id"], drawdown_event["event_id"])
+        self.assertEqual(final_summary["drawdown"], 0.045)
+        self.assertEqual(
+            final_summary["last_heartbeat_event_id"],
+            later_heartbeat["event_id"],
+        )
+        self.assertNotEqual(
+            final_summary["drawdown_event_id"],
+            final_summary["last_heartbeat_event_id"],
+        )
 
     def test_paper_fill_and_position_snapshot_with_trade_episode_id_project_cleanly(self):
         async def scenario():

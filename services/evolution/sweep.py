@@ -239,21 +239,21 @@ def build_decision_from_incident(
 
 
 def threshold_snapshot_from_incident(incident: IncidentCase) -> ThresholdSnapshot:
+    if incident.severity == "critical":
+        return ThresholdSnapshot(
+            policy_source="EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+            signal_type=ThresholdSignalType.GOVERNANCE_INCIDENT,
+            metric_name="severity1_incident_count",
+            comparator=ComparisonOperator.GTE,
+            observed_value=1,
+            threshold_value=1,
+            window="active-incident",
+            breached=True,
+            note="Critical IncidentCase enters the high-risk freeze proposal path.",
+        )
     fields = _parse_evidence_summary(incident.evidence_summary or "")
     metric_name = fields.get("threshold_metric")
     if not metric_name:
-        if incident.severity == "critical":
-            return ThresholdSnapshot(
-                policy_source="EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
-                signal_type=ThresholdSignalType.GOVERNANCE_INCIDENT,
-                metric_name="severity1_incident_count",
-                comparator=ComparisonOperator.GTE,
-                observed_value=1,
-                threshold_value=1,
-                window="active-incident",
-                breached=True,
-                note="Critical IncidentCase enters the high-risk freeze proposal path.",
-            )
         return ThresholdSnapshot(
             policy_source="EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
             signal_type=ThresholdSignalType.MANUAL_REVIEW,
@@ -332,14 +332,19 @@ def _evidence_refs_for_incident(incident: IncidentCase) -> list[EvidenceRef]:
 
 def _parse_evidence_summary(summary: str) -> dict[str, str]:
     fields: dict[str, str] = {}
+    last_key: str | None = None
     for part in summary.split(";"):
         if "=" not in part:
+            extra = part.strip()
+            if last_key == "policy_source" and extra and last_key in fields:
+                fields[last_key] = f"{fields[last_key]}; {extra}"
             continue
         key, value = part.split("=", 1)
         normalized_key = key.strip().lower().replace(" ", "_")
         normalized_value = value.strip()
         if normalized_key and normalized_value:
             fields[normalized_key] = normalized_value
+            last_key = normalized_key
     return fields
 
 
