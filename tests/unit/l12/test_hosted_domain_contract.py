@@ -957,6 +957,18 @@ def _expected_execution_checksum() -> str:
 EXEC_CHECKSUM = _expected_execution_checksum()
 
 
+def _drift_consumer() -> Any:
+    """The real reconciliation-drift consumer, so stored reports have the production shape."""
+    path = Path(__file__).resolve().parents[3] / "services" / "reconciliation-drift" / "consumer.py"
+    if str(path.parent) not in sys.path:
+        sys.path.append(str(path.parent))  # consumer.py imports its sibling telemetry_client
+    spec = importlib.util.spec_from_file_location("hosted_drift_consumer_real", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class FakeRuntimeHttp:
     def __init__(self, *, h3: bool, validation_ok: bool = True, drop_reference: bool = False,
                  bundle: bool = True, h3_scope: dict[str, Any] | None = None) -> None:
@@ -1078,9 +1090,9 @@ class FakeRuntimeHttp:
                 return {**base, "duplicate_event_ids": [event["event_id"]]}
             if self.consume_mode == "deferred":
                 return {**base, "status": "deferred", "deferred_event_ids": [event["event_id"]]}
-            report = {"drift_report_id": f"drift-{event['event_id']}", "scope_ref": event["binding_id"],
-                      "baseline_ref": event["baseline_ref"], "baseline_metrics": body["baseline_metrics"],
-                      "thresholds": body["thresholds"], "severity": "critical"}
+            report = _drift_consumer().build_drift_report_from_event(
+                event, baseline_metrics=body["baseline_metrics"], thresholds=body["thresholds"]
+            )
             self.drift_reports.append(report)
             incident = _drift_incident(event["event_id"], "fill_price")
             self.incidents.append(incident)
@@ -1938,6 +1950,14 @@ def _stimulated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, stimuli: Any
     return mod, chain, fake
 
 
+def _stored_stimulus_report(fill_id: str) -> dict[str, Any]:
+    fill = {**_REAL_FILL, "event_id": fill_id, "baseline_ref": f"operator_test_stimulus:{fill_id}"}
+    return _drift_consumer().build_drift_report_from_event(
+        fill, baseline_metrics={"fill_price": 25000.0},
+        thresholds={"fill_price": {"warning_relative_delta": 0.01, "critical_relative_delta": 0.02}},
+    )
+
+
 def _consumes(fake: FakeRuntimeHttp) -> list[tuple[str, str, str]]:
     return [c for c in fake.calls if c[2] == "/api/reconciliation-drift/telemetry-events/consume"]
 
@@ -1979,13 +1999,32 @@ def test_hosted_observe_opt_in_with_existing_incident_does_not_post_again(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _, chain, fake = _stimulated(monkeypatch, tmp_path, incidents=[_drift_incident("ev-fill", "fill_price")])
-    fake.drift_reports.append({"drift_report_id": "drift-ev-fill", "scope_ref": "rb-1",
-                               "baseline_ref": "operator_test_stimulus:ev-fill",
-                               "baseline_metrics": {"fill_price": 1.0}, "thresholds": {}})
+    fake.drift_reports.append(_stored_stimulus_report("ev-fill"))
     chain.run_hosted()
     assert _consumes(fake) == []
     # A re-run still reports the earlier stimulus honestly, never as natural.
-    assert json.loads((tmp_path / "evidence.json").read_text())["l10_trigger"] == "operator_test_stimulus"
+    receipt = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt["l10_trigger"] == "operator_test_stimulus"
+    stimulus = receipt["cases"]["loop_10_telemetry_reconciliation_incident"]["next_consumer_readback"][
+        "operator_test_stimulus"]
+    assert stimulus["baseline_metrics"] == {"fill_price": 25000.0}
+    assert stimulus["thresholds"] == {"fill_price": {"warning_relative_delta": 0.01, "critical_relative_delta": 0.02}}
+
+
+def test_hosted_observe_newer_fill_after_stimulus_keeps_original_incident_and_never_posts_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _stimulated(monkeypatch, tmp_path, incidents=[_drift_incident("ev-fill", "fill_price")])
+    newer = {**_REAL_FILL, "event_id": "ev-fill-2", "created_at": "2026-11-03T10:00:00Z"}
+    chain._runtime_event = lambda runtime_id: {"event": newer, "summary": {"runtime_id": "rt-1", "state": "running"}}
+    fake.events["ev-fill-2"] = newer
+    fake.drift_reports.append(_stored_stimulus_report("ev-fill"))
+    chain.run_hosted()
+    assert _consumes(fake) == []  # opt-in is still present, yet no second stimulus
+    receipt = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt["l10_trigger"] == "operator_test_stimulus"
+    readback = receipt["cases"]["loop_10_telemetry_reconciliation_incident"]["next_consumer_readback"]
+    assert readback["same_chain_fill_event_id"] == "ev-fill" and readback["incident_id"] == "inc-1"
 
 
 def test_hosted_observe_natural_incident_is_labelled_natural(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

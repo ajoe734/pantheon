@@ -1456,8 +1456,9 @@ class HostedChainRunner:
             extra_result["observations"] = dict(observations)
         trigger = report.get("l10_trigger")
         if self.phase == "D_observe" and trigger in {"natural", "operator_test_stimulus"}:
-            self.l10_trigger = trigger
-            extra_result["l10_trigger"] = trigger
+            if self.l10_trigger != "operator_test_stimulus":  # never downgrade a recorded stimulus
+                self.l10_trigger = trigger
+            extra_result["l10_trigger"] = self.l10_trigger
         detail = report.get("detail")
         if status == "paused" and isinstance(detail, str) and detail.strip():
             extra_result["detail"] = detail.strip()
