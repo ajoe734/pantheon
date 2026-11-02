@@ -126,3 +126,28 @@ def test_approve_mutation_executor_path_is_bound():
             )
         assert exc.value.status_code == 403
         post.assert_not_called()
+
+
+def test_mfa_token_is_threaded_to_identity_resolution(monkeypatch):
+    """With MFA required, a valid MFA token resolves; without it the command is forbidden."""
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "true")
+    seen = []
+
+    def fake_extract(authorization, mfa_token=None, session_cookie=None):
+        seen.append(mfa_token)
+        if not mfa_token:
+            raise HTTPException(status_code=401, detail="MFA required")
+        return auth_policy.OperatorIdentity(operator_id="mia", roles=["approver"], mfa_verified=True)
+
+    monkeypatch.setattr(auth_policy, "extract_identity", fake_extract)
+    assert _actor_context({}, "tok", mfa_token="123456") == ("mia", "approver")
+    with pytest.raises(HTTPException) as exc:
+        _actor_context({}, "tok")
+    assert exc.value.status_code == 403
+    with patch(EXEC, return_value={}) as post:
+        _execute_approve_evolution_decision(
+            "cmd-1", {"evolution_decision_id": "evo-1", "approval_action": "approve"},
+            auth_token="tok", mfa_token="123456",
+        )
+    assert post.call_args[0][1]["actor_id"] == "mia"
+    assert seen[-1] == "123456"

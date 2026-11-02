@@ -50,7 +50,11 @@ def _evolution_forbidden(message: str) -> ActionUnavailableError:
     )
 
 
-def resolve_evolution_actor(params: Dict[str, Any], auth_token: Optional[str]) -> Tuple[str, str]:
+def resolve_evolution_actor(
+    params: Dict[str, Any],
+    auth_token: Optional[str],
+    mfa_token: Optional[str] = None,
+) -> Tuple[str, str]:
     """Bind Evolution decision actor fields to the verified principal.
 
     actor_id always comes from the verified identity; a client-supplied
@@ -64,7 +68,7 @@ def resolve_evolution_actor(params: Dict[str, Any], auth_token: Optional[str]) -
             raise ValueError("missing token")
         if not raw.lower().startswith("bearer "):
             raw = f"Bearer {raw}"
-        identity = extract_identity(raw)
+        identity = extract_identity(raw, mfa_token=mfa_token)
     except Exception as exc:
         raise _evolution_forbidden("Evolution command requires a verified authenticated principal.") from exc
     principal = str(identity.operator_id or "").strip()
@@ -205,7 +209,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             "ReviewMutation": "review",
         }
         subpath = str(verb_map.get(command_type, "approve")).lower()
-        actor_id, actor_role = resolve_evolution_actor(params, auth_token)
+        actor_id, actor_role = resolve_evolution_actor(params, auth_token, mfa_token=mfa_token)
         payload = {
             "actor_id": actor_id,
             "actor_role": actor_role,
@@ -245,7 +249,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         if not target_id:
             raise ValueError(f"{command_type} requires evolution_decision_id.")
 
-        actor_id, actor_role = resolve_evolution_actor(params, auth_token)
+        actor_id, actor_role = resolve_evolution_actor(params, auth_token, mfa_token=mfa_token)
         payload = {
             "actor_id": actor_id,
             "actor_role": "evolution_controller" if actor_role == "evolution_controller" else "operator",

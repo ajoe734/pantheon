@@ -131,12 +131,13 @@ def _extract_actor_id(auth_token: Optional[str]) -> str:
 def _actor_context(
     params: Dict[str, Any],
     auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
 ) -> tuple[str, str]:
     """Resolve actor_id/actor_role for governance-owned evolution commands.
 
     Both fields are bound to the verified principal; see resolve_evolution_actor.
     """
-    return resolve_evolution_actor(params, auth_token)
+    return resolve_evolution_actor(params, auth_token, mfa_token=mfa_token)
 
 
 # The BFF authorizes 'admin' operators to execute evolution mutations
@@ -526,7 +527,7 @@ def _execute_rollback(
         }
 
     try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     except Exception:
         actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
@@ -627,7 +628,7 @@ def _execute_activate_kill_switch(
 
     kill_switch_order_id = body.get("kill_switch_order_id") or f"ks-{uuid.uuid4().hex[:12]}"
     try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     except Exception:
         actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
@@ -728,7 +729,7 @@ def _execute_approve_evolution_decision(
     if approval_action not in {"approve", "reject"}:
         raise ValueError("ApproveEvolutionDecision requires approval_action=approve|reject.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": actor_role,
@@ -766,7 +767,7 @@ def _execute_evolution_action(
     if not decision_id:
         raise ValueError("ExecuteEvolutionAction requires evolution_decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": _evolution_actor_role(actor_role),
@@ -835,7 +836,7 @@ def _execute_approve_mutation(
     if not decision_id:
         raise ValueError("ApproveMutation requires decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": actor_role,
@@ -872,7 +873,7 @@ def _execute_reject_mutation(
     if not decision_id:
         raise ValueError("RejectMutation requires decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": actor_role,
@@ -912,7 +913,7 @@ def _execute_review_mutation(
     if not approval_decision_id:
         raise ValueError("ReviewMutation requires approval_decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": actor_role,
@@ -947,7 +948,7 @@ def _execute_execute_mutation(
     if not decision_id:
         raise ValueError("ExecuteMutation requires decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": _evolution_actor_role(actor_role),
