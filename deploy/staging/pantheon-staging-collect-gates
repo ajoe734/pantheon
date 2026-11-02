@@ -1013,7 +1013,7 @@ def main() -> int:
     statements: list[str] = []
     set_lines: list[str] = []
     for entry in sorted(mig_files, key=lambda e: str(e.get("name") if isinstance(e, dict) else "")):
-        name = str(entry.get("name") or "") if isinstance(e, dict) else ""
+        name = str(entry.get("name") or "") if isinstance(entry, dict) else ""
         if not re.fullmatch(r"[0-9]{3}_[a-z0-9_]+\.sql", name):
             _fail("MIGRATION_FILE_NAME_INVALID", f"Invalid migration file name {name!r}")
         mig_path = mig_dir / name
