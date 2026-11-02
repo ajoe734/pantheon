@@ -482,6 +482,18 @@ def _parse_event_time(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+# Incident worst_metric is the telemetry projection key; producers emit it under these keys.
+# Mirrors metric_map in services/telemetry/runtime_summary.py (projection key -> producer keys).
+_PROJECTION_PRODUCER_KEYS: dict[str, tuple[str, ...]] = {
+    "pnl": ("pnl",),
+    "drawdown": ("drawdown", "drawdown_pct"),
+    "sharpe_ratio": ("sharpe_ratio",),
+    "fill_rate": ("fill_rate",),
+    "avg_slippage_bps": ("avg_slippage_bps", "slippage_bps"),
+    "total_trades": ("total_trades",),
+}
+
+
 def _incident_worst_metric(incident: Mapping[str, Any]) -> str:
     """The drift producer records the breached metric as ``worst_metric=`` in the evidence summary."""
     for part in str(incident.get("evidence_summary") or "").split(";"):
@@ -1886,7 +1898,10 @@ class RuntimeChain:
                 created = _parse_event_time(cited.get("created_at"))
                 if cited.get("binding_id") != binding_id or cited.get("runtime_id") != runtime_id:
                     notes.append(f"{iid}: event {event_id} belongs to another binding/runtime")
-                elif metric not in (cited.get("metrics") or {}):
+                elif not any(
+                    key in (cited.get("metrics") or {})
+                    for key in _PROJECTION_PRODUCER_KEYS.get(metric, (metric,))
+                ):
                     notes.append(f"{iid}: event {event_id} does not carry metric {metric}")
                 elif meta.get("derived_from_threshold_evaluation") is True:
                     notes.append(f"{iid}: event {event_id} is a threshold-derived echo")

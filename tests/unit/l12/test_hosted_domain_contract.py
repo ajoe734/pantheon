@@ -1293,10 +1293,14 @@ FILL_AT = "2026-11-02T10:00:00Z"
 
 
 def _snapshot_event(event_id: str = "ev-dd", **over: Any) -> dict[str, Any]:
-    """Shape of PaperRuntime's drawdown_snapshot event (paper_runtime.py emit payload)."""
+    """Exact keys of PaperRuntime's drawdown_snapshot payload (_build_performance_event_payload, paper_runtime.py).
+
+    metrics carry drawdown_pct in [0, 1] (drawdown_as_of is popped to the top level); the pair legs are tagged in metadata.
+    """
     return {"event_id": event_id, "event_type": "drawdown_snapshot", "created_at": "2026-11-02T10:05:00Z",
             "binding_id": "rb-1", "runtime_id": "rt-1", "artifact_id": EXEC_ID,
-            "metrics": {"drawdown": 0.4}, "drawdown_as_of": "2026-11-02T10:05:00Z", "metadata": {}, **over}
+            "metrics": {"drawdown_pct": 0.4}, "drawdown_as_of": "2026-11-02T10:05:00Z",
+            "metadata": {"performance_pair_leg": "drawdown_snapshot", "performance_pair_id": "pair-1"}, **over}
 
 
 def _drift_incident(event_id: str = "ev-dd", metric: str = "drawdown", **over: Any) -> dict[str, Any]:
@@ -1374,6 +1378,7 @@ def test_hosted_observe_incident_must_cite_the_causal_metric_event_of_this_chain
         "other runtime": (_drift_incident(), {"ev-dd": _snapshot_event(runtime_id="rt-other")}),
         "threshold echo": (_drift_incident(), {"ev-dd": _snapshot_event(metadata={"derived_from_threshold_evaluation": True})}),
         "before the fill": (_drift_incident(), {"ev-dd": _snapshot_event(created_at="2026-11-02T09:59:59Z")}),
+        "unrelated metric key": (_drift_incident(), {"ev-dd": _snapshot_event(metrics={"pnl": 1.0})}),
         "non-drift cluster": (_drift_incident(incident_cluster_id="infra:runtime-health"), {}),
         "fill id cited": (_drift_incident("ev-1"), {"ev-1": {**_PAPER_FILL["event"], "binding_id": "rb-1"}}),
     }
