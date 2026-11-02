@@ -1,0 +1,13 @@
+{
+  "task_id": "PERSONA-PROVISIONING-BACKGROUND-PROMOTE-20261102",
+  "false_condition": "In _reconcile_persona_provisioning_once the pass-wide snapshot (_persona_readback_snapshot) collapsed a FAILED batch owner read into an authoritative EMPTY result: list_all failure -> all_bindings={} and fleet-state failure -> monitoring_sessions=[]. _evaluate_persona_provisioning_status treated {} as 'owner lists no RuntimeBinding for this plan' (binding_ok=False, binding_failed=False) and [] as 'no worker joined' (heartbeat_failed=False, heartbeat_ok=False). Neither sets a failure flag, so the Persona stayed provisioning until is_timeout produced provisioning_timeout as the ONLY failure reason. The operator route passes no batch (None), so it reads list_by_plan and the session store per Persona and sees the same owner state as true.",
+  "why_route_differs": "The route calls _evaluate_persona_provisioning_status without all_bindings/all_monitoring_sessions, so it always performs the direct per-Persona owner reads; the background pass trusted the once-per-pass batch even when it was empty because the batch read had failed or was stale.",
+  "limits": "The hosted container was not accessible to this task. The failing batch read on hosted dev (list_all vs fleet state) is inferred from the provisioning_timeout-only ledger reason, not observed; the operator should confirm via the 'Failed to batch list ...' warnings in the BFF log during canary verification.",
+  "fix": "Failed batch reads are None (unknown) and the evaluator falls back to the route's direct reads whenever the batch holds no binding for the plan or no worker for the binding. Timeout, heartbeat staleness, schedule and binding-identity checks are unchanged (fail-closed).",
+  "tests": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py: test_background_pass_promotes_ready_persona_from_batched_readbacks, test_background_pass_promotes_when_batch_owner_reads_fail (fails on base), parity tests for paper_running and provisioning_timeout, fail-closed parametrization (stale heartbeat, no worker, no binding).",
+  "verification": {
+    "reconcile_suite": "21 passed",
+    "other_provisioning_suites": "125 passed, 2 failed (test_persona_get_and_list_are_pure_reads, test_persona_list_projects_only_requested_page) - same 2 fail on the unmodified base",
+    "bff_test_architecture": "39 passed"
+  }
+}

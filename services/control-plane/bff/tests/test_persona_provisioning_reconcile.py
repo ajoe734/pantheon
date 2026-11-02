@@ -796,3 +796,213 @@ def test_lifespan_skips_provisioning_reconciler_when_disabled(monkeypatch):
     task, started = _run_reconciler_lifespan(monkeypatch, "false")
     assert task is None
     assert started["n"] == 0
+
+
+# =========================================================================
+# Background pass vs operator route (PERSONA-PROVISIONING-BACKGROUND-PROMOTE)
+# =========================================================================
+
+def _compose_background_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bind the app-scoped service the way app_factory does for the loop."""
+    import types
+
+    monkeypatch.setattr(
+        _persona_service_module,
+        "_composed_persona_service",
+        types.SimpleNamespace(
+            get_read_store=lambda: _state.read_store,
+            get_write_owner=lambda: _persona_service_module.persona_write_owner,
+            get_command_store=lambda: None,
+        ),
+    )
+
+
+def _create_persona(client: TestClient, key: str) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
+    resp = client.post(
+        "/bff/personas",
+        json={"name": key},
+        headers={**HEADERS, "Idempotency-Key": key},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]["id"], resp.json()["data"], resp.json()["meta"]
+
+
+def _install_owner_cron_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    persona_id: str,
+    meta: Dict[str, Any],
+    runtime_id: str,
+    runtime_binding_id: str,
+) -> None:
+    """Serve the first-evaluation row from the cron gateway; no registration."""
+    from services.control_plane.cron import persona_cron_registrar as registrar_module
+
+    workflow = registrar_module.WORKFLOW_CATALOG[
+        registrar_module.PERSONA_FIRST_EVALUATION_WORKFLOW_ID
+    ]
+    persona = _state.read_store.get_persona(persona_id)
+    job = dict(
+        registrar_module.PersonaCronRegistrar()._build_job_patch(
+            workflow,
+            persona_id,
+            f"persona-provisioning:{persona_id}:{workflow.workflow_id}",
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            capital_pool_id=persona["metadata"]["internal_paper_capital_pool_id"],
+            persona_capital_binding_id=meta["persona_capital_binding_id"],
+        ),
+        id="job-first-evaluation",
+    )
+    monkeypatch.setattr(
+        registrar_module.PersonaCronRegistrar, "_get_runtime", lambda self, **_kw: object()
+    )
+    monkeypatch.setattr(
+        registrar_module.PersonaCronRegistrar, "_list_jobs", lambda self, _rt, **_kw: [job]
+    )
+
+    def _no_registration(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
+        raise AssertionError("batched schedule readback must not register")
+
+    monkeypatch.setattr(_persona_service_module, "_register_persona_cron_required", _no_registration)
+
+
+def _ready_persona(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, key: str, **readback: Any
+) -> tuple[str, Dict[str, Any]]:
+    persona_id, data, meta = _create_persona(client, key)
+    _install_authoritative_readback(
+        persona_id=persona_id,
+        plan_id=data["deploymentPlanId"],
+        saga_id=meta["deployment_saga_id"],
+        persona_capital_binding_id=meta["persona_capital_binding_id"],
+        **readback,
+    )
+    _compose_background_service(monkeypatch)
+    return persona_id, meta
+
+
+def test_background_pass_promotes_ready_persona_from_batched_readbacks(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, meta = _ready_persona(client, monkeypatch, "bg-batched")
+        _install_owner_cron_jobs(
+            monkeypatch,
+            persona_id=persona_id,
+            meta=meta,
+            runtime_id=f"runtime-{persona_id[-12:]}",
+            runtime_binding_id=f"rb-{persona_id[-12:]}",
+        )
+
+        bindings, jobs, sessions = _persona_service_module._persona_readback_snapshot()
+        assert len(bindings) == 1 and len(jobs) == 1 and len(sessions) == 1
+
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 1
+        assert _state.read_store.get_persona(persona_id)["lifecycle_state"] == "paper_running"
+
+
+def test_background_pass_promotes_when_batch_owner_reads_fail(monkeypatch) -> None:
+    """A failed pass-wide read is unknown, not an authoritative empty owner."""
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, _meta = _ready_persona(client, monkeypatch, "bg-batch-failed")
+        inner_client = _persona_service_module._runtime_manager_client()
+
+        class _ListAllUnavailable:
+            def list_all(self) -> list:
+                raise RuntimeError("runtime-manager list timed out")
+
+            def list_by_plan(self, plan_id: str) -> list:
+                return inner_client.list_by_plan(plan_id)
+
+        monkeypatch.setattr(
+            _persona_service_module, "_runtime_manager_client", lambda: _ListAllUnavailable()
+        )
+        sessions_read = _state.read_store.list_authoritative_paper_runtime_monitoring_sessions
+        calls = {"n": 0}
+
+        def _first_sessions_read_fails() -> list:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("fleet state timed out")
+            return sessions_read()
+
+        monkeypatch.setattr(
+            _state.read_store,
+            "list_authoritative_paper_runtime_monitoring_sessions",
+            _first_sessions_read_fails,
+        )
+
+        assert _persona_service_module._persona_readback_snapshot()[0] is None
+        calls["n"] = 0
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 1
+        assert _state.read_store.get_persona(persona_id)["lifecycle_state"] == "paper_running"
+
+
+@pytest.mark.parametrize("mode", ["route", "background"])
+def test_background_pass_and_operator_route_agree_on_paper_running(monkeypatch, mode) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, _ = _ready_persona(client, monkeypatch, f"parity-running-{mode}")
+        if mode == "route":
+            client.post(f"/bff/personas/{persona_id}/provisioning/reconcile", headers=HEADERS)
+        else:
+            _persona_service_module._reconcile_persona_provisioning_once()
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "paper_running"
+        assert persisted["metadata"]["paper_runtime_state"] == "running"
+
+
+@pytest.mark.parametrize("mode", ["route", "background"])
+def test_background_pass_and_operator_route_agree_on_timeout(monkeypatch, mode) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, _data, _meta = _create_persona(client, f"parity-timeout-{mode}")
+        _compose_background_service(monkeypatch)
+        _state.read_store.update_persona(
+            persona_id, metadata={"provisioning_readback_started_at": "2026-01-01T00:00:00Z"}
+        )
+        tenant_id = _state.read_store.get_persona(persona_id)["metadata"]["tenant_id"]
+        record = _persona_service_module._PERSONA_PROVISIONING_STORE._backend.records[
+            (tenant_id, f"parity-timeout-{mode}")
+        ]
+        record.references["provisioning_readback_started_at"] = "2026-01-01T00:00:00Z"
+        if mode == "route":
+            client.post(f"/bff/personas/{persona_id}/provisioning/reconcile", headers=HEADERS)
+        else:
+            _persona_service_module._reconcile_persona_provisioning_once()
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "provisioning_failed"
+        assert "provisioning_timeout" in persisted["metadata"]["provisioning_failure_reason"]
+
+
+@pytest.mark.parametrize("fault", ["stale_heartbeat", "no_worker", "no_binding"])
+def test_background_pass_stays_fail_closed(monkeypatch, fault) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, _ = _ready_persona(
+            client,
+            monkeypatch,
+            f"bg-closed-{fault}",
+            **({"worker_heartbeat_age_seconds": 3600} if fault == "stale_heartbeat" else {}),
+        )
+        if fault == "no_worker":
+            monkeypatch.setattr(
+                _state.read_store,
+                "list_authoritative_paper_runtime_monitoring_sessions",
+                lambda: [],
+            )
+        if fault == "no_binding":
+
+            class _NoBindings:
+                def list_all(self) -> list:
+                    return []
+
+                def list_by_plan(self, _plan_id: str) -> list:
+                    return []
+
+            monkeypatch.setattr(_persona_service_module, "_runtime_manager_client", lambda: _NoBindings())
+
+        _persona_service_module._reconcile_persona_provisioning_once()
+        state = _state.read_store.get_persona(persona_id)["lifecycle_state"]
+        assert state == ("provisioning_failed" if fault == "stale_heartbeat" else "provisioning")
