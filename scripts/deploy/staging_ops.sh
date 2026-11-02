@@ -293,6 +293,7 @@ passthrough_vars = (
     "STAGING_ALLOW_APT_INSTALL",
     "STAGING_READY_TRIES",
     "STAGING_READY_INTERVAL",
+    "STAGING_OWNER_READY_TIMEOUT",
     "STAGING_RUNTIME_CONFIG_URL",
     "STAGING_METADATA_TOKEN_URL",
     "DOCKER_BIN",
@@ -388,6 +389,17 @@ PY
     cp "${SCRIPT_DIR}/release_manifest.py" "${STAGE_BUNDLE_DIR}/release_manifest.py"
     chmod 0755 "${STAGE_BUNDLE_DIR}/bootstrap.sh" "${STAGE_BUNDLE_DIR}/pantheon-staging-collect-gates"
 
+    if ! python3 "${SCRIPT_DIR}/prod_preflight.py" migration render \
+      "${RELEASE_MANIFEST_PATH}" \
+      "${STAGE_BUNDLE_DIR}/migration-material" \
+      --src "${REPO_ROOT}/services/trade_journey/migrations" >/dev/null 2>&1; then
+      rm -rf "${STAGE_BUNDLE_DIR}"
+      die_json "MIGRATION_RENDER_FAILED" "Failed to render and verify versioned migration material against release manifest"
+    fi
+    tar -czf "${STAGE_BUNDLE_DIR}/migration-material.tar.gz" \
+      -C "${STAGE_BUNDLE_DIR}/migration-material" \
+      migration-spec.json migrations
+
     # 1. Create remote bundle directory safely over IAP SSH before SCP transfer.
     REMOTE_MKDIR_CMD="set -euo pipefail; rm -rf '${REMOTE_BUNDLE_DIR}' && mkdir -p '${REMOTE_BUNDLE_DIR}' && chmod 0700 '${REMOTE_BUNDLE_DIR}'"
     # A freshly created VM can answer IAP 4047 (lookup) or 4003 (backend port 22 not listening yet) before sshd is up:
@@ -456,6 +468,7 @@ PY
       "${STAGE_BUNDLE_DIR}/pantheon-staging-collect-gates" \
       "${STAGE_BUNDLE_DIR}/staging_sanitize.py" \
       "${STAGE_BUNDLE_DIR}/release_manifest.py" \
+      "${STAGE_BUNDLE_DIR}/migration-material.tar.gz" \
       "${VM_NAME}:${REMOTE_BUNDLE_DIR}/" >/dev/null 2>&1; then
       rm -rf "${STAGE_BUNDLE_DIR}"
       die_json "HOST_SCP_FAILED" "Failed to transfer immutable release bundle to ${VM_NAME} over IAP SCP"
