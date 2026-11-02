@@ -90,6 +90,9 @@ def _canonical_provider_adapter_token(token: str) -> str:
     return PROVIDER_ADAPTER_ALIASES.get(normalized, normalized)
 
 
+EFFECTIVE_MAX_RECORDS_KEY = "_effective_max_records"
+
+
 def execute_provider_owned_adapter(
     *,
     connector: SourceConnector,
@@ -106,10 +109,11 @@ def execute_provider_owned_adapter(
         **_mapping(fetch.get("request")),
         **_mapping(job_parameters),
     }
-    records = spec.handler(adapter, request, trace_id)
     max_records = int(fetch.get("max_records") or request.get("max_records") or 100)
     if max_records < 1:
         raise SourceEvidenceError("fetch.max_records must be > 0 for provider_owned_adapter")
+    request[EFFECTIVE_MAX_RECORDS_KEY] = max_records
+    records = spec.handler(adapter, request, trace_id)
     return tuple(_attach_run_metadata(record, token=token, request=request) for record in records[:max_records])
 
 
@@ -333,7 +337,11 @@ def _taiwan_official(
     history_trading_days = resolve_tw_history_trading_days(
         request.get("history_trading_days") or request.get("tw_history_trading_days")
     )
-    max_records = int(request.get("max_records") or getattr(adapter, "max_records", 100))
+    max_records = int(
+        request.get(EFFECTIVE_MAX_RECORDS_KEY)
+        or request.get("max_records")
+        or getattr(adapter, "max_records", 100)
+    )
     required_priority_records = (
         len(priority_symbols) * TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL
         if dataset == "tw_price_daily"
@@ -341,8 +349,15 @@ def _taiwan_official(
     )
     if required_priority_records > max_records:
         raise SourceEvidenceError(
-            "active Taiwan paper symbol history exceeds the bounded official refresh max_records"
+            "bounded official refresh max_records cannot hold the minimum closes for every "
+            "active Taiwan paper symbol: "
+            f"symbols={','.join(priority_symbols)} "
+            f"required={required_priority_records} allowed={max_records}"
         )
+    per_symbol_depth = history_trading_days
+    if dataset == "tw_price_daily" and priority_symbols:
+        # Even share of the record budget; each symbol keeps its newest dates.
+        per_symbol_depth = max(1, min(history_trading_days, max_records // len(priority_symbols)))
     records: list[SourceRecord] = []
     for venue in venues:
         payload = payloads.get(venue) or payloads.get(str(venue).upper()) or single_payload
@@ -451,7 +466,7 @@ def _taiwan_official(
                     and float(close) > 0
                 ):
                     by_event_time[event_time] = candidate
-            selected_dates = sorted(by_event_time)[-history_trading_days :]
+            selected_dates = sorted(by_event_time)[-per_symbol_depth:]
             if len(selected_dates) < TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL:
                 raise SourceEvidenceError(
                     "bounded official refresh did not resolve distinct finite close history for "
