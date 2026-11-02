@@ -987,15 +987,15 @@ if args[:3] == ["compute", "disks", "list"]:
 
 if args[:3] == ["compute", "disks", "delete"]:
     name = args[3]
-    in_use = [
-        i["name"]
-        for i in state.get("instances", [])
-        if any(d.get("name") == name for d in (i.get("disks") or []))
-    ]
-    if in_use:
-        print(f"The disk resource '{name}' is already being used by '{in_use[0]}'", file=sys.stderr)
-        raise SystemExit(1)
     if os.environ.get("GCLOUD_SIMULATE_LINGERING_DELETE") != "true":
+        in_use = [
+            i["name"]
+            for i in state.get("instances", [])
+            if any(d.get("name") == name for d in (i.get("disks") or []))
+        ]
+        if in_use:
+            print(f"The disk resource '{name}' is already being used by '{in_use[0]}'", file=sys.stderr)
+            raise SystemExit(1)
         state["disks"] = [d for d in state["disks"] if d["name"] != name]
         save_state()
     print(json.dumps({"deleted": name}))
@@ -2623,10 +2623,13 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(any("compute disks create pantheon-stg-data-pantheon-20261024-001" in c for c in cmds))
         self.assertTrue(any("compute disks create pantheon-stg-pantheon-20261024-001-boot" in c for c in cmds))
         inst_create_cmd = next(c for c in cmds if "compute instances create pantheon-stg-pantheon-20261024-001" in c)
+        self.assertIn("--machine-type=e2-standard-4", inst_create_cmd)
         self.assertIn("--address=203.0.113.10", inst_create_cmd)
         self.assertIn("--network=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging", inst_create_cmd)
         self.assertIn("--subnet=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1", inst_create_cmd)
-        live_nic = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"][0]["networkInterfaces"][0]
+        live_inst = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"][0]
+        self.assertEqual(live_inst["machineType"], "e2-standard-4")
+        live_nic = live_inst["networkInterfaces"][0]
         self.assertTrue(live_nic["network"].endswith("/networks/pantheon-staging"))
         self.assertTrue(live_nic["subnetwork"].endswith("/subnetworks/pantheon-staging-asia-east1"))
         self.assertEqual(live_nic["accessConfigs"][0]["natIP"], "203.0.113.10")
@@ -2687,11 +2690,6 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
 
         # First IAP SSH: only exact transient 4047/4003 is retried (fake sleep keeps wall time at zero)
-        fake_sleep_dir = self.tmp_path / "fake-sleep-bin"
-        fake_sleep_dir.mkdir()
-        (fake_sleep_dir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        (fake_sleep_dir / "sleep").chmod(0o755)
-        sleep_env = {"PATH": f"{fake_sleep_dir}:{os.environ['PATH']}"}
         for label, state_patch, expect_ok, expect_mkdirs in (
             ("transient", {"ssh_4047_remaining": 2}, True, 3),
             ("transient_4003_then_4047", {"ssh_4003_remaining": 2, "ssh_4047_remaining": 1}, True, 4),
@@ -2703,6 +2701,11 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         ):
             with self.subTest(ssh_retry=label):
                 self.setUp()
+                fake_sleep_dir = self.tmp_path / "fake-sleep-bin"
+                fake_sleep_dir.mkdir()
+                (fake_sleep_dir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                (fake_sleep_dir / "sleep").chmod(0o755)
+                sleep_env = {"PATH": f"{fake_sleep_dir}:{os.environ['PATH']}"}
                 st = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
                 st.update(state_patch)
                 self.gcloud_state_file.write_text(json.dumps(st), encoding="utf-8")
@@ -3507,6 +3510,8 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         tpl = json.loads(INSTANCE_TEMPLATE.read_text(encoding="utf-8"))
         self.assertEqual(tpl["name"], "pantheon-stg-template-20261024")
         self.assertEqual(tpl["properties"]["machineType"], "e2-standard-2")
+        defaults_raw = (REPO_ROOT / "deploy" / "staging" / "staging-env.defaults").read_text(encoding="utf-8")
+        self.assertIn("STAGING_MACHINE_TYPE=e2-standard-4", defaults_raw)
         self.assertFalse(tpl["properties"]["scheduling"]["preemptible"])
         self.assertEqual(tpl["properties"]["scheduling"]["provisioningModel"], "STANDARD")
         self.assertEqual(
