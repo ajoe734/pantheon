@@ -184,6 +184,70 @@ def _token_tenant(token: Optional[str]) -> Optional[str]:
     return primary or (next(iter(concrete)) if len(concrete) == 1 else None)
 
 
+_EVOLUTION_ACTOR_ROLE_PREFERENCE = (
+    "governance_committee",
+    "risk_owner",
+    "reviewer_on_duty",
+    "governance_reviewer",
+    "admin",
+    "approver",
+    "reviewer",
+    "operator",
+)
+
+
+def _evolution_forbidden(message: str) -> ActionUnavailableError:
+    return ActionUnavailableError(
+        message,
+        error_code="FORBIDDEN",
+        suggestion="Act with an identity that holds the required Evolution role.",
+        downstream_status=403,
+    )
+
+
+def resolve_evolution_actor(params: Dict[str, Any], auth_token: Optional[str]) -> Tuple[str, str]:
+    """Bind Evolution decision actor fields to the verified principal.
+
+    actor_id always comes from the verified identity; a client-supplied
+    actor_id/approved_by_id may only equal it. A client-named role must be one
+    the principal holds; with none named, pick a held role by preference.
+    """
+    try:
+        from services.control_plane.bff.auth.policy import extract_identity
+        raw = str(auth_token or "").strip()
+        if not raw:
+            raise ValueError("missing token")
+        if not raw.lower().startswith("bearer "):
+            raw = f"Bearer {raw}"
+        identity = extract_identity(raw)
+    except Exception as exc:
+        raise _evolution_forbidden("Evolution command requires a verified authenticated principal.") from exc
+    principal = str(identity.operator_id or "").strip()
+    held = [str(r).strip() for r in (identity.roles or []) if str(r).strip()]
+    if not principal:
+        raise _evolution_forbidden("Evolution command requires a verified authenticated principal.")
+    for key in ("actor_id", "approved_by_id"):
+        claimed = str(params.get(key) or "").strip()
+        if claimed and claimed != principal:
+            raise _evolution_forbidden(f"{key} does not match the authenticated principal.")
+    named = {
+        str(params.get(key)).strip()
+        for key in ("approved_by_role", "actor_role")
+        if str(params.get(key) or "").strip()
+    }
+    if len(named) > 1:
+        raise _evolution_forbidden("Conflicting actor_role and approved_by_role.")
+    if named:
+        role = next(iter(named))
+        if role not in held:
+            raise _evolution_forbidden(f"Authenticated principal does not hold role {role!r}.")
+        return principal, role
+    for preferred in _EVOLUTION_ACTOR_ROLE_PREFERENCE:
+        if preferred in held:
+            return principal, preferred
+    raise _evolution_forbidden("Authenticated principal holds no Evolution actor role.")
+
+
 def bound_tenant(payload: Any, tenant_id: Optional[str] = None, auth_token: Optional[str] = None) -> str:
     """Return the trusted tenant; a payload tenant may only equal it, never fill it."""
     req_tid = str(tenant_id or "").strip()

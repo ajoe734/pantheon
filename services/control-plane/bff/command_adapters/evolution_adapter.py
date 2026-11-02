@@ -20,6 +20,7 @@ from .base import (
     build_domain_receipt,
     evolution_url,
     http_request_json as _base_http_request_json,
+    resolve_evolution_actor,
     utc_now,
 )
 
@@ -140,9 +141,10 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             "ReviewMutation": "review",
         }
         subpath = str(verb_map.get(command_type, "approve")).lower()
+        actor_id, actor_role = resolve_evolution_actor(params, auth_token)
         payload = {
-            "actor_id": params.get("actor_id") or "operator",
-            "actor_role": params.get("actor_role") or "operator",
+            "actor_id": actor_id,
+            "actor_role": actor_role,
             "note": params.get("note") or params.get("rationale") or f"Operator {command_type}",
         }
         if "approval_decision_id" in params:
@@ -179,9 +181,10 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         if not target_id:
             raise ValueError(f"{command_type} requires evolution_decision_id.")
 
+        actor_id, actor_role = resolve_evolution_actor(params, auth_token)
         payload = {
-            "actor_id": params.get("actor_id") or "operator",
-            "actor_role": "operator",
+            "actor_id": actor_id,
+            "actor_role": "evolution_controller" if actor_role == "evolution_controller" else "operator",
             "note": params.get("note") or params.get("rationale") or "Operator execute mutation",
         }
         for key in ("execution_receipt", "tenant_id", "has_active_runtime", "active_binding_id",

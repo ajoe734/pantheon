@@ -9600,17 +9600,6 @@ def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> D
     }
 
 
-# --- _DEV_LOGIN_IDENTITY_DEFS ---
-_DEV_LOGIN_IDENTITY_DEFS: Dict[str, Dict[str, Any]] = {
-    "viewer": {"roles": ("viewer",), "subject_suffix": "viewer"},
-    "operator": {"roles": ("operator",), "subject_suffix": "operator"},
-    "approver": {"roles": ("approver",), "subject_suffix": "approver"},
-    "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
-    "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
-    "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
-}
-
-
 # --- _REQUEST_DRY_RUN_CONTEXT ---
 _REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
 
