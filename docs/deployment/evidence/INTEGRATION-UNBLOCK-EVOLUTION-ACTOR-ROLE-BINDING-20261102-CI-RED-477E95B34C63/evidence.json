@@ -1,0 +1,7 @@
+{
+  "task": "INTEGRATION-UNBLOCK-EVOLUTION-ACTOR-ROLE-BINDING-20261102-CI-RED-477E95B34C63",
+  "pr": 6897,
+  "root_cause": "Import smoke services-search-Dockerfile failed in run 41409661789 because Docker Hub returned 502 Bad Gateway while pulling postgres:16-alpine. This was a transient registry error, not a code defect.",
+  "resolution": "Re-ran the failed job (gh run rerun --failed); Import smoke services-search-Dockerfile passed on retry. No code change needed. The canonical review gate stays red until the review-proof tag is published, which is normal pre-review state.",
+  "date": "2026-11-02"
+}

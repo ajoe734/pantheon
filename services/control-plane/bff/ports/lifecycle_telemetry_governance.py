@@ -1183,8 +1183,16 @@ class DomainTelemetryPort:
         except Exception:
             return "unavailable"
 
+    @staticmethod
+    def _copy_json_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: DomainTelemetryPort._copy_json_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [DomainTelemetryPort._copy_json_value(v) for v in value]
+        return value
+
     def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
-        return [json.loads(json.dumps(s)) for s in self._get_raw_telemetry_summaries()]
+        return [self._copy_json_value(s) for s in self._get_raw_telemetry_summaries()]
 
     def get_telemetry_performance(self, artifact_id: str) -> Optional[Dict[str, Any]]:
         return self._telemetry_performance.get(artifact_id)

@@ -65,11 +65,13 @@ def _hosted_env(
     *,
     predecessors: Mapping[str, Any] | None = None,
     decisions: Mapping[str, Any] | None = None,
+    stimuli: Mapping[str, Any] | None = None,
 ) -> None:
     input_path = tmp_path / "chain-input.json"
-    input_path.write_text(
-        json.dumps({"chain_id": CHAIN, "phase": phase, "predecessors": predecessors or {}, "decisions": decisions or {}})
-    )
+    packet = {"chain_id": CHAIN, "phase": phase, "predecessors": predecessors or {}, "decisions": decisions or {}}
+    if stimuli is not None:
+        packet["operator_test_stimuli"] = stimuli
+    input_path.write_text(json.dumps(packet))
     for key, value in {
         "PANTHEON_L12_HOSTED_CHAIN": "1",
         "PANTHEON_L12_CROSS_LOOP_RUN_ID": CHAIN,
@@ -955,6 +957,18 @@ def _expected_execution_checksum() -> str:
 EXEC_CHECKSUM = _expected_execution_checksum()
 
 
+def _drift_consumer() -> Any:
+    """The real reconciliation-drift consumer, so stored reports have the production shape."""
+    path = Path(__file__).resolve().parents[3] / "services" / "reconciliation-drift" / "consumer.py"
+    if str(path.parent) not in sys.path:
+        sys.path.append(str(path.parent))  # consumer.py imports its sibling telemetry_client
+    spec = importlib.util.spec_from_file_location("hosted_drift_consumer_real", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class FakeRuntimeHttp:
     def __init__(self, *, h3: bool, validation_ok: bool = True, drop_reference: bool = False,
                  bundle: bool = True, h3_scope: dict[str, Any] | None = None) -> None:
@@ -965,6 +979,7 @@ class FakeRuntimeHttp:
         self.h3, self.validation_ok, self.drop_reference = h3, validation_ok, drop_reference
         self.bundle, self.h3_scope = bundle, h3_scope
         self.incidents: list[dict[str, Any]] = []
+        self.events: dict[str, dict[str, Any]] = {}
         self.proposals: list[dict[str, Any]] = []
         self.reconciliation_evaluations: dict[str, dict[str, Any]] = {}
         self.evolution_coverage: dict[str, Any] = {"artifacts": []}
@@ -973,6 +988,8 @@ class FakeRuntimeHttp:
         self.plan: dict[str, Any] = {}
         self.dispatched = False
         self.entry_refusal: str | None = None
+        self.consume_mode = "ok"
+        self.drift_reports: list[dict[str, Any]] = []
 
     def request(self, service: str, method: str, path: str, *, body: Any = None, headers: Any = None,
                 query: Any = None, expected: Any = frozenset({200}), timeout: float = 20.0) -> Any:
@@ -1057,6 +1074,30 @@ class FakeRuntimeHttp:
             return {"bindings": [{"binding_id": "rb-1"}]}
         if path == "/api/incidents":
             return self.incidents
+        if path.startswith("/api/telemetry/events/"):
+            assert service == "telemetry" and method == "GET"
+            return self.events.get(urllib.parse.unquote(path.rsplit("/", 1)[-1]), {"detail": "nf"})
+        if path == "/api/reconciliation-drift/drift-reports":
+            assert service == "reconciliation" and method == "GET"
+            return [r for r in self.drift_reports if r["scope_ref"] == (query or {}).get("scope_ref")]
+        if path == "/api/reconciliation-drift/telemetry-events/consume":
+            assert service == "reconciliation" and method == "POST"
+            assert headers == {"Authorization": f"Bearer {RECONCILIATION_TOKEN}", "X-Tenant-Id": TENANT}
+            event = body["events"][0]
+            base = {"status": "ok", "drift_report_count": 0, "incident_case_count": 0, "drift_reports": [],
+                    "incident_cases": [], "duplicate_event_ids": [], "deferred_event_ids": [], "ignored_event_ids": []}
+            if self.consume_mode == "duplicate":
+                return {**base, "duplicate_event_ids": [event["event_id"]]}
+            if self.consume_mode == "deferred":
+                return {**base, "status": "deferred", "deferred_event_ids": [event["event_id"]]}
+            report = _drift_consumer().build_drift_report_from_event(
+                event, baseline_metrics=body["baseline_metrics"], thresholds=body["thresholds"]
+            )
+            self.drift_reports.append(report)
+            incident = _drift_incident(event["event_id"], "fill_price")
+            self.incidents.append(incident)
+            return {**base, "drift_report_count": 1, "incident_case_count": 1, "drift_reports": [report],
+                    "incident_cases": [incident]}
         if path.startswith("/api/reconciliation-drift/evaluations/"):
             assert service == "reconciliation" and method == "GET"
             assert headers == {"Authorization": f"Bearer {RECONCILIATION_TOKEN}", "X-Tenant-Id": TENANT}
@@ -1120,7 +1161,8 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
 
 PROMOTE_PREDECESSORS = {"registry_id": f"reg-{CHAIN}", "checksum": _spec_checksum(_runtime_spec()), "governance_handoff_id": "gh-consult-1",
                         "teaching_session_id": "trn-1", "persona_id": "persona-teach"}
-_PAPER_FILL = {"event": {"event_id": "ev-1", "artifact_id": EXEC_ID, "metrics": {"pnl": 1.0}, "metadata": {}},
+_PAPER_FILL = {"event": {"event_id": "ev-1", "runtime_id": "rt-1", "artifact_id": EXEC_ID, "metrics": {"pnl": 1.0},
+                         "created_at": "2026-11-02T10:00:00Z", "metadata": {}},
                "summary": {"runtime_id": "rt-1", "state": "running"}}
 PROMOTE_DECISIONS = {"H1": {"decision_id": "apv-1"}, "H3": {"decision_id": "apv-h3"}}
 
@@ -1284,7 +1326,30 @@ def test_hosted_promote_fails_when_the_plan_does_not_persist_predecessor_referen
 
 
 D_PREDECESSORS = {"runtime_binding_id": "rb-1", "runtime_id": "rt-1", "plan_id": f"hosted-all12-{CHAIN}-plan"}
-INCIDENT = {"incident_id": "inc-1", "binding_id": "rb-1", "telemetry_event_ids": ["ev-1"]}
+FILL_AT = "2026-11-02T10:00:00Z"
+
+
+def _snapshot_event(event_id: str = "ev-dd", **over: Any) -> dict[str, Any]:
+    """Exact keys of PaperRuntime's drawdown_snapshot payload (_build_performance_event_payload, paper_runtime.py).
+
+    metrics carry drawdown_pct in [0, 1] (drawdown_as_of is popped to the top level); the pair legs are tagged in metadata.
+    """
+    return {"event_id": event_id, "event_type": "drawdown_snapshot", "created_at": "2026-11-02T10:05:00Z",
+            "binding_id": "rb-1", "runtime_id": "rt-1", "artifact_id": EXEC_ID,
+            "metrics": {"drawdown_pct": 0.4}, "drawdown_as_of": "2026-11-02T10:05:00Z",
+            "metadata": {"performance_pair_leg": "drawdown_snapshot", "performance_pair_id": "pair-1"}, **over}
+
+
+def _drift_incident(event_id: str = "ev-dd", metric: str = "drawdown", **over: Any) -> dict[str, Any]:
+    """Shape of the IncidentCase the incidents consumer builds from a reconciliation-drift report."""
+    return {"incident_id": "inc-1", "binding_id": "rb-1", "runtime_id": "rt-1",
+            "incident_cluster_id": f"drift:{metric}", "telemetry_event_ids": [event_id],
+            "evidence_summary": f"DriftReport drift-{event_id}-{metric}; cluster=drift:{metric}; "
+                                f"reconciliation_ids=drift-{event_id}-{metric}; telemetry_event_ids={event_id}; "
+                                f"worst_metric={metric}", **over}
+
+
+INCIDENT = _drift_incident()
 
 
 def _proposal(**over: Any) -> dict[str, Any]:
@@ -1300,6 +1365,7 @@ def _observe(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, fill: bool = Tr
     chain._bff_health = lambda: {"data": {"targets": {"runtime-manager": {"ok": True},
                                                       "paper-fleet-reconciler": {"ok": True}}}}
     fake.incidents, fake.proposals = list(incidents), list(proposals)
+    fake.events = {"ev-dd": _snapshot_event(), "ev-hb": _snapshot_event("ev-hb", event_type="heartbeat", metrics={})}
     return mod, chain, fake
 
 
@@ -1338,6 +1404,32 @@ def test_hosted_observe_pauses_without_claiming_loops_that_were_not_observed(
         "X-Tenant-Id": TENANT,
     }
     assert fake.writes() == []  # D only reads owners
+
+
+def test_hosted_observe_incident_must_cite_the_causal_metric_event_of_this_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cases = {
+        "heartbeat only": (_drift_incident("ev-hb"), {}),
+        "other binding": (_drift_incident(), {"ev-dd": _snapshot_event(binding_id="rb-other")}),
+        "other runtime": (_drift_incident(), {"ev-dd": _snapshot_event(runtime_id="rt-other")}),
+        "threshold echo": (_drift_incident(), {"ev-dd": _snapshot_event(metadata={"derived_from_threshold_evaluation": True})}),
+        "before the fill": (_drift_incident(), {"ev-dd": _snapshot_event(created_at="2026-11-02T09:59:59Z")}),
+        "unrelated metric key": (_drift_incident(), {"ev-dd": _snapshot_event(metrics={"pnl": 1.0})}),
+        "non-drift cluster": (_drift_incident(incident_cluster_id="infra:runtime-health"), {}),
+        "fill id cited": (_drift_incident("ev-1"), {"ev-1": {**_PAPER_FILL["event"], "binding_id": "rb-1"}}),
+    }
+    for name, (incident, events) in cases.items():
+        _, chain, fake = _observe(monkeypatch, tmp_path, incidents=[incident])
+        fake.events.update(events)
+        chain.run_hosted()
+        assert _paused_at(tmp_path) == ("drift_incident_observation", {12}), name
+
+    _, chain, fake = _observe(monkeypatch, tmp_path, incidents=[INCIDENT])
+    chain.run_hosted()
+    case = json.loads((tmp_path / "evidence.json").read_text())["cases"]["loop_10_telemetry_reconciliation_incident"]
+    assert case["trigger_id"] == "ev-dd"
+    assert case["next_consumer_readback"]["same_chain_fill_event_id"] == "ev-1"
 
 
 def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_claim_all12(
@@ -1481,6 +1573,7 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
             "event_id": fill_event_id,
             "runtime_id": rid,
             "artifact_id": EXEC_ID,
+            "created_at": FILL_AT,
             "metrics": {"pnl": 0.0},
             "metadata": {"source_snapshot_id": snapshot_id, "is_real_capital": False},
         },
@@ -1575,7 +1668,8 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
     assert set(receipt["resource_ids"]) == set(predecessors)
 
     # Unevaluable Evolution target pauses at evolution_decision_observation even when Incident exists.
-    fake.incidents = [{"incident_id": "inc-d402214", "binding_id": binding_id, "telemetry_event_ids": [fill_event_id]}]
+    fake.events = {"ev-dd-d402214": _snapshot_event("ev-dd-d402214", binding_id=binding_id, runtime_id=runtime_id)}
+    fake.incidents = [_drift_incident("ev-dd-d402214", incident_id="inc-d402214", binding_id=binding_id, runtime_id=runtime_id)]
     fake.proposals = [_proposal(linked_incident_id="inc-d402214")]
     chain2 = mod.RuntimeChain(chain.settings)
     chain2.http = fake
@@ -1836,3 +1930,131 @@ def test_hosted_agora_content_uses_newest_bound_edit_and_records_its_actor(
     assert content["control_edit_event_id"] == "tevt-late" and content["actor_id"] == "executor-1"
     assert content["saving_actor_id"] == "executor-1"
     assert content["authorization_source"] == "authorized_executor_paper_test_control_edit"
+
+
+# -- Loop 10 operator test stimulus (explicit opt-in, always labelled) ---------------------------
+STIMULUS = {"L10": {"decided_by": "operator-1", "decided_at": "2026-11-02T09:00:00Z", "consent": True}}
+# The real hosted fill shape: top-level binding/runtime ids, metrics without a baseline.
+_REAL_FILL = {"event_id": "ev-fill", "event_type": "paper_fill_simulated", "runtime_id": "rt-1", "binding_id": "rb-1",
+              "artifact_id": EXEC_ID, "deployment_stage": "paper", "tenant_id": TENANT,
+              "created_at": "2026-11-02T10:00:00Z", "metadata": {},
+              "metrics": {"action": "SELL", "fill_price": 2370.0, "fill_quantity": -1.0, "submitted_to_broker": True}}
+
+
+def _stimulated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, stimuli: Any = STIMULUS, mode: str = "ok",
+                incidents: Any = (), **kwargs: Any) -> tuple[Any, Any, FakeRuntimeHttp]:
+    mod, chain, fake = _observe(monkeypatch, tmp_path, incidents=incidents, stimuli=stimuli, **kwargs)
+    chain._runtime_event = lambda runtime_id: {"event": _REAL_FILL, "summary": {"runtime_id": "rt-1", "state": "running"}}
+    fake.events["ev-fill"] = _REAL_FILL
+    fake.consume_mode = mode
+    return mod, chain, fake
+
+
+def _stored_stimulus_report(fill_id: str) -> dict[str, Any]:
+    fill = {**_REAL_FILL, "event_id": fill_id, "baseline_ref": f"operator_test_stimulus:{fill_id}"}
+    return _drift_consumer().build_drift_report_from_event(
+        fill, baseline_metrics={"fill_price": 25000.0},
+        thresholds={"fill_price": {"warning_relative_delta": 0.01, "critical_relative_delta": 0.02}},
+    )
+
+
+def _consumes(fake: FakeRuntimeHttp) -> list[tuple[str, str, str]]:
+    return [c for c in fake.calls if c[2] == "/api/reconciliation-drift/telemetry-events/consume"]
+
+
+def test_hosted_observe_without_opt_in_never_posts_to_drift_or_incidents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _stimulated(monkeypatch, tmp_path, stimuli=None)
+    chain.run_hosted()
+    assert _paused_at(tmp_path) == ("drift_incident_observation", {12})
+    assert _consumes(fake) == [] and fake.writes() == []
+
+
+def test_hosted_observe_opt_in_posts_the_unchanged_fill_once_and_labels_everything(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _stimulated(monkeypatch, tmp_path)
+    chain.run_hosted()
+    assert _paused_at(tmp_path) == ("evolution_decision_observation", {10, 12})
+    assert len(_consumes(fake)) == 1
+    assert fake.writes() == _consumes(fake)  # never incidents or evolution
+    body = fake.bodies["POST /api/reconciliation-drift/telemetry-events/consume"]
+    sent = dict(body["events"][0])
+    assert sent.pop("baseline_ref") == "operator_test_stimulus:ev-fill"
+    assert sent == _REAL_FILL  # identity, ids, metrics and created_at untouched
+    assert list(body["baseline_metrics"]) == ["fill_price"] == list(body["thresholds"])
+    assert body["baseline_metrics"]["fill_price"] == 2370.0 + 2370.0 * 10.0
+    receipt = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt["l10_trigger"] == "operator_test_stimulus"
+    case = receipt["cases"]["loop_10_telemetry_reconciliation_incident"]
+    assert case["next_consumer_readback"]["l10_trigger"] == "operator_test_stimulus"
+    stimulus = case["next_consumer_readback"]["operator_test_stimulus"]
+    assert stimulus["drift_report_id"] == "drift-ev-fill"
+    assert stimulus["baseline_metrics"] == body["baseline_metrics"] and stimulus["thresholds"] == body["thresholds"]
+    assert stimulus["decided_by"] == "operator-1"
+
+
+def test_hosted_observe_opt_in_with_existing_incident_does_not_post_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _stimulated(monkeypatch, tmp_path, incidents=[_drift_incident("ev-fill", "fill_price")])
+    fake.drift_reports.append(_stored_stimulus_report("ev-fill"))
+    chain.run_hosted()
+    assert _consumes(fake) == []
+    # A re-run still reports the earlier stimulus honestly, never as natural.
+    receipt = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt["l10_trigger"] == "operator_test_stimulus"
+    stimulus = receipt["cases"]["loop_10_telemetry_reconciliation_incident"]["next_consumer_readback"][
+        "operator_test_stimulus"]
+    assert stimulus["baseline_metrics"] == {"fill_price": 25000.0}
+    assert stimulus["thresholds"] == {"fill_price": {"warning_relative_delta": 0.01, "critical_relative_delta": 0.02}}
+
+
+def test_hosted_observe_newer_fill_after_stimulus_keeps_original_incident_and_never_posts_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _stimulated(monkeypatch, tmp_path, incidents=[_drift_incident("ev-fill", "fill_price")])
+    newer = {**_REAL_FILL, "event_id": "ev-fill-2", "created_at": "2026-11-03T10:00:00Z"}
+    chain._runtime_event = lambda runtime_id: {"event": newer, "summary": {"runtime_id": "rt-1", "state": "running"}}
+    fake.events["ev-fill-2"] = newer
+    fake.drift_reports.append(_stored_stimulus_report("ev-fill"))
+    chain.run_hosted()
+    assert _consumes(fake) == []  # opt-in is still present, yet no second stimulus
+    receipt = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt["l10_trigger"] == "operator_test_stimulus"
+    readback = receipt["cases"]["loop_10_telemetry_reconciliation_incident"]["next_consumer_readback"]
+    assert readback["same_chain_fill_event_id"] == "ev-fill" and readback["incident_id"] == "inc-1"
+
+
+def test_hosted_observe_natural_incident_is_labelled_natural(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _, chain, fake = _observe(monkeypatch, tmp_path, incidents=[INCIDENT])
+    chain.run_hosted()
+    assert json.loads((tmp_path / "evidence.json").read_text())["l10_trigger"] == "natural"
+
+
+@pytest.mark.parametrize("mode", ["duplicate", "deferred"])
+def test_hosted_observe_opt_in_duplicate_or_deferred_pauses_with_owner_response(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
+) -> None:
+    _, chain, fake = _stimulated(monkeypatch, tmp_path, mode=mode)
+    chain.run_hosted()
+    assert len(_consumes(fake)) == 1  # no retry under another id
+    receipt = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt["blocked_before"] == "drift_incident_observation"
+    assert f"{mode}_event_ids" in receipt["detail"] and "ev-fill" in receipt["detail"]
+    assert "loop_10_telemetry_reconciliation_incident" not in receipt["cases"]
+
+
+@pytest.mark.parametrize("bad", [
+    {"L11": STIMULUS["L10"]},
+    {"L10": {**STIMULUS["L10"], "extra": 1}},
+    {"L10": {**STIMULUS["L10"], "consent": False}},
+    {"L10": {"decided_by": "", "decided_at": "x", "consent": True}},
+    {"L10": {"decided_by": "op", "decided_at": "x", "api_token": "t", "consent": True}},
+])
+def test_hosted_operator_stimulus_input_rejects_unknown_or_incomplete_opt_ins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad: Any
+) -> None:
+    with pytest.raises(Exception, match="operator_test_stimuli|credential"):
+        _observe(monkeypatch, tmp_path, stimuli=bad)

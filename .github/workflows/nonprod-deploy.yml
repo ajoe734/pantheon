@@ -3280,8 +3280,8 @@ jobs:
           forbidden = re.compile(r"token|secret|password|credential|authorization|mfa", re.IGNORECASE)
           raw = os.environ.get("CHAIN_INPUT_JSON", "").strip()
           supplied = json.loads(raw) if raw else {}
-          if not isinstance(supplied, dict) or set(supplied) - {"decisions", "predecessors"} or len(raw) > 20000:
-              raise SystemExit("chain_input_json must be an object with only decisions/predecessors")
+          if not isinstance(supplied, dict) or set(supplied) - {"decisions", "predecessors", "operator_test_stimuli"} or len(raw) > 20000:
+              raise SystemExit("chain_input_json must be an object with only decisions/predecessors/operator_test_stimuli")
 
           def reject(node, path=""):
               if isinstance(node, dict):
@@ -3301,6 +3301,8 @@ jobs:
               "phase": os.environ["CHAIN_PHASE"],
               "predecessors": supplied.get("predecessors") or {},
           }
+          if supplied.get("operator_test_stimuli"):
+              packet["operator_test_stimuli"] = supplied["operator_test_stimuli"]
           with open(sys.argv[1], "w", encoding="utf-8") as handle:
               json.dump(packet, handle, sort_keys=True)
           PY
@@ -4011,10 +4013,15 @@ jobs:
               "all12_claim_allowed": bool(
                   rc == 0 and phase == "E_close" and status == "completed" and hosted.get("all12_passed") is True
               ),
+              "all12_natural": bool(
+                  rc == 0 and phase == "E_close" and status == "completed" and hosted.get("all12_passed") is True
+                  and hosted.get("l10_trigger") == "natural"
+              ),
               "blocked_before": hosted.get("blocked_before"),
               "chain_id": os.environ["CHAIN_ID"],
               "complete": status == "completed",
               "harness_source_sha": (meta.get("harness_source") or {}).get("sha") or os.environ.get("GITHUB_SHA", ""),
+              "l10_trigger": hosted.get("l10_trigger"),
               "incomplete_reason": None if status == "completed" else (hosted.get("blocked_before") or "segment_not_completed"),
               "phase": phase,
               "phase_status": status,
@@ -4194,7 +4201,7 @@ jobs:
             echo "## Hosted all-12 chain segment"
             echo "- chain: \`${CHAIN_ID}\` phase: \`${CHAIN_PHASE}\` (workflow source \`${GITHUB_SHA}\`)"
             if [[ -s "${result}" ]]; then
-              python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print("- phase_status: " + str(r["phase_status"]) + ", pytest_exit: " + str(r["pytest_exit"]) + ", complete: " + str(r["complete"])); print("- all-12 claim allowed by the E_close receipt" if r["all12_claim_allowed"] else "- all-12 pass is NOT claimed")' "${result}"
+              python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print("- phase_status: " + str(r["phase_status"]) + ", pytest_exit: " + str(r["pytest_exit"]) + ", complete: " + str(r["complete"])); print("- l10_trigger: " + str(r.get("l10_trigger"))); print(("- all-12 claim allowed by the E_close receipt (natural)" if r.get("all12_natural") else "- all-12 claim allowed by the E_close receipt but OPERATOR-INDUCED via a labelled test stimulus (l10_trigger=" + str(r.get("l10_trigger")) + "); never a natural pass") if r["all12_claim_allowed"] else "- all-12 pass is NOT claimed")' "${result}"
             else
               echo "- no segment result was produced"
             fi

@@ -63,6 +63,7 @@ from services.evolution.threshold_sweep_worker import (
 )
 import os
 
+_PREV_RM_URL = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
 os.environ.setdefault("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:9")
 
 from services.incident.incident import IncidentStore
@@ -71,10 +72,15 @@ from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
 from services.incidents.main import _wire_canonical_performance_subscriber, app
 
 _wire_canonical_performance_subscriber()
+if _PREV_RM_URL is None:
+    os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
+else:
+    os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = _PREV_RM_URL
 
 @pytest.fixture(autouse=True)
 def isolate_worker_paths(tmp_path, monkeypatch):
     """Ensure no tests leak or read from the shared developer/runtime state paths."""
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:9")
     tmp_state = tmp_path / "threshold_sweep_state_isolated.json"
     monkeypatch.setattr("services.evolution.threshold_sweep_worker.DEFAULT_STATE_PATH", str(tmp_state))
     monkeypatch.setattr("services.incidents.main.store", IncidentStore(path=None))
@@ -482,6 +488,106 @@ def test_evaluate_breaches_detects_drawdown_breach_from_real_projection():
     assert not any("rolling_drawdown_multiple" in d for d in diagnostics)
 
 
+def test_reconciliation_drift_owned_drawdown_posts_no_incident_and_admits_no_derived_event(
+    tmp_path,
+):
+    from services.execution.lean_runtime.paper_runtime import (
+        RuntimeIdentity,
+        RuntimeTelemetryEmitter,
+    )
+
+    live_thresholds = load_thresholds(DEFAULT_CONFIG_PATH)
+    assert len(live_thresholds) == 1
+    assert live_thresholds[0]["metric_name"] == "rolling_drawdown_multiple"
+    assert live_thresholds[0]["incident_owner"] == "reconciliation-drift"
+
+    identity = RuntimeIdentity.from_env(
+        {
+            "PANTHEON_RUNTIME_ROLE": "paper",
+            "PANTHEON_RUNTIME_MODE": "paper",
+            "PANTHEON_RUNTIME_ID": "runtime-single-owner-001",
+            "PANTHEON_WORKSPACE_REF": "workspace-single-owner",
+            "PANTHEON_AUTH_PROFILE_REF": "auth-single-owner",
+            "PANTHEON_PERSONA_ID": "persona-single-owner",
+            "PANTHEON_SESSION_ID": "session-single-owner",
+            "PANTHEON_TRACE_ID": "trace-single-owner-001",
+            "PANTHEON_REQUEST_ID": "request-single-owner-001",
+        }
+    )
+
+    class _Resolver:
+        def resolve(self):
+            return {
+                "binding_id": "rb-single-owner-001",
+                "runtime_id": "runtime-single-owner-001",
+                "capital_pool_id": "pool-single-owner-001",
+                "artifact_id": "artifact-tw-session-momentum-v1",
+                "artifact_version": "1.0.0",
+                "plan_id": "plan-single-owner-001",
+                "persona_capital_binding_id": "pcb-single-owner-001",
+                "deployment_stage": "paper",
+                "deployment_mode": "paper",
+                "effective_at": "2026-07-13T00:00:00Z",
+            }
+
+    emitter = RuntimeTelemetryEmitter(identity, _Resolver())
+    store = RuntimeSummaryProjectionStore(path=None)
+    hb = emitter.build_event(
+        "heartbeat",
+        {"queue_lag_ms": 2.0, "delivery_lag_ms": 4.0},
+        created_at="2026-07-13T00:00:00Z",
+    )
+    dd = emitter.build_event(
+        "drawdown_snapshot",
+        {"drawdown": 0.045, "drawdown_as_of": "2026-07-13T00:00:05Z"},
+        created_at="2026-07-13T00:00:05Z",
+    )
+    store.project_event(hb)
+    store.project_event(dd)
+    summary = store.get(identity.runtime_id, now=_NOW)
+
+    admitted_events = []
+    posted_incidents = []
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        config_path=DEFAULT_CONFIG_PATH,
+        baselines=load_baselines(DEFAULT_BASELINES_PATH),
+        fetch_summaries=lambda *_a, **_kw: [summary],
+        admit_telemetry_event=lambda _u, ev, **_kw: (
+            admitted_events.append(ev) or {"status": 202, "body": {}}
+        ),
+        post_incident=lambda _u, payload, **_kw: (
+            posted_incidents.append(payload) or {"status": 201, "body": {}}
+        ),
+        state_path=str(tmp_path / "single-owner-state.json"),
+        now=_NOW,
+    )
+    assert result["candidates"] == 0
+    assert result["incidents_created"] == 0
+    assert admitted_events == []
+    assert posted_incidents == []
+    assert result["input_coverage"]["coverage_complete"] is True
+    assert result["input_coverage"]["artifacts"][0]["complete"] is True
+    assert result["input_coverage"]["artifacts"][0]["metrics"][0]["evaluable"] is True
+
+    # Ownership comes only from explicit incident_owner in threshold_sweep_thresholds.json:
+    # the same threshold without incident_owner is evaluated normally by the worker.
+    unowned_threshold = [
+        {k: v for k, v in live_thresholds[0].items() if k != "incident_owner"}
+    ]
+    unowned_payloads, unowned_diagnostics = evaluate_breaches(
+        [summary],
+        unowned_threshold,
+        window_bucket="2026-07-13",
+        baselines=load_baselines(DEFAULT_BASELINES_PATH),
+        now=_NOW,
+    )
+    assert unowned_diagnostics == []
+    assert len(unowned_payloads) == 1
+
+
 def test_explicit_pnl_and_drawdown_as_of_are_evaluated_from_real_projection():
     """Separate performance events reach the real sweep as fresh numbers.
 
@@ -535,8 +641,10 @@ def test_explicit_pnl_and_drawdown_as_of_are_evaluated_from_real_projection():
     summary = projection_store.get(identity["runtime_id"], now=_NOW)
     assert summary["pnl"] == -600.0
     assert summary["pnl_at"] == "2026-07-13T00:00:05Z"
+    assert summary["pnl_event_id"] == "evt-explicit-as-of-pnl"
     assert summary["drawdown"] == 0.18
     assert summary["drawdown_at"] == "2026-07-13T00:00:06Z"
+    assert summary["drawdown_event_id"] == "evt-explicit-as-of-drawdown"
 
     payloads, diagnostics = evaluate_breaches(
         [summary],

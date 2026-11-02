@@ -775,6 +775,11 @@ def test_hosted_validation_guard_script(tmp_path: Path) -> None:
         "chain_id": "hosted-all12-chain-0001", "phase": "A_research",
         "decisions": {"H1": "dec-1"}, "predecessors": {"registry_id": "reg-1"},
     }
+    stimulus = {"L10": {"decided_by": "op", "decided_at": "2026-11-02T00:00:00Z", "consent": True}}
+    opted = run(CHAIN_INPUT_JSON=json.dumps({"operator_test_stimuli": stimulus}))
+    assert opted.returncode == 0, opted.stderr
+    packet = json.loads((runner_temp / "hosted-all12-1-1/chain-input.json").read_text())
+    assert packet["operator_test_stimuli"] == stimulus
     assert run(GITHUB_SHA="c" * 40).returncode != 0
     assert run(ISOLATED_REQUESTED="true").returncode != 0
     assert run(ALLOW_DIRTY="true").returncode != 0

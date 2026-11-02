@@ -2739,3 +2739,157 @@ class TestRealStateColdStartUnchangedHeartbeat(unittest.TestCase):
         self.assertEqual(summary["drawdown_at"], "2026-10-27T13:01:35Z")
         # No fabricated fill event.
         self.assertEqual(summary["last_fill"]["action"], "SELL")
+
+    def test_paper_emitter_metric_event_ids_preserve_causal_event_across_echo_out_of_order_and_rollover(self):
+        from services.execution.lean_runtime.paper_runtime import (
+            RuntimeIdentity,
+            RuntimeTelemetryEmitter,
+        )
+
+        class _Resolver:
+            def __init__(self, binding_id: str, effective_at: str) -> None:
+                self.binding_id = binding_id
+                self.effective_at = effective_at
+
+            def resolve(self):
+                return {
+                    "binding_id": self.binding_id,
+                    "runtime_id": "rt-causal-metric-001",
+                    "capital_pool_id": "pool-causal-001",
+                    "artifact_id": "artifact-causal-001",
+                    "artifact_version": "1.0.0",
+                    "plan_id": "plan-causal-001",
+                    "persona_capital_binding_id": "pcb-causal-001",
+                    "deployment_stage": "paper",
+                    "deployment_mode": "paper",
+                    "effective_at": self.effective_at,
+                }
+
+        identity = RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "paper",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": "rt-causal-metric-001",
+                "PANTHEON_WORKSPACE_REF": "workspace-causal",
+                "PANTHEON_AUTH_PROFILE_REF": "auth-causal",
+                "PANTHEON_PERSONA_ID": "persona-causal",
+                "PANTHEON_SESSION_ID": "session-causal",
+                "PANTHEON_TRACE_ID": "trace-causal-001",
+                "PANTHEON_REQUEST_ID": "request-causal-001",
+            }
+        )
+        resolver = _Resolver("rb-causal-001", "2026-11-02T00:00:00Z")
+        emitter = RuntimeTelemetryEmitter(identity, resolver)
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+
+        hb1 = emitter.build_event(
+            "heartbeat",
+            {"queue_lag_ms": 2.0, "delivery_lag_ms": 4.0},
+            created_at="2026-11-02T00:00:01Z",
+        )
+        summary = store.project_event(hb1)
+        self.assertNotIn("drawdown_event_id", summary)
+        self.assertNotIn("pnl_event_id", summary)
+
+        pnl_ev = emitter.build_event(
+            "pnl_snapshot",
+            {"pnl": -55.0, "pnl_as_of": "2026-11-02T00:00:10Z"},
+            created_at="2026-11-02T00:00:10Z",
+        )
+        dd_ev = emitter.build_event(
+            "drawdown_snapshot",
+            {"drawdown": 0.04, "drawdown_as_of": "2026-11-02T00:00:12Z"},
+            created_at="2026-11-02T00:00:12Z",
+        )
+        store.project_event(pnl_ev)
+        summary = store.project_event(dd_ev)
+        self.assertEqual(summary["pnl_event_id"], pnl_ev["event_id"])
+        self.assertEqual(summary["drawdown_event_id"], dd_ev["event_id"])
+
+        # Out-of-order event with older as-of never moves drawdown_event_id or pnl_event_id
+        older_dd = emitter.build_event(
+            "drawdown_snapshot",
+            {"drawdown": 0.08, "drawdown_as_of": "2026-11-02T00:00:05Z"},
+            created_at="2026-11-02T00:00:20Z",
+        )
+        older_pnl = emitter.build_event(
+            "pnl_snapshot",
+            {"pnl": -120.0, "pnl_as_of": "2026-11-02T00:00:05Z"},
+            created_at="2026-11-02T00:00:21Z",
+        )
+        store.project_event(older_dd)
+        summary = store.project_event(older_pnl)
+        self.assertEqual(summary["drawdown_event_id"], dd_ev["event_id"])
+        self.assertEqual(summary["pnl_event_id"], pnl_ev["event_id"])
+
+        # Threshold-derived echo event never moves drawdown_event_id or pnl_event_id
+        echo_dd = emitter.build_event(
+            "drawdown_snapshot",
+            {"drawdown": 0.09, "drawdown_as_of": "2026-11-02T00:00:25Z"},
+            metadata={"derived_from_threshold_evaluation": True},
+            created_at="2026-11-02T00:00:25Z",
+        )
+        echo_pnl = emitter.build_event(
+            "pnl_snapshot",
+            {"pnl": -500.0, "pnl_as_of": "2026-11-02T00:00:26Z"},
+            metadata={"derived_from_threshold_evaluation": True},
+            created_at="2026-11-02T00:00:26Z",
+        )
+        store.project_event(echo_dd)
+        summary = store.project_event(echo_pnl)
+        self.assertEqual(summary["drawdown_event_id"], dd_ev["event_id"])
+        self.assertEqual(summary["pnl_event_id"], pnl_ev["event_id"])
+
+        # Event that updates a metric but carries no event_id drops the stale {metric}_event_id
+        # instead of keeping the old one, so the value and its event never disagree.
+        no_id_dd = dict(
+            emitter.build_event(
+                "drawdown_snapshot",
+                {"drawdown": 0.042, "drawdown_as_of": "2026-11-02T00:00:30Z"},
+                created_at="2026-11-02T00:00:30Z",
+            )
+        )
+        no_id_dd.pop("event_id", None)
+        no_id_pnl = dict(
+            emitter.build_event(
+                "pnl_snapshot",
+                {"pnl": -60.0, "pnl_as_of": "2026-11-02T00:00:31Z"},
+                created_at="2026-11-02T00:00:31Z",
+            )
+        )
+        no_id_pnl["event_id"] = "   "
+        store.project_event(no_id_dd)
+        summary = store.project_event(no_id_pnl)
+        self.assertEqual(summary["drawdown"], 0.042)
+        self.assertEqual(summary["pnl"], -60.0)
+        self.assertNotIn("drawdown_event_id", summary)
+        self.assertNotIn("pnl_event_id", summary)
+
+        # Re-establish event_ids before testing binding rollover
+        dd_ev_2 = emitter.build_event(
+            "drawdown_snapshot",
+            {"drawdown": 0.043, "drawdown_as_of": "2026-11-02T00:00:35Z"},
+            created_at="2026-11-02T00:00:35Z",
+        )
+        pnl_ev_2 = emitter.build_event(
+            "pnl_snapshot",
+            {"pnl": -62.0, "pnl_as_of": "2026-11-02T00:00:36Z"},
+            created_at="2026-11-02T00:00:36Z",
+        )
+        store.project_event(dd_ev_2)
+        summary = store.project_event(pnl_ev_2)
+        self.assertEqual(summary["drawdown_event_id"], dd_ev_2["event_id"])
+        self.assertEqual(summary["pnl_event_id"], pnl_ev_2["event_id"])
+
+        # Newer binding rollover clears drawdown_event_id and pnl_event_id
+        resolver.binding_id = "rb-causal-002"
+        resolver.effective_at = "2026-11-02T00:01:00Z"
+        hb2 = emitter.build_event(
+            "heartbeat",
+            {"queue_lag_ms": 1.0, "delivery_lag_ms": 2.0},
+            created_at="2026-11-02T00:01:01Z",
+        )
+        summary = store.project_event(hb2)
+        self.assertEqual(summary["binding_id"], "rb-causal-002")
+        self.assertNotIn("drawdown_event_id", summary)
+        self.assertNotIn("pnl_event_id", summary)

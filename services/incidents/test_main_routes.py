@@ -826,6 +826,115 @@ def test_consume_drift_report_route_creates_incident_case():
     assert len(store.list_incidents()) == 1
 
 
+def test_consume_drift_report_carries_threshold_fields_in_evidence_summary():
+    from services.execution.lean_runtime.paper_runtime import (
+        RuntimeIdentity,
+        RuntimeTelemetryEmitter,
+    )
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    identity = RuntimeIdentity.from_env(
+        {
+            "PANTHEON_RUNTIME_ROLE": "paper",
+            "PANTHEON_RUNTIME_MODE": "paper",
+            "PANTHEON_RUNTIME_ID": "runtime-drift-dd-001",
+            "PANTHEON_WORKSPACE_REF": "workspace-drift-dd",
+            "PANTHEON_AUTH_PROFILE_REF": "auth-drift-dd",
+            "PANTHEON_PERSONA_ID": "persona-drift-dd",
+            "PANTHEON_SESSION_ID": "session-drift-dd",
+            "PANTHEON_TRACE_ID": "trace-drift-dd-001",
+            "PANTHEON_REQUEST_ID": "request-drift-dd-001",
+        }
+    )
+
+    class _Resolver:
+        def resolve(self):
+            return {
+                "binding_id": "binding-drift-dd-001",
+                "runtime_id": "runtime-drift-dd-001",
+                "plan_id": "plan-drift-dd-001",
+                "capital_pool_id": "pool-drift-dd-001",
+                "persona_capital_binding_id": "pcb-drift-dd-001",
+                "artifact_id": "artifact-tw-session-momentum-v1",
+                "artifact_version": "1.0.0",
+                "deployment_stage": "paper",
+                "deployment_mode": "paper",
+                "effective_at": "2026-11-02T00:00:00Z",
+            }
+
+    emitter = RuntimeTelemetryEmitter(identity, _Resolver())
+    summary_store = RuntimeSummaryProjectionStore(path=None)
+    hb_event = emitter.build_event(
+        "heartbeat",
+        {"queue_lag_ms": 2.0, "delivery_lag_ms": 4.0},
+        created_at="2026-11-02T09:00:00Z",
+    )
+    dd_event = emitter.build_event(
+        "drawdown_snapshot",
+        {"drawdown": 0.052, "drawdown_as_of": "2026-11-02T09:01:00Z"},
+        created_at="2026-11-02T09:01:00Z",
+    )
+    summary_store.project_event(hb_event)
+    summary = summary_store.project_event(dd_event)
+
+    assert summary["drawdown_event_id"] == dd_event["event_id"]
+    assert summary["drawdown_event_id"] != hb_event["event_id"]
+
+    payload = _drift_report_payload(
+        drift_report_id="drift-report-dd-125x",
+        recon_run_id="recon-run-dd-125x",
+        incident_cluster_id="drift:drawdown",
+        drift_type="pnl",
+        severity="medium",
+        scope_ref=summary["binding_id"],
+        binding_id=summary["binding_id"],
+        runtime_id=summary["runtime_id"],
+        deployment_stage=summary["deployment_stage"],
+        deployment_plan_id=summary["plan_id"],
+        capital_pool_id=summary["capital_pool_id"],
+        persona_capital_binding_id=summary["persona_capital_binding_id"],
+        artifact_id=summary["artifact_id"],
+        artifact_version=summary["artifact_version"],
+        trace_id=dd_event["trace_id"],
+        telemetry_event_ids=[summary["drawdown_event_id"]],
+        threshold_metric="rolling_drawdown_multiple",
+        observed=1.3,
+        comparator="gt",
+        threshold_value=1.25,
+        threshold_window="paper-daily-sweep",
+        policy_source="EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1;services/evolution/config/threshold_sweep_thresholds.json",
+        metrics={
+            "worst_metric": "drawdown",
+            "breached_metric_ids": ["drawdown"],
+            "threshold_metric": "rolling_drawdown_multiple",
+            "observed": 1.3,
+            "comparator": "gt",
+            "threshold_value": 1.25,
+            "threshold_window": "paper-daily-sweep",
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1;services/evolution/config/threshold_sweep_thresholds.json",
+        },
+        evidence_refs=[
+            f"telemetry_event:{summary['drawdown_event_id']}",
+            "drift_report:drift-report-dd-125x",
+            "reconciliation_record:recon-run-dd-125x",
+        ],
+    )
+    r = client.post("/api/incidents/consume-drift-report", json={"drift_report": payload})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["telemetry_event_ids"] == [dd_event["event_id"]]
+    evidence_summary = body["evidence_summary"]
+    assert "threshold_metric=rolling_drawdown_multiple" in evidence_summary
+    assert "observed=1.3" in evidence_summary
+    assert "comparator=gt" in evidence_summary
+    assert "threshold_value=1.25" in evidence_summary
+    assert "threshold_window=paper-daily-sweep" in evidence_summary
+    assert (
+        "policy_source=EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1;services/evolution/config/threshold_sweep_thresholds.json"
+        in evidence_summary
+    )
+
+
 def test_drift_report_rejects_multiple_telemetry_events():
     payload = _drift_report_payload(
         telemetry_event_ids=["evt-drift-001", "evt-drift-002"],

@@ -1,0 +1,12 @@
+{
+  "task_id": "HOSTED-D-OBSERVE-CAUSAL-METRIC-EVENT-20261102",
+  "owner": "Claude",
+  "scope": "test harness and unit fixtures only; no service code changed; no hosted observation claimed",
+  "verification": [
+    {"command": "pytest tests/unit/l12/test_hosted_domain_contract.py -q", "result": "50 passed", "exit_status": 0}
+  ],
+  "negative_cases_paused_at_drift_incident_observation": [
+    "heartbeat-only citation", "other binding", "other runtime", "threshold-derived echo", "created before fill", "non-drift cluster", "fill id cited"
+  ],
+  "unchanged": ["Loop 11 target/pool/linked_incident_id checks", "H4 decision approved/executed check", "other hosted phases"]
+}
