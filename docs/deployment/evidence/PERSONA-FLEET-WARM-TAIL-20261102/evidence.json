@@ -1,0 +1,187 @@
+{
+  "task_id": "PERSONA-FLEET-WARM-TAIL-20261102",
+  "title": "Remove sequential owner reads from the Persona fleet warm path",
+  "generated_at": "2026-11-02T02:31:00Z",
+  "base_commit": "d05cd59d9",
+  "deployed_or_hosted_acceptance_run": false,
+  "hosted_profile_reference": {
+    "profile_tree_path": "/tmp/pantheon-persona-fleet-20261029/actual-live-bff-stack-d05cd59d-20261102-tree.txt",
+    "prior_live_verify_evidence": "docs/deployment/evidence/PERSONA-FLEET-LIVE-VERIFY-20261029/evidence.json",
+    "hosted_warm_p50_ms": 643.8,
+    "hosted_warm_p95_ms": 1152.9,
+    "hosted_profile_handler_total_ms": 659.0,
+    "frontend_duplicate_cold_entry_note": "On cold entry, execute-plans fires GET /bff/management/persona-fleet?purpose=trading&data_scope=regular&archived=exclude&page_size=20 twice (1176 ms first call, 674 ms second call in PERSONA-FLEET-LIVE-VERIFY-20261029). Deduplicating that frontend request is out of scope for this backend task."
+  },
+  "top_three_critical_path_costs_before_change": [
+    {
+      "rank": 1,
+      "stage": "_list_persona_records / persona_directory_http_read + second directory snapshot",
+      "hosted_profile_tree_ms": 320.0,
+      "hosted_profile_breakdown_ms": {
+        "shared_persona_directory_list_http_read": 293.0,
+        "persona_record_for_provisioning_overlay": 26.0,
+        "second_get_persona_directory_snapshot_in_executor": 46.0
+      },
+      "local_harness_median_ms": 333.47,
+      "local_harness_breakdown_ms": {
+        "first_shared_directory_list_median_ms": 300.18,
+        "second_directory_snapshot_median_ms": 20.67
+      },
+      "root_cause": "GET /api/personas in services/persona/write_owner.py called persistent_owner._records.list_all() twice per request (once in any_private_exists() and once in persistent_owner.list()), validated and dumped all PersonaBody models each time, and _get_persona_directory_snapshot re-ran _list_persona_records and list_personas(include_market_persona_defaults=True)."
+    },
+    {
+      "rank": 2,
+      "stage": "capital_bindings_read (read_store.list_bindings in _pm12_persona_league_rows)",
+      "hosted_profile_tree_ms": 98.0,
+      "local_harness_median_ms": 95.2,
+      "root_cause": "Ran sequentially on the request handler thread inside _pm12_persona_league_rows after _list_persona_records finished instead of overlapping in _PERSONA_FLEET_READ_EXECUTOR, and used json.loads(json.dumps(...)) per binding in _deep_copy."
+    },
+    {
+      "rank": 3,
+      "stage": "telemetry_summaries_read + runtime_bindings_read",
+      "hosted_profile_tree_ms": 138.0,
+      "hosted_profile_breakdown_ms": {
+        "telemetry_summaries_read_before_league_rows": 62.0,
+        "runtime_bindings_read_in_league_rows": 52.0,
+        "second_runtime_bindings_deep_copy_in_slim_list_payload": 24.0
+      },
+      "local_harness_median_ms": 112.38,
+      "local_harness_breakdown_ms": {
+        "telemetry_summaries_read_median_ms": 60.21,
+        "runtime_bindings_read_median_ms": 52.17
+      },
+      "root_cause": "list_telemetry_summaries ran on the handler thread before _pm12_persona_league_rows (blocking all subsequent handler work), and list_runtime_bindings ran sequentially on the handler thread inside _pm12_persona_league_rows and then re-copied all bindings in _persona_fleet_slim_list_payload."
+    }
+  ],
+  "persona_owner_server_get_api_personas_ms": {
+    "hosted_profile_consistent_harness": {
+      "before": {
+        "samples_sorted": [288.24, 288.55, 288.67, 289.11, 293.93],
+        "median_ms": 288.67,
+        "p95_ms": 289.11,
+        "store_list_all_calls_per_request": 2
+      },
+      "after": {
+        "samples_sorted": [147.86, 148.03, 148.09, 148.2, 149.18],
+        "median_ms": 148.09,
+        "p95_ms": 148.2,
+        "store_list_all_calls_per_request": 1
+      },
+      "ratio_after_over_before": 0.513
+    },
+    "zero_delay_cpu_harness": {
+      "before": {
+        "samples_sorted": [16.84, 17.09, 17.16, 17.61, 17.64],
+        "median_ms": 17.16,
+        "p95_ms": 17.61,
+        "store_list_all_calls_per_request": 2
+      },
+      "after": {
+        "samples_sorted": [11.78, 12.13, 12.15, 12.68, 13.28],
+        "median_ms": 12.15,
+        "p95_ms": 12.68,
+        "store_list_all_calls_per_request": 1
+      },
+      "ratio_after_over_before": 0.708
+    }
+  },
+  "fleet_persona_directory_read_ms": {
+    "hosted_profile_consistent_harness": {
+      "before": {
+        "first_shared_directory_list_median_ms": 300.18,
+        "second_directory_snapshot_median_ms": 20.67,
+        "combined_samples_sorted": [317.32, 320.85, 333.47, 336.92, 379.85],
+        "combined_median_ms": 333.47,
+        "combined_p95_ms": 336.92
+      },
+      "after": {
+        "first_shared_directory_list_median_ms": 151.77,
+        "second_directory_snapshot_median_ms": 1.32,
+        "combined_samples_sorted": [152.14, 152.52, 152.88, 153.76, 155.37],
+        "combined_median_ms": 152.88,
+        "combined_p95_ms": 153.76
+      },
+      "ratio_after_over_before": 0.458,
+      "less_than_half_of_before": true
+    },
+    "zero_delay_cpu_harness": {
+      "before": {
+        "first_shared_directory_list_median_ms": 28.57,
+        "second_directory_snapshot_median_ms": 21.74,
+        "combined_samples_sorted": [47.57, 49.38, 50.34, 50.85, 53.73],
+        "combined_median_ms": 50.34,
+        "combined_p95_ms": 50.85
+      },
+      "after": {
+        "first_shared_directory_list_median_ms": 16.04,
+        "second_directory_snapshot_median_ms": 1.35,
+        "combined_samples_sorted": [16.59, 17.04, 17.94, 18.05, 84.68],
+        "combined_median_ms": 17.94,
+        "combined_p95_ms": 18.05
+      },
+      "ratio_after_over_before": 0.356,
+      "less_than_half_of_before": true
+    }
+  },
+  "fleet_function_total_ms": {
+    "equal_row_count_parameters": {
+      "query": "purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+      "row_count_returned": 9,
+      "total_personas_in_store": 136,
+      "archived_total": 127
+    },
+    "hosted_profile_consistent_harness": {
+      "before": {
+        "samples_sorted": [562.75, 566.43, 566.59, 571.44, 653.48],
+        "median_ms": 566.59,
+        "p95_ms": 571.44,
+        "cold_source_truth_sample_ms": 653.48
+      },
+      "after": {
+        "samples_sorted": [393.7, 394.9, 395.63, 395.8, 396.55],
+        "median_ms": 395.63,
+        "p95_ms": 395.8
+      },
+      "reduction_median_ms": 170.96,
+      "reduction_pct": 30.17
+    },
+    "zero_delay_cpu_harness": {
+      "before": {
+        "samples_sorted": [114.66, 115.65, 117.12, 118.42, 134.8],
+        "median_ms": 117.12,
+        "p95_ms": 118.42
+      },
+      "after": {
+        "samples_sorted": [69.11, 69.67, 71.55, 72.0, 86.44],
+        "median_ms": 71.55,
+        "p95_ms": 72.0
+      },
+      "reduction_median_ms": 45.57,
+      "reduction_pct": 38.91
+    }
+  },
+  "next_critical_path_after_parallelization": {
+    "dominant_prefetch_read": "evolution_decisions_read (_fleet_evolution_decisions -> GET /api/evolution/proposals)",
+    "hosted_profile_tree_ms": 374.0,
+    "local_harness_median_ms": 372.6,
+    "other_overlapping_prefetch_reads_ms": {
+      "incidents_read": 242.48,
+      "provisioning_ledger_read": 208.15,
+      "persona_directory_http_read": 152.77,
+      "routed_strategy_counts_read": 115.15,
+      "capital_bindings_read": 95.29,
+      "telemetry_summaries_read": 60.23,
+      "runtime_bindings_read": 52.23
+    },
+    "post_join_cpu_assembly_ms": 23.03,
+    "explanation": "Once persona directory (152.8 ms), capital bindings (95.3 ms), runtime bindings (52.2 ms), and telemetry summaries (60.2 ms) run concurrently in _PERSONA_FLEET_READ_EXECUTOR alongside provisioning (208.2 ms), strategy counts (115.2 ms), incidents (242.5 ms), and evolution decisions (372.6 ms), the fleet function finishes in ~395.6 ms (bounded by the 372.6 ms evolution decisions read plus ~23 ms of post-join ranking/projection CPU)."
+  },
+  "validation": {
+    "commands": [
+      "PYTHONPATH=.:services/control-plane/bff ./.venv-pantheon/bin/python3 -m pytest services/persona/test_persona_owner_read_roles.py services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py -q"
+    ],
+    "passed": 124,
+    "skipped": 8,
+    "failed": 0
+  }
+}
