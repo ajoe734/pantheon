@@ -1937,6 +1937,41 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
             staging_sanitize.verify_security_and_safety_readbacks(sec_readback)["security_and_safety_readback_verified"]
         )
 
+    def test_gate_failure_redaction_strips_secrets_long_tokens_and_caps_at_600(self) -> None:
+        jwt_val = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcGVyYXRvciIsInRlbmFudCI6InN0ZyJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        sk_val = "sk-1234567890abcdefghijklmnop"
+        ghp_val = "ghp_1234567890abcdefghijklmnopqrstuv"
+        aiza_val = "AIzaSyA1234567890abcdefghijk_LMNOPQRST"
+        long_41 = "A" * 41
+        exact_40_sha = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4"
+        raw_message = (
+            f"rollback served_backend_commit {exact_40_sha} mismatch; "
+            f"jwt={jwt_val} key={sk_val} gh={ghp_val} gcp={aiza_val} "
+            f"Authorization: Bearer {jwt_val} "
+            f"dsn=postgresql://pantheon_stg:superSecretPgPass99@postgres:5432/pantheon_staging "
+            f"contact=ops.secret@example.com long_id={long_41} "
+            + ("tail-diagnostic-padding " * 35)
+        )
+        redacted = staging_sanitize.redact_gate_failure_message(
+            raw_message,
+            error_code="ROLLBACK_VERIFICATION_FAILED",
+            max_length=600,
+        )
+        self.assertLessEqual(len(redacted), 600)
+        self.assertIn(exact_40_sha, redacted)
+        self.assertIn("rollback served_backend_commit", redacted)
+        for forbidden in (
+            jwt_val,
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            sk_val,
+            ghp_val,
+            aiza_val,
+            "superSecretPgPass99",
+            "ops.secret@example.com",
+            long_41,
+        ):
+            self.assertNotIn(forbidden, redacted)
+
 
 class StagingControllerLifecycleTests(unittest.TestCase):
     def _unlock_vm_env_dir(self) -> None:
@@ -4139,6 +4174,124 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertIn("LIVE_GATE_COLLECTION_FAILED", res_fail.stderr)
         self.assertIn("PRODUCT_OWNER_UNSERVED", res_fail.stderr)
         self.assertIn("unserved_product_owner_services: agora-interaction-worker,registry", res_fail.stderr)
+
+    def test_collect_verify_gates_failure_reports_redacted_message_and_uploads_gate_failure_summary(self) -> None:
+        subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        jwt_secret = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdGctb3AiLCJ0ZW5hbnRfaWQiOiJ0ZW5hbnQtYWxwaGEifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        sk_secret = "sk-9876543210abcdefghijklmnop"
+        ghp_secret = "ghp_9876543210abcdefghijklmnopqrstuv"
+        aiza_secret = "AIzaSyB9876543210abcdefghijk_LMNOPQRST"
+        long_token = "tok_" + ("Z" * 42)
+        fail_payload = json.dumps(
+            {
+                "status": "error",
+                "step": "collect-verify-gates",
+                "error_code": "ROLLBACK_VERIFICATION_FAILED",
+                "message": (
+                    f"rollback duration must be <= 120 seconds (got 124.512); "
+                    f"auth=Bearer {jwt_secret} key={sk_secret} gh={ghp_secret} gcp={aiza_secret} "
+                    f"long={long_token} email=leaked.operator@example.com "
+                    + ("extra-context-segment " * 35)
+                ),
+                "rollback_duration_seconds": 124.512,
+                "bff_healthy": True,
+                "phase_timings_seconds": {
+                    "drain": 4.12,
+                    "baseline_up": 41.3,
+                    "owners_healthy": 68.4,
+                    "readyz_200": 6.2,
+                    "readback": 4.492,
+                },
+            }
+        )
+        fail_wrapper = self.tmp_path / "rollback-fail-gcloud.py"
+        fail_wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] == ['compute', 'ssh'] and any('collect-gates' in a for a in args):\n"
+            "    print('raw-ssh-noise-line token=sk-rawsshsecret1234567890abcd')\n"
+            f"    print({fail_payload!r})\n"
+            "    raise SystemExit(1)\n"
+            f"os.execv({str(self.gcloud_bin)!r}, [{str(self.gcloud_bin)!r}] + args)\n",
+            encoding="utf-8",
+        )
+        fail_wrapper.chmod(0o755)
+        ver = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", GCLOUD_BIN=str(fail_wrapper)),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(ver.returncode, 0)
+        die_doc = json.loads(ver.stderr.strip().splitlines()[-1])
+        self.assertEqual(die_doc["error_code"], "LIVE_GATE_COLLECTION_FAILED")
+        self.assertIn("ROLLBACK_VERIFICATION_FAILED", die_doc["message"])
+        self.assertIn("rollback duration must be <= 120 seconds (got 124.512)", die_doc["message"])
+        self.assertIn("rollback_duration_seconds=124.512", die_doc["message"])
+        self.assertIn("bff_healthy=true", die_doc["message"])
+
+        summary_file = self.state_dir / "evidence" / "pantheon-20261024-001-gate-failure-summary.json"
+        self.assertTrue(summary_file.is_file())
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        self.assertEqual(summary["status"], "error")
+        self.assertEqual(summary["step"], "collect-verify-gates")
+        self.assertEqual(summary["error_code"], "ROLLBACK_VERIFICATION_FAILED")
+        self.assertEqual(summary["rollback_duration_seconds"], 124.512)
+        self.assertIs(summary["bff_healthy"], True)
+        self.assertEqual(
+            set(summary["phase_timings_seconds"].keys()),
+            {"drain", "baseline_up", "owners_healthy", "readyz_200", "readback"},
+        )
+        self.assertLessEqual(len(summary["message"]), 600)
+        self.assertIn("rollback duration must be <= 120 seconds (got 124.512)", summary["message"])
+
+        # Raw SSH output must never be placed in the uploaded evidence directory.
+        evidence_files = [p.name for p in (self.state_dir / "evidence").iterdir()]
+        self.assertFalse(any("ssh" in name or name.endswith(".out") for name in evidence_files), evidence_files)
+
+        combined_public = ver.stderr + "\n" + summary_file.read_text(encoding="utf-8")
+        for secret_item in (
+            jwt_secret,
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            sk_secret,
+            "sk-rawsshsecret1234567890abcd",
+            ghp_secret,
+            aiza_secret,
+            long_token,
+            "leaked.operator@example.com",
+            "raw-ssh-noise-line",
+        ):
+            self.assertNotIn(secret_item, combined_public)
+
+    def test_rollback_readback_records_per_phase_timings_summing_to_at_most_rollback_duration(self) -> None:
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        gate_dir = self.state_dir / "observed-gates" / "pantheon-20261024-001"
+        rb_readback = json.loads((gate_dir / "rollback-readback.json").read_text(encoding="utf-8"))
+        self.assertIn("phase_timings_seconds", rb_readback)
+        timings = rb_readback["phase_timings_seconds"]
+        expected_phases = ("drain", "baseline_up", "owners_healthy", "readyz_200", "readback")
+        self.assertEqual(set(timings.keys()), set(expected_phases))
+        for phase_name in expected_phases:
+            val = timings[phase_name]
+            self.assertIsInstance(val, (int, float))
+            self.assertNotIsInstance(val, bool)
+            self.assertGreaterEqual(val, 0.0, phase_name)
+        self.assertLessEqual(sum(timings.values()), rb_readback["rollback_duration_seconds"])
+        self.assertLessEqual(rb_readback["rollback_duration_seconds"], 120.0)
+
+        ver_summary = json.loads(ver.stdout)
+        self.assertEqual(
+            ver_summary["gates"]["exact_pair_rollback"]["phase_timings_seconds"],
+            timings,
+        )
 
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):

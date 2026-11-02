@@ -616,6 +616,8 @@ PY
     REMOTE_ENV_EXPORTS="$(build_remote_env_exports)"
     REMOTE_VERIFY_CMD="set -euo pipefail; ${REMOTE_ENV_EXPORTS}'${COLLECTOR_BIN}' --release-id '${RELEASE_ID}'"
     SSH_VERIFY_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-ssh-verify.out"
+    GATE_FAILURE_SUMMARY_FILE="${STATE_DIR}/evidence/${RELEASE_ID}-gate-failure-summary.json"
+    rm -f "${GATE_FAILURE_SUMMARY_FILE}"
     install -m 0600 /dev/null "${SSH_VERIFY_OUT_FILE}"
     if ! "${GCLOUD_BIN}" compute ssh "${VM_TARGET}" \
         --project="${STAGING_GCP_PROJECT_ID}" \
@@ -623,46 +625,55 @@ PY
         --tunnel-through-iap \
         --quiet \
         --command="${REMOTE_VERIFY_CMD}" >"${SSH_VERIFY_OUT_FILE}" 2>&1; then
-      REMOTE_ERROR_CODES="$(grep -oE '"error_code" *: *"[A-Z][A-Z0-9_]{2,63}"' "${SSH_VERIFY_OUT_FILE}" | sed -E 's/.*"([A-Z0-9_]+)"$/\1/' | sort -u | tr '\n' ' ' || true)"
-      # Only for PRODUCT_OWNER_UNSERVED: keep the structural service-name list (every name validated
-      # against PRODUCT_OWNER_IMAGE_KEYS); anything malformed/unknown stays generic. Never echo raw output.
-      UNSERVED_OWNERS="$(
-        SSH_VERIFY_OUT_FILE="${SSH_VERIFY_OUT_FILE}" PYTHONPATH="${REPO_ROOT}" python3 -I - <<'PY' 2>/dev/null || true
+      mkdir -p "${STATE_DIR}/evidence"
+      FAILURE_DIE_MSG="$(
+        SSH_VERIFY_OUT_FILE="${SSH_VERIFY_OUT_FILE}" \
+        GATE_FAILURE_SUMMARY_FILE="${GATE_FAILURE_SUMMARY_FILE}" \
+        RELEASE_ID="${RELEASE_ID}" \
+        VM_TARGET="${VM_TARGET}" \
+        PYTHONPATH="${REPO_ROOT}" \
+        python3 -I - <<'PY' 2>/dev/null || true
 import json
 import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, os.environ["PYTHONPATH"])
-from scripts.deploy.staging_sanitize import PRODUCT_OWNER_IMAGE_KEYS
+from scripts.deploy.staging_sanitize import summarize_gate_collection_failure
 
-prefix = "Product owners not running/healthy: "
-allowed = {k.replace("_", "-") for k in PRODUCT_OWNER_IMAGE_KEYS}
-raw_lines = Path(os.environ["SSH_VERIFY_OUT_FILE"]).read_text(encoding="utf-8", errors="replace").splitlines()
-for line in reversed(raw_lines):
-    line = line.strip()
-    if not (line.startswith("{") and line.endswith("}")):
-        continue
-    try:
-        doc = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    if not isinstance(doc, dict) or doc.get("error_code") != "PRODUCT_OWNER_UNSERVED":
-        continue
-    msg = doc.get("message")
-    if not isinstance(msg, str) or not msg.startswith(prefix):
-        break
-    names = msg[len(prefix):].split(", ")
-    if names and all(n in allowed for n in names):
-        print(",".join(sorted(set(names))))
-    break
+raw_output = Path(os.environ["SSH_VERIFY_OUT_FILE"]).read_text(encoding="utf-8", errors="replace")
+summary = summarize_gate_collection_failure(raw_output, release_id=os.environ["RELEASE_ID"])
+summary_path = Path(os.environ["GATE_FAILURE_SUMMARY_FILE"])
+summary_path.parent.mkdir(parents=True, exist_ok=True)
+summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+codes_list = summary.get("remote_error_codes") or []
+codes_str = " ".join(codes_list) if codes_list else str(summary.get("error_code") or "unknown")
+msg = str(summary.get("message") or "").strip()
+msg_suffix = f"; remote message: {msg}" if msg else ""
+
+rb_meta = []
+if "rollback_duration_seconds" in summary:
+    rb_meta.append(f"rollback_duration_seconds={summary['rollback_duration_seconds']}")
+if "bff_healthy" in summary:
+    rb_meta.append(f"bff_healthy={str(summary['bff_healthy']).lower()}")
+rb_suffix = f" ({', '.join(rb_meta)})" if rb_meta else ""
+
+unserved = str(summary.get("unserved_product_owner_services") or "").strip()
+unserved_suffix = f"; unserved_product_owner_services: {unserved}" if unserved else ""
+
+vm_target = os.environ["VM_TARGET"]
+print(
+    f"Failed to collect live verification gates from {vm_target} via IAP SSH; "
+    f"remote error_code: {codes_str}{msg_suffix}{rb_suffix}{unserved_suffix}"
+)
 PY
       )"
-      UNSERVED_SUFFIX=""
-      if [[ -n "${UNSERVED_OWNERS}" ]]; then
-        UNSERVED_SUFFIX="; unserved_product_owner_services: ${UNSERVED_OWNERS}"
+      if [[ -z "${FAILURE_DIE_MSG}" ]]; then
+        REMOTE_ERROR_CODES="$(grep -oE '"error_code" *: *"[A-Z][A-Z0-9_]{2,63}"' "${SSH_VERIFY_OUT_FILE}" | sed -E 's/.*"([A-Z0-9_]+)"$/\1/' | sort -u | tr '\n' ' ' || true)"
+        FAILURE_DIE_MSG="Failed to collect live verification gates from ${VM_TARGET} via IAP SSH; remote error_code: ${REMOTE_ERROR_CODES:-unknown}"
       fi
-      die_json "LIVE_GATE_COLLECTION_FAILED" "Failed to collect live verification gates from ${VM_TARGET} via IAP SSH; remote error_code: ${REMOTE_ERROR_CODES:-unknown}${UNSERVED_SUFFIX}"
+      die_json "LIVE_GATE_COLLECTION_FAILED" "${FAILURE_DIE_MSG}"
     fi
 
     GATE_OUT_DIR="${STATE_DIR}/observed-gates/${RELEASE_ID}"
