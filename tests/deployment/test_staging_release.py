@@ -987,6 +987,14 @@ if args[:3] == ["compute", "disks", "list"]:
 
 if args[:3] == ["compute", "disks", "delete"]:
     name = args[3]
+    in_use = [
+        i["name"]
+        for i in state.get("instances", [])
+        if any(d.get("name") == name for d in (i.get("disks") or []))
+    ]
+    if in_use:
+        print(f"The disk resource '{name}' is already being used by '{in_use[0]}'", file=sys.stderr)
+        raise SystemExit(1)
     if os.environ.get("GCLOUD_SIMULATE_LINGERING_DELETE") != "true":
         state["disks"] = [d for d in state["disks"] if d["name"] != name]
         save_state()
@@ -2984,6 +2992,47 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(ev["reason"], "partial_create_failure")
         self.assertTrue(ev["post_delete_readback_verified"])
         self.assertEqual(len(ev["inventory_snapshot"]), 3)
+
+    def test_teardown_rebuilt_inventory_deletes_vm_disks_then_address(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        shutil.rmtree(self.state_dir)  # no journal: inventory is rebuilt from the cloud
+        self.gcloud_log_file.write_text("", encoding="utf-8")
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001")
+        order = ["instance", "disk", "disk", "address"]
+
+        no_gcloud_dry = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "teardown", "--dry-run", "--result", "success"],
+            env={**env, "GCLOUD_BIN": ""}, capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(json.loads(no_gcloud_dry.stdout)["status"], "already_absent")
+
+        with self.subTest("dry_run"):
+            dry = subprocess.run(
+                [str(DESTROY_SCRIPT), "--mode", "teardown", "--dry-run", "--result", "success"],
+                env=env, capture_output=True, text=True, check=True,
+            )
+            dry_json = json.loads(dry.stdout)
+            self.assertEqual(dry_json["status"], "destroyed")
+            self.assertTrue(dry_json["dry_run"])
+            self.assertEqual([d["type"] for d in dry_json["deleted_resources"]], order)
+            self.assertNotIn(" delete ", self.gcloud_log_file.read_text(encoding="utf-8"))
+            cloud = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+            self.assertEqual((len(cloud["instances"]), len(cloud["disks"]), len(cloud["addresses"])), (1, 2, 1))
+
+        with self.subTest("live"):
+            live = subprocess.run(
+                [str(DESTROY_SCRIPT), "--mode", "teardown", "--result", "success"],
+                env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(live.returncode, 0, live.stderr)
+            live_json = json.loads(live.stdout)
+            self.assertEqual(live_json["status"], "destroyed")
+            self.assertTrue(live_json["post_delete_readback_verified"])
+            self.assertEqual([d["type"] for d in live_json["deleted_resources"]], order)
+            deletes = [c.split()[1] for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines() if " delete " in c]
+            self.assertEqual(deletes, ["instances", "disks", "disks", "addresses"])
+            cloud = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+            self.assertEqual((cloud["instances"], cloud["disks"], cloud["addresses"]), ([], [], []))
 
     def test_cross_run_orphan_discovery_and_preexisting_iam_preservation(self) -> None:
         # 1. Orphan sweep is inert when STAGING_ORPHAN_CLEANUP_ENABLED != true
