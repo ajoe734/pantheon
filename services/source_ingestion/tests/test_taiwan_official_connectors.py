@@ -448,7 +448,6 @@ def test_bounded_official_refresh_prioritizes_active_symbols_before_global_cap(
             "request": {
                 "dataset": "tw_price_daily",
                 "venues": ["TWSE", "TPEx"],
-                "history_trading_days": 2,
                 "payloads": {"TWSE": twse_payload, "TPEx": tpex_payload},
                 "history_payloads": {
                     "2330.TWSE": TWSE_PRICE_HISTORY_PAYLOAD,
@@ -528,7 +527,6 @@ def test_bounded_official_refresh_fails_closed_without_two_distinct_closes(
                 "request": {
                     "dataset": "tw_price_daily",
                     "venues": ["TWSE"],
-                    "history_trading_days": 2,
                     "payloads": {"TWSE": TWSE_PRICE_PAYLOAD},
                     "history_payloads": {"2330.TWSE": one_day_history},
                 },
@@ -1216,7 +1214,6 @@ def test_bounded_official_refresh_unions_active_paper_and_history_symbols(monkey
             "request": {
                 "dataset": "tw_price_daily",
                 "venues": ["TWSE"],
-                "history_trading_days": 2,
                 "payloads": {"TWSE": twse_today},
                 "history_payloads": {
                     "2330.TWSE": TWSE_PRICE_HISTORY_PAYLOAD,
