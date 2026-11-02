@@ -1,0 +1,6 @@
+{
+  "task": "TW-REFRESH-MONTH-BOUNDARY-ANCHOR-20261102",
+  "change": "fetch_price_history_records prepends the current Asia/Taipei month window when it is later than the openapi anchor month; injectable today_provider; empty/non-OK current-month window tolerated; no future months requested",
+  "tests": "pytest services/source_ingestion/tests: 955 passed (excl. test_controller_worker) plus test_controller_worker run separately; 3 new month-boundary tests in test_taiwan_official_connectors.py",
+  "hosted_verification": "pending coordinator after deploy"
+}

@@ -373,6 +373,7 @@ def test_taiwan_official_history_fetch_is_bounded_and_uses_prior_month(
         "TWSE",
         anchor_date="2026-06-10",
         trace_id="trace-bounded-two-month-history",
+        today_provider=lambda: "2026-06-10",
     )
 
     assert calls == ["2026-06-01", "2026-05-01"]
@@ -1336,3 +1337,108 @@ def test_taiwan_official_adapter_binds_emergency_closure_v2_for_oct22_price() ->
         assert "2026-10-23" in evidence["holidays"]
         assert "2026-10-23" not in evidence["trading_days"]
         assert evidence["trading_days"] == ["2026-10-22", "2026-10-27", "2026-10-28"]
+
+
+_NOV_BOUNDARY_FIELDS = TWSE_PRICE_HISTORY_PAYLOAD["fields"]
+
+
+def _patch_month_boundary_history(monkeypatch, *, november_rows, calls):
+    def fake_fetch(self, symbol, venue, *, anchor_date, timeout_seconds=20.0):
+        del timeout_seconds
+        calls.append(anchor_date)
+        endpoint = self.price_history_endpoint(symbol, venue, anchor_date=anchor_date)
+        if anchor_date == "2026-11-01":
+            if not november_rows:
+                return {"stat": "很抱歉，沒有符合條件的資料!"}, endpoint
+            return {
+                "stat": "OK",
+                "date": "20261102",
+                "title": "115年11月 2330 台積電 各日成交資訊",
+                "fields": _NOV_BOUNDARY_FIELDS,
+                "data": november_rows,
+            }, endpoint
+        assert anchor_date == "2026-10-01"
+        return {
+            "stat": "OK",
+            "date": "20261001",
+            "title": "115年10月 2330 台積電 各日成交資訊",
+            "fields": _NOV_BOUNDARY_FIELDS,
+            "data": [
+                ["115/10/29", "20,000,000", "1", "2,360.00", "2,380.00", "2,350.00", "2,365.00", "+5.00", "1", ""],
+                ["115/10/30", "20,000,000", "1", "2,365.00", "2,380.00", "2,360.00", "2,370.00", "+5.00", "1", ""],
+            ],
+        }, endpoint
+
+    monkeypatch.setattr(TaiwanOfficialMarketDatasetAdapter, "fetch_price_history_payload", fake_fetch)
+    monkeypatch.setattr(
+        "services.source_ingestion.connectors.taiwan_official._taipei_today",
+        lambda: "2026-11-02",
+    )
+
+
+def test_bounded_refresh_fetches_current_month_when_openapi_row_lags(monkeypatch) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW")
+    monkeypatch.delenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS", raising=False)
+    calls: list[str] = []
+    _patch_month_boundary_history(
+        monkeypatch,
+        november_rows=[
+            ["115/11/02", "20,000,000", "1", "2,370.00", "2,380.00", "2,320.00", "2,330.00", "-40.00", "1", ""],
+        ],
+        calls=calls,
+    )
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=100)
+    records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 100},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE"],
+                "payloads": {
+                    "TWSE": [
+                        {"Date": "1151030", "Code": "2330", "Name": "台積電", "ClosingPrice": "2370.00"}
+                    ]
+                },
+                "history_trading_days": 3,
+            },
+            "max_records": 100,
+        },
+        trace_id="trace-month-boundary",
+    )
+
+    assert calls == ["2026-11-01", "2026-10-01"]
+    dates = [record.metadata["event_time"] for record in records]
+    assert dates == ["2026-10-29", "2026-10-30", "2026-11-02"]
+    latest = records[-1].metadata["normalized_row"]
+    assert latest["date"] == "2026-11-02"
+    assert latest["close"] == 2330.0
+
+
+def test_bounded_refresh_tolerates_empty_current_month_window(monkeypatch) -> None:
+    calls: list[str] = []
+    _patch_month_boundary_history(monkeypatch, november_rows=[], calls=calls)
+    records = TaiwanOfficialMarketDatasetAdapter(max_records=10).fetch_price_history_records(
+        "2330.TWSE",
+        "TWSE",
+        anchor_date="2026-10-30",
+        trace_id="trace-empty-current-month",
+    )
+
+    assert calls == ["2026-11-01", "2026-10-01"]
+    assert {record.metadata["event_time"] for record in records} == {"2026-10-29", "2026-10-30"}
+
+
+def test_history_fetch_never_requests_months_after_current_taipei_month(monkeypatch) -> None:
+    calls: list[str] = []
+    _patch_month_boundary_history(monkeypatch, november_rows=[], calls=calls)
+    TaiwanOfficialMarketDatasetAdapter(max_records=10).fetch_price_history_records(
+        "2330.TWSE",
+        "TWSE",
+        anchor_date="2026-10-30",
+        trace_id="trace-no-future",
+        today_provider=lambda: "2026-10-31",
+    )
+    assert calls == ["2026-10-01"]
