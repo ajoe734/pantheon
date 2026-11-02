@@ -1688,7 +1688,11 @@ def _evaluate_persona_provisioning_status(
                     if isinstance(value, dict)
                     and str(value.get("plan_id") or "") == plan_id
                 ]
-            else:
+            if not authoritative_bindings:
+                # The pass-wide batch is only an optimisation.  When it holds
+                # nothing for this plan (failed or stale list_all), read the
+                # plan directly exactly as the operator route does, so the
+                # background pass never decides on a weaker readback.
                 client = _runtime_manager_client()
                 authoritative_bindings = [
                     value
@@ -1807,36 +1811,48 @@ def _evaluate_persona_provisioning_status(
     monitoring_sessions: List[Dict[str, Any]] = []
     worker_identity_conflict = False
     if binding_ok and runtime_id and binding_id:
-        try:
-            owner_sessions = (
-                all_monitoring_sessions
-                if all_monitoring_sessions is not None
-                else _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions()
-            )
-        except Exception as exc:
-            log.warning(
-                "Failed to query paper worker sessions for %s: %s",
-                persona_id,
-                exc,
-            )
-            _append_persona_reconcile_diagnostic(diagnostics, "paper_runtime_manager")
-            owner_sessions = []
-        for s in owner_sessions:
-            # The paper-fleet reconciler owns worker sessions and joins them to
-            # RuntimeBinding by runtime_id + binding_id.  It does not duplicate
-            # Persona identity into the session.  Persona identity is instead
-            # proven above from the authoritative RuntimeBinding metadata.  If
-            # a future session does carry persona_id, treat a conflicting value
-            # as fail-closed rather than ignoring it.
-            s_pid = str(s.get("persona_id") or "").strip()
-            s_rtid = str(s.get("runtime_id") or "").strip()
-            s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
-            s_pool_id = str(s.get("capital_pool_id") or "").strip()
-            if s_rtid == runtime_id and s_bid == binding_id:
-                if (s_pid and s_pid != persona_id) or s_pool_id != capital_pool_id:
-                    worker_identity_conflict = True
-                else:
-                    monitoring_sessions.append(s)
+
+        def _join_owner_sessions(owner_sessions: List[Dict[str, Any]]) -> bool:
+            conflict = False
+            joined: List[Dict[str, Any]] = []
+            for s in owner_sessions:
+                # The paper-fleet reconciler owns worker sessions and joins
+                # them to RuntimeBinding by runtime_id + binding_id.  It does
+                # not duplicate Persona identity into the session.  Persona
+                # identity is instead proven above from the authoritative
+                # RuntimeBinding metadata.  If a future session does carry
+                # persona_id, treat a conflicting value as fail-closed rather
+                # than ignoring it.
+                s_pid = str(s.get("persona_id") or "").strip()
+                s_rtid = str(s.get("runtime_id") or "").strip()
+                s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
+                s_pool_id = str(s.get("capital_pool_id") or "").strip()
+                if s_rtid == runtime_id and s_bid == binding_id:
+                    if (s_pid and s_pid != persona_id) or s_pool_id != capital_pool_id:
+                        conflict = True
+                    else:
+                        joined.append(s)
+            monitoring_sessions[:] = joined
+            return conflict
+
+        def _read_owner_sessions() -> List[Dict[str, Any]]:
+            try:
+                return _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions()
+            except Exception as exc:
+                log.warning(
+                    "Failed to query paper worker sessions for %s: %s",
+                    persona_id,
+                    exc,
+                )
+                _append_persona_reconcile_diagnostic(diagnostics, "paper_runtime_manager")
+                return []
+
+        if all_monitoring_sessions is not None:
+            worker_identity_conflict = _join_owner_sessions(all_monitoring_sessions)
+        if all_monitoring_sessions is None or not monitoring_sessions:
+            # A pass-wide batch that holds no worker for this binding (failed
+            # or stale) is re-read directly, as the operator route does.
+            worker_identity_conflict = _join_owner_sessions(_read_owner_sessions())
 
     max_heartbeat_age = max(
         1,
@@ -3928,12 +3944,16 @@ def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, An
 
 # --- _persona_readback_snapshot ---
 def _persona_readback_snapshot() -> Tuple[
-    Dict[str, Dict[str, Any]],
+    Optional[Dict[str, Dict[str, Any]]],
     Optional[Any],
-    List[Dict[str, Any]],
+    Optional[List[Dict[str, Any]]],
 ]:
-    """Fetch owner readbacks off the async event loop for Persona projections."""
-    all_bindings: Dict[str, Dict[str, Any]] = {}
+    """Fetch owner readbacks off the async event loop for Persona projections.
+
+    A failed batch read is ``None`` (unknown), never an empty authoritative
+    result: the evaluator then reads that owner directly per Persona.
+    """
+    all_bindings: Optional[Dict[str, Dict[str, Any]]] = {}
     try:
         client = _runtime_manager_client()
         for binding in client.list_all():
@@ -3941,7 +3961,7 @@ def _persona_readback_snapshot() -> Tuple[
             if binding_id:
                 all_bindings[str(binding_id)] = binding
     except Exception as exc:
-        all_bindings = {}
+        all_bindings = None
         log.warning("Failed to batch list runtime bindings: %s", exc)
 
     all_cron_registrations: Optional[Any] = None
@@ -3954,7 +3974,7 @@ def _persona_readback_snapshot() -> Tuple[
             all_cron_registrations = registrar._list_jobs(runtime)
     except Exception as exc:
         log.warning("Failed to batch list persona cron registrations: %s", exc)
-    monitoring_sessions: List[Dict[str, Any]] = []
+    monitoring_sessions: Optional[List[Dict[str, Any]]] = None
     try:
         monitoring_sessions = (
             _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions()
@@ -3968,7 +3988,13 @@ def _persona_readback_snapshot() -> Tuple[
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
 
-    snapshot: Optional[Tuple[Dict[str, Dict[str, Any]], Optional[Any], List[Dict[str, Any]]]] = None
+    snapshot: Optional[
+        Tuple[
+            Optional[Dict[str, Dict[str, Any]]],
+            Optional[Any],
+            Optional[List[Dict[str, Any]]],
+        ]
+    ] = None
     reconciled = 0
     for raw in _list_persona_records():
         state = str(raw.get("lifecycle_state") or raw.get("state") or "").strip()
@@ -3979,7 +4005,7 @@ def _reconcile_persona_provisioning_once() -> int:
             continue
         if state == "provisioning" and snapshot is None:
             snapshot = _persona_readback_snapshot()
-        all_bindings, all_cron_registrations, monitoring_sessions = snapshot or ({}, None, [])
+        all_bindings, all_cron_registrations, monitoring_sessions = snapshot or (None, None, None)
         try:
             _evaluate_persona_provisioning_status(
                 persona_id,
