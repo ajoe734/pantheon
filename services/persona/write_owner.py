@@ -16,11 +16,12 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrllibRequest, urlopen
 
 from fastapi import FastAPI, Header, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.foundation.reliable_delivery import (
@@ -454,9 +455,12 @@ def resolve_persona_tenant_scope(
     authorization: str | None,
     requested_tenant: str | None = None,
     required_roles: frozenset[str] = _AUTHENTICATED_READ_ROLES,
+    *,
+    authority: PersonaInboundAuthority | None = None,
 ) -> tuple[PersonaInboundAuthority, str]:
     """Authenticate and select only a tenant admitted by verified claims."""
-    authority = _authenticate_persona_mutation(authorization, required_roles)
+    if authority is None:
+        authority = _authenticate_persona_mutation(authorization, required_roles)
     if authority.token_kind == "service":
         default = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
         chosen = str(requested_tenant or "").strip() or default
@@ -500,8 +504,8 @@ def _require_owner_persona(
         tenant = raw.get("tenant_id")
         if not tenant:
             raise PersonaAuthorityError("FORBIDDEN", "Persona has no tenant binding", 403)
-        resolve_persona_tenant_scope(authorization, tenant)
-    return authority, owner.get(persona_id)
+        resolve_persona_tenant_scope(authorization, tenant, authority=authority)
+    return authority, PersonaBody.model_validate(raw)
 
 
 def _bind_authenticated_actor(
@@ -759,6 +763,20 @@ class AdvancePersonaLifecycleRequest(BaseModel):
     governance_decision_id: str | None = Field(default=None, min_length=1)
 
 
+_PERSONA_BODY_KEYS = frozenset(PersonaBody.model_fields.keys())
+
+
+def _persona_record_to_json(record: Mapping[str, Any]) -> dict[str, Any]:
+    if (
+        isinstance(record, dict)
+        and record.keys() == _PERSONA_BODY_KEYS
+        and record.get("lifecycle_state") in _LIFECYCLE_TRANSITIONS
+        and record.get("status") in _ADMIN_STATUSES
+    ):
+        return record
+    return PersonaBody.model_validate(record).model_dump(mode="json")
+
+
 def _is_private_persona(record: Any) -> bool:
     tenant = record.tenant_id if isinstance(record, PersonaBody) else (record.get("tenant_id") if isinstance(record, dict) else None)
     if bool(tenant and str(tenant).strip()):
@@ -816,13 +834,42 @@ class PersistentPersonaOwner:
         return PersonaBody.model_validate(record)
 
     def list(
-        self, *, lifecycle_state: str | None = None, status_value: str | None = None, tenant_id: str | None = None,
+        self,
+        *,
+        lifecycle_state: str | None = None,
+        status_value: str | None = None,
+        tenant_id: str | None = None,
+        records: Sequence[Mapping[str, Any]] | None = None,
     ) -> list[PersonaBody]:
-        raw = [r for r in self._records.list_all() if tenant_id is None or r.get("tenant_id") == tenant_id or not _is_private_persona(r)]
-        records = [PersonaBody.model_validate(r) for r in raw]
-        if lifecycle_state is not None: records = [i for i in records if i.lifecycle_state == lifecycle_state]
-        if status_value is not None: records = [i for i in records if i.status == status_value]
-        return sorted(records, key=lambda item: item.persona_id)
+        source = self._records.list_all() if records is None else records
+        raw = [
+            r
+            for r in source
+            if (tenant_id is None or r.get("tenant_id") == tenant_id or not _is_private_persona(r))
+            and (lifecycle_state is None or (r.get("lifecycle_state") or "draft") == lifecycle_state)
+            and (status_value is None or (r.get("status") or "active") == status_value)
+        ]
+        validated = [PersonaBody.model_validate(r) for r in raw]
+        return sorted(validated, key=lambda item: item.persona_id)
+
+    def list_json(
+        self,
+        *,
+        lifecycle_state: str | None = None,
+        status_value: str | None = None,
+        tenant_id: str | None = None,
+        records: Sequence[Mapping[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        source = self._records.list_all() if records is None else records
+        items = [
+            _persona_record_to_json(r)
+            for r in source
+            if (tenant_id is None or r.get("tenant_id") == tenant_id or not _is_private_persona(r))
+            and (lifecycle_state is None or (r.get("lifecycle_state") or "draft") == lifecycle_state)
+            and (status_value is None or (r.get("status") or "active") == status_value)
+        ]
+        items.sort(key=lambda item: str(item.get("persona_id") or ""))
+        return items
 
 
     def patch(self, persona_id: str, request: PatchPersonaRequest) -> PersonaBody:
@@ -1786,19 +1833,43 @@ def create_app(
     def list_personas(
         lifecycle_state: str | None = Query(default=None), status_value: str | None = Query(default=None, alias="status"),
         authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
-    ) -> list[PersonaBody]:
-        has_private = any(_is_private_persona(r) for r in persistent_owner._records.list_all())
+    ) -> JSONResponse:
         if not authorization:
-            if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
-            return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
+            raw_records = persistent_owner._records.list_all()
+            if any(_is_private_persona(r) for r in raw_records):
+                raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
+            return JSONResponse(
+                persistent_owner.list_json(
+                    lifecycle_state=lifecycle_state, status_value=status_value, records=raw_records,
+                )
+            )
         try:
             authority = _authenticate_persona_read(authorization)
             if authority.token_kind == "service" and not tenant_id:
-                return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
-            if not tenant_id and not has_private:
-                return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
-            _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
-            return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value, tenant_id=admitted)
+                raw_records = persistent_owner._records.list_all()
+                return JSONResponse(
+                    persistent_owner.list_json(
+                        lifecycle_state=lifecycle_state, status_value=status_value, records=raw_records,
+                    )
+                )
+            if not tenant_id:
+                raw_records = persistent_owner._records.list_all()
+                if not any(_is_private_persona(r) for r in raw_records):
+                    return JSONResponse(
+                        persistent_owner.list_json(
+                            lifecycle_state=lifecycle_state, status_value=status_value, records=raw_records,
+                        )
+                    )
+            else:
+                raw_records = None
+            _, admitted = resolve_persona_tenant_scope(authorization, tenant_id, authority=authority)
+            if raw_records is None:
+                raw_records = persistent_owner._records.list_all()
+            return JSONResponse(
+                persistent_owner.list_json(
+                    lifecycle_state=lifecycle_state, status_value=status_value, tenant_id=admitted, records=raw_records,
+                )
+            )
         except PersonaAuthorityError as exc:
             raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
 
@@ -1809,14 +1880,14 @@ def create_app(
         has_private = _is_private_persona(raw)
         if not authorization:
             if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
-            return persistent_owner.get(persona_id)
+            return PersonaBody.model_validate(raw)
         try:
             authority = _authenticate_persona_read(authorization)
             if has_private and authority.token_kind != "service":
                 tenant = raw.get("tenant_id")
                 if not tenant: raise HTTPException(status_code=403, detail="FORBIDDEN: Persona has no tenant binding")
-                resolve_persona_tenant_scope(authorization, tenant)
-            return persistent_owner.get(persona_id)
+                resolve_persona_tenant_scope(authorization, tenant, authority=authority)
+            return PersonaBody.model_validate(raw)
         except PersonaAuthorityError as exc:
             raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
 

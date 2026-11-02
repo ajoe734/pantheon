@@ -148,3 +148,11 @@ their same-family siblings via index scans without detoasting unbound strategy
 families. No cross-request cache, fallback, or retry; owner failures surface as
 403/503. The default full strategy-spec response and the `view=persona_binding`
 rows are unchanged.
+
+## Parallel warm-path owner reads & single-pass Persona directory read (PERSONA-FLEET-WARM-TAIL-20261102)
+
+No response-shape, filter, privacy, or tenant-scoping change. Internally:
+- `GET /api/personas` in `services/persona/write_owner.py` now reads `persistent_owner._records.list_all()` once per request (reusing the loaded records across `any_private_exists()` and `list_json()`), reuses the already-validated `PersonaInboundAuthority` in `resolve_persona_tenant_scope`, filters by `tenant_id` / `lifecycle_state` / `status` before model serialization, and returns `JSONResponse` while preserving `response_model=list[PersonaBody]`.
+- `_persona_fleet_prefetch_independent_reads` submits `_fleet_persona_directory`, `_fleet_capital_bindings`, `_fleet_runtime_bindings`, and `_fleet_telemetry_summaries` into `_PERSONA_FLEET_READ_EXECUTOR` via `submit_owner_read` and `cached_owner_call` / `shared_persona_directory_list`, so the handler thread no longer executes persona directory (`~320 ms`), capital bindings (`~98 ms`), telemetry summaries (`~62 ms`), and runtime bindings (`~52 ms`) one after another.
+- `_list_persona_records(..., reuse_request_read=True)` caches the merged directory+provisioning records per request and `_get_persona_directory_snapshot(..., reuse_request_read=True)` reuses `_fleet_persona_directory`, cutting the fleet persona directory read from `333.47 ms` to `152.88 ms` (`45.8%`, `< 50%`) in the hosted-profile-consistent harness (`50.34 ms` to `17.94 ms`, `35.6%` in the zero-delay CPU harness) and reducing total fleet handler time from `566.59 ms` to `395.63 ms` (where `_fleet_evolution_decisions` at `~373 ms` is now the dominant critical path).
+

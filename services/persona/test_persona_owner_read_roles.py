@@ -299,3 +299,59 @@ def test_viewer_role_rejected_on_all_mutation_routes(owner_app):
         json={"actor_id": "viewer-alpha"},
     )
     assert reflect_res.status_code == 403, reflect_res.text
+
+
+def test_list_personas_reads_owner_store_once_per_request_and_preserves_shape_and_scoping(
+    owner_app, monkeypatch: pytest.MonkeyPatch
+):
+    client, store = owner_app
+    calls = {"list_all": 0}
+    orig_list_all = store._records.list_all
+
+    def counted_list_all():
+        calls["list_all"] += 1
+        return orig_list_all()
+
+    monkeypatch.setattr(store._records, "list_all", counted_list_all)
+
+    alpha_headers = {
+        **_auth_header(roles=["viewer"], tenant_id="tenant-alpha", actor_id="viewer-alpha"),
+        "X-Tenant-Id": "tenant-alpha",
+    }
+    calls["list_all"] = 0
+    alpha_res = client.get("/api/personas", headers=alpha_headers)
+    assert alpha_res.status_code == 200, alpha_res.text
+    assert calls["list_all"] == 1
+    expected_alpha = [
+        item.model_dump(mode="json")
+        for item in store.list(
+            tenant_id="tenant-alpha",
+            records=orig_list_all(),
+        )
+    ]
+    assert alpha_res.json() == expected_alpha
+
+    beta_headers = _auth_header(roles=["operator"], tenant_id="tenant-beta", actor_id="operator-beta")
+    calls["list_all"] = 0
+    beta_res = client.get("/api/personas", headers=beta_headers)
+    assert beta_res.status_code == 200, beta_res.text
+    assert calls["list_all"] == 1
+    expected_beta = [
+        item.model_dump(mode="json")
+        for item in store.list(
+            tenant_id="tenant-beta",
+            records=orig_list_all(),
+        )
+    ]
+    assert beta_res.json() == expected_beta
+
+    svc_headers = {
+        "Authorization": "Bearer test-svc-token",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+    calls["list_all"] = 0
+    svc_res = client.get("/api/personas", headers=svc_headers)
+    assert svc_res.status_code == 200, svc_res.text
+    assert calls["list_all"] == 1
+    assert svc_res.json() == expected_alpha
+
