@@ -345,5 +345,16 @@
     ],
     "tests": "test_teardown_rebuilt_inventory_deletes_vm_disks_then_address (empty state dir, fake gcloud; dry_run and live subtests verify ordered plan without deletion, no-gcloud already_absent fallback, and live VM -> disks -> address deletion with post-delete readback); both subtests fail on base and pass on head. Existing staging tests stay green.",
     "scope_note": "Source and local fake-gcloud tests only. No cloud mutation, workflow dispatch or drill. Hosted completion track (two consecutive zero-start drills) remains external_wait; Stage14 retained resources were already removed by the operator on 2026-11-01."
+  },
+  "staging_vm_sizing_e2_standard_4": {
+    "recorded_at": "2026-11-02",
+    "root_cause": "Zero-start drill 1 (run 41382561090 on dev ad135f371, release pantheon-20261028-102, seed pantheon-stg-sanitized-seed-20261030-v4) passed Stage 1/2 and failed Stage 3 LIVE_GATE_COLLECTION_FAILED / PRODUCT_OWNER_UNSERVED on paper-signal-producer: its Docker healthcheck returned rc=0 in 8.03s against a 5s timeout because the 2-vCPU e2-standard-2 VM ran 27 containers at load average ~10 with summed container CPU 170-191% (receipt ACTUAL-zero-start-drill-1-release102-v4-failed-producer-healthcheck-cpu-20261102.json).",
+    "fix": [
+      "deploy/staging/staging-env.defaults sets STAGING_MACHINE_TYPE=e2-standard-4 (and scripts/deploy/staging_provision.sh fallback matches e2-standard-4), passed as --machine-type on existing instance template pantheon-stg-template-20261024 without modifying any GCP instance template, cloud resource, healthcheck timeout, or gate",
+      "tests/deployment/test_staging_release.py asserts --machine-type=e2-standard-4 on provision instance creation and STAGING_MACHINE_TYPE=e2-standard-4 in staging-env.defaults while keeping the repo instance-template.json assertion matching the live template (e2-standard-2); also guards fake gcloud disk-in-use check when GCLOUD_SIMULATE_LINGERING_DELETE=true and recreates fake_sleep_dir after setUp() in SSH retry subtests",
+      "docs/deployment/ephemeral-staging-runbook.md updated to reflect e2-standard-4 VM sizing via STAGING_MACHINE_TYPE override on pantheon-stg-template-20261024"
+    ],
+    "tests": "bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_ops.sh scripts/deploy/staging_verify.sh scripts/deploy/staging_destroy.sh deploy/staging/bootstrap.sh (exit 0); actionlint .github/workflows/staging-ephemeral-deploy.yml .github/workflows/staging-orphan-cleanup.yml (exit 0); pytest ReleaseManifestContractTests + StagingSanitizeAndGateTests + WorkflowAndTemplateContractTests (17 passed); pytest test_real_gcloud_invocation_attachment_and_error_propagation + test_teardown_rebuilt_inventory_deletes_vm_disks_then_address (2 passed, 12 subtests passed).",
+    "scope_note": "Source and local fake-gcloud tests only. No cloud mutation, workflow dispatch or drill executed by worker. Hosted completion track (two consecutive zero-start live staging drills with actual gates and zero orphan inventory) remains external_wait."
   }
 }

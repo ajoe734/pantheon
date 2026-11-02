@@ -472,6 +472,37 @@ def _run(command: list[str], *, expected: set[int] = frozenset({0})) -> str:
     return process.stdout.strip()
 
 
+def _parse_event_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+# Incident worst_metric is the telemetry projection key; producers emit it under these keys.
+# Mirrors metric_map in services/telemetry/runtime_summary.py (projection key -> producer keys).
+_PROJECTION_PRODUCER_KEYS: dict[str, tuple[str, ...]] = {
+    "pnl": ("pnl",),
+    "drawdown": ("drawdown", "drawdown_pct"),
+    "sharpe_ratio": ("sharpe_ratio",),
+    "fill_rate": ("fill_rate",),
+    "avg_slippage_bps": ("avg_slippage_bps", "slippage_bps"),
+    "total_trades": ("total_trades",),
+}
+
+
+def _incident_worst_metric(incident: Mapping[str, Any]) -> str:
+    """The drift producer records the breached metric as ``worst_metric=`` in the evidence summary."""
+    for part in str(incident.get("evidence_summary") or "").split(";"):
+        key, _, value = part.strip().partition("=")
+        if key == "worst_metric" and value.strip():
+            return value.strip()
+    return ""
+
+
 def _is_executable_binding(binding: Mapping[str, Any]) -> bool:
     if not isinstance(binding, Mapping):
         return False
@@ -1835,6 +1866,51 @@ class RuntimeChain:
             "gaps": [str(gap) for gap in (matched.get("gaps") or []) if str(gap)],
         }
 
+    def _hosted_causal_incident(
+        self, incidents: Any, binding_id: str, runtime_id: str, fill: Mapping[str, Any]
+    ) -> tuple[Mapping[str, Any] | None, Mapping[str, Any] | None, str]:
+        """Find the drift Incident citing the event that set its breached metric, after the chain fill."""
+        notes: list[str] = []
+        fill_at = _parse_event_time(fill.get("created_at"))
+        for item in incidents if isinstance(incidents, list) else []:
+            if not isinstance(item, Mapping) or item.get("binding_id") != binding_id:
+                continue
+            iid = item.get("incident_id") or item.get("id")
+            if not str(item.get("incident_cluster_id") or "").startswith("drift:"):
+                notes.append(f"{iid}: not a drift cluster")
+                continue
+            metric = _incident_worst_metric(item)
+            if not metric:
+                notes.append(f"{iid}: no worst_metric")
+                continue
+            for event_id in item.get("telemetry_event_ids") or []:
+                cited = self.http.request(
+                    "telemetry",
+                    "GET",
+                    f"/api/telemetry/events/{event_id}",
+                    headers=self.telemetry_headers,
+                    expected={200, 404},
+                )
+                if not isinstance(cited, Mapping) or not cited.get("event_id"):
+                    notes.append(f"{iid}: cited event {event_id} unreadable")
+                    continue
+                meta = cited.get("metadata") if isinstance(cited.get("metadata"), Mapping) else {}
+                created = _parse_event_time(cited.get("created_at"))
+                if cited.get("binding_id") != binding_id or cited.get("runtime_id") != runtime_id:
+                    notes.append(f"{iid}: event {event_id} belongs to another binding/runtime")
+                elif not any(
+                    key in (cited.get("metrics") or {})
+                    for key in _PROJECTION_PRODUCER_KEYS.get(metric, (metric,))
+                ):
+                    notes.append(f"{iid}: event {event_id} does not carry metric {metric}")
+                elif meta.get("derived_from_threshold_evaluation") is True:
+                    notes.append(f"{iid}: event {event_id} is a threshold-derived echo")
+                elif created is None or fill_at is None or created < fill_at:
+                    notes.append(f"{iid}: event {event_id} is not at or after the paper fill")
+                else:
+                    return item, cited, ""
+        return None, None, "; ".join(notes) or "no incident for binding"
+
     def _hosted_observe(self, chain: Any, ids: dict[str, Any]) -> None:
         keys = ("runtime_binding_id", "runtime_id", "plan_id")
         wanted = {key: chain.predecessor(key) for key in keys}
@@ -1900,15 +1976,8 @@ class RuntimeChain:
         # a baseline or run a sweep here. Absent evidence keeps the phase paused.
         incidents = self.http.request("incidents", "GET", "/api/incidents", query={"binding_id": binding_id})
         incidents = incidents if isinstance(incidents, list) else incidents.get("incidents", [])
-        incident = next(
-            (
-                item
-                for item in incidents
-                if isinstance(item, Mapping)
-                and item.get("binding_id") == binding_id
-                and event["event_id"] in (item.get("telemetry_event_ids") or [])
-            ),
-            None,
+        incident, causal_event, incident_notes = self._hosted_causal_incident(
+            incidents, binding_id, wanted["runtime_id"], event
         )
         if incident is None:
             eval_note = ""
@@ -1922,7 +1991,8 @@ class RuntimeChain:
                 )
             raise HostedPause(
                 "drift_incident_observation",
-                f"no IncidentCase cites runtime telemetry event {event['event_id']} for binding {binding_id}{eval_note}; "
+                f"no drift IncidentCase for binding {binding_id} cites a causal metric event after paper fill {event['event_id']}"
+                f"{eval_note} ({incident_notes}); "
                 "loops 10-11 are not observed",
                 ids,
             )
@@ -1931,11 +2001,16 @@ class RuntimeChain:
         self.evidence.add_case(
             "loop_10_telemetry_reconciliation_incident",
             loop=10,
-            trigger_id=event["event_id"],
+            trigger_id=str(causal_event["event_id"]),
             owner_worker=self.evidence.identities["reconciliation-drift-svc"],
             terminal_output_id=incident_id,
             authority_readback=incident,
-            next_consumer_readback={"incident_id": incident_id, "binding_id": binding_id},
+            next_consumer_readback={
+                "incident_id": incident_id,
+                "binding_id": binding_id,
+                "causal_metric_event_id": str(causal_event["event_id"]),
+                "same_chain_fill_event_id": str(event["event_id"]),
+            },
             started_at=started,
             compose_services=["telemetry", "reconciliation-drift-svc", "incidents"],
             assertions={"incident_id": incident_id, "real_runtime_event_preserved": True},
