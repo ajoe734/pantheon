@@ -334,5 +334,16 @@
     "source_change": "deploy/staging/bootstrap.sh mints an HS256 JWT after secret validation from the VM-local PANTHEON_RUNTIME_JWT_SECRET + STAGING_JWT_ISSUER/AUDIENCE (sub svc:staging-paper-runtime-caller, roles [operator], concrete STAGING_TENANT_ID, exp=STAGING_TTL_SECONDS default 7200, max 86400) and atomically replaces PANTHEON_RUNTIME_MANAGER_TOKEN in the private secrets env preserving mode/owner. The shape gate is removed. scripts/deploy/staging_sanitize.py exempts only the exact public builtin provenance ref host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f4...f2ff9 from the retired-identifier guard.",
     "validation": "test_bootstrap_renders_runtime_manager_token_accepted_by_native_verifier (real services.runtime_auth_inbound; bad signature/issuer/audience/role/expiry rejected) and test_sanitizer_preserves_exact_public_builtin_provenance_only pass locally; controller behaviour only, not hosted evidence. Full-module run exceeds the sandbox time bound and was not completed.",
     "not_done": "No GSM/key/IAM/VM/workflow action; no manifest or release change. Hosted acceptance remains external_wait."
+  },
+  "teardown_type_order_fix": {
+    "recorded_at": "2026-11-02",
+    "root_cause": "staging_destroy.sh --mode teardown deleted reversed(inventory); a cloud-rebuilt inventory (instance, disk, address) therefore deleted the static IP first and failed CLOUD_DELETE_FAILED on the still-attached boot disk (Stage14 pantheon-20261028-102). Teardown --dry-run returned already_absent without querying the cloud.",
+    "fix": [
+      "teardown sorts deletions by the existing TYPE_ORDER (iam_binding, instance, disk, address) for journal and cloud-rebuilt inventories",
+      "with GCLOUD_BIN set, teardown --dry-run queries the cloud and prints the same ordered plan; without GCLOUD_BIN behavior is unchanged",
+      "runbook gains a retained-resource cleanup section"
+    ],
+    "tests": "test_teardown_rebuilt_inventory_deletes_vm_disks_then_address (empty state dir, fake gcloud; live order and dry-run no-delete); fails on base, passes on head. All 8 tests that invoke staging_destroy.sh pass after rebase on dev.",
+    "scope_note": "Source and local fake-gcloud tests only. No cloud mutation, workflow dispatch or drill. Hosted completion track (two consecutive zero-start drills) remains external_wait; Stage14 retained resources were already removed by the operator on 2026-11-01."
   }
 }
