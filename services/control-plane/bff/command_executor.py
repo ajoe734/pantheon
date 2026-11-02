@@ -22,6 +22,7 @@ from fastapi import HTTPException
 
 from .models import CommandStatus, CommandType
 from .command_adapters import ActionUnavailableError, dispatch_domain_command
+from .command_adapters.evolution_adapter import resolve_evolution_actor
 from .command_adapters.base import (
     _token_tenant,
     bound_tenant,
@@ -130,55 +131,13 @@ def _extract_actor_id(auth_token: Optional[str]) -> str:
 def _actor_context(
     params: Dict[str, Any],
     auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
 ) -> tuple[str, str]:
-    """Resolve actor_id/actor_role for governance-owned evolution commands."""
-    token_actor_id: Optional[str] = None
-    token_roles: list[str] = []
-    token = auth_token.strip() if auth_token else None
-    if token and token.lower().startswith("bearer "):
-        token = token[7:].strip()
-    if token:
-        if token.startswith("ey") and "." in token:
-            jwt_payload = _parse_jwt_payload(token)
-            token_actor_id = jwt_payload.get("sub") or jwt_payload.get("actor_id")
-            raw_roles = jwt_payload.get("roles") or jwt_payload.get("role") or []
-            if isinstance(raw_roles, str):
-                token_roles = [r.strip() for r in raw_roles.split(",") if r.strip()]
-            elif isinstance(raw_roles, list):
-                token_roles = [str(r) for r in raw_roles]
-        else:
-            token_parts = token.split(":")
-            if token_parts:
-                raw_actor_id = token_parts[0].strip()
-                token_actor_id = raw_actor_id or None
-            if len(token_parts) > 1:
-                token_roles = [role.strip() for role in token_parts[1].split(",") if role.strip()]
+    """Resolve actor_id/actor_role for governance-owned evolution commands.
 
-    actor_id = (
-        params.get("approved_by_id")
-        or params.get("actor_id")
-        or token_actor_id
-    )
-    actor_role = params.get("approved_by_role") or params.get("actor_role")
-    if not actor_role:
-        for preferred_role in (
-            "governance_committee",
-            "risk_owner",
-            "governance_reviewer",
-            "admin",
-            "approver",
-            "reviewer",
-            "operator",
-        ):
-            if preferred_role in token_roles:
-                actor_role = preferred_role
-                break
-
-    if not actor_id:
-        raise ValueError("Evolution command requires actor_id or an authenticated operator token.")
-    if not actor_role:
-        raise ValueError("Evolution command requires actor_role/approved_by_role or a role-bearing operator token.")
-    return str(actor_id), str(actor_role)
+    Both fields are bound to the verified principal; see resolve_evolution_actor.
+    """
+    return resolve_evolution_actor(params, auth_token, mfa_token=mfa_token)
 
 
 # The BFF authorizes 'admin' operators to execute evolution mutations
@@ -568,7 +527,7 @@ def _execute_rollback(
         }
 
     try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     except Exception:
         actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
@@ -669,7 +628,7 @@ def _execute_activate_kill_switch(
 
     kill_switch_order_id = body.get("kill_switch_order_id") or f"ks-{uuid.uuid4().hex[:12]}"
     try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     except Exception:
         actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
@@ -770,7 +729,7 @@ def _execute_approve_evolution_decision(
     if approval_action not in {"approve", "reject"}:
         raise ValueError("ApproveEvolutionDecision requires approval_action=approve|reject.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": actor_role,
@@ -808,7 +767,7 @@ def _execute_evolution_action(
     if not decision_id:
         raise ValueError("ExecuteEvolutionAction requires evolution_decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": _evolution_actor_role(actor_role),
@@ -877,7 +836,7 @@ def _execute_approve_mutation(
     if not decision_id:
         raise ValueError("ApproveMutation requires decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": actor_role,
@@ -914,7 +873,7 @@ def _execute_reject_mutation(
     if not decision_id:
         raise ValueError("RejectMutation requires decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": actor_role,
@@ -954,7 +913,7 @@ def _execute_review_mutation(
     if not approval_decision_id:
         raise ValueError("ReviewMutation requires approval_decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": actor_role,
@@ -989,7 +948,7 @@ def _execute_execute_mutation(
     if not decision_id:
         raise ValueError("ExecuteMutation requires decision_id.")
 
-    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token, mfa_token=mfa_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
         "actor_role": _evolution_actor_role(actor_role),

@@ -70,6 +70,7 @@ _DEV_LOGIN_IDENTITY_DEFS = {
             "approver",
             "reviewer",
             "governance_reviewer",
+            "reviewer_on_duty",
             "risk_owner",
         ),
         "subject_suffix": "admin-test",
