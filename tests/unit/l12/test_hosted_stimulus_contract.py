@@ -1502,3 +1502,15 @@ def test_e_close_remaining_chain_active_binding_pauses(tmp_path):
     assert phase["phase_status"] == "paused" and phase["blocked_before"] == "E_close:cleanup_incomplete"
     assert hosted["all12_passed"] is False
 
+
+
+def test_chain_record_and_all12_claim_carry_l10_trigger_and_never_call_a_stimulus_natural(tmp_path) -> None:
+    runner = _runner(tmp_path, "E_close", FakeOwner({}))
+    runner.phases = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES}
+    runner.phases["E_close"]["baseline_fleet_check"] = "verified"
+    runner.loops = {loop_id: {"loop_id": loop_id} for loop_id in parent.CANONICAL_LOOP_IDS}
+    for trigger, natural in (("natural", True), ("operator_test_stimulus", False), (None, False)):
+        runner.l10_trigger = trigger
+        receipt = runner._receipt()
+        assert receipt["all12_passed"] is True
+        assert receipt["l10_trigger"] == trigger and receipt["all12_natural"] is natural

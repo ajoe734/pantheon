@@ -182,6 +182,19 @@ Conceptual unless noted; existing DTO fields only, no new mandatory field.
   refs or API.
 - Branch closed only with: real canonical event links, owner-stored Incident, and delivery/readback refs.
 
+- **2026-11-02 operator decision (option B).** A labelled operator test stimulus through the Reconciliation
+  `POST /api/reconciliation-drift/telemetry-events/consume` route may close L10, and is always reported as
+  operator-induced. Natural L10 will not fire on this chain: it trades 1 share per daily bar, so portfolio
+  drawdown cannot reach the governed 1.25x of the approved expected drawdown for months, and no other natural
+  L10 source exists on one runtime. Shape: explicit `operator_test_stimuli.L10 {decided_by, decided_at,
+  consent}` in `chain_input_json`; D_observe posts the chain's own `paper_fill_simulated` event unchanged, with a
+  test baseline and tight thresholds for `fill_price` only, and a `baseline_ref` of
+  `operator_test_stimulus:<event_id>`. Drift itself builds the DriftReport and dispatches the Incident; the
+  harness never writes incidents or evolution and never runs a sweep (L11 waits for Evolution's daily sweep).
+  The D receipt, loop 10 case, chain record and E_close claim carry `l10_trigger`
+  (`natural` | `operator_test_stimulus`); an all-12 that used the stimulus is never worded as natural
+  (`all12_natural` false). Without the opt-in D_observe behaves as before.
+
 ### 6.2 L11/H4
 Verified existing interfaces (`services/evolution/main.py`): `POST /api/evolution/proposals/from-incident`
 (derives canonical Incident/Postmortem lineage; **stops at proposed**), `GET /api/evolution/proposals/{decision_id}`,

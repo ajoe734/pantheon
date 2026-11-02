@@ -885,6 +885,7 @@ class HostedChainRunner:
         prior_receipt: Mapping[str, Any] | None = None,
         decision_refs: Mapping[str, str] | None = None,
         predecessors: Mapping[str, str] | None = None,
+        operator_test_stimuli: Mapping[str, Any] | None = None,
     ) -> None:
         if not _CHAIN_ID_PATTERN.match(chain_id):
             raise StimulusProofError("chain id must be a stable lowercase nonsecret identifier")
@@ -906,6 +907,8 @@ class HostedChainRunner:
         }
         self.decisions: dict[str, Any] = {**dict(hosted.get("decisions") or {}), **dict(decision_refs or {})}
         self.baseline_fleet: dict[str, Any] | None = hosted.get("baseline_fleet") or None
+        self.operator_test_stimuli: dict[str, Any] = dict(operator_test_stimuli or {})
+        self.l10_trigger: str | None = hosted.get("l10_trigger") or None
         self.loops: dict[str, dict[str, Any]] = {
             item["loop_id"]: item for item in hosted.get("loops") or []
         }
@@ -1340,12 +1343,16 @@ class HostedChainRunner:
         all_done = all(self.phases.get(p, {}).get("phase_status") == "completed" for p in HOSTED_PHASES)
         # The parent cannot read the baseline fleet count; without it the chain is not proven closed.
         all_done = all_done and self.phases.get("E_close", {}).get("baseline_fleet_check") == "verified"
+        all12 = bool(all_done and len(self.loops) == len(CANONICAL_LOOP_IDS))
         return {
-            "all12_passed": bool(all_done and len(self.loops) == len(CANONICAL_LOOP_IDS)),
+            "all12_passed": all12,
+            # An all-12 that used the labelled operator stimulus is operator-induced, never natural.
+            "all12_natural": bool(all12 and self.l10_trigger == "natural"),
             "baseline_fleet": self.baseline_fleet,
             "blocked_before": current.get("blocked_before"),
             "chain_id": self.chain_id,
             "decisions": self.decisions,
+            "l10_trigger": self.l10_trigger,
             "loops": [self.loops[k] for k in CANONICAL_LOOP_IDS if k in self.loops],
             "phase": self.phase,
             "phase_status": current.get("phase_status"),
@@ -1383,6 +1390,11 @@ class HostedChainRunner:
                         "decisions": self.decisions,
                         "phase": self.phase,
                         "predecessors": self.resource_ids,
+                        **(
+                            {"operator_test_stimuli": self.operator_test_stimuli}
+                            if self.phase == "D_observe" and self.operator_test_stimuli
+                            else {}
+                        ),
                     },
                     sort_keys=True,
                 ),
@@ -1442,6 +1454,10 @@ class HostedChainRunner:
         observations = report.get("observations")
         if isinstance(observations, Mapping) and observations:
             extra_result["observations"] = dict(observations)
+        trigger = report.get("l10_trigger")
+        if self.phase == "D_observe" and trigger in {"natural", "operator_test_stimulus"}:
+            self.l10_trigger = trigger
+            extra_result["l10_trigger"] = trigger
         detail = report.get("detail")
         if status == "paused" and isinstance(detail, str) and detail.strip():
             extra_result["detail"] = detail.strip()
@@ -2133,6 +2149,7 @@ def run_hosted_phase_from_env() -> Evidence:
         prior_receipt=_load_prior_receipt(),
         decision_refs=decisions,
         predecessors=packet.get("predecessors") or None,
+        operator_test_stimuli=packet.get("operator_test_stimuli") or None,
     )
     return runner.run()
 

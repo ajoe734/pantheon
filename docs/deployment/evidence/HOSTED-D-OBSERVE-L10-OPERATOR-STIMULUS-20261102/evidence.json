@@ -1,0 +1,6 @@
+{
+  "task": "HOSTED-D-OBSERVE-L10-OPERATOR-STIMULUS-20261102",
+  "change": "D_observe opt-in operator_test_stimuli.L10; l10_trigger label in D receipt, loop 10 case, chain record, E_close claim and workflow summary",
+  "hosted_verification": "pending: coordinator dispatches D with the opt-in after merge and Root deploy",
+  "validation": "pytest tests/unit/l12 scripts/test_isolated_l12_provider_workflow.py: 183 passed"
+}
