@@ -3235,3 +3235,123 @@ def test_capability_batch_shares_directory_read_and_isolates_nested_snapshots():
         ports2 = ports.get_capability_snapshot_for_persona("p0")
     assert ports2 == {"skills": ["s0"]}
     assert calls["n"] == 2  # no cross-request cache
+
+
+# --- PERSONA-FLEET-WARM-TAIL-20261102: parallel warm-path owner reads ---
+
+
+def test_fleet_overlaps_directory_capital_runtime_and_telemetry_owner_reads(monkeypatch):
+    # Persona directory, capital bindings, runtime bindings, and telemetry summaries
+    # previously ran one after another on the handler thread (~320 + 98 + 62 + 52 ms).
+    # Each now starts in _PERSONA_FLEET_READ_EXECUTOR off the request thread, overlaps
+    # in parallel, and is invoked once per fleet request via request-scoped caching.
+    import threading
+    import time as _time
+
+    store = _seed_fleet_classification_store(100)
+    delay = 0.25
+    spans: dict[str, tuple[float, float, bool]] = {}
+    calls = {
+        "personas": 0,
+        "capital_bindings": 0,
+        "runtime_bindings": 0,
+        "telemetry_summaries": 0,
+    }
+    lock = threading.Lock()
+
+    def timed(name: str, fn):
+        def wrapped(*args, **kwargs):
+            if name == "personas" and kwargs.get("include_market_persona_defaults"):
+                return fn(*args, **kwargs)
+            start = _time.monotonic()
+            with lock:
+                calls[name] += 1
+            _time.sleep(delay)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                with lock:
+                    spans.setdefault(
+                        name,
+                        (
+                            start,
+                            _time.monotonic(),
+                            threading.current_thread() is threading.main_thread(),
+                        ),
+                    )
+
+        return wrapped
+
+    monkeypatch.setattr(store, "list_personas", timed("personas", store.list_personas))
+    monkeypatch.setattr(
+        store, "list_bindings", timed("capital_bindings", store.list_bindings)
+    )
+    monkeypatch.setattr(
+        store,
+        "list_runtime_bindings",
+        timed("runtime_bindings", store.list_runtime_bindings),
+    )
+    monkeypatch.setattr(
+        store,
+        "list_telemetry_summaries",
+        timed("telemetry_summaries", store.list_telemetry_summaries),
+    )
+
+    with _client_with_store(store) as client:
+        started = _time.monotonic()
+        body = _fleet(
+            client,
+            purpose="trading",
+            data_scope="regular",
+            archived="exclude",
+            page_size=20,
+        )
+        elapsed = _time.monotonic() - started
+
+    assert calls == {
+        "personas": 1,
+        "capital_bindings": 1,
+        "runtime_bindings": 1,
+        "telemetry_summaries": 1,
+    }, calls
+    for name, (start, end, on_main) in spans.items():
+        assert on_main is False, (name, spans)
+        assert end - start >= delay, (name, spans)
+    # All four reads overlap in time rather than running sequentially (4 * 0.25s = 1.0s).
+    latest_start = max(s for s, _, _ in spans.values())
+    earliest_end = min(e for _, e, _ in spans.values())
+    assert latest_start < earliest_end, spans
+    assert elapsed < 3 * delay, (elapsed, spans)
+    assert body["data"]["summary"]["population"]["archived_total"] == 100
+
+    # Also verify that through an unpatched ReadSurfacePorts + PersonaFleetPort,
+    # the underlying persona owner provider is invoked once per fleet request
+    # (reused across both _list_persona_records and _get_persona_directory_snapshot).
+    owner_provider_calls = {"n": 0}
+
+    def counted_owner_provider():
+        owner_provider_calls["n"] += 1
+        return [
+            {
+                "persona_id": "p-real-owner",
+                "tenant_id": "pantheon-dev",
+                "name": "Real Owner Persona",
+                "lifecycle_state": "paper",
+                "created_at": "2026-10-01T00:00:00Z",
+                "metadata": {"provisioning_idempotency_key": "k-1", "capital_mode": "paper"},
+            }
+        ]
+
+    real_port_store = _store_with_persona_owner(counted_owner_provider)
+    del real_port_store.__dict__["list_personas"]
+    with _client_with_store(real_port_store) as client:
+        real_body = _fleet(
+            client,
+            purpose="trading",
+            data_scope="regular",
+            archived="exclude",
+            page_size=20,
+        )
+    assert owner_provider_calls["n"] == 1, owner_provider_calls
+    assert any(item["persona_id"] == "p-real-owner" for item in real_body["data"]["items"])
+

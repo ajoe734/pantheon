@@ -71,6 +71,7 @@ added by this plan.
 | Existing D driver vs retired binding | **verified current-source gap**: `tests/integration/l12/test_current_runtime_loops_deployed_e2e.py::_hosted_observe` (~L1853) raises unless the RuntimeBinding `status == "active"`; the original binding is retired (E/AC5 completed). #6819 accepting a late-discovery Incident does **not** make replaying the D driver valid. A historical-window observer mode is **not claimed to exist** | source read at cutoff; follow-up S4a |
 | Full financial comparator | **unavailable** (§3.2) | feasibility `NOT_PUBLISHED_NOT_AUTHORITY_ACCEPTED` |
 | Hosted L10 Incident, L11/H4 same-chain decision | **not yet observed** | – |
+| D_observe Loop 10 acceptance rule (HOSTED-D-OBSERVE-CAUSAL-METRIC-EVENT-20261102) | accepts a drift-cluster (`drift:*`) Incident only when a cited event, read back via `GET /api/telemetry/events/{id}`, has the chain `binding_id` and `runtime_id`, carries the incident `worst_metric` in `metrics`, is not `derived_from_threshold_evaluation`, and has `created_at` at or after the chain `paper_fill_simulated`. The evidence case `trigger_id` is that causal event; the fill id stays as `same_chain_fill_event_id`. Loop 11/H4 checks unchanged. Harness/test change only; not a hosted observation | unit test `test_hosted_observe_incident_must_cite_the_causal_metric_event_of_this_chain` |
 | Reconciliation duplicate-execution output for L10 | **unverified/unimplemented gap** (§6.1) | – |
 | Full all12 and independent TOTAL | **false** | – |
 
@@ -180,6 +181,19 @@ Conceptual unless noted; existing DTO fields only, no new mandatory field.
   source task (Reconciliation owner) through the normal supervisor flow. No fabricated DriftReport, report
   refs or API.
 - Branch closed only with: real canonical event links, owner-stored Incident, and delivery/readback refs.
+
+- **2026-11-02 operator decision (option B).** A labelled operator test stimulus through the Reconciliation
+  `POST /api/reconciliation-drift/telemetry-events/consume` route may close L10, and is always reported as
+  operator-induced. Natural L10 will not fire on this chain: it trades 1 share per daily bar, so portfolio
+  drawdown cannot reach the governed 1.25x of the approved expected drawdown for months, and no other natural
+  L10 source exists on one runtime. Shape: explicit `operator_test_stimuli.L10 {decided_by, decided_at,
+  consent}` in `chain_input_json`; D_observe posts the chain's own `paper_fill_simulated` event unchanged, with a
+  test baseline and tight thresholds for `fill_price` only, and a `baseline_ref` of
+  `operator_test_stimulus:<event_id>`. Drift itself builds the DriftReport and dispatches the Incident; the
+  harness never writes incidents or evolution and never runs a sweep (L11 waits for Evolution's daily sweep).
+  The D receipt, loop 10 case, chain record and E_close claim carry `l10_trigger`
+  (`natural` | `operator_test_stimulus`); an all-12 that used the stimulus is never worded as natural
+  (`all12_natural` false). Without the opt-in D_observe behaves as before.
 
 ### 6.2 L11/H4
 Verified existing interfaces (`services/evolution/main.py`): `POST /api/evolution/proposals/from-incident`

@@ -194,6 +194,12 @@ class HostedChainInput:
     phase: str
     predecessors: Mapping[str, Any] = field(default_factory=dict)
     decisions: Mapping[str, Any] = field(default_factory=dict)
+    operator_test_stimuli: Mapping[str, Any] = field(default_factory=dict)
+
+    def l10_operator_stimulus(self) -> Mapping[str, Any] | None:
+        """The explicit operator opt-in to a labelled L10 test stimulus, or None (natural only)."""
+        ref = self.operator_test_stimuli.get("L10")
+        return ref if isinstance(ref, Mapping) and ref else None
 
     def predecessor(self, key: str) -> str:
         return str(self.predecessors.get(key) or "").strip()
@@ -322,6 +328,32 @@ def _reject_credentials(node: Any, path: str = "") -> None:
             _reject_credentials(value, f"{path}[{index}]")
 
 
+OPERATOR_STIMULUS_LOOPS = ("L10",)
+OPERATOR_STIMULUS_FIELDS = ("decided_by", "decided_at", "consent")
+
+
+def parse_operator_test_stimuli(raw: Any) -> dict[str, Any]:
+    """Validate the opt-in block; unknown loops or fields are rejected, never ignored."""
+    if raw in (None, {}):
+        return {}
+    if not isinstance(raw, Mapping):
+        raise HostedInputError("operator_test_stimuli must be a JSON object")
+    unknown = sorted(set(raw) - set(OPERATOR_STIMULUS_LOOPS))
+    if unknown:
+        raise HostedInputError(f"operator_test_stimuli has unknown stimulus keys {unknown}")
+    parsed: dict[str, Any] = {}
+    for loop, ref in raw.items():
+        if not isinstance(ref, Mapping) or set(ref) != set(OPERATOR_STIMULUS_FIELDS):
+            raise HostedInputError(f"operator_test_stimuli.{loop} must be an object with exactly {list(OPERATOR_STIMULUS_FIELDS)}")
+        if ref["consent"] is not True:
+            raise HostedInputError(f"operator_test_stimuli.{loop}.consent must be true")
+        for key in ("decided_by", "decided_at"):
+            if not isinstance(ref[key], str) or not ref[key].strip():
+                raise HostedInputError(f"operator_test_stimuli.{loop}.{key} must be a non-empty string")
+        parsed[loop] = {key: ref[key] for key in OPERATOR_STIMULUS_FIELDS}
+    return parsed
+
+
 def load_hosted_input(allowed_phases: Sequence[str]) -> HostedChainInput:
     chain_id = os.getenv(HOSTED_CHAIN_ID_ENV, "").strip()
     if not _SAFE_ID.match(chain_id):
@@ -347,7 +379,8 @@ def load_hosted_input(allowed_phases: Sequence[str]) -> HostedChainInput:
     predecessors, decisions = document.get("predecessors") or {}, document.get("decisions") or {}
     if not isinstance(predecessors, Mapping) or not isinstance(decisions, Mapping):
         raise HostedInputError("predecessors and decisions must be JSON objects")
-    return HostedChainInput(chain_id, phase, dict(predecessors), dict(decisions))
+    stimuli = parse_operator_test_stimuli(document.get("operator_test_stimuli"))
+    return HostedChainInput(chain_id, phase, dict(predecessors), dict(decisions), stimuli)
 
 
 def hosted_receipt_fields(

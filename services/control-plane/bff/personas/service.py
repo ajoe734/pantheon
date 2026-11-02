@@ -23,7 +23,7 @@ import socket
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import (
     Any,
     Callable,
@@ -2405,9 +2405,74 @@ def _routed_strategy_counts_by_persona() -> Dict[str, int]:
 
 # --- _persona_fleet_prefetch_independent_reads ---
 _PERSONA_FLEET_READ_EXECUTOR = ThreadPoolExecutor(
-    max_workers=6,
+    max_workers=12,
     thread_name_prefix="bff-persona-fleet-read",
 )
+
+
+def _fleet_persona_directory(read_store: Optional[Any] = None) -> List[Dict[str, Any]]:
+    """Fleet persona-directory read, shared per request (value or failure) with its prefetch."""
+    store = _get_active_read_store(explicit=read_store)
+    if store is None:
+        return []
+    return list(
+        shared_persona_directory_list(store, lambda: store.list_personas()) or []
+    )
+
+
+def _fleet_capital_bindings(
+    read_store: Optional[Any] = None,
+    *,
+    include_market_persona_defaults: bool = False,
+) -> List[Dict[str, Any]]:
+    """Fleet capital-binding read, shared per request (value or failure) with its prefetch."""
+    store = _get_active_read_store(explicit=read_store)
+    return list(
+        cached_owner_call(
+            ("persona_fleet_capital_bindings", id(store), selected_tenant.get()),
+            lambda: list(
+                (
+                    store.list_bindings(include_market_persona_defaults=True)
+                    if include_market_persona_defaults
+                    else store.list_bindings()
+                )
+                or []
+            ),
+        )
+    )
+
+
+def _fleet_runtime_bindings(
+    read_store: Optional[Any] = None,
+    *,
+    include_market_persona_defaults: bool = False,
+) -> List[Dict[str, Any]]:
+    """Fleet runtime-binding read, shared per request (value or failure) with its prefetch."""
+    store = _get_active_read_store(explicit=read_store)
+    return list(
+        cached_owner_call(
+            ("persona_fleet_runtime_bindings", id(store), selected_tenant.get()),
+            lambda: list(
+                (
+                    store.list_runtime_bindings(include_market_persona_defaults=True)
+                    if include_market_persona_defaults
+                    else store.list_runtime_bindings()
+                )
+                or []
+            ),
+        )
+    )
+
+
+def _fleet_telemetry_summaries(read_store: Optional[Any] = None) -> List[Dict[str, Any]]:
+    """Fleet telemetry-summary read, shared per request (value or failure) with its prefetch."""
+    store = _get_active_read_store(explicit=read_store)
+    return list(
+        cached_owner_call(
+            ("persona_fleet_telemetry_summaries", id(store), selected_tenant.get()),
+            lambda: list(store.list_telemetry_summaries() or []),
+        )
+    )
 
 
 def _fleet_incidents() -> List[Dict[str, Any]]:
@@ -2430,7 +2495,7 @@ def _fleet_evolution_decisions() -> List[Dict[str, Any]]:
     )
 
 
-def _persona_fleet_prefetch_independent_reads(tenant_id: Optional[str] = None) -> None:
+def _persona_fleet_prefetch_independent_reads(tenant_id: Optional[str] = None) -> List[Any]:
     """Start the fleet's slow, independent network owner reads together.
 
     Measured on the deployed path the strategy-spec registry read (~3.4s) and
@@ -2442,33 +2507,55 @@ def _persona_fleet_prefetch_independent_reads(tenant_id: Optional[str] = None) -
     """
     service = _current_persona_service.get()
     if service is None:
-        return
-    submit_owner_read(
-        _PERSONA_FLEET_READ_EXECUTOR,
-        _routed_strategy_counts_by_persona,
-        warm_key="persona_fleet_strategy_specs",
-    )
-    submit_owner_read(
-        _PERSONA_FLEET_READ_EXECUTOR,
-        service._source_ingest_truth_by_connector,
-        warm_key="persona_fleet_source_truth",
-    )
-    submit_owner_read(
-        _PERSONA_FLEET_READ_EXECUTOR,
-        _fleet_incidents,
-        warm_key="persona_fleet_incidents",
-    )
-    submit_owner_read(
-        _PERSONA_FLEET_READ_EXECUTOR,
-        _fleet_evolution_decisions,
-        warm_key="persona_fleet_evolution_decisions",
-    )
+        return []
     clean_tenant = str(tenant_id or "").strip()
-    submit_owner_read(
-        _PERSONA_FLEET_READ_EXECUTOR,
-        lambda: _persona_provisioning_records_shared(_persona_provisioning_store(), clean_tenant),
-        warm_key=f"persona_fleet_provisioning:{clean_tenant}",
-    )
+    return [
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            _fleet_persona_directory,
+            warm_key="persona_fleet_persona_directory",
+        ),
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            lambda: _persona_provisioning_records_shared(_persona_provisioning_store(), clean_tenant),
+            warm_key=f"persona_fleet_provisioning:{clean_tenant}",
+        ),
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            _fleet_capital_bindings,
+            warm_key="persona_fleet_capital_bindings",
+        ),
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            _fleet_runtime_bindings,
+            warm_key="persona_fleet_runtime_bindings",
+        ),
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            _fleet_telemetry_summaries,
+            warm_key="persona_fleet_telemetry_summaries",
+        ),
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            _routed_strategy_counts_by_persona,
+            warm_key="persona_fleet_strategy_specs",
+        ),
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            service._source_ingest_truth_by_connector,
+            warm_key="persona_fleet_source_truth",
+        ),
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            _fleet_incidents,
+            warm_key="persona_fleet_incidents",
+        ),
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            _fleet_evolution_decisions,
+            warm_key="persona_fleet_evolution_decisions",
+        ),
+    ]
 
 
 # --- _persona_provisioning_records_shared ---
@@ -2494,6 +2581,7 @@ def _list_persona_records(
     *,
     read_store: Optional[Any] = None,
     reuse_request_read: bool = False,
+    _shared_merge_inner: bool = False,
 ) -> List[Dict[str, Any]]:
     """Combine canonical personas with durable store and overlay records created via /bff.
 
@@ -2503,12 +2591,23 @@ def _list_persona_records(
     context-bound service and the module-level fallback.
     """
     active_store = _get_active_read_store(explicit=read_store)
+    clean_tenant = str(tenant_id or "").strip()
+    store = _persona_provisioning_store()
+    if reuse_request_read and not _shared_merge_inner:
+        merged_records = cached_owner_call(
+            ("persona_records_merged", id(active_store), id(store), clean_tenant),
+            lambda: _list_persona_records(
+                clean_tenant,
+                read_store=read_store,
+                reuse_request_read=True,
+                _shared_merge_inner=True,
+            ),
+        )
+        return [dict(raw) for raw in merged_records]
     if reuse_request_read and active_store is not None:
         # Read-only fleet callers share one directory copy per request; each
         # record is still shallow-copied below, never handed out as-is.
-        items = list(
-            shared_persona_directory_list(active_store, lambda: active_store.list_personas()) or []
-        )
+        items = _fleet_persona_directory(active_store)
     elif active_store is not None and hasattr(active_store, "list_personas"):
         items = list(active_store.list_personas() or [])
     elif active_store is not None:
@@ -2522,8 +2621,6 @@ def _list_persona_records(
         pid = str(item.get("id") or item.get("persona_id") or "").strip()
         if pid:
             records_by_id[pid] = dict(item)
-    clean_tenant = str(tenant_id or "").strip()
-    store = _persona_provisioning_store()
     try:
         if reuse_request_read:
             # Read-only callers sharing one request read the durable ledger
@@ -2609,8 +2706,16 @@ def _get_persona_directory_snapshot(
         if pid:
             records_by_id[pid] = raw
 
+    active_store = _get_active_read_store()
     try:
-        defaults = _get_active_read_store().list_personas(include_market_persona_defaults=True) or []
+        if (
+            reuse_request_read
+            and isinstance(active_store, ReadSurfacePorts)
+            and "list_personas" not in getattr(active_store, "__dict__", {})
+        ):
+            defaults = _fleet_persona_directory(active_store)
+        else:
+            defaults = active_store.list_personas(include_market_persona_defaults=True) or []
     except Exception:
         defaults = []
 
@@ -6590,11 +6695,27 @@ def _pm12_persona_league_rows(
     all_league_entries: List[Dict[str, Any]] = []
     if has_active:
         try:
-            all_bindings = [record for record in (active_store.list_bindings() or []) if isinstance(record, dict)]
+            all_bindings = [
+                record
+                for record in (
+                    _fleet_capital_bindings(active_store)
+                    if reuse_request_read
+                    else (active_store.list_bindings() or [])
+                )
+                if isinstance(record, dict)
+            ]
         except Exception:
             all_bindings = []
         try:
-            all_runtimes = [record for record in (active_store.list_runtime_bindings() or []) if isinstance(record, dict)]
+            all_runtimes = [
+                record
+                for record in (
+                    _fleet_runtime_bindings(active_store)
+                    if reuse_request_read
+                    else (active_store.list_runtime_bindings() or [])
+                )
+                if isinstance(record, dict)
+            ]
         except Exception:
             all_runtimes = []
         try:
@@ -8742,11 +8863,39 @@ def _persona_fleet_slim_list_payload(
     # quarterly endpoint uses this same read path; doing it first prevents a
     # later degraded persona-service read from silently restoring league rank.
     quarter_window = _pm12_quarter_window(None, snapshot_at)
-    _persona_fleet_prefetch_independent_reads(tenant_id)
+    prefetch_futures = _persona_fleet_prefetch_independent_reads(tenant_id)
+    directory_future: List[Any] = []
+    # The league's persona read runs first (rank snapshot precedes broader
+    # reads); the directory read then overlaps the league's wait on the
+    # in-flight Registry count instead of following it.
+    try:
+        league_rows = _pm12_persona_league_rows(
+            state=None,
+            archetype=None,
+            q="",
+            tenant_id=tenant_id,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+            reuse_request_read=True,
+            on_records_read=lambda: directory_future.append(
+                submit_owner_read(
+                    _PERSONA_FLEET_READ_EXECUTOR,
+                    lambda: _get_persona_directory_snapshot(
+                        tenant_id, snapshot_at=snapshot_at, reuse_request_read=True
+                    ),
+                )
+            ),
+        )
+        directory = directory_future[0].result()
+    except Exception:
+        if prefetch_futures or directory_future:
+            wait([*prefetch_futures, *directory_future], timeout=2.0)
+        raise
     telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     telemetry_list_loaded = False
     try:
-        for telemetry in _get_active_read_store().list_telemetry_summaries() or []:
+        for telemetry in _fleet_telemetry_summaries() or []:
             if not isinstance(telemetry, dict):
                 continue
             runtime_id = _management_record_id(
@@ -8761,29 +8910,6 @@ def _persona_fleet_slim_list_payload(
         telemetry_list_loaded = True
     except Exception:
         telemetry_cache = {}
-    # The league's persona read runs first (rank snapshot precedes broader
-    # reads); the directory read then overlaps the league's wait on the
-    # in-flight Registry count instead of following it.
-    directory_future: List[Any] = []
-    league_rows = _pm12_persona_league_rows(
-        state=None,
-        archetype=None,
-        q="",
-        tenant_id=tenant_id,
-        include_route_policy=False,
-        include_health=False,
-        include_allowed_actions=False,
-        reuse_request_read=True,
-        on_records_read=lambda: directory_future.append(
-            submit_owner_read(
-                _PERSONA_FLEET_READ_EXECUTOR,
-                lambda: _get_persona_directory_snapshot(
-                    tenant_id, snapshot_at=snapshot_at, reuse_request_read=True
-                ),
-            )
-        ),
-    )
-    directory = directory_future[0].result()
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
         for item in _pm12_quarterly_ranking_items(
@@ -8836,14 +8962,18 @@ def _persona_fleet_slim_list_payload(
         scoped_personas.append(persona)
     all_personas = personas
     personas = scoped_personas
-    routed_strategy_counts = {str(r.get("persona_id") or r.get("id") or "").strip(): int(r.get("routed_strategy_count") or 0) for r in league_rows if str(r.get("persona_id") or r.get("id") or "").strip()} if league_rows else (_routed_strategy_counts_by_persona() if personas else {})
-    league = _get_active_read_store().list_persona_league(include_market_persona_defaults=True)
-    bindings = _get_active_read_store().list_bindings(include_market_persona_defaults=True)
-    runtimes = _get_active_read_store().list_runtime_bindings(include_market_persona_defaults=True)
-    pools = _get_active_read_store().list_capital_pools(include_market_persona_defaults=True)
-    incidents = _fleet_incidents()
-    evolution_decisions = _fleet_evolution_decisions()
-    context_defaults = _persona_fleet_context_defaults_by_market(all_personas)
+    try:
+        routed_strategy_counts = {str(r.get("persona_id") or r.get("id") or "").strip(): int(r.get("routed_strategy_count") or 0) for r in league_rows if str(r.get("persona_id") or r.get("id") or "").strip()} if league_rows else (_routed_strategy_counts_by_persona() if personas else {})
+        league = _get_active_read_store().list_persona_league(include_market_persona_defaults=True)
+        bindings = _fleet_capital_bindings(include_market_persona_defaults=True)
+        runtimes = _fleet_runtime_bindings(include_market_persona_defaults=True)
+        pools = _get_active_read_store().list_capital_pools(include_market_persona_defaults=True)
+        incidents = _fleet_incidents()
+        evolution_decisions = _fleet_evolution_decisions()
+        context_defaults = _persona_fleet_context_defaults_by_market(all_personas)
+    finally:
+        if prefetch_futures or directory_future:
+            wait([*prefetch_futures, *directory_future], timeout=2.0)
 
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
@@ -9468,17 +9598,6 @@ def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> D
         "retryable": behavior["retryable"],
         "userActionable": behavior["userActionable"],
     }
-
-
-# --- _DEV_LOGIN_IDENTITY_DEFS ---
-_DEV_LOGIN_IDENTITY_DEFS: Dict[str, Dict[str, Any]] = {
-    "viewer": {"roles": ("viewer",), "subject_suffix": "viewer"},
-    "operator": {"roles": ("operator",), "subject_suffix": "operator"},
-    "approver": {"roles": ("approver",), "subject_suffix": "approver"},
-    "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
-    "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
-    "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
-}
 
 
 # --- _REQUEST_DRY_RUN_CONTEXT ---

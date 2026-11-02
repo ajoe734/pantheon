@@ -5,7 +5,7 @@
 # - `--mode teardown`: Preserves bounded evidence first, handles delayed evidence
 #   upload via retry + local archive fallback, respects 2h failure retention TTL
 #   (unless `--force-expired`, `partial_create_failure`, or `cancelled`), executes
-#   real `GCLOUD_BIN` deletion in reverse creation order (IAM -> VM -> disks -> IP),
+#   real `GCLOUD_BIN` deletion ordered by resource type (IAM -> VM -> disks -> IP),
 #   preserves unowned resources and preexisting IAM bindings, and performs post-delete
 #   cloud readback to prove zero lingering owned resources.
 # - `--mode orphan-sweep`: Independent scheduled reconciliation. Remains inert
@@ -96,6 +96,16 @@ check_retired_project() {
   done
 }
 
+run_destroy_py() {
+  {
+    cat <<'COMMON_PY'
+# Delete order: iam_binding -> instance -> disk -> address
+TYPE_ORDER = {"iam_binding": 0, "instance": 1, "disk": 2, "address": 3}
+COMMON_PY
+    cat
+  } | python3 -
+}
+
 if [[ "$MODE" == "orphan-sweep" ]]; then
   if [[ "${STAGING_ORPHAN_CLEANUP_ENABLED:-false}" != "true" ]]; then
     printf '{"status":"inert_disabled","mode":"orphan-sweep","mutated_resources":0,"message":"Orphan cleanup schedule is inert until STAGING_ORPHAN_CLEANUP_ENABLED=true"}\n'
@@ -117,7 +127,7 @@ if [[ "$MODE" == "orphan-sweep" ]]; then
   STATE_DIR="$STATE_DIR" NOW_EPOCH="$NOW_EPOCH" DRY_RUN="$DRY_RUN" \
   PROJECT_ID="$STAGING_GCP_PROJECT_ID" ZONE="$STAGING_GCP_ZONE" \
   GCLOUD_BIN="${GCLOUD_BIN:-}" \
-  python3 - <<'PY'
+  run_destroy_py <<'PY'
 import json
 import os
 import subprocess
@@ -323,9 +333,6 @@ for (r_type, r_name), res in merged_by_key.items():
 
     to_delete_by_rel.setdefault(res_rel, []).append(res)
 
-# Delete order: iam_binding -> instance -> disk -> address
-TYPE_ORDER = {"iam_binding": 0, "instance": 1, "disk": 2, "address": 3}
-
 for rel_id, rel_resources in sorted(to_delete_by_rel.items()):
     ordered = sorted(rel_resources, key=lambda r: TYPE_ORDER.get(str(r.get("type")), 99))
     rel_deleted_records = []
@@ -431,7 +438,7 @@ RESULT="$RESULT" REASON="$REASON" DRY_RUN="$DRY_RUN" FORCE_EXPIRED="$FORCE_EXPIR
 NOW_EPOCH="$NOW_EPOCH" DELAYED_UPLOAD="${STAGING_DELAYED_UPLOAD_SIMULATE:-false}" \
 PROJECT_ID="${STAGING_GCP_PROJECT_ID:-}" ZONE="${STAGING_GCP_ZONE:-}" \
 GCLOUD_BIN="${GCLOUD_BIN:-}" \
-python3 - <<'PY'
+run_destroy_py <<'PY'
 import json
 import os
 import subprocess
@@ -506,7 +513,7 @@ def pending_address_labels(item: dict, expect_project: str, expect_region: str, 
 
 
 def query_cloud_release_resources() -> list[dict]:
-    if dry_run or not gcloud_bin or not project_id or not zone:
+    if not gcloud_bin or not project_id or not zone:
         return []
     discovered = []
     inst_raw = json.loads(run_gcloud(["compute", "instances", "list", f"--project={project_id}", f"--zones={zone}"]) or "[]")
@@ -620,13 +627,14 @@ if (
     }, sort_keys=True))
     raise SystemExit(0)
 
-# 3. Delete owned staging resources in reverse creation order (IAM -> VM -> disks -> IP)
+# 3. Delete owned staging resources by type (IAM -> VM -> disks -> IP), regardless of
+# whether the inventory came from the journal or was rebuilt from the cloud.
 deleted = []
 skipped_unowned = []
 remaining = []
 exact_pending_addresses = []
 
-for res in reversed(inv.get("resources", [])):
+for res in sorted(inv.get("resources", []), key=lambda r: TYPE_ORDER.get(str(r.get("type")), 99)):
     if res.get("state") == "deleted":
         continue
     r_type = res.get("type")
@@ -722,7 +730,7 @@ if not dry_run:
     evidence_payload["deleted_resources"] = deleted
     evidence_path.write_text(json.dumps(evidence_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    inv["resources"] = list(reversed(remaining))
+    inv["resources"] = remaining
     inv_path.write_text(json.dumps(inv, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if lease_path.exists():
         lease["status"] = "destroyed"

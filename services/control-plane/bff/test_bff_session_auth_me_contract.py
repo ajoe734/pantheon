@@ -1168,5 +1168,6 @@ def test_bff_auth_login_test_admin_preserves_stable_subject_and_exposes_client_i
         "approver",
         "governance_reviewer",
         "risk_owner",
+        "reviewer_on_duty",
         "reviewer",
     }

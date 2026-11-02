@@ -727,7 +727,7 @@ run_gcloud_resource_create "instance" "${VM_NAME}" \
   --project="${STAGING_GCP_PROJECT_ID}" \
   --zone="${STAGING_GCP_ZONE}" \
   --source-instance-template="${STAGING_INSTANCE_TEMPLATE}" \
-  --machine-type="${STAGING_MACHINE_TYPE:-e2-standard-2}" \
+  --machine-type="${STAGING_MACHINE_TYPE:-e2-standard-4}" \
   --service-account="${STAGING_RUNTIME_SERVICE_ACCOUNT}" \
   ${TEMPLATE_SA_SCOPES:+--scopes="${TEMPLATE_SA_SCOPES}"} \
   "${NIC_ARGS[@]}" \

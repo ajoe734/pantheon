@@ -87,6 +87,7 @@ FAKE_NATIVE_ENV = {
     "operator-bff": {"BFF_DATA_DIR": "/data/bff"},
 }
 import base64
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
@@ -353,6 +354,9 @@ if tool == "docker":
             raise SystemExit(1)
         if fmt == "{{.Config.Image}}":
             print(cinfo["image"])
+        elif fmt == "{{.State.StartedAt}}":
+            override_started = os.environ.get("FAKE_OWNER_STARTED_AT", "").strip()
+            print(override_started or cinfo.get("started_at") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
         elif "State.Running" in fmt:
             running = "true" if cinfo.get("running", True) else "false"
             mode = os.environ.get(
@@ -468,13 +472,45 @@ if tool == "docker":
                         "GOVERNANCE_AUDIT_BACKEND": "postgres",
                         "DATABASE_URL": "postgresql://pantheon_stg@postgres:5432/pantheon_staging",
                     })
+                started_at_val = (
+                    os.environ.get("FAKE_OWNER_STARTED_AT", "").strip()
+                    if svc not in ("postgres", "nats", "signal-store")
+                    else ""
+                ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
                 st.setdefault("containers", {})[svc] = {
                     "cid": f"cid-{svc}-{st.setdefault('cid_gen', 0) + 1}",
                     "image": img_ref,
                     "running": True,
+                    "started_at": started_at_val,
                     "baseline": bool(env_file and env_file.name == "compose.baseline.env"),
                     "env": merged_svc_env,
                 }
+                if svc == "paper-fleet-reconciler" and os.environ.get("FAKE_SKIP_RUNTIME_LEASE_WRITE") != "true":
+                    db_tables = (
+                        st.setdefault("databases", {})
+                        .setdefault("pantheon_staging", {})
+                        .setdefault("tables", {})
+                    )
+                    loop_rows = list(db_tables.get("public.loop_controller_records") or [])
+                    loop_rows = [
+                        r for r in loop_rows if r.get("controller_id") != "runtime-paper-fleet-reconciler"
+                    ]
+                    loop_rows.append(
+                        {
+                            "controller_id": "runtime-paper-fleet-reconciler",
+                            "loop_id": "paper-fleet-reconciler-loop",
+                            "tenant_id": c_env.get("STAGING_TENANT_ID", "tenant-alpha"),
+                            "payload": {
+                                "_loop_controller_record": {
+                                    "lease_token": "runtime-lease-token-after-owner-start",
+                                    "state": "active",
+                                }
+                            },
+                            "evidence_refs": [],
+                            "updated_at": started_at_val,
+                        }
+                    )
+                    db_tables["public.loop_controller_records"] = loop_rows
             st["cid_gen"] = st.get("cid_gen", 0) + 1
             save_state(st)
             # Emit ordinary Docker Compose stdout to prove deploy-host does not rely on compose printing JSON.
@@ -679,6 +715,12 @@ if tool == "curl":
 
 if tool in ("psql", "pg_dump", "pg_restore"):
     st = load_state()
+    if st.get("containers", {}).get("postgres", {}).get("running") is not True:
+        print(
+            'psql: error: connection to server at "127.0.0.1", port 15432 failed: Connection refused',
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     expected_pw = st.get("expected_pg_password", "")
     if not os.environ.get("PGPASSWORD") or (expected_pw and os.environ.get("PGPASSWORD") != expected_pw):
         print("psql authentication failed: invalid or missing PGPASSWORD", file=sys.stderr)
@@ -988,6 +1030,14 @@ if args[:3] == ["compute", "disks", "list"]:
 if args[:3] == ["compute", "disks", "delete"]:
     name = args[3]
     if os.environ.get("GCLOUD_SIMULATE_LINGERING_DELETE") != "true":
+        in_use = [
+            i["name"]
+            for i in state.get("instances", [])
+            if any(d.get("name") == name for d in (i.get("disks") or []))
+        ]
+        if in_use:
+            print(f"The disk resource '{name}' is already being used by '{in_use[0]}'", file=sys.stderr)
+            raise SystemExit(1)
         state["disks"] = [d for d in state["disks"] if d["name"] != name]
         save_state()
     print(json.dumps({"deleted": name}))
@@ -2615,10 +2665,13 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(any("compute disks create pantheon-stg-data-pantheon-20261024-001" in c for c in cmds))
         self.assertTrue(any("compute disks create pantheon-stg-pantheon-20261024-001-boot" in c for c in cmds))
         inst_create_cmd = next(c for c in cmds if "compute instances create pantheon-stg-pantheon-20261024-001" in c)
+        self.assertIn("--machine-type=e2-standard-4", inst_create_cmd)
         self.assertIn("--address=203.0.113.10", inst_create_cmd)
         self.assertIn("--network=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging", inst_create_cmd)
         self.assertIn("--subnet=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1", inst_create_cmd)
-        live_nic = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"][0]["networkInterfaces"][0]
+        live_inst = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"][0]
+        self.assertEqual(live_inst["machineType"], "e2-standard-4")
+        live_nic = live_inst["networkInterfaces"][0]
         self.assertTrue(live_nic["network"].endswith("/networks/pantheon-staging"))
         self.assertTrue(live_nic["subnetwork"].endswith("/subnetworks/pantheon-staging-asia-east1"))
         self.assertEqual(live_nic["accessConfigs"][0]["natIP"], "203.0.113.10")
@@ -2679,11 +2732,6 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"], [])
 
         # First IAP SSH: only exact transient 4047/4003 is retried (fake sleep keeps wall time at zero)
-        fake_sleep_dir = self.tmp_path / "fake-sleep-bin"
-        fake_sleep_dir.mkdir()
-        (fake_sleep_dir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        (fake_sleep_dir / "sleep").chmod(0o755)
-        sleep_env = {"PATH": f"{fake_sleep_dir}:{os.environ['PATH']}"}
         for label, state_patch, expect_ok, expect_mkdirs in (
             ("transient", {"ssh_4047_remaining": 2}, True, 3),
             ("transient_4003_then_4047", {"ssh_4003_remaining": 2, "ssh_4047_remaining": 1}, True, 4),
@@ -2695,6 +2743,11 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         ):
             with self.subTest(ssh_retry=label):
                 self.setUp()
+                fake_sleep_dir = self.tmp_path / "fake-sleep-bin"
+                fake_sleep_dir.mkdir()
+                (fake_sleep_dir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                (fake_sleep_dir / "sleep").chmod(0o755)
+                sleep_env = {"PATH": f"{fake_sleep_dir}:{os.environ['PATH']}"}
                 st = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
                 st.update(state_patch)
                 self.gcloud_state_file.write_text(json.dumps(st), encoding="utf-8")
@@ -2984,6 +3037,47 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(ev["reason"], "partial_create_failure")
         self.assertTrue(ev["post_delete_readback_verified"])
         self.assertEqual(len(ev["inventory_snapshot"]), 3)
+
+    def test_teardown_rebuilt_inventory_deletes_vm_disks_then_address(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        shutil.rmtree(self.state_dir)  # no journal: inventory is rebuilt from the cloud
+        self.gcloud_log_file.write_text("", encoding="utf-8")
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001")
+        order = ["instance", "disk", "disk", "address"]
+
+        no_gcloud_dry = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "teardown", "--dry-run", "--result", "success"],
+            env={**env, "GCLOUD_BIN": ""}, capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(json.loads(no_gcloud_dry.stdout)["status"], "already_absent")
+
+        with self.subTest("dry_run"):
+            dry = subprocess.run(
+                [str(DESTROY_SCRIPT), "--mode", "teardown", "--dry-run", "--result", "success"],
+                env=env, capture_output=True, text=True, check=True,
+            )
+            dry_json = json.loads(dry.stdout)
+            self.assertEqual(dry_json["status"], "destroyed")
+            self.assertTrue(dry_json["dry_run"])
+            self.assertEqual([d["type"] for d in dry_json["deleted_resources"]], order)
+            self.assertNotIn(" delete ", self.gcloud_log_file.read_text(encoding="utf-8"))
+            cloud = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+            self.assertEqual((len(cloud["instances"]), len(cloud["disks"]), len(cloud["addresses"])), (1, 2, 1))
+
+        with self.subTest("live"):
+            live = subprocess.run(
+                [str(DESTROY_SCRIPT), "--mode", "teardown", "--result", "success"],
+                env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(live.returncode, 0, live.stderr)
+            live_json = json.loads(live.stdout)
+            self.assertEqual(live_json["status"], "destroyed")
+            self.assertTrue(live_json["post_delete_readback_verified"])
+            self.assertEqual([d["type"] for d in live_json["deleted_resources"]], order)
+            deletes = [c.split()[1] for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines() if " delete " in c]
+            self.assertEqual(deletes, ["instances", "disks", "disks", "addresses"])
+            cloud = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+            self.assertEqual((cloud["instances"], cloud["disks"], cloud["addresses"]), ([], [], []))
 
     def test_cross_run_orphan_discovery_and_preexisting_iam_preservation(self) -> None:
         # 1. Orphan sweep is inert when STAGING_ORPHAN_CLEANUP_ENABLED != true
@@ -3362,6 +3456,188 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(any(l.endswith("/bff/switch-tenant") for l in vm_logs))
         self.assertTrue(any(l.endswith("/bff/command-confirmations") for l in vm_logs))
 
+    def test_bootstrap_orders_postgres_pre_start_seed_verification_before_full_compose_up(self) -> None:
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001")
+        subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+        vm_logs = self.vm_bin_log_file.read_text(encoding="utf-8").splitlines()
+
+        pg_up_idx = next(
+            (
+                i
+                for i, line in enumerate(vm_logs)
+                if line.startswith("docker compose ")
+                and "--profile core up -d --no-build postgres" in line
+            ),
+            None,
+        )
+        self.assertIsNotNone(pg_up_idx, "bootstrap.sh must start postgres alone before full compose up")
+        pg_ready_idx = next(
+            (i for i, line in enumerate(vm_logs) if i > pg_up_idx and line.startswith("psql ") and "SELECT 1;" in line),
+            None,
+        )
+        self.assertIsNotNone(pg_ready_idx, "bootstrap.sh must wait for postgres readiness before pre-start seed check")
+        pre_start_catalog_idx = next(
+            (
+                i
+                for i, line in enumerate(vm_logs)
+                if i > pg_ready_idx and line.startswith("psql ") and "FROM information_schema.columns" in line
+            ),
+            None,
+        )
+        self.assertIsNotNone(pre_start_catalog_idx, "pre-start collector must query live information_schema catalog")
+        pre_start_tables_idx = next(
+            (
+                i
+                for i, line in enumerate(vm_logs)
+                if i > pre_start_catalog_idx and line.startswith("psql ") and "row_to_json" in line
+            ),
+            None,
+        )
+        self.assertIsNotNone(pre_start_tables_idx, "pre-start collector must read per-table rows via row_to_json")
+        full_up_idx = next(
+            (
+                i
+                for i, line in enumerate(vm_logs)
+                if line.startswith("docker compose ") and line.endswith("--profile core up -d --no-build")
+            ),
+            None,
+        )
+        self.assertIsNotNone(full_up_idx, "bootstrap.sh must run full --profile core up -d --no-build after pre-start check")
+        self.assertLess(pg_up_idx, pg_ready_idx)
+        self.assertLess(pg_ready_idx, pre_start_catalog_idx)
+        self.assertLess(pre_start_catalog_idx, pre_start_tables_idx)
+        self.assertLess(pre_start_tables_idx, full_up_idx)
+
+        self._unlock_vm_env_dir()
+        record_path = self.staging_root / "state" / "pre-start-sanitized-dataset.json"
+        self.assertTrue(record_path.is_file())
+        self.assertEqual(record_path.stat().st_mode & 0o777, 0o600)
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        self.assertTrue(record["verified"])
+        self.assertTrue(record["sanitized_verified"])
+        self.assertEqual(record["observed_phase"], "pre_owner_start")
+        self.assertEqual(record["snapshot_name"], "pantheon-nonprod-sanitized-20261024")
+        self.assertEqual(record["table_count"], 5)
+        self.assertEqual(record["row_counts"]["public.loop_controller_records"], 1)
+        self.assertRegex(record["live_dataset_sha256"], r"^sha256:[0-9a-f]{64}$")
+        self.assertRegex(record["metadata_dataset_sha256"], r"^sha256:[0-9a-f]{64}$")
+
+        # Confirm that paper-fleet-reconciler wrote a runtime row containing lease_token AFTER owner start,
+        # and that live gate verification passes by consuming the pre-owner-start record.
+        vm_state = json.loads(self.vm_runtime_state_file.read_text(encoding="utf-8"))
+        live_loop_rows = vm_state["databases"]["pantheon_staging"]["tables"]["public.loop_controller_records"]
+        self.assertEqual(len(live_loop_rows), 2)
+        self.assertTrue(
+            any(
+                r.get("payload", {}).get("_loop_controller_record", {}).get("lease_token")
+                == "runtime-lease-token-after-owner-start"
+                for r in live_loop_rows
+            )
+        )
+        self._lock_root_owned_paths()
+
+        (self.vm_env_dir / "pg-sim").mkdir(exist_ok=True)
+        ver = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        ver_json = json.loads(ver.stdout)
+        self.assertEqual(ver_json["status"], "staging_verified")
+        san_gate = ver_json["gates"]["sanitized_data"]
+        self.assertTrue(san_gate["sanitized_verified"])
+        self.assertTrue(san_gate["verified"])
+        self.assertEqual(san_gate["observed_phase"], "pre_owner_start")
+        self.assertEqual(san_gate["table_count"], 5)
+        self.assertEqual(san_gate["row_counts"]["public.loop_controller_records"], 1)
+        self.assertIn("paper-fleet-reconciler", san_gate["owner_started_at"])
+        prod_preflight.check_staging_evidence(ver_json, self.manifest, self.manifest_sha)
+
+    def test_seed_row_with_lease_token_fails_closed_before_product_owners_start(self) -> None:
+        vm_state = json.loads(self.vm_runtime_state_file.read_text(encoding="utf-8"))
+        vm_state["databases"]["pantheon_staging"]["tables"]["public.loop_controller_records"].append(
+            {
+                "controller_id": "leaked-seed-controller",
+                "loop_id": "loop-seed-leak",
+                "tenant_id": "tenant-alpha",
+                "payload": {"_loop_controller_record": {"lease_token": "seed-leaked-lease-token-value"}},
+                "evidence_refs": [],
+            }
+        )
+        self.vm_runtime_state_file.write_text(json.dumps(vm_state, indent=2, sort_keys=True), encoding="utf-8")
+
+        res = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("PARTIAL_CREATE_FAILURE_COMPENSATED", res.stderr)
+
+        self._unlock_vm_env_dir()
+        self.assertFalse((self.staging_root / "state" / "pre-start-sanitized-dataset.json").exists())
+        post_state = json.loads(self.vm_runtime_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(set(post_state.get("containers", {}).keys()), {"postgres"})
+
+    def test_collector_rejects_missing_unverified_mismatched_insecure_or_late_pre_start_record(self) -> None:
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001")
+        subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+        record_path = self.staging_root / "state" / "pre-start-sanitized-dataset.json"
+        self._unlock_vm_env_dir()
+        original_record_bytes = record_path.read_bytes()
+        original_record = json.loads(original_record_bytes.decode("utf-8"))
+
+        # 1. Missing pre-start record
+        record_path.unlink()
+        self._lock_root_owned_paths()
+        res_missing = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(res_missing.returncode, 0)
+        self.assertIn("LIVE_GATE_COLLECTION_FAILED", res_missing.stderr)
+        self.assertIn("SANITIZED_DATASET_INVALID", res_missing.stderr)
+
+        # 2. Unverified / failed pre-start record (verified=false)
+        self._unlock_vm_env_dir()
+        record_path.write_text(
+            json.dumps({**original_record, "verified": False}, sort_keys=True),
+            encoding="utf-8",
+        )
+        record_path.chmod(0o600)
+        self._lock_root_owned_paths()
+        res_unverified = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(res_unverified.returncode, 0)
+        self.assertIn("SANITIZED_DATASET_INVALID", res_unverified.stderr)
+
+        # 3. Mismatched snapshot_name vs on-disk metadata
+        self._unlock_vm_env_dir()
+        record_path.write_text(
+            json.dumps({**original_record, "snapshot_name": "pantheon-nonprod-sanitized-99999999"}, sort_keys=True),
+            encoding="utf-8",
+        )
+        record_path.chmod(0o600)
+        self._lock_root_owned_paths()
+        res_snap = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(res_snap.returncode, 0)
+        self.assertIn("SANITIZED_DATASET_INVALID", res_snap.stderr)
+
+        # 4. Insecure file mode (0644 instead of 0600)
+        self._unlock_vm_env_dir()
+        record_path.write_bytes(original_record_bytes)
+        record_path.chmod(0o644)
+        self._lock_root_owned_paths()
+        res_mode = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(res_mode.returncode, 0)
+        self.assertIn("SANITIZED_DATASET_INVALID", res_mode.stderr)
+
+        # 5. Late observed_at (not strictly earlier than product owner container start)
+        self._unlock_vm_env_dir()
+        record_path.write_text(
+            json.dumps({**original_record, "observed_at": "2099-12-31T23:59:59.999999Z"}, sort_keys=True),
+            encoding="utf-8",
+        )
+        record_path.chmod(0o600)
+        self._lock_root_owned_paths()
+        res_late = subprocess.run([str(VERIFY_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(res_late.returncode, 0)
+        self.assertIn("SANITIZED_DATASET_INVALID", res_late.stderr)
+
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
     def test_ephemeral_workflow_wires_public_identity_vars_to_host(self) -> None:
@@ -3458,6 +3734,8 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         tpl = json.loads(INSTANCE_TEMPLATE.read_text(encoding="utf-8"))
         self.assertEqual(tpl["name"], "pantheon-stg-template-20261024")
         self.assertEqual(tpl["properties"]["machineType"], "e2-standard-2")
+        defaults_raw = (REPO_ROOT / "deploy" / "staging" / "staging-env.defaults").read_text(encoding="utf-8")
+        self.assertIn("STAGING_MACHINE_TYPE=e2-standard-4", defaults_raw)
         self.assertFalse(tpl["properties"]["scheduling"]["preemptible"])
         self.assertEqual(tpl["properties"]["scheduling"]["provisioningModel"], "STANDARD")
         self.assertEqual(

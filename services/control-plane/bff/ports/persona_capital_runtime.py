@@ -58,7 +58,13 @@ def _parse_rfc3339(val: Any) -> Optional[datetime]:
 
 
 def _deep_copy(value: Any) -> Any:
-    return json.loads(json.dumps(value))
+    if isinstance(value, dict):
+        return {k: _deep_copy(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_deep_copy(v) for v in value]
+    if isinstance(value, tuple):
+        return [_deep_copy(v) for v in value]
+    return value
 
 
 # Operational persona lifecycle states, mirrored from the existing BFF
@@ -189,20 +195,29 @@ class PersonaFleetPort:
         composite caller interfaces that layer market defaults separately.
         """
         _, raw_records = self._get_raw_records()
-        items = [_deep_copy(record) for record in raw_records if self._persona_id(record)]
-        if lifecycle_state:
-            items = [p for p in items if str(p.get("lifecycle_state") or "") == lifecycle_state]
-        if mandate:
-            items = [p for p in items if str(p.get("mandate") or "") == mandate]
-        if strategy_family:
-            items = [p for p in items if str(p.get("strategy_family") or "") == strategy_family]
-        if operational_only:
-            items = [
-                p
-                for p in items
-                if str(p.get("lifecycle_state") or "").strip().lower()
-                in PERSONA_OPERATIONAL_LIFECYCLE_STATES
-            ]
+        copy_fn = (
+            dict
+            if getattr(getattr(self._store, "__class__", None), "__name__", "")
+            == "PersonaRegistryHttpWritePort"
+            else _deep_copy
+        )
+        items: List[Dict[str, Any]] = []
+        for record in raw_records:
+            if not self._persona_id(record):
+                continue
+            if lifecycle_state and str(record.get("lifecycle_state") or "") != lifecycle_state:
+                continue
+            if mandate and str(record.get("mandate") or "") != mandate:
+                continue
+            if strategy_family and str(record.get("strategy_family") or "") != strategy_family:
+                continue
+            if (
+                operational_only
+                and str(record.get("lifecycle_state") or "").strip().lower()
+                not in PERSONA_OPERATIONAL_LIFECYCLE_STATES
+            ):
+                continue
+            items.append(copy_fn(record))
         return items
 
     def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
