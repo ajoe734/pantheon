@@ -20,8 +20,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Mapping, Sequence
 
 from services.external_egress import open_external_url
 from services.source_ingestion.source_health import SourceHealth
@@ -637,6 +637,13 @@ def _tw_price_available_time(val: Any, date: str) -> str:
 
 
 
+_TAIPEI_TZ = timezone(timedelta(hours=8))
+
+
+def _taipei_today() -> str:
+    return datetime.now(_TAIPEI_TZ).date().isoformat()
+
+
 def _month_anchors(value: Any, *, max_months: int) -> tuple[str, ...]:
     """Return a bounded newest-first list of Gregorian month anchors."""
 
@@ -1008,8 +1015,14 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         max_months: int | None = None,
         timeout_seconds: float = 20.0,
         trace_id: str = "",
+        today_provider: Callable[[], str] | None = None,
     ) -> tuple[SourceRecord, ...]:
-        """Fetch official monthly windows for one active symbol bounded by history depth."""
+        """Fetch official monthly windows for one active symbol bounded by history depth.
+
+        The anchor date can lag the Asia/Taipei calendar (openapi snapshot rows trail
+        the official monthly window), so the current Taipei month is requested first
+        when it is later than the anchor month. Months after it are never requested.
+        """
 
         raw_env = os.getenv("SOURCE_INGEST_TW_HISTORY_TRADING_DAYS", "").strip()
         if history_trading_days is not None:
@@ -1027,18 +1040,20 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             resolved_max_months = TW_OFFICIAL_HISTORY_MAX_MONTHS
 
         records: list[SourceRecord] = []
-        for month_anchor in _month_anchors(
-            anchor_date,
-            max_months=resolved_max_months,
-        ):
-            payload, api_endpoint = self.fetch_price_history_payload(
-                symbol,
-                venue,
-                anchor_date=month_anchor,
-                timeout_seconds=timeout_seconds,
-            )
-            records.extend(
-                self.records_from_price_history_payload(
+        month_anchors = _month_anchors(anchor_date, max_months=resolved_max_months)
+        current_month = _month_anchors((today_provider or _taipei_today)(), max_months=1)[0]
+        extra_current_month = current_month > month_anchors[0]
+        if extra_current_month:
+            month_anchors = (current_month, *month_anchors)
+        for month_anchor in month_anchors:
+            try:
+                payload, api_endpoint = self.fetch_price_history_payload(
+                    symbol,
+                    venue,
+                    anchor_date=month_anchor,
+                    timeout_seconds=timeout_seconds,
+                )
+                month_records = self.records_from_price_history_payload(
                     symbol,
                     venue,
                     payload,
@@ -1047,7 +1062,12 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                     max_records=max(self.max_records, target_days),
                     trace_id=trace_id,
                 )
-            )
+            except SourceEvidenceError:
+                # The current month window may not be published yet (e.g. before the close).
+                if extra_current_month and month_anchor == current_month:
+                    continue
+                raise
+            records.extend(month_records)
             distinct_dates = {
                 str(record.metadata.get("event_time") or "")
                 for record in records
