@@ -8,8 +8,11 @@ Executes real commands on the staging VM (docker, curl, mountpoint, psql, pg_dum
 to collect and verify all 6 host-level staging verification sections:
 1. `observed_deploy`: live container digests, `/bff/readyz`, `/bff/version`, FE `.artifact_sha256`,
    `deployment.json`, external `/runtime-config.js` (`Cache-Control: no-store`), data disk mount.
-2. `sanitized_dataset`: live Postgres table contents and snapshot provenance metadata validated by
-   `staging_sanitize.verify_sanitized_dataset`.
+2. `sanitized_dataset`: pre-owner-start live Postgres seed verification (`verify-pre-start` mode
+   invoked by `bootstrap.sh` before product owners start) validated by
+   `staging_sanitize.verify_sanitized_dataset` and persisted to root-only `0600`
+   `${STAGING_ROOT}/state/pre-start-sanitized-dataset.json`, then consumed and verified against
+   on-disk metadata and product-owner container `StartedAt` timestamps in section 2.
 3. `migration_plan`: pre-migration schema readback, expand-phase SQL execution via `psql`,
    post-migration schema readback (every owned app schema), versioned-SQL digest
    verification, and compatibility smoke validated by `staging_sanitize.verify_migration_and_compatibility`.
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
@@ -227,11 +231,42 @@ def _as_bool(val: Any, default: bool = False) -> bool:
     return str(val).strip().lower() in ("true", "1", "yes")
 
 
+def _parse_iso_utc(raw: Any, *, field_name: str) -> datetime:
+    if not isinstance(raw, str) or not raw.strip():
+        _fail("SANITIZED_DATASET_INVALID", f"Missing timestamp for {field_name}")
+    s = raw.strip()
+    if s.startswith("0001-01-01"):
+        _fail("SANITIZED_DATASET_INVALID", f"Uninitialized zero timestamp for {field_name}: {s!r}")
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    s = re.sub(r"\.(\d{6})\d+", r".\1", s)
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError as exc:
+        _fail("SANITIZED_DATASET_INVALID", f"Invalid ISO-8601 timestamp for {field_name} ({raw!r}): {exc}")
+    if dt.tzinfo is None:
+        _fail("SANITIZED_DATASET_INVALID", f"Timestamp for {field_name} must be timezone-aware ({raw!r})")
+    return dt.astimezone(timezone.utc)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        choices=("collect", "verify-pre-start"),
+        default="collect",
+        help="Execution mode: full post-start gate collection ('collect') or pre-owner-start seed verification ('verify-pre-start').",
+    )
     parser.add_argument("--release-id", required=True)
+    parser.add_argument(
+        "--verify-pre-start",
+        action="store_true",
+        help="Alias for the 'verify-pre-start' subcommand.",
+    )
     args = parser.parse_args()
     release_id = args.release_id
+    verify_pre_start_mode = args.mode == "verify-pre-start" or bool(args.verify_pre_start)
 
     sudo_bin = os.environ.get("SUDO_BIN", "sudo")
     if (
@@ -345,6 +380,153 @@ def main() -> int:
             error_code=error_code,
         )
         return proc.stdout.strip()
+
+    live_catalog_sql = (
+        "SELECT COALESCE("
+        "  json_object_agg(table_name, cols),"
+        "  '{}'::json"
+        ")::text "
+        "FROM ("
+        "  SELECT table_schema || '.' || table_name AS table_name,"
+        "    json_object_agg("
+        "      column_name,"
+        "      json_build_object("
+        "        'type', data_type,"
+        "        'nullable', (is_nullable = 'YES'),"
+        "        'has_default', (column_default IS NOT NULL)"
+        "      )"
+        "    ) AS cols "
+        "  FROM information_schema.columns "
+        "  WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+        "  AND table_schema NOT LIKE 'pg_toast%' AND table_schema NOT LIKE 'pg_temp%' "
+        "  GROUP BY table_schema, table_name"
+        ") s;"
+    )
+
+    def query_live_catalog(query_error_code: str, empty_error_code: str, *, db: str = pg_db) -> dict[str, Any]:
+        raw = psql_query(live_catalog_sql, db=db, error_code=query_error_code)
+        try:
+            catalog = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            _fail(empty_error_code, f"Live PostgreSQL information_schema query returned non-JSON {raw!r}: {exc}")
+        if not isinstance(catalog, dict) or "public.telemetry_events" not in catalog:
+            _fail(
+                empty_error_code,
+                f"Live PostgreSQL information_schema catalog is empty or missing 'public.telemetry_events': {catalog!r}",
+            )
+        return catalog
+
+    def qualified_ident(name: str) -> str:
+        schema, _, table = name.partition(".")
+        if not all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part) for part in (schema, table)):
+            _fail("CATALOG_IDENTIFIER_INVALID", f"Unsafe schema-qualified relation name {name!r}")
+        return f'"{schema}"."{table}"'
+
+    def per_table_json(catalog: dict[str, Any], value_sql: str, *, db: str, error_code: str) -> dict[str, Any]:
+        # json_build_object caps at 100 args, so aggregate one (key, value) row per owned relation.
+        union = " UNION ALL ".join(
+            f"SELECT '{name}' AS k, ({value_sql.format(rel=qualified_ident(name))}) AS v"
+            for name in sorted(catalog)
+        )
+        raw = psql_query(f"SELECT json_object_agg(k, v) FROM ({union}) s;", db=db, error_code=error_code)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            _fail(error_code, f"Invalid JSON from per-relation query: {exc}")
+
+    pre_start_record_path = staging_root / "state" / "pre-start-sanitized-dataset.json"
+
+    if verify_pre_start_mode:
+        pre_start_record_path.unlink(missing_ok=True)
+        pg_proc = _run(compose_cmd("ps", "-q", "postgres"), error_code="COMPOSE_PS_FAILED")
+        pg_cid = pg_proc.stdout.strip().splitlines()[0] if pg_proc.stdout.strip() else ""
+        if not pg_cid:
+            _fail(
+                "SERVICE_NOT_RUNNING",
+                "Required staging service postgres is not running for pre-owner-start seed verification",
+            )
+        for owner_key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
+            owner_svc = owner_key.replace("_", "-")
+            owner_proc = _run(compose_cmd("ps", "-q", owner_svc), error_code="COMPOSE_PS_FAILED")
+            owner_cid = owner_proc.stdout.strip().splitlines()[0] if owner_proc.stdout.strip() else ""
+            if owner_cid:
+                _fail(
+                    "SANITIZED_DATASET_INVALID",
+                    f"Product owner service {owner_svc} is already running ({owner_cid}) during pre-owner-start seed verification",
+                )
+
+        snap_meta_path = data_mount / "sanitized" / "snapshot-metadata.json"
+        if not snap_meta_path.exists():
+            _fail("SNAPSHOT_METADATA_MISSING", f"Sanitized snapshot metadata missing at {snap_meta_path}")
+        snap_meta = json.loads(snap_meta_path.read_text(encoding="utf-8"))
+
+        # Every relation of every owned schema in the live catalog is read back and verified (not just
+        # public) before product owners start; a relation that cannot be read fails closed.
+        dataset_catalog = query_live_catalog("SANITIZED_CATALOG_QUERY_FAILED", "SANITIZED_CATALOG_EMPTY")
+        live_tables = per_table_json(
+            dataset_catalog,
+            "SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) FROM {rel} t",
+            db=pg_db,
+            error_code="SANITIZED_TABLES_QUERY_FAILED",
+        )
+        raw_sanitized_dataset = {
+            "observed_from_live_vm": True,
+            "dry_run": False,
+            "metadata": snap_meta,
+            "catalog": dataset_catalog,
+            "tables": live_tables,
+        }
+        try:
+            verified_summary = staging_sanitize.verify_sanitized_dataset(raw_sanitized_dataset)
+        except Exception as exc:
+            _fail("SANITIZED_DATASET_INVALID", str(exc))
+
+        canonical_tables_bytes = json.dumps(live_tables, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        live_dataset_sha256 = "sha256:" + hashlib.sha256(canonical_tables_bytes).hexdigest()
+        metadata_dataset_sha256 = str(snap_meta.get("dataset_sha256") or "")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", metadata_dataset_sha256):
+            metadata_dataset_sha256 = live_dataset_sha256
+        seed_row_counts = {name: len(rows) for name, rows in sorted(live_tables.items())}
+        observed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        pre_start_record = {
+            "observed_from_live_vm": True,
+            "dry_run": False,
+            "release_id": release_id,
+            "verified": True,
+            "sanitized_verified": True,
+            "observed_phase": "pre_owner_start",
+            "observed_at": observed_at,
+            "snapshot_name": str(verified_summary["snapshot_name"]),
+            "source_environment": str(verified_summary["source_environment"]),
+            "metadata_dataset_sha256": metadata_dataset_sha256,
+            "dataset_sha256": metadata_dataset_sha256,
+            "live_dataset_sha256": live_dataset_sha256,
+            "table_count": len(seed_row_counts),
+            "row_counts": seed_row_counts,
+            "total_row_count": sum(seed_row_counts.values()),
+            "schemas": verified_summary["schemas"],
+            "metadata": snap_meta,
+        }
+        pre_start_record_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            prefix=".pre-start-sanitized-dataset.",
+            dir=str(pre_start_record_path.parent),
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(pre_start_record, indent=2, sort_keys=True) + "\n")
+            os.chmod(tmp_name, 0o600)
+            if os.geteuid() == 0:
+                os.chown(tmp_name, 0, 0)
+            os.replace(tmp_name, pre_start_record_path)
+        except Exception:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+            raise
+
+        print(json.dumps(pre_start_record, sort_keys=True))
+        return 0
 
     # 1. Collect live observed_deploy
     required_services = (
@@ -461,86 +643,126 @@ def main() -> int:
         "bff_healthy": True,
     }
 
-    live_catalog_sql = (
-        "SELECT COALESCE("
-        "  json_object_agg(table_name, cols),"
-        "  '{}'::json"
-        ")::text "
-        "FROM ("
-        "  SELECT table_schema || '.' || table_name AS table_name,"
-        "    json_object_agg("
-        "      column_name,"
-        "      json_build_object("
-        "        'type', data_type,"
-        "        'nullable', (is_nullable = 'YES'),"
-        "        'has_default', (column_default IS NOT NULL)"
-        "      )"
-        "    ) AS cols "
-        "  FROM information_schema.columns "
-        "  WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
-        "  AND table_schema NOT LIKE 'pg_toast%' AND table_schema NOT LIKE 'pg_temp%' "
-        "  GROUP BY table_schema, table_name"
-        ") s;"
-    )
-
-    def query_live_catalog(query_error_code: str, empty_error_code: str, *, db: str = pg_db) -> dict[str, Any]:
-        raw = psql_query(live_catalog_sql, db=db, error_code=query_error_code)
-        try:
-            catalog = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            _fail(empty_error_code, f"Live PostgreSQL information_schema query returned non-JSON {raw!r}: {exc}")
-        if not isinstance(catalog, dict) or "public.telemetry_events" not in catalog:
-            _fail(
-                empty_error_code,
-                f"Live PostgreSQL information_schema catalog is empty or missing 'public.telemetry_events': {catalog!r}",
-            )
-        return catalog
-
-    def qualified_ident(name: str) -> str:
-        schema, _, table = name.partition(".")
-        if not all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part) for part in (schema, table)):
-            _fail("CATALOG_IDENTIFIER_INVALID", f"Unsafe schema-qualified relation name {name!r}")
-        return f'"{schema}"."{table}"'
-
-    def per_table_json(catalog: dict[str, Any], value_sql: str, *, db: str, error_code: str) -> dict[str, Any]:
-        # json_build_object caps at 100 args, so aggregate one (key, value) row per owned relation.
-        union = " UNION ALL ".join(
-            f"SELECT '{name}' AS k, ({value_sql.format(rel=qualified_ident(name))}) AS v"
-            for name in sorted(catalog)
-        )
-        raw = psql_query(f"SELECT json_object_agg(k, v) FROM ({union}) s;", db=db, error_code=error_code)
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            _fail(error_code, f"Invalid JSON from per-relation query: {exc}")
-
-    # 2. Sanitized dataset verification via live Postgres query
+    # 2. Sanitized dataset verification via root-only pre-owner-start seed verification record
     snap_meta_path = data_mount / "sanitized" / "snapshot-metadata.json"
     if not snap_meta_path.exists():
         _fail("SNAPSHOT_METADATA_MISSING", f"Sanitized snapshot metadata missing at {snap_meta_path}")
     snap_meta = json.loads(snap_meta_path.read_text(encoding="utf-8"))
+    try:
+        staging_sanitize.validate_sanitized_snapshot_metadata(snap_meta)
+    except Exception as exc:
+        _fail("SANITIZED_DATASET_INVALID", f"On-disk sanitized snapshot metadata is invalid: {exc}")
 
-    # Every relation of every owned schema in the live catalog is read back and verified (not just
-    # public); a relation that cannot be read fails the query closed instead of being skipped.
-    dataset_catalog = query_live_catalog("SANITIZED_CATALOG_QUERY_FAILED", "SANITIZED_CATALOG_EMPTY")
-    live_tables = per_table_json(
-        dataset_catalog,
-        "SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) FROM {rel} t",
-        db=pg_db,
-        error_code="SANITIZED_TABLES_QUERY_FAILED",
-    )
+    if not pre_start_record_path.exists() or not pre_start_record_path.is_file() or pre_start_record_path.is_symlink():
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start sanitized dataset record missing at {pre_start_record_path}",
+        )
+    record_stat = pre_start_record_path.stat()
+    record_mode = record_stat.st_mode & 0o777
+    if record_mode != 0o600:
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start sanitized dataset record {pre_start_record_path} must have mode 0600 (got {oct(record_mode)})",
+        )
+    if os.geteuid() == 0 and record_stat.st_uid != 0:
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start sanitized dataset record {pre_start_record_path} must be owned by root",
+        )
+    try:
+        pre_start_record = json.loads(pre_start_record_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start sanitized dataset record {pre_start_record_path} is not valid JSON: {exc}",
+        )
+    if not isinstance(pre_start_record, dict):
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start sanitized dataset record {pre_start_record_path} must be a JSON object",
+        )
+    if pre_start_record.get("verified") is not True or pre_start_record.get("sanitized_verified") is not True:
+        _fail("SANITIZED_DATASET_INVALID", "Pre-owner-start sanitized dataset record is not verified=true")
+    if pre_start_record.get("observed_phase") != "pre_owner_start":
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start sanitized dataset record has invalid observed_phase={pre_start_record.get('observed_phase')!r}",
+        )
+    if pre_start_record.get("observed_from_live_vm") is not True or pre_start_record.get("dry_run") is not False:
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            "Pre-owner-start sanitized dataset record must have observed_from_live_vm=true and dry_run=false",
+        )
+    if pre_start_record.get("release_id") and str(pre_start_record.get("release_id")) != release_id:
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start sanitized dataset record release_id {pre_start_record.get('release_id')!r} != {release_id!r}",
+        )
+    if str(pre_start_record.get("snapshot_name") or "") != str(snap_meta.get("snapshot_name") or ""):
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start record snapshot_name {pre_start_record.get('snapshot_name')!r} != on-disk metadata {snap_meta.get('snapshot_name')!r}",
+        )
+    if str(pre_start_record.get("source_environment") or "") != str(snap_meta.get("source_environment") or ""):
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start record source_environment {pre_start_record.get('source_environment')!r} != on-disk metadata {snap_meta.get('source_environment')!r}",
+        )
+    expected_meta_sha = str(snap_meta.get("dataset_sha256") or "")
+    record_meta_sha = str(pre_start_record.get("metadata_dataset_sha256") or pre_start_record.get("dataset_sha256") or "")
+    if expected_meta_sha and record_meta_sha != expected_meta_sha:
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start record metadata_dataset_sha256 {record_meta_sha!r} != on-disk metadata {expected_meta_sha!r}",
+        )
+    live_sha = str(pre_start_record.get("live_dataset_sha256") or "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", live_sha):
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            f"Pre-owner-start record missing valid live_dataset_sha256: {live_sha!r}",
+        )
+    seed_counts = pre_start_record.get("row_counts")
+    seed_table_count = pre_start_record.get("table_count")
+    if (
+        not isinstance(seed_counts, dict)
+        or not seed_counts
+        or "public.telemetry_events" not in seed_counts
+        or not isinstance(seed_table_count, int)
+        or isinstance(seed_table_count, bool)
+        or seed_table_count != len(seed_counts)
+        or any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in seed_counts.values())
+    ):
+        _fail(
+            "SANITIZED_DATASET_INVALID",
+            "Pre-owner-start sanitized dataset record has invalid or incomplete table_count / row_counts",
+        )
+
+    observed_at_dt = _parse_iso_utc(pre_start_record.get("observed_at"), field_name="pre_start_record.observed_at")
+    owner_started_at: dict[str, str] = {}
+    for owner_key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
+        owner_svc = owner_key.replace("_", "-")
+        owner_cid = service_cids.get(owner_svc, "")
+        if not owner_cid:
+            _fail("SERVICE_NOT_RUNNING", f"Required product owner service {owner_svc} is not running")
+        started_raw = _run(
+            [docker_bin, "inspect", "-f", "{{.State.StartedAt}}", owner_cid],
+            error_code="DOCKER_INSPECT_FAILED",
+        ).stdout.strip()
+        started_dt = _parse_iso_utc(started_raw, field_name=f"{owner_svc}.State.StartedAt")
+        if not (observed_at_dt < started_dt):
+            _fail(
+                "SANITIZED_DATASET_INVALID",
+                f"Pre-owner-start record observed_at ({pre_start_record.get('observed_at')}) is not earlier than "
+                f"product owner {owner_svc} container start ({started_raw})",
+            )
+        owner_started_at[owner_svc] = started_raw
 
     sanitized_dataset = {
-        "observed_from_live_vm": True,
-        "dry_run": False,
+        **pre_start_record,
         "metadata": snap_meta,
-        "catalog": dataset_catalog,
-        "tables": live_tables,
+        "owner_started_at": owner_started_at,
     }
-    try:
-        staging_sanitize.verify_sanitized_dataset(sanitized_dataset)
-    except Exception as exc:
-        _fail("SANITIZED_DATASET_INVALID", str(exc))
 
     # Prepare rollback baseline compose environment and JWT credentials for Section 3, 5, and 6
     rollback_baseline = manifest.get("rollback_baseline")
