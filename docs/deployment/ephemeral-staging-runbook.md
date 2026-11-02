@@ -51,6 +51,10 @@ Orchestrated by [`.github/workflows/staging-ephemeral-deploy.yml`](../../.github
 
 ---
 
+### Retained-resource cleanup path
+
+Resources kept by `retained_for_debug` (or left by a lost runner) may have no journal in `STAGING_STATE_DIR`. Teardown then rebuilds the inventory from the cloud by `release_id` label and deletes by type (VM, then disks, then address; IAM keeps its preexisting/owned rules), the same order as `orphan-sweep`. With `GCLOUD_BIN` set, `--mode teardown --dry-run` queries the cloud and prints that ordered plan without deleting; without `GCLOUD_BIN` it keeps reporting `already_absent`.
+
 ## 3. Local Validation Commands
 
 ```bash

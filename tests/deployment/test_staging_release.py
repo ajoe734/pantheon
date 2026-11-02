@@ -2985,6 +2985,39 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(ev["post_delete_readback_verified"])
         self.assertEqual(len(ev["inventory_snapshot"]), 3)
 
+    def test_teardown_rebuilt_inventory_deletes_vm_disks_then_address(self) -> None:
+        subprocess.run([str(PROVISION_SCRIPT)], env=self._base_env(), capture_output=True, text=True, check=True)
+        shutil.rmtree(self.state_dir)  # no journal: inventory is rebuilt from the cloud
+        self.gcloud_log_file.write_text("", encoding="utf-8")
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001")
+        order = ["instance", "disk", "disk", "address"]
+
+        dry = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "teardown", "--dry-run", "--result", "success"],
+            env=env, capture_output=True, text=True, check=True,
+        )
+        dry_json = json.loads(dry.stdout)
+        self.assertEqual(dry_json["status"], "destroyed")
+        self.assertTrue(dry_json["dry_run"])
+        self.assertEqual([d["type"] for d in dry_json["deleted_resources"]], order)
+        self.assertNotIn(" delete ", self.gcloud_log_file.read_text(encoding="utf-8"))
+        cloud = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(len(cloud["instances"]), 1)
+        self.assertEqual(len(cloud["disks"]), 2)
+        self.assertEqual(len(cloud["addresses"]), 1)
+
+        live = subprocess.run(
+            [str(DESTROY_SCRIPT), "--mode", "teardown", "--result", "success"],
+            env=env, capture_output=True, text=True, check=True,
+        )
+        live_json = json.loads(live.stdout)
+        self.assertTrue(live_json["post_delete_readback_verified"])
+        self.assertEqual([d["type"] for d in live_json["deleted_resources"]], order)
+        deletes = [c.split()[1] for c in self.gcloud_log_file.read_text(encoding="utf-8").splitlines() if " delete " in c]
+        self.assertEqual(deletes, ["instances", "disks", "disks", "addresses"])
+        cloud = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))
+        self.assertEqual((cloud["instances"], cloud["disks"], cloud["addresses"]), ([], [], []))
+
     def test_cross_run_orphan_discovery_and_preexisting_iam_preservation(self) -> None:
         # 1. Orphan sweep is inert when STAGING_ORPHAN_CLEANUP_ENABLED != true
         inert = subprocess.run(

@@ -5,7 +5,7 @@
 # - `--mode teardown`: Preserves bounded evidence first, handles delayed evidence
 #   upload via retry + local archive fallback, respects 2h failure retention TTL
 #   (unless `--force-expired`, `partial_create_failure`, or `cancelled`), executes
-#   real `GCLOUD_BIN` deletion in reverse creation order (IAM -> VM -> disks -> IP),
+#   real `GCLOUD_BIN` deletion ordered by resource type (IAM -> VM -> disks -> IP),
 #   preserves unowned resources and preexisting IAM bindings, and performs post-delete
 #   cloud readback to prove zero lingering owned resources.
 # - `--mode orphan-sweep`: Independent scheduled reconciliation. Remains inert
@@ -506,7 +506,7 @@ def pending_address_labels(item: dict, expect_project: str, expect_region: str, 
 
 
 def query_cloud_release_resources() -> list[dict]:
-    if dry_run or not gcloud_bin or not project_id or not zone:
+    if not gcloud_bin or not project_id or not zone:
         return []
     discovered = []
     inst_raw = json.loads(run_gcloud(["compute", "instances", "list", f"--project={project_id}", f"--zones={zone}"]) or "[]")
@@ -620,13 +620,15 @@ if (
     }, sort_keys=True))
     raise SystemExit(0)
 
-# 3. Delete owned staging resources in reverse creation order (IAM -> VM -> disks -> IP)
+# 3. Delete owned staging resources by type (IAM -> VM -> disks -> IP), regardless of
+# whether the inventory came from the journal or was rebuilt from the cloud.
+TYPE_ORDER = {"iam_binding": 0, "instance": 1, "disk": 2, "address": 3}
 deleted = []
 skipped_unowned = []
 remaining = []
 exact_pending_addresses = []
 
-for res in reversed(inv.get("resources", [])):
+for res in sorted(inv.get("resources", []), key=lambda r: TYPE_ORDER.get(str(r.get("type")), 99)):
     if res.get("state") == "deleted":
         continue
     r_type = res.get("type")
@@ -722,7 +724,7 @@ if not dry_run:
     evidence_payload["deleted_resources"] = deleted
     evidence_path.write_text(json.dumps(evidence_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    inv["resources"] = list(reversed(remaining))
+    inv["resources"] = remaining
     inv_path.write_text(json.dumps(inv, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if lease_path.exists():
         lease["status"] = "destroyed"
