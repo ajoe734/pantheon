@@ -19,6 +19,7 @@
 #   readability, exact-pair rollback, and security/safe-off checks.
 
 set -euo pipefail
+unset SSH_DEPLOY_OUT SSH_VERIFY_OUT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -81,23 +82,22 @@ STATE_DIR="${STAGING_STATE_DIR:-/tmp/pantheon-staging-state}"
 mkdir -p "${STATE_DIR}/evidence" "${STATE_DIR}/artifacts" "${STATE_DIR}/observed-gates"
 
 validate_and_inspect_artifacts() {
-  local base_summary
-  if ! base_summary="$(
-    python3 "${SCRIPT_DIR}/release_manifest.py" validate \
+  local base_summary_file="${STATE_DIR}/artifacts/manifest-base-summary.json"
+  install -m 0600 /dev/null "${base_summary_file}"
+  if ! python3 "${SCRIPT_DIR}/release_manifest.py" validate \
       --manifest "${RELEASE_MANIFEST_PATH}" \
       --expected-sha256 "${EXPECTED_MANIFEST_SHA256}" \
-      --require-dev-verified 2>&1
-  )"; then
-    die_json "MANIFEST_VALIDATION_FAILED" "Release manifest rejected: $(printf '%s' "$base_summary" | tr '\n"' '  ')"
+      --require-dev-verified >"${base_summary_file}" 2>&1; then
+    die_json "MANIFEST_VALIDATION_FAILED" "Release manifest rejected: $(tr '\n"' '  ' <"${base_summary_file}")"
   fi
 
   local release_id expected_fe_sha expected_bff_image prev_release_id expected_base_fe_sha expected_base_bff_image
-  release_id="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"])["release_id"])')"
-  expected_fe_sha="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"])["frontend_artifact_sha256"])')"
-  expected_bff_image="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"])["operator_bff_image"])')"
-  prev_release_id="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"]).get("rollback_previous_release_id", ""))')"
-  expected_base_fe_sha="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"]).get("rollback_frontend_artifact_sha256", ""))')"
-  expected_base_bff_image="$(MANIFEST_JSON="$base_summary" python3 -c 'import json, os; print(json.loads(os.environ["MANIFEST_JSON"]).get("rollback_operator_bff_image", ""))')"
+  release_id="$(MANIFEST_FILE="${base_summary_file}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["MANIFEST_FILE"]).read_text(encoding="utf-8"))["release_id"])')"
+  expected_fe_sha="$(MANIFEST_FILE="${base_summary_file}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["MANIFEST_FILE"]).read_text(encoding="utf-8"))["frontend_artifact_sha256"])')"
+  expected_bff_image="$(MANIFEST_FILE="${base_summary_file}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["MANIFEST_FILE"]).read_text(encoding="utf-8"))["operator_bff_image"])')"
+  prev_release_id="$(MANIFEST_FILE="${base_summary_file}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["MANIFEST_FILE"]).read_text(encoding="utf-8")).get("rollback_previous_release_id", ""))')"
+  expected_base_fe_sha="$(MANIFEST_FILE="${base_summary_file}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["MANIFEST_FILE"]).read_text(encoding="utf-8")).get("rollback_frontend_artifact_sha256", ""))')"
+  expected_base_bff_image="$(MANIFEST_FILE="${base_summary_file}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["MANIFEST_FILE"]).read_text(encoding="utf-8")).get("rollback_operator_bff_image", ""))')"
 
   local observed_fe_sha="${OBSERVED_FE_ARTIFACT_SHA256:-}"
   local fe_artifact_file="${STAGING_FE_ARTIFACT_PATH:-}"
@@ -162,16 +162,18 @@ PY
   local observed_bff_digest="${OBSERVED_BFF_IMAGE_DIGEST:-}"
   local observed_base_bff_digest="${OBSERVED_BASELINE_BFF_IMAGE_DIGEST:-}"
   if [[ "${DRY_RUN}" != "true" ]]; then
-    local gcloud_img_json
-    if ! gcloud_img_json="$("${GCLOUD_BIN}" artifacts docker images describe "${expected_bff_image}" --format=json 2>&1)"; then
+    local gcloud_img_file="${STATE_DIR}/artifacts/${release_id}-bff-image-describe.json"
+    install -m 0600 /dev/null "${gcloud_img_file}"
+    if ! "${GCLOUD_BIN}" artifacts docker images describe "${expected_bff_image}" --format=json >"${gcloud_img_file}" 2>&1; then
       die_json "BFF_IMAGE_LOOKUP_FAILED" "Failed to describe immutable BFF image ${expected_bff_image}"
     fi
     if ! observed_bff_digest="$(
-      IMG_JSON="${gcloud_img_json}" EXPECTED_REF="${expected_bff_image}" python3 - <<'PY'
+      IMG_JSON_FILE="${gcloud_img_file}" EXPECTED_REF="${expected_bff_image}" python3 - <<'PY'
 import json
 import os
+from pathlib import Path
 
-payload = json.loads(os.environ["IMG_JSON"])
+payload = json.loads(Path(os.environ["IMG_JSON_FILE"]).read_text(encoding="utf-8"))
 if not isinstance(payload, dict):
     raise SystemExit(1)
 summary = payload.get("image_summary") or payload
@@ -186,16 +188,18 @@ PY
     fi
 
     if [[ -n "${expected_base_bff_image}" ]]; then
-      local gcloud_base_img_json
-      if ! gcloud_base_img_json="$("${GCLOUD_BIN}" artifacts docker images describe "${expected_base_bff_image}" --format=json 2>&1)"; then
+      local gcloud_base_img_file="${STATE_DIR}/artifacts/${release_id}-baseline-bff-image-describe.json"
+      install -m 0600 /dev/null "${gcloud_base_img_file}"
+      if ! "${GCLOUD_BIN}" artifacts docker images describe "${expected_base_bff_image}" --format=json >"${gcloud_base_img_file}" 2>&1; then
         die_json "BASELINE_BFF_IMAGE_LOOKUP_FAILED" "Failed to describe immutable baseline BFF image ${expected_base_bff_image}"
       fi
       if ! observed_base_bff_digest="$(
-        IMG_JSON="${gcloud_base_img_json}" EXPECTED_REF="${expected_base_bff_image}" python3 - <<'PY'
+        IMG_JSON_FILE="${gcloud_base_img_file}" EXPECTED_REF="${expected_base_bff_image}" python3 - <<'PY'
 import json
 import os
+from pathlib import Path
 
-payload = json.loads(os.environ["IMG_JSON"])
+payload = json.loads(Path(os.environ["IMG_JSON_FILE"]).read_text(encoding="utf-8"))
 if not isinstance(payload, dict):
     raise SystemExit(1)
 summary = payload.get("image_summary") or payload
@@ -230,12 +234,13 @@ PY
     verify_args+=("--observed-baseline-bff-digest" "${observed_base_bff_digest}")
   fi
 
-  local verified_summary
-  if ! verified_summary="$(python3 "${SCRIPT_DIR}/release_manifest.py" "${verify_args[@]}" 2>&1)"; then
-    die_json "ARTIFACT_CHECKSUM_MISMATCH" "Immutable artifact verification failed: $(printf '%s' "$verified_summary" | tr '\n"' '  ')"
+  local verified_summary_file="${STATE_DIR}/artifacts/${release_id}-manifest-verified-summary.json"
+  install -m 0600 /dev/null "${verified_summary_file}"
+  if ! python3 "${SCRIPT_DIR}/release_manifest.py" "${verify_args[@]}" >"${verified_summary_file}" 2>&1; then
+    die_json "ARTIFACT_CHECKSUM_MISMATCH" "Immutable artifact verification failed: $(tr '\n"' '  ' <"${verified_summary_file}")"
   fi
 
-  MANIFEST_SUMMARY="${verified_summary}" \
+  MANIFEST_SUMMARY_FILE="${verified_summary_file}" \
   DRY_RUN="${DRY_RUN}" \
   FE_ARTIFACT_FILE="${fe_artifact_file}" \
   FE_BASELINE_ARTIFACT_FILE="${fe_baseline_artifact_file}" \
@@ -246,8 +251,9 @@ PY
   python3 - <<'PY'
 import json
 import os
+from pathlib import Path
 
-summary = json.loads(os.environ["MANIFEST_SUMMARY"])
+summary = json.loads(Path(os.environ["MANIFEST_SUMMARY_FILE"]).read_text(encoding="utf-8"))
 summary["dry_run"] = os.environ["DRY_RUN"] == "true"
 summary["observed_fe_artifact_sha256"] = os.environ["OBSERVED_FE_SHA"]
 summary["observed_operator_bff_image"] = os.environ["OBSERVED_BFF_REF"]
@@ -322,14 +328,16 @@ case "${SUBCOMMAND}" in
     ;;
 
   deploy-host)
-    ARTIFACT_CHECK_JSON="$(validate_and_inspect_artifacts)"
-    RELEASE_ID="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"])["release_id"])' )"
-    FE_COMMIT="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"])["frontend_commit"])' )"
-    FE_SHA256="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"])["frontend_artifact_sha256"])' )"
-    BFF_COMMIT="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"])["backend_commit"])' )"
-    BFF_IMAGE="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"])["operator_bff_image"])' )"
-    FE_ARTIFACT_FILE="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"]).get("fe_artifact_path", ""))' )"
-    FE_BASELINE_ARTIFACT_FILE="$( CHECK_JSON="$ARTIFACT_CHECK_JSON" python3 -c 'import json, os; print(json.loads(os.environ["CHECK_JSON"]).get("fe_baseline_artifact_path", ""))' )"
+    ARTIFACT_CHECK_FILE="${STATE_DIR}/artifacts/artifact-check.json"
+    install -m 0600 /dev/null "${ARTIFACT_CHECK_FILE}"
+    validate_and_inspect_artifacts >"${ARTIFACT_CHECK_FILE}"
+    RELEASE_ID="$( CHECK_JSON_FILE="${ARTIFACT_CHECK_FILE}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["CHECK_JSON_FILE"]).read_text(encoding="utf-8"))["release_id"])' )"
+    FE_COMMIT="$( CHECK_JSON_FILE="${ARTIFACT_CHECK_FILE}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["CHECK_JSON_FILE"]).read_text(encoding="utf-8"))["frontend_commit"])' )"
+    FE_SHA256="$( CHECK_JSON_FILE="${ARTIFACT_CHECK_FILE}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["CHECK_JSON_FILE"]).read_text(encoding="utf-8"))["frontend_artifact_sha256"])' )"
+    BFF_COMMIT="$( CHECK_JSON_FILE="${ARTIFACT_CHECK_FILE}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["CHECK_JSON_FILE"]).read_text(encoding="utf-8"))["backend_commit"])' )"
+    BFF_IMAGE="$( CHECK_JSON_FILE="${ARTIFACT_CHECK_FILE}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["CHECK_JSON_FILE"]).read_text(encoding="utf-8"))["operator_bff_image"])' )"
+    FE_ARTIFACT_FILE="$( CHECK_JSON_FILE="${ARTIFACT_CHECK_FILE}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["CHECK_JSON_FILE"]).read_text(encoding="utf-8")).get("fe_artifact_path", ""))' )"
+    FE_BASELINE_ARTIFACT_FILE="$( CHECK_JSON_FILE="${ARTIFACT_CHECK_FILE}" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["CHECK_JSON_FILE"]).read_text(encoding="utf-8")).get("fe_baseline_artifact_path", ""))' )"
     OBSERVED_DEPLOY_FILE="${STATE_DIR}/evidence/${RELEASE_ID}-observed-deploy.json"
 
     if [[ "${DRY_RUN}" == "true" ]]; then
@@ -481,22 +489,22 @@ PY
     REMOTE_ENV_EXPORTS="$(build_remote_env_exports)"
     REMOTE_DEPLOY_CMD="set -euo pipefail; ${REMOTE_ENV_EXPORTS}bash '${REMOTE_BUNDLE_DIR}/bootstrap.sh' --bundle-dir '${REMOTE_BUNDLE_DIR}' --release-id '${RELEASE_ID}' --fe-sha '${FE_SHA256}' --bff-image '${BFF_IMAGE}' --bff-host '${BFF_HOST}' --fe-host '${FE_HOST}'"
 
-    if ! SSH_DEPLOY_OUT="$(
-      "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
+    SSH_DEPLOY_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-ssh-deploy.out"
+    install -m 0600 /dev/null "${SSH_DEPLOY_OUT_FILE}"
+    if ! "${GCLOUD_BIN}" compute ssh "${VM_NAME}" \
         --project="${STAGING_GCP_PROJECT_ID}" \
         --zone="${STAGING_GCP_ZONE}" \
         --tunnel-through-iap \
         --quiet \
-        --command="${REMOTE_DEPLOY_CMD}" 2>&1
-    )"; then
+        --command="${REMOTE_DEPLOY_CMD}" >"${SSH_DEPLOY_OUT_FILE}" 2>&1; then
       # Public-output boundary: replay only structural BFF_DIAG lines and the bootstrap error_code; never the raw SSH body.
-      printf '%s\n' "$SSH_DEPLOY_OUT" | grep -E '^BFF_DIAG (status=[a-z]+ exit_code=-?[0-9]+ oom_killed=(true|false) restart_count=[0-9]+ error_present=(true|false)|state=unavailable|container=missing|frame=/workspace/[A-Za-z0-9_./-]+\.py:[0-9]+|exception_type=[A-Za-z_][A-Za-z0-9_.]*)$' | tail -n 40 >&2 || true
-      REMOTE_ERR_CODE="$(printf '%s\n' "$SSH_DEPLOY_OUT" | grep -oE '"error_code": "[A-Z0-9_]{1,64}"' | tail -n1 | cut -d'"' -f4 || true)"
+      grep -E '^BFF_DIAG (status=[a-z]+ exit_code=-?[0-9]+ oom_killed=(true|false) restart_count=[0-9]+ error_present=(true|false)|state=unavailable|container=missing|frame=/workspace/[A-Za-z0-9_./-]+\.py:[0-9]+|exception_type=[A-Za-z_][A-Za-z0-9_.]*)$' "${SSH_DEPLOY_OUT_FILE}" | tail -n 40 >&2 || true
+      REMOTE_ERR_CODE="$(grep -oE '"error_code": "[A-Z0-9_]{1,64}"' "${SSH_DEPLOY_OUT_FILE}" | tail -n1 | cut -d'"' -f4 || true)"
       die_json "HOST_SSH_DEPLOY_FAILED" "Remote staging deployment command failed on ${VM_NAME}: ${REMOTE_ERR_CODE:-unknown}"
     fi
 
     OBSERVED_DEPLOY_FILE="${OBSERVED_DEPLOY_FILE}" \
-    SSH_DEPLOY_OUT="${SSH_DEPLOY_OUT}" \
+    SSH_DEPLOY_OUT_FILE="${SSH_DEPLOY_OUT_FILE}" \
     RELEASE_ID="${RELEASE_ID}" \
     VM_NAME="${VM_NAME}" \
     RESERVED_IP="${RESERVED_IP}" \
@@ -510,7 +518,7 @@ import os
 import sys
 from pathlib import Path
 
-raw = os.environ["SSH_DEPLOY_OUT"].strip()
+raw = Path(os.environ["SSH_DEPLOY_OUT_FILE"]).read_text(encoding="utf-8", errors="replace").strip()
 if not raw:
     print(json.dumps({"status": "error", "error_code": "EMPTY_HOST_DEPLOY_READBACK", "message": "SSH deploy returned empty output"}), file=sys.stderr)
     raise SystemExit(1)
@@ -607,21 +615,22 @@ PY
     COLLECTOR_BIN="${STAGING_BIN_DIR:-/usr/local/bin}/pantheon-staging-collect-gates"
     REMOTE_ENV_EXPORTS="$(build_remote_env_exports)"
     REMOTE_VERIFY_CMD="set -euo pipefail; ${REMOTE_ENV_EXPORTS}'${COLLECTOR_BIN}' --release-id '${RELEASE_ID}'"
-    if ! SSH_VERIFY_OUT="$(
-      "${GCLOUD_BIN}" compute ssh "${VM_TARGET}" \
+    SSH_VERIFY_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-ssh-verify.out"
+    install -m 0600 /dev/null "${SSH_VERIFY_OUT_FILE}"
+    if ! "${GCLOUD_BIN}" compute ssh "${VM_TARGET}" \
         --project="${STAGING_GCP_PROJECT_ID}" \
         --zone="${STAGING_GCP_ZONE}" \
         --tunnel-through-iap \
         --quiet \
-        --command="${REMOTE_VERIFY_CMD}" 2>&1
-    )"; then
-      REMOTE_ERROR_CODES="$(printf '%s' "$SSH_VERIFY_OUT" | grep -oE '"error_code" *: *"[A-Z][A-Z0-9_]{2,63}"' | sed -E 's/.*"([A-Z0-9_]+)"$/\1/' | sort -u | tr '\n' ' ' || true)"
+        --command="${REMOTE_VERIFY_CMD}" >"${SSH_VERIFY_OUT_FILE}" 2>&1; then
+      REMOTE_ERROR_CODES="$(grep -oE '"error_code" *: *"[A-Z][A-Z0-9_]{2,63}"' "${SSH_VERIFY_OUT_FILE}" | sed -E 's/.*"([A-Z0-9_]+)"$/\1/' | sort -u | tr '\n' ' ' || true)"
       # Only for PRODUCT_OWNER_UNSERVED: keep the structural service-name list (every name validated
       # against PRODUCT_OWNER_IMAGE_KEYS); anything malformed/unknown stays generic. Never echo raw output.
       UNSERVED_OWNERS="$(
-        SSH_VERIFY_OUT="${SSH_VERIFY_OUT}" PYTHONPATH="${REPO_ROOT}" python3 -I - <<'PY' 2>/dev/null || true
+        SSH_VERIFY_OUT_FILE="${SSH_VERIFY_OUT_FILE}" PYTHONPATH="${REPO_ROOT}" python3 -I - <<'PY' 2>/dev/null || true
 import json
 import os
+from pathlib import Path
 import sys
 
 sys.path.insert(0, os.environ["PYTHONPATH"])
@@ -629,7 +638,8 @@ from scripts.deploy.staging_sanitize import PRODUCT_OWNER_IMAGE_KEYS
 
 prefix = "Product owners not running/healthy: "
 allowed = {k.replace("_", "-") for k in PRODUCT_OWNER_IMAGE_KEYS}
-for line in reversed(os.environ["SSH_VERIFY_OUT"].splitlines()):
+raw_lines = Path(os.environ["SSH_VERIFY_OUT_FILE"]).read_text(encoding="utf-8", errors="replace").splitlines()
+for line in reversed(raw_lines):
     line = line.strip()
     if not (line.startswith("{") and line.endswith("}")):
         continue
@@ -658,7 +668,7 @@ PY
     GATE_OUT_DIR="${STATE_DIR}/observed-gates/${RELEASE_ID}"
     mkdir -p "${GATE_OUT_DIR}"
 
-    SSH_VERIFY_OUT="${SSH_VERIFY_OUT}" \
+    SSH_VERIFY_OUT_FILE="${SSH_VERIFY_OUT_FILE}" \
     GATE_OUT_DIR="${GATE_OUT_DIR}" \
     RELEASE_ID="${RELEASE_ID}" \
     python3 - <<'PY'
@@ -667,7 +677,7 @@ import os
 import sys
 from pathlib import Path
 
-raw = os.environ["SSH_VERIFY_OUT"].strip()
+raw = Path(os.environ["SSH_VERIFY_OUT_FILE"]).read_text(encoding="utf-8", errors="replace").strip()
 bundle = None
 for line in reversed(raw.splitlines()):
     candidate = line.strip()

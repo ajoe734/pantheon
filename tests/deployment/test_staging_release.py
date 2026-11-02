@@ -4029,6 +4029,117 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(sec_rec["tenant_isolation_enforced"])
         self.assertTrue(sec_rec["viewer_mutation_rejected"])
 
+    def test_large_ssh_bundle_over_256kib_flows_through_deploy_and_collect_verify_gates(self) -> None:
+        # 10. Drill 4 regression: collector bundle > 256 KiB (well above Linux MAX_ARG_STRLEN 128 KiB)
+        # must never be passed via environment variables or argv to python3 (which died with E2BIG / exit 126
+        # at staging_ops.sh:661, :622, and :499). Both deploy-host and collect-verify-gates (plus
+        # staging_verify.sh) must read 0600 files under STATE_DIR and preserve the full bundle.
+        self._unlock_vm_env_dir()
+        raw_ds = _sample_raw_dataset(self.manifest["migration_set_sha256"])
+        for i in range(80):
+            tname = f"public.domain_table_{i:03d}"
+            raw_ds["catalog"][tname] = {
+                f"col_{j:02d}": {"type": "character varying(255)", "nullable": True, "has_default": False}
+                for j in range(25)
+            }
+            raw_ds["tables"][tname] = []
+        sanitized = staging_sanitize.sanitize_dataset(raw_ds)
+        (self.data_mount / "sanitized" / "snapshot-metadata.json").write_text(
+            json.dumps(sanitized["metadata"], indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        vm_state = json.loads(self.vm_runtime_state_file.read_text(encoding="utf-8"))
+        vm_state["databases"]["pantheon_staging"] = {
+            "tables": sanitized["tables"],
+            "schema": raw_ds["catalog"],
+        }
+        self.vm_runtime_state_file.write_text(json.dumps(vm_state, indent=2, sort_keys=True), encoding="utf-8")
+        self._lock_root_owned_paths()
+
+        # Wrap fake gcloud so SSH deploy-host also emits > 256 KiB of bootstrap log lines before its JSON readback.
+        big_ssh_wrapper = self.tmp_path / "big-ssh-gcloud.py"
+        big_ssh_wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, subprocess, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] == ['compute', 'ssh'] and any('bootstrap.sh' in a for a in args):\n"
+            "    sys.stdout.write(('bootstrap-progress-line-' + ('x' * 100) + '\\n') * 2400)\n"
+            "    sys.stdout.flush()\n"
+            f"proc = subprocess.run([{str(self.gcloud_bin)!r}] + args)\n"
+            "raise SystemExit(proc.returncode)\n",
+            encoding="utf-8",
+        )
+        big_ssh_wrapper.chmod(0o755)
+
+        ver = self._provision_and_verify(GCLOUD_BIN=str(big_ssh_wrapper))
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        ver_json = json.loads(ver.stdout)
+        self.assertEqual(ver_json["status"], "staging_verified")
+
+        deploy_out_file = self.state_dir / "artifacts" / "pantheon-20261024-001-ssh-deploy.out"
+        verify_out_file = self.state_dir / "artifacts" / "pantheon-20261024-001-ssh-verify.out"
+        self.assertTrue(deploy_out_file.is_file())
+        self.assertTrue(verify_out_file.is_file())
+        self.assertEqual(deploy_out_file.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(verify_out_file.stat().st_mode & 0o777, 0o600)
+        self.assertGreater(deploy_out_file.stat().st_size, 262144)
+        self.assertGreater(verify_out_file.stat().st_size, 262144)
+
+        gate_dir = self.state_dir / "observed-gates" / "pantheon-20261024-001"
+        for fname in (
+            "observed-deploy.json",
+            "sanitized-dataset.json",
+            "migration-plan.json",
+            "backup-restore-record.json",
+            "rollback-readback.json",
+            "security-readback.json",
+        ):
+            gfile = gate_dir / fname
+            self.assertTrue(gfile.is_file(), fname)
+            gdoc = json.loads(gfile.read_text(encoding="utf-8"))
+            self.assertTrue(gdoc["observed_from_live_vm"], fname)
+            self.assertFalse(gdoc["dry_run"], fname)
+
+        mig_plan = json.loads((gate_dir / "migration-plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(mig_plan["old_app_schema"]), 85)
+        self.assertEqual(len(mig_plan["new_schema"]), 86)
+        self.assertIn("public.domain_table_079", mig_plan["old_app_schema"])
+        self.assertEqual(len(mig_plan["old_app_schema"]["public.domain_table_079"]), 25)
+
+        # Also verify the collect-verify-gates failure branch (:622) handles > 256 KiB output without E2BIG.
+        fail_payload = json.dumps(
+            {
+                "status": "error",
+                "step": "collect-verify-gates",
+                "error_code": "PRODUCT_OWNER_UNSERVED",
+                "message": "Product owners not running/healthy: registry, agora-interaction-worker",
+            }
+        )
+        big_fail_wrapper = self.tmp_path / "big-fail-gcloud.py"
+        big_fail_wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] == ['compute', 'ssh'] and any('collect-gates' in a for a in args):\n"
+            "    sys.stdout.write(('collector-progress-line-' + ('y' * 100) + '\\n') * 2400)\n"
+            f"    print({fail_payload!r})\n"
+            "    raise SystemExit(1)\n"
+            f"os.execv({str(self.gcloud_bin)!r}, [{str(self.gcloud_bin)!r}] + args)\n",
+            encoding="utf-8",
+        )
+        big_fail_wrapper.chmod(0o755)
+        res_fail = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", GCLOUD_BIN=str(big_fail_wrapper)),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_fail.returncode, 1)
+        self.assertNotIn("Argument list too long", res_fail.stderr)
+        self.assertIn("LIVE_GATE_COLLECTION_FAILED", res_fail.stderr)
+        self.assertIn("PRODUCT_OWNER_UNSERVED", res_fail.stderr)
+        self.assertIn("unserved_product_owner_services: agora-interaction-worker,registry", res_fail.stderr)
+
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
     def test_ephemeral_workflow_wires_public_identity_vars_to_host(self) -> None:
