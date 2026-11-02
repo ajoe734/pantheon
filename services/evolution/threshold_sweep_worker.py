@@ -246,35 +246,17 @@ def load_thresholds(path: str | None = None) -> list[dict[str, Any]]:
     return valid
 
 
-_RECONCILIATION_DRIFT_BASELINE_KEYS: dict[str, str] = {
-    "drawdown": "expected_drawdown",
-}
-
-
 def _is_reconciliation_drift_owned_threshold(
     threshold: Mapping[str, Any],
-    *,
-    baseline_value: float | None,
 ) -> bool:
     """Return True when reconciliation-drift owns incident production for this metric.
 
-    A metric that reconciliation-drift evaluates against an approved artifact
-    baseline (or that explicitly names ``incident_owner == "reconciliation-drift"``)
+    A metric that explicitly names ``incident_owner == "reconciliation-drift"``
     must not also have ``threshold_sweep_worker`` admit a derived telemetry echo
     event or post a second incident for the same breach.
     """
     owner = str(threshold.get("incident_owner") or "").strip().lower()
-    if owner == "reconciliation-drift":
-        return True
-    if owner in {"evolution", "threshold_sweep_worker"}:
-        return False
-    field = str(threshold.get("summary_field") or "").strip()
-    baseline_key = str(threshold.get("ratio_baseline_key") or "").strip()
-    return bool(
-        baseline_value is not None
-        and field in _RECONCILIATION_DRIFT_BASELINE_KEYS
-        and _RECONCILIATION_DRIFT_BASELINE_KEYS[field] == baseline_key
-    )
+    return owner == "reconciliation-drift"
 
 
 def load_baselines(path: str | None = None) -> dict[str, dict[str, Any]]:
@@ -547,10 +529,7 @@ def evaluate_breaches(
                 )
                 continue
 
-            if _is_reconciliation_drift_owned_threshold(
-                threshold,
-                baseline_value=baseline_value,
-            ):
+            if _is_reconciliation_drift_owned_threshold(threshold):
                 continue
 
             window_label = f"{threshold.get('window') or 'sweep'}:{window_bucket}"

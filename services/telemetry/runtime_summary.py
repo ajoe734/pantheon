@@ -765,8 +765,11 @@ class RuntimeSummaryProjectionStore:
                         current[target_key] = metrics[source_key]
                         current[f"{target_key}_at"] = metric_as_of
                         current[f"{target_key}_binding_id"] = binding_id
-                        if event.get("event_id"):
-                            current[f"{target_key}_event_id"] = str(event["event_id"])
+                        metric_event_id = str(event.get("event_id") or "").strip()
+                        if metric_event_id:
+                            current[f"{target_key}_event_id"] = metric_event_id
+                        else:
+                            current.pop(f"{target_key}_event_id", None)
                         break
 
             if event_type in ("pnl_snapshot", "drawdown_snapshot") and not is_derived_metric_echo:

@@ -116,11 +116,6 @@ THRESHOLDS = [
     },
 ]
 
-WORKER_OWNED_THRESHOLDS = [
-    {**THRESHOLDS[0], "incident_owner": "threshold_sweep_worker"},
-    THRESHOLDS[1],
-]
-
 BASELINES = {
     "artifact-evochain-001": {
         "expected_drawdown": 0.12,
@@ -479,22 +474,8 @@ def test_evaluate_breaches_detects_drawdown_breach_from_real_projection():
     projection_store = RuntimeSummaryProjectionStore(path=None)
     summary = _seed_real_summary(projection_store)
 
-    # Default THRESHOLDS leaves drawdown incident ownership with reconciliation-drift,
-    # while assess_input_coverage still reports the artifact evaluable.
-    default_payloads, default_diagnostics = evaluate_breaches(
-        [summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
-    )
-    assert default_payloads == []
-    assert default_diagnostics == []
-    coverage = assess_input_coverage(
-        [summary], THRESHOLDS, baselines=BASELINES, now=_NOW
-    )
-    assert coverage["coverage_complete"] is True
-    assert coverage["artifacts"][0]["metrics"][0]["evaluable"] is True
-
-    # Worker-owned ratio threshold exercises ratio normalization directly.
     payloads, diagnostics = evaluate_breaches(
-        [summary], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+        [summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
 
     drawdown_payloads = [p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"]
@@ -514,6 +495,11 @@ def test_reconciliation_drift_owned_drawdown_posts_no_incident_and_admits_no_der
         RuntimeIdentity,
         RuntimeTelemetryEmitter,
     )
+
+    live_thresholds = load_thresholds(DEFAULT_CONFIG_PATH)
+    assert len(live_thresholds) == 1
+    assert live_thresholds[0]["metric_name"] == "rolling_drawdown_multiple"
+    assert live_thresholds[0]["incident_owner"] == "reconciliation-drift"
 
     identity = RuntimeIdentity.from_env(
         {
@@ -586,6 +572,21 @@ def test_reconciliation_drift_owned_drawdown_posts_no_incident_and_admits_no_der
     assert result["input_coverage"]["artifacts"][0]["complete"] is True
     assert result["input_coverage"]["artifacts"][0]["metrics"][0]["evaluable"] is True
 
+    # Ownership comes only from explicit incident_owner in threshold_sweep_thresholds.json:
+    # the same threshold without incident_owner is evaluated normally by the worker.
+    unowned_threshold = [
+        {k: v for k, v in live_thresholds[0].items() if k != "incident_owner"}
+    ]
+    unowned_payloads, unowned_diagnostics = evaluate_breaches(
+        [summary],
+        unowned_threshold,
+        window_bucket="2026-07-13",
+        baselines=load_baselines(DEFAULT_BASELINES_PATH),
+        now=_NOW,
+    )
+    assert unowned_diagnostics == []
+    assert len(unowned_payloads) == 1
+
 
 def test_explicit_pnl_and_drawdown_as_of_are_evaluated_from_real_projection():
     """Separate performance events reach the real sweep as fresh numbers.
@@ -645,21 +646,9 @@ def test_explicit_pnl_and_drawdown_as_of_are_evaluated_from_real_projection():
     assert summary["drawdown_at"] == "2026-07-13T00:00:06Z"
     assert summary["drawdown_event_id"] == "evt-explicit-as-of-drawdown"
 
-    default_payloads, default_diagnostics = evaluate_breaches(
-        [summary],
-        THRESHOLDS,
-        window_bucket="2026-07-13",
-        baselines=BASELINES,
-        now=_NOW,
-    )
-    assert default_diagnostics == []
-    assert [p["threshold_snapshot"]["metric_name"] for p in default_payloads] == [
-        "rolling_pnl_floor"
-    ]
-
     payloads, diagnostics = evaluate_breaches(
         [summary],
-        WORKER_OWNED_THRESHOLDS,
+        THRESHOLDS,
         window_bucket="2026-07-13",
         baselines=BASELINES,
         now=_NOW,
@@ -841,14 +830,14 @@ def test_evaluate_breaches_non_numeric_metric_is_diagnostic_only():
 
 
 def test_evaluate_breaches_dedupe_key_stable_across_reruns():
-    first, _ = evaluate_breaches([_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
-    second, _ = evaluate_breaches([_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    first, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    second, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
     assert first[0]["telemetry_event"]["event_id"] == second[0]["telemetry_event"]["event_id"]
 
 
 def test_evaluate_breaches_dedupe_key_changes_across_window_bucket():
-    day1, _ = evaluate_breaches([_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
-    day2, _ = evaluate_breaches([_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-14", baselines=BASELINES, now=_NOW)
+    day1, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    day2, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-14", baselines=BASELINES, now=_NOW)
     assert day1[0]["telemetry_event"]["event_id"] != day2[0]["telemetry_event"]["event_id"]
 
 
@@ -857,7 +846,7 @@ def test_evaluate_breaches_dedupe_key_changes_across_window_bucket():
 # ---------------------------------------------------------------------------
 
 def test_derived_telemetry_event_is_schema_valid_and_ingest_admissible():
-    payloads, _ = evaluate_breaches([_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
     drawdown_event = next(
         p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
     )["telemetry_event"]
@@ -905,7 +894,7 @@ def test_payload_accepted_by_real_consumer_and_idempotent_on_rerun():
     store = IncidentStore(path=None)
     consumer = ThresholdTelemetryIncidentConsumer(incident_store=store)
 
-    payloads, _ = evaluate_breaches([_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
     drawdown_payload = next(
         p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
     )
@@ -931,7 +920,7 @@ def test_two_breached_metrics_on_same_binding_open_two_distinct_incidents():
     consumer = ThresholdTelemetryIncidentConsumer(incident_store=store)
 
     payloads, _ = evaluate_breaches(
-        [_summary(drawdown=0.30, pnl=-600.0)], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+        [_summary(drawdown=0.30, pnl=-600.0)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     assert len(payloads) == 2
 
@@ -992,7 +981,7 @@ def test_consume_threshold_route_passes_real_canonical_reference_validator(monke
     """
     monkeypatch.setattr("services.incidents.main.store", IncidentStore(path=None))
 
-    payloads, _ = evaluate_breaches([_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
+    payloads, _ = evaluate_breaches([_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW)
     drawdown_payload = next(
         p for p in payloads if p["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
     )
@@ -1254,7 +1243,7 @@ def test_run_tick_fails_closed_when_telemetry_ingest_rejects_derived_event():
     result = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -1289,7 +1278,7 @@ def test_run_tick_creates_then_dedupes_on_rerun_via_real_consumer(tmp_path):
     first = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -1303,7 +1292,7 @@ def test_run_tick_creates_then_dedupes_on_rerun_via_real_consumer(tmp_path):
     second = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -1336,7 +1325,7 @@ def test_run_tick_fails_closed_when_telemetry_ingest_returns_malformed_json():
     result = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -1361,7 +1350,7 @@ def test_run_tick_fails_closed_when_post_incident_returns_malformed_json(tmp_pat
     result = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -1400,7 +1389,7 @@ def test_run_tick_retry_reuses_frozen_evidence_when_incident_post_previously_fai
     first = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch_first,
         admit_telemetry_event=admit,
@@ -1427,7 +1416,7 @@ def test_run_tick_retry_reuses_frozen_evidence_when_incident_post_previously_fai
     second = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch_second,
         admit_telemetry_event=admit,
@@ -1518,7 +1507,7 @@ def test_derived_threshold_evidence_does_not_refresh_stale_metric_across_days(tm
         result = run_tick(
             telemetry_api_url="http://telemetry.test",
             incidents_api_url="http://incidents.test",
-            thresholds=WORKER_OWNED_THRESHOLDS,
+            thresholds=THRESHOLDS,
             baselines=BASELINES,
             fetch_summaries=fetch,
             admit_telemetry_event=admit,
@@ -1596,7 +1585,7 @@ def test_run_tick_implements_write_ahead_log(tmp_path):
     result = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -1632,7 +1621,7 @@ def test_run_tick_reports_empty_telemetry_diagnostic():
 def test_run_tick_filters_duplicate_thresholds_with_diagnostic():
     """Verify that run_tick() ignores duplicate (metric_name, window) threshold entries
     and records an explicit diagnostic warning."""
-    duplicate_thresholds = WORKER_OWNED_THRESHOLDS + [WORKER_OWNED_THRESHOLDS[0]]  # Add duplicate of WORKER_OWNED_THRESHOLDS[0]
+    duplicate_thresholds = THRESHOLDS + [THRESHOLDS[0]]  # Add duplicate of THRESHOLDS[0]
 
     def fetch(*_args, **_kwargs):
         return [_summary()]
@@ -1803,7 +1792,7 @@ def test_run_tick_fails_closed_on_write_ahead_log_write_error(tmp_path):
         result = run_tick(
             telemetry_api_url="http://telemetry.test",
             incidents_api_url="http://incidents.test",
-            thresholds=WORKER_OWNED_THRESHOLDS,
+            thresholds=THRESHOLDS,
             baselines=BASELINES,
             fetch_summaries=fetch,
             state_path=str(tmp_path / "state.json"),
@@ -2265,7 +2254,7 @@ def test_run_tick_quarantines_corrupt_wal_record_instead_of_recomputing_under_sa
     # The exact deterministic event_id a genuine drawdown candidate for this
     # summary/threshold/window bucket hashes to.
     candidates, _ = evaluate_breaches(
-        [_summary(drawdown=0.30)], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+        [_summary(drawdown=0.30)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     drawdown_candidate = next(
         c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
@@ -2301,7 +2290,7 @@ def test_run_tick_quarantines_corrupt_wal_record_instead_of_recomputing_under_sa
     result = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -2331,7 +2320,7 @@ def test_run_tick_quarantines_malformed_delivered_record_instead_of_fabricating_
     state_path = tmp_path / "state.json"
 
     candidates, _ = evaluate_breaches(
-        [_summary(drawdown=0.30)], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+        [_summary(drawdown=0.30)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     drawdown_candidate = next(
         c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
@@ -2368,7 +2357,7 @@ def test_run_tick_quarantines_malformed_delivered_record_instead_of_fabricating_
     result = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -2399,7 +2388,7 @@ def test_run_tick_persists_quarantine_tombstone_across_prune_and_delivery_saves(
 
     summary = _summary(drawdown=0.30, pnl=-600.0)
     candidates, _ = evaluate_breaches(
-        [summary], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+        [summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     drawdown_candidate = next(
         c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
@@ -2443,7 +2432,7 @@ def test_run_tick_persists_quarantine_tombstone_across_prune_and_delivery_saves(
     result_1 = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -2466,7 +2455,7 @@ def test_run_tick_persists_quarantine_tombstone_across_prune_and_delivery_saves(
     result_2 = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=fetch,
         admit_telemetry_event=admit,
@@ -2550,8 +2539,8 @@ def test_evaluate_breaches_dedupe_key_is_not_collision_prone_across_colon_bounda
     (metric_name, window) tuples that only differ in *where* a colon falls
     mint the same event_id, silently suppressing one candidate as a
     duplicate of the other."""
-    thresholds_a = [{**WORKER_OWNED_THRESHOLDS[0], "metric_name": "a:b", "window": "c"}]
-    thresholds_b = [{**WORKER_OWNED_THRESHOLDS[0], "metric_name": "a", "window": "b:c"}]
+    thresholds_a = [{**THRESHOLDS[0], "metric_name": "a:b", "window": "c"}]
+    thresholds_b = [{**THRESHOLDS[0], "metric_name": "a", "window": "b:c"}]
 
     payloads_a, _ = evaluate_breaches(
         [_summary(drawdown=0.30)], thresholds_a, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
@@ -2873,7 +2862,7 @@ def test_threshold_worker_strict_telemetry_http_auth_reads_and_admits_configured
     result = run_tick(
         telemetry_api_url=strict_telemetry_http_server["url"],
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=default_fetch_summaries,
         admit_telemetry_event=default_admit_telemetry_event,
@@ -2922,7 +2911,7 @@ def test_threshold_worker_missing_local_credential_or_tenant_fails_closed_withou
     )
 
     candidates, _ = evaluate_breaches(
-        [_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+        [_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     derived_event = candidates[0]["telemetry_event"]
 
@@ -2943,7 +2932,7 @@ def test_threshold_worker_missing_local_credential_or_tenant_fails_closed_withou
         result = run_tick(
             telemetry_api_url=strict_telemetry_http_server["url"],
             incidents_api_url="http://incidents.test",
-            thresholds=WORKER_OWNED_THRESHOLDS,
+            thresholds=THRESHOLDS,
             baselines=BASELINES,
             fetch_summaries=default_fetch_summaries,
             admit_telemetry_event=default_admit_telemetry_event,
@@ -2976,7 +2965,7 @@ def test_threshold_worker_propagates_strict_telemetry_401_and_403_refusals(
 
     _seed_real_summary(strict_telemetry_http_server["summary_store"], tenant_id="tenant-dev")
     candidates, _ = evaluate_breaches(
-        [_summary()], WORKER_OWNED_THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+        [_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
     )
     derived_event = candidates[0]["telemetry_event"]
 
@@ -3008,7 +2997,7 @@ def test_threshold_worker_propagates_strict_telemetry_401_and_403_refusals(
     tick_401 = run_tick(
         telemetry_api_url=strict_telemetry_http_server["url"],
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=default_fetch_summaries,
         admit_telemetry_event=default_admit_telemetry_event,
@@ -3039,7 +3028,7 @@ def test_threshold_worker_propagates_strict_telemetry_401_and_403_refusals(
     tick_403_ingest = run_tick(
         telemetry_api_url=strict_telemetry_http_server["url"],
         incidents_api_url="http://incidents.test",
-        thresholds=WORKER_OWNED_THRESHOLDS,
+        thresholds=THRESHOLDS,
         baselines=BASELINES,
         fetch_summaries=lambda *_a, **_kw: [_summary()],
         admit_telemetry_event=default_admit_telemetry_event,

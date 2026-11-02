@@ -2840,6 +2840,47 @@ class TestRealStateColdStartUnchangedHeartbeat(unittest.TestCase):
         self.assertEqual(summary["drawdown_event_id"], dd_ev["event_id"])
         self.assertEqual(summary["pnl_event_id"], pnl_ev["event_id"])
 
+        # Event that updates a metric but carries no event_id drops the stale {metric}_event_id
+        # instead of keeping the old one, so the value and its event never disagree.
+        no_id_dd = dict(
+            emitter.build_event(
+                "drawdown_snapshot",
+                {"drawdown": 0.042, "drawdown_as_of": "2026-11-02T00:00:30Z"},
+                created_at="2026-11-02T00:00:30Z",
+            )
+        )
+        no_id_dd.pop("event_id", None)
+        no_id_pnl = dict(
+            emitter.build_event(
+                "pnl_snapshot",
+                {"pnl": -60.0, "pnl_as_of": "2026-11-02T00:00:31Z"},
+                created_at="2026-11-02T00:00:31Z",
+            )
+        )
+        no_id_pnl["event_id"] = "   "
+        store.project_event(no_id_dd)
+        summary = store.project_event(no_id_pnl)
+        self.assertEqual(summary["drawdown"], 0.042)
+        self.assertEqual(summary["pnl"], -60.0)
+        self.assertNotIn("drawdown_event_id", summary)
+        self.assertNotIn("pnl_event_id", summary)
+
+        # Re-establish event_ids before testing binding rollover
+        dd_ev_2 = emitter.build_event(
+            "drawdown_snapshot",
+            {"drawdown": 0.043, "drawdown_as_of": "2026-11-02T00:00:35Z"},
+            created_at="2026-11-02T00:00:35Z",
+        )
+        pnl_ev_2 = emitter.build_event(
+            "pnl_snapshot",
+            {"pnl": -62.0, "pnl_as_of": "2026-11-02T00:00:36Z"},
+            created_at="2026-11-02T00:00:36Z",
+        )
+        store.project_event(dd_ev_2)
+        summary = store.project_event(pnl_ev_2)
+        self.assertEqual(summary["drawdown_event_id"], dd_ev_2["event_id"])
+        self.assertEqual(summary["pnl_event_id"], pnl_ev_2["event_id"])
+
         # Newer binding rollover clears drawdown_event_id and pnl_event_id
         resolver.binding_id = "rb-causal-002"
         resolver.effective_at = "2026-11-02T00:01:00Z"

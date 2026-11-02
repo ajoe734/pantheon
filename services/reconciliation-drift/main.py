@@ -409,6 +409,14 @@ def _governed_thresholds_path() -> str | None:
     )
 
 
+def _governed_threshold_comparator(comparator: str) -> Any:
+    try:
+        from services.evolution import threshold_sweep_worker as sweep
+    except ImportError:  # pragma: no cover - image always ships services/evolution
+        return None
+    return sweep._COMPARATORS.get(comparator)
+
+
 def _load_governed_threshold_for_metric(
     metric: str,
     baseline_key: str | None = None,
@@ -519,20 +527,29 @@ def _drift_checks(
                 if isinstance(governed, dict)
                 else None
             )
+            comparator = (
+                str(governed.get("comparator") or "")
+                if isinstance(governed, dict)
+                else ""
+            )
+            comparator_fn = _governed_threshold_comparator(comparator)
             if (
                 isinstance(governed, dict)
                 and threshold_multiple is not None
                 and threshold_multiple > 0
+                and comparator_fn is not None
             ):
                 observed_multiple = observed / baseline
-                governed_breached = observed_multiple >= threshold_multiple
+                governed_breached = bool(
+                    comparator_fn(observed_multiple, threshold_multiple)
+                )
                 if governed_breached and status == "ok":
                     status = "warning"
                 governed_threshold_fields = {
                     "governed_threshold_breached": governed_breached,
                     "observed_multiple": observed_multiple,
                     "threshold_metric": str(governed["metric_name"]),
-                    "comparator": str(governed["comparator"]),
+                    "comparator": comparator,
                     "threshold_value": threshold_multiple,
                     "threshold_window": str(governed.get("window") or "paper-daily-sweep"),
                     "policy_source": str(governed["policy_source"]),

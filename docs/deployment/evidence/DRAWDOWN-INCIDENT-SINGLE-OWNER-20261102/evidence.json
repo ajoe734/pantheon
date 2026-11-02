@@ -3,11 +3,11 @@
   "title": "Drift is the single drawdown incident owner at the section 7.1 multiple and cites the causal metric event",
   "owner": "Antigravity",
   "reviewer": "Antigravity2",
-  "recorded_at": "2026-11-02T04:48:00Z",
+  "recorded_at": "2026-11-02T05:10:00Z",
   "acceptance_criteria": {
     "ac1_telemetry_metric_event_ids": {
       "status": "verified",
-      "summary": "RuntimeSummaryProjectionStore records {metric}_event_id (including drawdown_event_id and pnl_event_id) beside {metric}_at and {metric}_binding_id for non-derived metric updates when candidate_as_of >= previous_as_of; out-of-order events and threshold-derived echo events (metadata.derived_from_threshold_evaluation is True) never move it; binding rollover clears {metric}_event_id.",
+      "summary": "RuntimeSummaryProjectionStore records {metric}_event_id (including drawdown_event_id and pnl_event_id) beside {metric}_at and {metric}_binding_id for non-derived metric updates when candidate_as_of >= previous_as_of; events that update a metric without an event_id drop any stale {metric}_event_id; out-of-order events and threshold-derived echo events (metadata.derived_from_threshold_evaluation is True) never move it; binding rollover clears {metric}_event_id.",
       "files": [
         "services/telemetry/runtime_summary.py",
         "services/telemetry/test_runtime_summary_projection.py",
@@ -25,7 +25,7 @@
     },
     "ac3_drift_governed_125x_threshold_no_copied_constant": {
       "status": "verified",
-      "summary": "Reconciliation-drift reads rolling_drawdown_multiple (1.25x) from services/evolution/config/threshold_sweep_thresholds.json via threshold_sweep_worker.load_thresholds() with no copied constant. Below 1.25x ([1.2x, 1.25x)) an approved-baseline drawdown warning stays observe-only; in [1.25x, 1.5x) it builds a governed DriftReport (severity='medium'); at or above 1.5x (relative_delta >= 0.5) the report stays critical.",
+      "summary": "Reconciliation-drift reads rolling_drawdown_multiple (1.25x, comparator='gt') from services/evolution/config/threshold_sweep_thresholds.json via threshold_sweep_worker.load_thresholds() and evaluates it through threshold_sweep_worker._COMPARATORS with no copied constant. At or below 1.25x ([1.2x, 1.25x]) an approved-baseline drawdown warning stays observe-only; in (1.25x, 1.5x) it builds a governed DriftReport (severity='medium'); at or above 1.5x (relative_delta >= 0.5) the report stays critical.",
       "files": [
         "services/reconciliation-drift/main.py",
         "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py"
@@ -33,7 +33,7 @@
     },
     "ac4_incident_evidence_summary_and_evolution_sweep_routing": {
       "status": "verified",
-      "summary": "build_incident_from_drift_report includes threshold_metric, observed, comparator, threshold_value, threshold_window, and policy_source in IncidentCase.evidence_summary so services/evolution/sweep.py derives RETRAIN at LOW risk for the [1.25x, 1.5x) medium band and keeps the existing critical FREEZE path at or above 1.5x.",
+      "summary": "build_incident_from_drift_report includes threshold_metric, observed, comparator, threshold_value, threshold_window, and policy_source in IncidentCase.evidence_summary so services/evolution/sweep.py derives RETRAIN at LOW risk via unmodified ThresholdEvaluator for the (1.25x, 1.5x) medium band and keeps the existing critical FREEZE path at or above 1.5x.",
       "files": [
         "services/incidents/consumer.py",
         "services/incidents/test_main_routes.py",
@@ -43,7 +43,7 @@
     },
     "ac5_threshold_sweep_skips_drift_owned_metric_keeps_input_coverage": {
       "status": "verified",
-      "summary": "threshold_sweep_thresholds.json marks rolling_drawdown_multiple with incident_owner='reconciliation-drift' (enabled=true). evaluate_breaches posts no incident and admits no derived telemetry event when the artifact has an approved expected_drawdown baseline owned by reconciliation-drift, while assess_input_coverage and GET /api/evolution/input-coverage still report the artifact evaluable.",
+      "summary": "threshold_sweep_thresholds.json marks rolling_drawdown_multiple with incident_owner='reconciliation-drift' (enabled=true). evaluate_breaches checks only explicit incident_owner=='reconciliation-drift' so it posts no incident and admits no derived telemetry event for that metric, while assess_input_coverage and GET /api/evolution/input-coverage still report the artifact evaluable.",
       "files": [
         "services/evolution/config/threshold_sweep_thresholds.json",
         "services/evolution/threshold_sweep_worker.py",

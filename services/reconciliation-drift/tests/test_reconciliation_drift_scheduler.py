@@ -3647,14 +3647,18 @@ def test_drawdown_half_of_approved_baseline_is_ok_and_raises_no_incident(tmp_pat
 def test_drawdown_below_section_7_1_multiple_warning_stays_observe_only(tmp_path) -> None:
     baselines = tmp_path / "baselines.json"
     _write_approved_baselines(baselines, 0.04)
-    # 0.049 / 0.04 = 1.225x: in [1.2x, 1.25x), warning stays observe-only.
-    payload, evaluation, reports, classify = _run_drawdown_tick(baselines, drawdown=0.049)
-    check = _drawdown_check(evaluation)
-    assert check["status"] == "warning"
-    assert check["governed_threshold_breached"] is False
-    assert reports == []
-    assert payload["incident_ids"] == []
-    assert classify.call_count == 0
+    # 0.049 / 0.04 = 1.225x and 0.05 / 0.04 = 1.25x (comparator "gt" requires > 1.25x):
+    # warning stays observe-only until drawdown strictly exceeds 1.25x.
+    for drawdown_value in (0.049, 0.05):
+        payload, evaluation, reports, classify = _run_drawdown_tick(
+            baselines, drawdown=drawdown_value
+        )
+        check = _drawdown_check(evaluation)
+        assert check["status"] == "warning"
+        assert check["governed_threshold_breached"] is False
+        assert reports == []
+        assert payload["incident_ids"] == []
+        assert classify.call_count == 0
 
 
 def test_drawdown_1_3x_approved_baseline_builds_governed_medium_report_and_cites_causal_metric_event(

@@ -20,11 +20,7 @@ if str(_CP_GOV) not in sys.path:
     sys.path.insert(0, str(_CP_GOV))
 
 from approval_decision import EvidenceRef, EvidenceRefType  # type: ignore
-from evolution_controller import (  # type: ignore
-    EvolutionControllerError,
-    ThresholdEvaluation,
-    ThresholdEvaluator,
-)
+from evolution_controller import EvolutionControllerError, ThresholdEvaluator  # type: ignore
 from evolution_decision import (  # type: ignore
     ComparisonOperator,
     DEFAULT_TENANT_ID,
@@ -193,39 +189,14 @@ def build_decision_from_incident(
 ) -> EvolutionDecision:
     """Derive one proposed EvolutionDecision from an incident threshold signal."""
     snapshot = threshold_snapshot_from_incident(incident)
-    try:
-        evaluation = (evaluator or ThresholdEvaluator()).classify(
-            snapshot,
-            context={
-                "incident_open": incident.is_open(),
-                "incident_severity": incident.severity,
-                "has_active_runtime": bool(incident.binding_id),
-            },
-        )
-    except EvolutionControllerError:
-        if (
-            snapshot.metric_name in {"rolling_drawdown_multiple", "drawdown_multiple"}
-            and isinstance(snapshot.observed_value, (int, float))
-            and isinstance(snapshot.threshold_value, (int, float))
-            and float(snapshot.observed_value) >= float(snapshot.threshold_value)
-        ):
-            evaluation = ThresholdEvaluation(
-                proposed_action=EvolutionActionType.RETRAIN,
-                rationale="Rolling drawdown reached 1.25x expected tolerance.",
-            )
-        else:
-            raise
-    if (
-        evaluation.proposed_action == EvolutionActionType.OBSERVE
-        and snapshot.metric_name in {"rolling_drawdown_multiple", "drawdown_multiple"}
-        and isinstance(snapshot.observed_value, (int, float))
-        and isinstance(snapshot.threshold_value, (int, float))
-        and float(snapshot.observed_value) >= float(snapshot.threshold_value)
-    ):
-        evaluation = ThresholdEvaluation(
-            proposed_action=EvolutionActionType.RETRAIN,
-            rationale="Rolling drawdown reached 1.25x expected tolerance.",
-        )
+    evaluation = (evaluator or ThresholdEvaluator()).classify(
+        snapshot,
+        context={
+            "incident_open": incident.is_open(),
+            "incident_severity": incident.severity,
+            "has_active_runtime": bool(incident.binding_id),
+        },
+    )
     action_type = str(evaluation.proposed_action.value if hasattr(evaluation.proposed_action, "value") else evaluation.proposed_action)
     metadata = {
         "source": "evolution_daily_sweep",

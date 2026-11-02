@@ -164,7 +164,7 @@ stateDiagram-v2
 觸發 `proposed`：
 
 - 最近 20 交易日風險調整績效（Sharpe / IR / strategy family 定義指標）低於 paper/canary 基線的 **50%**
-- 或 rolling drawdown 超過研究預期區間的 **1.25 倍**（`reconciliation-drift` 為此 drawdown 1.25x incident 的唯一 producer：一旦 `observed / expected_drawdown` 達 `services/evolution/config/threshold_sweep_thresholds.json` 之 `rolling_drawdown_multiple`（`1.25`），由 `reconciliation-drift` 依 causal `drawdown_event_id` 建立 governed `DriftReport` 並轉為 `IncidentCase`，再由 Evolution daily sweep 轉為 `RETRAIN`（`[1.25x, 1.5x)`，`LOW` risk）或維持既有 `>= 1.5x` critical `FREEZE` 路徑；Evolution `threshold_sweep_worker` 不再重複發送該指標之 derived telemetry echo 或 incident）
+- 或 rolling drawdown 超過研究預期區間的 **1.25 倍**（`reconciliation-drift` 為此 drawdown 1.25x incident 的唯一 producer：一旦 `observed / expected_drawdown` 超過 `services/evolution/config/threshold_sweep_thresholds.json` 之 `rolling_drawdown_multiple`（`comparator="gt"`, `1.25`），由 `reconciliation-drift` 依 causal `drawdown_event_id` 建立 governed `DriftReport` 並轉為 `IncidentCase`，再由 Evolution daily sweep 轉為 `RETRAIN`（`(1.25x, 1.5x)`，`LOW` risk）或維持既有 `>= 1.5x` critical `FREEZE` 路徑；Evolution `threshold_sweep_worker` 不再重複發送該指標之 derived telemetry echo 或 incident）
 - 或連續 **3 個評估窗**明顯劣於 baseline
 
 ### 7.2 Execution drift threshold
