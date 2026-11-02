@@ -965,6 +965,7 @@ class FakeRuntimeHttp:
         self.h3, self.validation_ok, self.drop_reference = h3, validation_ok, drop_reference
         self.bundle, self.h3_scope = bundle, h3_scope
         self.incidents: list[dict[str, Any]] = []
+        self.events: dict[str, dict[str, Any]] = {}
         self.proposals: list[dict[str, Any]] = []
         self.reconciliation_evaluations: dict[str, dict[str, Any]] = {}
         self.evolution_coverage: dict[str, Any] = {"artifacts": []}
@@ -1057,6 +1058,9 @@ class FakeRuntimeHttp:
             return {"bindings": [{"binding_id": "rb-1"}]}
         if path == "/api/incidents":
             return self.incidents
+        if path.startswith("/api/telemetry/events/"):
+            assert service == "telemetry" and method == "GET"
+            return self.events.get(urllib.parse.unquote(path.rsplit("/", 1)[-1]), {"detail": "nf"})
         if path.startswith("/api/reconciliation-drift/evaluations/"):
             assert service == "reconciliation" and method == "GET"
             assert headers == {"Authorization": f"Bearer {RECONCILIATION_TOKEN}", "X-Tenant-Id": TENANT}
@@ -1120,7 +1124,8 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
 
 PROMOTE_PREDECESSORS = {"registry_id": f"reg-{CHAIN}", "checksum": _spec_checksum(_runtime_spec()), "governance_handoff_id": "gh-consult-1",
                         "teaching_session_id": "trn-1", "persona_id": "persona-teach"}
-_PAPER_FILL = {"event": {"event_id": "ev-1", "artifact_id": EXEC_ID, "metrics": {"pnl": 1.0}, "metadata": {}},
+_PAPER_FILL = {"event": {"event_id": "ev-1", "runtime_id": "rt-1", "artifact_id": EXEC_ID, "metrics": {"pnl": 1.0},
+                         "created_at": "2026-11-02T10:00:00Z", "metadata": {}},
                "summary": {"runtime_id": "rt-1", "state": "running"}}
 PROMOTE_DECISIONS = {"H1": {"decision_id": "apv-1"}, "H3": {"decision_id": "apv-h3"}}
 
@@ -1284,7 +1289,26 @@ def test_hosted_promote_fails_when_the_plan_does_not_persist_predecessor_referen
 
 
 D_PREDECESSORS = {"runtime_binding_id": "rb-1", "runtime_id": "rt-1", "plan_id": f"hosted-all12-{CHAIN}-plan"}
-INCIDENT = {"incident_id": "inc-1", "binding_id": "rb-1", "telemetry_event_ids": ["ev-1"]}
+FILL_AT = "2026-11-02T10:00:00Z"
+
+
+def _snapshot_event(event_id: str = "ev-dd", **over: Any) -> dict[str, Any]:
+    """Shape of PaperRuntime's drawdown_snapshot event (paper_runtime.py emit payload)."""
+    return {"event_id": event_id, "event_type": "drawdown_snapshot", "created_at": "2026-11-02T10:05:00Z",
+            "binding_id": "rb-1", "runtime_id": "rt-1", "artifact_id": EXEC_ID,
+            "metrics": {"drawdown": 0.4}, "drawdown_as_of": "2026-11-02T10:05:00Z", "metadata": {}, **over}
+
+
+def _drift_incident(event_id: str = "ev-dd", metric: str = "drawdown", **over: Any) -> dict[str, Any]:
+    """Shape of the IncidentCase the incidents consumer builds from a reconciliation-drift report."""
+    return {"incident_id": "inc-1", "binding_id": "rb-1", "runtime_id": "rt-1",
+            "incident_cluster_id": f"drift:{metric}", "telemetry_event_ids": [event_id],
+            "evidence_summary": f"DriftReport drift-{event_id}-{metric}; cluster=drift:{metric}; "
+                                f"reconciliation_ids=drift-{event_id}-{metric}; telemetry_event_ids={event_id}; "
+                                f"worst_metric={metric}", **over}
+
+
+INCIDENT = _drift_incident()
 
 
 def _proposal(**over: Any) -> dict[str, Any]:
@@ -1300,6 +1324,7 @@ def _observe(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, fill: bool = Tr
     chain._bff_health = lambda: {"data": {"targets": {"runtime-manager": {"ok": True},
                                                       "paper-fleet-reconciler": {"ok": True}}}}
     fake.incidents, fake.proposals = list(incidents), list(proposals)
+    fake.events = {"ev-dd": _snapshot_event(), "ev-hb": _snapshot_event("ev-hb", event_type="heartbeat", metrics={})}
     return mod, chain, fake
 
 
@@ -1338,6 +1363,31 @@ def test_hosted_observe_pauses_without_claiming_loops_that_were_not_observed(
         "X-Tenant-Id": TENANT,
     }
     assert fake.writes() == []  # D only reads owners
+
+
+def test_hosted_observe_incident_must_cite_the_causal_metric_event_of_this_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cases = {
+        "heartbeat only": (_drift_incident("ev-hb"), {}),
+        "other binding": (_drift_incident(), {"ev-dd": _snapshot_event(binding_id="rb-other")}),
+        "other runtime": (_drift_incident(), {"ev-dd": _snapshot_event(runtime_id="rt-other")}),
+        "threshold echo": (_drift_incident(), {"ev-dd": _snapshot_event(metadata={"derived_from_threshold_evaluation": True})}),
+        "before the fill": (_drift_incident(), {"ev-dd": _snapshot_event(created_at="2026-11-02T09:59:59Z")}),
+        "non-drift cluster": (_drift_incident(incident_cluster_id="infra:runtime-health"), {}),
+        "fill id cited": (_drift_incident("ev-1"), {"ev-1": {**_PAPER_FILL["event"], "binding_id": "rb-1"}}),
+    }
+    for name, (incident, events) in cases.items():
+        _, chain, fake = _observe(monkeypatch, tmp_path, incidents=[incident])
+        fake.events.update(events)
+        chain.run_hosted()
+        assert _paused_at(tmp_path) == ("drift_incident_observation", {12}), name
+
+    _, chain, fake = _observe(monkeypatch, tmp_path, incidents=[INCIDENT])
+    chain.run_hosted()
+    case = json.loads((tmp_path / "evidence.json").read_text())["cases"]["loop_10_telemetry_reconciliation_incident"]
+    assert case["trigger_id"] == "ev-dd"
+    assert case["next_consumer_readback"]["same_chain_fill_event_id"] == "ev-1"
 
 
 def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_claim_all12(
@@ -1481,6 +1531,7 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
             "event_id": fill_event_id,
             "runtime_id": rid,
             "artifact_id": EXEC_ID,
+            "created_at": FILL_AT,
             "metrics": {"pnl": 0.0},
             "metadata": {"source_snapshot_id": snapshot_id, "is_real_capital": False},
         },
@@ -1575,7 +1626,8 @@ def test_hosted_observe_independent_loop12_and_d402214_causal_evidence_never_cla
     assert set(receipt["resource_ids"]) == set(predecessors)
 
     # Unevaluable Evolution target pauses at evolution_decision_observation even when Incident exists.
-    fake.incidents = [{"incident_id": "inc-d402214", "binding_id": binding_id, "telemetry_event_ids": [fill_event_id]}]
+    fake.events = {"ev-dd-d402214": _snapshot_event("ev-dd-d402214", binding_id=binding_id, runtime_id=runtime_id)}
+    fake.incidents = [_drift_incident("ev-dd-d402214", incident_id="inc-d402214", binding_id=binding_id, runtime_id=runtime_id)]
     fake.proposals = [_proposal(linked_incident_id="inc-d402214")]
     chain2 = mod.RuntimeChain(chain.settings)
     chain2.http = fake
