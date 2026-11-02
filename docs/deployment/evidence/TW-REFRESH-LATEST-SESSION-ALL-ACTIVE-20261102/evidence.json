@@ -1,0 +1,17 @@
+{
+  "task_id": "TW-REFRESH-LATEST-SESSION-ALL-ACTIVE-20261102",
+  "incident_shape": "2026-11-02 hosted: priority 2330.TWSE 2317.TWSE 0050.TWSE, 40 history trading days",
+  "rows_stored_per_priority_symbol": {
+    "before_fix": {"2330.TWSE": 40, "2317.TWSE": 40, "0050.TWSE": 20, "note": "0050 kept only 2026-09-01..2026-09-30; newest rows dropped by records[:100]"},
+    "after_fix": {"2330.TWSE": 40, "2317.TWSE": 40, "0050.TWSE": 40, "note": "latest closed session present for each; budget now 500"}
+  },
+  "preflight": {
+    "decision": "latest closed official session (13:30 Taipei close, walk back over weekends and evidenced holidays), checked for every resolved active symbol",
+    "delayed_runs_covered": ["2026-11-02T16:47Z", "2026-11-02T17:42Z"],
+    "clock_pin_env": "PANTHEON_REFRESH_PREFLIGHT_NOW"
+  },
+  "budget_guard": "fails before any provider fetch: symbols, required=symbols*history_trading_days, allowed=effective fetch.max_records",
+  "limits_changed": {"tw-twse-tpex-official-market default_limits.max_records": "100 -> 500", "bounded refresh SOURCE_INGEST_MAX_RECORDS": "100 -> 500 (validation range 1..500 unchanged)"},
+  "post_merge": "source-ingest change needs a Root deploy; an existing source instance persisted with limits.max_records=100 will fail loudly until its limit is raised",
+  "known_unrelated_failures": "scripts/test_dev_tw_market_refresh_workflow.py 4 tests fail identically on unmodified HEAD (missing PANTHEON_TENANT_ID in stub env)"
+}

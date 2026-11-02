@@ -1918,6 +1918,135 @@ def test_taiwan_preflight_invalid_calendar_proceeds_and_valid_holiday_still_skip
     assert (result["status"], result["reason"]) == ("skipped", "holiday")
 
 
+def _run_pinned_taiwan_preflight(
+    now_utc: str,
+    snapshots: dict[str, dict[str, Any] | None],
+    *,
+    force: bool = False,
+    symbols: str | None = None,
+) -> dict[str, Any]:
+    """Run the real preflight heredoc at a pinned clock against per-symbol stub snapshots."""
+    import http.server
+    import os
+    import threading
+    import urllib.parse
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'PREFLIGHT_PY'\n", 1)[1].split("\nPREFLIGHT_PY", 1)[0]
+    requested: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            symbol = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)["symbol"][0]
+            requested.append(symbol)
+            snap = snapshots.get(symbol)
+            payload = json.dumps(snap if snap is not None else {"detail": "not found"}).encode()
+            self.send_response(200 if snap is not None else 404)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(ROOT),
+        "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
+        "PANTHEON_REFRESH_PREFLIGHT_NOW": now_utc,
+    }
+    env.pop("PANTHEON_DEV_PAPER_BASELINE_SYMBOL", None)
+    env.pop("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", None)
+    if symbols is not None:
+        env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] = symbols
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import sys\nexec(compile({body!r}, 'preflight', 'exec'))\n", "true" if force else "false"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    finally:
+        server.shutdown()
+    result = json.loads(proc.stdout)
+    result["_requested"] = requested
+    return result
+
+
+def _stored_tw_snapshot(trade_date: str, observed_at: str) -> dict[str, Any]:
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    return {
+        "snapshot_id": f"snap-{trade_date}",
+        "event_time": f"{trade_date}T06:30:00Z",
+        "observed_at": observed_at,
+        "calendar_evidence": governed_taiwan_calendar_evidence(venue="TWSE", trade_date=trade_date),
+        "lineage": {
+            "source_ids": [f"tw-official:tw_price_daily:TWSE:2330:receipt-{trade_date}"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    }
+
+
+@pytest.mark.parametrize("now_utc", ["2026-11-02T16:47:00Z", "2026-11-02T17:42:00Z"])
+def test_taiwan_preflight_delayed_scheduled_run_proceeds_for_missing_monday_close(now_utc: str) -> None:
+    """2026-11-02 incident: a schedule delayed past Taipei midnight must still ingest Monday's close."""
+    stale = _stored_tw_snapshot("2026-10-30", "2026-10-30T08:00:00Z")
+    result = _run_pinned_taiwan_preflight(now_utc, {"2330.TW": stale})
+    assert result["taipei_date"] == "2026-11-03"
+    assert result["status"] == "proceed"
+    assert result["reason"] == "closed_session_missing"
+    assert result["session_date"] == "2026-11-02"
+    assert result["_requested"] == ["2330.TW"]
+
+
+def test_taiwan_preflight_delayed_run_is_noop_only_when_closed_session_stored() -> None:
+    stored = _stored_tw_snapshot("2026-11-02", "2026-11-02T08:00:00Z")
+    result = _run_pinned_taiwan_preflight("2026-11-02T16:47:00Z", {"2330.TW": stored})
+    assert result["status"] == "skipped"
+    assert result["reason"] == "session_not_closed"
+    after_close = _run_pinned_taiwan_preflight("2026-11-03T07:00:00Z", {"2330.TW": stored})
+    assert after_close["status"] == "proceed"
+    assert after_close["session_date"] == "2026-11-03"
+    same_day = _run_pinned_taiwan_preflight("2026-11-02T08:00:00Z", {"2330.TW": stored})
+    assert (same_day["status"], same_day["reason"]) == ("noop", "already_fresh")
+    receipt_before_close = _stored_tw_snapshot("2026-11-02", "2026-11-02T04:00:00Z")
+    stale_receipt = _run_pinned_taiwan_preflight("2026-11-02T08:00:00Z", {"2330.TW": receipt_before_close})
+    assert (stale_receipt["status"], stale_receipt["reason"]) == ("proceed", "closed_session_missing")
+
+
+def test_taiwan_preflight_friday_session_delayed_into_saturday_proceeds_unless_stored() -> None:
+    thursday = _stored_tw_snapshot("2026-10-29", "2026-10-29T08:00:00Z")
+    result = _run_pinned_taiwan_preflight("2026-10-30T17:30:00Z", {"2330.TW": thursday})
+    assert result["taipei_date"] == "2026-10-31"
+    assert (result["status"], result["session_date"]) == ("proceed", "2026-10-30")
+    friday = _stored_tw_snapshot("2026-10-30", "2026-10-30T08:00:00Z")
+    result = _run_pinned_taiwan_preflight("2026-10-30T17:30:00Z", {"2330.TW": friday})
+    assert (result["status"], result["reason"]) == ("skipped", "weekend")
+
+
+def test_taiwan_preflight_covers_every_resolved_active_symbol() -> None:
+    fresh = _stored_tw_snapshot("2026-11-02", "2026-11-02T08:00:00Z")
+    stale = _stored_tw_snapshot("2026-10-30", "2026-10-30T08:00:00Z")
+    result = _run_pinned_taiwan_preflight(
+        "2026-11-02T08:00:00Z",
+        {"2330.TW": fresh, "2317.TW": fresh, "0050.TWSE": stale},
+        symbols="2330.TW,2317.TW,0050.TWSE",
+    )
+    assert (result["status"], result["symbols"]) == ("proceed", ["0050.TWSE"])
+    assert result["_requested"] == ["2330.TW", "2317.TW", "0050.TWSE"]
+
+
+def test_taiwan_preflight_defaults_to_paper_baseline_symbol_not_0050() -> None:
+    result = _run_pinned_taiwan_preflight("2026-11-02T08:00:00Z", {})
+    assert result["_requested"] == ["2330.TW"]
+    assert (result["status"], result["reason"]) == ("proceed", "snapshot_missing")
+
+
 def test_deploy_nonprod_vm_taiwan_market_freshness_session_window() -> None:
     """Nonprod deploy paper snapshot admission accepts Friday receipt across the weekend session window."""
     from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness

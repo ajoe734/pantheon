@@ -1826,61 +1826,114 @@ ensure_dev_caddy_ingress() (
 check_taiwan_refresh_preflight() {
   local force="${1:-false}"
   python3 - "${force}" <<'PREFLIGHT_PY'
-import json, sys, urllib.error, urllib.request
-from datetime import datetime, time, timedelta, timezone
+import json, os, sys, urllib.error, urllib.parse, urllib.request
+from datetime import date, datetime, time, timedelta, timezone
 
 tz = timezone(timedelta(hours=8))
 force = str(sys.argv[1]).lower() == "true"
-now_u, now_t = datetime.now(timezone.utc), datetime.now(tz)
+# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock so delayed scheduled runs can be reproduced.
+pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
+now_u = datetime.fromisoformat(pinned_now.replace("Z", "+00:00")) if pinned_now else datetime.now(timezone.utc)
+now_t = now_u.astimezone(tz)
 d_str = str(now_t.date())
 def emit(status, **kw):
     sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
 
-if not force and now_t.weekday() >= 5:
-    emit("skipped", reason="weekend", checked_at=now_u.isoformat())
-if not force and now_t.time() < time(13, 30):
-    emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
-
 from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
-snap = None
-try:
-    url = f"{__import__('os').environ.get('SOURCE_INGEST_API_URL', 'http://127.0.0.1:18097')}/api/source-ingest/snapshots/latest?symbol=0050.TW"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=3) as resp:
-        snap = json.loads(resp.read().decode("utf-8"))
-except urllib.error.HTTPError as exc:
-    if exc.code != 404:
-        emit("error", reason="snapshot_lookup_failed", detail=f"HTTP {exc.code}: {exc.reason}")
-except urllib.error.URLError as exc:
-    emit("error", reason="source_ingest_unreachable", detail=str(exc.reason))
-except Exception as exc:
-    emit("error", reason="preflight_failed", detail=str(exc))
 
-if snap is not None:
+symbols = list(dict.fromkeys(s.strip().upper() for s in os.environ.get("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(",") if s.strip()))
+if not symbols:
+    baseline = os.environ.get("PANTHEON_DEV_PAPER_BASELINE_SYMBOL")
+    if baseline is None:
+        try:
+            from scripts.bootstrap_dev_paper_baseline import DEFAULT_MARKET_SYMBOL as baseline
+        except Exception:
+            baseline = "2330.TW"
+    symbols = [baseline.strip().upper()] if baseline.strip() else []
+if not symbols:
+    symbols = ["2330.TW"]
+
+api_url = os.environ.get("SOURCE_INGEST_API_URL", "http://127.0.0.1:18097")
+snaps = []
+for symbol in symbols:
+    try:
+        url = f"{api_url}/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(symbol)}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            snaps.append((symbol, json.loads(resp.read().decode("utf-8"))))
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            emit("error", reason="snapshot_lookup_failed", detail=f"{symbol}: HTTP {exc.code}: {exc.reason}")
+        snaps.append((symbol, None))
+    except urllib.error.URLError as exc:
+        emit("error", reason="source_ingest_unreachable", detail=str(exc.reason))
+    except Exception as exc:
+        emit("error", reason="preflight_failed", detail=str(exc))
+
+if any(snap is None for _, snap in snaps):
+    if force:
+        emit("proceed")
+    emit("proceed", reason="snapshot_missing", symbols=[sym for sym, snap in snaps if snap is None])
+
+holidays = {}
+calendars = {}
+for symbol, snap in snaps:
     cal = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
     c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u) if cal else (False, "snapshot missing calendar evidence", None)
     if not c_ok:
         print(f"refresh needed: existing snapshot calendar evidence unusable: {c_err}", file=sys.stderr)
         emit("proceed", reason="calendar_evidence_refresh_needed", detail=str(c_err))
-    if d_str in (c_norm.get("holidays") or {}):
+    calendars[symbol] = cal
+    holidays.update(c_norm.get("holidays") or {})
+
+def is_session_day(day):
+    return day.weekday() < 5 and day.isoformat() not in holidays
+
+if force:
+    if d_str in holidays:
         emit("skipped", reason="holiday", checked_at=now_u.isoformat())
+    emit("proceed")
+
+# Latest closed official session: today only after the 13:30 close, otherwise walk back
+# over weekends and evidenced holidays. Never decided from the wall-clock date alone.
+cursor = now_t.date() if now_t.time() >= time(13, 30) else now_t.date() - timedelta(days=1)
+for _ in range(20):
+    if is_session_day(cursor):
+        break
+    cursor -= timedelta(days=1)
+session_date = cursor
+session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+
+missing = []
+admission_failure = None
+for symbol, snap in snaps:
     ev_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00"))
     obs = snap.get("observed_at")
     obs_dt = datetime.fromisoformat(obs.replace("Z", "+00:00")) if obs else None
-    close_t = datetime(now_t.year, now_t.month, now_t.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
-    if not force and ev_dt.astimezone(tz).date() == now_t.date() and obs_dt and obs_dt >= close_t:
-        ok, reason, detail = evaluate_taiwan_market_freshness(
-            event_time_dt=ev_dt,
-            now_dt=now_u,
-            refresh_receipt_dt=obs_dt,
-            lineage=snap.get("lineage") or {},
-            max_refresh_age_seconds=86400,
-            calendar_evidence=cal,
-        )
-        if ok:
-            emit("noop", reason="already_fresh", snapshot_id=snap.get("snapshot_id"), checked_at=now_u.isoformat())
-        emit("error", reason="existing_snapshot_admission_failed", detail=f"{reason}: {detail}")
-emit("proceed")
+    if ev_dt.astimezone(tz).date() < session_date or not obs_dt or obs_dt < session_close:
+        missing.append(symbol)
+        continue
+    ok, reason, detail = evaluate_taiwan_market_freshness(
+        event_time_dt=ev_dt,
+        now_dt=now_u,
+        refresh_receipt_dt=obs_dt,
+        lineage=snap.get("lineage") or {},
+        max_refresh_age_seconds=86400,
+        calendar_evidence=calendars[symbol],
+    )
+    if not ok:
+        admission_failure = admission_failure or f"{symbol}: {reason}: {detail}"
+if missing:
+    emit("proceed", reason="closed_session_missing", session_date=str(session_date), symbols=missing)
+if admission_failure:
+    emit("error", reason="existing_snapshot_admission_failed", detail=admission_failure)
+if now_t.weekday() >= 5:
+    emit("skipped", reason="weekend", checked_at=now_u.isoformat())
+if d_str in holidays:
+    emit("skipped", reason="holiday", checked_at=now_u.isoformat())
+if now_t.time() < time(13, 30):
+    emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
+emit("noop", reason="already_fresh", session_date=str(session_date), snapshot_id=snaps[0][1].get("snapshot_id"), checked_at=now_u.isoformat())
 PREFLIGHT_PY
 }
 
@@ -2138,7 +2191,7 @@ execute_bounded_source_refresh_entrypoint() {
   SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no" \
   SOURCE_INGEST_CONTROLLER_MAX_TICKS="1" \
   SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1" \
-  SOURCE_INGEST_MAX_RECORDS="100"
+  SOURCE_INGEST_MAX_RECORDS="500"
   validate_source_refresh_profile
   resolve_bounded_source_refresh_active_symbols
   if [[ -z "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" ]]; then
@@ -2256,7 +2309,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
-    SOURCE_INGEST_MAX_RECORDS=100 \
+    SOURCE_INGEST_MAX_RECORDS=500 \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
         -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
