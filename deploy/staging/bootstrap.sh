@@ -95,6 +95,7 @@ STAGING_BIN_DIR="${STAGING_BIN_DIR:-/usr/local/bin}"
 STAGING_CADDYFILE_PATH="${STAGING_CADDYFILE_PATH:-/etc/caddy/Caddyfile}"
 STAGING_SECRETS_ENV_FILE="${STAGING_SECRETS_ENV_FILE:-${STAGING_ROOT}/secrets/staging.secrets.env}"
 STAGING_POSTGRES_PASSWORD_FILE="${STAGING_POSTGRES_PASSWORD_FILE:-${STAGING_ROOT}/secrets/postgres_password}"
+STAGING_POSTGRES_PORT="${STAGING_POSTGRES_PORT:-15432}"
 STAGING_POSTGRES_USER="${STAGING_POSTGRES_USER:-pantheon_stg}"
 STAGING_POSTGRES_DB="${STAGING_POSTGRES_DB:-pantheon_staging}"
 STAGING_JWT_ISSUER="${STAGING_JWT_ISSUER:-https://auth.stg.pantheon.internal}"
@@ -821,6 +822,47 @@ STAGING_SECRETS_ENV_FILE=${STAGING_SECRETS_ENV_FILE}
 STAGING_POSTGRES_PASSWORD_FILE=${STAGING_POSTGRES_PASSWORD_FILE}
 EOF
 run_priv install -m 0600 "${LOCAL_WORK_DIR}/compose.baseline.env" "${BASELINE_COMPOSE_ENV_PATH}"
+
+# 8b. Start only the pinned postgres service, wait until it accepts connections, and run
+# the shared pre-owner-start live sanitized seed verification before starting any product owners.
+PRE_START_SANITIZED_RECORD_PATH="${STAGING_ROOT}/state/pre-start-sanitized-dataset.json"
+run_priv rm -f "${PRE_START_SANITIZED_RECORD_PATH}"
+
+run_compose -p pantheon-staging \
+  -f "${STAGING_ROOT}/docker-compose.staging.yml" \
+  --env-file "${COMPOSE_ENV_PATH}" \
+  --profile core up -d --no-build postgres || fail "POSTGRES_UP_FAILED" "docker compose up -d --no-build postgres failed"
+
+PG_PASSWORD_VAL="$(run_priv cat "${STAGING_POSTGRES_PASSWORD_FILE}" 2>/dev/null | tr -d '\r\n')"
+[[ -n "${PG_PASSWORD_VAL}" ]] || fail "SECRET_EMPTY" "Postgres password file at ${STAGING_POSTGRES_PASSWORD_FILE} is empty"
+PG_READY="false"
+for _ in $(seq 1 "${STAGING_READY_TRIES:-60}"); do
+  if PGPASSWORD="${PG_PASSWORD_VAL}" "$PSQL_BIN" \
+    -h 127.0.0.1 \
+    -p "${STAGING_POSTGRES_PORT}" \
+    -U "${STAGING_POSTGRES_USER}" \
+    -d "${STAGING_POSTGRES_DB}" \
+    -v ON_ERROR_STOP=1 \
+    -t -A -c "SELECT 1;" >/dev/null 2>&1; then
+    PG_READY="true"
+    break
+  fi
+  sleep "${STAGING_READY_INTERVAL:-1}"
+done
+unset PG_PASSWORD_VAL
+if [[ "${PG_READY}" != "true" ]]; then
+  fail "POSTGRES_NOT_READY" "PostgreSQL did not accept connections on 127.0.0.1:${STAGING_POSTGRES_PORT} before owner start"
+fi
+
+export STAGING_ROOT STAGING_DATA_MOUNT STAGING_FE_ROOT STAGING_BFF_PORT STAGING_FE_HTTP_PORT \
+  STAGING_POSTGRES_PORT STAGING_POSTGRES_USER STAGING_POSTGRES_DB \
+  STAGING_POSTGRES_PASSWORD_FILE STAGING_SECRETS_ENV_FILE \
+  DOCKER_BIN CURL_BIN MOUNTPOINT_BIN PSQL_BIN PG_DUMP_BIN PG_RESTORE_BIN SUDO_BIN
+"${STAGING_BIN_DIR}/pantheon-staging-collect-gates" verify-pre-start \
+  --release-id "${RELEASE_ID}" >/dev/null || fail "SANITIZED_DATASET_INVALID" "Pre-owner-start sanitized seed dataset verification failed"
+run_priv test -s "${PRE_START_SANITIZED_RECORD_PATH}" || fail "SANITIZED_DATASET_INVALID" "Pre-owner-start sanitized dataset record missing at ${PRE_START_SANITIZED_RECORD_PATH}"
+PRE_START_RECORD_MODE="$(run_priv stat -c '%a' "${PRE_START_SANITIZED_RECORD_PATH}" 2>/dev/null || echo "")"
+[[ "${PRE_START_RECORD_MODE}" == "600" ]] || fail "SANITIZED_DATASET_INVALID" "Pre-owner-start sanitized dataset record mode must be 600 (got ${PRE_START_RECORD_MODE})"
 
 run_compose -p pantheon-staging \
   -f "${STAGING_ROOT}/docker-compose.staging.yml" \

@@ -240,7 +240,85 @@ if not dry_run:
 PY
 
 # 2. Sanitized dataset check
-SANITIZED_OUT="$(python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-sanitized --input "${SANITIZED_DATASET_PATH}")"
+SANITIZED_OUT="$(
+  SCRIPT_DIR="${SCRIPT_DIR}" SANITIZED_DATASET_PATH="${SANITIZED_DATASET_PATH}" DRY_RUN="${DRY_RUN}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.environ["SCRIPT_DIR"])
+import staging_sanitize  # type: ignore
+
+dataset_path = Path(os.environ["SANITIZED_DATASET_PATH"])
+payload = json.loads(dataset_path.read_text(encoding="utf-8"))
+if (
+    isinstance(payload, dict)
+    and payload.get("observed_phase") == "pre_owner_start"
+    and "tables" not in payload
+    and os.environ.get("DRY_RUN") != "true"
+):
+    if payload.get("verified") is not True or payload.get("sanitized_verified") is not True:
+        raise SystemExit("SanitizationError: pre-owner-start sanitized dataset record is not verified=true")
+    if payload.get("observed_from_live_vm") is not True or payload.get("dry_run") is not False:
+        raise SystemExit("SanitizationError: pre-owner-start record must have observed_from_live_vm=true and dry_run=false")
+    meta = payload.get("metadata")
+    if not isinstance(meta, dict):
+        raise SystemExit("SanitizationError: pre-owner-start record is missing snapshot metadata")
+    staging_sanitize.validate_sanitized_snapshot_metadata(meta)
+    if str(payload.get("snapshot_name") or "") != str(meta.get("snapshot_name") or ""):
+        raise SystemExit("SanitizationError: pre-owner-start record snapshot_name does not match metadata")
+    if str(payload.get("source_environment") or "") != str(meta.get("source_environment") or ""):
+        raise SystemExit("SanitizationError: pre-owner-start record source_environment does not match metadata")
+    live_sha = str(payload.get("live_dataset_sha256") or "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", live_sha):
+        raise SystemExit("SanitizationError: pre-owner-start record missing valid live_dataset_sha256")
+    row_counts = payload.get("row_counts")
+    table_count = payload.get("table_count")
+    if (
+        not isinstance(row_counts, dict)
+        or "public.telemetry_events" not in row_counts
+        or not isinstance(table_count, int)
+        or table_count != len(row_counts)
+    ):
+        raise SystemExit("SanitizationError: pre-owner-start record has invalid table_count or row_counts")
+    owner_started_at = payload.get("owner_started_at")
+    if not isinstance(owner_started_at, dict) or not owner_started_at:
+        raise SystemExit("SanitizationError: pre-owner-start record is missing owner_started_at timestamps")
+    summary = {
+        "sanitized_verified": True,
+        "verified": True,
+        "observed_phase": "pre_owner_start",
+        "observed_at": str(payload["observed_at"]),
+        "snapshot_name": str(payload["snapshot_name"]),
+        "source_environment": str(payload["source_environment"]),
+        "dataset_sha256": str(payload.get("dataset_sha256") or meta.get("dataset_sha256") or live_sha),
+        "metadata_dataset_sha256": str(payload.get("metadata_dataset_sha256") or meta.get("dataset_sha256") or live_sha),
+        "live_dataset_sha256": live_sha,
+        "table_count": table_count,
+        "row_counts": row_counts,
+        "schemas": payload.get("schemas") or sorted({name.partition(".")[0] for name in row_counts}),
+        "owner_started_at": owner_started_at,
+    }
+    print(json.dumps(summary, sort_keys=True))
+else:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(Path(os.environ["SCRIPT_DIR"]) / "staging_sanitize.py"),
+            "verify-sanitized",
+            "--input",
+            str(dataset_path),
+        ],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    print(proc.stdout.strip())
+PY
+)"
 
 # 3. Forward migration & old-app/new-schema compatibility
 MIGRATION_OUT="$(python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-migration --input "${MIGRATION_PLAN_PATH}")"
