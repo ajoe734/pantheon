@@ -425,7 +425,7 @@ def create_incident_router(
     # Route 1: GET /api/v1/operator/alerts
     # -------------------------------------------------------------------------
     @router.get("/api/v1/operator/alerts")
-    async def list_operator_alerts(
+    def list_operator_alerts(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """Operator alert aggregate view."""
@@ -438,7 +438,7 @@ def create_incident_router(
     # Route 2: GET /api/v1/incidents
     # -------------------------------------------------------------------------
     @router.get("/api/v1/incidents")
-    async def list_incidents(
+    def list_incidents(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -495,7 +495,7 @@ def create_incident_router(
     # (Registered BEFORE /api/v1/incidents/{incident_id} to avoid path conflict)
     # -------------------------------------------------------------------------
     @router.get("/api/v1/incidents/stream")
-    async def stream_incident_events(
+    def stream_incident_events(
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
     ):
@@ -508,7 +508,7 @@ def create_incident_router(
     # Route 4: GET /api/v1/incidents/{incident_id}
     # -------------------------------------------------------------------------
     @router.get("/api/v1/incidents/{incident_id}")
-    async def get_incident(
+    def get_incident(
         incident_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -540,7 +540,7 @@ def create_incident_router(
     # Route 5: GET /api/v1/kill-switch/status
     # -------------------------------------------------------------------------
     @router.get("/api/v1/kill-switch/status")
-    async def get_kill_switch_status(
+    def get_kill_switch_status(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """IN-05: Kill Switch Status — requires admin role."""
@@ -562,7 +562,7 @@ def create_incident_router(
     # Route 6: GET /api/v1/operator/incident-response/{incident_id}
     # -------------------------------------------------------------------------
     @router.get("/api/v1/operator/incident-response/{incident_id}")
-    async def get_incident_response(
+    def get_incident_response(
         incident_id: str,
         snapshot: str = "preferred",
         authorization: Optional[str] = Header(default=None),
@@ -587,7 +587,7 @@ def create_incident_router(
     # Route 7: GET /api/v1/operator/post-incident-review/{incident_id}
     # -------------------------------------------------------------------------
     @router.get("/api/v1/operator/post-incident-review/{incident_id}")
-    async def get_post_incident_review(
+    def get_post_incident_review(
         incident_id: str,
         snapshot: str = "preferred",
         authorization: Optional[str] = Header(default=None),
@@ -611,7 +611,7 @@ def create_incident_router(
     # Route 8: GET /bff/risk/alerts
     # -------------------------------------------------------------------------
     @router.get("/bff/risk/alerts")
-    async def bff_list_risk_alerts(
+    def bff_list_risk_alerts(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: list risk/operator alerts."""
@@ -624,7 +624,7 @@ def create_incident_router(
     # Route 9: GET /bff/risk/alerts/{alert_id}
     # -------------------------------------------------------------------------
     @router.get("/bff/risk/alerts/{alert_id}")
-    async def bff_get_risk_alert(
+    def bff_get_risk_alert(
         alert_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -761,7 +761,7 @@ def create_incident_router(
     # Route 13: GET /bff/incidents/{incident_id}
     # -------------------------------------------------------------------------
     @router.get("/bff/incidents/{incident_id}")
-    async def bff_get_incident(
+    def bff_get_incident(
         incident_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -860,7 +860,7 @@ def create_incident_router(
     # Route 16: GET /bff/alerts/{alert_id}
     # -------------------------------------------------------------------------
     @router.get("/bff/alerts/{alert_id}")
-    async def bff_get_alert(
+    def bff_get_alert(
         alert_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1053,7 +1053,7 @@ def create_incident_router(
     # Route 19: GET /bff/audit/events
     # -------------------------------------------------------------------------
     @router.get("/bff/audit/events")
-    async def bff_list_audit_events(
+    def bff_list_audit_events(
         actor: Optional[str] = None,
         action_type: Optional[str] = None,
         target_type: Optional[str] = None,
@@ -1088,7 +1088,7 @@ def create_incident_router(
     # Route 20: GET /bff/audit/entities/{entity_type}/{entity_id}
     # -------------------------------------------------------------------------
     @router.get("/bff/audit/entities/{entity_type}/{entity_id}")
-    async def bff_get_entity_audit(
+    def bff_get_entity_audit(
         entity_type: str,
         entity_id: str,
         page_token: Optional[str] = None,
@@ -1120,7 +1120,7 @@ def create_incident_router(
     # Route 21: GET /bff/audit/export
     # -------------------------------------------------------------------------
     @router.get("/bff/audit/export")
-    async def bff_audit_export(
+    def bff_audit_export(
         actor: Optional[str] = None,
         action_type: Optional[str] = None,
         target_type: Optional[str] = None,
@@ -1153,7 +1153,7 @@ def create_incident_router(
     # Route 22: POST /bff/audit/export
     # -------------------------------------------------------------------------
     @router.post("/bff/audit/export", status_code=202)
-    async def sem_audit_export_command(
+    def sem_audit_export_command(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -1170,7 +1170,7 @@ def create_incident_router(
     @router.post("/bff/alerts/{id}/escalate-incident", status_code=200)
     @router.post("/bff/incidents/{id}/resolve", status_code=200)
     @router.post("/bff/incidents/{id}/start-mitigation", status_code=200)
-    async def sem_final_generic_id_command_alias(
+    def sem_final_generic_id_command_alias(
         id: str,
         request: Request,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -1268,7 +1268,7 @@ def create_incident_router(
     # -------------------------------------------------------------------------
     @router.post("/bff/incidents/{id}/append-postmortem", status_code=200)
     @router.post("/bff/incidents/{id}/rollback-deployment", status_code=200)
-    async def bff_incident_non_status_action(
+    def bff_incident_non_status_action(
         id: str,
         request: Request,
         authorization: Optional[str] = Header(default=None),

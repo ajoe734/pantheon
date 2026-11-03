@@ -212,7 +212,7 @@ def create_control_loops_router(
 
     # 1-2: OODA packet management reads.
     @router.get("/bff/ooda/packets")
-    async def bff_list_ooda_packets(
+    def bff_list_ooda_packets(
         status: Optional[str] = None,
         stage: Optional[str] = None,
         strategy_id: Optional[str] = None,
@@ -241,7 +241,7 @@ def create_control_loops_router(
         return response
 
     @router.get("/bff/ooda/packets/{packet_id}")
-    async def bff_get_ooda_packet(
+    def bff_get_ooda_packet(
         packet_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -318,7 +318,7 @@ def create_control_loops_router(
         )
 
     @router.get("/bff/v5/loop-inventory", response_model=LoopInventoryListEnvelope)
-    async def bff_v5_loop_inventory(
+    def bff_v5_loop_inventory(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _read_identity(authorization)
@@ -353,7 +353,7 @@ def create_control_loops_router(
         )
 
     @router.get("/bff/v5/loop-inventory/{loop_id}", response_model=LoopInventoryDetailEnvelope)
-    async def bff_v5_loop_inventory_detail(
+    def bff_v5_loop_inventory_detail(
         loop_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -362,7 +362,7 @@ def create_control_loops_router(
 
     # 18-19: downstream monitor read and audited delivery replay.
     @router.get("/bff/v5/downstream-health")
-    async def bff_v5_downstream_health(
+    def bff_v5_downstream_health(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
@@ -468,7 +468,7 @@ def create_control_loops_router(
 
     # 23: aggregate control room.
     @router.get("/bff/v5/control-room")
-    async def bff_v5_control_room(
+    def bff_v5_control_room(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)

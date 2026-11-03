@@ -31,7 +31,7 @@ def create_training_router(
         dataset_surface_status=dataset_surface_status,
     )
     @router.post("/api/v1/trainer/sessions")
-    async def create_trainer_session(
+    def create_trainer_session(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
     ):
@@ -89,7 +89,7 @@ def create_training_router(
     
     
     @router.get("/api/v1/trainer/sessions")
-    async def list_trainer_sessions(
+    def list_trainer_sessions(
         persona_id: Optional[str] = None,
         status: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -149,7 +149,7 @@ def create_training_router(
     
     
     @router.get("/api/v1/trainer/sessions/{session_id}")
-    async def get_trainer_session_detail(
+    def get_trainer_session_detail(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -177,7 +177,7 @@ def create_training_router(
     
     
     @router.get("/api/v1/trainer/sessions/{session_id}/controls")
-    async def get_trainer_controls(
+    def get_trainer_controls(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -196,7 +196,7 @@ def create_training_router(
     
     
     @router.post("/api/v1/trainer/sessions/{session_id}/patch")
-    async def patch_trainer_controls(
+    def patch_trainer_controls(
         session_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -246,7 +246,7 @@ def create_training_router(
     
     
     @router.post("/api/v1/trainer/sessions/{session_id}/message")
-    async def append_trainer_message(
+    def append_trainer_message(
         session_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -306,7 +306,7 @@ def create_training_router(
     
     
     @router.get("/api/v1/trainer/sessions/{session_id}/preview")
-    async def get_trainer_preview(
+    def get_trainer_preview(
         session_id: str,
         eval_id: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
@@ -347,7 +347,7 @@ def create_training_router(
     
     
     @router.post("/api/v1/trainer/sessions/{session_id}/preview")
-    async def refresh_trainer_preview(
+    def refresh_trainer_preview(
         session_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -409,7 +409,7 @@ def create_training_router(
     
     
     @router.get("/api/v1/trainer/replay")
-    async def list_trainer_replays(
+    def list_trainer_replays(
         persona_id: str,
         status: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -465,7 +465,7 @@ def create_training_router(
     
     
     @router.get("/api/v1/trainer/replay/{session_id}")
-    async def get_trainer_replay_detail(
+    def get_trainer_replay_detail(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -484,7 +484,7 @@ def create_training_router(
         return replay
     
     @router.post("/api/v1/trainer/sessions/{session_id}/commit")
-    async def commit_trainer_replay(
+    def commit_trainer_replay(
         session_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -558,7 +558,7 @@ def create_training_router(
     
     
     @router.post("/api/v1/trainer/sessions/{session_id}/discard")
-    async def discard_trainer_replay(
+    def discard_trainer_replay(
         session_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -626,7 +626,7 @@ def create_training_router(
     
     
     @router.post("/api/v1/trainer/sessions/{session_id}/rapid-eval")
-    async def create_rapid_eval(
+    def create_rapid_eval(
         session_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -713,7 +713,7 @@ def create_training_router(
     
     
     @router.get("/api/v1/trainer/sessions/{session_id}/rapid-eval/{eval_id}")
-    async def get_rapid_eval(
+    def get_rapid_eval(
         session_id: str,
         eval_id: str,
         authorization: Optional[str] = Header(default=None),

@@ -2774,6 +2774,13 @@
       "rationale": "BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001 regression: exercises the real models.redact_evidence_refs directly plus one real-router request per direct-caller surface (research/personas/assistant/management_read_models/governance routers) with a low-capability identity, a full-capability identity, and a capability-resolution failure; never imports main"
     },
     {
+      "file": "tests/test_bff_async_route_handlers_guard.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-ASYNC-ROUTE-NO-AWAIT-SWEEP-20261103 static AST guard: parses non-test BFF modules only; never imports main"
+    },
+    {
       "file": "tests/test_event_loop_owner_reads_guard.py",
       "layer": "adapter",
       "imports_main": false,

@@ -19,7 +19,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
     router = APIRouter()
 
     @router.get("/bff/strategies/{strategy_id}")
-    async def bff_get_strategy(
+    def bff_get_strategy(
         strategy_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -45,7 +45,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         }
 
     @router.patch("/bff/strategies/{strategy_id}")
-    async def bff_patch_strategy(
+    def bff_patch_strategy(
         strategy_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -98,7 +98,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         return result
 
     @router.get("/bff/strategies/{strategy_id}/specs")
-    async def bff_list_strategy_specs(
+    def bff_list_strategy_specs(
         strategy_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -119,7 +119,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         }
 
     @router.post("/bff/strategies/{strategy_id}/specs", status_code=201)
-    async def bff_create_strategy_spec(
+    def bff_create_strategy_spec(
         strategy_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -165,7 +165,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         return result
 
     @router.get("/bff/strategies/{strategy_id}/experiments")
-    async def bff_list_strategy_experiments(
+    def bff_list_strategy_experiments(
         strategy_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -192,7 +192,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         }
 
     @router.get("/bff/strategies/{strategy_id}/artifacts")
-    async def bff_list_strategy_artifacts(
+    def bff_list_strategy_artifacts(
         strategy_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -213,7 +213,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         }
 
     @router.get("/bff/strategies/{strategy_id}/lineage")
-    async def bff_get_strategy_lineage(
+    def bff_get_strategy_lineage(
         strategy_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -242,7 +242,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         ]
 
     @router.get("/bff/strategies/{strategy_id}/audit")
-    async def bff_get_strategy_audit(
+    def bff_get_strategy_audit(
         strategy_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -264,7 +264,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         }
 
     @router.get("/bff/strategies/{strategy_id}/ooda")
-    async def bff_list_strategy_ooda_packets(
+    def bff_list_strategy_ooda_packets(
         strategy_id: str,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -288,7 +288,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         return {"data": packets, "items": packets, "meta": ctx.read_surface_meta("ooda_packets", "strategy_ooda", snapshot_at=ctx.utc_now())}
 
     @router.post("/bff/strategies/{strategy_id}/actions/{action_id}", status_code=202)
-    async def bff_strategy_action(
+    def bff_strategy_action(
         strategy_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -305,7 +305,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         return {"data": {"strategy_id": strategy_id, "action_id": action_id, "status": "deprecated"}}
 
     @router.post("/bff/strategies/{strategy_id}/dry-run", status_code=202)
-    async def bff_strategy_dry_run(
+    def bff_strategy_dry_run(
         strategy_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
