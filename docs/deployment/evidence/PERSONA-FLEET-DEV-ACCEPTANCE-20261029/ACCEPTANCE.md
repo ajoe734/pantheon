@@ -1,6 +1,6 @@
 # PERSONA-FLEET-DEV-ACCEPTANCE-20261029
 
-Status: release DONE on the final pair; hosted acceptance NOT passed (warm p95 still above target).
+Status: **hosted acceptance PASSED on the final served pair** BFF `28b2579e39c235ef0bb6e252946de76aa9c80ac0` + FE `56bec9ad581d7731551d685dbeeba0d7ba28eca3` (see the 2026-11-03 section at the end). Sections below are the historical failing batches and are retained as evidence.
 
 - Pair served on dev: BFF `fd3c0ba1f968243228208350c599f314ef86fbba` (includes PERSONA-FLEET-WARM-P95 PR #6865) + FE `56bec9ad581d7731551d685dbeeba0d7ba28eca3`.
 - Release: Pantheon Nonprod Deploy run 40961611194 success (21:54Z-22:58Z), served pairId `0c9dce09...a95c2`. Previous pair run 40940459676 (BFF 71829313) had warm p95 2643 ms.
@@ -56,3 +56,13 @@ Status: release DONE on the final pair; hosted acceptance NOT passed (warm p95 s
 - **Cold (3 fresh contexts): API 1097/920/563 ms (<=2000 OK); usable 2037/1674/1378 ms (<=2500 OK).** Login latency (887–920 ms to shell) reported separately. Previous batch's entry-1 failure (2555 ms) did not recur.
 - Harness reported completed_subset=true, performance_pass=true. Finance-runtime probe, local privacy rerun and Registry file-hash proof were NOT rerun for this pair; Agora operational readiness is unavailable on dev. These remain gaps for the native review.
 - Single-batch result: targets met once after two failing batches; not repeated for variance.
+
+
+## Final closeout 2026-11-03: remaining acceptance items on the final pair
+
+- Release: Pantheon Nonprod Deploy root run 41544133483 success (release 20261103T001610Z, gate run 41547638201); served pairId `d850d393...db7bb`, BFF image `sha256:0424deba...f8b9`. All ten prerequisite tasks and PRs are listed in `evidence.json` `source_prs`.
+- Finance/runtime readback (GET only, 2026-11-03T00:38Z): 15 reads all HTTP 200, 0 errors, 0 blocked writes, logout 200, identity identical before and after. 10 paper personas isolated ledger with no live pool; the 3 without trading telemetry keep null metrics, source=unavailable. File sha256 `8d64eee0...c121` retained outside the repo.
+- Registry + BFF image proof: Registry container `c427d2b8...19f9`, image `sha256:7e66974c...c09e`; all 5 Registry/Foundation files match source 28b2579e3 (SHA-256). BFF `/bff/version` image digest equals the release image. No OCI revision label is claimed.
+- Local privacy: 4 existing contract tests pass on an exact 28b2579e3 export (8.10s). Local fixtures only; no hosted cross-user pass claimed. Archived-scaling evidence reused from PERSONA-FLEET-HOSTED-LATENCY-20261029 (archived_100/1000) and WARM-TAIL; hosted stores were not grown.
+- `pagination.json` and `timings.json` were compacted to fit the diff budget; full copies and SHA-256 digests are recorded inside them.
+- Remaining gaps: Agora operational readiness unavailable on dev; single passing batch (not repeated for variance); dataset drift between batches. Hosted milestone may be marked done with these limitations.
