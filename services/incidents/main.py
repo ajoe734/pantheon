@@ -114,9 +114,14 @@ try:
         IncidentStatus,
         IncidentStore,
         NOT_REOBSERVED_RESOLUTION_REASON,
+        ORPHAN_RECOVERED_RESOLUTION_REASON,
         canonical_monitor_agent_finding_key,
+        extract_infrastructure_incident_component,
+        extract_infrastructure_incident_referenced_ids,
         extract_monitor_agent_finding_references,
+        is_infrastructure_health_incident,
         is_monitor_agent_finding_incident,
+        normalize_infrastructure_component,
         validate_incident_case,
     )
     from services.incident.pg_store import build_incident_store  # type: ignore
@@ -128,9 +133,14 @@ except ImportError:
         IncidentStatus,
         IncidentStore,
         NOT_REOBSERVED_RESOLUTION_REASON,
+        ORPHAN_RECOVERED_RESOLUTION_REASON,
         canonical_monitor_agent_finding_key,
+        extract_infrastructure_incident_component,
+        extract_infrastructure_incident_referenced_ids,
         extract_monitor_agent_finding_references,
+        is_infrastructure_health_incident,
         is_monitor_agent_finding_incident,
+        normalize_infrastructure_component,
         validate_incident_case,
     )
     from incident.pg_store import build_incident_store  # type: ignore
@@ -357,6 +367,8 @@ def _to_response(inc: IncidentCase) -> IncidentResponse:
 
 def _get_or_404(incident_id: str) -> IncidentCase:
     inc = store.get_incident(incident_id)
+    if inc is None and hasattr(store, "find_infrastructure_incident_by_id_or_alias"):
+        inc = store.find_infrastructure_incident_by_id_or_alias(incident_id)
     if inc is None:
         raise HTTPException(status_code=404, detail=f"IncidentCase '{incident_id}' not found")
     return inc
@@ -595,6 +607,16 @@ def consume_infrastructure_health_incident(
     producers must send the strict infrastructure incident contract and must not
     provide fake RuntimeBinding fields to pass canonical runtime validation.
     """
+    raw_status = str(body.get("status") or "open").strip().lower() if isinstance(body, dict) else "open"
+    probe_kind = str(body.get("probe_kind") or "").strip().lower() if isinstance(body, dict) else ""
+    open_ids_before: set[str] = set()
+    if raw_status in {"resolved", "closed"} or probe_kind == "recovery":
+        open_ids_before = {
+            inc.incident_id
+            for inc in store.find_open_incidents()
+            if is_infrastructure_health_incident(inc)
+        }
+
     consumer = InfrastructureHealthIncidentConsumer(incident_store=store)
     try:
         result = consumer.consume(body)
@@ -602,6 +624,16 @@ def consume_infrastructure_health_incident(
         detail = str(exc)
         status_code = 409 if "conflicts with an existing infrastructure incident" in detail else 422
         raise HTTPException(status_code=status_code, detail=detail)
+
+    if open_ids_before:
+        for inc_id in sorted(open_ids_before):
+            inc_after = store.get_incident(inc_id)
+            if inc_after is not None and inc_after.status in _TERMINAL_INCIDENT_STATUSES:
+                try:
+                    prepared = _prepare_postmortem_delivery(inc_id)
+                    outbox_store.activate(prepared)
+                except Exception:
+                    log.exception("AUDIT: Could not activate outbox for recovered infrastructure incident %s", inc_id)
 
     if not result.created:
         response.status_code = 200
@@ -612,6 +644,45 @@ def consume_infrastructure_health_incident(
         result.created,
     )
     return _to_response(result.incident)
+
+
+@app.post(
+    "/api/incidents/reconcile-infrastructure-health",
+    summary="Resolve open infrastructure incidents whose component is healthy and unreferenced by the BFF ledger",
+)
+def reconcile_infrastructure_health_incidents(
+    body: Dict[str, Any] = Body(default_factory=dict),
+) -> Dict[str, Any]:
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="reconcile payload must be an object")
+    raw_components = body.get("healthy_components")
+    if raw_components is None:
+        raw_components = body.get("components") or []
+    if not isinstance(raw_components, list):
+        raise HTTPException(status_code=422, detail="healthy_components must be a list")
+    raw_referenced = body.get("referenced_incident_ids") or []
+    if not isinstance(raw_referenced, list):
+        raise HTTPException(status_code=422, detail="referenced_incident_ids must be a list")
+
+    resolved_at = str(body.get("resolved_at") or body.get("observed_at") or _utc_now()).strip() or _utc_now()
+    source_event_id = str(body.get("source_event_id") or "").strip()
+    resolution_reason = (
+        str(body.get("resolution_reason") or ORPHAN_RECOVERED_RESOLUTION_REASON).strip()
+        or ORPHAN_RECOVERED_RESOLUTION_REASON
+    )
+    resolved = reconcile_orphaned_infrastructure_incidents(
+        healthy_components=[str(item) for item in raw_components if str(item or "").strip()],
+        referenced_incident_ids=[str(item) for item in raw_referenced if str(item or "").strip()],
+        resolved_at=resolved_at,
+        telemetry_event_ids=[source_event_id] if source_event_id else [],
+        resolution_reason=resolution_reason,
+    )
+    return {
+        "resolved_count": len(resolved),
+        "resolved_incident_ids": [inc.incident_id for inc in resolved],
+        "resolution_reason": resolution_reason,
+        "incidents": [_to_response(inc).model_dump() for inc in resolved],
+    }
 
 
 @app.post(
@@ -1063,6 +1134,128 @@ def redrive_incident_outbox(
     return record.to_dict()
 
 
+def _resolve_sibling_open_infrastructure_incidents(
+    primary: IncidentCase,
+    *,
+    new_status: str,
+    telemetry_event_ids: List[str],
+    resolution_reason: str = ORPHAN_RECOVERED_RESOLUTION_REASON,
+) -> List[IncidentCase]:
+    if new_status not in _TERMINAL_INCIDENT_STATUSES:
+        return []
+    if not is_infrastructure_health_incident(primary):
+        return []
+    if not hasattr(store, "find_open_infrastructure_incidents_for_component"):
+        return []
+    component = extract_infrastructure_incident_component(primary) or ""
+    siblings = store.find_open_infrastructure_incidents_for_component(
+        component,
+        cluster_id=primary.incident_cluster_id,
+    )
+    resolved_siblings: List[IncidentCase] = []
+    for sibling in siblings:
+        if sibling.incident_id == primary.incident_id:
+            continue
+        prepared_sib: ReliableOutboxRecord | None = None
+        try:
+            prepared_sib = _prepare_postmortem_delivery(sibling.incident_id)
+            updated_sib = store.update_incident_status(
+                sibling.incident_id,
+                new_status,
+                resolved_at=primary.resolved_at or sibling.resolved_at,
+                telemetry_event_ids=telemetry_event_ids,
+                resolution_reason=resolution_reason,
+                expected_snapshot=sibling.to_dict(),
+            )
+            outbox_store.activate(prepared_sib)
+            resolved_siblings.append(updated_sib)
+            log.info(
+                "Resolved sibling open infrastructure IncidentCase %s for component=%s reason=%s",
+                sibling.incident_id,
+                component,
+                resolution_reason,
+            )
+        except Exception:
+            if prepared_sib is not None:
+                _repair_prepared_after_transition_conflict(prepared_sib)
+            log.exception(
+                "AUDIT: Could not resolve sibling infrastructure incident %s for component=%s",
+                sibling.incident_id,
+                component,
+            )
+    return resolved_siblings
+
+
+def reconcile_orphaned_infrastructure_incidents(
+    *,
+    healthy_components: List[str],
+    referenced_incident_ids: Optional[List[str]] = None,
+    resolved_at: Optional[str] = None,
+    telemetry_event_ids: Optional[List[str]] = None,
+    resolution_reason: str = ORPHAN_RECOVERED_RESOLUTION_REASON,
+) -> List[IncidentCase]:
+    """Resolve open infrastructure incidents whose component is healthy and unreferenced by the BFF ledger."""
+    healthy_set = {
+        normalize_infrastructure_component(item)
+        for item in (healthy_components or [])
+        if normalize_infrastructure_component(item)
+    }
+    if not healthy_set:
+        return []
+    referenced_set = {
+        str(item or "").strip()
+        for item in (referenced_incident_ids or [])
+        if str(item or "").strip()
+    }
+    resolved_iso = str(resolved_at or _utc_now()).strip() or _utc_now()
+    reason_clean = (
+        str(resolution_reason or ORPHAN_RECOVERED_RESOLUTION_REASON).strip()
+        or ORPHAN_RECOVERED_RESOLUTION_REASON
+    )
+    events = list(telemetry_event_ids or [])
+
+    candidates = sorted(
+        store.find_open_incidents(),
+        key=lambda item: (item.created_at, item.incident_id),
+    )
+    resolved: List[IncidentCase] = []
+    for inc in candidates:
+        if not inc.is_open() or not is_infrastructure_health_incident(inc):
+            continue
+        comp = extract_infrastructure_incident_component(inc)
+        if not comp or comp not in healthy_set:
+            continue
+        if extract_infrastructure_incident_referenced_ids(inc) & referenced_set:
+            continue
+        prepared: ReliableOutboxRecord | None = None
+        try:
+            prepared = _prepare_postmortem_delivery(inc.incident_id)
+            updated = store.update_incident_status(
+                inc.incident_id,
+                IncidentStatus.RESOLVED.value,
+                resolved_at=inc.resolved_at or resolved_iso,
+                telemetry_event_ids=events,
+                resolution_reason=reason_clean,
+                expected_snapshot=inc.to_dict(),
+            )
+            outbox_store.activate(prepared)
+            resolved.append(updated)
+            log.info(
+                "Resolved orphaned infrastructure IncidentCase %s component=%s reason=%s",
+                inc.incident_id,
+                comp,
+                reason_clean,
+            )
+        except Exception:
+            if prepared is not None:
+                _repair_prepared_after_transition_conflict(prepared)
+            log.exception(
+                "AUDIT: Could not resolve orphaned infrastructure incident %s",
+                inc.incident_id,
+            )
+    return resolved
+
+
 @app.post(
     "/api/incidents/{incident_id}/status",
     response_model=IncidentResponse,
@@ -1079,6 +1272,7 @@ def update_status(
     resolved_at is auto-set when transitioning to resolved or closed.
     """
     previous = _get_or_404(incident_id)
+    target_incident_id = previous.incident_id
     crosses_terminal_boundary = (
         previous.status not in _TERMINAL_INCIDENT_STATUSES
         and body.status in _TERMINAL_INCIDENT_STATUSES
@@ -1086,22 +1280,27 @@ def update_status(
     prepared: ReliableOutboxRecord | None = None
     if crosses_terminal_boundary:
         try:
-            prepared = _prepare_postmortem_delivery(incident_id)
+            prepared = _prepare_postmortem_delivery(target_incident_id)
         except Exception as exc:
-            log.exception("AUDIT: Could not prepare incident outbox for %s", incident_id)
+            log.exception("AUDIT: Could not prepare incident outbox for %s", target_incident_id)
             raise HTTPException(
                 status_code=503,
                 detail=f"incident status not changed because delivery intent could not be persisted: {exc}",
             ) from exc
+    telemetry_events = [
+        *([body.source_event_id] if body.source_event_id else []),
+        *body.telemetry_event_ids,
+    ]
+    extra_reason = getattr(body, "resolution_reason", None) or (
+        dict(getattr(body, "__pydantic_extra__", None) or {}).get("resolution_reason")
+    )
     try:
         updated = store.update_incident_status(
-            incident_id,
+            target_incident_id,
             body.status,
             resolved_at=body.resolved_at or previous.resolved_at,
-            telemetry_event_ids=[
-                *([body.source_event_id] if body.source_event_id else []),
-                *body.telemetry_event_ids,
-            ],
+            telemetry_event_ids=telemetry_events,
+            resolution_reason=str(extra_reason).strip() if extra_reason else None,
             expected_snapshot=previous.to_dict(),
         )
     except IncidentError as exc:
@@ -1110,7 +1309,7 @@ def update_status(
         status_code = 409 if "changed concurrently" in str(exc) else 400
         raise HTTPException(status_code=status_code, detail=str(exc))
 
-    log.info("IncidentCase %s → status=%s", incident_id, body.status)
+    log.info("IncidentCase %s → status=%s", target_incident_id, body.status)
 
     if prepared is not None:
         try:
@@ -1118,7 +1317,7 @@ def update_status(
         except Exception as exc:
             log.exception(
                 "AUDIT: Incident %s transitioned but its durable prepared outbox could not be activated",
-                incident_id,
+                target_incident_id,
             )
             raise HTTPException(
                 status_code=503,
@@ -1127,6 +1326,15 @@ def update_status(
                     f"{exc}"
                 ),
             ) from exc
+
+    if body.status in _TERMINAL_INCIDENT_STATUSES and is_infrastructure_health_incident(updated):
+        _resolve_sibling_open_infrastructure_incidents(
+            updated,
+            new_status=body.status,
+            telemetry_event_ids=telemetry_events,
+            resolution_reason=str(extra_reason or ORPHAN_RECOVERED_RESOLUTION_REASON).strip()
+            or ORPHAN_RECOVERED_RESOLUTION_REASON,
+        )
 
     return _to_response(updated)
 

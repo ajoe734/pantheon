@@ -1161,6 +1161,85 @@ def test_infrastructure_health_incident_resolves_through_status_route():
     assert refs.count("infra-event-resolve-ok") == 1
 
 
+def test_consume_infrastructure_health_second_open_event_merges_and_resolves_via_alias():
+    first_payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-0847594c513bbe71b6aedcd3",
+        source_event_id="infra-event-gov-20261022",
+        component={
+            "service_name": "governance",
+            "component_kind": "http_service",
+            "endpoint": "http://governance:8080/__health__",
+        },
+    )
+    second_payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-2b8541b81f8d5796101ad57e",
+        source_event_id="infra-event-gov-20261027",
+        component={
+            "service_name": "governance",
+            "component_kind": "http_service",
+            "endpoint": "http://governance:8080/__health__",
+        },
+    )
+
+    first = client.post("/api/incidents/consume-infrastructure-health", json=first_payload)
+    second = client.post("/api/incidents/consume-infrastructure-health", json=second_payload)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["incident_id"] == "infra-bff-0847594c513bbe71b6aedcd3"
+    assert len(store.find_open_incidents()) == 1
+
+    # Resolving via the later incident_id resolves the canonical open incident
+    resolved = client.post(
+        "/api/incidents/infra-bff-2b8541b81f8d5796101ad57e/status",
+        json={
+            "status": "resolved",
+            "resolved_at": "2026-10-27T01:36:00Z",
+            "source_event_id": "infra-event-gov-resolve-20261027",
+            "telemetry_event_ids": ["infra-event-gov-resolve-20261027"],
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["incident_id"] == "infra-bff-0847594c513bbe71b6aedcd3"
+    assert resolved.json()["status"] == "resolved"
+    assert store.find_open_incidents() == []
+
+
+def test_reconcile_infrastructure_health_resolves_orphaned_healthy_component():
+    created = client.post(
+        "/api/incidents/consume-infrastructure-health",
+        json=_infrastructure_incident_payload(
+            incident_id="infra-bff-0ddbece9a628d5148155a9c1",
+            source_event_id="infra-event-deploy-20261022",
+            component={
+                "service_name": "deployment",
+                "component_kind": "http_service",
+                "endpoint": "http://deployment:8080/__health__",
+            },
+        ),
+    )
+    assert created.status_code == 201, created.text
+
+    reconciled = client.post(
+        "/api/incidents/reconcile-infrastructure-health",
+        json={
+            "healthy_components": ["deployment"],
+            "referenced_incident_ids": [],
+            "observed_at": "2026-11-03T02:00:00Z",
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    body = reconciled.json()
+    assert body["resolved_count"] == 1
+    assert body["resolved_incident_ids"] == ["infra-bff-0ddbece9a628d5148155a9c1"]
+    assert body["resolution_reason"] == "orphan_recovered"
+
+    inc = store.require_incident("infra-bff-0ddbece9a628d5148155a9c1")
+    assert inc.status == "resolved"
+    assert "resolution_reason=orphan_recovered" in (inc.evidence_summary or "")
+    assert "resolution_reason:orphan_recovered" in inc.telemetry_event_ids
+
+
 # ---------------------------------------------------------------------------
 # GET /api/incidents — list
 # ---------------------------------------------------------------------------

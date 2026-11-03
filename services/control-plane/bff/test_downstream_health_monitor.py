@@ -490,6 +490,66 @@ class TestIncidentResolveTransition:
         assert len(resolves) == 1
         assert monitor._store.get_incident("svc-a")["status"] == "resolving"
 
+    def test_reconcile_orphaned_incidents_posts_healthy_components_and_resolves_stuck_resolving(
+        self, tmp_path
+    ):
+        monitor = _safety_monitor(tmp_path)
+        monitor._store.record_probe(
+            DownstreamProbeResult(
+                target_name="governance",
+                ok=True,
+                status_code=200,
+                latency_ms=4.0,
+                checked_at="2026-11-03T01:00:00Z",
+                consecutive_failures=0,
+            )
+        )
+        monitor._store.record_probe(
+            DownstreamProbeResult(
+                target_name="telemetry",
+                ok=False,
+                status_code=503,
+                latency_ms=12.0,
+                checked_at="2026-11-03T01:00:00Z",
+                consecutive_failures=3,
+            )
+        )
+        with monitor._store._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO incident_mappings(
+                    target_name, incident_id, status, opening_event_id,
+                    create_delivery_id, last_event_id, updated_at
+                ) VALUES
+                ('governance', 'infra-bff-2b8541b81f8d5796101ad57e', 'resolving',
+                 'evt-gov-open', 'incident-open:evt-gov-open',
+                 'evt-gov-resolve', '2026-10-27T01:36:00Z'),
+                ('telemetry', 'infra-bff-telemetry-active', 'open',
+                 'evt-tel-open', 'incident-open:evt-tel-open',
+                 'evt-tel-open', '2026-11-03T01:00:00Z')
+                """
+            )
+
+        captured: List[Dict[str, Any]] = []
+
+        def mock_post(url, body, timeout):
+            captured.append({"url": url, "body": body})
+            return True, 200
+
+        with patch("downstream_health_monitor._post_json", side_effect=mock_post):
+            ok = monitor.reconcile_orphaned_incidents_sync(
+                observed_at="2026-11-03T01:01:00Z"
+            )
+
+        assert ok is True
+        assert len(captured) == 1
+        assert captured[0]["url"].endswith("/api/incidents/reconcile-infrastructure-health")
+        assert captured[0]["body"]["healthy_components"] == ["governance"]
+        assert captured[0]["body"]["referenced_incident_ids"] == ["infra-bff-telemetry-active"]
+        assert captured[0]["body"]["resolution_reason"] == "orphan_recovered"
+        assert monitor._store.get_incident("governance")["status"] == "resolved"
+        assert monitor._store.get_incident("telemetry")["status"] == "open"
+
 
 class _FakeLoopControllerWriter:
     calls: List[Any] = []
