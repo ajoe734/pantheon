@@ -158,7 +158,7 @@ def create_jobs_router(
         }
 
     @router.get("/bff/jobs/{job_id}")
-    async def get_job(
+    def get_job(
         job_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -179,7 +179,7 @@ def create_jobs_router(
         }
 
     @router.get("/bff/jobs/{job_id}/logs")
-    async def get_job_logs(
+    def get_job_logs(
         job_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -213,7 +213,7 @@ def create_jobs_router(
         }
 
     @router.post("/bff/jobs/{job_id}/actions/{action_id}", status_code=202)
-    async def job_action(
+    def job_action(
         job_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),

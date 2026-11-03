@@ -151,6 +151,13 @@ jobs:
           workload_identity_provider: ${{ vars.PROD_WIF_PROVIDER }}
           service_account: ${{ vars.PROD_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+      - name: Control VM size gate (read-only; minimum e2-standard-8 = 8 vCPUs)
+        run: |
+          machine_type="$(gcloud compute instances describe "${PROD_VM_NAME}" --project "${PROD_GCP_PROJECT_ID}" \
+            --zone "${PROD_GCP_ZONE}" --format='value(machineType.basename())')"
+          vcpus="$(gcloud compute machine-types describe "${machine_type}" --project "${PROD_GCP_PROJECT_ID}" \
+            --zone "${PROD_GCP_ZONE}" --format='value(guestCpus)')"
+          python3 -I scripts/deploy/prod_preflight.py vm-size --vcpus "${vcpus}"
       - name: Retrieve immutable FE bundle and pre-release data-disk snapshot
         run: |
           mkdir -p "${RUNNER_TEMP}/bundle"
@@ -175,11 +182,11 @@ jobs:
              scripts/deploy/prod_preflight.py scripts/deploy/staging_sanitize.py \
              scripts/deploy/release_manifest.py "${RUNNER_TEMP}/bundle/"
           cp deploy/production/docker-compose.prod-control.yml deploy/production/Caddyfile deploy/production/bootstrap.sh "${RUNNER_TEMP}/bundle/"
-          # Immutable migration material: Stage recipe over the checked-out versioned SQL, proven equal to the manifest
-          # migration_set_sha256 (fails closed otherwise), plus the base-schema initializer applied before it.
-          python3 -I scripts/deploy/prod_preflight.py migration render "${RELEASE_MANIFEST_PATH}" "${RUNNER_TEMP}/bundle/migration" \
-            --src services/trade_journey/migrations
-          cp scripts/db_migrate.sh "${RUNNER_TEMP}/bundle/migration/db_migrate.sh"
+          # Immutable migration material: everything release-pinned (versioned SQL and the base-schema initializer
+          # db_migrate.sh) is taken from the manifest's backend.commit, never from this workflow checkout, then proven
+          # equal to the manifest migration_set_sha256. Fails closed on a bad/missing commit, path or digest.
+          python3 -I scripts/deploy/prod_preflight.py migration render-commit "${RELEASE_MANIFEST_PATH}" "${RUNNER_TEMP}/bundle/migration" \
+            --src "${GITHUB_WORKSPACE}"
           {
             for v in RELEASE_ID EXPECTED_MANIFEST_SHA256 PROD_BOOTSTRAP_FIRST_RELEASE PROD_ROOT PROD_DATA_MOUNT \
                      PROD_BLUE_PORT PROD_GREEN_PORT PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_WIF_PROVIDER \

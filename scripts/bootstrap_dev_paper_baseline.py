@@ -288,6 +288,7 @@ def ensure_paper_baseline(
         "market": "TW",
         "symbols": [market_symbol],
         "strategy_family": "dev_paper_baseline",
+        "data_scope": "test",
     }
     attempts = 1
     last_reconcile_meta: dict[str, Any] = {}

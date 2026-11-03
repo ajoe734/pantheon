@@ -162,7 +162,7 @@ def create_ranking_formulas_router(
         }
 
     @router.get("/bff/ranking-formulas/{formula_id}")
-    async def bff_get_ranking_formula(
+    def bff_get_ranking_formula(
         formula_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -201,7 +201,7 @@ def create_ranking_formulas_router(
         }
 
     @router.post("/bff/ranking-formulas", status_code=201)
-    async def bff_create_ranking_formula(
+    def bff_create_ranking_formula(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -214,7 +214,7 @@ def create_ranking_formulas_router(
         reject_retired_command("RankingFormulaAction")
 
     @router.patch("/bff/ranking-formulas/{formula_id}")
-    async def bff_patch_ranking_formula(
+    def bff_patch_ranking_formula(
         formula_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -295,7 +295,7 @@ def create_rankings_long_tail_router(
         raise NotImplementedError("get_read_store dependency was not supplied")
 
     @router.get("/bff/ranking/formulas")
-    async def bff_deprecated_list_ranking_formulas(
+    def bff_deprecated_list_ranking_formulas(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -309,7 +309,7 @@ def create_rankings_long_tail_router(
 
 
     @router.post("/bff/ranking/formulas", status_code=201)
-    async def bff_deprecated_create_ranking_formula(
+    def bff_deprecated_create_ranking_formula(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -323,7 +323,7 @@ def create_rankings_long_tail_router(
 
 
     @router.get("/bff/ranking/formulas/{formula_id}")
-    async def bff_deprecated_get_ranking_formula(
+    def bff_deprecated_get_ranking_formula(
         formula_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -335,7 +335,7 @@ def create_rankings_long_tail_router(
 
 
     @router.patch("/bff/ranking/formulas/{formula_id}")
-    async def bff_deprecated_patch_ranking_formula(
+    def bff_deprecated_patch_ranking_formula(
         formula_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -350,7 +350,7 @@ def create_rankings_long_tail_router(
 
 
     @router.post("/bff/ranking/formulas/{formula_id}/actions/{action_id}", status_code=202)
-    async def bff_deprecated_ranking_formula_action(
+    def bff_deprecated_ranking_formula_action(
         formula_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -365,7 +365,7 @@ def create_rankings_long_tail_router(
 
 
     @router.get("/bff/rankings")
-    async def bff_list_rankings(
+    def bff_list_rankings(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -389,7 +389,7 @@ def create_rankings_long_tail_router(
         }
 
     @router.get("/bff/rankings/{ranking_id}")
-    async def bff_get_ranking(
+    def bff_get_ranking(
         ranking_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -414,7 +414,7 @@ def create_rankings_long_tail_router(
         }
 
     @router.post("/bff/rankings/{ranking_id}/actions/{action_id}", status_code=202)
-    async def bff_ranking_action(
+    def bff_ranking_action(
         ranking_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -524,7 +524,7 @@ def create_performance_attribution_router(
         return pm12_performance_attribution_response(**kwargs)
 
     @router.get("/bff/management/performance-attribution")
-    async def bff_management_performance_attribution(
+    def bff_management_performance_attribution(
         dimension: Optional[str] = Query(default=None),
         period: str = Query(default="latest"),
         page_token: Optional[str] = None,
@@ -573,11 +573,11 @@ def create_performance_attribution_router(
         status_code=204,
         include_in_schema=False,
     )
-    async def bff_management_performance_attribution_by_strategy_options():
+    def bff_management_performance_attribution_by_strategy_options():
         return Response(status_code=204)
 
     @router.get("/bff/management/performance-attribution/by-strategy")
-    async def bff_management_performance_attribution_by_strategy(
+    def bff_management_performance_attribution_by_strategy(
         period: str = Query(default="latest"),
         page_token: Optional[str] = None,
         page_size: int = Query(default=50, ge=1, le=200),
@@ -623,7 +623,7 @@ def create_performance_attribution_router(
         )
 
     @router.get("/bff/management/performance-attribution/by-persona")
-    async def bff_management_performance_attribution_by_persona(
+    def bff_management_performance_attribution_by_persona(
         period: str = Query(default="latest"),
         page_token: Optional[str] = None,
         page_size: int = Query(default=50, ge=1, le=200),
@@ -669,7 +669,7 @@ def create_performance_attribution_router(
         )
 
     @router.get("/bff/management/performance-attribution/by-pool")
-    async def bff_management_performance_attribution_by_pool(
+    def bff_management_performance_attribution_by_pool(
         period: str = Query(default="latest"),
         page_token: Optional[str] = None,
         page_size: int = Query(default=50, ge=1, le=200),

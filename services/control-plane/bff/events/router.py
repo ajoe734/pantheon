@@ -774,7 +774,7 @@ def create_events_router(
         summary="List recent events (telemetry + governance audit)",
         operation_id="listBffEvents",
     )
-    async def list_events(
+    def list_events(
         event_type: Optional[str] = Query(default=None),
         actor: Optional[str] = Query(default=None),
         action_types: Optional[str] = Query(default=None),
@@ -1167,7 +1167,7 @@ def create_events_router(
             yield event
 
     @router.post("/api/v1/internal/sse/publish")
-    async def publish_sse_event(
+    def publish_sse_event(
         event_type: str = Query(..., description="Event type: runtime_state_changed, incident_created, etc."),
         channel: Optional[str] = Query(default=None, description="Optional channel name; inferred from event_type if missing"),
         runtime_id: Optional[str] = Query(default=None),

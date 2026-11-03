@@ -1315,7 +1315,10 @@ jobs:
           SOURCE_INGEST_CONTROLLER_MAX_TICKS: "1"
           SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: "1"
           SOURCE_INGEST_MAX_RECORDS: "100"
-          PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'true' }}
+          PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE: ${{ vars.PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE || '20GB' }}
+          PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB: ${{ vars.PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB || '25' }}
+          PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED: ${{ vars.PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED || '3' }}
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}
           PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
@@ -2742,7 +2745,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
-          PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'true' }}
+          PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -2852,7 +2855,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
-          PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'true' }}
+          PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -2982,7 +2985,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
-          PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'true' }}
+          PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: bash .target/scripts/compensate_cross_repo_release.sh
 

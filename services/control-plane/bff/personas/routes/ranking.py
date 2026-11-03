@@ -87,7 +87,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
     _resolve_final_idempotency_key = ctx.resolve_final_idempotency_key
 
     @router.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
-    async def bff_management_quarterly_ranking_recommendation_submit(
+    def bff_management_quarterly_ranking_recommendation_submit(
         recommendation_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -149,7 +149,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.post("/bff/management/promotion-reviews/{review_id}/decisions", status_code=202)
-    async def bff_management_promotion_review_decision(
+    def bff_management_promotion_review_decision(
         review_id: str,
         authorization: Optional[str] = Header(default=None),
     ):

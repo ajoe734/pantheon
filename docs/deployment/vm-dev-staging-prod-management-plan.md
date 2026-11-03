@@ -344,6 +344,27 @@ Dev 不因每個普通 push 自動重部署。當兩個 repository 的 protected
 - Browser smoke、auth readiness、CORS 與關鍵 read path 通過。
 - Dev 部署失敗後沒有留下半套 candidate pair。
 
+### 8.4 Dev release-artifacts 保留期限、Build Cache 上限與磁碟預檢（DEV-RELEASE-ARTIFACT-RETENTION-20261103）
+
+在持有 dev environment lease 且進入 `root` build 之前，`scripts/deploy_nonprod_vm.sh` 依序執行以下三個保護步驟，防止 VM 磁碟被歷史封存與 build cache 塞滿：
+
+1. **`pantheon-ci-deploy/release-artifacts` 保留期限（`prune_dev_release_artifacts_for_build` / `scripts/dev_release_artifact_retention.py`）**：
+   - 不另建第二套 release registry，直接由 `capture_dev_artifact_baseline.py`、`dev_release_artifact_driver.py` 與 live FE `deployment.json` 寫入的既有 manifests 推導保留集合（kept set）：
+     1. **目前線上服務中的版本（currently served release）**：由 live FE symlink（`/var/www/pantheon-dev-fe/deployment.json`）與 baseline manifest 的 served backend/FE target 決定。無論是否經過僅前端（FE-only）部署更新 `frontendSha`/`target`，或該線上版本的映像封存僅存在於既有 baseline `manifest.json` 的 `image_bundle` 中，目前線上服務版本的 `images/*.tar` 一律強制保留、絕不刪除。
+     2. **最近 N 個已接受的正式發布（last 3 accepted releases）**：預設保留最新 3 個具 `candidate-frontend.json` 驗收憑證的 `baseline-*`（可由 `PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED` 調整）。
+     3. **本次部署進行中的候選版本（in-flight candidate）**：當前 run/attempt/candidate 的 `baseline-*` 與 candidate/previous backend SHA。
+     4. **最新擷取的回退基線（latest captured rollback baseline）**：最新具 `manifest.json` 的 `baseline-*`。
+   - 凡被上述任一保留 manifest 引用的 `images/*.tar` image archive、`compose/<backend_sha>` compose bundle 與 `baseline-*` 目錄一律保留（即使該 archive 同時被過期 release 共用也絕不刪除）；其餘未被引用的項目一律刪除並於部署日誌記錄 `deleted_count` 與 `deleted_bytes`（支援 `--dry-run` / `PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN=true` 預演模式，不刪除任何檔案）。
+2. **Docker Build Cache 預設上限、容器映像標籤保護與 Unused-Image Prune Opt-In（`protect_dev_compose_container_images_for_builder_prune` / `prune_dev_docker_storage_for_build`）**：
+   - 嚴禁執行無上限的 `docker builder prune -a` 或 `docker builder prune -af`（若 `PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE` 設為 `0`/`0GB` 直接拒絕）。
+   - 在執行任何 `docker builder prune -f --keep-storage` 之前，`protect_dev_compose_container_images_for_builder_prune` 會列舉所有 compose 容器（含 running 與 stopped）所引用的映像，並逐一加上保護標籤 `pantheon-protect/<service>:<id12>`（防止在 containerd image store 下，因部分建置移動 `:latest` 標籤而導致運行中或已停止容器的 untagged 映像被 builder prune 誤刪），同時僅移除沒有任何容器使用的過期 `pantheon-protect/*` 標籤；若任一容器映像無法列舉、檢查或加上保護標籤，則記錄原因並跳過本次 builder prune。
+   - 在容器映像保護完成後，預設執行 `docker builder prune -f --keep-storage "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"`，將 Docker builder cache 限制在可設定上限（預設 `20GB`）。
+   - 同樣只在容器映像保護完成後，預設執行 `docker image prune -f`（只清 dangling：沒有標籤且沒有容器使用的映像；`PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=false` 可關閉）。每次 root build 都會移動 `:latest` 標籤，上一輪 build 的映像因此失去標籤；dev environment 的 `PANTHEON_DEV_DOCKER_PRUNE=false` 下沒有其他步驟會回收它們，2026-11-03 兩次失敗 build 就留下 47 個未使用映像。回退依賴 release-artifacts 的 tar，不依賴這些映像。
+   - `docker image prune -af`（以及 container/system prune）維持 opt-in，預設關閉（`PANTHEON_DEV_DOCKER_PRUNE=false`），避免清除回退所需的既有映像或影響運行中容器。
+3. **部署磁碟可用空間預檢（`check_dev_deploy_disk_preflight`）**：
+   - 在完成 `release-artifacts` 保留清理與 Docker builder cache 限額後、執行任何 `docker compose ... build` 之前，檢查部署檔案系統的可用空間是否達到最低門檻（`PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB`，預設 `25GB`）。
+   - 若可用空間低於門檻，立即輸出明確的 `insufficient disk space on deploy filesystem` 錯誤訊息並 fail-closed 中止部署，不在空間不足時進入 `docker build`。
+
 ## 9. Ephemeral Staging 管理流程
 
 ### 9.1 建立前 gate

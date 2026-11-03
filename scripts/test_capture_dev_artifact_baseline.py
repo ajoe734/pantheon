@@ -31,6 +31,7 @@ VIEWER_SECRET = "fixture-viewer-'quoted'-$never-expanded\nline-two"
     "capture_dev_artifact_baseline.py", "dev_remote_guarded_exec.py",
     "dev_candidate_receipt.py", "fetch_dev_artifact_evidence.py",
     "dev_artifact_compensation_evidence.py", "dev_release_artifact_driver.py",
+    "dev_release_artifact_retention.py",
 ])
 @pytest.mark.parametrize("safe_path", ["ordinary", "environment", "flag"])
 def test_direct_artifact_entrypoints_import_siblings_without_cwd_shadowing(

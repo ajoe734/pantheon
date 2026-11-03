@@ -61,15 +61,13 @@ def test_internal_publish_delivers_to_inferred_outbox_channel() -> None:
     router = create_events_router(event_stream_service=service)
     publish = _endpoint(router, "/api/v1/internal/sse/publish")
 
-    result = asyncio.run(
-        publish(
-            event_type="approval.created",
-            channel=None,
-            runtime_id=None,
-            incident_id=None,
-            payload={"approval_id": "approval-1"},
-            authorization="Bearer op-1:operator",
-        )
+    result = publish(
+        event_type="approval.created",
+        channel=None,
+        runtime_id=None,
+        incident_id=None,
+        payload={"approval_id": "approval-1"},
+        authorization="Bearer op-1:operator",
     )
 
     event_id = result["event_id"]

@@ -114,7 +114,7 @@ def create_command_adapters_router(
 
     # 1. Action Catalog
     @router.get("/bff/actions", response_model=BffActionCatalogResponse)
-    async def get_action_catalog_endpoint(
+    def get_action_catalog_endpoint(
         authorization: Optional[str] = Header(default=None),
     ) -> BffActionCatalogResponse:
         """Return the canonical backend action catalog."""
@@ -123,7 +123,7 @@ def create_command_adapters_router(
 
     # 2. Command Status Lookup
     @router.get("/api/v1/operator/commands/{command_id}", response_model=CommandStatusResponse)
-    async def get_command_status(
+    def get_command_status(
         command_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> CommandStatusResponse:
@@ -133,7 +133,7 @@ def create_command_adapters_router(
 
     # 3. Final BFF Command Submission
     @router.post("/bff/v1/commands", status_code=202)
-    async def submit_final_command(
+    def submit_final_command(
         background_tasks: BackgroundTasks,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -183,7 +183,7 @@ def create_command_adapters_router(
 
     # 5. Command Confirmation Status Read
     @router.get("/bff/command-confirmations/{token}")
-    async def bff_command_confirmation_status(
+    def bff_command_confirmation_status(
         token: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -225,7 +225,7 @@ def create_command_adapters_router(
 
     # 7. Create Confirm Token
     @router.post("/bff/confirm-tokens", status_code=201)
-    async def sem_create_confirm_token_command(
+    def sem_create_confirm_token_command(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -242,7 +242,7 @@ def create_command_adapters_router(
 
     # 8. Get Confirm Token Status
     @router.get("/bff/confirm-tokens/{tokenId}")
-    async def sem_get_confirm_token(
+    def sem_get_confirm_token(
         tokenId: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -252,7 +252,7 @@ def create_command_adapters_router(
 
     # 9. Redeem Confirm Token
     @router.post("/bff/confirm-tokens/{tokenId}/redeem", status_code=202)
-    async def sem_redeem_confirm_token_command(
+    def sem_redeem_confirm_token_command(
         tokenId: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -271,7 +271,7 @@ def create_command_adapters_router(
 
     # 10. Delete Confirm Token
     @router.delete("/bff/confirm-tokens/{tokenId}", status_code=202)
-    async def sem_delete_confirm_token_command(
+    def sem_delete_confirm_token_command(
         tokenId: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
