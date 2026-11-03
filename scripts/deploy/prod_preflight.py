@@ -22,7 +22,10 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -68,6 +71,31 @@ SAFETY_ENV = {
     "PANTHEON_REAL_WRITES_ENABLED": "false",
     "PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT": "false",
 }
+
+
+# Minimum control VM size (operator decision 2026-11-03): e2-standard-2 saturates on the full owner closure and
+# e2-standard-4 misses the 120s exact-pair rollback limit; e2-standard-8 is the smallest size proven in staging.
+MIN_CONTROL_VM_MACHINE_TYPE = "e2-standard-8"
+MIN_CONTROL_VM_VCPUS = 8
+
+
+def check_control_vm_vcpus(vcpus: Any) -> int:
+    """Read-only gate: refuse to promote onto a control VM with fewer than MIN_CONTROL_VM_VCPUS vCPUs."""
+    if isinstance(vcpus, bool):
+        raise PreflightError("control VM vCPU count is not an integer")
+    if isinstance(vcpus, str):
+        vcpus = vcpus.strip()
+        if not vcpus.isdigit():
+            raise PreflightError(f"control VM vCPU count {vcpus!r} is not an integer")
+        vcpus = int(vcpus)
+    if not isinstance(vcpus, int):
+        raise PreflightError("control VM vCPU count is not an integer")
+    if vcpus < MIN_CONTROL_VM_VCPUS:
+        raise PreflightError(
+            f"control VM has {vcpus} vCPUs; minimum is {MIN_CONTROL_VM_VCPUS} ({MIN_CONTROL_VM_MACHINE_TYPE}); "
+            "resize pantheon-prod-control per the production control runbook before promoting a release"
+        )
+    return vcpus
 
 
 def check_config(env: Mapping[str, str]) -> dict[str, str]:
@@ -521,8 +549,59 @@ def render_material(manifest_path: str, src_dir: str, out_dir: str) -> None:
     load_verified(manifest_path, out_dir)
 
 
+BACKEND_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+MIGRATIONS_REPO_PATH = "services/trade_journey/migrations"
+SUBSTRATE_REPO_PATH = "scripts/db_migrate.sh"
+
+
+def _git(repo: str, *args: str, binary: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=not binary)
+
+
+def render_material_from_commit(manifest_path: str, out_dir: str, repo: str = ".") -> None:
+    """Render migration material from the release manifest's backend.commit, never from the working tree.
+
+    Takes the versioned SQL and the base-schema initializer (db_migrate.sh) from that commit, then proves the SQL set
+    equals the manifest migration_set_sha256. Fails closed with a `reason=` on a malformed/missing commit, a missing
+    path or a digest mismatch (same reasons as the Stage renderer)."""
+    try:
+        commit = release_manifest.load_manifest_file(Path(manifest_path))["backend"]["commit"]
+    except (release_manifest.ReleaseManifestError, KeyError, TypeError) as exc:
+        raise MigrationError(f"cannot read backend.commit from manifest (reason=invalid_backend_commit): {exc}") from exc
+    if not isinstance(commit, str) or not BACKEND_COMMIT_RE.fullmatch(commit):
+        raise MigrationError("invalid release backend commit format (reason=invalid_backend_commit)")
+    if _git(repo, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+        fetched = _git(repo, "fetch", "--no-tags", "--depth=1", "origin", commit)
+        if fetched.returncode != 0 or _git(repo, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+            raise MigrationError(f"failed to fetch release backend commit {commit} (reason=backend_commit_fetch_failed)")
+    if _git(repo, "cat-file", "-t", f"{commit}:{MIGRATIONS_REPO_PATH}").stdout.strip() != "tree":
+        raise MigrationError(f"release backend commit {commit} is missing {MIGRATIONS_REPO_PATH} (reason=migration_path_missing)")
+    if _git(repo, "cat-file", "-t", f"{commit}:{SUBSTRATE_REPO_PATH}").stdout.strip() != "blob":
+        raise MigrationError(f"release backend commit {commit} is missing {SUBSTRATE_REPO_PATH} (reason=substrate_path_missing)")
+    tmp = Path(tempfile.mkdtemp(prefix="prod-migration-src-"))
+    try:
+        archive = subprocess.run(["git", "-C", repo, "archive", "--format=tar", commit, MIGRATIONS_REPO_PATH, SUBSTRATE_REPO_PATH],
+                                 capture_output=True)
+        if archive.returncode != 0:
+            raise MigrationError(f"failed to materialize migration material from {commit} (reason=migration_archive_failed)")
+        extracted = subprocess.run(["tar", "-xf", "-", "-C", str(tmp)], input=archive.stdout, capture_output=True)
+        src = tmp / MIGRATIONS_REPO_PATH
+        if extracted.returncode != 0 or not src.is_dir() or not (tmp / SUBSTRATE_REPO_PATH).is_file():
+            raise MigrationError(f"materialized migration material missing for {commit} (reason=migration_path_missing)")
+        try:
+            render_material(manifest_path, str(src), out_dir)
+        except (MigrationError, PreflightError) as exc:
+            raise MigrationError(f"{exc} (reason=migration_digest_or_spec_mismatch)") from exc
+        shutil.copyfile(tmp / SUBSTRATE_REPO_PATH, Path(out_dir) / "db_migrate.sh")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _migration_cli(cmd: str, manifest: str, spec_dir: str, src_dir: str = "") -> int:
     try:
+        if cmd == "render-commit":
+            render_material_from_commit(manifest, spec_dir, src_dir or ".")
+            return 0
         if cmd == "render":
             render_material(manifest, src_dir, spec_dir)
             return 0
@@ -556,15 +635,21 @@ def _cli() -> int:
     a.add_argument("--bootstrap", action="store_true")
     a.add_argument("--skip-baseline", action="store_true", help="runner-side: baseline is checked on the control VM")
     a.add_argument("--skip-approval", action="store_true", help="pre-approval validation only")
+    vm = sub.add_parser("vm-size", help="read-only: fail closed if the control VM has fewer than 8 vCPUs")
+    vm.add_argument("--vcpus", required=True, help="observed vCPU count (e.g. gcloud machineType guestCpus or nproc)")
     mg = sub.add_parser("migration", help="verify Stage-qualified versioned SQL / live catalog (VM-side)")
-    mg.add_argument("action", choices=["verify", "names", "catalog", "catalog-sql", "render"])
+    mg.add_argument("action", choices=["verify", "names", "catalog", "catalog-sql", "render", "render-commit"])
     mg.add_argument("manifest")
     mg.add_argument("spec_dir", help="material dir (render: output dir)")
-    mg.add_argument("--src", default="", help="render: directory of versioned *.sql")
+    mg.add_argument("--src", default="", help="render: directory of versioned *.sql; render-commit: git repo holding backend.commit (default .)")
     args = p.parse_args()
     if args.command == "migration":
         return _migration_cli(args.action, args.manifest, args.spec_dir, args.src)
     try:
+        if args.command == "vm-size":
+            print(json.dumps({"status": "vm_size_ok", "vcpus": check_control_vm_vcpus(args.vcpus),
+                              "minimum_machine_type": MIN_CONTROL_VM_MACHINE_TYPE}))
+            return 0
         if args.command == "config":
             check_config(os.environ)
             print(json.dumps({"status": "config_ok"}))

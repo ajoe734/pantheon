@@ -91,7 +91,7 @@ Pricing based on Google Compute Engine standard rates in `asia-east1` (Taiwan):
 | Component | Quantity / Specs | Estimated Monthly Cost |
 |---|---|---|
 | **Dev VM** | `e2-standard-4` + 250 GB pd-balanced | ~$115.00 |
-| **Prod Control VM** | `e2-standard-2` + 30 GB pd-balanced | ~$52.00 |
+| **Prod Control VM** | `e2-standard-8` minimum (2026-11-03; e2-standard-2/-4 measured insufficient, cost not re-estimated here) + 30 GB pd-balanced | ~$52.00 |
 | **Prod Persistent Data Disk** | 100 GB pd-ssd | ~$17.00 |
 | **Prod Execution VM** (Phase 4) | `e2-standard-2` + 30 GB pd-balanced | ~$52.00 |
 | **Cloud Storage & Snapshots** | 150 GB multi-regional (retained snapshots & evidence)| ~$6.00 |
