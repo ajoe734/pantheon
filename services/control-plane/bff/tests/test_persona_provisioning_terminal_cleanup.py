@@ -286,12 +286,20 @@ def test_failed_schedule_cleanup_retries_with_bounded_backoff(
     _persona_service_module._reconcile_persona_provisioning_once()
     assert len(cron_runtime.calls) == 1
     assert cron_runtime.calls[0][0] == "cron.list"
-    assert len(mutation_port.updates) == 1
+    # PR #6919 (R2) intentionally made the background pass persist the terminal
+    # marker provisioning_reconciliation_state, so pass 1 performs two owner
+    # writes: the pending cleanup receipt, then one terminal marker write.
+    assert len(mutation_port.updates) == 2
     assert (
         mutation_port.updates[0]["metadata"]["first_evaluation_schedule_cleanup"][
             "status"
         ]
         == "pending"
+    )
+    assert mutation_port.updates[1]["lifecycle_state"] == "provisioning_failed"
+    assert (
+        mutation_port.updates[1]["metadata"]["provisioning_reconciliation_state"]
+        == "provisioning_failed"
     )
 
     # Passes 2 & 3 within backoff window (t=1005s, t=1009s): 0 cron RPCs, 0 writes.
