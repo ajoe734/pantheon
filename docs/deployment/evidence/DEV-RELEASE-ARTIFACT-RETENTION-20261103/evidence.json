@@ -1,0 +1,71 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-RELEASE-ARTIFACT-RETENTION-20261103",
+  "title": "dev 部署 release-artifacts 保留期限＋build cache 上限＋磁碟預檢",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "base_sha": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
+  "summary": "Implements pre-build release-artifact retention in scripts/dev_release_artifact_retention.py, bounds Docker builder cache by default via docker builder prune -f --keep-storage 20GB while keeping unused-image prune opt-in behind PANTHEON_DEV_DOCKER_PRUNE=true, enforces a 25GB free-disk preflight floor on the deploy filesystem before the dev root build, and documents the policy in docs/deployment/vm-dev-staging-prod-management-plan.md.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Before the dev root build and while holding the dev environment lease, the deploy applies a retention policy to pantheon-ci-deploy/release-artifacts: it keeps every image archive, compose bundle, and baseline folder referenced by the currently served release, the last 3 accepted releases, the in-flight candidate, and the latest captured rollback baseline; all other entries are deleted and the deleted count and bytes are logged.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Retention never deletes a file referenced by any kept manifest even when archives are shared between releases; a test builds a fixture root with kept and stale manifests and shared archives and proves only unreferenced files are removed and a dry-run mode deletes nothing.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Docker build cache is bounded by default with docker builder prune --keep-storage (configurable and default 20GB) while the unused-image prune stays opt-in behind PANTHEON_DEV_DOCKER_PRUNE because rollback needs prior images.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "After retention and the cache bound, a disk preflight fails the deploy before any build with an explicit insufficient-disk message when free space on the deploy filesystem is below a configurable floor (default 25GB).",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "docs/deployment/vm-dev-staging-prod-management-plan.md documents the retention rule, the cache bound, and the disk floor; existing release-artifact and restore tests stay green.",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_release_artifact_retention.py -v",
+      "passed": 9,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_release_artifact_retention.py scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_capture_dev_artifact_baseline.py scripts/test_deploy_nonprod_artifact_restore.py -q",
+      "passed": 603,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_artifact_restore.py scripts/test_deploy_nonprod_vm.py -q",
+      "passed": 143,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 2,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "scripts/deploy_nonprod_vm.sh",
+    "scripts/dev_release_artifact_retention.py",
+    "scripts/test_dev_release_artifact_retention.py",
+    "scripts/test_capture_dev_artifact_baseline.py",
+    ".github/workflows/nonprod-deploy.yml",
+    "docs/deployment/vm-dev-staging-prod-management-plan.md",
+    "docs/deployment/evidence/DEV-RELEASE-ARTIFACT-RETENTION-20261103/evidence.json"
+  ]
+}

@@ -101,6 +101,11 @@ DEV_AGORA_PRIVATE_CONTENT_DEV_KEK="${DEV_AGORA_PRIVATE_CONTENT_DEV_KEK:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-false}"
+PANTHEON_DEV_DOCKER_BUILDER_PRUNE="${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}"
+PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE="${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"
+PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB="${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}"
+PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED="${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}"
+PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN="${PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN:-false}"
 # Telemetry cleanup is maintenance, not a required deployment step.  A root
 # deploy must stay bounded even when canonical telemetry has grown large.
 # Enable it explicitly for a scheduled/one-off maintenance run.
@@ -731,6 +736,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_assistant_control_idle_ttl_seconds=${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
   info "dev_bff_stub_capabilities_configured=$([[ -n "${PANTHEON_BFF_STUB_CAPABILITIES:-}" ]] && echo true || echo false)"
   info "dev_docker_prune=${PANTHEON_DEV_DOCKER_PRUNE}"
+  info "dev_docker_builder_keep_storage=${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE}"
+  info "dev_deploy_min_free_disk_gb=${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB}"
   info "dev_compose_profiles=${DEV_COMPOSE_PROFILES:-<default-safe>}"
   info "source_refresh_egress_mode=${SOURCE_REFRESH_EGRESS_MODE}"
   info "source_refresh_allowed_hosts_configured=$([[ -n "${SOURCE_REFRESH_ALLOWED_HOSTS}" ]] && echo true || echo false)"
@@ -991,6 +998,11 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}")"
+  command_prefix+=" PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB=$(shell_quote "${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}")"
+  command_prefix+=" PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED=$(shell_quote "${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}")"
+  command_prefix+=" PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN=$(shell_quote "${PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN:-false}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}")"
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
@@ -3927,24 +3939,160 @@ run_bounded_docker_prune() {
   return 0
 }
 
+prune_dev_release_artifacts_for_build() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
+    return
+  fi
+
+  local artifact_root="${PANTHEON_DEV_ARTIFACT_ROOT:-/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts}"
+  local fe_root="${PANTHEON_DEV_FE_ROOT:-${PANTHEON_DEV_FE_STATIC_ROOT:-/var/www/pantheon-dev-fe}}"
+  local keep_accepted="${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}"
+  local retention_script=""
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_RETENTION_SCRIPT:-}" ]]; then
+    retention_script="${PANTHEON_DEV_ARTIFACT_RETENTION_SCRIPT}"
+  elif [[ -f "scripts/dev_release_artifact_retention.py" ]]; then
+    retention_script="scripts/dev_release_artifact_retention.py"
+  elif [[ -n "${PANTHEON_REMOTE_DIR:-}" && -f "${PANTHEON_REMOTE_DIR}/scripts/dev_release_artifact_retention.py" ]]; then
+    retention_script="${PANTHEON_REMOTE_DIR}/scripts/dev_release_artifact_retention.py"
+  fi
+
+  if [[ -z "${retention_script}" || ! -f "${retention_script}" ]]; then
+    info "warning: dev_release_artifact_retention.py not found in checkout; skipping release-artifacts retention"
+    return 0
+  fi
+
+  local -a retention_args=(
+    --artifact-root "${artifact_root}"
+    --fe-live-link "${fe_root}"
+    --keep-accepted "${keep_accepted}"
+  )
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_MANIFEST_PATH:-}" ]]; then
+    retention_args+=(--in-flight-manifest "${PANTHEON_DEV_ARTIFACT_MANIFEST_PATH}")
+  fi
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_RUN_ID:-}" ]]; then
+    retention_args+=(--in-flight-run-id "${PANTHEON_DEV_ARTIFACT_RUN_ID}")
+  fi
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_ATTEMPT:-}" ]]; then
+    retention_args+=(--in-flight-attempt "${PANTHEON_DEV_ARTIFACT_ATTEMPT}")
+  fi
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_CANDIDATE_ID:-}" ]]; then
+    retention_args+=(--in-flight-candidate-id "${PANTHEON_DEV_ARTIFACT_CANDIDATE_ID}")
+  fi
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA:-${PANTHEON_DEPLOY_SHA:-}}" ]]; then
+    retention_args+=(--in-flight-backend-sha "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA:-${PANTHEON_DEPLOY_SHA:-}}")
+  fi
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}}" ]]; then
+    retention_args+=(--in-flight-previous-backend-sha "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}}")
+  fi
+  if [[ -n "${PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA:-}" ]]; then
+    retention_args+=(--served-frontend-sha "${PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA}")
+  fi
+  if [[ "${PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN:-false}" == "true" ]]; then
+    retention_args+=(--dry-run)
+  fi
+
+  info "applying dev release-artifacts retention policy before root build (root=${artifact_root}, keep_accepted=${keep_accepted})"
+  python3 "${retention_script}" "${retention_args[@]}"
+}
+
 prune_dev_docker_storage_for_build() {
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
     return
   fi
 
-  if [[ "${PANTHEON_DEV_DOCKER_PRUNE:-false}" != "true" ]]; then
-    info "dev Docker prune disabled before root build"
-    docker_storage_diagnostics "before build"
-    return
+  local builder_keep_storage="${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"
+  if [[ ! "${builder_keep_storage}" =~ ^[0-9]+([.][0-9]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]]; then
+    error "invalid PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=${builder_keep_storage}; expected size such as 20GB"
   fi
 
   docker_storage_diagnostics "before prune"
+  if [[ "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}" != "false" ]]; then
+    if [[ "${builder_keep_storage}" =~ ^0+([.][0]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]]; then
+      info "pruning all dev Docker build cache before root build (keep-storage=${builder_keep_storage})"
+      run_bounded_docker_prune "builder cache" docker builder prune -af
+    else
+      info "bounding dev Docker build cache before root build (keep-storage=${builder_keep_storage})"
+      run_bounded_docker_prune "builder cache" docker builder prune -f --keep-storage "${builder_keep_storage}"
+    fi
+  else
+    info "dev Docker builder cache prune disabled before root build"
+  fi
+
+  if [[ "${PANTHEON_DEV_DOCKER_PRUNE:-false}" != "true" ]]; then
+    info "dev Docker unused-image prune disabled before root build (PANTHEON_DEV_DOCKER_PRUNE=false)"
+    docker_storage_diagnostics "after prune"
+    return
+  fi
+
   info "pruning dev Docker build cache and unused containers/images before root build"
-  run_bounded_docker_prune "builder cache" docker builder prune -af
   run_bounded_docker_prune "stopped containers" docker container prune -f
   run_bounded_docker_prune "unused images" docker image prune -af
   run_bounded_docker_prune "system cache" docker system prune -f
   docker_storage_diagnostics "after prune"
+}
+
+check_dev_deploy_disk_preflight() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
+    return
+  fi
+
+  local check_path="${PANTHEON_DEV_DEPLOY_DISK_CHECK_PATH:-$(pwd)}"
+  local min_free_gb="${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}"
+  local df_avail_bytes=""
+  if [[ -z "${PANTHEON_DEV_DEPLOY_FREE_DISK_BYTES:-}" ]] && command -v df >/dev/null 2>&1; then
+    df_avail_bytes="$(df -PB1 "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+    [[ "${df_avail_bytes}" =~ ^[0-9]+$ ]] || df_avail_bytes=""
+  fi
+
+  python3 - "${check_path}" "${min_free_gb}" "${PANTHEON_DEV_DEPLOY_FREE_DISK_BYTES:-${df_avail_bytes}}" <<'DISK_PREFLIGHT_PY'
+import os
+from pathlib import Path
+import re
+import sys
+
+check_path_raw, min_free_raw, avail_override_raw = sys.argv[1:4]
+gib = 1024 * 1024 * 1024
+text = min_free_raw.strip()
+match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]+)?", text)
+if not match:
+    print(f"[remote-deploy] ERROR: invalid PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB={min_free_raw!r}", file=sys.stderr)
+    raise SystemExit(1)
+amount = float(match.group(1))
+unit = (match.group(2) or "gb").lower()
+multipliers = {
+    "b": 1, "k": 1024, "kb": 1024, "kib": 1024,
+    "m": 1024 * 1024, "mb": 1024 * 1024, "mib": 1024 * 1024,
+    "g": gib, "gb": gib, "gib": gib,
+    "t": 1024 * gib, "tb": 1024 * gib, "tib": 1024 * gib,
+}
+if unit not in multipliers or amount <= 0:
+    print(f"[remote-deploy] ERROR: invalid PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB={min_free_raw!r}", file=sys.stderr)
+    raise SystemExit(1)
+min_free_bytes = int(amount * multipliers[unit])
+target = Path(check_path_raw)
+if not target.exists():
+    target = target.parent
+resolved = target.resolve() if target.exists() else target
+if avail_override_raw.strip():
+    free_bytes = int(avail_override_raw.strip())
+else:
+    st = os.statvfs(resolved)
+    free_bytes = int(st.f_bavail * st.f_frsize)
+free_gb = free_bytes / gib
+floor_gb = min_free_bytes / gib
+if free_bytes < min_free_bytes:
+    print(
+        f"[remote-deploy] ERROR: insufficient disk space on deploy filesystem ({resolved}): "
+        f"available={free_gb:.2f}GB ({free_bytes} bytes) is below required "
+        f"floor={floor_gb:.2f}GB ({min_free_bytes} bytes); aborting deploy before docker build",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+print(
+    f"[remote-deploy] disk preflight passed on {resolved}: "
+    f"available={free_gb:.2f}GB ({free_bytes} bytes) >= floor={floor_gb:.2f}GB ({min_free_bytes} bytes)"
+)
+DISK_PREFLIGHT_PY
 }
 
 cleanup_stale_compose_replacement_containers() {
@@ -4732,7 +4880,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
+    prune_dev_release_artifacts_for_build
     prune_dev_docker_storage_for_build
+    check_dev_deploy_disk_preflight
     # Phase 2: Build candidate images before mutating the active runtime.
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \

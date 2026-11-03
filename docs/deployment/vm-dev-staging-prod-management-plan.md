@@ -344,6 +344,24 @@ Dev 不因每個普通 push 自動重部署。當兩個 repository 的 protected
 - Browser smoke、auth readiness、CORS 與關鍵 read path 通過。
 - Dev 部署失敗後沒有留下半套 candidate pair。
 
+### 8.4 Dev release-artifacts 保留期限、Build Cache 上限與磁碟預檢（DEV-RELEASE-ARTIFACT-RETENTION-20261103）
+
+在持有 dev environment lease 且進入 `root` build 之前，`scripts/deploy_nonprod_vm.sh` 依序執行以下三個保護步驟，防止 VM 磁碟被歷史封存與 build cache 塞滿：
+
+1. **`pantheon-ci-deploy/release-artifacts` 保留期限（`prune_dev_release_artifacts_for_build` / `scripts/dev_release_artifact_retention.py`）**：
+   - 不另建第二套 release registry，直接由 `capture_dev_artifact_baseline.py` 與 `dev_release_artifact_driver.py` 寫入的既有 manifests 推導保留集合（kept set）：
+     1. **目前線上服務中的版本（currently served release）**：由 live FE symlink（`/var/www/pantheon-dev-fe/deployment.json`）與 baseline manifest 的 served pair 決定。
+     2. **最近 N 個已接受的正式發布（last 3 accepted releases）**：預設保留最新 3 個具 `candidate-frontend.json` 驗收憑證的 `baseline-*`（可由 `PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED` 調整）。
+     3. **本次部署進行中的候選版本（in-flight candidate）**：當前 run/attempt/candidate 的 `baseline-*` 與 candidate/previous backend SHA。
+     4. **最新擷取的回退基線（latest captured rollback baseline）**：最新具 `manifest.json` 的 `baseline-*`。
+   - 凡被上述任一保留 manifest 引用的 `images/*.tar` image archive、`compose/<backend_sha>` compose bundle 與 `baseline-*` 目錄一律保留（即使該 archive 同時被過期 release 共用也絕不刪除）；其餘未被引用的項目一律刪除並於部署日誌記錄 `deleted_count` 與 `deleted_bytes`（支援 `--dry-run` / `PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN=true` 預演模式，不刪除任何檔案）。
+2. **Docker Build Cache 預設上限與 Unused-Image Prune Opt-In（`prune_dev_docker_storage_for_build`）**：
+   - 預設啟用 `docker builder prune -f --keep-storage "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"`，將 Docker builder cache 限制在可設定上限（預設 `20GB`）。
+   - `docker image prune -af`（以及 container/system prune）維持 opt-in，預設關閉（`PANTHEON_DEV_DOCKER_PRUNE=false`），避免清除回退所需的既有映像或影響運行中容器。
+3. **部署磁碟可用空間預檢（`check_dev_deploy_disk_preflight`）**：
+   - 在完成 `release-artifacts` 保留清理與 Docker builder cache 限額後、執行任何 `docker compose ... build` 之前，檢查部署檔案系統的可用空間是否達到最低門檻（`PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB`，預設 `25GB`）。
+   - 若可用空間低於門檻，立即輸出明確的 `insufficient disk space on deploy filesystem` 錯誤訊息並 fail-closed 中止部署，不在空間不足時進入 `docker build`。
+
 ## 9. Ephemeral Staging 管理流程
 
 ### 9.1 建立前 gate
