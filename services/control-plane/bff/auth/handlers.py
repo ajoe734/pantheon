@@ -52,6 +52,11 @@ def _ttl() -> int:
     return max(300, min(value, 3600))
 
 
+# A browser sign-in backs the operator's long-lived Management page, so it
+# outlives the short CI/probe bearer TTL above.
+_BROWSER_SESSION_TTL_SECONDS = 30 * 24 * 3600
+
+
 def _dev_profile(payload: Mapping[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
     if deps.dev_login_forbidden_environment():
         raise deps.bff_error(
@@ -123,7 +128,7 @@ def _dev_profile(payload: Mapping[str, Any], deps: AuthDependencies) -> Dict[str
     return profile
 
 
-def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
+def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies, *, ttl: Optional[int] = None) -> Dict[str, Any]:
     from services.runtime_auth_inbound import encode_jwt_hs256
 
     secret = os.getenv("PANTHEON_BFF_DEV_LOGIN_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET", "")
@@ -136,7 +141,7 @@ def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies) -> Dict[str
             precondition_failed="jwt_secret",
         )
     now = int(time.time())
-    ttl = _ttl()
+    ttl = ttl or _ttl()
     exp = now + ttl
     claims = {
         "sub": profile["subject"],
@@ -178,7 +183,8 @@ def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies) -> Dict[str
 
 async def bff_auth_dev_login(*, payload: Dict[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
     profile = _dev_profile(payload or {}, deps)
-    token = _issue_token(profile, deps)
+    browser_session = (payload or {}).get("browser_session") is True
+    token = _issue_token(profile, deps, ttl=_BROWSER_SESSION_TTL_SECONDS if browser_session else None)
     return {
         **token,
         "meta": {
