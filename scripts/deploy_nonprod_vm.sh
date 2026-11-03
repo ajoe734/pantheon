@@ -3995,24 +3995,116 @@ prune_dev_release_artifacts_for_build() {
   python3 "${retention_script}" "${retention_args[@]}"
 }
 
+protect_dev_compose_container_images_for_builder_prune() {
+  if ! command -v docker >/dev/null 2>&1; then
+    info "warning: skipping builder cache prune: docker command unavailable"
+    return 1
+  fi
+
+  local compose_lines all_cids
+  if ! compose_lines="$(docker ps -a --filter "label=com.docker.compose.project=pantheon" --format '{{.ID}}|{{.Label "com.docker.compose.service"}}|{{.Names}}' 2>/dev/null)"; then
+    info "warning: skipping builder cache prune: failed to enumerate compose containers"
+    return 1
+  fi
+  if ! all_cids="$(docker ps -a -q 2>/dev/null)"; then
+    info "warning: skipping builder cache prune: failed to enumerate host containers"
+    return 1
+  fi
+  if [[ -z "${compose_lines}" ]]; then
+    info "warning: skipping builder cache prune: no compose containers found to protect"
+    return 1
+  fi
+
+  declare -A active_image_ids=()
+  declare -A active_protect_tags=()
+  local line cid service cname image_id image_hex id12 safe_service protect_tag protected_count=0
+
+  while IFS='|' read -r cid service cname; do
+    [[ -z "${cid}" ]] && continue
+    image_id="$(docker inspect --format '{{.Image}}' "${cid}" 2>/dev/null || true)"
+    if [[ ! "${image_id}" =~ ^sha256:([0-9a-f]{64})$ ]]; then
+      info "warning: skipping builder cache prune: cannot resolve image ID for compose container ${cid} (service=${service:-unknown}, image=${image_id:-missing})"
+      return 1
+    fi
+    image_hex="${BASH_REMATCH[1]}"
+    id12="${image_hex:0:12}"
+    if ! docker image inspect "${image_id}" >/dev/null 2>&1; then
+      info "warning: skipping builder cache prune: image ${image_id} for compose container ${cid} (service=${service:-unknown}) is not inspectable"
+      return 1
+    fi
+    if [[ -z "${service}" ]]; then
+      service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${cid}" 2>/dev/null || true)"
+    fi
+    safe_service="$(printf '%s' "${service:-${cname:-container}}" | tr -c 'a-zA-Z0-9_.-' '-' | sed 's/^-*//;s/-*$//')"
+    [[ -n "${safe_service}" ]] || safe_service="container"
+    protect_tag="pantheon-protect/${safe_service}:${id12}"
+    if ! docker tag "${image_id}" "${protect_tag}" >/dev/null 2>&1; then
+      info "warning: skipping builder cache prune: failed to tag ${image_id} as ${protect_tag} for container ${cid}"
+      return 1
+    fi
+    active_image_ids["${image_id}"]=1
+    active_image_ids["${image_hex}"]=1
+    active_image_ids["${id12}"]=1
+    active_protect_tags["${protect_tag}"]=1
+    protected_count=$((protected_count + 1))
+  done <<< "${compose_lines}"
+
+  if (( protected_count == 0 )); then
+    info "warning: skipping builder cache prune: zero compose container images protected"
+    return 1
+  fi
+
+  local host_cid host_img host_hex
+  while IFS= read -r host_cid; do
+    [[ -z "${host_cid}" ]] && continue
+    host_img="$(docker inspect --format '{{.Image}}' "${host_cid}" 2>/dev/null || true)"
+    if [[ ! "${host_img}" =~ ^sha256:([0-9a-f]{64})$ ]]; then
+      info "warning: skipping builder cache prune: cannot resolve image ID for host container ${host_cid}"
+      return 1
+    fi
+    host_hex="${BASH_REMATCH[1]}"
+    active_image_ids["${host_img}"]=1
+    active_image_ids["${host_hex}"]=1
+    active_image_ids["${host_hex:0:12}"]=1
+  done <<< "${all_cids}"
+
+  local protect_rows tag_ref raw_img_id norm_id full_img_id stale_removed=0
+  if protect_rows="$(docker image ls --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
+    while IFS='|' read -r tag_ref raw_img_id; do
+      [[ "${tag_ref}" == pantheon-protect/*:* ]] || continue
+      [[ -n "${active_protect_tags[${tag_ref}]:-}" ]] && continue
+      norm_id="${raw_img_id#sha256:}"
+      full_img_id="$(docker image inspect --format '{{.Id}}' "${tag_ref}" 2>/dev/null || true)"
+      if [[ -n "${active_image_ids[${raw_img_id}]:-}" || -n "${active_image_ids[${norm_id}]:-}" || -n "${active_image_ids[${norm_id:0:12}]:-}" || ( -n "${full_img_id}" && -n "${active_image_ids[${full_img_id}]:-}" ) ]]; then
+        continue
+      fi
+      if docker image rm "${tag_ref}" >/dev/null 2>&1; then
+        stale_removed=$((stale_removed + 1))
+      fi
+    done <<< "${protect_rows}"
+  fi
+
+  info "protected ${protected_count} compose container image(s) before builder cache prune (stale_protect_tags_removed=${stale_removed})"
+  return 0
+}
+
 prune_dev_docker_storage_for_build() {
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
     return
   fi
 
   local builder_keep_storage="${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"
-  if [[ ! "${builder_keep_storage}" =~ ^[0-9]+([.][0-9]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]]; then
-    error "invalid PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=${builder_keep_storage}; expected size such as 20GB"
+  if [[ ! "${builder_keep_storage}" =~ ^[0-9]+([.][0-9]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]] || [[ "${builder_keep_storage}" =~ ^0+([.][0]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]]; then
+    error "invalid PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=${builder_keep_storage}; expected positive size such as 20GB (unbounded builder prune -a/-af is forbidden)"
   fi
 
   docker_storage_diagnostics "before prune"
   if [[ "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}" != "false" ]]; then
-    if [[ "${builder_keep_storage}" =~ ^0+([.][0]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]]; then
-      info "pruning all dev Docker build cache before root build (keep-storage=${builder_keep_storage})"
-      run_bounded_docker_prune "builder cache" docker builder prune -af
-    else
+    if protect_dev_compose_container_images_for_builder_prune; then
       info "bounding dev Docker build cache before root build (keep-storage=${builder_keep_storage})"
       run_bounded_docker_prune "builder cache" docker builder prune -f --keep-storage "${builder_keep_storage}"
+    else
+      info "skipped dev Docker builder cache prune because container image protection did not complete"
     fi
   else
     info "dev Docker builder cache prune disabled before root build"

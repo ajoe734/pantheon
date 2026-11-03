@@ -3,9 +3,9 @@
   "task_id": "DEV-RELEASE-ARTIFACT-RETENTION-20261103",
   "title": "dev 部署 release-artifacts 保留期限＋build cache 上限＋磁碟預檢",
   "owner": "Antigravity",
-  "reviewer": "Claude2",
+  "reviewer": "Antigravity2",
   "base_sha": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
-  "summary": "Implements pre-build release-artifact retention in scripts/dev_release_artifact_retention.py, bounds Docker builder cache by default via docker builder prune -f --keep-storage 20GB while keeping unused-image prune opt-in behind PANTHEON_DEV_DOCKER_PRUNE=true, enforces a 25GB free-disk preflight floor on the deploy filesystem before the dev root build, and documents the policy in docs/deployment/vm-dev-staging-prod-management-plan.md.",
+  "summary": "Implements pre-build release-artifact retention in scripts/dev_release_artifact_retention.py deriving kept sets strictly from existing manifests and never deleting the image tars of the currently served release (including across FE-only deploys or baseline-only captures); protects every running or stopped compose container image with pantheon-protect/<service>:<id12> before docker builder prune -f --keep-storage 20GB (forbidding builder prune -a/-af, removing stale protect tags only for unused images, and skipping builder prune with a logged reason if any container image cannot be protected); keeps unused-image prune opt-in behind PANTHEON_DEV_DOCKER_PRUNE=true; enforces a 25GB free-disk preflight floor before the dev root build; and documents the policy in docs/deployment/vm-dev-staging-prod-management-plan.md.",
   "acceptance_verification": [
     {
       "ac": "AC1",
@@ -14,12 +14,12 @@
     },
     {
       "ac": "AC2",
-      "description": "Retention never deletes a file referenced by any kept manifest even when archives are shared between releases; a test builds a fixture root with kept and stale manifests and shared archives and proves only unreferenced files are removed and a dry-run mode deletes nothing.",
+      "description": "Retention never deletes a file referenced by any kept manifest even when archives are shared between releases, and never deletes the release-artifacts image tars of the currently served release; tests build fixture roots proving shared and currently served archives survive and dry-run mode deletes nothing.",
       "verdict": "pass"
     },
     {
       "ac": "AC3",
-      "description": "Docker build cache is bounded by default with docker builder prune --keep-storage (configurable and default 20GB) while the unused-image prune stays opt-in behind PANTHEON_DEV_DOCKER_PRUNE because rollback needs prior images.",
+      "description": "Docker build cache is bounded by default only with docker builder prune -f --keep-storage (default 20GB, never -a/-af) after enumerating every compose container (running or stopped) and protecting its image with pantheon-protect/<service>:<id12> (removing stale protect tags only for images no container uses, or skipping the prune with a logged reason if any container image cannot be protected); a test proves a container's untagged image survives the cache bound while unused-image prune stays opt-in behind PANTHEON_DEV_DOCKER_PRUNE.",
       "verdict": "pass"
     },
     {
@@ -29,30 +29,30 @@
     },
     {
       "ac": "AC5",
-      "description": "docs/deployment/vm-dev-staging-prod-management-plan.md documents the retention rule, the cache bound, and the disk floor; existing release-artifact and restore tests stay green.",
+      "description": "docs/deployment/vm-dev-staging-prod-management-plan.md documents the retention rule, container image protection and cache bound, and the disk floor; existing release-artifact and restore tests stay green.",
       "verdict": "pass"
     }
   ],
   "verification": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_release_artifact_retention.py -v",
-      "passed": 9,
+      "command": "${PANTHEON_DEPENDENCY_PYTHON} -m pytest -v scripts/test_dev_release_artifact_retention.py",
+      "passed": 11,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
       "exit_code": 0
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_release_artifact_retention.py scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_capture_dev_artifact_baseline.py scripts/test_deploy_nonprod_artifact_restore.py -q",
-      "passed": 603,
+      "command": "${PANTHEON_DEPENDENCY_PYTHON} -m pytest -q scripts/test_dev_release_artifact_retention.py scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_capture_dev_artifact_baseline.py scripts/test_deploy_nonprod_artifact_restore.py",
+      "passed": 605,
       "failed": 0,
       "errors": 0,
       "skipped": 1,
       "exit_code": 0
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_artifact_restore.py scripts/test_deploy_nonprod_vm.py -q",
-      "passed": 143,
+      "command": "${PANTHEON_DEPENDENCY_PYTHON} -m pytest -q scripts/test_deploy_nonprod_vm.py",
+      "passed": 69,
       "failed": 0,
       "errors": 0,
       "skipped": 2,

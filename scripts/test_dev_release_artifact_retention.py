@@ -615,6 +615,32 @@ def test_retention_cli_dry_run_and_apply_logging_and_disk_preflight(tmp_path: Pa
     assert "floor=25.00GB" in proc_fail.stderr
 
 
+def _write_basic_docker_stub(stub_path: Path, log_path: Path, *, wrap_tool: bool = False) -> None:
+    stub_path.write_text(
+        f"""#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+payload = {{"tool": "docker", "args": args}} if {wrap_tool!r} else args
+with open({str(log_path)!r}, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload) + "\\n")
+img_id = "sha256:" + ("1" * 64)
+if args[:2] == ["ps", "-a"]:
+    if "-q" in args:
+        print("cid-bff-1")
+    else:
+        print("cid-bff-1|operator-bff|pantheon-operator-bff-1")
+elif args[:1] == ["inspect"]:
+    print(img_id)
+elif args[:2] == ["image", "inspect"]:
+    print(img_id)
+elif args[:2] == ["image", "ls"]:
+    print(f"pantheon-protect/operator-bff:{{'1'*12}}|{{img_id}}")
+""",
+        encoding="utf-8",
+    )
+    stub_path.chmod(0o755)
+
+
 def test_deploy_nonprod_vm_docker_builder_cache_bounded_by_default_and_image_prune_opt_in(
     tmp_path: Path,
 ) -> None:
@@ -623,21 +649,14 @@ def test_deploy_nonprod_vm_docker_builder_cache_bounded_by_default_and_image_pru
     docker_log = tmp_path / "docker_calls.jsonl"
 
     stub_docker = bin_dir / "docker"
-    stub_docker.write_text(
-        f"""#!/usr/bin/env python3
-import json, sys
-with open({str(docker_log)!r}, "a", encoding="utf-8") as handle:
-    handle.write(json.dumps(sys.argv[1:]) + "\\n")
-""",
-        encoding="utf-8",
-    )
-    stub_docker.chmod(0o755)
+    _write_basic_docker_stub(stub_docker, docker_log, wrap_tool=False)
 
     funcs = "\n\n".join(
         _extract_shell_function(name)
         for name in (
             "docker_storage_diagnostics",
             "run_bounded_docker_prune",
+            "protect_dev_compose_container_images_for_builder_prune",
             "prune_dev_docker_storage_for_build",
         )
     )
@@ -667,6 +686,7 @@ prune_dev_docker_storage_for_build
     res_default = subprocess.run(["bash", str(runner)], env=base_env, capture_output=True, text=True, check=False)
     assert res_default.returncode == 0, res_default.stderr
     calls_default = [json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()]
+    assert ["tag", "sha256:" + "1" * 64, "pantheon-protect/operator-bff:" + "1" * 12] in calls_default
     assert ["builder", "prune", "-f", "--keep-storage", "20GB"] in calls_default
     assert not any(call[:2] == ["image", "prune"] for call in calls_default)
     assert not any(call[:2] == ["container", "prune"] for call in calls_default)
@@ -694,6 +714,323 @@ prune_dev_docker_storage_for_build
     assert ["system", "prune", "-f"] in calls_opt_in
 
 
+def test_builder_prune_protects_untagged_compose_container_images_and_skips_when_unprotectable(
+    tmp_path: Path,
+) -> None:
+    # 1. Static guard: deploy_nonprod_vm.sh must never invoke `docker builder prune -a` or `-af`.
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "docker builder prune -a" not in script_text
+    assert "docker builder prune -af" not in script_text
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    state_path = tmp_path / "containerd_store.json"
+    calls_path = tmp_path / "docker_calls.jsonl"
+
+    img_running = "sha256:" + "1" * 64
+    img_stopped = "sha256:" + "2" * 64
+    img_stale_protected = "sha256:" + "3" * 64
+    img_untagged_cache = "sha256:" + "4" * 64
+    img_partial_build_latest = "sha256:" + "9" * 64
+
+    initial_state = {
+        "fail_tag": False,
+        "containers": [
+            {
+                "id": "c_running_bff",
+                "service": "operator-bff",
+                "name": "pantheon-operator-bff-1",
+                "status": "running",
+                "image": img_running,
+                "compose": True,
+            },
+            {
+                "id": "c_stopped_pg",
+                "service": "postgres",
+                "name": "pantheon-postgres-1",
+                "status": "exited",
+                "image": img_stopped,
+                "compose": True,
+            },
+        ],
+        "images": {
+            # Both running and stopped containers lost their :latest tags to a partial build,
+            # leaving them completely untagged in the containerd image store before protection!
+            img_running: [],
+            img_stopped: [],
+            img_stale_protected: ["pantheon-protect/operator-bff:" + "3" * 12],
+            img_untagged_cache: [],
+            img_partial_build_latest: ["pantheon-operator-bff:latest"],
+        },
+    }
+    state_path.write_text(json.dumps(initial_state), encoding="utf-8")
+
+    stub_docker = bin_dir / "docker"
+    stub_docker.write_text(
+        f"""#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+
+state_file = Path({str(state_path)!r})
+calls_file = Path({str(calls_path)!r})
+args = sys.argv[1:]
+with calls_file.open("a", encoding="utf-8") as h:
+    h.write(json.dumps(args) + "\\n")
+
+state = json.loads(state_file.read_text(encoding="utf-8"))
+containers = state["containers"]
+images = state["images"]
+
+if args[:2] == ["ps", "-a"]:
+    if "-q" in args:
+        for c in containers:
+            print(c["id"])
+    else:
+        for c in containers:
+            if c.get("compose"):
+                print(f"{{c['id']}}|{{c['service']}}|{{c['name']}}")
+    sys.exit(0)
+
+if args[:1] == ["inspect"]:
+    cid = args[-1]
+    fmt = args[args.index("--format") + 1] if "--format" in args else ""
+    for c in containers:
+        if c["id"] == cid:
+            if fmt == "{{{{.Image}}}}":
+                print(c["image"])
+            else:
+                print(c["service"])
+            sys.exit(0)
+    sys.exit(1)
+
+if args[:2] == ["image", "inspect"]:
+    target = args[-1]
+    fmt = args[args.index("--format") + 1] if "--format" in args else ""
+    for img_id, tags in images.items():
+        if target == img_id or target in tags:
+            if fmt == "{{{{.Id}}}}":
+                print(img_id)
+            else:
+                print(json.dumps([{{"Id": img_id, "RepoTags": tags}}]))
+            sys.exit(0)
+    sys.exit(1)
+
+if args[:1] == ["tag"]:
+    if state.get("fail_tag"):
+        sys.exit(1)
+    src, tag = args[1], args[2]
+    if src not in images:
+        sys.exit(1)
+    if tag not in images[src]:
+        images[src].append(tag)
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    sys.exit(0)
+
+if args[:2] == ["image", "ls"]:
+    for img_id, tags in images.items():
+        short_id = img_id.split(":", 1)[1][:12]
+        for t in tags:
+            print(f"{{t}}|{{short_id}}")
+    sys.exit(0)
+
+if args[:2] == ["image", "rm"]:
+    target_tag = args[2]
+    for img_id, tags in list(images.items()):
+        if target_tag in tags:
+            tags.remove(target_tag)
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    sys.exit(0)
+
+if args[:2] == ["builder", "prune"]:
+    # Containerd image store behavior: builder prune deletes every untagged image!
+    for img_id in [k for k, tags in images.items() if not tags]:
+        del images[img_id]
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    sys.exit(0)
+
+sys.exit(0)
+""",
+        encoding="utf-8",
+    )
+    stub_docker.chmod(0o755)
+
+    funcs = "\n\n".join(
+        _extract_shell_function(name)
+        for name in (
+            "docker_storage_diagnostics",
+            "run_bounded_docker_prune",
+            "protect_dev_compose_container_images_for_builder_prune",
+            "prune_dev_docker_storage_for_build",
+        )
+    )
+    runner = tmp_path / "run_protect_prune.sh"
+    runner.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+{funcs}
+prune_dev_docker_storage_for_build
+""",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+
+    base_env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "PANTHEON_DEPLOY_ENV": "dev",
+        "PANTHEON_DEPLOY_COMPONENT": "root",
+    }
+    base_env.pop("PANTHEON_DEV_DOCKER_PRUNE", None)
+    base_env.pop("PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE", None)
+
+    res = subprocess.run(["bash", str(runner)], env=base_env, capture_output=True, text=True, check=False)
+    assert res.returncode == 0, res.stderr
+    assert "protected 2 compose container image(s) before builder cache prune (stale_protect_tags_removed=1)" in res.stdout
+
+    after_state = json.loads(state_path.read_text(encoding="utf-8"))
+    remaining_images = after_state["images"]
+    # Both running and stopped containers' previously-untagged images MUST survive builder prune!
+    assert img_running in remaining_images
+    assert f"pantheon-protect/operator-bff:{'1' * 12}" in remaining_images[img_running]
+    assert img_stopped in remaining_images
+    assert f"pantheon-protect/postgres:{'2' * 12}" in remaining_images[img_stopped]
+    # Unused image with stale protect tag had its stale protect tag removed and was pruned!
+    assert img_stale_protected not in remaining_images
+    # Unused untagged build cache image was pruned!
+    assert img_untagged_cache not in remaining_images
+
+    # 2. Verify keep-storage=0GB is rejected so unbounded prune cannot be triggered via config.
+    env_zero = {**base_env, "PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE": "0GB"}
+    res_zero = subprocess.run(["bash", str(runner)], env=env_zero, capture_output=True, text=True, check=False)
+    assert res_zero.returncode != 0
+    assert "unbounded builder prune -a/-af is forbidden" in res_zero.stderr
+
+    # 3. Verify fail-safe skip: if any container image cannot be protected (e.g. docker tag fails
+    # or image is uninspectable), builder prune is skipped with a logged reason.
+    calls_path.unlink()
+    unprotectable_state = {
+        "fail_tag": True,
+        "containers": initial_state["containers"],
+        "images": {img_running: [], img_stopped: []},
+    }
+    state_path.write_text(json.dumps(unprotectable_state), encoding="utf-8")
+    res_skip = subprocess.run(["bash", str(runner)], env=base_env, capture_output=True, text=True, check=False)
+    assert res_skip.returncode == 0, res_skip.stderr
+    assert "skipping builder cache prune: failed to tag" in res_skip.stdout
+    assert "skipped dev Docker builder cache prune because container image protection did not complete" in res_skip.stdout
+    calls_skip = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
+    assert not any(call[:2] == ["builder", "prune"] for call in calls_skip)
+
+
+def test_retention_never_deletes_currently_served_release_image_tars_across_fe_only_deploy_or_baseline_only_capture(
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "release-artifacts"
+    images_dir = artifact_root / "images"
+    compose_dir = artifact_root / "compose"
+    for d in (artifact_root, images_dir, compose_dir):
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    served_be = "1" * 39 + "1"
+    old_fe_at_be_deploy = "f" * 39 + "0"
+    new_fe_from_fe_only_deploy = "f" * 39 + "9"
+
+    # Live FE deployment.json was updated by an execute-plans FE-only deploy:
+    # bffCommit is still `served_be`, but frontendSha and target moved to `new_fe_from_fe_only_deploy`.
+    fe_dir = tmp_path / "fe-releases" / new_fe_from_fe_only_deploy
+    fe_dir.mkdir(parents=True, exist_ok=True)
+    fe_live_link = tmp_path / "pantheon-dev-fe"
+    fe_live_link.symlink_to(fe_dir)
+    (fe_dir / "deployment.json").write_text(
+        json.dumps(
+            {
+                "bffCommit": served_be,
+                "frontendSha": new_fe_from_fe_only_deploy,
+                "target": str(fe_dir.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    served_cand_tar = "served-cand-tar.tar"
+    served_baseline_only_tar = "served-captured-in-failed-baseline-only.tar"
+    stale_failed_cand_tar = "stale-failed-cand-only.tar"
+    for name in (served_cand_tar, served_baseline_only_tar, stale_failed_cand_tar):
+        _write_archive(images_dir, name, 512)
+
+    # Baseline 101 deployed `served_be` with `old_fe_at_be_deploy`
+    b101 = _make_baseline_folder(
+        artifact_root,
+        run_id=101,
+        candidate_id="1" * 64,
+        captured_at="2026-10-01T01:00:00Z",
+        previous_be="0" * 40,
+        previous_fe="0" * 40,
+        candidate_be=served_be,
+        candidate_fe=old_fe_at_be_deploy,
+        baseline_archives={"sha256:" + "a" * 64: served_cand_tar},
+        candidate_archives={"sha256:" + "b" * 64: served_cand_tar},
+        accepted=True,
+        accepted_at="2026-10-01T01:10:00Z",
+    )
+
+    # Baseline 102 is a failed deploy that ran while `served_be` was live, capturing
+    # `served_baseline_only_tar` in its `manifest.json` image_bundle (`previous_be=served_be`),
+    # and producing `stale_failed_cand_tar` in its unaccepted `candidate-bundle.json`.
+    b102_failed = _make_baseline_folder(
+        artifact_root,
+        run_id=102,
+        candidate_id="2" * 64,
+        captured_at="2026-10-02T01:00:00Z",
+        previous_be=served_be,
+        previous_fe=old_fe_at_be_deploy,
+        candidate_be="2" * 40,
+        candidate_fe="e" * 40,
+        baseline_archives={"sha256:" + "c" * 64: served_baseline_only_tar},
+        candidate_archives={"sha256:" + "d" * 64: stale_failed_cand_tar},
+        accepted=False,
+    )
+
+    # 4 newer accepted releases (201..204) so 101 is well outside `keep_accepted=3`
+    for idx in range(1, 5):
+        sha = str(idx + 2) * 40
+        tar_name = f"acc-20{idx}.tar"
+        _write_archive(images_dir, tar_name, 256)
+        _make_baseline_folder(
+            artifact_root,
+            run_id=200 + idx,
+            candidate_id=str(idx + 2) * 64,
+            captured_at=f"2026-10-1{idx}T01:00:00Z",
+            previous_be=str(idx + 1) * 40,
+            previous_fe=str(idx + 1) * 40,
+            candidate_be=sha,
+            candidate_fe=sha,
+            baseline_archives={"sha256:" + str(idx + 2) * 64: tar_name},
+            candidate_archives={"sha256:" + str(idx + 2) * 64: tar_name},
+            accepted=True,
+            accepted_at=f"2026-10-1{idx}T01:10:00Z",
+        )
+
+    res = retention.apply_release_artifact_retention(
+        artifact_root,
+        fe_live_link=fe_live_link,
+        keep_accepted=3,
+        dry_run=False,
+    )
+
+    # Both `b101` (candidate_be == served_be) and `b102_failed` (newest baseline with previous_be == served_be)
+    # are protected in `currently_served` despite `deployment.json` having a newer `frontendSha`!
+    assert b101.name in res.kept_by_reason["currently_served"]
+    assert b102_failed.name in res.kept_by_reason["currently_served"]
+    # Both `served_cand_tar` and `served_baseline_only_tar` MUST survive!
+    assert served_cand_tar in res.kept_images
+    assert served_baseline_only_tar in res.kept_images
+    assert (images_dir / served_cand_tar).exists()
+    assert (images_dir / served_baseline_only_tar).exists()
+
+
 def test_deploy_nonprod_vm_pre_build_sequence_stops_before_build_on_insufficient_disk(
     tmp_path: Path,
 ) -> None:
@@ -713,15 +1050,7 @@ def test_deploy_nonprod_vm_pre_build_sequence_stops_before_build_on_insufficient
     events_log = tmp_path / "events.jsonl"
 
     stub_docker = bin_dir / "docker"
-    stub_docker.write_text(
-        f"""#!/usr/bin/env python3
-import json, sys
-with open({str(events_log)!r}, "a", encoding="utf-8") as handle:
-    handle.write(json.dumps({{"tool": "docker", "args": sys.argv[1:]}}) + "\\n")
-""",
-        encoding="utf-8",
-    )
-    stub_docker.chmod(0o755)
+    _write_basic_docker_stub(stub_docker, events_log, wrap_tool=True)
 
     # Stub df returning 10 GiB available (< 25 GiB default floor)
     avail_10gib = 10 * 1024 * 1024 * 1024
@@ -744,6 +1073,7 @@ printf "Filesystem Size Used Avail Use%% Mounted on\\n/dev/sda1 193G 183G 10G 95
             "docker_storage_diagnostics",
             "run_bounded_docker_prune",
             "prune_dev_release_artifacts_for_build",
+            "protect_dev_compose_container_images_for_builder_prune",
             "prune_dev_docker_storage_for_build",
             "check_dev_deploy_disk_preflight",
         )
