@@ -25,6 +25,9 @@ from services.incident.incident import (
     IncidentConcurrencyError,
     IncidentError,
     IncidentStore,
+    ORPHAN_RECOVERED_RESOLUTION_REASON,
+    extract_infrastructure_incident_component,
+    is_infrastructure_health_incident,
 )
 
 
@@ -488,6 +491,13 @@ class InfrastructureHealthIncidentConsumer:
         self._store = incident_store
 
     def consume(self, payload: Mapping[str, Any]) -> InfrastructureHealthIncidentResult:
+        if not isinstance(payload, Mapping):
+            raise IncidentConsumerError("infrastructure incident payload must be an object")
+        raw_status = str(payload.get("status") or "open").strip().lower()
+        probe_kind = str(payload.get("probe_kind") or "").strip().lower()
+        if raw_status in {"resolved", "closed"} or probe_kind == "recovery":
+            return self._consume_recovery(payload)
+
         try:
             incident = build_incident_from_infrastructure_health_payload(payload)
         except (IncidentError, ValueError, TypeError) as exc:
@@ -498,8 +508,19 @@ class InfrastructureHealthIncidentConsumer:
             _require_same_infrastructure_incident_identity(existing, incident)
             return InfrastructureHealthIncidentResult(incident=existing, created=False)
 
+        if hasattr(self._store, "find_infrastructure_incident_by_id_or_alias"):
+            alias_match = self._store.find_infrastructure_incident_by_id_or_alias(incident.incident_id)
+            if alias_match is not None:
+                _require_same_merged_infrastructure_incident_identity(alias_match, incident)
+                return InfrastructureHealthIncidentResult(incident=alias_match, created=False)
+
         try:
-            created = self._store.create_incident(incident)
+            if is_infrastructure_health_incident(incident) and hasattr(
+                self._store, "upsert_open_infrastructure_incident"
+            ):
+                canonical, created = self._store.upsert_open_infrastructure_incident(incident)
+                return InfrastructureHealthIncidentResult(incident=canonical, created=created)
+            created_inc = self._store.create_incident(incident)
         except IncidentError as exc:
             existing = self._store.get_incident(incident.incident_id)
             if existing is not None:
@@ -507,7 +528,69 @@ class InfrastructureHealthIncidentConsumer:
                 return InfrastructureHealthIncidentResult(incident=existing, created=False)
             raise IncidentConsumerError(str(exc)) from exc
 
-        return InfrastructureHealthIncidentResult(incident=created, created=True)
+        return InfrastructureHealthIncidentResult(incident=created_inc, created=True)
+
+    def _consume_recovery(self, payload: Mapping[str, Any]) -> InfrastructureHealthIncidentResult:
+        component = _mapping(payload.get("component")) or {}
+        service_name = _first_value(
+            component,
+            payload,
+            keys=("service_name", "target_name", "component_name"),
+        )
+        incident_id = _first_value(payload, keys=("incident_id",))
+        if not service_name and incident_id:
+            target = (
+                self._store.find_infrastructure_incident_by_id_or_alias(incident_id)
+                if hasattr(self._store, "find_infrastructure_incident_by_id_or_alias")
+                else self._store.get_incident(incident_id)
+            )
+            if target is not None:
+                service_name = extract_infrastructure_incident_component(target)
+        if not service_name:
+            raise IncidentConsumerError("component.service_name is required for recovery")
+
+        source_event_id = _first_value(
+            payload,
+            keys=("source_event_id", "event_id", "telemetry_event_id"),
+        )
+        telemetry_events = (
+            _infrastructure_telemetry_event_ids(payload, source_event_id)
+            if source_event_id
+            else list(payload.get("telemetry_event_ids") or [])
+        )
+        resolved_at = str(
+            payload.get("resolved_at")
+            or payload.get("observed_at")
+            or payload.get("created_at")
+            or _utc_now()
+        ).strip()
+        resolution_reason = str(payload.get("resolution_reason") or "").strip() or None
+        resolved_list = self._store.resolve_open_infrastructure_incidents_for_component(
+            service_name,
+            resolved_at=resolved_at,
+            telemetry_event_ids=telemetry_events,
+            resolution_reason=resolution_reason,
+        )
+        if resolved_list:
+            return InfrastructureHealthIncidentResult(incident=resolved_list[0], created=False)
+        if incident_id:
+            existing = (
+                self._store.find_infrastructure_incident_by_id_or_alias(incident_id)
+                if hasattr(self._store, "find_infrastructure_incident_by_id_or_alias")
+                else self._store.get_incident(incident_id)
+            )
+            if existing is not None:
+                return InfrastructureHealthIncidentResult(incident=existing, created=False)
+        comp_norm = _safe_component(service_name)
+        for candidate in reversed(self._store.list_incidents()):
+            if (
+                is_infrastructure_health_incident(candidate)
+                and extract_infrastructure_incident_component(candidate) == comp_norm
+            ):
+                return InfrastructureHealthIncidentResult(incident=candidate, created=False)
+        raise IncidentConsumerError(
+            f"No infrastructure incident found to resolve for component {service_name!r}"
+        )
 
 
 def build_incident_from_threshold_payload(
@@ -893,6 +976,31 @@ def _require_same_infrastructure_incident_identity(
     existing_primary = existing.telemetry_event_ids[0] if existing.telemetry_event_ids else None
     incoming_primary = incident.telemetry_event_ids[0] if incident.telemetry_event_ids else None
     if not (same_binding and same_cluster and existing_primary == incoming_primary):
+        raise IncidentConsumerError(
+            f"incident_id {incident.incident_id!r} conflicts with an existing "
+            "infrastructure incident for a different subject or source_event_id"
+        )
+
+
+def _require_same_merged_infrastructure_incident_identity(
+    existing: IncidentCase,
+    incident: IncidentCase,
+) -> None:
+    same_binding = existing.binding_id == incident.binding_id
+    same_cluster = existing.incident_cluster_id == incident.incident_cluster_id
+    incoming_primary = incident.telemetry_event_ids[0] if incident.telemetry_event_ids else None
+    prefix = f"merged_event:{incident.incident_id}:"
+    recorded_events = [
+        str(item)[len(prefix):]
+        for item in (existing.telemetry_event_ids or [])
+        if str(item).startswith(prefix)
+    ]
+    event_matches = (
+        incoming_primary in recorded_events
+        if recorded_events
+        else incoming_primary in (existing.telemetry_event_ids or [])
+    )
+    if not (same_binding and same_cluster and event_matches):
         raise IncidentConsumerError(
             f"incident_id {incident.incident_id!r} conflicts with an existing "
             "infrastructure incident for a different subject or source_event_id"

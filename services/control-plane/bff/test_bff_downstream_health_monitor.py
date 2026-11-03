@@ -558,6 +558,54 @@ class TestRecoveryTracking:
         assert resolve_calls[0]["body"]["status"] == "resolved"
         assert incident_id in resolve_calls[0]["url"]
 
+    def test_probe_all_reconciles_orphaned_incidents_for_healthy_targets(self):
+        from services.control_plane.bff.downstream_health_monitor import DownstreamTarget
+
+        monitor = DownstreamHealthMonitor(
+            telemetry_url="",
+            incidents_url="http://inc:8090",
+            tenant_id="tenant-test",
+            probe_interval_seconds=60,
+            failure_threshold=3,
+        )
+        monitor._resolve_target_registry = lambda: {  # type: ignore[assignment]
+            "governance": DownstreamTarget(
+                name="governance",
+                base_url="http://governance:8080",
+                health_path="/__health__",
+            ),
+            "deployment": DownstreamTarget(
+                name="deployment",
+                base_url="http://deployment:8080",
+                health_path="/__health__",
+            ),
+        }
+        captured: List[Dict[str, Any]] = []
+
+        def mock_post_json(url, body, timeout):
+            captured.append({"url": url, "body": body})
+            return True, 200
+
+        with (
+            patch(
+                "services.control_plane.bff.downstream_health_monitor._probe_http",
+                return_value=(True, 200, ""),
+            ),
+            patch(
+                "services.control_plane.bff.downstream_health_monitor._post_json",
+                side_effect=mock_post_json,
+            ),
+        ):
+            _run(monitor._probe_all())
+
+        reconcile_calls = [
+            c for c in captured if "/api/incidents/reconcile-infrastructure-health" in c["url"]
+        ]
+        assert len(reconcile_calls) == 1
+        assert reconcile_calls[0]["body"]["healthy_components"] == ["deployment", "governance"]
+        assert reconcile_calls[0]["body"]["referenced_incident_ids"] == []
+        assert reconcile_calls[0]["body"]["resolution_reason"] == "orphan_recovered"
+
 
 # ---------------------------------------------------------------------------
 # BFF route contract tests

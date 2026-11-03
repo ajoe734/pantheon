@@ -87,7 +87,7 @@ FAKE_NATIVE_ENV = {
     "operator-bff": {"BFF_DATA_DIR": "/data/bff"},
 }
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -399,9 +399,11 @@ if tool == "docker":
             if a == "-f" and i + 1 < len(args):
                 fmt = args[i + 1]
         cinfo = None
+        target_svc = ""
         for svc, info in st.get("containers", {}).items():
             if info.get("cid") == cid:
                 cinfo = info
+                target_svc = svc
                 break
         if not cinfo:
             print(f"No such container: {cid}", file=sys.stderr)
@@ -416,13 +418,80 @@ if tool == "docker":
             mode = os.environ.get(
                 "FAKE_BASELINE_OWNER_HEALTH" if cinfo.get("baseline") else "FAKE_OWNER_HEALTH", ""
             )
+            no_healthcheck_svcs = {
+                "runtime-manager",
+                "operator-bff",
+                "lifecycle-projector",
+                "consultation-svc",
+                "agora-interaction-worker",
+            }
+            starting_health_svc = os.environ.get("FAKE_STARTING_HEALTH_OWNER", "").strip()
             health = ""
-            if mode:
+            if starting_health_svc and target_svc == starting_health_svc:
+                health = "starting"
+            elif mode and target_svc not in no_healthcheck_svcs | {"governance", "deployment"}:
                 counter = vm_state_file.with_name("health-" + cid + ".count")
                 n = int(counter.read_text()) if counter.exists() else 0
                 counter.write_text(str(n + 1))
-                health = "unhealthy" if mode == "unhealthy" else ("healthy" if n >= 2 else "starting")
-            print(running + (" " + health if health else ""))
+                if mode == "unhealthy":
+                    health = "unhealthy"
+                elif mode == "starting":
+                    health = "starting"
+                else:
+                    health = "healthy" if n >= 2 else "starting"
+            elif target_svc not in no_healthcheck_svcs:
+                health = "healthy"
+            if "RestartCount" in fmt:
+                if cinfo.get("baseline"):
+                    crashloop_svc = os.environ.get("FAKE_BASELINE_CRASHLOOP_OWNER", "").strip()
+                elif st.get("rollback_rehearsal_done"):
+                    crashloop_svc = (
+                        os.environ.get("FAKE_RESTORE_CRASHLOOP_OWNER", "").strip()
+                        or os.environ.get("FAKE_CRASHLOOP_OWNER", "").strip()
+                    )
+                else:
+                    crashloop_svc = os.environ.get("FAKE_CRASHLOOP_OWNER", "").strip()
+                short_uptime_svc = os.environ.get("FAKE_SHORT_UPTIME_OWNER", "").strip()
+                early_restart_svc = os.environ.get("FAKE_EARLY_RESTART_OWNER", "").strip()
+                uptime_sec = float(os.environ.get("FAKE_DEFAULT_OWNER_UPTIME_SECONDS", "60"))
+                if crashloop_svc and target_svc == crashloop_svc:
+                    rc_file = vm_state_file.with_name("restart-" + cid + ".count")
+                    rc = int(rc_file.read_text()) if rc_file.exists() else 0
+                    rc_file.write_text(str(rc + 1))
+                    uptime_sec = 3.0
+                elif short_uptime_svc and target_svc == short_uptime_svc:
+                    sb_file = vm_state_file.with_name("short-uptime-" + cid + ".count")
+                    sb_n = int(sb_file.read_text()) if sb_file.exists() else 0
+                    sb_file.write_text(str(sb_n + 1))
+                    rc = int(cinfo.get("restart_count", 0))
+                    uptime_sec = float(os.environ.get("FAKE_SHORT_UPTIME_SECONDS", "3"))
+                elif early_restart_svc and target_svc == early_restart_svc:
+                    er_file = vm_state_file.with_name("early-restart-" + cid + ".count")
+                    er_n = int(er_file.read_text()) if er_file.exists() else 0
+                    er_file.write_text(str(er_n + 1))
+                    if er_n == 0:
+                        rc = 0
+                        uptime_sec = 2.0
+                    elif er_n == 1:
+                        rc = 1
+                        uptime_sec = 3.0
+                    elif er_n == 2:
+                        rc = 1
+                        uptime_sec = 8.0
+                    else:
+                        rc = 1
+                        uptime_sec = 20.0
+                else:
+                    rc = int(cinfo.get("restart_count", 0))
+                if "State.StartedAt" in fmt:
+                    inspect_started_at = (
+                        datetime.now(timezone.utc) - timedelta(seconds=uptime_sec)
+                    ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    print(f"{running} {rc} {inspect_started_at}" + (f" {health}" if health else ""))
+                else:
+                    print(f"{running} {rc}" + (f" {health}" if health else ""))
+            else:
+                print(running + (" " + health if health else ""))
         elif "State.Status" in fmt:
             print("exited 1 false 2 true")
         elif "Config.Env" in fmt:
@@ -1716,6 +1785,92 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         self.assertEqual(env["deployment"]["PANTHEON_RUNTIME_BINDING_STORE_PATH"], "/data/runtime/runtime_bindings.json")
         self.assertEqual(env["operator-bff"]["BFF_DATA_DIR"], "/data/bff")
         self.assertEqual(env["lifecycle-projector"]["BFF_DATA_DIR"], "/data/bff")
+
+    def test_staging_compose_owners_pass_persistence_posture_validation(self) -> None:
+        from services.foundation import persistence_posture
+
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        services = compose["services"]
+
+        # Every staging compose owner that calls require_persistence_posture or
+        # validate_persistence_posture (including all SERVICE_BACKEND_DEFAULTS owners present in
+        # docker-compose.staging.yml plus registry and evolution custom backend_env_vars callers).
+        owner_posture_specs: tuple[tuple[str, str, dict[str, str] | None, bool], ...] = (
+            ("governance", "governance", None, True),
+            ("operator-bff", "operator-bff", None, True),
+            ("capital", "capital", None, True),
+            ("consultation-svc", "consultation", None, True),
+            ("evolution", "evolution", {"EVOLUTION_STORE_BACKEND": "json"}, False),
+            ("incidents", "incidents", None, True),
+            ("memory", "memory", None, True),
+            ("policy-learning-svc", "policy-learning", None, True),
+            ("postmortems", "postmortems", None, True),
+            ("reconciliation-drift-svc", "reconciliation-drift", None, True),
+            ("registry", "registry", {"REGISTRY_STORE_BACKEND": "memory"}, False),
+            ("research-orchestrator-svc", "research-orchestrator", None, True),
+            ("training-session-svc", "training-session", None, True),
+        )
+
+        # Ensure no staging compose service in SERVICE_BACKEND_DEFAULTS is omitted from the table.
+        covered_compose_svcs = {svc for svc, _, _, _ in owner_posture_specs}
+        for svc_name in services:
+            if (
+                svc_name in persistence_posture.SERVICE_BACKEND_DEFAULTS
+                or svc_name.removesuffix("-svc") in persistence_posture.SERVICE_BACKEND_DEFAULTS
+            ):
+                self.assertIn(svc_name, covered_compose_svcs, svc_name)
+
+        interpolation_fixtures = {
+            "PANTHEON_RELEASE_ID": "pantheon-20261024-001",
+            "PANTHEON_BACKEND_COMMIT": "b" * 40,
+            "STAGING_TENANT_ID": "tenant-stg-fixture",
+            "STAGING_JWT_ISSUER": "https://auth.stg.pantheon.internal",
+            "STAGING_JWT_AUDIENCE": "pantheon-staging-api",
+            "STAGING_IDP_ISSUER": "https://auth.stg.pantheon.internal",
+            "STAGING_BFF_CORS_ORIGINS": "https://stg-fe.pantheon.internal",
+        }
+
+        def render_compose_env(svc_name: str) -> dict[str, str]:
+            spec = services[svc_name]
+            raw_env = spec.get("environment") or {}
+            rendered: dict[str, str] = {}
+            if spec.get("env_file"):
+                # staging.secrets.env provides isolated staging Postgres DATABASE_URL at runtime;
+                # it deliberately carries no *BACKEND or *POSTURE keys.
+                rendered["DATABASE_URL"] = "postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging"
+            for k, v in raw_env.items():
+                val = str(v)
+                val = re.sub(
+                    r"\$\{([A-Z0-9_]+):-([^}]*)\}",
+                    lambda m: interpolation_fixtures.get(m.group(1), m.group(2)),
+                    val,
+                )
+                val = re.sub(
+                    r"\$\{([A-Z0-9_]+):\?[^}]*\}",
+                    lambda m: interpolation_fixtures.get(m.group(1), f"fixture-{m.group(1).lower()}"),
+                    val,
+                )
+                rendered[str(k)] = val
+            return rendered
+
+        for compose_svc, posture_key, backend_vars, req_obj in owner_posture_specs:
+            with self.subTest(compose_service=compose_svc, posture_service=posture_key):
+                owner_env = render_compose_env(compose_svc)
+                self.assertEqual(owner_env.get("PANTHEON_ENV"), "staging", compose_svc)
+                check = persistence_posture.validate_persistence_posture(
+                    posture_key,
+                    env=owner_env,
+                    backend_env_vars=backend_vars,
+                    require_object_store=req_obj,
+                )
+                self.assertEqual(check.errors, (), f"{compose_svc} ({posture_key}) errors: {check.errors}")
+                self.assertEqual(check.status, "ok", compose_svc)
+                persistence_posture.require_persistence_posture(
+                    posture_key,
+                    env=owner_env,
+                    backend_env_vars=backend_vars,
+                    require_object_store=req_obj,
+                )
 
     def test_telemetry_service_token_is_scoped_to_exactly_the_staging_tenant(self) -> None:
         from unittest import mock
@@ -4293,8 +4448,185 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             timings,
         )
 
+    def test_core_owner_restart_count_increase_while_running_is_reported_unserved_and_stable_passes(self) -> None:
+        # 1. A fake core owner (deployment or governance) whose RestartCount increases between
+        # samples while State.Running=true must be reported unserved across initial, rollback, and
+        # restore legs with structure-only diagnostics and no leaked secrets.
+        base_prov_env = self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0")
+        subprocess.run([str(PROVISION_SCRIPT)], env=base_prov_env, capture_output=True, text=True, check=True)
+        self._unlock_vm_env_dir()
+        (self.vm_env_dir / "pg-sim").mkdir(exist_ok=True)
+        initial_vm_state = self.vm_runtime_state_file.read_bytes()
+        self._lock_root_owned_paths()
+
+        for leg, env_overrides, expected_code in (
+            ("initial_deployment", {"FAKE_CRASHLOOP_OWNER": "deployment"}, "CORE_OWNER_UNSERVED"),
+            ("initial_governance", {"FAKE_CRASHLOOP_OWNER": "governance"}, "CORE_OWNER_UNSERVED"),
+            ("rollback_deployment", {"FAKE_BASELINE_CRASHLOOP_OWNER": "deployment"}, "ROLLBACK_BASELINE_UNHEALTHY"),
+            ("restore_deployment", {"FAKE_RESTORE_CRASHLOOP_OWNER": "deployment"}, "RESTORE_CANDIDATE_UNHEALTHY"),
+        ):
+            with self.subTest(leg=leg):
+                self._unlock_vm_env_dir()
+                self.vm_runtime_state_file.write_bytes(initial_vm_state)
+                for cnt_file in self.vm_env_dir.glob("*.count"):
+                    cnt_file.unlink(missing_ok=True)
+                self._lock_root_owned_paths()
+                ver = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0", **env_overrides),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver.returncode, 0, f"{leg} unexpectedly passed")
+                out = ver.stderr + ver.stdout
+                self.assertIn("LIVE_GATE_COLLECTION_FAILED", out)
+                self.assertIn(expected_code, out)
+                owner_name = next(iter(env_overrides.values()))
+                self.assertIn(f"owner={owner_name}", out)
+                self.assertIn("status=exited exit_code=1 oom_killed=false restart_count=2 error_present=true", out)
+                self.assertIn("frame=/workspace/services/control-plane/bff/main.py:42", out)
+                self.assertIn("exception_type=RuntimeError", out)
+                self.assertIn("exception_type=OtherException", out)
+                summary_file = self.state_dir / "evidence" / "pantheon-20261024-001-gate-failure-summary.json"
+                self.assertTrue(summary_file.is_file())
+                summary = json.loads(summary_file.read_text(encoding="utf-8"))
+                self.assertEqual(summary["error_code"], expected_code)
+                self.assertIn(f"owner={owner_name}", summary["message"])
+                if leg in ("rollback_deployment", "restore_deployment"):
+                    self.assertIn("rollback_duration_seconds", summary)
+                    self.assertIsInstance(summary["rollback_duration_seconds"], (int, float))
+                    self.assertIn("phase_timings_seconds", summary)
+                for leaked in (
+                    "stg-isolated-pg-password-20261025",
+                    "alpha-77",
+                    "res-123",
+                    "connect(",
+                    "/etc/private",
+                    "strategy_alpha77",
+                    "result_res123",
+                    "ResearchResult",
+                    "boom",
+                    "Traceback",
+                ):
+                    self.assertNotIn(leaked, out + summary_file.read_text(encoding="utf-8"))
+
+        # 2. A stable core owner (RestartCount unchanged across samples while State.Running=true) passes.
+        self._unlock_vm_env_dir()
+        self.vm_runtime_state_file.write_bytes(initial_vm_state)
+        for cnt_file in self.vm_env_dir.glob("*.count"):
+            cnt_file.unlink(missing_ok=True)
+        self._lock_root_owned_paths()
+        ver_ok = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(ver_ok.returncode, 0, ver_ok.stderr + ver_ok.stdout)
+        self.assertEqual(json.loads(ver_ok.stdout)["status"], "staging_verified")
+
+    def test_short_uptime_early_restart_and_starting_healthcheck_owner_readiness(self) -> None:
+        base_prov_env = self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0")
+        subprocess.run([str(PROVISION_SCRIPT)], env=base_prov_env, capture_output=True, text=True, check=True)
+        self._unlock_vm_env_dir()
+        (self.vm_env_dir / "pg-sim").mkdir(exist_ok=True)
+        initial_vm_state = self.vm_runtime_state_file.read_bytes()
+        self._lock_root_owned_paths()
+
+        def reset_vm_state() -> None:
+            self._unlock_vm_env_dir()
+            self.vm_runtime_state_file.write_bytes(initial_vm_state)
+            for cnt_file in self.vm_env_dir.glob("*.count"):
+                cnt_file.unlink(missing_ok=True)
+            self._lock_root_owned_paths()
+
+        # 1. Crash-looping fake with Running=true and RestartCount unchanged on two consecutive samples,
+        #    but StartedAt only 3s old (< STAGING_OWNER_MIN_UPTIME_SECONDS=15), is unserved.
+        for svc_name, expected_code in (
+            ("governance", "CORE_OWNER_UNSERVED"),
+            ("consultation-svc", "PRODUCT_OWNER_UNSERVED"),
+        ):
+            with self.subTest(case=f"short_uptime_{svc_name}"):
+                reset_vm_state()
+                ver_short = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_SHORT_UPTIME_OWNER=svc_name,
+                        FAKE_SHORT_UPTIME_SECONDS="3",
+                        STAGING_READY_INTERVAL="0.05",
+                        STAGING_OWNER_READY_TIMEOUT="0.2",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver_short.returncode, 0, f"{svc_name} with 3s StartedAt unexpectedly passed")
+                self.assertIn(expected_code, ver_short.stderr + ver_short.stdout)
+                self.assertIn(svc_name, ver_short.stderr + ver_short.stdout)
+
+        # 2. A fake that restarts once early (RestartCount 0 -> 1) and is then stable with sufficient
+        #    uptime (>= 15s) is served.
+        for svc_name in ("governance",):
+            with self.subTest(case=f"early_single_restart_{svc_name}"):
+                reset_vm_state()
+                ver_early = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_EARLY_RESTART_OWNER=svc_name,
+                        STAGING_READY_INTERVAL="0",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(ver_early.returncode, 0, ver_early.stderr + ver_early.stdout)
+                self.assertEqual(json.loads(ver_early.stdout)["status"], "staging_verified")
+
+        # 3. A healthcheck owner reporting "starting" is unserved.
+        for svc_name, expected_code in (
+            ("governance", "CORE_OWNER_UNSERVED"),
+            ("registry", "PRODUCT_OWNER_UNSERVED"),
+        ):
+            with self.subTest(case=f"starting_health_{svc_name}"):
+                reset_vm_state()
+                ver_starting = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_STARTING_HEALTH_OWNER=svc_name,
+                        STAGING_READY_INTERVAL="0.05",
+                        STAGING_OWNER_READY_TIMEOUT="0.2",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver_starting.returncode, 0, f"{svc_name} with starting health unexpectedly passed")
+                self.assertIn(expected_code, ver_starting.stderr + ver_starting.stdout)
+                self.assertIn(svc_name, ver_starting.stderr + ver_starting.stdout)
+
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
+    def test_rendered_compose_has_governance_and_deployment_healthchecks_on_health(self) -> None:
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        services = compose["services"]
+        for svc_name, port in (("governance", 8082), ("deployment", 8095)):
+            with self.subTest(service=svc_name):
+                hc = services[svc_name].get("healthcheck")
+                self.assertIsInstance(hc, dict, f"{svc_name} missing healthcheck")
+                self.assertEqual(
+                    hc["test"],
+                    [
+                        "CMD",
+                        "python",
+                        "-c",
+                        f"import urllib.request; urllib.request.urlopen('http://127.0.0.1:{port}/health', timeout=5).read()",
+                    ],
+                )
+                self.assertEqual(hc["interval"], "10s")
+                self.assertEqual(hc["timeout"], "5s")
+                self.assertEqual(hc["retries"], 10)
+                self.assertEqual(hc["start_period"], "15s")
+
     def test_ephemeral_workflow_wires_public_identity_vars_to_host(self) -> None:
         raw = EPHEMERAL_WORKFLOW.read_text(encoding="utf-8")
         ops = (REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh").read_text(encoding="utf-8")

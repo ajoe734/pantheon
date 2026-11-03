@@ -484,6 +484,15 @@ MONITOR_AGENT_CLUSTER_PREFIX = "infra-cluster:monitor-agent:agent-finding-"
 MONITOR_AGENT_ARTIFACT_PREFIX = "infra-component-agent-finding-"
 MONITOR_AGENT_COMPONENT_KIND = "monitor-agent-finding"
 NOT_REOBSERVED_RESOLUTION_REASON = "not_reobserved"
+ORPHAN_RECOVERED_RESOLUTION_REASON = "orphan_recovered"
+
+INFRASTRUCTURE_SUBJECT_PREFIX = "infra-subject-"
+INFRASTRUCTURE_PLAN_PREFIX = "infra-plan-"
+INFRASTRUCTURE_POOL_PREFIX = "infra-pool-"
+INFRASTRUCTURE_AUTHORITY_PREFIX = "infra-authority-"
+INFRASTRUCTURE_ARTIFACT_PREFIX = "infra-component-"
+INFRASTRUCTURE_RUNTIME_PREFIX = "infra-endpoint-"
+INFRASTRUCTURE_CLUSTER_PREFIX = "infrastructure:"
 
 _OBSERVED_AT_RE = re.compile(r"(?:last_)?observed_at=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+\-Z]+)")
 _SNAPSHOT_TS_RE = re.compile(r"monitor-snapshot-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z")
@@ -491,6 +500,8 @@ _FINGERPRINT_KV_RE = re.compile(r"fingerprint=([^;\s]+)")
 _CANONICAL_KEY_KV_RE = re.compile(r"canonical_key=([^;\s]+)")
 _COMPONENT_KV_RE = re.compile(r"(?:component|service_name)=agent-finding-([^;\s]+)")
 _RESOLUTION_REASON_KV_RE = re.compile(r"resolution_reason=([^;\s]+)")
+_SERVICE_NAME_KV_RE = re.compile(r"(?:^|;\s*)service_name=([^;]+)")
+_MERGED_INCIDENT_ID_KV_RE = re.compile(r"(?:^|;\s*)merged_incident_id=([A-Za-z0-9_.:-]+)")
 
 
 def _parse_iso_utc(raw: Optional[str]) -> Optional[datetime]:
@@ -527,6 +538,111 @@ def is_monitor_agent_finding_incident(inc: IncidentCase) -> bool:
         or f"component_kind={MONITOR_AGENT_COMPONENT_KIND}" in summary
         or artifact.startswith(MONITOR_AGENT_ARTIFACT_PREFIX)
     )
+
+
+def normalize_infrastructure_component(value: str) -> str:
+    """Normalize a downstream infrastructure component/service name."""
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-").lower()
+    return cleaned[:64]
+
+
+def is_infrastructure_health_incident(inc: IncidentCase) -> bool:
+    """Return True strictly for non-trading infrastructure-health incidents.
+
+    Excludes monitor-agent finding, runtime, drift, and deployment incidents.
+    """
+    if is_monitor_agent_finding_incident(inc):
+        return False
+    if str(inc.incident_id or "").startswith("agent-"):
+        return False
+    cluster = str(inc.incident_cluster_id or "")
+    summary = str(inc.evidence_summary or "")
+    artifact = str(inc.artifact_id or "")
+    if (
+        ":monitor-agent:agent-finding-" in cluster
+        or f"component_kind={MONITOR_AGENT_COMPONENT_KIND}" in summary
+        or artifact.startswith(MONITOR_AGENT_ARTIFACT_PREFIX)
+    ):
+        return False
+    if cluster.startswith(("drift:", "deployment:", "runtime:")):
+        return False
+
+    binding = str(inc.binding_id or "")
+    plan = str(inc.deployment_plan_id or "")
+    authority = str(inc.persona_capital_binding_id or "")
+    runtime = str(inc.runtime_id or "")
+
+    if not (
+        binding.startswith(INFRASTRUCTURE_SUBJECT_PREFIX)
+        and plan.startswith(INFRASTRUCTURE_PLAN_PREFIX)
+        and authority.startswith(INFRASTRUCTURE_AUTHORITY_PREFIX)
+    ):
+        return False
+    return (
+        cluster.startswith(INFRASTRUCTURE_CLUSTER_PREFIX)
+        or "non_trading_infrastructure_incident=true" in summary
+        or artifact.startswith(INFRASTRUCTURE_ARTIFACT_PREFIX)
+        or runtime.startswith(INFRASTRUCTURE_RUNTIME_PREFIX)
+    )
+
+
+def extract_infrastructure_incident_component(inc: IncidentCase) -> Optional[str]:
+    """Return the normalized component name for an infrastructure-health incident."""
+    if not is_infrastructure_health_incident(inc):
+        return None
+    artifact = str(inc.artifact_id or "").strip()
+    if artifact.startswith(INFRASTRUCTURE_ARTIFACT_PREFIX):
+        comp = normalize_infrastructure_component(artifact[len(INFRASTRUCTURE_ARTIFACT_PREFIX):])
+        if comp:
+            return comp
+    cluster = str(inc.incident_cluster_id or "").strip()
+    if cluster.startswith(INFRASTRUCTURE_CLUSTER_PREFIX):
+        parts = cluster.split(":", 3)
+        if len(parts) == 4:
+            comp = normalize_infrastructure_component(parts[3])
+            if comp:
+                return comp
+    summary = str(inc.evidence_summary or "")
+    match = _SERVICE_NAME_KV_RE.search(summary)
+    if match:
+        comp = normalize_infrastructure_component(match.group(1))
+        if comp:
+            return comp
+    binding = str(inc.binding_id or "").strip()
+    pool = str(inc.capital_pool_id or "").strip()
+    if pool.startswith(INFRASTRUCTURE_POOL_PREFIX):
+        tenant_id = pool[len(INFRASTRUCTURE_POOL_PREFIX):].strip()
+        prefix = f"{INFRASTRUCTURE_SUBJECT_PREFIX}{tenant_id}-"
+        if binding.startswith(prefix):
+            comp = normalize_infrastructure_component(binding[len(prefix):])
+            if comp:
+                return comp
+    if binding.startswith(f"{INFRASTRUCTURE_SUBJECT_PREFIX}default-"):
+        comp = normalize_infrastructure_component(
+            binding[len(f"{INFRASTRUCTURE_SUBJECT_PREFIX}default-"):]
+        )
+        if comp:
+            return comp
+    return None
+
+
+def extract_infrastructure_incident_referenced_ids(inc: IncidentCase) -> Set[str]:
+    """Return the canonical incident_id plus any merged secondary incident_ids."""
+    refs: Set[str] = set()
+    if inc.incident_id:
+        refs.add(inc.incident_id.strip())
+    for item in inc.telemetry_event_ids or []:
+        text = str(item or "").strip()
+        if text.startswith("merged_incident_id:"):
+            merged_id = text.split(":", 1)[1].strip()
+            if merged_id:
+                refs.add(merged_id)
+    summary = str(inc.evidence_summary or "")
+    for match in _MERGED_INCIDENT_ID_KV_RE.finditer(summary):
+        merged_id = match.group(1).strip()
+        if merged_id:
+            refs.add(merged_id)
+    return refs
 
 
 def extract_incident_last_observed_at(inc: IncidentCase) -> Optional[datetime]:
@@ -711,6 +827,7 @@ class IncidentStore:
         self._path = path
         self._loaded_mtime_ns: Optional[int] = None
         self._thread_lock = threading.RLock()
+        self._write_guard_depth = 0
         if path and path.exists():
             self._load(path)
             self._loaded_mtime_ns = path.stat().st_mtime_ns
@@ -720,9 +837,14 @@ class IncidentStore:
         """Serialize JSON read-modify-write cycles across threads/processes."""
 
         with self._thread_lock:
-            if self._path is None:
-                yield
+            if self._path is None or self._write_guard_depth > 0:
+                self._write_guard_depth += 1
+                try:
+                    yield
+                finally:
+                    self._write_guard_depth -= 1
                 return
+            self._write_guard_depth = 1
             self._path.parent.mkdir(parents=True, exist_ok=True)
             lock_path = self._path.with_name(f".{self._path.name}.lock")
             descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
@@ -736,6 +858,7 @@ class IncidentStore:
                     self._loaded_mtime_ns = self._path.stat().st_mtime_ns
                 yield
             finally:
+                self._write_guard_depth = 0
                 if fcntl is not None:
                     fcntl.flock(descriptor, fcntl.LOCK_UN)
                 os.close(descriptor)
@@ -832,6 +955,55 @@ class IncidentStore:
 
         return None
 
+    @_serialized_store_read
+    def find_open_infrastructure_incidents_for_component(
+        self,
+        component: str,
+        *,
+        cluster_id: Optional[str] = None,
+    ) -> List[IncidentCase]:
+        """Find all open infrastructure-health incidents for a component, oldest first."""
+        self._refresh_from_disk()
+        comp = normalize_infrastructure_component(component)
+        cluster_clean = str(cluster_id or "").strip()
+        if not comp and not cluster_clean:
+            return []
+        matches: List[IncidentCase] = []
+        for inc in self._incidents.values():
+            if not inc.is_open() or not is_infrastructure_health_incident(inc):
+                continue
+            inc_comp = extract_infrastructure_incident_component(inc)
+            if (comp and inc_comp == comp) or (
+                cluster_clean and str(inc.incident_cluster_id or "").strip() == cluster_clean
+            ):
+                matches.append(inc)
+        matches.sort(key=lambda item: (item.created_at, item.incident_id))
+        return matches
+
+    @_serialized_store_read
+    def find_infrastructure_incident_by_id_or_alias(
+        self,
+        incident_id: str,
+    ) -> Optional[IncidentCase]:
+        """Find an infrastructure-health incident by primary incident_id or merged alias."""
+        self._refresh_from_disk()
+        target = str(incident_id or "").strip()
+        if not target:
+            return None
+        direct = self._incidents.get(target)
+        if direct is not None and is_infrastructure_health_incident(direct):
+            return direct
+        candidates = sorted(
+            (
+                inc
+                for inc in self._incidents.values()
+                if is_infrastructure_health_incident(inc)
+                and target in extract_infrastructure_incident_referenced_ids(inc)
+            ),
+            key=lambda item: (0 if item.is_open() else 1, item.created_at, item.incident_id),
+        )
+        return candidates[0] if candidates else None
+
     # ---- IncidentCase writes ----
 
     @_serialized_store_write
@@ -887,6 +1059,14 @@ class IncidentStore:
         updates: Dict[str, Any] = {"status": new_status}
         merged_telemetry = list(telemetry_event_ids or [])
         reason_clean = str(resolution_reason or "").strip()
+        if not reason_clean:
+            for item in reversed(merged_telemetry):
+                text = str(item or "").strip()
+                if text.startswith("resolution_reason:"):
+                    candidate_reason = text.split(":", 1)[1].strip()
+                    if candidate_reason:
+                        reason_clean = candidate_reason
+                        break
         if reason_clean:
             merged_telemetry.append(f"resolution_reason:{reason_clean}")
             updates["evidence_summary"] = _merge_summary(
@@ -1017,6 +1197,234 @@ class IncidentStore:
             expected_snapshot=existing.to_dict(),
         )
         return updated
+
+    @_serialized_store_write
+    def merge_infrastructure_incident_into_open(
+        self,
+        incident_id: str,
+        incoming: IncidentCase,
+    ) -> IncidentCase:
+        """Merge a second infrastructure-health open event into the canonical open incident."""
+        existing = self.require_incident(incident_id)
+        if not is_infrastructure_health_incident(existing):
+            raise IncidentError(
+                f"Cannot merge infrastructure incident into non-infrastructure incident: {incident_id}"
+            )
+        extra_telemetry = list(incoming.telemetry_event_ids or [])
+        extra_summary_parts: List[str] = []
+        if incoming.incident_id and incoming.incident_id != existing.incident_id:
+            extra_telemetry.append(f"merged_incident_id:{incoming.incident_id}")
+            if incoming.telemetry_event_ids:
+                extra_telemetry.append(
+                    f"merged_event:{incoming.incident_id}:{incoming.telemetry_event_ids[0]}"
+                )
+            extra_summary_parts.append(f"merged_incident_id={incoming.incident_id}")
+        if incoming.evidence_summary:
+            extra_summary_parts.append(incoming.evidence_summary)
+
+        updates: Dict[str, Any] = {
+            "telemetry_event_ids": _merge_unique(
+                existing.telemetry_event_ids,
+                extra_telemetry,
+            ),
+            "reconciliation_ids": _merge_unique(
+                existing.reconciliation_ids,
+                incoming.reconciliation_ids,
+            ),
+            "severity": _max_incident_severity(existing.severity, incoming.severity),
+        }
+        if not existing.incident_cluster_id and incoming.incident_cluster_id:
+            updates["incident_cluster_id"] = incoming.incident_cluster_id
+        incoming_summary = "; ".join(part for part in extra_summary_parts if part)
+        if incoming_summary or (
+            existing.evidence_summary and len(existing.evidence_summary) > MAX_EVIDENCE_SUMMARY_LENGTH
+        ):
+            updates["evidence_summary"] = _merge_summary(existing.evidence_summary, incoming_summary)
+
+        updated = IncidentCase(**{**existing.to_dict(), **updates})
+        errors = validate_incident_case(updated)
+        if errors:
+            raise IncidentError(f"Infrastructure evidence merge produces invalid IncidentCase: {errors}")
+        if updated.to_dict() == existing.to_dict():
+            return existing
+        self._incidents[incident_id] = updated
+        self._save(
+            aggregate_type="incident",
+            record_id=incident_id,
+            expected_snapshot=existing.to_dict(),
+        )
+        return updated
+
+    @_serialized_store_write
+    def upsert_open_infrastructure_incident(
+        self,
+        incoming: IncidentCase,
+    ) -> Tuple[IncidentCase, bool]:
+        """Ensure at most one open infrastructure incident exists per component.
+
+        If an open infrastructure incident for the same component already exists,
+        merges ``incoming`` into the earliest open incident and resolves any
+        extra pre-existing open duplicates for that component.
+        """
+        errors = validate_incident_case(incoming)
+        if errors:
+            raise IncidentError(f"Invalid IncidentCase: {errors}")
+        if not is_infrastructure_health_incident(incoming):
+            raise IncidentError(
+                f"IncidentCase is not a non-trading infrastructure-health incident: {incoming.incident_id}"
+            )
+        comp = extract_infrastructure_incident_component(incoming) or ""
+        open_for_component = self.find_open_infrastructure_incidents_for_component(
+            comp,
+            cluster_id=incoming.incident_cluster_id,
+        )
+        if open_for_component:
+            primary = open_for_component[0]
+            merged = self.merge_infrastructure_incident_into_open(primary.incident_id, incoming)
+            if len(open_for_component) > 1:
+                for duplicate in open_for_component[1:]:
+                    merged = self.merge_infrastructure_incident_into_open(primary.incident_id, duplicate)
+                self.resolve_open_infrastructure_incidents_for_component(
+                    comp,
+                    resolved_at=incoming.created_at,
+                    resolution_reason=ORPHAN_RECOVERED_RESOLUTION_REASON,
+                    exclude_incident_ids={primary.incident_id},
+                    cluster_id=incoming.incident_cluster_id,
+                )
+                merged = self.require_incident(primary.incident_id)
+            return merged, False
+        created = self.create_incident(incoming)
+        return created, True
+
+    @_serialized_store_write
+    def resolve_open_infrastructure_incidents_for_component(
+        self,
+        component: str,
+        *,
+        resolved_at: Optional[str] = None,
+        telemetry_event_ids: Optional[List[str]] = None,
+        resolution_reason: Optional[str] = None,
+        exclude_incident_ids: Optional[Set[str]] = None,
+        cluster_id: Optional[str] = None,
+    ) -> List[IncidentCase]:
+        """Resolve every open infrastructure-health incident for a component.
+
+        Strictly excludes monitor-agent finding, runtime, drift, and deployment
+        incidents.
+        """
+        comp = normalize_infrastructure_component(component)
+        cluster_clean = str(cluster_id or "").strip()
+        if not comp and not cluster_clean:
+            return []
+        excluded = {str(item or "").strip() for item in (exclude_incident_ids or set()) if str(item or "").strip()}
+        resolved_iso = str(resolved_at or _utc_now()).strip() or _utc_now()
+        reason_clean = str(resolution_reason or "").strip()
+        extra_events = list(telemetry_event_ids or [])
+        if reason_clean:
+            extra_events.append(f"resolution_reason:{reason_clean}")
+
+        transitions: List[Tuple[str, Mapping[str, Any], IncidentCase]] = []
+        candidates = sorted(
+            self._incidents.values(),
+            key=lambda item: (item.created_at, item.incident_id),
+        )
+        for inc in candidates:
+            if not inc.is_open() or not is_infrastructure_health_incident(inc):
+                continue
+            if inc.incident_id in excluded:
+                continue
+            inc_comp = extract_infrastructure_incident_component(inc)
+            if not (
+                (comp and inc_comp == comp)
+                or (cluster_clean and str(inc.incident_cluster_id or "").strip() == cluster_clean)
+            ):
+                continue
+
+            updates: Dict[str, Any] = {
+                "status": IncidentStatus.RESOLVED.value,
+                "resolved_at": inc.resolved_at or resolved_iso,
+            }
+            if extra_events:
+                updates["telemetry_event_ids"] = _merge_unique(inc.telemetry_event_ids, extra_events)
+            if reason_clean:
+                updates["evidence_summary"] = _merge_summary(
+                    inc.evidence_summary,
+                    f"resolution_reason={reason_clean}",
+                )
+            updated = IncidentCase(**{**inc.to_dict(), **updates})
+            errors = validate_incident_case(updated)
+            if errors:
+                raise IncidentError(f"Component recovery resolution produces invalid IncidentCase: {errors}")
+            transitions.append((inc.incident_id, inc.to_dict(), updated))
+
+        if not transitions:
+            return []
+        return self._persist_batch_incident_updates(transitions)
+
+    @_serialized_store_write
+    def resolve_orphaned_infrastructure_incidents(
+        self,
+        *,
+        healthy_components: List[str],
+        referenced_incident_ids: Optional[List[str]] = None,
+        resolved_at: Optional[str] = None,
+        telemetry_event_ids: Optional[List[str]] = None,
+        resolution_reason: str = ORPHAN_RECOVERED_RESOLUTION_REASON,
+    ) -> List[IncidentCase]:
+        """Resolve open infrastructure incidents whose component is healthy and unreferenced by the BFF ledger.
+
+        Applies strictly to non-trading infrastructure-health incidents and never
+        touches monitor-agent finding, runtime, drift, or deployment incidents.
+        """
+        healthy_set = {
+            normalize_infrastructure_component(item)
+            for item in (healthy_components or [])
+            if normalize_infrastructure_component(item)
+        }
+        if not healthy_set:
+            return []
+        referenced_set = {
+            str(item or "").strip()
+            for item in (referenced_incident_ids or [])
+            if str(item or "").strip()
+        }
+        resolved_iso = str(resolved_at or _utc_now()).strip() or _utc_now()
+        reason_clean = str(resolution_reason or ORPHAN_RECOVERED_RESOLUTION_REASON).strip() or ORPHAN_RECOVERED_RESOLUTION_REASON
+        extra_events = list(telemetry_event_ids or [])
+        extra_events.append(f"resolution_reason:{reason_clean}")
+
+        transitions: List[Tuple[str, Mapping[str, Any], IncidentCase]] = []
+        candidates = sorted(
+            self._incidents.values(),
+            key=lambda item: (item.created_at, item.incident_id),
+        )
+        for inc in candidates:
+            if not inc.is_open() or not is_infrastructure_health_incident(inc):
+                continue
+            comp = extract_infrastructure_incident_component(inc)
+            if not comp or comp not in healthy_set:
+                continue
+            if extract_infrastructure_incident_referenced_ids(inc) & referenced_set:
+                continue
+
+            updates: Dict[str, Any] = {
+                "status": IncidentStatus.RESOLVED.value,
+                "resolved_at": inc.resolved_at or resolved_iso,
+                "telemetry_event_ids": _merge_unique(inc.telemetry_event_ids, extra_events),
+                "evidence_summary": _merge_summary(
+                    inc.evidence_summary,
+                    f"resolution_reason={reason_clean}",
+                ),
+            }
+            updated = IncidentCase(**{**inc.to_dict(), **updates})
+            errors = validate_incident_case(updated)
+            if errors:
+                raise IncidentError(f"Orphan recovery resolution produces invalid IncidentCase: {errors}")
+            transitions.append((inc.incident_id, inc.to_dict(), updated))
+
+        if not transitions:
+            return []
+        return self._persist_batch_incident_updates(transitions)
 
     # ---- Postmortem reads ----
 
