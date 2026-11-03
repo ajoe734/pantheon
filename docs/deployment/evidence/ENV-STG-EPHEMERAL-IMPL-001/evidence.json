@@ -2,7 +2,7 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "ENV-STG-EPHEMERAL-IMPL-001",
   "title": "Ephemeral Staging Template & Automated Lifecycle Engine",
-  "recorded_at": "2026-10-26T22:58:00Z",
+  "recorded_at": "2026-11-03T05:20:00Z",
   "owner": "Antigravity",
   "reviewer": "Claude",
   "target_repo": "pantheon",
@@ -30,12 +30,14 @@
   ],
   "completion_tracks": {
     "functional": {
-      "status": "ready_for_review",
-      "scope": "Corrective source implementation resolving all 7 prior source counterexamples plus all 5 concrete PR #6798 pre-deployment source findings: (1) Real exact-pair rollback baseline FE tarball retrieval/verification (STAGING_FE_BASELINE_ARTIFACT_PATH / STAGING_FE_BASELINE_ARTIFACT_URI), removal of fabricated placeholder index.html in deploy/staging/bootstrap.sh, on-host archive SHA-256 + member digest verification, and full 5-service owner-closure rollback (operator-bff, runtime-manager, governance, deployment, lifecycle-projector); (2) Real HS256-authenticated security, tenant isolation, and RBAC gate in deploy/staging/pantheon-staging-collect-gates and scripts/deploy/staging_sanitize.py exercising GET /bff/me, POST /bff/switch-tenant, and POST /bff/command-confirmations with positive controls (HTTP 200) and strict negative controls (401 AUTH_REQUIRED unauthenticated, 403 FORBIDDEN tenant_scope on cross-tenant read/write, 403 FORBIDDEN role_check on viewer mutation; 404/405 never accepted); (3) Live PostgreSQL information_schema.columns pre/post migration catalog observation without static spec fallbacks, plus live old-app (rollback_baseline.backend_operator_bff_image) execution against the migrated schema; (4) Separate single-statement psql -c invocations for DROP DATABASE IF EXISTS and CREATE DATABASE during backup/restore verification; (5) Non-root IAP OS Login privilege elevation (sudo -n / sudo -E), Debian 12 docker-compose-plugin support, and GCE metadata-token docker login (oauth2accesstoken) to Artifact Registry before docker pull."
+      "status": "done",
+      "merged_pr": "https://github.com/ajoe734/pantheon/pull/6922",
+      "merge_commit_sha": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
+      "scope": "Corrective source implementation resolving all 7 prior source counterexamples plus all 5 concrete PR #6798 pre-deployment source findings and all live drill 1-8 source/contract defects through PR #6914 and PR #6922: (1) Real exact-pair rollback baseline FE tarball retrieval/verification (STAGING_FE_BASELINE_ARTIFACT_PATH / STAGING_FE_BASELINE_ARTIFACT_URI), removal of fabricated placeholder index.html in deploy/staging/bootstrap.sh, on-host archive SHA-256 + member digest verification, and full owner-closure rollback; (2) Real HS256-authenticated security, tenant isolation, and RBAC gate in deploy/staging/pantheon-staging-collect-gates and scripts/deploy/staging_sanitize.py exercising GET /bff/me, POST /bff/switch-tenant, and POST /bff/command-confirmations with positive controls (HTTP 200) and strict negative controls (401 AUTH_REQUIRED unauthenticated, 403 FORBIDDEN tenant_scope on cross-tenant read/write, 403 FORBIDDEN role_check on viewer mutation; 404/405 never accepted); (3) Live PostgreSQL information_schema.columns pre/post migration catalog observation without static spec fallbacks, migration rendering from manifest.backend.commit, and live old-app (rollback_baseline.backend_operator_bff_image) execution against the migrated schema; (4) Separate single-statement psql -c invocations for DROP DATABASE IF EXISTS and CREATE DATABASE during backup/restore verification inside the pinned postgres:16 container; (5) Non-root IAP OS Login privilege elevation (sudo -n / sudo -E), Debian 12 docker-compose-plugin support, GCE metadata-token docker login (oauth2accesstoken) to Artifact Registry before docker pull, e2-standard-8 VM sizing, pre-owner-start sanitized seed verification, and core+product owner health/stability gates."
     },
     "hosted": {
-      "status": "external_wait",
-      "note": "Local/simulated tests prove controller, bootstrap, and gate-collector behavior only and do not count as hosted drill evidence. Hosted acceptance requires an accepted dev_verified release manifest from Root01a11, a populated sanitized non-production snapshot pantheon-stg-sanitized-seed-20261024, and two consecutive zero-to-zero live staging releases."
+      "status": "ready_for_review",
+      "note": "Two consecutive zero-start live ephemeral staging drills (Drill 10 run 41579314601 and Drill 11 run 41581135775) executed back to back on dev 9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b (containing PR #6914 and PR #6922) using release pantheon-20261028-102, seed pantheon-stg-sanitized-seed-20261030-v5 (snapshot id 73632110598225712), and e2-standard-8. Both started with 0 staging inventory (instances, disks, addresses), passed Stage 1/2 provision+deploy, Stage 3 live gates (exact_pair_rollback 107.727s and 108.599s < 120s limit, migration_set_sha256 sha256:a35cb559..., pre_owner_start sanitized_data verified on v5, backup_restore_verified true, security_and_safety_readbacks with live_broker/provider/real_writes all false), and Stage 4/5 teardown (4 owned resources deleted, post_delete_readback_verified true, closing inventory 0, STAGING_EPHEMERAL_ENABLED reset to false). Interpretation explicitly noted: 'two consecutive releases' was executed as two consecutive zero-start runs of the same dev_verified release pantheon-20261028-102 by the existing workflow. Production obligations belong to ENV-PROD-CONTROL-IMPL-001 and are not marked here."
     }
   },
   "pr6798_blocking_source_findings_remediation": [
@@ -430,6 +432,369 @@
       "production_release_workflow": ".github/workflows/production-release.yml has the same checkout-vs-release-commit coupling: step 'Checkout' (line 125) runs actions/checkout@v6 (shallow checkout of current workflow ref) and step 'Transport immutable artifacts, evidence and controller scripts to the control VM (IAP)' (lines 180-182) invokes 'python3 -I scripts/deploy/prod_preflight.py migration render \"${RELEASE_MANIFEST_PATH}\" \"${RUNNER_TEMP}/bundle/migration\" --src services/trade_journey/migrations' (plus 'cp scripts/db_migrate.sh \"${RUNNER_TEMP}/bundle/migration/db_migrate.sh\"') from the workflow checkout rather than materializing from manifest.backend.commit. Per task instructions, production behavior is reported here and intentionally left unchanged in this task."
     },
     "tests": "test_deploy_host_renders_migrations_from_manifest_backend_commit_not_checkout_head in tests/deployment/test_staging_release.py (1 passed, 4 subtests passed in 75.83s): uses a shallow (depth=1) fake git checkout whose HEAD has an extra migration while manifest.backend.commit matches the manifest digest; proves render fails on base 0b12194f4 with MIGRATION_RENDER_FAILED, succeeds from backend.commit on head through full staging provision + verify, and fails closed with MIGRATION_RENDER_FAILED and structure-only reasons when the manifest digest matches neither, matches checkout HEAD instead of backend.commit, when backend.commit cannot be fetched, or when services/trade_journey/migrations is missing in backend.commit. Existing staging and production deployment tests remain green: pytest ReleaseManifestContractTests + StagingSanitizeAndGateTests + WorkflowAndTemplateContractTests (20 passed, 15 subtests passed in 5.35s); pytest test_collector_rejects_tampered_migration_files_and_missing_owner_store + test_deploy_host_renders_and_ships_migration_material_and_fails_closed_on_manifest_mismatch + test_source_artifact_retrieval_and_checksum_mismatch_rejection (3 passed in 156.92s); pytest tests/deployment/test_production_release.py (82 passed, 11 subtests passed in 134.73s); bash -n scripts/deploy/staging_*.sh deploy/staging/bootstrap.sh (exit 0); actionlint .github/workflows/staging-ephemeral-deploy.yml .github/workflows/staging-orphan-cleanup.yml (exit 0).",
-    "remaining_hosted_obligation": "Two consecutive zero-start live staging drills with actual gates and zero orphan inventory on release pantheon-20261028-102, seed pantheon-stg-sanitized-seed-20261030-v5 (id 73632110598225712), and e2-standard-8 (cohort expires 2026-11-04T02:18:18.658Z; drill 8 failed as recorded with inventory 0). No drills, workflows, or cloud mutations executed by worker; hosted completion track remains external_wait."
+    "remaining_hosted_obligation": "Satisfied on 2026-11-03 by two consecutive zero-start live staging drills (Drill 10 run 41579314601 and Drill 11 run 41581135775) on dev 9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b; see top-level 'hosted' section."
+  },
+  "hosted": {
+    "recorded_at": "2026-11-03T05:20:00Z",
+    "executed_by": "Human/Ops (operator-run on 2026-11-03; verified read-only by Antigravity via gh run view / gh api / gh run download and local receipts)",
+    "workflow_name": "Pantheon Ephemeral Staging Deploy",
+    "workflow_path": ".github/workflows/staging-ephemeral-deploy.yml",
+    "head_branch": "dev",
+    "head_sha": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
+    "head_sha_includes_prs": [
+      "https://github.com/ajoe734/pantheon/pull/6914",
+      "https://github.com/ajoe734/pantheon/pull/6922"
+    ],
+    "release_id": "pantheon-20261028-102",
+    "release_manifest_path": "deploy/staging/releases/pantheon-20261028-102.json",
+    "release_manifest_sha256": "sha256:617e2936f3534a1f425e8c71726750826979c5b1d98cf767fec2fdb0c728bcf3",
+    "release_state": "dev_verified",
+    "backend_commit": "9a12eb361165867d39b7c7c6f55e846a1b4564e1",
+    "frontend_commit": "24534489030770f9e7a52cb893e97efa14b53cc4",
+    "frontend_artifact_sha256": "sha256:47cfd8d3c0f970569c22cfb9736294f6e7c01ed73f0141c3d07c7de9b0ead69a",
+    "operator_bff_image": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:ccb9b9291521b360ce8ac1fed682df36b4b39f9d45dfd74efe5e2d9eb65913b8",
+    "rollback_previous_release_id": "pantheon-20261028-100",
+    "rollback_frontend_artifact_sha256": "sha256:d58fdf8dae491bc47c9b83dcf6e636a1de4c90fe29d8862a399522cbee79a093",
+    "rollback_operator_bff_image": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:3ca3d75e51a48cede9e0771db83eb5e842b0eb0da4e20080538ab56bc381610c",
+    "sanitized_seed": {
+      "name": "pantheon-stg-sanitized-seed-20261030-v5",
+      "snapshot_id": "73632110598225712",
+      "dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+      "source_environment": "dev_sanitized_seed",
+      "table_count": 97,
+      "cohort_expires_at": "2026-11-04T02:18:18.658Z"
+    },
+    "machine_type": "e2-standard-8",
+    "staging_project_id": "pantheon-stg-20260902",
+    "staging_region": "asia-east1",
+    "staging_zone": "asia-east1-b",
+    "consecutive_back_to_back_verified": true,
+    "zero_start_and_zero_end": {
+      "inventory_empty_before_each_dispatch": true,
+      "inventory_empty_after_each_close": true,
+      "staging_ephemeral_enabled_reset_to_false_after_each_drill": true,
+      "per_drill_iam_resources_created": 0,
+      "owned_resources_deleted_per_drill": 4,
+      "owned_resource_types_deleted_in_order": [
+        "instance",
+        "disk (data)",
+        "disk (boot)",
+        "address"
+      ],
+      "post_delete_readback_verified_each_drill": true
+    },
+    "drills": [
+      {
+        "drill": 10,
+        "run_id": 41579314601,
+        "run_url": "https://github.com/ajoe734/pantheon/actions/runs/41579314601",
+        "job_id": 125730147767,
+        "job_url": "https://github.com/ajoe734/pantheon/actions/runs/41579314601/job/125730147767",
+        "head_sha": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
+        "created_at": "2026-11-03T04:38:35Z",
+        "started_at": "2026-11-03T04:38:40Z",
+        "completed_at": "2026-11-03T04:57:17Z",
+        "conclusion": "success",
+        "stage_conclusions": {
+          "stage_1_2_provision_and_deploy": "success",
+          "stage_3_collect_and_verify_live_gates": "success",
+          "stage_3b_bounded_qa_window": "skipped",
+          "stage_4_5_collect_evidence_and_destroy": "success",
+          "upload_bounded_staging_evidence_bundle": "success"
+        },
+        "artifact": {
+          "id": 13205541547,
+          "name": "staging-evidence-pantheon-20261028-102-41579314601",
+          "url": "https://api.github.com/repos/ajoe734/pantheon/actions/artifacts/13205541547",
+          "digest": "sha256:210fb5fccd9b247e195f089d5bee11e36e8c90c792b839cdf7096fcf56fd1c9e",
+          "size_in_bytes": 4618
+        },
+        "observed_deploy": {
+          "status": "deployed_observed",
+          "dry_run": false,
+          "observed": true,
+          "observed_from_live_vm": true,
+          "rebuilt_during_promotion": false,
+          "bff_healthy": true,
+          "data_disk_mounted": true,
+          "vm_name": "pantheon-stg-pantheon-20261028-102",
+          "reserved_ip": "34.80.189.209"
+        },
+        "gates": {
+          "verification_status": "staging_verified",
+          "dry_run": false,
+          "observed_from_live_vm": true,
+          "exact_pair_rollback": {
+            "exact_pair_rollback_verified": true,
+            "restored_release_id": "pantheon-20261028-100",
+            "rollback_duration_seconds": 107.727,
+            "rto_limit_seconds": 120.0,
+            "margin_under_limit_seconds": 12.273,
+            "phase_timings_seconds": {
+              "drain": 10.814,
+              "baseline_up": 55.635,
+              "owners_healthy": 32.817,
+              "readyz_200": 0.047,
+              "readback": 8.411
+            }
+          },
+          "migration_and_compatibility": {
+            "migration_set_sha256": "sha256:a35cb55989d3eb8c3919c6158a98f30d686416aee703597b018cbfe72441210c",
+            "migration_verified": true,
+            "old_app_new_schema_compatible": true
+          },
+          "sanitized_data": {
+            "sanitized_verified": true,
+            "verified": true,
+            "snapshot_name": "pantheon-stg-sanitized-seed-20261030-v5",
+            "observed_phase": "pre_owner_start",
+            "observed_at": "2026-11-03T04:47:21.422639Z",
+            "dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+            "live_dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+            "metadata_dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+            "table_count": 97
+          },
+          "backup_restore_readability": {
+            "backup_restore_verified": true,
+            "backup_id": "stg-backup-pantheon-20261028-102",
+            "backup_sha256": "sha256:40949ea014bc83856e52525be457130fd9e1a59953a44eb73007723a3476fb40",
+            "owner_store_backup_sha256": "sha256:e64bee0f594d895208ab56753231f75748d0537dc065111a1bf3ceb47c9c9cc9"
+          },
+          "security_and_safety_readbacks": {
+            "security_and_safety_readback_verified": true,
+            "live_broker_enabled": false,
+            "provider_enabled": false,
+            "real_writes_enabled": false
+          },
+          "cleanup_dry_run": {
+            "status": "ok",
+            "mode": "orphan-sweep",
+            "dry_run": true,
+            "deleted_resources": [],
+            "retained_active_resources_count": 4,
+            "skipped_unowned_resources": []
+          }
+        },
+        "teardown_readback": {
+          "result": "success",
+          "reason": "completed",
+          "post_delete_readback_verified": true,
+          "upload_status": "uploaded",
+          "upload_attempts": 1,
+          "verification_summary_present": true,
+          "deleted_resources_count": 4,
+          "deleted_resources": [
+            {
+              "type": "instance",
+              "name": "pantheon-stg-pantheon-20261028-102",
+              "resource_id": "4516650232121187143",
+              "state": "deleted"
+            },
+            {
+              "type": "disk",
+              "name": "pantheon-stg-data-pantheon-20261028-102",
+              "resource_id": "4547529852978518883",
+              "state": "deleted"
+            },
+            {
+              "type": "disk",
+              "name": "pantheon-stg-pantheon-20261028-102-boot",
+              "resource_id": "616027222419233612",
+              "state": "deleted"
+            },
+            {
+              "type": "address",
+              "name": "pantheon-stg-ip-pantheon-20261028-102",
+              "resource_id": "8800726646404733802",
+              "address": "34.80.189.209",
+              "state": "deleted"
+            }
+          ]
+        },
+        "zero_inventory_receipts": {
+          "before_path": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-10-release102-v5-20261103/before.json",
+          "before_at": "2026-11-03T04:38:32.156937+00:00",
+          "before_inventory": {
+            "instances": [],
+            "disks": [],
+            "addresses": []
+          },
+          "before_flag": "false",
+          "closed_path": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-10-release102-v5-20261103/closed.json",
+          "closed_at": "2026-11-03T04:57:49.428512+00:00",
+          "closed_inventory": {
+            "instances": [],
+            "disks": [],
+            "addresses": []
+          },
+          "flag_after": "false",
+          "zero": true,
+          "drill_receipt_path": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/ACTUAL-zero-start-drill-10-release102-v5-e2s8-success-20261103.json"
+        }
+      },
+      {
+        "drill": 11,
+        "run_id": 41581135775,
+        "run_url": "https://github.com/ajoe734/pantheon/actions/runs/41581135775",
+        "job_id": 125735994703,
+        "job_url": "https://github.com/ajoe734/pantheon/actions/runs/41581135775/job/125735994703",
+        "head_sha": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
+        "created_at": "2026-11-03T04:58:16Z",
+        "started_at": "2026-11-03T04:58:59Z",
+        "completed_at": "2026-11-03T05:14:44Z",
+        "conclusion": "success",
+        "stage_conclusions": {
+          "stage_1_2_provision_and_deploy": "success",
+          "stage_3_collect_and_verify_live_gates": "success",
+          "stage_3b_bounded_qa_window": "skipped",
+          "stage_4_5_collect_evidence_and_destroy": "success",
+          "upload_bounded_staging_evidence_bundle": "success"
+        },
+        "artifact": {
+          "id": 13205758813,
+          "name": "staging-evidence-pantheon-20261028-102-41581135775",
+          "url": "https://api.github.com/repos/ajoe734/pantheon/actions/artifacts/13205758813",
+          "digest": "sha256:fc3bf590c305d06939f8884f054f4649657642252634915969d6eb1247f2ee4a",
+          "size_in_bytes": 4618
+        },
+        "observed_deploy": {
+          "status": "deployed_observed",
+          "dry_run": false,
+          "observed": true,
+          "observed_from_live_vm": true,
+          "rebuilt_during_promotion": false,
+          "bff_healthy": true,
+          "data_disk_mounted": true,
+          "vm_name": "pantheon-stg-pantheon-20261028-102",
+          "reserved_ip": "35.185.146.146"
+        },
+        "gates": {
+          "verification_status": "staging_verified",
+          "dry_run": false,
+          "observed_from_live_vm": true,
+          "exact_pair_rollback": {
+            "exact_pair_rollback_verified": true,
+            "restored_release_id": "pantheon-20261028-100",
+            "rollback_duration_seconds": 108.599,
+            "rto_limit_seconds": 120.0,
+            "margin_under_limit_seconds": 11.401,
+            "phase_timings_seconds": {
+              "drain": 10.694,
+              "baseline_up": 54.903,
+              "owners_healthy": 35.789,
+              "readyz_200": 0.137,
+              "readback": 7.074
+            }
+          },
+          "migration_and_compatibility": {
+            "migration_set_sha256": "sha256:a35cb55989d3eb8c3919c6158a98f30d686416aee703597b018cbfe72441210c",
+            "migration_verified": true,
+            "old_app_new_schema_compatible": true
+          },
+          "sanitized_data": {
+            "sanitized_verified": true,
+            "verified": true,
+            "snapshot_name": "pantheon-stg-sanitized-seed-20261030-v5",
+            "observed_phase": "pre_owner_start",
+            "observed_at": "2026-11-03T05:06:40.800441Z",
+            "dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+            "live_dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+            "metadata_dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+            "table_count": 97
+          },
+          "backup_restore_readability": {
+            "backup_restore_verified": true,
+            "backup_id": "stg-backup-pantheon-20261028-102",
+            "backup_sha256": "sha256:09fd5eb59dae679452d176e5ab044dbc585fc90a53932372fde01c871b4ef84f",
+            "owner_store_backup_sha256": "sha256:68b7c6f7b45880db55398d79e169f7efb5d1591b663b31cb2889a5e052370312"
+          },
+          "security_and_safety_readbacks": {
+            "security_and_safety_readback_verified": true,
+            "live_broker_enabled": false,
+            "provider_enabled": false,
+            "real_writes_enabled": false
+          },
+          "cleanup_dry_run": {
+            "status": "ok",
+            "mode": "orphan-sweep",
+            "dry_run": true,
+            "deleted_resources": [],
+            "retained_active_resources_count": 4,
+            "skipped_unowned_resources": []
+          }
+        },
+        "teardown_readback": {
+          "result": "success",
+          "reason": "completed",
+          "post_delete_readback_verified": true,
+          "upload_status": "uploaded",
+          "upload_attempts": 1,
+          "verification_summary_present": true,
+          "deleted_resources_count": 4,
+          "deleted_resources": [
+            {
+              "type": "instance",
+              "name": "pantheon-stg-pantheon-20261028-102",
+              "resource_id": "6404344747338814603",
+              "state": "deleted"
+            },
+            {
+              "type": "disk",
+              "name": "pantheon-stg-data-pantheon-20261028-102",
+              "resource_id": "483470053329917095",
+              "state": "deleted"
+            },
+            {
+              "type": "disk",
+              "name": "pantheon-stg-pantheon-20261028-102-boot",
+              "resource_id": "7722051489824560304",
+              "state": "deleted"
+            },
+            {
+              "type": "address",
+              "name": "pantheon-stg-ip-pantheon-20261028-102",
+              "resource_id": "6616336975790396590",
+              "address": "35.185.146.146",
+              "state": "deleted"
+            }
+          ]
+        },
+        "zero_inventory_receipts": {
+          "before_path": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-11-release102-v5-20261103/before.json",
+          "before_at": "2026-11-03T04:58:13.237367+00:00",
+          "before_inventory": {
+            "instances": [],
+            "disks": [],
+            "addresses": []
+          },
+          "before_flag": "false",
+          "closed_path": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-11-release102-v5-20261103/closed.json",
+          "closed_at": "2026-11-03T05:15:06.065690+00:00",
+          "closed_inventory": {
+            "instances": [],
+            "disks": [],
+            "addresses": []
+          },
+          "flag_after": "false",
+          "zero": true,
+          "drill_receipt_path": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/ACTUAL-zero-start-drill-11-release102-v5-e2s8-success-20261103.json"
+        }
+      }
+    ],
+    "zero_inventory_receipts_by_path": {
+      "drill_10_receipt": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/ACTUAL-zero-start-drill-10-release102-v5-e2s8-success-20261103.json",
+      "drill_11_receipt": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/ACTUAL-zero-start-drill-11-release102-v5-e2s8-success-20261103.json",
+      "two_consecutive_drills_passed_receipt": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/ACTUAL-two-consecutive-zero-start-staging-drills-10-11-PASSED-20261103.json",
+      "drill_10_dir": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-10-release102-v5-20261103/",
+      "drill_10_before_json": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-10-release102-v5-20261103/before.json",
+      "drill_10_closed_json": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-10-release102-v5-20261103/closed.json",
+      "drill_11_dir": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-11-release102-v5-20261103/",
+      "drill_11_before_json": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-11-release102-v5-20261103/before.json",
+      "drill_11_closed_json": "/tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/actual-zero-start-drill-11-release102-v5-20261103/closed.json",
+      "earlier_drills_1_to_9_summary": "Earlier drills 1-9 (runs 41382561090, 41389390525, 41413058719, 41446053084, 41463489685, 41466107722, 41470074094, 41571926235, 41578157682) are recorded in /tmp/pantheon-codex-01a11-review-20261023/post-dev-existing-staging-source-resumption-20261026/ (ACTUAL-zero-start-drill-{1,2,4,5,6,7,8,9}-*.json, ACTUAL-drill-3-probe-findings-20261102.json, and actual-zero-start-drill-{1..9}-*/). Every one of them ended with staging inventory 0 (instances=[], disks=[], addresses=[]) and STAGING_EPHEMERAL_ENABLED=false before the next drill."
+    },
+    "margin_limitation": "Exact-pair rollback duration on e2-standard-8 was 107.727s (drill 10) and 108.599s (drill 11), which is about 11-12s (12.273s and 11.401s) under the 120s limit.",
+    "interpretation_note": "\"two consecutive releases\" was executed as two consecutive zero-start runs of the same dev_verified release pantheon-20261028-102 by the existing workflow (.github/workflows/staging-ephemeral-deploy.yml). If the reviewer reads AC10 as requiring two different releases, block with that reason instead of claiming done.",
+    "production_boundary": "Production obligations belong to ENV-PROD-CONTROL-IMPL-001 and are NOT marked here."
   }
 }
