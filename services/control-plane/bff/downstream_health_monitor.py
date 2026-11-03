@@ -58,6 +58,8 @@ INFRASTRUCTURE_HEALTH_SCHEMA_VERSION = "pantheon.infrastructure-health/1"
 INFRASTRUCTURE_HEALTH_PRODUCER = "control-plane-bff"
 INFRASTRUCTURE_HEALTH_PATH = "/api/v1/telemetry/infrastructure-health"
 INFRASTRUCTURE_INCIDENT_PATH = "/api/incidents/consume-infrastructure-health"
+INFRASTRUCTURE_INCIDENT_RECONCILE_PATH = "/api/incidents/reconcile-infrastructure-health"
+ORPHAN_RECOVERED_REASON = "orphan_recovered"
 _DELIVERY_HISTORY_RETENTION_SECONDS = 7 * 24 * 60 * 60
 # Undelivered health rows older than this no longer describe current health.
 _DELIVERY_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -1275,6 +1277,30 @@ class _DurableHealthStore:
             )
         return cursor.rowcount == 1
 
+    def has_active_incident_delivery(
+        self,
+        *,
+        target_name: str,
+        incident_id: str,
+    ) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM delivery_outbox
+                WHERE target_name=?
+                  AND channel IN ('incident_open', 'incident_resolve')
+                  AND status IN ('pending', 'retry', 'claimed', 'dead_letter')
+                  AND (url LIKE ? OR body_json LIKE ?)
+                LIMIT 1
+                """,
+                (
+                    target_name,
+                    f"%{incident_id}%",
+                    f"%{incident_id}%",
+                ),
+            ).fetchone()
+        return row is not None
+
     def queue_delivery(
         self,
         *,
@@ -2214,6 +2240,13 @@ class DownstreamHealthMonitor:
                 )
         await asyncio.to_thread(self._deliver_due_sync)
         try:
+            await asyncio.to_thread(
+                self.reconcile_orphaned_incidents_sync,
+                observed_at=observed_at,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("reconcile_orphaned_incidents error: %s", exc)
+        try:
             # get_state reads several durable tables; gather it off-loop and
             # keep only the heartbeat scheduling on the event loop.
             state = await asyncio.to_thread(self.get_state)
@@ -2525,6 +2558,95 @@ class DownstreamHealthMonitor:
             INFRASTRUCTURE_INCIDENT_PATH,
         ).strip()
         return f"{self._incidents_url.rstrip('/')}/{path.lstrip('/')}"
+
+    def _incident_reconcile_url(self) -> str:
+        path = os.getenv(
+            "PANTHEON_BFF_HEALTH_INCIDENT_RECONCILE_PATH",
+            INFRASTRUCTURE_INCIDENT_RECONCILE_PATH,
+        ).strip()
+        return f"{self._incidents_url.rstrip('/')}/{path.lstrip('/')}"
+
+    async def reconcile_orphaned_incidents(
+        self,
+        *,
+        observed_at: Optional[str] = None,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self.reconcile_orphaned_incidents_sync,
+            observed_at=observed_at,
+        )
+
+    def reconcile_orphaned_incidents_sync(
+        self,
+        *,
+        observed_at: Optional[str] = None,
+    ) -> bool:
+        if not self._incidents_url:
+            return False
+        probes = self._store.list_probes()
+        healthy_components = sorted(
+            name
+            for name, probe in probes.items()
+            if probe.ok and int(probe.consecutive_failures) == 0
+        )
+        if not healthy_components:
+            return False
+
+        incidents = self._store.list_incidents()
+        referenced_incident_ids: List[str] = []
+        orphaned_resolving_targets: List[ tuple[str, str] ] = []
+        for target_name, row in incidents.items():
+            status = str(row.get("status") or "").strip().lower()
+            inc_id = str(row.get("incident_id") or "").strip()
+            if not inc_id:
+                continue
+            if status in {"opening", "open"}:
+                referenced_incident_ids.append(inc_id)
+            elif status == "resolving":
+                if self._store.has_active_incident_delivery(
+                    target_name=target_name,
+                    incident_id=inc_id,
+                ):
+                    referenced_incident_ids.append(inc_id)
+                elif target_name in healthy_components:
+                    orphaned_resolving_targets.append((target_name, inc_id))
+
+        now_iso = str(observed_at or _utc_now_rfc3339()).strip() or _utc_now_rfc3339()
+        body = {
+            "tenant_id": self._tenant_id,
+            "producer": self._producer,
+            "healthy_components": healthy_components,
+            "referenced_incident_ids": sorted(set(referenced_incident_ids)),
+            "observed_at": now_iso,
+            "resolved_at": now_iso,
+            "resolution_reason": ORPHAN_RECOVERED_REASON,
+        }
+        headers = self._headers_for_delivery(
+            {
+                "event_id": f"orphan-reconcile:{now_iso}",
+                "channel": "incident_reconcile",
+            }
+        )
+        token = _POST_HEADERS.set(headers)
+        try:
+            ok, _status_code = _post_json(
+                self._incident_reconcile_url(),
+                body,
+                min(self._http_timeout, 2.0),
+            )
+        finally:
+            _POST_HEADERS.reset(token)
+
+        if ok:
+            for target_name, inc_id in orphaned_resolving_targets:
+                self._store.set_incident_status(
+                    target_name=target_name,
+                    incident_id=inc_id,
+                    status="resolved",
+                    event_id=f"orphan-reconcile:{now_iso}",
+                )
+                self._open_incident_ids.pop(target_name, None)
+        return bool(ok)
 
     async def _handle_probe_result(self, result: DownstreamProbeResult) -> None:
         # Durable SQLite work blocks on the WAL writer lock, so keep it off the

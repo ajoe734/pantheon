@@ -13,6 +13,9 @@ from .incident import (
     IncidentError,
     IncidentStore,
     Postmortem,
+    _serialized_store_write,
+    extract_infrastructure_incident_component,
+    is_infrastructure_health_incident,
 )
 
 
@@ -184,6 +187,21 @@ class PostgresIncidentStore(IncidentStore):
                 else:
                     self._incidents[record_id] = IncidentCase.from_dict(dict(expected_snapshot))
         return resolved
+
+    @_serialized_store_write
+    def upsert_open_infrastructure_incident(
+        self,
+        incoming: IncidentCase,
+    ) -> tuple[IncidentCase, bool]:
+        """Postgres-backed single-open-per-component upsert with CAS retry."""
+        for attempt in range(3):
+            try:
+                return super().upsert_open_infrastructure_incident(incoming)
+            except IncidentConcurrencyError:
+                if attempt == 2:
+                    raise
+                self._refresh_from_disk()
+        return super().upsert_open_infrastructure_incident(incoming)
 
     def _owner_and_payload(
         self,
