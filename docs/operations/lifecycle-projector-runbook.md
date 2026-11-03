@@ -72,11 +72,12 @@ Rollup rule (`JourneyMaterializer._rollup` / `deadline_status`):
 
 Deadline: `PANTHEON_TRADE_JOURNEY_RECONCILIATION_DEADLINE_SECONDS`, default 72h. Both statuses are in `TERMINAL_STATUSES`, so the BFF never flags them stalled; `unreconciled` is never presented as `completed`. The runtime-binding-ended signal is not carried on projection rows, so the deadline is the only criterion. Pure replays pass no `as_of` and stay deterministic; only the live projector applies the deadline.
 
-Existing rows: migration `003_reclassify_stale_open_journeys.sql` only installs
-`trade_journey_projection.reclassify_stale_open_journeys(as_of, deadline_seconds, batch_size)`
-(no row writes, so it never blocks readiness). Drive it with
-`projection_migration.reclassify_stale_open_journeys(run_batch, ...)`, which loops
-bounded batches (default 1000 rows, `max_batches` per run) and reports `complete`.
+Existing rows: migration `003_reclassify_stale_open_journeys.sql` only adds a partial
+index on open journeys (no routines, no row writes, so it never blocks readiness and
+the runtime-role reconcile stays idempotent). Drive the reclassification with
+`projection_migration.reclassify_stale_open_journeys(sql_reclassify_batch_runner(connect), ...)`,
+which loops the bounded `RECLASSIFY_STALE_OPEN_SQL` UPDATE (default 1000 rows,
+`max_batches` per run) and reports `complete`.
 Rerun until `complete=true`; reclassified rows leave `open`, so it is resumable and idempotent.
 
 Verify after deployment: `SELECT status, count(*) FROM trade_journey_projection.journeys GROUP BY 1`.

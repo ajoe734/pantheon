@@ -2,7 +2,7 @@
   "task": "TRADE-JOURNEY-STALE-OPEN-TERMINAL-20261103",
   "hosted_verification": "not performed; counts below are expected values derived from the 2026-11-03 read-only baseline in the task brief",
   "rule": "services/trade_journey/materializer.py _rollup + deadline_status; deadline 72h (PANTHEON_TRADE_JOURNEY_RECONCILIATION_DEADLINE_SECONDS)",
-  "reclassification_path": "migrations/003_reclassify_stale_open_journeys.sql function, driven in bounded batches by projection_migration.reclassify_stale_open_journeys",
+  "reclassification_path": "migrations/003_reclassify_stale_open_journeys.sql partial index (no routines); bounded UPDATE RECLASSIFY_STALE_OPEN_SQL driven in batches by projection_migration.reclassify_stale_open_journeys",
   "baseline": {"total": 157997, "open": 147149, "completed_with_variance": 6936, "completed": 3719, "failed": 193},
   "expected_reclassification": {
     "no_order": {
