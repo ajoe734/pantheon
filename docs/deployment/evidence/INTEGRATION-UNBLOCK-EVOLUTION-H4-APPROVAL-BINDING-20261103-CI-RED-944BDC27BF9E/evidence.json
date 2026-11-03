@@ -1,0 +1,11 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-EVOLUTION-H4-APPROVAL-BINDING-20261103-CI-RED-944BDC27BF9E",
+  "original_pr": 6916,
+  "failing_check": "Branch CI Gate / Smoke acceptance (step: BFF test architecture gate)",
+  "root_cause": "services/control-plane/bff/tests/test_evolution_decision_approval_binding.py:29 called sys.path.insert; test_migrated_suites_do_not_mutate_sys_path forbids this in non-composition suites.",
+  "fix": "Removed the sys.path.insert block and the now-unused sys/Path imports. Original PR commits cherry-picked onto this branch, so this PR supersedes #6916.",
+  "verification": {
+    "py_compile": "passed",
+    "pytest": "not run locally (pytest unavailable in worker sandbox); relies on CI"
+  }
+}
