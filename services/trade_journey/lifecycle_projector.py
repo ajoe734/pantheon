@@ -610,7 +610,7 @@ class RelationalLifecycleProjector:
             if not source_event_ids:
                 continue
             identity_links.extend(self._identity_links_for_aggregate(agg))
-            reducer = JourneyMaterializer()
+            reducer = JourneyMaterializer(as_of=datetime.now(timezone.utc))
             reducer.rebuild(agg.journey_events)
             projection = reducer.get(
                 journey_id, tenant_id=agg.tenant_id, environment=agg.environment

@@ -44,6 +44,7 @@ from services.trade_journey.lifecycle_projector import (
     _fingerprint,
 )
 from services.trade_journey.materializer import (
+    RECONCILIATION_DEADLINE_SECONDS,
     IDENTIFIER_FIELDS,
     JourneyMaterializer,
     SHARED_IDENTIFIER_TYPES,
@@ -1334,3 +1335,36 @@ def projection_quarantine_rows(rows: Iterable[Any]) -> list[dict[str, Any]]:
         {"event_id": _field(row, "event_id"), "ingested_seq": _field(row, "ingested_seq")}
         for row in rows
     ]
+
+
+def reclassify_stale_open_journeys(
+    run_batch: Callable[[datetime, int, int], Mapping[str, int]],
+    *,
+    as_of: datetime | None = None,
+    deadline_seconds: int = RECONCILIATION_DEADLINE_SECONDS,
+    batch_size: int = 1000,
+    max_batches: int = 100,
+) -> dict[str, Any]:
+    """Drive the bounded ``reclassify_stale_open_journeys`` SQL function.
+
+    ``run_batch(as_of, deadline_seconds, batch_size)`` executes one short
+    transaction and returns ``{new_status: rows}``. Reclassified rows leave
+    ``open``, so rerunning resumes where the last call stopped; a run bounded by
+    ``max_batches`` reports ``complete=False`` and is simply invoked again.
+    """
+    if batch_size < 1 or max_batches < 1:
+        raise ValueError("batch_size and max_batches must be positive")
+    as_of = as_of or datetime.now(timezone.utc)
+    totals: dict[str, int] = {}
+    batches = 0
+    complete = False
+    while batches < max_batches:
+        counts = run_batch(as_of, deadline_seconds, batch_size)
+        batches += 1
+        moved = sum(int(value) for value in counts.values())
+        for status, value in counts.items():
+            totals[status] = totals.get(status, 0) + int(value)
+        if moved < batch_size:
+            complete = True
+            break
+    return {"batches": batches, "reclassified": totals, "complete": complete}

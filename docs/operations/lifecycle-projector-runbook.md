@@ -58,3 +58,25 @@ and DDL/grant rollback. Artifact seal ordering and compensation have separate
 deployment contract tests. These are local source proofs, not hosted acceptance.
 Only the existing release coordinator may consume the merged source for a bounded
 upgrade/deploy; the earlier failed root run is not an accepted candidate.
+
+## Stale-open journey reclassification (`no_order` / `unreconciled`)
+
+Rollup rule (`JourneyMaterializer._rollup` / `deadline_status`):
+
+| Condition | Status |
+| --- | --- |
+| `order_submission` skipped | `no_order` |
+| open, no `reconciliation` stage, last event older than the deadline, no `order_submission` stage | `no_order` |
+| open, no `reconciliation` stage, last event older than the deadline, `order_submission` present | `unreconciled` |
+| within the deadline | `open` (existing stalled flag unchanged) |
+
+Deadline: `PANTHEON_TRADE_JOURNEY_RECONCILIATION_DEADLINE_SECONDS`, default 72h. Both statuses are in `TERMINAL_STATUSES`, so the BFF never flags them stalled; `unreconciled` is never presented as `completed`. The runtime-binding-ended signal is not carried on projection rows, so the deadline is the only criterion. Pure replays pass no `as_of` and stay deterministic; only the live projector applies the deadline.
+
+Existing rows: migration `003_reclassify_stale_open_journeys.sql` only installs
+`trade_journey_projection.reclassify_stale_open_journeys(as_of, deadline_seconds, batch_size)`
+(no row writes, so it never blocks readiness). Drive it with
+`projection_migration.reclassify_stale_open_journeys(run_batch, ...)`, which loops
+bounded batches (default 1000 rows, `max_batches` per run) and reports `complete`.
+Rerun until `complete=true`; reclassified rows leave `open`, so it is resumable and idempotent.
+
+Verify after deployment: `SELECT status, count(*) FROM trade_journey_projection.journeys GROUP BY 1`.
