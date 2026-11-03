@@ -24,7 +24,18 @@ from services.foundation.reliable_delivery import (
 from services.incident.incident import (
     IncidentCase,
     IncidentConcurrencyError,
+    MONITOR_AGENT_ARTIFACT_PREFIX,
+    MONITOR_AGENT_AUTHORITY_ID,
+    MONITOR_AGENT_BINDING_ID,
+    MONITOR_AGENT_CLUSTER_PREFIX,
+    MONITOR_AGENT_COMPONENT_KIND,
+    MONITOR_AGENT_PLAN_ID,
+    MONITOR_AGENT_POOL_ID,
+    MONITOR_AGENT_RUNTIME_ID,
+    NOT_REOBSERVED_RESOLUTION_REASON,
+    ORPHAN_RECOVERED_RESOLUTION_REASON,
     Postmortem,
+    extract_incident_resolution_reason,
 )
 from services.incident.pg_store import PostgresIncidentStore
 
@@ -453,3 +464,108 @@ def test_postgres_inbox_reservation_fences_stale_claimant(pg_case):
     replay_state, replay = second.reserve(event, result_ref="pm-pg-delivery")
     assert replay_state == "applied"
     assert replay["result_ref"] == "pm-pg-delivery"
+
+
+def test_postgres_resolve_stale_monitor_agent_findings_preserves_non_agent_incidents(pg_case):
+    seed = _store(pg_case, bootstrap=True)
+    stale_finding = IncidentCase(
+        incident_id="agent-pg-stale-001",
+        title="Reconciler generation jumped",
+        status="open",
+        severity="medium",
+        created_at="2026-07-15T00:00:00Z",
+        binding_id=MONITOR_AGENT_BINDING_ID,
+        deployment_stage="paper",
+        deployment_plan_id=MONITOR_AGENT_PLAN_ID,
+        capital_pool_id=MONITOR_AGENT_POOL_ID,
+        persona_capital_binding_id=MONITOR_AGENT_AUTHORITY_ID,
+        artifact_id=f"{MONITOR_AGENT_ARTIFACT_PREFIX}reconciler-generation-change",
+        artifact_version="1.0.0",
+        runtime_id=MONITOR_AGENT_RUNTIME_ID,
+        trace_id="monitor-snapshot-20260715T000000Z-111111111111",
+        telemetry_event_ids=["monitor-snapshot-20260715T000000Z-111111111111"],
+        incident_cluster_id=f"{MONITOR_AGENT_CLUSTER_PREFIX}reconciler-generation-change",
+        evidence_summary=(
+            f"component_kind={MONITOR_AGENT_COMPONENT_KIND}; "
+            "component=agent-finding-reconciler-generation-change; "
+            "snapshot_ref=monitor-snapshot-20260715T000000Z-111111111111"
+        ),
+        lineage_ref=f"{MONITOR_AGENT_ARTIFACT_PREFIX}reconciler-generation-change@1.0.0",
+    )
+    open_runtime = replace(_incident(), incident_id="inc-pg-runtime-open", status="open", resolved_at=None)
+    seed.create_incident(stale_finding)
+    seed.create_incident(open_runtime)
+
+    sweeper = _store(pg_case, bootstrap=False)
+    resolved = sweeper.resolve_stale_monitor_agent_findings(
+        resolve_after_seconds=7200,
+        now=datetime(2026, 7, 15, 3, 0, 0, tzinfo=timezone.utc),
+    )
+    assert [inc.incident_id for inc in resolved] == ["agent-pg-stale-001"]
+
+    reader = _store(pg_case, bootstrap=False)
+    durable_finding = reader.require_incident("agent-pg-stale-001")
+    assert durable_finding.status == "resolved"
+    assert extract_incident_resolution_reason(durable_finding) == NOT_REOBSERVED_RESOLUTION_REASON
+    assert reader.require_incident("inc-pg-runtime-open").status == "open"
+
+
+def test_postgres_upsert_and_resolve_orphaned_infrastructure_incidents(pg_case):
+    seed = _store(pg_case, bootstrap=True)
+    first_infra = IncidentCase(
+        incident_id="infra-bff-0847594c513bbe71b6aedcd3",
+        title="BFF downstream degradation: governance",
+        status="open",
+        severity="high",
+        created_at="2026-10-22T08:00:00Z",
+        binding_id="infra-subject-default-control-plane-bff-governance",
+        deployment_stage="paper",
+        deployment_plan_id="infra-plan-control-plane-bff",
+        capital_pool_id="infra-tenant-default",
+        persona_capital_binding_id="infra-authority-control-plane-bff",
+        artifact_id="infra-component-governance",
+        artifact_version="endpoint-1234567890ab",
+        runtime_id="infra-endpoint-1234567890ab",
+        trace_id="evt-gov-1022",
+        telemetry_event_ids=["evt-gov-1022"],
+        incident_cluster_id="infrastructure:default:control-plane-bff:governance",
+        evidence_summary=(
+            "non_trading_infrastructure_incident=true; service_name=governance; "
+            "source_event_id=evt-gov-1022"
+        ),
+        lineage_ref="infra-component-governance@endpoint-1234567890ab",
+    )
+    second_infra = replace(
+        first_infra,
+        incident_id="infra-bff-2b8541b81f8d5796101ad57e",
+        created_at="2026-10-27T01:32:00Z",
+        trace_id="evt-gov-1027",
+        telemetry_event_ids=["evt-gov-1027"],
+    )
+    open_runtime = replace(_incident(), incident_id="inc-pg-runtime-keep-open", status="open", resolved_at=None)
+
+    inc1, created1 = seed.upsert_open_infrastructure_incident(first_infra)
+    assert created1 is True
+    assert inc1.incident_id == "infra-bff-0847594c513bbe71b6aedcd3"
+
+    second_writer = _store(pg_case, bootstrap=False)
+    inc2, created2 = second_writer.upsert_open_infrastructure_incident(second_infra)
+    assert created2 is False
+    assert inc2.incident_id == "infra-bff-0847594c513bbe71b6aedcd3"
+    assert "evt-gov-1027" in inc2.telemetry_event_ids
+    seed.create_incident(open_runtime)
+
+    reconciler = _store(pg_case, bootstrap=False)
+    resolved = reconciler.resolve_orphaned_infrastructure_incidents(
+        healthy_components=["governance"],
+        referenced_incident_ids=[],
+        resolved_at="2026-11-03T02:00:00Z",
+    )
+    assert [inc.incident_id for inc in resolved] == ["infra-bff-0847594c513bbe71b6aedcd3"]
+
+    reader = _store(pg_case, bootstrap=False)
+    durable_gov = reader.require_incident("infra-bff-0847594c513bbe71b6aedcd3")
+    assert durable_gov.status == "resolved"
+    assert extract_incident_resolution_reason(durable_gov) == ORPHAN_RECOVERED_RESOLUTION_REASON
+    assert reader.require_incident("inc-pg-runtime-keep-open").status == "open"
+

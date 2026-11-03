@@ -1,0 +1,30 @@
+{
+  "task": "TRADE-JOURNEY-STALE-OPEN-TERMINAL-20261103",
+  "hosted_verification": "not performed; counts below are expected values derived from the 2026-11-03 read-only baseline in the task brief",
+  "rule": "services/trade_journey/materializer.py _rollup + deadline_status; deadline 72h (PANTHEON_TRADE_JOURNEY_RECONCILIATION_DEADLINE_SECONDS)",
+  "reclassification_path": "migrations/003_reclassify_stale_open_journeys.sql partial index (no routines); bounded UPDATE RECLASSIFY_STALE_OPEN_SQL driven in batches by projection_migration.reclassify_stale_open_journeys",
+  "baseline": {"total": 157997, "open": 147149, "completed_with_variance": 6936, "completed": 3719, "failed": 193},
+  "expected_reclassification": {
+    "no_order": {
+      "order_submission_skipped": 28144,
+      "no_order_stage_past_deadline": 7980,
+      "subtotal": 36124
+    },
+    "unreconciled": {
+      "order_succeeded_with_ledger_no_reconciliation": 110970,
+      "order_succeeded_without_ledger": 55,
+      "subtotal": 111025
+    },
+    "remaining_open_expected": 0,
+    "note": "28141 skipped + 3 skipped-with-ledger = 28144. Open rows are all 2026-10-02..10-27, far past the 72h deadline as of 2026-11-03. Expected after: open 0 (+ at most the 1 open row from the last 7 days), no_order 36124, unreconciled 111025; 36124+111025 = 147149."
+  },
+  "october_no_reconciliation_analysis": {
+    "verified_facts": [
+      "The 147k open rows are confined to last_occurred_at 2026-10-02..2026-10-27 across 44 bindings, with peak ~20k/day on 10/08-10/14; only 1 open row exists in the last 7 days.",
+      "November journeys reach reconciliation, so the projector/rollup path handles reconciliation events correctly.",
+      "_rollup had no terminal outcome for skipped order_submission or for journeys that never receive reconciliation; both fell through to 'open'."
+    ],
+    "unverified_hypothesis": "The October window coincides with a period when the reconciliation producer did not emit reconciliation events for these bindings (bulk paper-loop traffic at ~20k/day); the cause was not confirmed because this task had no hosted/producer log access. Operator should check reconciliation event emission for 2026-10-02..10-27 on the producer side; the new unreconciled status makes the gap visible instead of hiding it as open."
+  },
+  "tests": "services/trade_journey/test_stale_open_terminal.py; trade_journey suite 437 passed, 1 failed (test_asyncpg_case_source_live_postgres_queries: asyncpg not installed in local venv, unrelated)"
+}

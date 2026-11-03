@@ -50,6 +50,9 @@ def _evolution_forbidden(message: str) -> ActionUnavailableError:
     )
 
 
+_ADMISSION_GENERIC_ROLES = {"admin", "approver", "reviewer", "operator"}
+
+
 def resolve_evolution_actor(
     params: Dict[str, Any],
     auth_token: Optional[str],
@@ -75,6 +78,11 @@ def resolve_evolution_actor(
     held = [str(r).strip() for r in (identity.roles or []) if str(r).strip()]
     if not principal:
         raise _evolution_forbidden("Evolution command requires a verified authenticated principal.")
+    if params.get("request_hash") and str(params.get("actor_role") or "").strip() in _ADMISSION_GENERIC_ROLES:
+        # Admission stores a generic role (admin/approver/reviewer/operator) it
+        # derived itself; it is not a client claim and cannot express Evolution
+        # owner roles such as risk_owner. Resolve from the principal's held roles.
+        params = {k: v for k, v in params.items() if k != "actor_role"}
     for key in ("actor_id", "approved_by_id"):
         claimed = str(params.get(key) or "").strip()
         if claimed and claimed != principal:

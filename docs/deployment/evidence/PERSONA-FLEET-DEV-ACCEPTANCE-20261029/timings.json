@@ -1,0 +1,117 @@
+{
+ "pair": {
+  "backend": "28b2579e39c235ef0bb6e252946de76aa9c80ac0",
+  "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+  "served_pairId": "d850d393c1dc7f7ddf89d0159db501938c95e1355882f3ec833c5db95f9db7bb",
+  "bff_image_digest": "sha256:0424deba9f769873a7740b10d66985c3002703f69ac52a403ea16dfa2d56f8b9",
+  "accepted_at": "2026-11-03T00:20:21Z",
+  "release": "20261103T001610Z",
+  "integration_gate_run": "41547638201",
+  "source": "identity verified via /bff/version and /deployment.json by the harness before and after QA, and again by direct curl after QA"
+ },
+ "method": "20 sequential browser warm GETs of fleet query trading/regular/exclude page_size=20; nearest-rank p95; cold = 3 fresh browser contexts, login latency excluded",
+ "run_started": "2026-11-03T00:25Z",
+ "dataset": {
+  "authorized_total": 120,
+  "active_total": 14,
+  "archived_total": 106,
+  "warm_scope": "purpose=trading,data_scope=regular,archived=exclude,page_size=20 (10 rows)"
+ },
+ "warm_ms": [382, 640, 347, 389, 498, 431, 655, 595, 481, 1006, 431, 420, 450, 378, 869, 496, 429, 414, 926, 479],
+ "warm_sorted_ms": [347, 378, 382, 389, 414, 420, 429, 431, 431, 450, 479, 481, 496, 498, 595, 640, 655, 869, 926, 1006],
+ "warm_p95_nearest_rank_ms": 926,
+ "warm_target_ms": 1000,
+ "warm_pass": true,
+ "cold": [
+  {
+   "entry": 1,
+   "login_HTTP": 200,
+   "login_to_shell_ms": 920,
+   "initial_post_login_API_ms": 508,
+   "login_to_initial_usable_ms": 1258,
+   "api_ms": 1097,
+   "usable_ms": 2037,
+   "row_count": 10,
+   "initial_fleet_queries": ["?purpose=trading&data_scope=regular&archived=exclude&page_size=20", "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"]
+  },
+  {
+   "entry": 2,
+   "login_HTTP": 200,
+   "login_to_shell_ms": 899,
+   "initial_post_login_API_ms": 845,
+   "login_to_initial_usable_ms": 1514,
+   "api_ms": 920,
+   "usable_ms": 1674,
+   "row_count": 10,
+   "initial_fleet_queries": ["?purpose=trading&data_scope=regular&archived=exclude&page_size=20", "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"]
+  },
+  {
+   "entry": 3,
+   "login_HTTP": 200,
+   "login_to_shell_ms": 887,
+   "initial_post_login_API_ms": 1283,
+   "login_to_initial_usable_ms": 1967,
+   "api_ms": 563,
+   "usable_ms": 1378,
+   "row_count": 10,
+   "initial_fleet_queries": ["?purpose=trading&data_scope=regular&archived=exclude&page_size=20", "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"]
+  }
+ ],
+ "cold_api_target_ms": 2000,
+ "cold_usable_target_ms": 2500,
+ "cold_pass": true,
+ "result_proof": "raw result.json not committed (outside declared artifact contract); sha256 bb7291c01dfd281093ee405a1f359604139b90b31c1e57cc48dc63d8f822efc0; retained at /tmp/pantheon-persona-fleet-20261029/hosted-ui-m3V8aO/result.json; all samples are in this entry",
+ "note": "Top-level fields describe the final pair batch (28b2579e3). Earlier batches are summarised below with full per-batch samples in the retained file.",
+ "full_timings_before_compaction": {
+  "path": "/tmp/pantheon-persona-fleet-20261029/timings-full-before-compaction.json",
+  "sha256": "38d871ad70fe86d66ef3538468e81b6107c21077cdf1571a99eae11808152c12"
+ },
+ "history": [
+  {
+   "batch": "previous_pair_batch",
+   "backend": "71829313630064996553693bf9766a8dd2009e9c",
+   "warm_p95_nearest_rank_ms": 2643,
+   "warm_ms": [1352, 1336, 891, 1328, 1117, 1528, 1207, 963, 1237, 943, 1811, 1420, 1046, 1162, 1046, 1330, 1285, 979, 4590, 2643]
+  },
+  {
+   "batch": "previous_pair_batch_fd3c0ba1",
+   "backend": "fd3c0ba1f968243228208350c599f314ef86fbba",
+   "warm_p95_nearest_rank_ms": 1500,
+   "warm_ms": [1126, 1460, 707, 1491, 1427, 1740, 979, 1072, 1199, 734, 1500, 862, 1032, 1062, 777, 1275, 1005, 1324, 929, 1077],
+   "cold_api_ms": [1115, 1320, 740],
+   "cold_usable_ms": [1836, 2076, 1525]
+  },
+  {
+   "batch": "latest_batch_3867ec9b",
+   "backend": "3867ec9b4c3d0eb950af2a77ae290c5f78da818d",
+   "warm_p95_nearest_rank_ms": 1679,
+   "warm_ms": [1327, 684, 1344, 633, 1075, 686, 681, 1679, 1609, 1095, 1803, 1579, 1220, 668, 1055, 754, 1327, 1151, 1044, 695],
+   "cold_api_ms": [984, 1187, 1376],
+   "cold_usable_ms": [1827, 1938, 2074]
+  },
+  {
+   "batch": "latest_batch_fa656a8c",
+   "backend": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+   "warm_p95_nearest_rank_ms": 1475,
+   "warm_ms": [973, 823, 921, 1107, 1021, 1002, 714, 930, 54536, 1475, 678, 730, 649, 660, 654, 693, 1027, 574, 987, 548],
+   "cold_api_ms": [1018, 1118, 857],
+   "cold_usable_ms": [1755, 1836, 1589]
+  },
+  {
+   "batch": "latest_batch_808ab01c",
+   "backend": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+   "warm_p95_nearest_rank_ms": 1007,
+   "warm_ms": [749, 453, 1007, 519, 533, 672, 797, 553, 599, 876, 425, 768, 777, 489, 484, 502, 896, 541, 542, 1222],
+   "cold_api_ms": [905, 1055, 927],
+   "cold_usable_ms": [1609, 1751, 1638]
+  },
+  {
+   "batch": "latest_batch_d05cd59d",
+   "backend": "d05cd59d9ae61070c47b9f385395cb5dfa9b7760",
+   "warm_p95_nearest_rank_ms": 1043,
+   "warm_ms": [871, 714, 1074, 762, 660, 1000, 504, 635, 499, 790, 791, 888, 747, 908, 570, 943, 641, 835, 1043, 723],
+   "cold_api_ms": [1667, 1152, 962],
+   "cold_usable_ms": [2555, 1967, 1791]
+  }
+ ]
+}

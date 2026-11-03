@@ -1006,3 +1006,160 @@ def test_background_pass_stays_fail_closed(monkeypatch, fault) -> None:
         _persona_service_module._reconcile_persona_provisioning_once()
         state = _state.read_store.get_persona(persona_id)["lifecycle_state"]
         assert state == ("provisioning_failed" if fault == "stale_heartbeat" else "provisioning")
+
+
+
+# =========================================================================
+# Background controller pass parity with the operator reconcile route
+# =========================================================================
+
+def _create_persona(client: TestClient, key: str) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
+    resp = client.post(
+        "/bff/personas",
+        json={"name": f"Trader {key}"},
+        headers={**HEADERS, "Idempotency-Key": key},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]["id"], resp.json()["data"], resp.json()["meta"]
+
+
+def _background_pass_in_worker_thread(td: str) -> int:
+    """Run the controller pass outside any request context, as the lifespan does."""
+    import threading
+
+    svc = PersonaService(
+        write_owner=_persona_service_module.persona_write_owner,
+        read_store=_state.read_store,
+        ranking_write_owner=object(),
+        command_store=CommandStore(os.path.join(td, "composed-commands.jsonl")),
+    )
+    previous = _persona_service_module._composed_persona_service
+    _persona_service_module._composed_persona_service = svc
+    out: Dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            out["reconciled"] = _persona_service_module._reconcile_persona_provisioning_once()
+        except BaseException as exc:  # noqa: BLE001
+            out["error"] = exc
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    worker.join()
+    _persona_service_module._composed_persona_service = previous
+    if "error" in out:
+        raise out["error"]
+    return out["reconciled"]
+
+
+@pytest.mark.parametrize("controller", ["route", "background"])
+def test_route_and_background_pass_persist_the_same_paper_running_state(controller: str) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, data, meta = _create_persona(client, f"parity-ok-{controller}")
+        binding_id, runtime_id = _install_authoritative_readback(
+            persona_id=persona_id,
+            plan_id=data["deploymentPlanId"],
+            saga_id=meta["deployment_saga_id"],
+            persona_capital_binding_id=meta["persona_capital_binding_id"],
+        )
+        if controller == "route":
+            reconciled = client.post(
+                f"/bff/personas/{persona_id}/provisioning/reconcile", headers=HEADERS
+            )
+            assert reconciled.json()["meta"]["lifecycle_state"] == "paper_running"
+        else:
+            assert _background_pass_in_worker_thread(td) >= 1
+
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "paper_running"
+        metadata = persisted["metadata"]
+        assert metadata["provisioning_reconciliation_state"] == "paper_running"
+        assert metadata["paper_runtime_state"] == "running"
+        assert metadata["runtime_binding_id"] == binding_id
+        assert metadata["runtime_id"] == runtime_id
+        assert metadata["provisioning_authoritative_readback"]["paper_worker"]["runtime_id"] == runtime_id
+        observed = client.get(f"/bff/personas/{persona_id}", headers={"Authorization": OPERATOR_TOKEN})
+        assert observed.status_code == 200, observed.text
+        assert observed.json()["data"]["lifecycleStatus"] == "paper_running"
+
+
+def test_background_pass_persists_provisioning_timeout_like_the_route() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, _data, _meta = _create_persona(client, "parity-bg-timeout")
+        tenant_id = _state.read_store.get_persona(persona_id)["metadata"].get("tenant_id", "pantheon-dev")
+        rec = _persona_service_module._PERSONA_PROVISIONING_STORE._backend.records.get(
+            (tenant_id, "parity-bg-timeout")
+        )
+        rec.references["provisioning_readback_started_at"] = "2026-01-01T00:00:00Z"
+        _state.read_store.update_persona(
+            persona_id,
+            metadata={"provisioning_readback_started_at": "2026-01-01T00:00:00Z"},
+        )
+
+        _background_pass_in_worker_thread(td)
+
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "provisioning_failed"
+        assert "provisioning_timeout" in persisted["metadata"]["provisioning_failure_reason"]
+        assert persisted["metadata"]["provisioning_reconciliation_state"] == "provisioning_failed"
+
+
+def test_background_pass_reads_plan_directly_when_batch_lags_behind() -> None:
+    """A non-empty list_all batch without an active binding must not decide."""
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, data, meta = _create_persona(client, "parity-bg-lagging-batch")
+        binding_id, _runtime_id = _install_authoritative_readback(
+            persona_id=persona_id,
+            plan_id=data["deploymentPlanId"],
+            saga_id=meta["deployment_saga_id"],
+            persona_capital_binding_id=meta["persona_capital_binding_id"],
+        )
+        exact = _persona_service_module._runtime_manager_client()
+        lagging = {**exact.list_all()[0], "status": "pending"}
+
+        class LaggingBatchClient:
+            def get(self, requested):
+                return exact.get(requested)
+
+            def list_all(self):
+                return [lagging]
+
+            def list_by_plan(self, plan):
+                return exact.list_by_plan(plan)
+
+        _persona_service_module._runtime_manager_client = lambda: LaggingBatchClient()
+
+        _background_pass_in_worker_thread(td)
+
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "paper_running"
+        assert persisted["metadata"]["runtime_binding_id"] == binding_id
+
+
+def test_background_pass_records_bounded_structure_only_summary_while_worker_missing() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, data, meta = _create_persona(client, "parity-bg-stale-worker")
+        _install_authoritative_readback(
+            persona_id=persona_id,
+            plan_id=data["deploymentPlanId"],
+            saga_id=meta["deployment_saga_id"],
+            persona_capital_binding_id=meta["persona_capital_binding_id"],
+        )
+        _state.read_store.list_authoritative_paper_runtime_monitoring_sessions = lambda: []
+
+        _background_pass_in_worker_thread(td)
+
+        persisted = _state.read_store.get_persona(persona_id)
+        assert persisted["lifecycle_state"] == "provisioning"
+        summary = persisted["metadata"]["provisioning_readback_summary"]
+        assert "paper_worker_heartbeat" in summary["unmet"]
+        assert "runtime_binding" not in summary["unmet"]
+        assert set(summary) == {
+            "unmet", "counts", "waiting_reason", "degraded_dependencies", "evaluated_at",
+        }
+        assert all(isinstance(v, int) for v in summary["counts"].values())
+        assert len(json.dumps(summary)) < 600
