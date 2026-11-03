@@ -83,7 +83,7 @@ All implementation work arising from this architectural design is strictly segre
 - **Scope & Deliverables**:
   1. Creation of dedicated production GCP project (e.g. `pantheon-prod-202609XX`).
   2. Setup of GitHub Environment `production` with required multi-party human reviewers and `prevent_self_review: true`.
-  3. Provisioning of `pantheon-prod-control` VM (minimum `e2-standard-8`; operator decision 2026-11-03, supersedes `e2-standard-2`) and independent 100 GB `pd-ssd` persistent data disk.
+  3. Provisioning of `pantheon-prod-control` VM (`e2-standard-2`) and independent 100 GB `pd-ssd` persistent data disk.
   4. Configuration of Caddy reverse proxy with Let's Encrypt TLS for production domain.
   5. Deployment scripts implementing single-node Blue/Green candidate execution, Caddy reload, atomic FE symlink swapping, and sub-2-minute rollback.
   6. Automated pre-deploy database checkpoint snapshotting.
