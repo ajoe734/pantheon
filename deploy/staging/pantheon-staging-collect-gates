@@ -746,40 +746,174 @@ def main() -> int:
     if not bff_healthy:
         _fail("BFF_UNHEALTHY", f"/bff/readyz reported unhealthy: {readyz}")
 
-    def _unserved_product_owners(skip: frozenset[str] = frozenset()) -> list[str]:
-        # Product route owners must be running (and healthy where a healthcheck exists), not just
-        # the five /bff/readyz owners.
-        bad: list[str] = []
-        for key in staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS:
-            if key in skip:
-                continue
-            svc = key.replace("_", "-")
-            ids = _run(compose_cmd("ps", "-q", svc), error_code="PRODUCT_OWNER_PS_FAILED").stdout.split()
-            state = (
-                _run(
-                    [docker_bin, "inspect", "-f", "{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", ids[0]],
-                    error_code="PRODUCT_OWNER_INSPECT_FAILED",
-                ).stdout.split()
-                if ids
-                else []
+    core_owner_services = frozenset(
+        k.replace("_", "-") for k in staging_sanitize.CORE_OWNER_IMAGE_KEYS
+    )
+    frame_re = re.compile(r'^\s*File "([^"]+)", line (\d+), in .*$')
+    exc_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]{0,127})(?::|$)")
+    public_exc = {
+        "Exception",
+        "RuntimeError",
+        "ValueError",
+        "KeyError",
+        "TypeError",
+        "AttributeError",
+        "ImportError",
+        "ModuleNotFoundError",
+        "OSError",
+        "ConnectionError",
+        "TimeoutError",
+        "SystemExit",
+        "KeyboardInterrupt",
+        "PersistencePostureError",
+    }
+
+    def _collect_core_owner_diag(svc: str) -> str:
+        # Structure-only diagnostics for unserved core owners: container state, traceback
+        # /workspace/services/... frames, and exception types; never env values or raw messages.
+        ps_proc = subprocess.run(
+            compose_cmd("ps", "-a", "-q", svc),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        cids = ps_proc.stdout.split() if ps_proc.returncode == 0 else []
+        if not cids:
+            print(f"BFF_DIAG owner={svc} container=missing", file=sys.stderr)
+            return f"owner={svc} container=missing"
+        cid = cids[0]
+        insp_proc = subprocess.run(
+            [
+                docker_bin,
+                "inspect",
+                "-f",
+                "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}} {{if .State.Error}}true{{else}}false{{end}}",
+                cid,
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        fields = insp_proc.stdout.strip().split() if insp_proc.returncode == 0 else []
+        state_ok = (
+            len(fields) == 5
+            and fields[0] in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
+            and fields[1].lstrip("-").isdigit()
+            and fields[2] in {"true", "false"}
+            and fields[3].isdigit()
+            and fields[4] in {"true", "false"}
+        )
+        parts = [f"owner={svc}"]
+        if state_ok:
+            state_part = (
+                f"status={fields[0]} exit_code={fields[1]} oom_killed={fields[2]} "
+                f"restart_count={fields[3]} error_present={fields[4]}"
             )
-            if not state or state[0] != "true" or (len(state) > 1 and state[1] != "healthy"):
-                bad.append(svc)
-        return bad
+        else:
+            state_part = "state=unavailable"
+        parts.append(state_part)
+        print(f"BFF_DIAG owner={svc} {state_part}", file=sys.stderr)
+
+        logs_proc = subprocess.run(
+            [docker_bin, "logs", "--tail", "200", cid],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        raw_logs = (logs_proc.stdout or "") + "\n" + (logs_proc.stderr or "")
+        frames: list[str] = []
+        kinds: list[str] = []
+        for line in raw_logs.splitlines():
+            m_frame = frame_re.match(line)
+            if m_frame:
+                fpath, lineno = m_frame.group(1), m_frame.group(2)
+                if (
+                    ".." not in fpath
+                    and re.fullmatch(r"/workspace/services/[A-Za-z0-9_./-]+\.py", fpath)
+                ):
+                    frames.append(f"{fpath}:{lineno}")
+                continue
+            m_exc = exc_re.match(line)
+            if m_exc and m_exc.group(1).endswith(("Error", "Exception", "Exit", "Interrupt")):
+                kinds.append(m_exc.group(1) if m_exc.group(1) in public_exc else "OtherException")
+        for fr in frames[-5:]:
+            parts.append(f"frame={fr}")
+            print(f"BFF_DIAG owner={svc} frame={fr}", file=sys.stderr)
+        for k in kinds[-5:]:
+            parts.append(f"exception_type={k}")
+            print(f"BFF_DIAG owner={svc} exception_type={k}", file=sys.stderr)
+        return " ".join(parts)
 
     def _wait_product_owners(skip: frozenset[str] = frozenset()) -> list[str]:
-        # Bounded retry: Docker reports health=starting right after `up -d --no-build`; persistent
-        # unhealthy or timeout still fails.
+        # Bounded readiness wait across REQUIRED_OWNER_IMAGE_KEYS (core + product, honoring skip).
+        # An owner is served only when it is running, healthy where a healthcheck exists, and its
+        # RestartCount is unchanged across the observations in the wait window, so a crash-looping
+        # container can never pass.
         deadline = time.monotonic() + float(os.environ.get("STAGING_OWNER_READY_TIMEOUT", "180"))
         interval = float(os.environ.get("STAGING_READY_INTERVAL", "3"))
+        first_restart: dict[str, tuple[str, int]] = {}
+        restart_changed: set[str] = set()
+        sample_count = 0
         while True:
-            bad = _unserved_product_owners(skip)
-            if not bad or time.monotonic() >= deadline:
+            sample_count += 1
+            bad: list[str] = []
+            for key in staging_sanitize.REQUIRED_OWNER_IMAGE_KEYS:
+                svc = key.replace("_", "-")
+                if key in skip or svc in skip:
+                    continue
+                ids = _run(compose_cmd("ps", "-q", svc), error_code="PRODUCT_OWNER_PS_FAILED").stdout.split()
+                if not ids:
+                    bad.append(svc)
+                    continue
+                cid = ids[0]
+                state = _run(
+                    [
+                        docker_bin,
+                        "inspect",
+                        "-f",
+                        "{{.State.Running}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                        cid,
+                    ],
+                    error_code="PRODUCT_OWNER_INSPECT_FAILED",
+                ).stdout.split()
+                running = state[0] if len(state) >= 1 else ""
+                restart_raw = state[1] if len(state) >= 2 else ""
+                health = state[2] if len(state) >= 3 else ""
+                if restart_raw.isdigit():
+                    rc = int(restart_raw)
+                    if svc not in first_restart:
+                        first_restart[svc] = (cid, rc)
+                    elif first_restart[svc] != (cid, rc):
+                        restart_changed.add(svc)
+                else:
+                    restart_changed.add(svc)
+                currently_ok = (
+                    running == "true"
+                    and restart_raw.isdigit()
+                    and (not health or health == "healthy")
+                )
+                if not currently_ok or svc in restart_changed:
+                    bad.append(svc)
+            if sample_count >= 2:
+                if not bad:
+                    return []
+                if restart_changed and all(s in restart_changed for s in bad):
+                    return bad
+                if time.monotonic() >= deadline:
+                    return bad
+            elif time.monotonic() >= deadline and bad:
                 return bad
             time.sleep(interval)
 
     unserved = _wait_product_owners()
     if unserved:
+        unserved_core = [s for s in unserved if s in core_owner_services]
+        if unserved_core:
+            core_diags = "; ".join(_collect_core_owner_diag(s) for s in unserved_core)
+            _fail(
+                "CORE_OWNER_UNSERVED",
+                f"Required owners not running/healthy: {', '.join(unserved)} ({core_diags})",
+            )
         _fail("PRODUCT_OWNER_UNSERVED", f"Product owners not running/healthy: {', '.join(unserved)}")
 
     observed_deploy = {
@@ -1485,9 +1619,16 @@ def main() -> int:
     unserved = _wait_product_owners(frozenset(baseline_absent_owners))
     t_after_owners_healthy = time.monotonic()
     if unserved:
+        unserved_core = [s for s in unserved if s in core_owner_services]
+        rb_unserved_msg = (
+            f"Baseline owners not running/healthy after rollback: {', '.join(unserved)} "
+            f"({'; '.join(_collect_core_owner_diag(s) for s in unserved_core)})"
+            if unserved_core
+            else f"Baseline product owners not running/healthy after rollback: {', '.join(unserved)}"
+        )
         _fail(
             "ROLLBACK_BASELINE_UNHEALTHY",
-            f"Baseline product owners not running/healthy after rollback: {', '.join(unserved)}",
+            rb_unserved_msg,
             rollback_duration_seconds=round(t_after_owners_healthy - t0, 3),
             bff_healthy=False,
             phase_timings_seconds=_build_rollback_phase_timings(
@@ -1560,9 +1701,16 @@ def main() -> int:
     )
     unserved = _wait_product_owners()
     if unserved:
+        unserved_core = [s for s in unserved if s in core_owner_services]
+        restore_unserved_msg = (
+            f"Candidate owners not running/healthy after rollback rehearsal: {', '.join(unserved)} "
+            f"({'; '.join(_collect_core_owner_diag(s) for s in unserved_core)})"
+            if unserved_core
+            else f"Product owners not running/healthy after rollback rehearsal: {', '.join(unserved)}"
+        )
         _fail(
             "RESTORE_CANDIDATE_UNHEALTHY",
-            f"Product owners not running/healthy after rollback rehearsal: {', '.join(unserved)}",
+            restore_unserved_msg,
             rollback_duration_seconds=rollback_duration,
             bff_healthy=rb_ready,
             phase_timings_seconds=rollback_phase_timings,

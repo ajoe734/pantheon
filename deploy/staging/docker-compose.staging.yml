@@ -123,6 +123,8 @@ services:
     environment:
       <<: *core_env
       GOVERNANCE_DATA_DIR: /data/governance
+      GOVERNANCE_STORE_BACKEND: postgres
+      GOVERNANCE_AUDIT_BACKEND: postgres
     volumes:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance
     labels: {"org.pantheon.role": "owner"}
@@ -181,6 +183,7 @@ services:
       BFF_COMMIT: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
       BFF_IMAGE_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:?operator_bff digest required}
       BFF_DATA_DIR: /data/bff
+      MANAGEMENT_AI_STORE_BACKEND: postgres
       PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
       PANTHEON_BFF_AUTH_MODE: strict
