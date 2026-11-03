@@ -116,15 +116,21 @@ def _jwt_lifetime(token):
     return claims["exp"] - claims["iat"]
 
 
-def test_browser_login_lasts_30_days_while_bearer_login_stays_short(app_factory, monkeypatch):
+def test_browser_login_is_short_access_plus_30_day_refresh_while_bearer_login_stays_short(app_factory, monkeypatch):
     monkeypatch.delenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS", raising=False)
     thirty_days = 30 * 24 * 3600
     with TestClient(app_factory(), base_url=BASE) as client:
         response = login(client)
         assert response.status_code == 200, response.text
-        assert response.json()["expires_in"] == thirty_days
-        assert f"Max-Age={thirty_days}" in response.headers["set-cookie"]
-        assert _jwt_lifetime(client.cookies.get("pantheon_session")) == thirty_days
+        assert response.json()["expires_in"] == 1800
+        cookies = response.headers.get_list("set-cookie")
+        access = next(c for c in cookies if c.startswith("pantheon_session=") and "Max-Age=0" not in c)
+        refresh = next(c for c in cookies if c.startswith("pantheon_refresh_token="))
+        assert "Max-Age=1800" in access
+        assert "Path=/bff/auth" in refresh and "HttpOnly" in refresh
+        assert abs(int(refresh.split("Max-Age=")[1].split(";")[0]) - thirty_days) <= 5
+        assert _jwt_lifetime(client.cookies.get("pantheon_session")) == 1800
 
     with TestClient(app_factory(), base_url=BASE) as client:
         bearer = client.post("/bff/auth/dev-login", json=CREDENTIALS)

@@ -1385,6 +1385,7 @@ services:
       # The legacy/generic operator credential is intentionally the negative
       # no-MFA verifier identity. Dedicated governed actors may opt in to MFA.
       PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}
+      PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS:-2592000}
       PANTHEON_BFF_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
       PANTHEON_BFF_ROLE_MAP: ${PANTHEON_BFF_ROLE_MAP:-}
       PANTHEON_BFF_ROLE_MAP_MODE: ${PANTHEON_BFF_ROLE_MAP_MODE:-passthrough}

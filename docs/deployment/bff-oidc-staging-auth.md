@@ -72,6 +72,7 @@ PANTHEON_BFF_OIDC_DISCOVERY_URL=
 PANTHEON_BFF_OIDC_CLIENT_ID=<dev-client-id>
 PANTHEON_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
 PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS=1800
+PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS=2592000
 ```
 
 Do not set `PANTHEON_BFF_JWT_SECRET` in staging-live when OIDC discovery or a
@@ -93,6 +94,30 @@ uses `PANTHEON_BFF_JWT_ISSUER` / `PANTHEON_BFF_JWT_AUDIENCE`, and is limited to
 5 minutes through 1 hour. Revocation is by rotating
 `PANTHEON_BFF_OIDC_CLIENT_SECRET`, disabling the endpoint, or rotating the dev
 JWT signing secret. The endpoint must stay disabled on staging-live/live/prod.
+
+### Access and refresh split (30-day dev login)
+
+The access JWT stays short (`PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS`, 300-3600 s,
+default 1800). A browser dev-login (`"browser_session": true`, allowed Origin
+required) additionally sets an opaque rotating refresh credential:
+
+- Cookies: `pantheon_session` (access, `Path=/`) and `pantheon_refresh_token`
+  (refresh, `HttpOnly; Secure; SameSite=Lax; Path=/bff/auth`).
+- The server stores only a SHA-256 hash in `dev_login_refresh_sessions.json`
+  next to `session_lifecycle.json` under `BFF_DATA_DIR` (`/data/bff` volume), so a
+  redeploy does not sign operators out.
+- Absolute limit: login time + `PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS`
+  (default 2592000 = 30 days). Rotation never extends it.
+- `POST /bff/auth/refresh` (allowed Origin required, access cookie may be
+  expired or absent) reissues the access cookie and rotates the refresh cookie.
+  Reusing an already-rotated credential returns 401 and revokes the whole chain.
+  It also returns 401 if the record is expired/revoked/unknown or the identity's
+  registry roles/tenant/client changed. It returns 403 where dev login is forbidden.
+- `POST /bff/logout` revokes the chain (via the `refresh_chain` access claim or
+  a presented refresh cookie) and deletes both cookies.
+- `GET /bff/me` and the refresh response expose `session.expires_at` (access) and
+  `session.refresh_expires_at` (absolute refresh limit); the refresh response also
+  carries top-level `data.expires_at` / `data.refresh_expires_at`.
 
 ## Staging Smoke
 
