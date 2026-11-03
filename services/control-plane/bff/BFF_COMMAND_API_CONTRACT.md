@@ -241,8 +241,9 @@ whose `target` is `{"type":"EvolutionDecision","id":<same id>}`; `decision_id` /
 `evolution_decision_id` params, when present, must equal that id. It never binds to any other
 command, target type, or id (`APPROVAL_DECISION_BINDING_MISMATCH`); pending or rejected
 records stay `APPROVAL_DECISION_NOT_APPROVED`. The approval is not consumed, so one record
-serves both steps. The caller's `actor_role` must be a role the principal holds (e.g.
-`risk_owner` for a MEDIUM proposal); `actor_id` is always the logged-in principal.
+serves both steps. `actor_id` is always the logged-in principal and `actor_role` is resolved from the roles
+the principal holds (e.g. `risk_owner` for a MEDIUM proposal); an unheld or foreign
+actor value is refused with 403.
 
 1. Create and approve one governance ApprovalDecision (`target_type=evolution_proposal`,
    `target_id=<evo id>`); note its id as `<apv id>`.

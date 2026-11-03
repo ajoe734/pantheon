@@ -132,19 +132,8 @@ def stored_command_params(
     is_gov = cmd.command in {CommandType.APPROVE_DECISION, CommandType.REJECT_DECISION, CommandType.REVIEW_ACTION} or (
         cmd.target and cmd.target.type.value in {"ApprovalDecision", "Review"}
     )
-    named_evolution_role = str(
-        cmd.params.get("actor_role") or cmd.params.get("approved_by_role") or ""
-    ).strip()
     if is_gov:
         actor_role = cmd.params.get("actor_role")
-    elif (
-        cmd.command in {CommandType.APPROVE_EVOLUTION_DECISION, CommandType.REVIEW_MUTATION}
-        and cmd.target.type.value == "EvolutionDecision"
-        and named_evolution_role in identity.roles
-    ):
-        # Evolution owner roles (risk_owner, ...) are not in the generic list
-        # below; honour a role the verified principal actually holds.
-        actor_role = named_evolution_role
     else:
         actor_role = next(
             (role for role in ("admin", "approver", "reviewer", "operator") if role in identity.roles),
