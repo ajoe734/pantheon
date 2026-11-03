@@ -1,0 +1,114 @@
+{
+ "task": "PERSONA-FLEET-DEV-ACCEPTANCE-20261029",
+ "status": "hosted_acceptance_passed_final_pair_28b2579e3",
+ "observed_at": "2026-11-03T00:40Z",
+ "pair": {
+  "backend": "28b2579e39c235ef0bb6e252946de76aa9c80ac0",
+  "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+  "served_pairId": "d850d393c1dc7f7ddf89d0159db501938c95e1355882f3ec833c5db95f9db7bb",
+  "accepted_at": "2026-11-03T00:20:21Z"
+ },
+ "source_prs": {
+  "PERSONA-FLEET-BFF-20261029": "#6849 (merge c01bb731e)",
+  "PERSONA-FLEET-FE-20261029": "execute-plans#893 (merge 7f5cdba28727735700f6af80f954a582c7eef3c1)",
+  "PERSONA-ARCHIVE-COUNT-FE-20261029": "execute-plans#894 (merge 56bec9ad581d7731551d685dbeeba0d7ba28eca3, the served FE)",
+  "DEV-SSH-EXPLICIT-CONFIG-20261029": "#6856 (merge 7ee9d91950079634acb4ebe5d941935ecf805638)",
+  "PERSONA-FLEET-HOSTED-LATENCY-20261029": "#6857",
+  "PERSONA-FLEET-WARM-P95-20261029": "#6865 (merge fd3c0ba1f)",
+  "PERSONA-FLEET-REGISTRY-READ-20261030": "#6867 (merge ad45734e9)",
+  "PERSONA-FLEET-LEDGER-PAYLOAD-20261030": "#6873",
+  "PERSONA-FLEET-HEALTH-IO-20261030": "#6874",
+  "PERSONA-FLEET-STRATEGY-COUNT-READ-20261101": "#6887 (merge d05cd59d9)",
+  "additional_latency_sources_in_served_BFF": "#6890 WARM-TAIL, #6889 PROVISIONING-BACKGROUND-PROMOTE (28b2579e3 includes both)"
+ },
+ "release": {
+  "workflow": "Pantheon Nonprod Deploy",
+  "root_run_id": "41544133483",
+  "root_created": "2026-11-02T23:16:29Z",
+  "root_conclusion": "success",
+  "title": "Dev release 28b2579e39c235ef0bb6e252946de76aa9c80ac0 + 56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+  "release": "20261103T001610Z",
+  "integration_gate_run": "41547638201",
+  "followup_up_to_date_run": "41552484231 (success, same SHA)",
+  "bff_image_digest": "sha256:0424deba9f769873a7740b10d66985c3002703f69ac52a403ea16dfa2d56f8b9",
+  "pair_identity": "/bff/version and /deployment.json identical before and after each QA batch",
+  "staging_prod": "not touched; holds preserved"
+ },
+ "registry_image_proof": {
+  "observed_at": "2026-11-03T00:38:08Z",
+  "registry_container": "c427d2b8a5937b407b73dec83c204e4e6426eb87cd4d67351e70806ccd6c19f9",
+  "registry_image_id": "sha256:7e66974c4f33950a5652bea39a232188cbe19f33e24cf050acc1b9c91076c09e",
+  "files_vs_source_28b2579e3": "5/5 SHA-256 match (foundation/postgres_json_store.py, registry/storage.py, registry/pg_store.py, registry/split_api.py, registry/service.py), all_match=true",
+  "bff_image": "/bff/version image_digest sha256:0424deba... equals release image; source_commit_sha 28b2579e3",
+  "note": "No OCI revision label is claimed."
+ },
+ "hosted_acceptance": {
+  "done": true,
+  "passed": [
+   "login/logout 200, post-logout me 401; FE/BFF identity matches before and after",
+   "no unsolicited archived-only fetch; full pagination traversal 120 unique ids / 6 pages, totals consistent (pagination.json)",
+   "Agora servant 404 documented, UI shows 尚未建立, no trading fields",
+   "no blocked writes, no page errors",
+   "warm p95 926 ms <= 1000 (20 samples, nearest-rank; one 1006 ms sample retained)",
+   "cold API 1097/920/563 ms <= 2000 and usable 2037/1674/1378 ms <= 2500 on 3 fresh entries",
+   "finance/runtime readbacks on final pair: 15 GETs all 200, 0 errors, 0 blocked writes, logout 200 (10 paper personas isolated ledger, no live pool; 3 personas lacking trading telemetry retain null metrics with source=unavailable)",
+   "local privacy regressions on exact 28b2579e3 source (git archive, 4 passed in 8.10s, exit 0)"
+  ],
+  "failed": [],
+  "finance_runtime_readback": {
+   "file": "/tmp/pantheon-persona-fleet-20261029/current-finance-runtime-1793666288106.json",
+   "sha256": "8d64eee032bb95b70960fc9009b3d530600fa2ddc4e9c8a01d981aaeb6bcc121",
+   "at": "2026-11-03T00:38Z",
+   "scope": "GET only: fleet scope (10 rows), 9 runtimes, capital-pools, portfolio-book/exposure/positions/holdings; HTTP 200 is not a claim that every runtime is healthy"
+  },
+  "local_privacy": {
+   "source_sha": "28b2579e39c235ef0bb6e252946de76aa9c80ac0",
+   "tests": [
+    "test_filtered_archived_total_excludes_other_users_private_records",
+    "test_advisory_servant_has_no_nested_trading_facts_and_is_owner_private",
+    "test_private_servant_visibility_uses_agora_user_scope_for_verified_jwt"
+   ],
+   "result": "4 passed",
+   "scope": "local existing fixtures only; no second hosted identity exists, no hosted cross-user privacy pass is claimed"
+  },
+  "archived_scaling": "reused isolated local evidence from PERSONA-FLEET-HOSTED-LATENCY-20261029/evidence.json (archived_100 / archived_1000) and WARM-TAIL evidence; hosted stores were not grown",
+  "limitations": [
+   "Agora operational-readiness is unavailable on dev; not claimed healthy",
+   "single passing hosted batch after two failing batches (1007/1043 ms); not repeated for variance",
+   "dataset drifted (120 records, warm scope 10 rows vs 5/9 earlier) so before/after is not strictly like-for-like",
+   "harness is a temporary read-only subset; raw result.json (sha256 bb7291c0...) kept outside the repo",
+   "full pagination/timings raw copies kept in /tmp/pantheon-persona-fleet-20261029 with SHA-256 in pagination.json/timings.json (compacted for diff budget)"
+  ]
+ },
+ "history": [
+  {
+   "pair_bff": "71829313",
+   "warm_p95_ms": 2643
+  },
+  {
+   "pair_bff": "fd3c0ba1f",
+   "warm_p95_ms": 1500
+  },
+  {
+   "pair_bff": "3867ec9b4",
+   "warm_p95_ms": 1679
+  },
+  {
+   "pair_bff": "fa656a8c1",
+   "warm_p95_ms": 1475
+  },
+  {
+   "pair_bff": "808ab01cd",
+   "warm_p95_ms": 1007
+  },
+  {
+   "pair_bff": "d05cd59d9",
+   "warm_p95_ms": 1043,
+   "cold_usable_entry1_ms": 2555
+  },
+  {
+   "pair_bff": "28b2579e3",
+   "warm_p95_ms": 926
+  }
+ ]
+}

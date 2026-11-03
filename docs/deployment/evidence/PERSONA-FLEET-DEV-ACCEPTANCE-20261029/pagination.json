@@ -1,0 +1,115 @@
+{
+ "pair": {
+  "backend": "28b2579e39c235ef0bb6e252946de76aa9c80ac0",
+  "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+ },
+ "note": "Compacted for the 400-line diff budget. Full traversal (120 item payloads + per-page ids) is retained outside the repo with the digest below; per-page id lists are represented by count, first/last id and SHA-256 of the newline-joined ids.",
+ "full_artifact": {
+  "path": "/tmp/pantheon-persona-fleet-20261029/pagination-full-28b2579e3.json",
+  "sha256": "eb1c2111f276b5a5ff086b39e98a1a455249ad6310eb18658c26b211ce1b81c0",
+  "item_count": 120,
+  "page_count": 6
+ },
+ "summary": {
+  "authorized_total": 120,
+  "unique_ids_across_pages": 120,
+  "ids_across_pages": 120,
+  "items_array_ids_equal_page_ids": true,
+  "archived_items": 106,
+  "active_items": 14,
+  "page_size": 20,
+  "last_page_next_token": null
+ },
+ "pages": [
+  {
+   "page": 1,
+   "page_info": {
+    "next_page_token": "20",
+    "total": 120,
+    "canonical_total": 120,
+    "filtered_total": 120,
+    "catalog_default_total": 0,
+    "page_size": 20
+   },
+   "id_count": 20,
+   "first_id": "persona-02fc6ca929d84dc0e71a",
+   "last_id": "persona-28c22ba301b0b5c1eac4",
+   "ids_sha256": "bca9e497c0d3addcb3ae2d0798006d16f348423fc6f43984ed0a018bfb56b905"
+  },
+  {
+   "page": 2,
+   "page_info": {
+    "next_page_token": "40",
+    "total": 120,
+    "canonical_total": 120,
+    "filtered_total": 120,
+    "catalog_default_total": 0,
+    "page_size": 20
+   },
+   "id_count": 20,
+   "first_id": "persona-2ae89593e301902eabe3",
+   "last_id": "persona-62b01faadc3a071c7697",
+   "ids_sha256": "e74514879759b7800a5946ae61f18e17a3e4ae1b8c680eb72c49d98fafba3fc2"
+  },
+  {
+   "page": 3,
+   "page_info": {
+    "next_page_token": "60",
+    "total": 120,
+    "canonical_total": 120,
+    "filtered_total": 120,
+    "catalog_default_total": 0,
+    "page_size": 20
+   },
+   "id_count": 20,
+   "first_id": "persona-6850ff548d6368ccc520",
+   "last_id": "persona-839a3016a40783f4dbbc",
+   "ids_sha256": "3f3fa27d3d4d3cda2bf67eca8d4b87dca44b399a20f6f5aff175dab7707a1ca3"
+  },
+  {
+   "page": 4,
+   "page_info": {
+    "next_page_token": "80",
+    "total": 120,
+    "canonical_total": 120,
+    "filtered_total": 120,
+    "catalog_default_total": 0,
+    "page_size": 20
+   },
+   "id_count": 20,
+   "first_id": "persona-863dc3fbea5c86e2fdbb",
+   "last_id": "persona-b1609121812e22e323fb",
+   "ids_sha256": "9bcbfce59eb9bc3df4a8e421be565255496ed57e74585f9eef7411bbdc855678"
+  },
+  {
+   "page": 5,
+   "page_info": {
+    "next_page_token": "100",
+    "total": 120,
+    "canonical_total": 120,
+    "filtered_total": 120,
+    "catalog_default_total": 0,
+    "page_size": 20
+   },
+   "id_count": 20,
+   "first_id": "persona-b52db9473b6e0396f4d9",
+   "last_id": "persona-e0adc03618cfbb4b78c3",
+   "ids_sha256": "5ef08ba7ae1136af264cb1fda1f385d8ee0c6c2164f4a2df2ada8b98ac188a07"
+  },
+  {
+   "page": 6,
+   "page_info": {
+    "next_page_token": null,
+    "total": 120,
+    "canonical_total": 120,
+    "filtered_total": 120,
+    "catalog_default_total": 0,
+    "page_size": 20
+   },
+   "id_count": 20,
+   "first_id": "persona-e2ff3f604a4852648bab",
+   "last_id": "persona-f915e4ff1147e9e473b7",
+   "ids_sha256": "684b01bf93799e0239087cfdea896eca47bd6e7bd92960baac6956eff6537511"
+  }
+ ]
+}
