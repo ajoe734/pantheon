@@ -1177,7 +1177,14 @@ def test_embedded_projection_binding_is_not_runtime_manager_authority(
     )
 
     assert state == "provisioning"
-    assert harness.mutation_port.updates == []
+    # Only the bounded diagnostics summary may be written; never a lifecycle
+    # change or binding identity taken from the embedded projection.
+    assert [
+        (u["lifecycle_state"], sorted(u["metadata"])) for u in harness.mutation_port.updates
+    ] == [("provisioning", ["provisioning_readback_summary"])]
+    assert "runtime_binding" in harness.mutation_port.updates[0]["metadata"][
+        "provisioning_readback_summary"
+    ]["unmet"]
 
 
 def test_multiple_active_bindings_for_plan_fail_closed(harness: _Harness) -> None:

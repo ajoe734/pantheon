@@ -87,7 +87,7 @@ FAKE_NATIVE_ENV = {
     "operator-bff": {"BFF_DATA_DIR": "/data/bff"},
 }
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -399,9 +399,11 @@ if tool == "docker":
             if a == "-f" and i + 1 < len(args):
                 fmt = args[i + 1]
         cinfo = None
+        target_svc = ""
         for svc, info in st.get("containers", {}).items():
             if info.get("cid") == cid:
                 cinfo = info
+                target_svc = svc
                 break
         if not cinfo:
             print(f"No such container: {cid}", file=sys.stderr)
@@ -416,13 +418,80 @@ if tool == "docker":
             mode = os.environ.get(
                 "FAKE_BASELINE_OWNER_HEALTH" if cinfo.get("baseline") else "FAKE_OWNER_HEALTH", ""
             )
+            no_healthcheck_svcs = {
+                "runtime-manager",
+                "operator-bff",
+                "lifecycle-projector",
+                "consultation-svc",
+                "agora-interaction-worker",
+            }
+            starting_health_svc = os.environ.get("FAKE_STARTING_HEALTH_OWNER", "").strip()
             health = ""
-            if mode:
+            if starting_health_svc and target_svc == starting_health_svc:
+                health = "starting"
+            elif mode and target_svc not in no_healthcheck_svcs | {"governance", "deployment"}:
                 counter = vm_state_file.with_name("health-" + cid + ".count")
                 n = int(counter.read_text()) if counter.exists() else 0
                 counter.write_text(str(n + 1))
-                health = "unhealthy" if mode == "unhealthy" else ("healthy" if n >= 2 else "starting")
-            print(running + (" " + health if health else ""))
+                if mode == "unhealthy":
+                    health = "unhealthy"
+                elif mode == "starting":
+                    health = "starting"
+                else:
+                    health = "healthy" if n >= 2 else "starting"
+            elif target_svc not in no_healthcheck_svcs:
+                health = "healthy"
+            if "RestartCount" in fmt:
+                if cinfo.get("baseline"):
+                    crashloop_svc = os.environ.get("FAKE_BASELINE_CRASHLOOP_OWNER", "").strip()
+                elif st.get("rollback_rehearsal_done"):
+                    crashloop_svc = (
+                        os.environ.get("FAKE_RESTORE_CRASHLOOP_OWNER", "").strip()
+                        or os.environ.get("FAKE_CRASHLOOP_OWNER", "").strip()
+                    )
+                else:
+                    crashloop_svc = os.environ.get("FAKE_CRASHLOOP_OWNER", "").strip()
+                short_uptime_svc = os.environ.get("FAKE_SHORT_UPTIME_OWNER", "").strip()
+                early_restart_svc = os.environ.get("FAKE_EARLY_RESTART_OWNER", "").strip()
+                uptime_sec = float(os.environ.get("FAKE_DEFAULT_OWNER_UPTIME_SECONDS", "60"))
+                if crashloop_svc and target_svc == crashloop_svc:
+                    rc_file = vm_state_file.with_name("restart-" + cid + ".count")
+                    rc = int(rc_file.read_text()) if rc_file.exists() else 0
+                    rc_file.write_text(str(rc + 1))
+                    uptime_sec = 3.0
+                elif short_uptime_svc and target_svc == short_uptime_svc:
+                    sb_file = vm_state_file.with_name("short-uptime-" + cid + ".count")
+                    sb_n = int(sb_file.read_text()) if sb_file.exists() else 0
+                    sb_file.write_text(str(sb_n + 1))
+                    rc = int(cinfo.get("restart_count", 0))
+                    uptime_sec = float(os.environ.get("FAKE_SHORT_UPTIME_SECONDS", "3"))
+                elif early_restart_svc and target_svc == early_restart_svc:
+                    er_file = vm_state_file.with_name("early-restart-" + cid + ".count")
+                    er_n = int(er_file.read_text()) if er_file.exists() else 0
+                    er_file.write_text(str(er_n + 1))
+                    if er_n == 0:
+                        rc = 0
+                        uptime_sec = 2.0
+                    elif er_n == 1:
+                        rc = 1
+                        uptime_sec = 3.0
+                    elif er_n == 2:
+                        rc = 1
+                        uptime_sec = 8.0
+                    else:
+                        rc = 1
+                        uptime_sec = 20.0
+                else:
+                    rc = int(cinfo.get("restart_count", 0))
+                if "State.StartedAt" in fmt:
+                    inspect_started_at = (
+                        datetime.now(timezone.utc) - timedelta(seconds=uptime_sec)
+                    ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    print(f"{running} {rc} {inspect_started_at}" + (f" {health}" if health else ""))
+                else:
+                    print(f"{running} {rc}" + (f" {health}" if health else ""))
+            else:
+                print(running + (" " + health if health else ""))
         elif "State.Status" in fmt:
             print("exited 1 false 2 true")
         elif "Config.Env" in fmt:
@@ -1331,6 +1400,20 @@ def _build_fe_tarball(path: Path, content: str = "<!doctype html><title>Pantheon
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _repo_migration_head_commit() -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    sha = proc.stdout.strip()
+    return sha if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", sha) else ("b" * 40)
+
+
+DEFAULT_SAMPLE_BFF_COMMIT = _repo_migration_head_commit()
+
+
 def _sample_manifest(
     *,
     release_id: str = "pantheon-20261024-001",
@@ -1338,9 +1421,10 @@ def _sample_manifest(
     fe_sha: str | None = None,
     prev_fe_sha: str | None = None,
     mig_sha: str = "sha256:" + ("4" * 64),
+    bff_commit: str | None = None,
 ) -> dict:
     fe_commit = "a" * 40
-    bff_commit = "b" * 40
+    bff_commit_val = bff_commit or DEFAULT_SAMPLE_BFF_COMMIT
     fe_sha_val = fe_sha or ("sha256:" + ("1" * 64))
     reg = "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases"
     bff_img = f"{reg}/operator-bff@sha256:" + ("2" * 64)
@@ -1352,7 +1436,7 @@ def _sample_manifest(
         release_state=state,
         frontend_commit=fe_commit,
         frontend_artifact_sha256=fe_sha_val,
-        backend_commit=bff_commit,
+        backend_commit=bff_commit_val,
         operator_bff_image=bff_img,
         additional_images={
             "runtime_manager": f"{reg}/runtime-manager@sha256:" + ("a" * 64),
@@ -1371,7 +1455,7 @@ def _sample_manifest(
             "verified_at": "2026-10-24T07:30:00Z",
             "workflow_run": "ajoe734/pantheon/actions/runs/40000002",
             "frontend_commit": fe_commit,
-            "bff_version_commit": bff_commit,
+            "bff_version_commit": bff_commit_val,
             "fe_deployment_manifest_sha256": "sha256:" + ("7" * 64),
             "all12_chain_id": "h12-verified-fixture-0001",
             "all12_status": "passed",
@@ -1716,6 +1800,92 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
         self.assertEqual(env["deployment"]["PANTHEON_RUNTIME_BINDING_STORE_PATH"], "/data/runtime/runtime_bindings.json")
         self.assertEqual(env["operator-bff"]["BFF_DATA_DIR"], "/data/bff")
         self.assertEqual(env["lifecycle-projector"]["BFF_DATA_DIR"], "/data/bff")
+
+    def test_staging_compose_owners_pass_persistence_posture_validation(self) -> None:
+        from services.foundation import persistence_posture
+
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        services = compose["services"]
+
+        # Every staging compose owner that calls require_persistence_posture or
+        # validate_persistence_posture (including all SERVICE_BACKEND_DEFAULTS owners present in
+        # docker-compose.staging.yml plus registry and evolution custom backend_env_vars callers).
+        owner_posture_specs: tuple[tuple[str, str, dict[str, str] | None, bool], ...] = (
+            ("governance", "governance", None, True),
+            ("operator-bff", "operator-bff", None, True),
+            ("capital", "capital", None, True),
+            ("consultation-svc", "consultation", None, True),
+            ("evolution", "evolution", {"EVOLUTION_STORE_BACKEND": "json"}, False),
+            ("incidents", "incidents", None, True),
+            ("memory", "memory", None, True),
+            ("policy-learning-svc", "policy-learning", None, True),
+            ("postmortems", "postmortems", None, True),
+            ("reconciliation-drift-svc", "reconciliation-drift", None, True),
+            ("registry", "registry", {"REGISTRY_STORE_BACKEND": "memory"}, False),
+            ("research-orchestrator-svc", "research-orchestrator", None, True),
+            ("training-session-svc", "training-session", None, True),
+        )
+
+        # Ensure no staging compose service in SERVICE_BACKEND_DEFAULTS is omitted from the table.
+        covered_compose_svcs = {svc for svc, _, _, _ in owner_posture_specs}
+        for svc_name in services:
+            if (
+                svc_name in persistence_posture.SERVICE_BACKEND_DEFAULTS
+                or svc_name.removesuffix("-svc") in persistence_posture.SERVICE_BACKEND_DEFAULTS
+            ):
+                self.assertIn(svc_name, covered_compose_svcs, svc_name)
+
+        interpolation_fixtures = {
+            "PANTHEON_RELEASE_ID": "pantheon-20261024-001",
+            "PANTHEON_BACKEND_COMMIT": "b" * 40,
+            "STAGING_TENANT_ID": "tenant-stg-fixture",
+            "STAGING_JWT_ISSUER": "https://auth.stg.pantheon.internal",
+            "STAGING_JWT_AUDIENCE": "pantheon-staging-api",
+            "STAGING_IDP_ISSUER": "https://auth.stg.pantheon.internal",
+            "STAGING_BFF_CORS_ORIGINS": "https://stg-fe.pantheon.internal",
+        }
+
+        def render_compose_env(svc_name: str) -> dict[str, str]:
+            spec = services[svc_name]
+            raw_env = spec.get("environment") or {}
+            rendered: dict[str, str] = {}
+            if spec.get("env_file"):
+                # staging.secrets.env provides isolated staging Postgres DATABASE_URL at runtime;
+                # it deliberately carries no *BACKEND or *POSTURE keys.
+                rendered["DATABASE_URL"] = "postgresql://pantheon_stg:stg-pg-pass@postgres:5432/pantheon_staging"
+            for k, v in raw_env.items():
+                val = str(v)
+                val = re.sub(
+                    r"\$\{([A-Z0-9_]+):-([^}]*)\}",
+                    lambda m: interpolation_fixtures.get(m.group(1), m.group(2)),
+                    val,
+                )
+                val = re.sub(
+                    r"\$\{([A-Z0-9_]+):\?[^}]*\}",
+                    lambda m: interpolation_fixtures.get(m.group(1), f"fixture-{m.group(1).lower()}"),
+                    val,
+                )
+                rendered[str(k)] = val
+            return rendered
+
+        for compose_svc, posture_key, backend_vars, req_obj in owner_posture_specs:
+            with self.subTest(compose_service=compose_svc, posture_service=posture_key):
+                owner_env = render_compose_env(compose_svc)
+                self.assertEqual(owner_env.get("PANTHEON_ENV"), "staging", compose_svc)
+                check = persistence_posture.validate_persistence_posture(
+                    posture_key,
+                    env=owner_env,
+                    backend_env_vars=backend_vars,
+                    require_object_store=req_obj,
+                )
+                self.assertEqual(check.errors, (), f"{compose_svc} ({posture_key}) errors: {check.errors}")
+                self.assertEqual(check.status, "ok", compose_svc)
+                persistence_posture.require_persistence_posture(
+                    posture_key,
+                    env=owner_env,
+                    backend_env_vars=backend_vars,
+                    require_object_store=req_obj,
+                )
 
     def test_telemetry_service_token_is_scoped_to_exactly_the_staging_tenant(self) -> None:
         from unittest import mock
@@ -4293,8 +4463,417 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             timings,
         )
 
+    def test_core_owner_restart_count_increase_while_running_is_reported_unserved_and_stable_passes(self) -> None:
+        # 1. A fake core owner (deployment or governance) whose RestartCount increases between
+        # samples while State.Running=true must be reported unserved across initial, rollback, and
+        # restore legs with structure-only diagnostics and no leaked secrets.
+        base_prov_env = self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0")
+        subprocess.run([str(PROVISION_SCRIPT)], env=base_prov_env, capture_output=True, text=True, check=True)
+        self._unlock_vm_env_dir()
+        (self.vm_env_dir / "pg-sim").mkdir(exist_ok=True)
+        initial_vm_state = self.vm_runtime_state_file.read_bytes()
+        self._lock_root_owned_paths()
+
+        for leg, env_overrides, expected_code in (
+            ("initial_deployment", {"FAKE_CRASHLOOP_OWNER": "deployment"}, "CORE_OWNER_UNSERVED"),
+            ("initial_governance", {"FAKE_CRASHLOOP_OWNER": "governance"}, "CORE_OWNER_UNSERVED"),
+            ("rollback_deployment", {"FAKE_BASELINE_CRASHLOOP_OWNER": "deployment"}, "ROLLBACK_BASELINE_UNHEALTHY"),
+            ("restore_deployment", {"FAKE_RESTORE_CRASHLOOP_OWNER": "deployment"}, "RESTORE_CANDIDATE_UNHEALTHY"),
+        ):
+            with self.subTest(leg=leg):
+                self._unlock_vm_env_dir()
+                self.vm_runtime_state_file.write_bytes(initial_vm_state)
+                for cnt_file in self.vm_env_dir.glob("*.count"):
+                    cnt_file.unlink(missing_ok=True)
+                self._lock_root_owned_paths()
+                ver = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0", **env_overrides),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver.returncode, 0, f"{leg} unexpectedly passed")
+                out = ver.stderr + ver.stdout
+                self.assertIn("LIVE_GATE_COLLECTION_FAILED", out)
+                self.assertIn(expected_code, out)
+                owner_name = next(iter(env_overrides.values()))
+                self.assertIn(f"owner={owner_name}", out)
+                self.assertIn("status=exited exit_code=1 oom_killed=false restart_count=2 error_present=true", out)
+                self.assertIn("frame=/workspace/services/control-plane/bff/main.py:42", out)
+                self.assertIn("exception_type=RuntimeError", out)
+                self.assertIn("exception_type=OtherException", out)
+                summary_file = self.state_dir / "evidence" / "pantheon-20261024-001-gate-failure-summary.json"
+                self.assertTrue(summary_file.is_file())
+                summary = json.loads(summary_file.read_text(encoding="utf-8"))
+                self.assertEqual(summary["error_code"], expected_code)
+                self.assertIn(f"owner={owner_name}", summary["message"])
+                if leg in ("rollback_deployment", "restore_deployment"):
+                    self.assertIn("rollback_duration_seconds", summary)
+                    self.assertIsInstance(summary["rollback_duration_seconds"], (int, float))
+                    self.assertIn("phase_timings_seconds", summary)
+                for leaked in (
+                    "stg-isolated-pg-password-20261025",
+                    "alpha-77",
+                    "res-123",
+                    "connect(",
+                    "/etc/private",
+                    "strategy_alpha77",
+                    "result_res123",
+                    "ResearchResult",
+                    "boom",
+                    "Traceback",
+                ):
+                    self.assertNotIn(leaked, out + summary_file.read_text(encoding="utf-8"))
+
+        # 2. A stable core owner (RestartCount unchanged across samples while State.Running=true) passes.
+        self._unlock_vm_env_dir()
+        self.vm_runtime_state_file.write_bytes(initial_vm_state)
+        for cnt_file in self.vm_env_dir.glob("*.count"):
+            cnt_file.unlink(missing_ok=True)
+        self._lock_root_owned_paths()
+        ver_ok = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(ver_ok.returncode, 0, ver_ok.stderr + ver_ok.stdout)
+        self.assertEqual(json.loads(ver_ok.stdout)["status"], "staging_verified")
+
+    def test_short_uptime_early_restart_and_starting_healthcheck_owner_readiness(self) -> None:
+        base_prov_env = self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0")
+        subprocess.run([str(PROVISION_SCRIPT)], env=base_prov_env, capture_output=True, text=True, check=True)
+        self._unlock_vm_env_dir()
+        (self.vm_env_dir / "pg-sim").mkdir(exist_ok=True)
+        initial_vm_state = self.vm_runtime_state_file.read_bytes()
+        self._lock_root_owned_paths()
+
+        def reset_vm_state() -> None:
+            self._unlock_vm_env_dir()
+            self.vm_runtime_state_file.write_bytes(initial_vm_state)
+            for cnt_file in self.vm_env_dir.glob("*.count"):
+                cnt_file.unlink(missing_ok=True)
+            self._lock_root_owned_paths()
+
+        # 1. Crash-looping fake with Running=true and RestartCount unchanged on two consecutive samples,
+        #    but StartedAt only 3s old (< STAGING_OWNER_MIN_UPTIME_SECONDS=15), is unserved.
+        for svc_name, expected_code in (
+            ("governance", "CORE_OWNER_UNSERVED"),
+            ("consultation-svc", "PRODUCT_OWNER_UNSERVED"),
+        ):
+            with self.subTest(case=f"short_uptime_{svc_name}"):
+                reset_vm_state()
+                ver_short = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_SHORT_UPTIME_OWNER=svc_name,
+                        FAKE_SHORT_UPTIME_SECONDS="3",
+                        STAGING_READY_INTERVAL="0.05",
+                        STAGING_OWNER_READY_TIMEOUT="0.2",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver_short.returncode, 0, f"{svc_name} with 3s StartedAt unexpectedly passed")
+                self.assertIn(expected_code, ver_short.stderr + ver_short.stdout)
+                self.assertIn(svc_name, ver_short.stderr + ver_short.stdout)
+
+        # 2. A fake that restarts once early (RestartCount 0 -> 1) and is then stable with sufficient
+        #    uptime (>= 15s) is served.
+        for svc_name in ("governance",):
+            with self.subTest(case=f"early_single_restart_{svc_name}"):
+                reset_vm_state()
+                ver_early = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_EARLY_RESTART_OWNER=svc_name,
+                        STAGING_READY_INTERVAL="0",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(ver_early.returncode, 0, ver_early.stderr + ver_early.stdout)
+                self.assertEqual(json.loads(ver_early.stdout)["status"], "staging_verified")
+
+        # 3. A healthcheck owner reporting "starting" is unserved.
+        for svc_name, expected_code in (
+            ("governance", "CORE_OWNER_UNSERVED"),
+            ("registry", "PRODUCT_OWNER_UNSERVED"),
+        ):
+            with self.subTest(case=f"starting_health_{svc_name}"):
+                reset_vm_state()
+                ver_starting = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_STARTING_HEALTH_OWNER=svc_name,
+                        STAGING_READY_INTERVAL="0.05",
+                        STAGING_OWNER_READY_TIMEOUT="0.2",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver_starting.returncode, 0, f"{svc_name} with starting health unexpectedly passed")
+                self.assertIn(expected_code, ver_starting.stderr + ver_starting.stdout)
+                self.assertIn(svc_name, ver_starting.stderr + ver_starting.stdout)
+
+    def test_deploy_host_renders_migrations_from_manifest_backend_commit_not_checkout_head(self) -> None:
+        origin_repo = self.tmp_path / "fake-origin-repo"
+        origin_repo.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "-C", str(origin_repo), "init", "-b", "dev"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(origin_repo), "config", "user.email", "test@pantheon.internal"], check=True)
+        subprocess.run(["git", "-C", str(origin_repo), "config", "user.name", "Pantheon Test"], check=True)
+
+        # Commit 0: commit lacking services/trade_journey/migrations
+        (origin_repo / "README.md").write_text("fake repo\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(origin_repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(origin_repo), "commit", "-m", "init without migrations"], check=True, capture_output=True)
+        missing_path_commit = subprocess.run(
+            ["git", "-C", str(origin_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        # Commit 1 (manifest backend.commit): base migration set (2 SQL files)
+        origin_mig_dir = origin_repo / "services" / "trade_journey" / "migrations"
+        origin_mig_dir.mkdir(parents=True, exist_ok=True)
+        base_sql_names = (
+            "001_create_trade_journey_projection_schema.sql",
+            "002_add_trade_journey_search_indexes.sql",
+        )
+        base_lines: list[str] = []
+        for sql_name in base_sql_names:
+            raw_bytes = (MIGRATIONS_SRC_DIR / sql_name).read_bytes()
+            (origin_mig_dir / sql_name).write_bytes(raw_bytes)
+            base_lines.append(f"{hashlib.sha256(raw_bytes).hexdigest()}  {sql_name}\n")
+        backend_mig_sha = "sha256:" + hashlib.sha256("".join(base_lines).encode("utf-8")).hexdigest()
+
+        subprocess.run(["git", "-C", str(origin_repo), "add", "services/trade_journey/migrations"], check=True)
+        subprocess.run(["git", "-C", str(origin_repo), "commit", "-m", "release backend commit migrations"], check=True, capture_output=True)
+        backend_commit = subprocess.run(
+            ["git", "-C", str(origin_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        # Commit 2 (checkout HEAD): adds an extra migration after the release's backend commit
+        extra_sql_name = "003_reclassify_stale_open_journeys.sql"
+        extra_bytes = (
+            (MIGRATIONS_SRC_DIR / extra_sql_name).read_bytes()
+            if (MIGRATIONS_SRC_DIR / extra_sql_name).is_file()
+            else b"ALTER TABLE public.telemetry_events ADD COLUMN IF NOT EXISTS extra_post_release_col TEXT NULL;\n"
+        )
+        (origin_mig_dir / extra_sql_name).write_bytes(extra_bytes)
+        head_lines = [*base_lines, f"{hashlib.sha256(extra_bytes).hexdigest()}  {extra_sql_name}\n"]
+        head_mig_sha = "sha256:" + hashlib.sha256("".join(head_lines).encode("utf-8")).hexdigest()
+        self.assertNotEqual(backend_mig_sha, head_mig_sha)
+
+        subprocess.run(["git", "-C", str(origin_repo), "add", f"services/trade_journey/migrations/{extra_sql_name}"], check=True)
+        subprocess.run(["git", "-C", str(origin_repo), "commit", "-m", "later dev migration"], check=True, capture_output=True)
+        checkout_head_commit = subprocess.run(
+            ["git", "-C", str(origin_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertNotEqual(backend_commit, checkout_head_commit)
+
+        # Shallow checkout (depth=1, matching actions/checkout default) at checkout_head_commit
+        checkout_repo = self.tmp_path / "fake-checkout-repo"
+        subprocess.run(
+            ["git", "clone", "--no-local", "--depth=1", f"file://{origin_repo}", str(checkout_repo)],
+            check=True,
+            capture_output=True,
+        )
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout_repo), "rev-parse", "--is-shallow-repository"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip(),
+            "true",
+        )
+        self.assertTrue((checkout_repo / "services" / "trade_journey" / "migrations" / extra_sql_name).is_file())
+        # Before deploy-host runs, backend_commit is not present in the depth=1 shallow checkout
+        self.assertNotEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout_repo), "cat-file", "-e", f"{backend_commit}^{{commit}}"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+
+        # Populate controller scripts, staging assets, and schema into the fake checkout
+        shutil.copytree(REPO_ROOT / "scripts" / "deploy", checkout_repo / "scripts" / "deploy", dirs_exist_ok=True)
+        shutil.copytree(REPO_ROOT / "deploy" / "staging", checkout_repo / "deploy" / "staging", dirs_exist_ok=True)
+        shutil.copytree(REPO_ROOT / "schemas", checkout_repo / "schemas", dirs_exist_ok=True)
+
+        fake_provision = checkout_repo / "scripts" / "deploy" / "staging_provision.sh"
+        fake_verify = checkout_repo / "scripts" / "deploy" / "staging_verify.sh"
+
+        # Configure the VM fixture and manifest for backend_commit + backend_mig_sha
+        self._unlock_vm_env_dir()
+        sanitized = staging_sanitize.sanitize_dataset(_sample_raw_dataset(backend_mig_sha))
+        (self.data_mount / "sanitized" / "snapshot-metadata.json").write_text(
+            json.dumps(sanitized["metadata"], indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        vm_st = json.loads(self.vm_runtime_state_file.read_text(encoding="utf-8"))
+        vm_st["migration_set_sha256"] = backend_mig_sha
+        vm_st["databases"]["pantheon_staging"]["tables"] = sanitized["tables"]
+        self.vm_runtime_state_file.write_text(json.dumps(vm_st, indent=2, sort_keys=True), encoding="utf-8")
+        self._lock_root_owned_paths()
+
+        manifest = _sample_manifest(
+            release_id="pantheon-20261028-102",
+            fe_sha=self.fe_sha,
+            prev_fe_sha=self.fe_baseline_sha,
+            mig_sha=backend_mig_sha,
+            bff_commit=backend_commit,
+        )
+        manifest_path = self.tmp_path / "release-backend-commit-manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        manifest_sha = release_manifest.compute_manifest_sha256(manifest)
+
+        env = self._base_env(
+            RELEASE_ID="pantheon-20261028-102",
+            RELEASE_MANIFEST_PATH=str(manifest_path),
+            EXPECTED_MANIFEST_SHA256=manifest_sha,
+        )
+
+        # 0. On base (0b12194f4), staging_ops.sh rendered from ${REPO_ROOT}/services/trade_journey/migrations
+        # (checkout HEAD with extra migration) and failed with MIGRATION_RENDER_FAILED.
+        base_ref = "0b12194f4d628dfad789dd77574c0ec9a7ee20fc"
+        base_show = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "show", f"{base_ref}:scripts/deploy/staging_ops.sh"],
+            capture_output=True,
+            text=True,
+        )
+        if base_show.returncode == 0 and base_show.stdout:
+            base_ops_text = base_show.stdout
+        else:
+            base_ops_text = (REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh").read_text(encoding="utf-8").replace(
+                '--src "${MIGRATION_COMMIT_SRC_DIR}"',
+                '--src "${REPO_ROOT}/services/trade_journey/migrations"',
+            )
+        fake_ops = checkout_repo / "scripts" / "deploy" / "staging_ops.sh"
+        fake_ops.write_text(base_ops_text, encoding="utf-8")
+        fake_ops.chmod(0o755)
+        base_res = subprocess.run(
+            [str(fake_ops), "deploy-host"],
+            env={
+                **env,
+                "VM_NAME": "pantheon-stg-pantheon-20261028-102",
+                "RESERVED_IP": "203.0.113.10",
+            },
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(base_res.returncode, 0)
+        self.assertIn("MIGRATION_RENDER_FAILED", base_res.stderr + base_res.stdout)
+        # Base 0b12194f4 never fetched backend_commit into the shallow checkout
+        self.assertNotEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout_repo), "cat-file", "-e", f"{backend_commit}^{{commit}}"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+
+        # 1. Restore updated staging_ops.sh: deploy-host fetches backend_commit, archives only
+        # services/trade_journey/migrations from backend_commit, and succeeds.
+        shutil.copy2(REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh", fake_ops)
+        prov = subprocess.run([str(fake_provision)], env=env, capture_output=True, text=True)
+        self.assertEqual(prov.returncode, 0, prov.stderr + prov.stdout)
+
+        # Verify backend_commit was fetched into the shallow checkout and only its migrations were shipped
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout_repo), "cat-file", "-e", f"{backend_commit}^{{commit}}"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+        self.assertEqual(list((self.state_dir / "artifacts").glob("migration-src-*")), [])
+
+        self._unlock_vm_env_dir()
+        installed_spec = self.staging_root / "state" / "migration-material" / "migration-spec.json"
+        installed_dir = self.staging_root / "state" / "migration-material" / "migrations"
+        self.assertTrue(installed_spec.is_file())
+        spec_doc = json.loads(installed_spec.read_text(encoding="utf-8"))
+        self.assertEqual(spec_doc["migration_set_sha256"], backend_mig_sha)
+        self.assertEqual([f["name"] for f in spec_doc["files"]], list(base_sql_names))
+        self.assertEqual(sorted(p.name for p in installed_dir.glob("*.sql")), list(base_sql_names))
+        self.assertFalse((installed_dir / extra_sql_name).exists())
+        self._lock_root_owned_paths()
+
+        ver = subprocess.run([str(fake_verify)], env=env, capture_output=True, text=True)
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        self.assertEqual(json.loads(ver.stdout)["status"], "staging_verified")
+
+        # 2. A manifest digest that matches neither backend.commit nor checkout HEAD (or matches checkout HEAD
+        #    while backend.commit is at the earlier migration set) must still fail closed with MIGRATION_RENDER_FAILED.
+        for case_name, bad_mig_sha, bad_bff_commit, expected_reason in (
+            ("digest_matches_neither", "sha256:" + ("9" * 64), backend_commit, "reason=migration_digest_or_spec_mismatch"),
+            ("digest_matches_checkout_head_not_backend_commit", head_mig_sha, backend_commit, "reason=migration_digest_or_spec_mismatch"),
+            ("unfetchable_backend_commit", backend_mig_sha, "f" * 40, "reason=backend_commit_fetch_failed"),
+            ("missing_migration_path_in_commit", backend_mig_sha, missing_path_commit, "reason=migration_path_missing"),
+        ):
+            with self.subTest(case=case_name):
+                bad_manifest = _sample_manifest(
+                    release_id="pantheon-20261028-103",
+                    fe_sha=self.fe_sha,
+                    prev_fe_sha=self.fe_baseline_sha,
+                    mig_sha=bad_mig_sha,
+                    bff_commit=bad_bff_commit,
+                )
+                bad_path = self.tmp_path / f"bad-{case_name}.json"
+                bad_path.write_text(json.dumps(bad_manifest), encoding="utf-8")
+                bad_sha = release_manifest.compute_manifest_sha256(bad_manifest)
+                res_bad = subprocess.run(
+                    [str(checkout_repo / "scripts" / "deploy" / "staging_ops.sh"), "deploy-host"],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261028-103",
+                        RELEASE_MANIFEST_PATH=str(bad_path),
+                        EXPECTED_MANIFEST_SHA256=bad_sha,
+                        VM_NAME="pantheon-stg-pantheon-20261028-102",
+                        RESERVED_IP="203.0.113.10",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res_bad.returncode, 0, case_name)
+                self.assertIn("MIGRATION_RENDER_FAILED", res_bad.stderr + res_bad.stdout)
+                self.assertIn(expected_reason, res_bad.stderr + res_bad.stdout)
+
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
+    def test_rendered_compose_has_governance_and_deployment_healthchecks_on_health(self) -> None:
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        services = compose["services"]
+        for svc_name, port in (("governance", 8082), ("deployment", 8095)):
+            with self.subTest(service=svc_name):
+                hc = services[svc_name].get("healthcheck")
+                self.assertIsInstance(hc, dict, f"{svc_name} missing healthcheck")
+                self.assertEqual(
+                    hc["test"],
+                    [
+                        "CMD",
+                        "python",
+                        "-c",
+                        f"import urllib.request; urllib.request.urlopen('http://127.0.0.1:{port}/health', timeout=5).read()",
+                    ],
+                )
+                self.assertEqual(hc["interval"], "10s")
+                self.assertEqual(hc["timeout"], "5s")
+                self.assertEqual(hc["retries"], 10)
+                self.assertEqual(hc["start_period"], "15s")
+
     def test_ephemeral_workflow_wires_public_identity_vars_to_host(self) -> None:
         raw = EPHEMERAL_WORKFLOW.read_text(encoding="utf-8")
         ops = (REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh").read_text(encoding="utf-8")

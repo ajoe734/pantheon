@@ -1494,6 +1494,40 @@ def retire_persona_provisioning_case(
 _PERSONA_CLEANUP_BACKOFF: Dict[Tuple[int, str], Tuple[int, float]] = {}
 
 
+# --- _provisioning_readback_summary ---
+def _provisioning_readback_summary(
+    previous: Any,
+    *,
+    conditions: Mapping[str, bool],
+    counts: Mapping[str, int],
+    waiting_reason: str,
+    diagnostics: Optional[List[str]],
+) -> Optional[Dict[str, Any]]:
+    """Bounded structure-only record of which readback conditions are unmet.
+
+    Carries booleans, small counts and fixed dependency names only; never owner
+    payload values.  Returns ``None`` when the previous record is still current
+    so a 5s controller pass does not rewrite an unchanged Persona every time.
+    """
+    summary: Dict[str, Any] = {
+        "unmet": sorted(name for name, ok in conditions.items() if not ok),
+        "counts": {name: int(value) for name, value in counts.items()},
+        "waiting_reason": str(waiting_reason or "")[:64] or None,
+        "degraded_dependencies": sorted(set(diagnostics or []))[:8],
+    }
+    if isinstance(previous, Mapping):
+        previous_shape = {key: previous.get(key) for key in summary}
+        observed = _parse_rfc3339(previous.get("evaluated_at"))
+        fresh = bool(
+            observed is not None
+            and (datetime.now(timezone.utc) - observed).total_seconds() < 60
+        )
+        if previous_shape == summary and fresh:
+            return None
+    summary["evaluated_at"] = utc_now()
+    return summary
+
+
 # --- _evaluate_persona_provisioning_status ---
 def _evaluate_persona_provisioning_status(
     persona_id: str,
@@ -1688,17 +1722,24 @@ def _evaluate_persona_provisioning_status(
                     if isinstance(value, dict)
                     and str(value.get("plan_id") or "") == plan_id
                 ]
-            if not authoritative_bindings:
+            if not any(
+                str(value.get("state") or value.get("status") or "").lower()
+                in {"active", "running", "ok"}
+                for value in authoritative_bindings
+            ):
                 # The pass-wide batch is only an optimisation.  When it holds
-                # nothing for this plan (failed or stale list_all), read the
-                # plan directly exactly as the operator route does, so the
-                # background pass never decides on a weaker readback.
+                # no active binding for this plan (failed, stale or lagging
+                # list_all), read the plan directly exactly as the operator
+                # route does, so the background pass never decides on a
+                # weaker readback than the route.
                 client = _runtime_manager_client()
-                authoritative_bindings = [
+                direct_bindings = [
                     value
                     for value in client.list_by_plan(plan_id)
                     if isinstance(value, dict)
                 ]
+                if direct_bindings or not authoritative_bindings:
+                    authoritative_bindings = direct_bindings
             active_bindings = [
                 value
                 for value in authoritative_bindings
@@ -2045,6 +2086,25 @@ def _evaluate_persona_provisioning_status(
         new_state = "provisioning"
 
     metadata_updates: Dict[str, Any] = {}
+    if new_state == "provisioning":
+        summary = _provisioning_readback_summary(
+            metadata.get("provisioning_readback_summary"),
+            conditions={
+                "deployment_projection": projection_observed and projection_complete,
+                "runtime_binding": binding_ok,
+                "paper_worker_heartbeat": heartbeat_ok,
+                "first_evaluation_schedule": cron_ok,
+            },
+            counts={
+                "authoritative_bindings": len(authoritative_bindings),
+                "worker_sessions": len(monitoring_sessions),
+                "live_worker_sessions": len(live_sessions),
+            },
+            waiting_reason=waiting_reason,
+            diagnostics=diagnostics,
+        )
+        if summary is not None:
+            metadata_updates["provisioning_readback_summary"] = summary
     if binding_ok and binding_id:
         metadata_updates["runtime_binding_id"] = binding_id
     if binding_ok and runtime_id:
@@ -4112,13 +4172,24 @@ def _reconcile_persona_provisioning_once() -> int:
             snapshot = _persona_readback_snapshot()
         all_bindings, all_cron_registrations, monitoring_sessions = snapshot or (None, None, None)
         try:
-            _evaluate_persona_provisioning_status(
+            decided = _evaluate_persona_provisioning_status(
                 persona_id,
                 raw,
                 all_bindings=all_bindings,
                 all_cron_registrations=all_cron_registrations,
                 all_monitoring_sessions=monitoring_sessions,
             )
+            if decided in ("paper_running", "provisioning_failed") and (
+                (raw.get("metadata") or {}).get("provisioning_reconciliation_state")
+                != decided
+            ):
+                # Same terminal persistence the operator reconcile route does.
+                _persist_persona_provisioning_terminal_transition(
+                    persona_id,
+                    lifecycle_state=decided,
+                    metadata=raw.get("metadata") or {},
+                )
+                raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = decided
             reconciled += 1
         except Exception as exc:
             log.warning(

@@ -123,12 +123,20 @@ services:
     environment:
       <<: *core_env
       GOVERNANCE_DATA_DIR: /data/governance
+      GOVERNANCE_STORE_BACKEND: postgres
+      GOVERNANCE_AUDIT_BACKEND: postgres
     volumes:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/governance:/data/governance
     labels: {"org.pantheon.role": "owner"}
     depends_on:
       - postgres
       - nats
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   deployment:
     image: ${PANTHEON_DEPLOYMENT_IMAGE:?immutable deployment digest required}
@@ -148,6 +156,12 @@ services:
     depends_on:
       - postgres
       - nats
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   lifecycle-projector:
     image: ${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE:?immutable lifecycle-projector digest required}
@@ -181,6 +195,7 @@ services:
       BFF_COMMIT: ${PANTHEON_BACKEND_COMMIT:?backend commit required}
       BFF_IMAGE_DIGEST: ${PANTHEON_OPERATOR_BFF_DIGEST:?operator_bff digest required}
       BFF_DATA_DIR: /data/bff
+      MANAGEMENT_AI_STORE_BACKEND: postgres
       PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
       PANTHEON_BFF_AUTH_MODE: strict

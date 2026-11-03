@@ -83,6 +83,8 @@ def test_downstream_health_reports_targets_observed_within_two_intervals(
     monkeypatch.setenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", reconciler_url)
     interval = 1.0
     monitor = monitor_module.DownstreamHealthMonitor(
+        telemetry_url="",
+        incidents_url="",
         probe_interval_seconds=interval,
         state_path=str(tmp_path / "downstream_health.sqlite3"),
     )
@@ -117,3 +119,75 @@ def test_downstream_health_reports_targets_observed_within_two_intervals(
             server.server_close()
     assert elapsed is not None, f"targets not observed within two intervals: {observed}"
     assert elapsed <= 2 * interval + 0.5
+
+
+def test_lifespan_monitor_reconciles_orphaned_infrastructure_incidents_within_one_interval(
+    tmp_path, monkeypatch, restore_registered_monitor
+):
+    reconcile_requests: list[dict] = []
+
+    class _IncidentsAndHealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - http.server API
+            body = json.dumps({"status": "ok"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):  # noqa: N802 - http.server API
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+            if self.path.endswith("/api/incidents/reconcile-infrastructure-health"):
+                reconcile_requests.append(json.loads(raw))
+            body = json.dumps({"resolved_count": 1, "resolution_reason": "orphan_recovered"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _IncidentsAndHealthHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    interval = 1.0
+    monitor = monitor_module.DownstreamHealthMonitor(
+        telemetry_url="",
+        incidents_url=base_url,
+        probe_interval_seconds=interval,
+        state_path=str(tmp_path / "downstream_orphan_reconcile.sqlite3"),
+    )
+    monitor._resolve_target_registry = lambda: {  # type: ignore[assignment]
+        "governance": monitor_module.DownstreamTarget(
+            name="governance",
+            base_url=base_url,
+            health_path="/__health__",
+        ),
+    }
+    lifespan = create_lifespan(
+        ProviderReadinessCache(_ready_probe),
+        prewarm_jwks=False,
+        downstream_health_monitor=monitor,
+    )
+    app = FastAPI()
+
+    async def scenario():
+        async with lifespan(app):
+            started = time.monotonic()
+            while not reconcile_requests and (time.monotonic() - started) <= interval + 0.5:
+                await asyncio.sleep(0.05)
+            return time.monotonic() - started
+
+    try:
+        elapsed = asyncio.run(scenario())
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert reconcile_requests, "Expected orphan reconciliation request within one probe interval"
+    assert elapsed <= interval + 0.5
+    assert reconcile_requests[0]["healthy_components"] == ["governance"]
+    assert reconcile_requests[0]["resolution_reason"] == "orphan_recovered"
