@@ -1,0 +1,723 @@
+{
+  "pair": {
+    "bff": "fd3c0ba1f968243228208350c599f314ef86fbba",
+    "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+  },
+  "method": "20 sequential browser warm GETs of fleet query trading/regular/exclude page_size=20; nearest-rank p95; cold = 3 fresh browser contexts, login latency excluded",
+  "run_started": "2026-10-29T23:00:19.688Z",
+  "warm_ms": [
+    1126,
+    1460,
+    707,
+    1491,
+    1427,
+    1740,
+    979,
+    1072,
+    1199,
+    734,
+    1500,
+    862,
+    1032,
+    1062,
+    777,
+    1275,
+    1005,
+    1324,
+    929,
+    1077
+  ],
+  "warm_sorted_ms": [
+    707,
+    734,
+    777,
+    862,
+    929,
+    979,
+    1005,
+    1032,
+    1062,
+    1072,
+    1077,
+    1126,
+    1199,
+    1275,
+    1324,
+    1427,
+    1460,
+    1491,
+    1500,
+    1740
+  ],
+  "warm_p95_nearest_rank_ms": 1500,
+  "warm_target_ms": 1000,
+  "warm_pass": false,
+  "cold": [
+    {
+      "entry": 1,
+      "login_HTTP": 200,
+      "login_to_shell_ms": 938,
+      "initial_post_login_API_ms": 1824,
+      "login_to_initial_usable_ms": 2634,
+      "api_ms": 1115,
+      "usable_ms": 1836,
+      "row_count": 5,
+      "initial_fleet_queries": [
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+      ]
+    },
+    {
+      "entry": 2,
+      "login_HTTP": 200,
+      "login_to_shell_ms": 883,
+      "initial_post_login_API_ms": 1381,
+      "login_to_initial_usable_ms": 1954,
+      "api_ms": 1320,
+      "usable_ms": 2076,
+      "row_count": 5,
+      "initial_fleet_queries": [
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+      ]
+    },
+    {
+      "entry": 3,
+      "login_HTTP": 200,
+      "login_to_shell_ms": 931,
+      "initial_post_login_API_ms": 1240,
+      "login_to_initial_usable_ms": 1805,
+      "api_ms": 740,
+      "usable_ms": 1525,
+      "row_count": 5,
+      "initial_fleet_queries": [
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+        "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+      ]
+    }
+  ],
+  "cold_api_target_ms": 2000,
+  "cold_usable_target_ms": 2500,
+  "cold_pass": true,
+  "aborted_first_attempt": "hosted-ui first attempt 22:59Z failed with TimeoutError 30s on first API GET before any sample; no samples; rerun below",
+  "previous_pair_batch": {
+    "pair": {
+      "bff": "71829313630064996553693bf9766a8dd2009e9c",
+      "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+    },
+    "warm_ms": [
+      1352,
+      1336,
+      891,
+      1328,
+      1117,
+      1528,
+      1207,
+      963,
+      1237,
+      943,
+      1811,
+      1420,
+      1046,
+      1162,
+      1046,
+      1330,
+      1285,
+      979,
+      4590,
+      2643
+    ],
+    "warm_p95_nearest_rank_ms": 2643
+  },
+  "previous_pair_batch_fd3c0ba1": {
+    "pair": {
+      "bff": "fd3c0ba1f968243228208350c599f314ef86fbba",
+      "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+    },
+    "warm_ms": [
+      1126,
+      1460,
+      707,
+      1491,
+      1427,
+      1740,
+      979,
+      1072,
+      1199,
+      734,
+      1500,
+      862,
+      1032,
+      1062,
+      777,
+      1275,
+      1005,
+      1324,
+      929,
+      1077
+    ],
+    "warm_sorted_ms": [
+      707,
+      734,
+      777,
+      862,
+      929,
+      979,
+      1005,
+      1032,
+      1062,
+      1072,
+      1077,
+      1126,
+      1199,
+      1275,
+      1324,
+      1427,
+      1460,
+      1491,
+      1500,
+      1740
+    ],
+    "warm_p95_nearest_rank_ms": 1500,
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 938,
+        "initial_post_login_API_ms": 1824,
+        "login_to_initial_usable_ms": 2634,
+        "api_ms": 1115,
+        "usable_ms": 1836,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 883,
+        "initial_post_login_API_ms": 1381,
+        "login_to_initial_usable_ms": 1954,
+        "api_ms": 1320,
+        "usable_ms": 2076,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 931,
+        "initial_post_login_API_ms": 1240,
+        "login_to_initial_usable_ms": 1805,
+        "api_ms": 740,
+        "usable_ms": 1525,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      }
+    ]
+  },
+  "latest_batch_3867ec9b": {
+    "pair": {
+      "bff": "3867ec9b4c3d0eb950af2a77ae290c5f78da818d",
+      "fe": "56bec9ad581d7731551d685dbeeba0d7ba28eca3"
+    },
+    "root_run": 40978598720,
+    "run_started": "2026-10-30T01:14:54.977Z",
+    "warm_ms": [
+      1327,
+      684,
+      1344,
+      633,
+      1075,
+      686,
+      681,
+      1679,
+      1609,
+      1095,
+      1803,
+      1579,
+      1220,
+      668,
+      1055,
+      754,
+      1327,
+      1151,
+      1044,
+      695
+    ],
+    "warm_p95_nearest_rank_ms": 1679,
+    "warm_target_ms": 1000,
+    "warm_pass": false,
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 938,
+        "initial_post_login_API_ms": 1836,
+        "login_to_initial_usable_ms": 2443,
+        "api_ms": 984,
+        "usable_ms": 1827,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 896,
+        "initial_post_login_API_ms": 1195,
+        "login_to_initial_usable_ms": 1857,
+        "api_ms": 1187,
+        "usable_ms": 1938,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 898,
+        "initial_post_login_API_ms": 1171,
+        "login_to_initial_usable_ms": 1751,
+        "api_ms": 1376,
+        "usable_ms": 2074,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      }
+    ],
+    "servedPairId": "0b9f25a1bf78e7f36534b0753635d970785ecc2166ccb7a176dec33735e02fb8"
+  },
+  "latest_batch_fa656a8c": {
+    "pair": {
+      "backend": "fa656a8c19ae2db595e7815ce2a10b0c1ab7b516",
+      "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+      "root_run": 40996778825
+    },
+    "warm_ms": [
+      973,
+      823,
+      921,
+      1107,
+      1021,
+      1002,
+      714,
+      930,
+      54536,
+      1475,
+      678,
+      730,
+      649,
+      660,
+      654,
+      693,
+      1027,
+      574,
+      987,
+      548
+    ],
+    "warm_sorted_ms": [
+      548,
+      574,
+      649,
+      654,
+      660,
+      678,
+      693,
+      714,
+      730,
+      823,
+      921,
+      930,
+      973,
+      987,
+      1002,
+      1021,
+      1027,
+      1107,
+      1475,
+      54536
+    ],
+    "warm_p95_nearest_rank_ms": 1475,
+    "warm_target_ms": 1000,
+    "warm_pass": false,
+    "note": "sample 9 = 54536 ms outlier retained, not discarded",
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 951,
+        "initial_post_login_API_ms": 1246,
+        "login_to_initial_usable_ms": 1872,
+        "api_ms": 1018,
+        "usable_ms": 1755,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 883,
+        "initial_post_login_API_ms": 737,
+        "login_to_initial_usable_ms": 1313,
+        "api_ms": 1118,
+        "usable_ms": 1836,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 891,
+        "initial_post_login_API_ms": 1206,
+        "login_to_initial_usable_ms": 1764,
+        "api_ms": 857,
+        "usable_ms": 1589,
+        "row_count": 5,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      }
+    ],
+    "cold_pass": true
+  },
+  "latest_batch_808ab01c": {
+    "pair": {
+      "backend": "808ab01cdfe00ab22b8b38ce4c8d6b445eeb86ca",
+      "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+      "root_run": 41139527088,
+      "served_pairId": "97a0f619757e345885b6f3517a6f19f2fea72b746dd0cad82197c0eda54d8e8c",
+      "bff_image_digest": "sha256:438b31a8fb042c26307195bdb2a1ef63c161150c242dc98fdaa51f0c23b6c5fb"
+    },
+    "warm_ms": [
+      749,
+      453,
+      1007,
+      519,
+      533,
+      672,
+      797,
+      553,
+      599,
+      876,
+      425,
+      768,
+      777,
+      489,
+      484,
+      502,
+      896,
+      541,
+      542,
+      1222
+    ],
+    "warm_sorted_ms": [
+      425,
+      453,
+      484,
+      489,
+      502,
+      519,
+      533,
+      541,
+      542,
+      553,
+      599,
+      672,
+      749,
+      768,
+      777,
+      797,
+      876,
+      896,
+      1007,
+      1222
+    ],
+    "warm_p95_nearest_rank_ms": 1007,
+    "warm_target_ms": 1000,
+    "warm_pass": false,
+    "note": "n=20, nearest-rank p95 = 19th sorted sample = 1007 ms; max 1222 ms. No outlier discarded.",
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 952,
+        "initial_post_login_API_ms": 1303,
+        "login_to_initial_usable_ms": 1944,
+        "api_ms": 905,
+        "usable_ms": 1609,
+        "row_count": 5
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 925,
+        "initial_post_login_API_ms": 635,
+        "login_to_initial_usable_ms": 1187,
+        "api_ms": 1055,
+        "usable_ms": 1751,
+        "row_count": 5
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 872,
+        "initial_post_login_API_ms": 788,
+        "login_to_initial_usable_ms": 1605,
+        "api_ms": 927,
+        "usable_ms": 1638,
+        "row_count": 5
+      }
+    ],
+    "cold_pass": true
+  },
+  "latest_batch_d05cd59d": {
+    "pair": {
+      "backend": "d05cd59d9ae61070c47b9f385395cb5dfa9b7760",
+      "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+      "served_pairId": "75ec3b62b84ab6b381519d56acd0e0e6a3941dbc5dad1acd75ac4b1c9876dbba",
+      "bff_image_digest": "sha256:5f6486b2340db216fb282ecc70d25303a4869b1255a85b019f8ac92a1767ce71",
+      "accepted_at": "2026-11-01T19:23:27Z",
+      "source": "hourly dev-pair reconcile run 41358101624 (up_to_date); identity verified via /bff/version and /deployment.json before and after QA"
+    },
+    "dataset": {
+      "authorized_total": 117,
+      "active_total": 13,
+      "archived_total": 104,
+      "warm_scope": "purpose=trading,data_scope=regular,archived=exclude,page_size=20 (9 rows)"
+    },
+    "warm_ms": [
+      871,
+      714,
+      1074,
+      762,
+      660,
+      1000,
+      504,
+      635,
+      499,
+      790,
+      791,
+      888,
+      747,
+      908,
+      570,
+      943,
+      641,
+      835,
+      1043,
+      723
+    ],
+    "warm_sorted_ms": [
+      499,
+      504,
+      570,
+      635,
+      641,
+      660,
+      714,
+      723,
+      747,
+      762,
+      790,
+      791,
+      835,
+      871,
+      888,
+      908,
+      943,
+      1000,
+      1043,
+      1074
+    ],
+    "warm_p95_nearest_rank_ms": 1043,
+    "warm_target_ms": 1000,
+    "warm_pass": false,
+    "note": "n=20, nearest-rank p95 = 19th sorted sample = 1043 ms; max 1074 ms; median ~816 ms. No outlier discarded; no stall.",
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 958,
+        "initial_post_login_API_ms": 2088,
+        "login_to_initial_usable_ms": 2892,
+        "api_ms": 1667,
+        "usable_ms": 2555,
+        "row_count": 9,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 926,
+        "initial_post_login_API_ms": 899,
+        "login_to_initial_usable_ms": 1526,
+        "api_ms": 1152,
+        "usable_ms": 1967,
+        "row_count": 9,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 893,
+        "initial_post_login_API_ms": 1124,
+        "login_to_initial_usable_ms": 1767,
+        "api_ms": 962,
+        "usable_ms": 1791,
+        "row_count": 9,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      }
+    ],
+    "cold_api_target_ms": 2000,
+    "cold_usable_target_ms": 2500,
+    "cold_pass": false,
+    "cold_note": "entry 1 usable_ms 2555 > 2500 (api 1667 ok); entries 2/3 usable 1967/1791 ok",
+    "result_proof": "hosted-ui-readonly-result.json"
+  },
+  "latest_batch_28b2579e3": {
+    "pair": {
+      "backend": "28b2579e39c235ef0bb6e252946de76aa9c80ac0",
+      "frontend": "56bec9ad581d7731551d685dbeeba0d7ba28eca3",
+      "served_pairId": "d850d393c1dc7f7ddf89d0159db501938c95e1355882f3ec833c5db95f9db7bb",
+      "bff_image_digest": "sha256:0424deba9f769873a7740b10d66985c3002703f69ac52a403ea16dfa2d56f8b9",
+      "accepted_at": "2026-11-03T00:20:21Z",
+      "release": "20261103T001610Z",
+      "integration_gate_run": "41547638201",
+      "source": "identity verified via /bff/version and /deployment.json by the harness before and after QA, and again by direct curl after QA"
+    },
+    "dataset": {
+      "authorized_total": 120,
+      "active_total": 14,
+      "archived_total": 106,
+      "warm_scope": "purpose=trading,data_scope=regular,archived=exclude,page_size=20 (10 rows)"
+    },
+    "warm_ms": [
+      382,
+      640,
+      347,
+      389,
+      498,
+      431,
+      655,
+      595,
+      481,
+      1006,
+      431,
+      420,
+      450,
+      378,
+      869,
+      496,
+      429,
+      414,
+      926,
+      479
+    ],
+    "warm_sorted_ms": [
+      347,
+      378,
+      382,
+      389,
+      414,
+      420,
+      429,
+      431,
+      431,
+      450,
+      479,
+      481,
+      496,
+      498,
+      595,
+      640,
+      655,
+      869,
+      926,
+      1006
+    ],
+    "warm_p95_nearest_rank_ms": 926,
+    "warm_target_ms": 1000,
+    "warm_pass": true,
+    "note": "n=20, nearest-rank p95 = 19th sorted sample = 926 ms; max 1006 ms (one sample >1000 ms, retained); median ~ 480 ms. No outlier discarded.",
+    "cold": [
+      {
+        "entry": 1,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 920,
+        "initial_post_login_API_ms": 508,
+        "login_to_initial_usable_ms": 1258,
+        "api_ms": 1097,
+        "usable_ms": 2037,
+        "row_count": 10,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 2,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 899,
+        "initial_post_login_API_ms": 845,
+        "login_to_initial_usable_ms": 1514,
+        "api_ms": 920,
+        "usable_ms": 1674,
+        "row_count": 10,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      },
+      {
+        "entry": 3,
+        "login_HTTP": 200,
+        "login_to_shell_ms": 887,
+        "initial_post_login_API_ms": 1283,
+        "login_to_initial_usable_ms": 1967,
+        "api_ms": 563,
+        "usable_ms": 1378,
+        "row_count": 10,
+        "initial_fleet_queries": [
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+          "?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+        ]
+      }
+    ],
+    "cold_api_target_ms": 2000,
+    "cold_usable_target_ms": 2500,
+    "cold_pass": true,
+    "cold_note": "all 3 entries within targets; entry 3 initial post-login API 1283 ms is login-adjacent and excluded from cold metric.",
+    "result_proof": "raw result.json not committed (outside declared artifact contract); sha256 bb7291c01dfd281093ee405a1f359604139b90b31c1e57cc48dc63d8f822efc0; retained at /tmp/pantheon-persona-fleet-20261029/hosted-ui-m3V8aO/result.json; all samples are in this entry"
+  }
+}
