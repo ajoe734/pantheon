@@ -1,0 +1,18 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-DANGLING-IMAGE-PRUNE-20261103",
+  "title": "dev root build 前清 dangling 映像（容器映像保護完成後）",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "base_sha": "8383b068e",
+  "implementation_commit": "c4bcda5bd35985c13c5a5190745c9df8e3352ef0",
+  "summary": "prune_dev_docker_storage_for_build runs docker image prune -f (dangling only) after protect_dev_compose_container_images_for_builder_prune succeeds, together with the bounded builder cache prune; both are skipped with a logged reason when protection does not complete. PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=false disables only the dangling prune; docker image prune -af stays opt-in behind PANTHEON_DEV_DOCKER_PRUNE. test_management_ai_postgres_bootstrap_contract.py updated to the PR #6923 builder-prune contract with ordering asserted inside the root deploy block.",
+  "acceptance_verification": [
+    {"ac": "AC1", "verdict": "pass", "note": "Reviewed deploy_nonprod_vm.sh diff: dangling prune only inside the protection-success branch; else-branch logs skip."},
+    {"ac": "AC2", "verdict": "pass", "note": "Separate PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE flag, forwarded over ssh_bash; -af path unchanged."},
+    {"ac": "AC3", "verdict": "pass", "note": "Stateful docker stub test in scripts/test_dev_release_artifact_retention.py passes."},
+    {"ac": "AC4", "verdict": "pass", "note": "Contract test passes; ordering uses _root_deploy_block."},
+    {"ac": "AC5", "verdict": "pass", "note": "pytest scripts/test_dev_release_artifact_retention.py scripts/test_management_ai_postgres_bootstrap_contract.py scripts/test_deploy_nonprod_vm.py: 87 passed, 2 skipped (live postgres tests)."}
+  ],
+  "scope_unchanged": ["release-artifacts retention", "capture/seal/restore", ".github/workflows/nonprod-deploy.yml"]
+}

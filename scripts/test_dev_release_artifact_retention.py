@@ -682,13 +682,19 @@ prune_dev_docker_storage_for_build
     }
     base_env.pop("PANTHEON_DEV_DOCKER_PRUNE", None)
     base_env.pop("PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE", None)
+    base_env.pop("PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE", None)
 
     res_default = subprocess.run(["bash", str(runner)], env=base_env, capture_output=True, text=True, check=False)
     assert res_default.returncode == 0, res_default.stderr
     calls_default = [json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()]
     assert ["tag", "sha256:" + "1" * 64, "pantheon-protect/operator-bff:" + "1" * 12] in calls_default
     assert ["builder", "prune", "-f", "--keep-storage", "20GB"] in calls_default
-    assert not any(call[:2] == ["image", "prune"] for call in calls_default)
+    # Dangling-only image prune runs by default, after container images are protected.
+    assert ["image", "prune", "-f"] in calls_default
+    assert calls_default.index(["image", "prune", "-f"]) > calls_default.index(
+        ["tag", "sha256:" + "1" * 64, "pantheon-protect/operator-bff:" + "1" * 12]
+    )
+    assert ["image", "prune", "-af"] not in calls_default
     assert not any(call[:2] == ["container", "prune"] for call in calls_default)
     assert not any(call[:2] == ["system", "prune"] for call in calls_default)
     assert "unused-image prune disabled before root build (PANTHEON_DEV_DOCKER_PRUNE=false)" in res_default.stdout
@@ -700,7 +706,19 @@ prune_dev_docker_storage_for_build
     assert res_custom.returncode == 0, res_custom.stderr
     calls_custom = [json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()]
     assert ["builder", "prune", "-f", "--keep-storage", "15GB"] in calls_custom
-    assert not any(call[:2] == ["image", "prune"] for call in calls_custom)
+    assert ["image", "prune", "-af"] not in calls_custom
+
+    # Case 2b: Dangling-image prune can be switched off on its own
+    docker_log.unlink()
+    env_no_dangling = {**base_env, "PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE": "false"}
+    res_no_dangling = subprocess.run(
+        ["bash", str(runner)], env=env_no_dangling, capture_output=True, text=True, check=False
+    )
+    assert res_no_dangling.returncode == 0, res_no_dangling.stderr
+    calls_no_dangling = [json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()]
+    assert ["builder", "prune", "-f", "--keep-storage", "20GB"] in calls_no_dangling
+    assert not any(call[:2] == ["image", "prune"] for call in calls_no_dangling)
+    assert "dev Docker dangling-image prune disabled before root build" in res_no_dangling.stdout
 
     # Case 3: Opt-in PANTHEON_DEV_DOCKER_PRUNE=true runs bounded builder prune AND unused-image prune
     docker_log.unlink()
@@ -848,6 +866,14 @@ if args[:2] == ["builder", "prune"]:
     state_file.write_text(json.dumps(state), encoding="utf-8")
     sys.exit(0)
 
+if args == ["image", "prune", "-f"]:
+    # Dangling-only prune: untagged images that no container references.
+    in_use = {{c["image"] for c in containers}}
+    for img_id in [k for k, tags in images.items() if not tags and k not in in_use]:
+        del images[img_id]
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    sys.exit(0)
+
 sys.exit(0)
 """,
         encoding="utf-8",
@@ -884,7 +910,27 @@ prune_dev_docker_storage_for_build
     }
     base_env.pop("PANTHEON_DEV_DOCKER_PRUNE", None)
     base_env.pop("PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE", None)
+    base_env.pop("PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE", None)
 
+    # 1a. Dangling-image prune alone (builder prune off) removes the previous build's untagged
+    # images but keeps every container image, because protection tags them first.
+    env_dangling_only = {**base_env, "PANTHEON_DEV_DOCKER_BUILDER_PRUNE": "false"}
+    res_dangling = subprocess.run(
+        ["bash", str(runner)], env=env_dangling_only, capture_output=True, text=True, check=False
+    )
+    assert res_dangling.returncode == 0, res_dangling.stderr
+    dangling_state = json.loads(state_path.read_text(encoding="utf-8"))["images"]
+    assert img_running in dangling_state
+    assert img_stopped in dangling_state
+    assert img_partial_build_latest in dangling_state
+    assert img_stale_protected not in dangling_state
+    assert img_untagged_cache not in dangling_state
+    dangling_calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
+    assert not any(call[:2] == ["builder", "prune"] for call in dangling_calls)
+    assert ["image", "prune", "-f"] in dangling_calls
+
+    calls_path.unlink()
+    state_path.write_text(json.dumps(initial_state), encoding="utf-8")
     res = subprocess.run(["bash", str(runner)], env=base_env, capture_output=True, text=True, check=False)
     assert res.returncode == 0, res.stderr
     assert "protected 2 compose container image(s) before builder cache prune (stale_protect_tags_removed=1)" in res.stdout
@@ -919,9 +965,15 @@ prune_dev_docker_storage_for_build
     res_skip = subprocess.run(["bash", str(runner)], env=base_env, capture_output=True, text=True, check=False)
     assert res_skip.returncode == 0, res_skip.stderr
     assert "skipping builder cache prune: failed to tag" in res_skip.stdout
-    assert "skipped dev Docker builder cache prune because container image protection did not complete" in res_skip.stdout
+    assert (
+        "skipped dev Docker builder cache and dangling-image prune because container image protection did not complete"
+        in res_skip.stdout
+    )
     calls_skip = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
     assert not any(call[:2] == ["builder", "prune"] for call in calls_skip)
+    assert not any(call[:2] == ["image", "prune"] for call in calls_skip)
+    skip_state = json.loads(state_path.read_text(encoding="utf-8"))["images"]
+    assert img_running in skip_state and img_stopped in skip_state
 
 
 def test_retention_never_deletes_currently_served_release_image_tars_across_fe_only_deploy_or_baseline_only_capture(
@@ -1261,5 +1313,6 @@ def test_deploy_nonprod_vm_syntax_and_dry_run_defaults() -> None:
     assert dry_run.returncode == 0, dry_run.stderr
     assert "dev_docker_prune=false" in dry_run.stdout
     assert "dev_docker_builder_keep_storage=20GB" in dry_run.stdout
+    assert "dev_docker_dangling_image_prune=true" in dry_run.stdout
     assert "dev_deploy_min_free_disk_gb=25" in dry_run.stdout
 

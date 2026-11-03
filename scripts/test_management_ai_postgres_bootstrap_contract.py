@@ -10,6 +10,10 @@ def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def _root_deploy_block(deploy: str) -> str:
+    return deploy.split("\n  root)\n", 1)[1].split("\n  bff)\n", 1)[0]
+
+
 def test_operator_bff_defaults_to_management_ai_owner_dsn() -> None:
     compose = _read("docker-compose.yml")
 
@@ -79,14 +83,16 @@ def test_nonprod_deploy_prunes_dev_docker_storage_before_root_build() -> None:
     assert "PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS" in deploy
     assert "prune_dev_docker_storage_for_build" in deploy
     assert '[[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]' in deploy
-    assert "docker builder prune -af" in deploy
-    assert "docker image prune -af" in deploy
-    assert 'run_bounded_docker_prune "builder cache" docker builder prune -af' in deploy
+    # Unbounded builder prune deleted running containers' untagged images on 2026-11-03.
+    assert "docker builder prune -af" not in deploy
+    assert 'run_bounded_docker_prune "builder cache" docker builder prune -f --keep-storage' in deploy
+    assert 'run_bounded_docker_prune "dangling images" docker image prune -f' in deploy
     assert 'run_bounded_docker_prune "unused images" docker image prune -af' in deploy
     assert "docker system df" in deploy
+    root_block = _root_deploy_block(deploy)
     assert (
-        deploy.index("    prune_dev_docker_storage_for_build")
-        < deploy.index("docker compose -p pantheon -f docker-compose.yml build")
+        root_block.index("    prune_dev_docker_storage_for_build")
+        < root_block.index("docker compose -p pantheon -f docker-compose.yml build")
     )
 
 
@@ -101,7 +107,8 @@ def test_nonprod_deploy_prunes_dev_postgres_telemetry_before_root_build() -> Non
     assert "no derived ${mgmt_schema}.telemetry_events exists" in deploy
     assert "TRUNCATE TABLE %I.%I" in deploy
     assert "telemetry_events" in deploy
+    root_block = _root_deploy_block(deploy)
     assert (
-        deploy.index("    prune_dev_management_ai_telemetry_for_disk")
-        < deploy.index("docker compose -p pantheon -f docker-compose.yml build")
+        root_block.index("    prune_dev_management_ai_telemetry_for_disk")
+        < root_block.index("docker compose -p pantheon -f docker-compose.yml build")
     )
