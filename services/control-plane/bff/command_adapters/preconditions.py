@@ -642,6 +642,38 @@ def _binding_target_matches(record: Dict[str, Any], cmd: OperatorCommand) -> boo
     return type_ok and id_ok
 
 
+# Governance can only express an Evolution proposal approval as target_type
+# evolution_proposal; the BFF object for the same record is EvolutionDecision.
+_EVOLUTION_PROPOSAL_BINDING_COMMANDS = (
+    CommandType.APPROVE_EVOLUTION_DECISION,
+    CommandType.REVIEW_MUTATION,
+)
+
+
+def _evolution_proposal_binding_matches(record: Dict[str, Any], cmd: OperatorCommand) -> bool:
+    """Exact-id binding of an evolution_proposal approval to its EvolutionDecision.
+
+    Applies only to ApproveEvolutionDecision / ReviewMutation acting on an
+    EvolutionDecision target; any other command or target type never binds.
+    """
+    if cmd.command not in _EVOLUTION_PROPOSAL_BINDING_COMMANDS:
+        return False
+    if cmd.target.type != ObjectType.EVOLUTION_DECISION:
+        return False
+    target_types, target_ids = _binding_target_values(record)
+    if not target_types or not target_ids:
+        return False
+    if any(_binding_token(value) != "evolutionproposal" for value in target_types):
+        return False
+    if any(str(value) != cmd.target.id for value in target_ids):
+        return False
+    for key in ("evolution_decision_id", "decision_id"):
+        named = cmd.params.get(key)
+        if _precondition_value_present(named) and str(named).strip() != cmd.target.id:
+            return False
+    return True
+
+
 def _record_bound_to_command_and_target(record: Dict[str, Any], cmd: OperatorCommand) -> bool:
     return (
         _binding_has_command(record)
@@ -1025,7 +1057,9 @@ def _approval_decision_applies_to_command(decision: Dict[str, Any], decision_id:
     if has_command and not _binding_command_matches(synthetic_record, cmd):
         return False
     if has_target:
-        return _binding_target_matches(synthetic_record, cmd)
+        return _binding_target_matches(synthetic_record, cmd) or _evolution_proposal_binding_matches(
+            synthetic_record, cmd
+        )
     if cmd.target.type == ObjectType.APPROVAL_DECISION:
         return decision_id == cmd.target.id
     return False
