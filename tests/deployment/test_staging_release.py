@@ -1400,6 +1400,20 @@ def _build_fe_tarball(path: Path, content: str = "<!doctype html><title>Pantheon
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _repo_migration_head_commit() -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    sha = proc.stdout.strip()
+    return sha if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", sha) else ("b" * 40)
+
+
+DEFAULT_SAMPLE_BFF_COMMIT = _repo_migration_head_commit()
+
+
 def _sample_manifest(
     *,
     release_id: str = "pantheon-20261024-001",
@@ -1407,9 +1421,10 @@ def _sample_manifest(
     fe_sha: str | None = None,
     prev_fe_sha: str | None = None,
     mig_sha: str = "sha256:" + ("4" * 64),
+    bff_commit: str | None = None,
 ) -> dict:
     fe_commit = "a" * 40
-    bff_commit = "b" * 40
+    bff_commit_val = bff_commit or DEFAULT_SAMPLE_BFF_COMMIT
     fe_sha_val = fe_sha or ("sha256:" + ("1" * 64))
     reg = "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases"
     bff_img = f"{reg}/operator-bff@sha256:" + ("2" * 64)
@@ -1421,7 +1436,7 @@ def _sample_manifest(
         release_state=state,
         frontend_commit=fe_commit,
         frontend_artifact_sha256=fe_sha_val,
-        backend_commit=bff_commit,
+        backend_commit=bff_commit_val,
         operator_bff_image=bff_img,
         additional_images={
             "runtime_manager": f"{reg}/runtime-manager@sha256:" + ("a" * 64),
@@ -1440,7 +1455,7 @@ def _sample_manifest(
             "verified_at": "2026-10-24T07:30:00Z",
             "workflow_run": "ajoe734/pantheon/actions/runs/40000002",
             "frontend_commit": fe_commit,
-            "bff_version_commit": bff_commit,
+            "bff_version_commit": bff_commit_val,
             "fe_deployment_manifest_sha256": "sha256:" + ("7" * 64),
             "all12_chain_id": "h12-verified-fixture-0001",
             "all12_status": "passed",
@@ -4603,6 +4618,238 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertNotEqual(ver_starting.returncode, 0, f"{svc_name} with starting health unexpectedly passed")
                 self.assertIn(expected_code, ver_starting.stderr + ver_starting.stdout)
                 self.assertIn(svc_name, ver_starting.stderr + ver_starting.stdout)
+
+    def test_deploy_host_renders_migrations_from_manifest_backend_commit_not_checkout_head(self) -> None:
+        origin_repo = self.tmp_path / "fake-origin-repo"
+        origin_repo.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "-C", str(origin_repo), "init", "-b", "dev"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(origin_repo), "config", "user.email", "test@pantheon.internal"], check=True)
+        subprocess.run(["git", "-C", str(origin_repo), "config", "user.name", "Pantheon Test"], check=True)
+
+        # Commit 0: commit lacking services/trade_journey/migrations
+        (origin_repo / "README.md").write_text("fake repo\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(origin_repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(origin_repo), "commit", "-m", "init without migrations"], check=True, capture_output=True)
+        missing_path_commit = subprocess.run(
+            ["git", "-C", str(origin_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        # Commit 1 (manifest backend.commit): base migration set (2 SQL files)
+        origin_mig_dir = origin_repo / "services" / "trade_journey" / "migrations"
+        origin_mig_dir.mkdir(parents=True, exist_ok=True)
+        base_sql_names = (
+            "001_create_trade_journey_projection_schema.sql",
+            "002_add_trade_journey_search_indexes.sql",
+        )
+        base_lines: list[str] = []
+        for sql_name in base_sql_names:
+            raw_bytes = (MIGRATIONS_SRC_DIR / sql_name).read_bytes()
+            (origin_mig_dir / sql_name).write_bytes(raw_bytes)
+            base_lines.append(f"{hashlib.sha256(raw_bytes).hexdigest()}  {sql_name}\n")
+        backend_mig_sha = "sha256:" + hashlib.sha256("".join(base_lines).encode("utf-8")).hexdigest()
+
+        subprocess.run(["git", "-C", str(origin_repo), "add", "services/trade_journey/migrations"], check=True)
+        subprocess.run(["git", "-C", str(origin_repo), "commit", "-m", "release backend commit migrations"], check=True, capture_output=True)
+        backend_commit = subprocess.run(
+            ["git", "-C", str(origin_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        # Commit 2 (checkout HEAD): adds an extra migration after the release's backend commit
+        extra_sql_name = "003_reclassify_stale_open_journeys.sql"
+        extra_bytes = (
+            (MIGRATIONS_SRC_DIR / extra_sql_name).read_bytes()
+            if (MIGRATIONS_SRC_DIR / extra_sql_name).is_file()
+            else b"ALTER TABLE public.telemetry_events ADD COLUMN IF NOT EXISTS extra_post_release_col TEXT NULL;\n"
+        )
+        (origin_mig_dir / extra_sql_name).write_bytes(extra_bytes)
+        head_lines = [*base_lines, f"{hashlib.sha256(extra_bytes).hexdigest()}  {extra_sql_name}\n"]
+        head_mig_sha = "sha256:" + hashlib.sha256("".join(head_lines).encode("utf-8")).hexdigest()
+        self.assertNotEqual(backend_mig_sha, head_mig_sha)
+
+        subprocess.run(["git", "-C", str(origin_repo), "add", f"services/trade_journey/migrations/{extra_sql_name}"], check=True)
+        subprocess.run(["git", "-C", str(origin_repo), "commit", "-m", "later dev migration"], check=True, capture_output=True)
+        checkout_head_commit = subprocess.run(
+            ["git", "-C", str(origin_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertNotEqual(backend_commit, checkout_head_commit)
+
+        # Shallow checkout (depth=1, matching actions/checkout default) at checkout_head_commit
+        checkout_repo = self.tmp_path / "fake-checkout-repo"
+        subprocess.run(
+            ["git", "clone", "--no-local", "--depth=1", f"file://{origin_repo}", str(checkout_repo)],
+            check=True,
+            capture_output=True,
+        )
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout_repo), "rev-parse", "--is-shallow-repository"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip(),
+            "true",
+        )
+        self.assertTrue((checkout_repo / "services" / "trade_journey" / "migrations" / extra_sql_name).is_file())
+        # Before deploy-host runs, backend_commit is not present in the depth=1 shallow checkout
+        self.assertNotEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout_repo), "cat-file", "-e", f"{backend_commit}^{{commit}}"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+
+        # Populate controller scripts, staging assets, and schema into the fake checkout
+        shutil.copytree(REPO_ROOT / "scripts" / "deploy", checkout_repo / "scripts" / "deploy", dirs_exist_ok=True)
+        shutil.copytree(REPO_ROOT / "deploy" / "staging", checkout_repo / "deploy" / "staging", dirs_exist_ok=True)
+        shutil.copytree(REPO_ROOT / "schemas", checkout_repo / "schemas", dirs_exist_ok=True)
+
+        fake_provision = checkout_repo / "scripts" / "deploy" / "staging_provision.sh"
+        fake_verify = checkout_repo / "scripts" / "deploy" / "staging_verify.sh"
+
+        # Configure the VM fixture and manifest for backend_commit + backend_mig_sha
+        self._unlock_vm_env_dir()
+        sanitized = staging_sanitize.sanitize_dataset(_sample_raw_dataset(backend_mig_sha))
+        (self.data_mount / "sanitized" / "snapshot-metadata.json").write_text(
+            json.dumps(sanitized["metadata"], indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        vm_st = json.loads(self.vm_runtime_state_file.read_text(encoding="utf-8"))
+        vm_st["migration_set_sha256"] = backend_mig_sha
+        vm_st["databases"]["pantheon_staging"]["tables"] = sanitized["tables"]
+        self.vm_runtime_state_file.write_text(json.dumps(vm_st, indent=2, sort_keys=True), encoding="utf-8")
+        self._lock_root_owned_paths()
+
+        manifest = _sample_manifest(
+            release_id="pantheon-20261028-102",
+            fe_sha=self.fe_sha,
+            prev_fe_sha=self.fe_baseline_sha,
+            mig_sha=backend_mig_sha,
+            bff_commit=backend_commit,
+        )
+        manifest_path = self.tmp_path / "release-backend-commit-manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        manifest_sha = release_manifest.compute_manifest_sha256(manifest)
+
+        env = self._base_env(
+            RELEASE_ID="pantheon-20261028-102",
+            RELEASE_MANIFEST_PATH=str(manifest_path),
+            EXPECTED_MANIFEST_SHA256=manifest_sha,
+        )
+
+        # 0. On base (0b12194f4), staging_ops.sh rendered from ${REPO_ROOT}/services/trade_journey/migrations
+        # (checkout HEAD with extra migration) and failed with MIGRATION_RENDER_FAILED.
+        base_ref = "0b12194f4d628dfad789dd77574c0ec9a7ee20fc"
+        base_show = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "show", f"{base_ref}:scripts/deploy/staging_ops.sh"],
+            capture_output=True,
+            text=True,
+        )
+        if base_show.returncode == 0 and base_show.stdout:
+            base_ops_text = base_show.stdout
+        else:
+            base_ops_text = (REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh").read_text(encoding="utf-8").replace(
+                '--src "${MIGRATION_COMMIT_SRC_DIR}"',
+                '--src "${REPO_ROOT}/services/trade_journey/migrations"',
+            )
+        fake_ops = checkout_repo / "scripts" / "deploy" / "staging_ops.sh"
+        fake_ops.write_text(base_ops_text, encoding="utf-8")
+        fake_ops.chmod(0o755)
+        base_res = subprocess.run(
+            [str(fake_ops), "deploy-host"],
+            env={
+                **env,
+                "VM_NAME": "pantheon-stg-pantheon-20261028-102",
+                "RESERVED_IP": "203.0.113.10",
+            },
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(base_res.returncode, 0)
+        self.assertIn("MIGRATION_RENDER_FAILED", base_res.stderr + base_res.stdout)
+        # Base 0b12194f4 never fetched backend_commit into the shallow checkout
+        self.assertNotEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout_repo), "cat-file", "-e", f"{backend_commit}^{{commit}}"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+
+        # 1. Restore updated staging_ops.sh: deploy-host fetches backend_commit, archives only
+        # services/trade_journey/migrations from backend_commit, and succeeds.
+        shutil.copy2(REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh", fake_ops)
+        prov = subprocess.run([str(fake_provision)], env=env, capture_output=True, text=True)
+        self.assertEqual(prov.returncode, 0, prov.stderr + prov.stdout)
+
+        # Verify backend_commit was fetched into the shallow checkout and only its migrations were shipped
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout_repo), "cat-file", "-e", f"{backend_commit}^{{commit}}"],
+                capture_output=True,
+            ).returncode,
+            0,
+        )
+        self.assertEqual(list((self.state_dir / "artifacts").glob("migration-src-*")), [])
+
+        self._unlock_vm_env_dir()
+        installed_spec = self.staging_root / "state" / "migration-material" / "migration-spec.json"
+        installed_dir = self.staging_root / "state" / "migration-material" / "migrations"
+        self.assertTrue(installed_spec.is_file())
+        spec_doc = json.loads(installed_spec.read_text(encoding="utf-8"))
+        self.assertEqual(spec_doc["migration_set_sha256"], backend_mig_sha)
+        self.assertEqual([f["name"] for f in spec_doc["files"]], list(base_sql_names))
+        self.assertEqual(sorted(p.name for p in installed_dir.glob("*.sql")), list(base_sql_names))
+        self.assertFalse((installed_dir / extra_sql_name).exists())
+        self._lock_root_owned_paths()
+
+        ver = subprocess.run([str(fake_verify)], env=env, capture_output=True, text=True)
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        self.assertEqual(json.loads(ver.stdout)["status"], "staging_verified")
+
+        # 2. A manifest digest that matches neither backend.commit nor checkout HEAD (or matches checkout HEAD
+        #    while backend.commit is at the earlier migration set) must still fail closed with MIGRATION_RENDER_FAILED.
+        for case_name, bad_mig_sha, bad_bff_commit, expected_reason in (
+            ("digest_matches_neither", "sha256:" + ("9" * 64), backend_commit, "reason=migration_digest_or_spec_mismatch"),
+            ("digest_matches_checkout_head_not_backend_commit", head_mig_sha, backend_commit, "reason=migration_digest_or_spec_mismatch"),
+            ("unfetchable_backend_commit", backend_mig_sha, "f" * 40, "reason=backend_commit_fetch_failed"),
+            ("missing_migration_path_in_commit", backend_mig_sha, missing_path_commit, "reason=migration_path_missing"),
+        ):
+            with self.subTest(case=case_name):
+                bad_manifest = _sample_manifest(
+                    release_id="pantheon-20261028-103",
+                    fe_sha=self.fe_sha,
+                    prev_fe_sha=self.fe_baseline_sha,
+                    mig_sha=bad_mig_sha,
+                    bff_commit=bad_bff_commit,
+                )
+                bad_path = self.tmp_path / f"bad-{case_name}.json"
+                bad_path.write_text(json.dumps(bad_manifest), encoding="utf-8")
+                bad_sha = release_manifest.compute_manifest_sha256(bad_manifest)
+                res_bad = subprocess.run(
+                    [str(checkout_repo / "scripts" / "deploy" / "staging_ops.sh"), "deploy-host"],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261028-103",
+                        RELEASE_MANIFEST_PATH=str(bad_path),
+                        EXPECTED_MANIFEST_SHA256=bad_sha,
+                        VM_NAME="pantheon-stg-pantheon-20261028-102",
+                        RESERVED_IP="203.0.113.10",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res_bad.returncode, 0, case_name)
+                self.assertIn("MIGRATION_RENDER_FAILED", res_bad.stderr + res_bad.stdout)
+                self.assertIn(expected_reason, res_bad.stderr + res_bad.stdout)
 
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
