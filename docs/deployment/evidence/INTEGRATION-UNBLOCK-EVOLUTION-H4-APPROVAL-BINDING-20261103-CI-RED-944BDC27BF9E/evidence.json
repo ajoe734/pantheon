@@ -1,0 +1,48 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-EVOLUTION-H4-APPROVAL-BINDING-20261103-CI-RED-944BDC27BF9E",
+  "source_task_id": "EVOLUTION-H4-APPROVAL-BINDING-20261103",
+  "original_pr": 6916,
+  "original_head_sha": "6bed37841fd253d931cca4f3bb99d484d736ee44",
+  "base_sha": "7dd66dd00d62a3230abe44faad4a03be20fdfe76",
+  "superseded_by_pr": 6918,
+  "failing_check": {
+    "workflow": "Branch CI Gate",
+    "run_id": 41565815237,
+    "job_name": "Smoke acceptance",
+    "job_id": 125688164397,
+    "step_name": "BFF test architecture gate",
+    "command": "python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "failing_test": "services/control-plane/bff/tests/test_bff_test_architecture.py::test_migrated_suites_do_not_mutate_sys_path"
+  },
+  "root_cause": "services/control-plane/bff/tests/test_evolution_decision_approval_binding.py:29 called sys.path.insert(0, _BFF_DIR) outside the composition suite allowlist; test_migrated_suites_do_not_mutate_sys_path in services/control-plane/bff/tests/test_bff_test_architecture.py forbids sys.path.insert/append in non-composition BFF test suites because editable package provisioning and services/control-plane/bff/tests/conftest.py already configure import paths.",
+  "integrator_disposition": "scripts/git/auto_integrator.py operated as designed by blocking integration of PR #6916 on red Smoke acceptance and materializing this unblock task. No changes to scripts/git/auto_integrator.py are required.",
+  "fix": {
+    "commit_sha": "df1e76ac64cd73d9deacdf1bb5a9c92a7fb66292",
+    "changed_file": "services/control-plane/bff/tests/test_evolution_decision_approval_binding.py",
+    "summary": "Removed the _BFF_DIR sys.path.insert block and unused sys/Path imports from services/control-plane/bff/tests/test_evolution_decision_approval_binding.py."
+  },
+  "verification": {
+    "local_pytest_bff_and_arch_gate": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_evolution_decision_approval_binding.py services/control-plane/bff/tests/test_evolution_actor_role_binding.py services/control-plane/bff/tests/test_command_replay_conflict.py",
+      "exit_code": 0,
+      "result": "75 passed, 3 warnings in 85.05s"
+    },
+    "local_unittest_auto_integrator": {
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "Ran 163 tests in 3.751s, OK"
+    },
+    "diff_budget": {
+      "command": ".venv-pantheon/bin/python3 scripts/git/diff_budget.py --base 7dd66dd00d62a3230abe44faad4a03be20fdfe76 --head HEAD",
+      "exit_code": 0,
+      "result": "production +52/-4 (net +48, within source task 60-line budget), test +303/-0 (net +303)"
+    },
+    "github_ci_branch_gate_on_fix": {
+      "pr": 6918,
+      "tested_head_sha": "748b6c50ab2fdeb55994766fb1d995242a193f8d",
+      "run_id": 41567689517,
+      "smoke_acceptance_job_id": 125693960096,
+      "conclusion": "SUCCESS (all 10 jobs in Branch CI Gate succeeded, including Smoke acceptance / BFF test architecture gate)"
+    }
+  }
+}
