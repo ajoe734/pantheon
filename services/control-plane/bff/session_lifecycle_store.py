@@ -19,6 +19,10 @@ class SessionLifecycleStore:
         if not os.path.exists(path):
             self._write_unlocked(self._blank())
 
+    @property
+    def path(self) -> str:
+        return self._path
+
     @staticmethod
     def _blank() -> Dict[str, Any]:
         return {"sessions": {}, "idempotency": {}}

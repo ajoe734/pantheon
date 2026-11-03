@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Body, Cookie, Header, HTTPException, Query, Request, Response
 
+from .refresh_sessions import is_refresh_token, set_access_cookie, set_refresh_cookie
 from .service import AuthFacadeService, ProviderReadinessCache
 
 
@@ -31,13 +32,14 @@ def create_auth_router(
             # Retire the earlier /bff-only cookie: command tracking is served
             # by the same BFF host at /api/v1/operator/commands/{id}.
             response.delete_cookie("pantheon_session", path="/bff", secure=True, httponly=True, samesite="lax")
-            response.set_cookie(
-                "pantheon_session", result["access_token"],
-                max_age=result["expires_in"], path="/",
-                secure=True, httponly=True, samesite="lax",
-            )
-            # The browser needs only session metadata, never a JS-readable JWT.
-            return {key: value for key, value in result.items() if key != "access_token"}
+            set_access_cookie(response, result["access_token"], result["expires_in"])
+            refresh_token = result.get("refresh_token")
+            if refresh_token:
+                from datetime import datetime
+                expiry = datetime.fromisoformat(result["refresh_expires_at"].replace("Z", "+00:00")).timestamp()
+                set_refresh_cookie(response, refresh_token, int(expiry))
+            # The browser needs only session metadata, never a JS-readable token.
+            return {key: value for key, value in result.items() if key not in {"access_token", "refresh_token"}}
         return result
 
     @router.get("/bff/me")
@@ -81,8 +83,14 @@ def create_auth_router(
             x_tenant_id=x_tenant_id,
         )
 
+    def _require_cookie_origin(request: Request, *cookies: Optional[str]) -> None:
+        if any(is_refresh_token(c) for c in cookies) and not browser_origin_allowed(request.headers.get("origin")):
+            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Browser session requires an allowed Origin"}})
+
     @router.post("/bff/auth/refresh")
     async def bff_auth_refresh(
+        request: Request,
+        response: Response,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         pantheon_session: Optional[str] = Cookie(default=None),
@@ -93,8 +101,10 @@ def create_auth_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
+        _require_cookie_origin(request, pantheon_refresh_token, pantheon_refresh)
         return await service.invoke(
             "bff_auth_refresh",
+            response=response,
             payload=payload,
             authorization=authorization,
             pantheon_session=pantheon_session,
@@ -106,22 +116,28 @@ def create_auth_router(
             x_idempotency_key=x_idempotency_key,
         )
 
+    # The refresh cookie is path-scoped to /bff/auth, so logout normally revokes the
+    # chain through the refresh_chain claim of the (still valid) access token.
     @router.post("/bff/logout")
     async def bff_logout(
+        request: Request,
         response: Response,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         pantheon_session: Optional[str] = Cookie(default=None),
+        pantheon_refresh_token: Optional[str] = Cookie(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
+        _require_cookie_origin(request, pantheon_refresh_token)
         return await service.invoke(
             "bff_logout",
             response=response,
             payload=payload,
             authorization=authorization,
             pantheon_session=pantheon_session,
+            pantheon_refresh_token=pantheon_refresh_token,
             x_mfa_token=x_mfa_token,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,

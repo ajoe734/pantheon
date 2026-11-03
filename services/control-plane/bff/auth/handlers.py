@@ -20,6 +20,15 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from fastapi import HTTPException
 
 from ..models import ErrorCode
+from .refresh_sessions import (
+    RefreshRejected,
+    RefreshSessionStore,
+    delete_refresh_cookie,
+    is_refresh_token,
+    iso_utc,
+    set_access_cookie,
+    set_refresh_cookie,
+)
 from .policy import (
     AuthDependencies,
     SessionLogoutGuard,
@@ -50,11 +59,6 @@ def _ttl() -> int:
     except ValueError:
         value = 1800
     return max(300, min(value, 3600))
-
-
-# A browser sign-in backs the operator's long-lived Management page, so it
-# outlives the short CI/probe bearer TTL above.
-_BROWSER_SESSION_TTL_SECONDS = 30 * 24 * 3600
 
 
 def _dev_profile(payload: Mapping[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
@@ -128,7 +132,13 @@ def _dev_profile(payload: Mapping[str, Any], deps: AuthDependencies) -> Dict[str
     return profile
 
 
-def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies, *, ttl: Optional[int] = None) -> Dict[str, Any]:
+def _issue_token(
+    profile: Mapping[str, Any],
+    deps: AuthDependencies,
+    extra_claims: Optional[Mapping[str, Any]] = None,
+    *,
+    ttl: Optional[int] = None,
+) -> Dict[str, Any]:
     from services.runtime_auth_inbound import encode_jwt_hs256
 
     secret = os.getenv("PANTHEON_BFF_DEV_LOGIN_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET", "")
@@ -158,6 +168,8 @@ def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies, *, ttl: Opt
         "tenant_id": profile["tenant_id"],
         "allowed_tenants": profile["allowed_tenants"],
     }
+    if extra_claims:
+        claims.update(extra_claims)
     preferred_username = _first(
         profile.get("preferred_username"),
         profile.get("client_id") if profile.get("identity") == "test_admin" else None,
@@ -181,11 +193,20 @@ def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies, *, ttl: Opt
     }
 
 
-async def bff_auth_dev_login(*, payload: Dict[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
+async def bff_auth_dev_login(*, payload: Dict[str, Any], deps: AuthDependencies, refresh_store: Optional[RefreshSessionStore] = None) -> Dict[str, Any]:
     profile = _dev_profile(payload or {}, deps)
     browser_session = (payload or {}).get("browser_session") is True
-    token = _issue_token(profile, deps, ttl=_BROWSER_SESSION_TTL_SECONDS if browser_session else None)
-    return {
+    grant = None
+    extra: Dict[str, Any] = {}
+    if browser_session and refresh_store is not None:
+        # Rotating refresh cookie keeps the browser session alive; access token stays short-lived.
+        grant = refresh_store.issue(
+            identity=profile["identity"], client_id=profile["client_id"],
+            roles=profile["roles"], tenant_id=profile["tenant_id"],
+        )
+        extra = {"refresh_exp": grant.expires_at, "refresh_chain": grant.chain_id}
+    token = _issue_token(profile, deps, extra)
+    result = {
         **token,
         "meta": {
             "route": "POST /bff/auth/dev-login",
@@ -194,6 +215,11 @@ async def bff_auth_dev_login(*, payload: Dict[str, Any], deps: AuthDependencies)
             "identity": profile["identity"],
         },
     }
+    if grant is not None:
+        # The router moves the opaque value into an HttpOnly cookie and drops it from the body.
+        result["refresh_token"] = grant.token
+        result["refresh_expires_at"] = iso_utc(grant.expires_at)
+    return result
 
 
 def _session_kind(identity: Any) -> str:
@@ -285,6 +311,7 @@ def _session(identity: Any, *, checked_at: str) -> Dict[str, Any]:
         "expires_at": _epoch_iso(claims.get("exp")),
         "mfa_verified": bool(identity.mfa_verified),
         "checked_at": checked_at,
+        "refresh_expires_at": _epoch_iso(claims.get("refresh_exp")) if claims.get("refresh_exp") else None,
     }
 
 
@@ -462,6 +489,62 @@ async def bff_auth_readiness(
     }
 
 
+def _refresh_denied(deps: AuthDependencies) -> HTTPException:
+    return deps.bff_error(
+        401, ErrorCode.AUTH_REQUIRED, "Refresh credential is invalid or expired", "AUTH_REFRESH_CREDENTIAL_INVALID",
+        precondition_failed="refresh_credential",
+    )
+
+
+def _refresh_with_cookie(token: str, *, response: Any, refresh_store: Optional[RefreshSessionStore], deps: AuthDependencies) -> Dict[str, Any]:
+    """Rotate the dev-login refresh cookie and reissue a short-lived access cookie."""
+    if deps.dev_login_forbidden_environment():
+        raise deps.bff_error(
+            403, ErrorCode.PRECONDITION_FAILED, "Dev login is disabled for this BFF", "dev_login_disabled",
+            precondition_failed="dev_login",
+            suggestion="Use the dev BFF with configured client credentials; staging-live must use IdP OIDC/JWKS auth",
+        )
+    if refresh_store is None:
+        raise _refresh_denied(deps)
+    registry = deps.dev_login_identity_registry()
+
+    def _validate(record: Mapping[str, Any]) -> None:
+        profile = registry.get(record.get("identity"))
+        if (
+            not profile
+            or profile["client_id"] != record.get("client_id")
+            or sorted(profile["roles"]) != sorted(record.get("roles") or [])
+            or profile["tenant_id"] != record.get("tenant_id")
+        ):
+            raise RefreshRejected("identity_changed")
+
+    try:
+        grant = refresh_store.rotate(token, validate=_validate)
+    except RefreshRejected:
+        raise _refresh_denied(deps)
+    profile = registry[grant.identity]
+    issued = _issue_token(profile, deps, {"refresh_exp": grant.expires_at, "refresh_chain": grant.chain_id})
+    identity = _assert_identity(f"Bearer {issued['access_token']}", deps)
+    now = deps.utc_now()
+    state = _state(identity, deps)
+    state.update({"state": "active", "last_refreshed_at": now, "last_refresh_credential_source": "refresh_cookie"})
+    deps.session_lifecycle_store.upsert_session(get_session_key(identity), state, now=now)
+    result = _lifecycle(identity, "refresh", None, now, deps=deps)
+    descriptor = {"source": "refresh_cookie", "session_kind": "cookie", "sessionKind": "cookie", "token_kind": "cookie", "tokenKind": "cookie"}
+    session = result["data"]["session"]
+    session.update({"last_refreshed_at": now, "last_refresh_credential_source": "refresh_cookie", "session_kind": "cookie", "auth_mode": "cookie"})
+    result["data"]["session_kind"] = result["data"]["sessionKind"] = "cookie"
+    result["data"]["operation"].update({"refresh_credential": descriptor, "refreshCredential": descriptor})
+    result["data"]["auth"] = {"refresh_credential": descriptor, "refreshCredential": descriptor}
+    result["data"]["expires_at"] = issued["expires_at"]
+    result["data"]["refresh_expires_at"] = iso_utc(grant.expires_at)
+    result["meta"]["auth"] = {"refreshCredentialSource": "refresh_cookie", "sessionKind": "cookie", "rotated": True}
+    if response is not None:
+        set_access_cookie(response, issued["access_token"], issued["expires_in"])
+        set_refresh_cookie(response, grant.token, grant.expires_at)
+    return result
+
+
 async def bff_auth_refresh(
     *,
     payload: Dict[str, Any],
@@ -473,8 +556,13 @@ async def bff_auth_refresh(
     x_refresh_token: Optional[str] = None,
     idempotency_key: Optional[str] = None,
     x_idempotency_key: Optional[str] = None,
+    response: Any = None,
+    refresh_store: Optional[RefreshSessionStore] = None,
     deps: AuthDependencies,
 ) -> Dict[str, Any]:
+    opaque = next((c for c in (pantheon_refresh_token, pantheon_refresh) if is_refresh_token(c)), None)
+    if opaque:
+        return _refresh_with_cookie(opaque, response=response, refresh_store=refresh_store, deps=deps)
     credential = _first((payload or {}).get("refresh_token"), (payload or {}).get("refreshToken"), x_refresh_token, pantheon_refresh, pantheon_refresh_token, pantheon_session, authorization)
     if not credential:
         raise deps.bff_error(401, ErrorCode.AUTH_REQUIRED, "Refresh credential is required", "AUTH_REFRESH_CREDENTIAL_REQUIRED", precondition_failed="refresh_credential")
@@ -520,10 +608,28 @@ async def bff_logout(
     x_mfa_token: Optional[str] = None,
     idempotency_key: Optional[str] = None,
     x_idempotency_key: Optional[str] = None,
+    pantheon_refresh_token: Optional[str] = None,
+    refresh_store: Optional[RefreshSessionStore] = None,
     deps: AuthDependencies,
 ) -> Dict[str, Any]:
-    identity = deps.extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
-    deps.require_read_role(identity)
+    refresh_revoked = False
+    if refresh_store is not None and is_refresh_token(pantheon_refresh_token):
+        refresh_revoked = refresh_store.revoke_token(pantheon_refresh_token)
+    try:
+        identity = deps.extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
+        deps.require_read_role(identity)
+    except HTTPException:
+        if not is_refresh_token(pantheon_refresh_token):
+            raise
+        # Expired access cookie: the refresh cookie alone is enough to end the session.
+        if response is not None:
+            response.delete_cookie("pantheon_session", path="/")
+            delete_refresh_cookie(response)
+        now = deps.utc_now()
+        return {"data": {"operation": {"type": "logout", "performed_at": now}, "session": {"authenticated": False, "fresh": False, "state": "logged_out", "logged_out_at": now}}, "meta": {"contract": "BFF-LUV-SEM-001", "snapshot_at": now}}
+    chain_id = _claims(identity).get("refresh_chain")
+    if refresh_store is not None and chain_id:
+        refresh_store.revoke_chain(str(chain_id))
     idem = idempotency_key or x_idempotency_key
     record_key = _idempotency_key("POST /bff/logout", identity, idem)
     request_hash = _request_hash({"route": "POST /bff/logout", "payload": payload or {}})
@@ -537,6 +643,7 @@ async def bff_logout(
             if response is not None:
                 response.delete_cookie("pantheon_session", path="/")
                 response.delete_cookie("pantheon_session", path="/bff", secure=True, httponly=True, samesite="lax")
+                delete_refresh_cookie(response)
             return result
     now = deps.utc_now()
     key = get_session_key(identity)
@@ -544,6 +651,7 @@ async def bff_logout(
     if response is not None:
         response.delete_cookie("pantheon_session", path="/")
         response.delete_cookie("pantheon_session", path="/bff", secure=True, httponly=True, samesite="lax")
+        delete_refresh_cookie(response)
     result = _lifecycle(identity, "logout", idem, now, deps=deps)
     result["data"]["session"].update({"authenticated": False, "fresh": False, "state": "logged_out", "logged_out_at": now})
     if record_key:
@@ -647,8 +755,13 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
                 ),
             )
 
+    refresh_store: Optional[RefreshSessionStore] = None
+    lifecycle_path = getattr(deps.session_lifecycle_store, "path", None)
+    if lifecycle_path:
+        refresh_store = RefreshSessionStore(os.path.join(os.path.dirname(str(lifecycle_path)), "dev_login_refresh_sessions.json"))
+
     async def _dev_login(*, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return await bff_auth_dev_login(payload=payload, deps=deps)
+        return await bff_auth_dev_login(payload=payload, deps=deps, refresh_store=refresh_store)
 
     async def _me(
         *,
@@ -694,6 +807,7 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
 
     async def _refresh(
         *,
+        response: Any = None,
         payload: Dict[str, Any],
         authorization: Optional[str] = None,
         pantheon_session: Optional[str] = None,
@@ -714,11 +828,14 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
             x_refresh_token=x_refresh_token,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
+            response=response,
+            refresh_store=refresh_store,
             deps=deps,
         )
 
     async def _logout(
         *,
+        pantheon_refresh_token: Optional[str] = None,
         response: Any,
         payload: Dict[str, Any],
         authorization: Optional[str] = None,
@@ -735,6 +852,8 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
             x_mfa_token=x_mfa_token,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
+            pantheon_refresh_token=pantheon_refresh_token,
+            refresh_store=refresh_store,
             deps=deps,
         )
 
