@@ -61,11 +61,6 @@ def _ttl() -> int:
     return max(300, min(value, 3600))
 
 
-# A browser sign-in backs the operator's long-lived Management page, so it
-# outlives the short CI/probe bearer TTL above.
-_BROWSER_SESSION_TTL_SECONDS = 30 * 24 * 3600
-
-
 def _dev_profile(payload: Mapping[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
     if deps.dev_login_forbidden_environment():
         raise deps.bff_error(
@@ -203,7 +198,6 @@ async def bff_auth_dev_login(*, payload: Dict[str, Any], deps: AuthDependencies,
     browser_session = (payload or {}).get("browser_session") is True
     grant = None
     extra: Dict[str, Any] = {}
-    ttl: Optional[int] = None
     if browser_session and refresh_store is not None:
         # Rotating refresh cookie keeps the browser session alive; access token stays short-lived.
         grant = refresh_store.issue(
@@ -211,10 +205,7 @@ async def bff_auth_dev_login(*, payload: Dict[str, Any], deps: AuthDependencies,
             roles=profile["roles"], tenant_id=profile["tenant_id"],
         )
         extra = {"refresh_exp": grant.expires_at, "refresh_chain": grant.chain_id}
-    elif browser_session:
-        # No refresh store wired: fall back to the long-lived access token from DEV-LOGIN-LONG-SESSION.
-        ttl = _BROWSER_SESSION_TTL_SECONDS
-    token = _issue_token(profile, deps, extra, ttl=ttl)
+    token = _issue_token(profile, deps, extra)
     result = {
         **token,
         "meta": {
