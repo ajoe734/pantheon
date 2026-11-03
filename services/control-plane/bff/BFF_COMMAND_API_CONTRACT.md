@@ -232,6 +232,27 @@ confirmation, and audit gates.
 | Incident / kill switch | `IssueRiskOff`, `LiquidateAll`, `IssueSafeMode`, `ActivateKillSwitch` | operator/admin role per action; admin+MFA for destructive commands; audit reason and command receipt. |
 | Evolution / governance | `ApproveEvolutionDecision`, `ExecuteEvolutionAction`, `ApproveMutation`, `RejectMutation`, `RecordSponsorDecision` | policy-gated governance role; target state checked against read projection before dispatch. |
 
+### 7.1 H4: Evolution proposal approval sequence
+
+Governance records an Evolution proposal approval with `target_type=evolution_proposal`
+and `target_id=<EvolutionDecision id>`. For `ReviewMutation` and
+`ApproveEvolutionDecision` **only**, an approved record of that type binds to a command
+whose `target` is `{"type":"EvolutionDecision","id":<same id>}`; `decision_id` /
+`evolution_decision_id` params, when present, must equal that id. It never binds to any other
+command, target type, or id (`APPROVAL_DECISION_BINDING_MISMATCH`); pending or rejected
+records stay `APPROVAL_DECISION_NOT_APPROVED`. The approval is not consumed, so one record
+serves both steps. The caller's `actor_role` must be a role the principal holds (e.g.
+`risk_owner` for a MEDIUM proposal); `actor_id` is always the logged-in principal.
+
+1. Create and approve one governance ApprovalDecision (`target_type=evolution_proposal`,
+   `target_id=<evo id>`); note its id as `<apv id>`.
+2. `POST /bff/v1/commands` (header `Idempotency-Key`):
+   `{"command":"ReviewMutation","target":{"type":"EvolutionDecision","id":"<evo id>"},"params":{"decision_id":"<evo id>","approval_decision_id":"<apv id>","actor_role":"risk_owner"},"audit_context":{"reason":"H4 review"}}`
+   (proposed -> reviewed)
+3. `POST /bff/v1/commands` (new `Idempotency-Key`, after step 2 completes):
+   `{"command":"ApproveEvolutionDecision","target":{"type":"EvolutionDecision","id":"<evo id>"},"params":{"evolution_decision_id":"<evo id>","approval_action":"approve","approval_decision_id":"<apv id>","actor_role":"risk_owner"},"audit_context":{"reason":"H4 approve"}}`
+   (reviewed -> approved)
+
 ## 8. Command Adapter Mapping
 
 The `/bff/actions/{entityType}/{entityId}/{actionId}` routes and their compact

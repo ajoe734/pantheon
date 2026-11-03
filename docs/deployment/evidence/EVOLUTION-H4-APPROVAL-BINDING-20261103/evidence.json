@@ -1,0 +1,19 @@
+{
+  "task": "EVOLUTION-H4-APPROVAL-BINDING-20261103",
+  "tests": {
+    "passed": "569 passed, 1 skipped",
+    "files": [
+      "services/control-plane/bff/tests/test_evolution_decision_approval_binding.py",
+      "services/control-plane/bff/tests/test_evolution_actor_role_binding.py",
+      "services/control-plane/bff/tests/test_command_replay_conflict.py",
+      "services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
+      "services/control-plane/bff/tests/test_command_adapters_router.py"
+    ]
+  },
+  "changes": [
+    "preconditions.py: evolution_proposal approval binds ReviewMutation/ApproveEvolutionDecision on the same EvolutionDecision id only",
+    "service.py: stored actor_role honours a named role the principal holds for those two commands on EvolutionDecision (admission previously could only store admin/approver/reviewer/operator, so risk_owner never reached the Evolution owner)"
+  ],
+  "known_unrelated_failure": "services/control-plane/bff/test_ew05_mutation_review_contract.py fails identically on baseline",
+  "h4_requests": "see BFF_COMMAND_API_CONTRACT.md section 7.1"
+}
