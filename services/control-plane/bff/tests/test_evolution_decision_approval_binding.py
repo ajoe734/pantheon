@@ -9,11 +9,9 @@ Evolution owner app.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator
 from unittest.mock import patch
 
@@ -24,9 +22,6 @@ from fastapi.testclient import TestClient
 _tmp = tempfile.mkdtemp(prefix="evo_h4_bff_")
 os.environ.setdefault("EVOLUTION_DATA_DIR", _tmp)
 os.environ.setdefault("INCIDENT_DATA_DIR", _tmp)
-_CP_GOV = Path(__file__).resolve().parents[2] / "governance"
-if str(_CP_GOV) not in sys.path:
-    sys.path.insert(0, str(_CP_GOV))
 
 from services.evolution.main import app as evolution_app  # noqa: E402
 from services.control_plane.bff.command_adapters.evolution_adapter import EvolutionCommandAdapter  # noqa: E402
