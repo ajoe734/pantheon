@@ -373,6 +373,7 @@ def test_taiwan_official_history_fetch_is_bounded_and_uses_prior_month(
         "TWSE",
         anchor_date="2026-06-10",
         trace_id="trace-bounded-two-month-history",
+        today_provider=lambda: "2026-06-10",
     )
 
     assert calls == ["2026-06-01", "2026-05-01"]
@@ -489,7 +490,7 @@ def test_bounded_official_refresh_prioritizes_active_symbols_before_global_cap(
 def test_bounded_official_refresh_fails_when_active_symbols_exceed_cap(monkeypatch) -> None:
     monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW,3105.TWO")
 
-    with pytest.raises(SourceEvidenceError, match="symbol history exceeds"):
+    with pytest.raises(SourceEvidenceError, match="cannot hold the minimum closes"):
         execute_provider_owned_adapter(
             connector=TaiwanOfficialMarketDatasetAdapter(max_records=1).connector(),
             fetch={
@@ -1313,6 +1314,104 @@ def test_bounded_official_refresh_retains_configured_history_depth(monkeypatch) 
 
 
 
+def _incident_20261102_request(max_records: int) -> dict:
+    """2026-11-02 hosted shape: three TWSE priority symbols, 40-day history, many daily-all rows."""
+    fields = TWSE_PRICE_HISTORY_PAYLOAD["fields"]
+
+    def history(code: str, name: str) -> dict:
+        rows = [
+            [f"115/05/{day:02d}", "1,000", "1,000", "10.00", "11.00", "9.00", f"{10.0 + day / 100:.2f}", "+0.01", "10", ""]
+            for day in range(1, 23)
+        ] + [
+            [f"115/06/{day:02d}", "1,000", "1,000", "10.00", "11.00", "9.00", f"{11.0 + day / 100:.2f}", "+0.01", "10", ""]
+            for day in range(1, 24)
+        ]
+        return {"stat": "OK", "date": "20260623", "title": f"115年06月 {code} {name} 各日成交資訊", "fields": fields, "data": rows}
+
+    def daily(code: str) -> dict:
+        return {
+            "Date": "1150623",
+            "Code": code,
+            "Name": code,
+            "TradeVolume": "1000",
+            "TradeValue": "1000",
+            "OpeningPrice": "10.00",
+            "HighestPrice": "11.00",
+            "LowestPrice": "9.00",
+            "ClosingPrice": "11.23",
+            "Change": "+0.01",
+            "Transaction": "10",
+        }
+
+    codes = ("2330", "2317", "0050")
+    return {
+        "dataset": "tw_price_daily",
+        "venues": ["TWSE"],
+        "payloads": {"TWSE": [daily(code) for code in codes] + [daily(f"{index:04d}") for index in range(1101, 1201)]},
+        "history_payloads": {f"{code}.TWSE": history(code, code) for code in codes},
+        "history_trading_days": 40,
+        "max_records": max_records,
+    }
+
+
+def test_bounded_official_refresh_keeps_newest_dates_for_every_priority_symbol_under_hosted_limit(monkeypatch) -> None:
+    """Hosted fetch.max_records=100: before the fix 2330=40, 2317=40, 0050=20 (oldest rows only)."""
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TWSE,2317.TWSE,0050.TWSE")
+    monkeypatch.delenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS", raising=False)
+    request = _incident_20261102_request(100)
+
+    records = execute_provider_owned_adapter(
+        connector=TaiwanOfficialMarketDatasetAdapter(max_records=100).connector(),
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 100},
+            "request": request,
+            "max_records": 100,
+        },
+        trace_id="trace-20261102-three-priority",
+    )
+
+    assert len(records) == 100
+    for symbol in ("2330.TWSE", "2317.TWSE", "0050.TWSE"):
+        times = [r.metadata["event_time"] for r in records if r.metadata["symbol_canonical"] == symbol]
+        assert len(times) == 33, symbol
+        assert times == sorted(times)
+        assert times[-1] == "2026-06-23", symbol
+    assert {r.metadata["symbol_canonical"] for r in records[:99]} == {"2330.TWSE", "2317.TWSE", "0050.TWSE"}
+
+
+def test_bounded_official_refresh_fails_before_fetch_when_budget_cannot_hold_priority_history(monkeypatch) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TWSE,2317.TWSE,0050.TWSE")
+    monkeypatch.delenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS", raising=False)
+
+    def forbidden_fetch(*args, **kwargs):
+        raise AssertionError("provider fetch must not run when the record budget is too small")
+
+    monkeypatch.setattr(TaiwanOfficialMarketDatasetAdapter, "fetch_payload", forbidden_fetch)
+    monkeypatch.setattr(TaiwanOfficialMarketDatasetAdapter, "fetch_price_history_records", forbidden_fetch)
+    request = _incident_20261102_request(5)
+    del request["payloads"]
+    del request["history_payloads"]
+
+    with pytest.raises(SourceEvidenceError) as excinfo:
+        execute_provider_owned_adapter(
+            connector=TaiwanOfficialMarketDatasetAdapter(max_records=5).connector(),
+            fetch={
+                "mode": "provider_owned_adapter",
+                "adapter": "TaiwanOfficialMarketDatasetAdapter",
+                "adapter_config": {"max_records": 5},
+                "request": request,
+                "max_records": 5,
+            },
+            trace_id="trace-20261102-budget",
+        )
+    message = str(excinfo.value)
+    assert "2330.TWSE,2317.TWSE,0050.TWSE" in message
+    assert "required=6" in message
+    assert "allowed=5" in message
+
+
 def test_taiwan_official_adapter_binds_emergency_closure_v2_for_oct22_price() -> None:
     adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
     records = adapter.records_from_payload(
@@ -1336,3 +1435,108 @@ def test_taiwan_official_adapter_binds_emergency_closure_v2_for_oct22_price() ->
         assert "2026-10-23" in evidence["holidays"]
         assert "2026-10-23" not in evidence["trading_days"]
         assert evidence["trading_days"] == ["2026-10-22", "2026-10-27", "2026-10-28"]
+
+
+_NOV_BOUNDARY_FIELDS = TWSE_PRICE_HISTORY_PAYLOAD["fields"]
+
+
+def _patch_month_boundary_history(monkeypatch, *, november_rows, calls):
+    def fake_fetch(self, symbol, venue, *, anchor_date, timeout_seconds=20.0):
+        del timeout_seconds
+        calls.append(anchor_date)
+        endpoint = self.price_history_endpoint(symbol, venue, anchor_date=anchor_date)
+        if anchor_date == "2026-11-01":
+            if not november_rows:
+                return {"stat": "很抱歉，沒有符合條件的資料!"}, endpoint
+            return {
+                "stat": "OK",
+                "date": "20261102",
+                "title": "115年11月 2330 台積電 各日成交資訊",
+                "fields": _NOV_BOUNDARY_FIELDS,
+                "data": november_rows,
+            }, endpoint
+        assert anchor_date == "2026-10-01"
+        return {
+            "stat": "OK",
+            "date": "20261001",
+            "title": "115年10月 2330 台積電 各日成交資訊",
+            "fields": _NOV_BOUNDARY_FIELDS,
+            "data": [
+                ["115/10/29", "20,000,000", "1", "2,360.00", "2,380.00", "2,350.00", "2,365.00", "+5.00", "1", ""],
+                ["115/10/30", "20,000,000", "1", "2,365.00", "2,380.00", "2,360.00", "2,370.00", "+5.00", "1", ""],
+            ],
+        }, endpoint
+
+    monkeypatch.setattr(TaiwanOfficialMarketDatasetAdapter, "fetch_price_history_payload", fake_fetch)
+    monkeypatch.setattr(
+        "services.source_ingestion.connectors.taiwan_official._taipei_today",
+        lambda: "2026-11-02",
+    )
+
+
+def test_bounded_refresh_fetches_current_month_when_openapi_row_lags(monkeypatch) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW")
+    monkeypatch.delenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS", raising=False)
+    calls: list[str] = []
+    _patch_month_boundary_history(
+        monkeypatch,
+        november_rows=[
+            ["115/11/02", "20,000,000", "1", "2,370.00", "2,380.00", "2,320.00", "2,330.00", "-40.00", "1", ""],
+        ],
+        calls=calls,
+    )
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=100)
+    records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 100},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE"],
+                "payloads": {
+                    "TWSE": [
+                        {"Date": "1151030", "Code": "2330", "Name": "台積電", "ClosingPrice": "2370.00"}
+                    ]
+                },
+                "history_trading_days": 3,
+            },
+            "max_records": 100,
+        },
+        trace_id="trace-month-boundary",
+    )
+
+    assert calls == ["2026-11-01", "2026-10-01"]
+    dates = [record.metadata["event_time"] for record in records]
+    assert dates == ["2026-10-29", "2026-10-30", "2026-11-02"]
+    latest = records[-1].metadata["normalized_row"]
+    assert latest["date"] == "2026-11-02"
+    assert latest["close"] == 2330.0
+
+
+def test_bounded_refresh_tolerates_empty_current_month_window(monkeypatch) -> None:
+    calls: list[str] = []
+    _patch_month_boundary_history(monkeypatch, november_rows=[], calls=calls)
+    records = TaiwanOfficialMarketDatasetAdapter(max_records=10).fetch_price_history_records(
+        "2330.TWSE",
+        "TWSE",
+        anchor_date="2026-10-30",
+        trace_id="trace-empty-current-month",
+    )
+
+    assert calls == ["2026-11-01", "2026-10-01"]
+    assert {record.metadata["event_time"] for record in records} == {"2026-10-29", "2026-10-30"}
+
+
+def test_history_fetch_never_requests_months_after_current_taipei_month(monkeypatch) -> None:
+    calls: list[str] = []
+    _patch_month_boundary_history(monkeypatch, november_rows=[], calls=calls)
+    TaiwanOfficialMarketDatasetAdapter(max_records=10).fetch_price_history_records(
+        "2330.TWSE",
+        "TWSE",
+        anchor_date="2026-10-30",
+        trace_id="trace-no-future",
+        today_provider=lambda: "2026-10-31",
+    )
+    assert calls == ["2026-10-01"]

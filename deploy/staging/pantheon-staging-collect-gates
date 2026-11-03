@@ -48,20 +48,58 @@ import time
 from typing import Any
 
 
-def _fail(code: str, message: str) -> "NoReturn":
+def _fail(code: str, message: str, **extra: Any) -> "NoReturn":
+    payload: dict[str, Any] = {
+        "status": "error",
+        "step": "collect-verify-gates",
+        "error_code": code,
+        "message": message,
+    }
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
     print(
         json.dumps(
-            {
-                "status": "error",
-                "step": "collect-verify-gates",
-                "error_code": code,
-                "message": message,
-            },
+            payload,
             sort_keys=True,
         ),
         file=sys.stderr,
     )
     raise SystemExit(1)
+
+
+def _build_rollback_phase_timings(
+    t0: float,
+    *,
+    drain_end: float,
+    baseline_up_end: float,
+    owners_healthy_end: float,
+    readyz_200_end: float | None = None,
+    readback_end: float | None = None,
+    total_duration: float | None = None,
+) -> dict[str, float]:
+    def _ms_floor(start: float, end: float) -> float:
+        return int(max(0.0, end - start) * 1000) / 1000.0
+
+    timings: dict[str, float] = {
+        "drain": _ms_floor(t0, drain_end),
+        "baseline_up": _ms_floor(drain_end, baseline_up_end),
+        "owners_healthy": _ms_floor(baseline_up_end, owners_healthy_end),
+        "readyz_200": _ms_floor(owners_healthy_end, readyz_200_end) if readyz_200_end is not None else 0.0,
+        "readback": (
+            _ms_floor(readyz_200_end, readback_end)
+            if readyz_200_end is not None and readback_end is not None
+            else 0.0
+        ),
+    }
+    if total_duration is not None:
+        while sum(timings.values()) > total_duration:
+            largest_key = max(timings, key=lambda k: timings[k])
+            if timings[largest_key] <= 0.0:
+                break
+            excess = max(0.001, round(sum(timings.values()) - total_duration, 3))
+            timings[largest_key] = max(0.0, round(timings[largest_key] - excess, 3))
+    return timings
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -77,6 +115,9 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+_COMPOSE_ENV_KEYS: set[str] = set()
+
+
 def _run(
     cmd: list[str],
     *,
@@ -85,6 +126,9 @@ def _run(
     error_code: str = "COMMAND_FAILED",
 ) -> subprocess.CompletedProcess[str]:
     merged_env = os.environ.copy()
+    if "--env-file" in cmd:
+        for k in _COMPOSE_ENV_KEYS:
+            merged_env.pop(k, None)
     if env:
         merged_env.update(env)
     proc = subprocess.run(cmd, env=merged_env, text=True, capture_output=True, check=False)
@@ -178,6 +222,43 @@ def _http_status(curl_bin: str, url: str, *, method: str = "GET", headers: dict[
     return status_code
 
 
+def _wait_bff_ready(curl_bin: str, bff_port: str) -> int:
+    deadline = time.monotonic() + float(os.environ.get("STAGING_OWNER_READY_TIMEOUT", "180"))
+    interval = float(os.environ.get("STAGING_READY_INTERVAL", "3"))
+    url = f"http://127.0.0.1:{bff_port}/bff/readyz"
+    while True:
+        status = _http_status(curl_bin, url)
+        if status == 200 or time.monotonic() >= deadline:
+            return status
+        time.sleep(interval)
+
+
+def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
+    dest_resolved = dest.resolve()
+    members = tf.getmembers()
+    for member in members:
+        name = member.name
+        if not name or name.startswith("/") or "\\" in name or ".." in Path(name).parts:
+            _fail("UNSAFE_TAR_MEMBER", f"Refusing unsafe tar member path {name!r}")
+        if (
+            member.issym()
+            or member.islnk()
+            or member.isdev()
+            or member.isfifo()
+            or member.ischr()
+            or member.isblk()
+            or not (member.isfile() or member.isdir())
+        ):
+            _fail("UNSAFE_TAR_MEMBER", f"Refusing non-regular/non-dir tar member {name!r}")
+        target = (dest_resolved / name).resolve()
+        if target != dest_resolved and dest_resolved not in target.parents:
+            _fail("UNSAFE_TAR_MEMBER", f"Refusing tar member escaping destination: {name!r}")
+    try:
+        tf.extractall(dest_resolved, members=members, filter="data")
+    except TypeError:
+        tf.extractall(dest_resolved, members=members)
+
+
 def _http_json(curl_bin: str, url: str, *, error_code: str) -> dict[str, Any]:
     proc = _run([curl_bin, "-fsS", "-m", "10", url], error_code=error_code)
     try:
@@ -189,7 +270,11 @@ def _http_json(curl_bin: str, url: str, *, error_code: str) -> dict[str, Any]:
     return data
 
 
-def _verify_unpacked_tarball_matches_dir(tarball_path: Path, target_dir: Path) -> None:
+def _verify_unpacked_tarball_matches_dir(
+    tarball_path: Path,
+    target_dir: Path,
+    rollback_baseline: dict[str, Any] | None = None,
+) -> None:
     if not tarball_path.exists():
         _fail("BASELINE_FE_ARCHIVE_MISSING", f"Retained baseline FE archive missing at {tarball_path}")
     if not target_dir.exists():
@@ -201,6 +286,10 @@ def _verify_unpacked_tarball_matches_dir(tarball_path: Path, target_dir: Path) -
                 continue
             rel_name = member.name.lstrip("./")
             if not rel_name:
+                continue
+            if rel_name == "deployment.json":
+                # bootstrap.sh write_deployment_json rewrites deployment.json with the staging
+                # baseline release identity; verified explicitly against rollback_baseline below.
                 continue
             extracted_file = target_dir / rel_name
             if not extracted_file.exists() or not extracted_file.is_file():
@@ -221,6 +310,54 @@ def _verify_unpacked_tarball_matches_dir(tarball_path: Path, target_dir: Path) -
             member_count += 1
     if member_count == 0:
         _fail("BASELINE_FE_ARCHIVE_EMPTY", f"Baseline FE archive {tarball_path} contains no regular files")
+    if rollback_baseline is not None:
+        dep_file = target_dir / "deployment.json"
+        if not dep_file.exists() or not dep_file.is_file():
+            _fail("BASELINE_FE_CONTENT_MISMATCH", f"Baseline FE deployment.json missing at {dep_file}")
+        try:
+            dep_doc = json.loads(dep_file.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            _fail("BASELINE_FE_CONTENT_TAMPERED", f"Baseline FE deployment.json is invalid JSON: {exc}")
+        if not isinstance(dep_doc, dict):
+            _fail("BASELINE_FE_CONTENT_TAMPERED", "Baseline FE deployment.json must be a JSON object")
+        sha_file = target_dir / ".artifact_sha256"
+        expected_fe_sha = str(rollback_baseline.get("frontend_artifact_sha256") or "")
+        if not sha_file.is_file() or sha_file.read_text(encoding="utf-8").strip() != expected_fe_sha:
+            _fail(
+                "BASELINE_FE_CONTENT_TAMPERED",
+                "Baseline FE .artifact_sha256 does not match rollback_baseline.frontend_artifact_sha256",
+            )
+        expected_bff_img = str(rollback_baseline.get("backend_operator_bff_image") or "")
+        expected_bff_digest = (
+            "sha256:" + expected_bff_img.split("@sha256:", 1)[1] if "@sha256:" in expected_bff_img else ""
+        )
+        expected_fields: dict[str, Any] = {
+            "schema_version": 1,
+            "environment": "staging",
+            "release_id": str(rollback_baseline.get("previous_release_id") or ""),
+            "config_schema_version": str(rollback_baseline.get("config_schema_version") or ""),
+            "frontend_commit": str(rollback_baseline.get("frontend_commit") or ""),
+            "frontend_commit_sha": str(rollback_baseline.get("frontend_commit") or ""),
+            "frontend_artifact_sha256": expected_fe_sha,
+            "backend_commit": str(rollback_baseline.get("backend_commit") or ""),
+            "backend_commit_sha": str(rollback_baseline.get("backend_commit") or ""),
+            "operator_bff_image": expected_bff_img,
+            "operator_bff_digest": expected_bff_digest,
+            "vite_bff_mode": "live",
+            "vite_bff_fallback": "strict",
+            "provider_enabled": False,
+            "live_broker_enabled": False,
+            "real_writes_enabled": False,
+            "dev_stub_writes_enabled": False,
+            "control_vm_broker_credentials_present": False,
+        }
+        for field_name, expected_val in expected_fields.items():
+            actual_val = dep_doc.get(field_name)
+            if type(actual_val) is not type(expected_val) or actual_val != expected_val:
+                _fail(
+                    "BASELINE_FE_CONTENT_TAMPERED",
+                    f"Baseline FE deployment.json field {field_name!r}={actual_val!r} != expected {expected_val!r}",
+                )
 
 
 def _as_bool(val: Any, default: bool = False) -> bool:
@@ -288,6 +425,8 @@ def main() -> int:
     staging_root = Path(os.environ.get("STAGING_ROOT", "/var/lib/pantheon-staging-root"))
     compose_env = _load_env_file(staging_root / "state" / "compose.env")
     for k, v in compose_env.items():
+        if k not in os.environ:
+            _COMPOSE_ENV_KEYS.add(k)
         os.environ.setdefault(k, v)
 
     data_mount = Path(os.environ.get("STAGING_DATA_MOUNT", "/var/lib/pantheon-staging"))
@@ -357,16 +496,31 @@ def main() -> int:
         _fail("SECRET_EMPTY", "Postgres password file is empty")
     pg_env = {"PGPASSWORD": pg_password}
 
+    def pg_client_cmd(tool_name: str, *tool_args: str) -> list[str]:
+        pg_proc = _run(compose_cmd("ps", "-q", "postgres"), error_code="COMPOSE_PS_FAILED")
+        pg_cid = pg_proc.stdout.strip().splitlines()[0] if pg_proc.stdout.strip() else ""
+        if not pg_cid:
+            _fail("SERVICE_NOT_RUNNING", "Required staging service postgres is not running")
+        return [
+            docker_bin,
+            "exec",
+            "-e",
+            "PGPASSWORD",
+            pg_cid,
+            tool_name,
+            "-h",
+            "127.0.0.1",
+            "-p",
+            "5432",
+            "-U",
+            pg_user,
+            *tool_args,
+        ]
+
     def psql_query(sql: str, *, db: str = pg_db, error_code: str = "PSQL_QUERY_FAILED") -> str:
         proc = _run(
-            [
-                psql_bin,
-                "-h",
-                "127.0.0.1",
-                "-p",
-                pg_port,
-                "-U",
-                pg_user,
+            pg_client_cmd(
+                "psql",
                 "-d",
                 db,
                 "-v",
@@ -375,7 +529,7 @@ def main() -> int:
                 "-A",
                 "-c",
                 sql,
-            ],
+            ),
             env=pg_env,
             error_code=error_code,
         )
@@ -784,7 +938,7 @@ def main() -> int:
             "BASELINE_FE_ARCHIVE_SHA_MISMATCH",
             f"Retained baseline FE archive digest {baseline_archive_sha} != manifest {rollback_baseline['frontend_artifact_sha256']}",
         )
-    _verify_unpacked_tarball_matches_dir(baseline_fe_archive, baseline_fe_dir)
+    _verify_unpacked_tarball_matches_dir(baseline_fe_archive, baseline_fe_dir, rollback_baseline)
 
     baseline_compose_env = staging_root / "state" / "compose.baseline.env"
     baseline_env_map = dict(compose_env)
@@ -847,29 +1001,36 @@ def main() -> int:
         or "pantheon-operator-bff"
     ).strip()
 
-    operator_token = _mint_staging_jwt(
-        secret=jwt_secret,
-        issuer=jwt_issuer,
-        audience=jwt_audience,
-        sub="usr-101",
-        email="staging-user-usr-101@pantheon.internal",
-        tenant_id="tenant-alpha",
-        allowed_tenants=["tenant-alpha"],
-        roles=["operator"],
-    )
-    viewer_token = _mint_staging_jwt(
-        secret=jwt_secret,
-        issuer=jwt_issuer,
-        audience=jwt_audience,
-        sub="usr-viewer-101",
-        email="staging-user-viewer-101@pantheon.internal",
-        tenant_id="tenant-alpha",
-        allowed_tenants=["tenant-alpha"],
-        roles=["viewer"],
-    )
+    def _mint_probe_tokens() -> tuple[str, str]:
+        op_tok = _mint_staging_jwt(
+            secret=jwt_secret,
+            issuer=jwt_issuer,
+            audience=jwt_audience,
+            sub="usr-101",
+            email="staging-user-usr-101@pantheon.internal",
+            tenant_id="tenant-alpha",
+            allowed_tenants=["tenant-alpha"],
+            roles=["operator"],
+            ttl_seconds=300,
+        )
+        vw_tok = _mint_staging_jwt(
+            secret=jwt_secret,
+            issuer=jwt_issuer,
+            audience=jwt_audience,
+            sub="usr-viewer-101",
+            email="staging-user-viewer-101@pantheon.internal",
+            tenant_id="tenant-alpha",
+            allowed_tenants=["tenant-alpha"],
+            roles=["viewer"],
+            ttl_seconds=300,
+        )
+        return op_tok, vw_tok
+
+    operator_token, viewer_token = _mint_probe_tokens()
 
     # 3. Expand-phase forward migration & old-app/new-schema compatibility
-    mig_spec_path = data_mount / "sanitized" / "migration-spec.json"
+    mig_root = staging_root / "state" / "migration-material"
+    mig_spec_path = mig_root / "migration-spec.json"
     if not mig_spec_path.exists():
         _fail("MIGRATION_SPEC_MISSING", f"Migration specification missing at {mig_spec_path}")
     mig_spec = json.loads(mig_spec_path.read_text(encoding="utf-8"))
@@ -886,7 +1047,7 @@ def main() -> int:
     mig_files = mig_spec.get("files")
     if not isinstance(mig_files, list) or not mig_files:
         _fail("MIGRATION_FILES_EMPTY", "migration-spec.json must list the versioned migration files")
-    mig_dir = data_mount / "sanitized" / "migrations"
+    mig_dir = mig_root / "migrations"
     statements: list[str] = []
     set_lines: list[str] = []
     for entry in sorted(mig_files, key=lambda e: str(e.get("name") if isinstance(e, dict) else "")):
@@ -915,10 +1076,15 @@ def main() -> int:
     # CREATE INDEX CONCURRENTLY requires (a multi-statement `-c` would be one transaction).
     for mig_name, stmt in zip(sorted(str(e["name"]) for e in mig_files), statements):
         _run(
-            [
-                psql_bin, "-h", "127.0.0.1", "-p", pg_port, "-U", pg_user, "-d", pg_db,
-                "-v", "ON_ERROR_STOP=1", "-f", str(mig_dir / mig_name),
-            ],
+            pg_client_cmd(
+                "psql",
+                "-d",
+                pg_db,
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-f",
+                str(mig_dir / mig_name),
+            ),
             env=pg_env,
             error_code="MIGRATION_SQL_FAILED",
         )
@@ -962,7 +1128,7 @@ def main() -> int:
             "OLD_APP_COMPAT_IMAGE_MISMATCH",
             f"Old-app compatibility check started {old_app_image_observed!r}, expected {baseline_bff_img!r}",
         )
-    old_app_readyz_status = _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz")
+    old_app_readyz_status = _wait_bff_ready(curl_bin, bff_port)
     old_app_version = _http_json(
         curl_bin,
         f"http://127.0.0.1:{bff_port}/bff/version",
@@ -994,7 +1160,7 @@ def main() -> int:
         compose_cmd("--profile", "core", "up", "-d", "--no-build", "operator-bff"),
         error_code="OLD_APP_COMPAT_RESTORE_CANDIDATE_FAILED",
     )
-    post_mig_ready = _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") == 200
+    post_mig_ready = _wait_bff_ready(curl_bin, bff_port) == 200
     post_mig_version = _http_json(
         curl_bin,
         f"http://127.0.0.1:{bff_port}/bff/version",
@@ -1174,28 +1340,39 @@ def main() -> int:
         query_live_catalog("BACKUP_CATALOG_QUERY_FAILED", "BACKUP_CATALOG_EMPTY")
     )
     live_row_counts = row_counts(pg_db)
-    owner_manifest_sha = owner_store_manifest(data_mount)
 
     backup_dir = data_mount / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
+    owner_backup_file = backup_dir / f"{release_id}.owner-stores.tar.gz"
+    with tempfile.TemporaryDirectory(prefix="stg-owner-snap-") as snap_tmp:
+        snap_root = Path(snap_tmp)
+        for store in staging_sanitize.OWNER_STORE_PATHS:
+            src_store = data_mount / store
+            if not src_store.is_dir():
+                _fail("OWNER_STORE_MISSING", f"Durable owner store {src_store} is missing")
+            shutil.copytree(src_store, snap_root / store, symlinks=True)
+        owner_manifest_sha = owner_store_manifest(snap_root)
+        with tarfile.open(owner_backup_file, "w:gz") as tf:
+            for store in staging_sanitize.OWNER_STORE_PATHS:
+                tf.add(str(snap_root / store), arcname=store)
+    owner_backup_sha256 = "sha256:" + hashlib.sha256(owner_backup_file.read_bytes()).hexdigest()
+
     backup_file = backup_dir / f"{release_id}.dump"
     _run(
-        [
-            pg_dump_bin, "-h", "127.0.0.1", "-p", pg_port, "-U", pg_user, "-d", pg_db,
-            "-Fc", "-f", str(backup_file),
-        ],
+        pg_client_cmd(
+            "pg_dump",
+            "-d",
+            pg_db,
+            "-Fc",
+            "-f",
+            str(backup_file),
+        ),
         env=pg_env,
         error_code="PG_DUMP_FAILED",
     )
     if not backup_file.exists() or backup_file.stat().st_size == 0:
         _fail("BACKUP_FILE_EMPTY", f"pg_dump did not produce a non-empty backup at {backup_file}")
     backup_sha256 = "sha256:" + hashlib.sha256(backup_file.read_bytes()).hexdigest()
-
-    owner_backup_file = backup_dir / f"{release_id}.owner-stores.tar.gz"
-    with tarfile.open(owner_backup_file, "w:gz") as tf:
-        for store in staging_sanitize.OWNER_STORE_PATHS:
-            tf.add(str(data_mount / store), arcname=store)
-    owner_backup_sha256 = "sha256:" + hashlib.sha256(owner_backup_file.read_bytes()).hexdigest()
 
     restore_db = f"{pg_db}_restore_verify"
     if not re.fullmatch(r"^[a-z][a-z0-9_]{1,62}$", restore_db) or restore_db == pg_db:
@@ -1206,10 +1383,14 @@ def main() -> int:
     psql_query(f'DROP DATABASE IF EXISTS "{restore_db}";', db=pg_db, error_code="RESTORE_DB_DROP_FAILED")
     psql_query(f'CREATE DATABASE "{restore_db}";', db=pg_db, error_code="RESTORE_DB_CREATE_FAILED")
     _run(
-        [
-            pg_restore_bin, "-h", "127.0.0.1", "-p", pg_port, "-U", pg_user, "-d", restore_db,
-            "--clean", "--if-exists", str(backup_file),
-        ],
+        pg_client_cmd(
+            "pg_restore",
+            "-d",
+            restore_db,
+            "--clean",
+            "--if-exists",
+            str(backup_file),
+        ),
         env=pg_env,
         error_code="PG_RESTORE_FAILED",
     )
@@ -1222,7 +1403,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="stg-owner-restore-") as restore_tmp:
         restore_root = Path(restore_tmp)
         with tarfile.open(owner_backup_file, "r:gz") as tf:
-            tf.extractall(restore_root, filter="data")
+            _safe_extract_tar(tf, restore_root)
         restored_owner_manifest_sha = owner_store_manifest(restore_root)
         restored_bff = json.loads((restore_root / "bff" / "session_lifecycle.json").read_text(encoding="utf-8"))
         if ack_id not in restored_bff.get("sessions", {}):
@@ -1262,10 +1443,17 @@ def main() -> int:
 
     t0 = time.monotonic()
     # Drain singleton before switching
-    _run(compose_cmd("--profile", "singleton", "rm", "-fsv", "lifecycle-projector"), error_code="ROLLBACK_DRAIN_FAILED")
+    _run(
+        compose_cmd("--profile", "core", "--profile", "singleton", "rm", "-fsv", "lifecycle-projector"),
+        error_code="ROLLBACK_DRAIN_FAILED",
+    )
     for absent_key in sorted(baseline_absent_owners):
         # Owners the baseline never had must not keep running beside the restored baseline.
-        _run(compose_cmd("rm", "-fsv", absent_key.replace("_", "-")), error_code="ROLLBACK_ABSENT_OWNER_REMOVE_FAILED")
+        _run(
+            compose_cmd("--profile", "core", "rm", "-fsv", absent_key.replace("_", "-")),
+            error_code="ROLLBACK_ABSENT_OWNER_REMOVE_FAILED",
+        )
+    t_after_drain = time.monotonic()
     if current_fe.is_symlink() or current_fe.exists():
         current_fe.unlink()
     current_fe.symlink_to(baseline_fe_dir)
@@ -1290,13 +1478,27 @@ def main() -> int:
         ],
         error_code="ROLLBACK_COMPOSE_UP_FAILED",
     )
+    t_after_baseline_up = time.monotonic()
 
     # Baseline owners must be running/healthy (not just carry the baseline Config.Image) before
     # any rollback evidence or duration is recorded.
     unserved = _wait_product_owners(frozenset(baseline_absent_owners))
+    t_after_owners_healthy = time.monotonic()
     if unserved:
-        _fail("ROLLBACK_BASELINE_UNHEALTHY", f"Baseline product owners not running/healthy after rollback: {', '.join(unserved)}")
-    rb_ready = _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") == 200
+        _fail(
+            "ROLLBACK_BASELINE_UNHEALTHY",
+            f"Baseline product owners not running/healthy after rollback: {', '.join(unserved)}",
+            rollback_duration_seconds=round(t_after_owners_healthy - t0, 3),
+            bff_healthy=False,
+            phase_timings_seconds=_build_rollback_phase_timings(
+                t0,
+                drain_end=t_after_drain,
+                baseline_up_end=t_after_baseline_up,
+                owners_healthy_end=t_after_owners_healthy,
+            ),
+        )
+    rb_ready = _wait_bff_ready(curl_bin, bff_port) == 200
+    t_after_readyz = time.monotonic()
     rb_version = _http_json(curl_bin, f"http://127.0.0.1:{bff_port}/bff/version", error_code="ROLLBACK_VERSION_FAILED")
     served_backend_images: dict[str, str] = {}
     for absent_key in sorted(baseline_absent_owners):
@@ -1323,10 +1525,23 @@ def main() -> int:
     ]
     rb_fe_sha = (current_fe / ".artifact_sha256").read_text(encoding="utf-8").strip()
     rb_dep_json = json.loads((current_fe / "deployment.json").read_text(encoding="utf-8"))
-    rollback_duration = round(time.monotonic() - t0, 3)
+    t_after_readback = time.monotonic()
+    rollback_duration = round(t_after_readback - t0, 3)
+    rollback_phase_timings = _build_rollback_phase_timings(
+        t0,
+        drain_end=t_after_drain,
+        baseline_up_end=t_after_baseline_up,
+        owners_healthy_end=t_after_owners_healthy,
+        readyz_200_end=t_after_readyz,
+        readback_end=t_after_readback,
+        total_duration=rollback_duration,
+    )
 
     # Restore candidate pair across every required owner service after rollback readback
-    _run(compose_cmd("--profile", "singleton", "rm", "-fsv", "lifecycle-projector"), error_code="RESTORE_CANDIDATE_DRAIN_FAILED")
+    _run(
+        compose_cmd("--profile", "core", "--profile", "singleton", "rm", "-fsv", "lifecycle-projector"),
+        error_code="RESTORE_CANDIDATE_DRAIN_FAILED",
+    )
     if current_fe.is_symlink() or current_fe.exists():
         current_fe.unlink()
     current_fe.symlink_to(candidate_fe_dir)
@@ -1343,11 +1558,23 @@ def main() -> int:
         ),
         error_code="RESTORE_CANDIDATE_UP_FAILED",
     )
-    if _http_status(curl_bin, f"http://127.0.0.1:{bff_port}/bff/readyz") != 200:
-        _fail("RESTORE_CANDIDATE_UNHEALTHY", "Candidate BFF failed /bff/readyz after rollback rehearsal")
     unserved = _wait_product_owners()
     if unserved:
-        _fail("RESTORE_CANDIDATE_UNHEALTHY", f"Product owners not running/healthy after rollback rehearsal: {', '.join(unserved)}")
+        _fail(
+            "RESTORE_CANDIDATE_UNHEALTHY",
+            f"Product owners not running/healthy after rollback rehearsal: {', '.join(unserved)}",
+            rollback_duration_seconds=rollback_duration,
+            bff_healthy=rb_ready,
+            phase_timings_seconds=rollback_phase_timings,
+        )
+    if _wait_bff_ready(curl_bin, bff_port) != 200:
+        _fail(
+            "RESTORE_CANDIDATE_UNHEALTHY",
+            "Candidate BFF failed /bff/readyz after rollback rehearsal",
+            rollback_duration_seconds=rollback_duration,
+            bff_healthy=rb_ready,
+            phase_timings_seconds=rollback_phase_timings,
+        )
 
     rollback_readback = {
         "observed_from_live_vm": True,
@@ -1363,13 +1590,21 @@ def main() -> int:
         "bff_healthy": rb_ready,
         "singleton_worker_owner_unique": len(rb_singleton_cids) == 1,
         "rollback_duration_seconds": rollback_duration,
+        "phase_timings_seconds": rollback_phase_timings,
     }
     try:
         staging_sanitize.verify_exact_pair_rollback(rollback_baseline, rollback_readback)
     except Exception as exc:
-        _fail("ROLLBACK_VERIFICATION_FAILED", str(exc))
+        _fail(
+            "ROLLBACK_VERIFICATION_FAILED",
+            str(exc),
+            rollback_duration_seconds=rollback_duration,
+            bff_healthy=rb_ready,
+            phase_timings_seconds=rollback_phase_timings,
+        )
 
     # 6. Security, tenant isolation, RBAC, and safe-off readbacks against real operator-bff routes
+    operator_token, viewer_token = _mint_probe_tokens()
     # Positive Control 1: Authenticated operator same-tenant read (GET /bff/me -> 200)
     op_read_code, op_read_body = _http_probe(
         curl_bin,

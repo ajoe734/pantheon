@@ -14,9 +14,11 @@
 # Evidence output shape aligns with `scripts/deploy/prod_preflight.py` (`check_staging_evidence`).
 
 set -euo pipefail
+unset SSH_DEPLOY_OUT SSH_VERIFY_OUT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${STAGING_STATE_DIR:-/tmp/pantheon-staging-state}"
+mkdir -p "${STATE_DIR}/artifacts"
 
 die_json() {
   local code="$1"
@@ -128,23 +130,23 @@ PY
 
   # Collect live verification gates from the staging VM via staging_ops.sh when not already populated
   if [[ -z "${SANITIZED_DATASET_PATH:-}" || -z "${MIGRATION_PLAN_PATH:-}" || -z "${BACKUP_RESTORE_RECORD_PATH:-}" || -z "${ROLLBACK_READBACK_PATH:-}" || -z "${SECURITY_READBACK_PATH:-}" ]]; then
-    COLLECTED_JSON="$(
-      STAGING_STATE_DIR="${STATE_DIR}" \
-      STAGING_DRY_RUN="false" \
-      RELEASE_ID="${RELEASE_ID}" \
-      STAGING_GCP_PROJECT_ID="${PROJECT_ID}" \
-      STAGING_GCP_ZONE="${ZONE}" \
-      RELEASE_MANIFEST_PATH="${RELEASE_MANIFEST_PATH}" \
-      EXPECTED_MANIFEST_SHA256="${EXPECTED_MANIFEST_SHA256}" \
-      GCLOUD_BIN="${GCLOUD_BIN}" \
-      "${SCRIPT_DIR}/staging_ops.sh" collect-verify-gates
-    )"
-    LIVE_OBSERVED_DEPLOY_PATH="$(COLLECTED_JSON="$COLLECTED_JSON" python3 -c 'import json, os; print(json.loads(os.environ["COLLECTED_JSON"])["paths"]["observed_deploy"])')"
-    SANITIZED_DATASET_PATH="${SANITIZED_DATASET_PATH:-$(COLLECTED_JSON="$COLLECTED_JSON" python3 -c 'import json, os; print(json.loads(os.environ["COLLECTED_JSON"])["paths"]["sanitized_dataset"])')}"
-    MIGRATION_PLAN_PATH="${MIGRATION_PLAN_PATH:-$(COLLECTED_JSON="$COLLECTED_JSON" python3 -c 'import json, os; print(json.loads(os.environ["COLLECTED_JSON"])["paths"]["migration_plan"])')}"
-    BACKUP_RESTORE_RECORD_PATH="${BACKUP_RESTORE_RECORD_PATH:-$(COLLECTED_JSON="$COLLECTED_JSON" python3 -c 'import json, os; print(json.loads(os.environ["COLLECTED_JSON"])["paths"]["backup_restore_record"])')}"
-    ROLLBACK_READBACK_PATH="${ROLLBACK_READBACK_PATH:-$(COLLECTED_JSON="$COLLECTED_JSON" python3 -c 'import json, os; print(json.loads(os.environ["COLLECTED_JSON"])["paths"]["rollback_readback"])')}"
-    SECURITY_READBACK_PATH="${SECURITY_READBACK_PATH:-$(COLLECTED_JSON="$COLLECTED_JSON" python3 -c 'import json, os; print(json.loads(os.environ["COLLECTED_JSON"])["paths"]["security_readback"])')}"
+    COLLECTED_JSON_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-collected-gates.json"
+    install -m 0600 /dev/null "${COLLECTED_JSON_FILE}"
+    STAGING_STATE_DIR="${STATE_DIR}" \
+    STAGING_DRY_RUN="false" \
+    RELEASE_ID="${RELEASE_ID}" \
+    STAGING_GCP_PROJECT_ID="${PROJECT_ID}" \
+    STAGING_GCP_ZONE="${ZONE}" \
+    RELEASE_MANIFEST_PATH="${RELEASE_MANIFEST_PATH}" \
+    EXPECTED_MANIFEST_SHA256="${EXPECTED_MANIFEST_SHA256}" \
+    GCLOUD_BIN="${GCLOUD_BIN}" \
+    "${SCRIPT_DIR}/staging_ops.sh" collect-verify-gates >"${COLLECTED_JSON_FILE}"
+    LIVE_OBSERVED_DEPLOY_PATH="$(COLLECTED_JSON_FILE="$COLLECTED_JSON_FILE" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["COLLECTED_JSON_FILE"]).read_text(encoding="utf-8"))["paths"]["observed_deploy"])')"
+    SANITIZED_DATASET_PATH="${SANITIZED_DATASET_PATH:-$(COLLECTED_JSON_FILE="$COLLECTED_JSON_FILE" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["COLLECTED_JSON_FILE"]).read_text(encoding="utf-8"))["paths"]["sanitized_dataset"])')}"
+    MIGRATION_PLAN_PATH="${MIGRATION_PLAN_PATH:-$(COLLECTED_JSON_FILE="$COLLECTED_JSON_FILE" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["COLLECTED_JSON_FILE"]).read_text(encoding="utf-8"))["paths"]["migration_plan"])')}"
+    BACKUP_RESTORE_RECORD_PATH="${BACKUP_RESTORE_RECORD_PATH:-$(COLLECTED_JSON_FILE="$COLLECTED_JSON_FILE" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["COLLECTED_JSON_FILE"]).read_text(encoding="utf-8"))["paths"]["backup_restore_record"])')}"
+    ROLLBACK_READBACK_PATH="${ROLLBACK_READBACK_PATH:-$(COLLECTED_JSON_FILE="$COLLECTED_JSON_FILE" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["COLLECTED_JSON_FILE"]).read_text(encoding="utf-8"))["paths"]["rollback_readback"])')}"
+    SECURITY_READBACK_PATH="${SECURITY_READBACK_PATH:-$(COLLECTED_JSON_FILE="$COLLECTED_JSON_FILE" python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["COLLECTED_JSON_FILE"]).read_text(encoding="utf-8"))["paths"]["security_readback"])')}"
   fi
 else
   for gate_var in SANITIZED_DATASET_PATH MIGRATION_PLAN_PATH BACKUP_RESTORE_RECORD_PATH ROLLBACK_READBACK_PATH SECURITY_READBACK_PATH; do
@@ -188,17 +190,17 @@ else:
 PY
 )"
 
-MANIFEST_SUMMARY="$(
-  python3 "${SCRIPT_DIR}/release_manifest.py" validate \
-    --manifest "${RELEASE_MANIFEST_PATH}" \
-    --expected-sha256 "${EXPECTED_MANIFEST_SHA256}" \
-    --observed-fe-sha256 "${OBSERVED_FE_SHA}" \
-    --observed-bff-digest "${OBSERVED_BFF_IMAGE}" \
-    --require-dev-verified
-)"
+MANIFEST_SUMMARY_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-manifest-summary.json"
+install -m 0600 /dev/null "${MANIFEST_SUMMARY_FILE}"
+python3 "${SCRIPT_DIR}/release_manifest.py" validate \
+  --manifest "${RELEASE_MANIFEST_PATH}" \
+  --expected-sha256 "${EXPECTED_MANIFEST_SHA256}" \
+  --observed-fe-sha256 "${OBSERVED_FE_SHA}" \
+  --observed-bff-digest "${OBSERVED_BFF_IMAGE}" \
+  --require-dev-verified >"${MANIFEST_SUMMARY_FILE}"
 
 LEASE_FILE="$LEASE_FILE" OBS_FILE="$LIVE_OBSERVED_DEPLOY_PATH" WORKFLOW_RUN_ID="$WORKFLOW_RUN_ID" \
-MANIFEST_SUMMARY="$MANIFEST_SUMMARY" DRY_RUN="$DRY_RUN" \
+MANIFEST_SUMMARY_FILE="$MANIFEST_SUMMARY_FILE" DRY_RUN="$DRY_RUN" \
 python3 - <<'PY'
 import json
 import os
@@ -206,7 +208,7 @@ import sys
 from pathlib import Path
 
 lease = json.loads(Path(os.environ["LEASE_FILE"]).read_text(encoding="utf-8"))
-manifest = json.loads(os.environ["MANIFEST_SUMMARY"])
+manifest = json.loads(Path(os.environ["MANIFEST_SUMMARY_FILE"]).read_text(encoding="utf-8"))
 dry_run = os.environ["DRY_RUN"] == "true"
 obs_path = Path(os.environ["OBS_FILE"])
 obs = json.loads(obs_path.read_text(encoding="utf-8")) if obs_path.exists() else {}
@@ -240,8 +242,9 @@ if not dry_run:
 PY
 
 # 2. Sanitized dataset check
-SANITIZED_OUT="$(
-  SCRIPT_DIR="${SCRIPT_DIR}" SANITIZED_DATASET_PATH="${SANITIZED_DATASET_PATH}" DRY_RUN="${DRY_RUN}" python3 - <<'PY'
+SANITIZED_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-sanitized-out.json"
+install -m 0600 /dev/null "${SANITIZED_OUT_FILE}"
+SCRIPT_DIR="${SCRIPT_DIR}" SANITIZED_DATASET_PATH="${SANITIZED_DATASET_PATH}" DRY_RUN="${DRY_RUN}" python3 - <<'PY' >"${SANITIZED_OUT_FILE}"
 import json
 import os
 from pathlib import Path
@@ -318,13 +321,16 @@ else:
     )
     print(proc.stdout.strip())
 PY
-)"
 
 # 3. Forward migration & old-app/new-schema compatibility
-MIGRATION_OUT="$(python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-migration --input "${MIGRATION_PLAN_PATH}")"
+MIGRATION_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-migration-out.json"
+install -m 0600 /dev/null "${MIGRATION_OUT_FILE}"
+python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-migration --input "${MIGRATION_PLAN_PATH}" >"${MIGRATION_OUT_FILE}"
 
 # 4. Backup & restore readability rehearsal
-BACKUP_OUT="$(python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-backup-restore --input "${BACKUP_RESTORE_RECORD_PATH}")"
+BACKUP_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-backup-out.json"
+install -m 0600 /dev/null "${BACKUP_OUT_FILE}"
+python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-backup-restore --input "${BACKUP_RESTORE_RECORD_PATH}" >"${BACKUP_OUT_FILE}"
 
 # 5. Exact-pair rollback rehearsal
 BASELINE_TMP="$(mktemp)"
@@ -338,33 +344,35 @@ Path(os.environ["BASELINE_TMP"]).write_text(
     json.dumps(manifest["rollback_baseline"], sort_keys=True), encoding="utf-8"
 )
 PY
-ROLLBACK_OUT="$(
-  python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-rollback \
-    --baseline "${BASELINE_TMP}" \
-    --readback "${ROLLBACK_READBACK_PATH}"
-)"
+ROLLBACK_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-rollback-out.json"
+install -m 0600 /dev/null "${ROLLBACK_OUT_FILE}"
+python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-rollback \
+  --baseline "${BASELINE_TMP}" \
+  --readback "${ROLLBACK_READBACK_PATH}" >"${ROLLBACK_OUT_FILE}"
 rm -f "${BASELINE_TMP}"
 
 # 6. Tenant isolation, RBAC, and provider/write/broker-off readbacks
-SECURITY_OUT="$(python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-readbacks --input "${SECURITY_READBACK_PATH}")"
+SECURITY_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-security-out.json"
+install -m 0600 /dev/null "${SECURITY_OUT_FILE}"
+python3 "${SCRIPT_DIR}/staging_sanitize.py" verify-readbacks --input "${SECURITY_READBACK_PATH}" >"${SECURITY_OUT_FILE}"
 
 # 7. Cleanup dry-run & inventory reconciliation
-DRY_RUN_OUT="$(
-  STAGING_STATE_DIR="${STATE_DIR}" \
-  STAGING_ORPHAN_CLEANUP_ENABLED="true" \
-  STAGING_GCP_PROJECT_ID="${PROJECT_ID}" \
-  STAGING_GCP_ZONE="${ZONE}" \
-  GCLOUD_BIN="${GCLOUD_BIN:-}" \
-  "${SCRIPT_DIR}/staging_destroy.sh" --mode orphan-sweep --dry-run
-)"
+DRY_RUN_OUT_FILE="${STATE_DIR}/artifacts/${RELEASE_ID}-dry-run-out.json"
+install -m 0600 /dev/null "${DRY_RUN_OUT_FILE}"
+STAGING_STATE_DIR="${STATE_DIR}" \
+STAGING_ORPHAN_CLEANUP_ENABLED="true" \
+STAGING_GCP_PROJECT_ID="${PROJECT_ID}" \
+STAGING_GCP_ZONE="${ZONE}" \
+GCLOUD_BIN="${GCLOUD_BIN:-}" \
+"${SCRIPT_DIR}/staging_destroy.sh" --mode orphan-sweep --dry-run >"${DRY_RUN_OUT_FILE}"
 
 VERIFICATION_FILE="${STATE_DIR}/evidence/${RELEASE_ID}-verification.json"
 mkdir -p "$(dirname "${VERIFICATION_FILE}")"
 
 RELEASE_ID="$RELEASE_ID" WORKFLOW_RUN_ID="$WORKFLOW_RUN_ID" LEASE_FILE="$LEASE_FILE" \
-VERIFICATION_FILE="$VERIFICATION_FILE" MANIFEST_SUMMARY="$MANIFEST_SUMMARY" DRY_RUN="$DRY_RUN" \
-SANITIZED_OUT="$SANITIZED_OUT" MIGRATION_OUT="$MIGRATION_OUT" BACKUP_OUT="$BACKUP_OUT" \
-ROLLBACK_OUT="$ROLLBACK_OUT" SECURITY_OUT="$SECURITY_OUT" DRY_RUN_OUT="$DRY_RUN_OUT" \
+VERIFICATION_FILE="$VERIFICATION_FILE" MANIFEST_SUMMARY_FILE="$MANIFEST_SUMMARY_FILE" DRY_RUN="$DRY_RUN" \
+SANITIZED_OUT_FILE="$SANITIZED_OUT_FILE" MIGRATION_OUT_FILE="$MIGRATION_OUT_FILE" BACKUP_OUT_FILE="$BACKUP_OUT_FILE" \
+ROLLBACK_OUT_FILE="$ROLLBACK_OUT_FILE" SECURITY_OUT_FILE="$SECURITY_OUT_FILE" DRY_RUN_OUT_FILE="$DRY_RUN_OUT_FILE" \
 python3 - <<'PY'
 import json
 import os
@@ -384,14 +392,14 @@ summary = {
     "observed_from_live_vm": not dry_run,
     "release_id": os.environ["RELEASE_ID"],
     "workflow_run_id": os.environ["WORKFLOW_RUN_ID"],
-    "manifest": json.loads(os.environ["MANIFEST_SUMMARY"]),
+    "manifest": json.loads(Path(os.environ["MANIFEST_SUMMARY_FILE"]).read_text(encoding="utf-8")),
     "gates": {
-        "sanitized_data": json.loads(os.environ["SANITIZED_OUT"]),
-        "migration_and_compatibility": json.loads(os.environ["MIGRATION_OUT"]),
-        "backup_restore_readability": json.loads(os.environ["BACKUP_OUT"]),
-        "exact_pair_rollback": json.loads(os.environ["ROLLBACK_OUT"]),
-        "security_and_safety_readbacks": json.loads(os.environ["SECURITY_OUT"]),
-        "cleanup_dry_run": json.loads(os.environ["DRY_RUN_OUT"]),
+        "sanitized_data": json.loads(Path(os.environ["SANITIZED_OUT_FILE"]).read_text(encoding="utf-8")),
+        "migration_and_compatibility": json.loads(Path(os.environ["MIGRATION_OUT_FILE"]).read_text(encoding="utf-8")),
+        "backup_restore_readability": json.loads(Path(os.environ["BACKUP_OUT_FILE"]).read_text(encoding="utf-8")),
+        "exact_pair_rollback": json.loads(Path(os.environ["ROLLBACK_OUT_FILE"]).read_text(encoding="utf-8")),
+        "security_and_safety_readbacks": json.loads(Path(os.environ["SECURITY_OUT_FILE"]).read_text(encoding="utf-8")),
+        "cleanup_dry_run": json.loads(Path(os.environ["DRY_RUN_OUT_FILE"]).read_text(encoding="utf-8")),
     },
 }
 Path(os.environ["VERIFICATION_FILE"]).write_text(

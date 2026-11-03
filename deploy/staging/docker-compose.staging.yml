@@ -70,6 +70,8 @@ services:
       - postgres_password
     volumes:
       - ${STAGING_DATA_MOUNT:?staging data disk mount required}/postgres:/var/lib/postgresql/data
+      - ${STAGING_DATA_MOUNT:?staging data disk mount required}/backups:${STAGING_DATA_MOUNT}/backups
+      - ${STAGING_ROOT:?staging root required}/state/migration-material:${STAGING_ROOT}/state/migration-material:ro
     ports:
       - "127.0.0.1:15432:5432"
     deploy:

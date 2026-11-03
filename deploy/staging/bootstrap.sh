@@ -221,12 +221,21 @@ run_priv mkdir -p \
 [[ -f "${BUNDLE_DIR}/docker-compose.staging.yml" ]] || fail "COMPOSE_MISSING" "docker-compose.staging.yml missing from staging bundle"
 [[ -f "${BUNDLE_DIR}/Caddyfile.staging.tmpl" ]] || fail "CADDY_TEMPLATE_MISSING" "Caddyfile.staging.tmpl missing from staging bundle"
 [[ -f "${BUNDLE_DIR}/fe-dist.tar.gz" ]] || fail "FE_TARBALL_MISSING" "fe-dist.tar.gz missing from staging bundle"
+[[ -f "${BUNDLE_DIR}/migration-material.tar.gz" ]] || fail "MIGRATION_MATERIAL_MISSING" "migration-material.tar.gz missing from staging bundle"
 
 run_priv install -m 0755 "${BUNDLE_DIR}/pantheon-staging-collect-gates" "${STAGING_BIN_DIR}/pantheon-staging-collect-gates"
 run_priv install -m 0644 "${BUNDLE_DIR}/staging_sanitize.py" "${STAGING_ROOT}/lib/staging_sanitize.py"
 run_priv install -m 0644 "${BUNDLE_DIR}/release_manifest.py" "${STAGING_ROOT}/lib/release_manifest.py"
 run_priv install -m 0644 "${BUNDLE_DIR}/manifest.json" "${STAGING_ROOT}/state/manifest.json"
 run_priv install -m 0644 "${BUNDLE_DIR}/docker-compose.staging.yml" "${STAGING_ROOT}/docker-compose.staging.yml"
+run_priv rm -rf "${STAGING_ROOT}/state/migration-material"
+run_priv mkdir -p "${STAGING_ROOT}/state/migration-material"
+run_priv tar -xzf "${BUNDLE_DIR}/migration-material.tar.gz" -C "${STAGING_ROOT}/state/migration-material" \
+  || fail "MIGRATION_MATERIAL_INVALID" "Failed to unpack migration-material.tar.gz"
+run_priv test -f "${STAGING_ROOT}/state/migration-material/migration-spec.json" \
+  || fail "MIGRATION_MATERIAL_INVALID" "migration-spec.json missing from unpacked migration-material.tar.gz"
+run_priv test -d "${STAGING_ROOT}/state/migration-material/migrations" \
+  || fail "MIGRATION_MATERIAL_INVALID" "migrations directory missing from unpacked migration-material.tar.gz"
 if [[ -f "${BUNDLE_DIR}/staging-env.defaults" ]]; then
   run_priv install -m 0644 "${BUNDLE_DIR}/staging-env.defaults" "${STAGING_ROOT}/staging-env.defaults"
 fi
@@ -835,11 +844,13 @@ run_compose -p pantheon-staging \
 
 PG_PASSWORD_VAL="$(run_priv cat "${STAGING_POSTGRES_PASSWORD_FILE}" 2>/dev/null | tr -d '\r\n')"
 [[ -n "${PG_PASSWORD_VAL}" ]] || fail "SECRET_EMPTY" "Postgres password file at ${STAGING_POSTGRES_PASSWORD_FILE} is empty"
+PG_CID="$(run_compose -p pantheon-staging -f "${STAGING_ROOT}/docker-compose.staging.yml" --env-file "${COMPOSE_ENV_PATH}" ps -q postgres | head -n1)"
+[[ -n "${PG_CID}" ]] || fail "POSTGRES_UP_FAILED" "postgres container ID not found after compose up"
 PG_READY="false"
 for _ in $(seq 1 "${STAGING_READY_TRIES:-60}"); do
-  if PGPASSWORD="${PG_PASSWORD_VAL}" "$PSQL_BIN" \
+  if run_priv env PGPASSWORD="${PG_PASSWORD_VAL}" "$DOCKER_BIN" exec -e PGPASSWORD "$PG_CID" psql \
     -h 127.0.0.1 \
-    -p "${STAGING_POSTGRES_PORT}" \
+    -p 5432 \
     -U "${STAGING_POSTGRES_USER}" \
     -d "${STAGING_POSTGRES_DB}" \
     -v ON_ERROR_STOP=1 \
