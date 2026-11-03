@@ -1,0 +1,7 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-DEV-LOGIN-30D-REFRESH-20261103-MERGE-STATE-DIRTY-931180689603",
+  "pr": 6915,
+  "root_cause": "PR #6913 (DEV-LOGIN-LONG-SESSION-20261103) merged into dev and changed _issue_token/bff_auth_dev_login in services/control-plane/bff/auth/handlers.py (30d access-token ttl), conflicting with the refresh-cookie changes in #6915.",
+  "resolution": "Merged dev into the PR branch; _issue_token accepts both extra_claims and ttl. browser_session with a refresh store -> short access token + rotating refresh grant; browser_session without a refresh store -> 30d access token (#6913 behaviour preserved).",
+  "verification": "py_compile OK; pytest unavailable in worker env, so refresh-session tests not run here (CI to run)."
+}
