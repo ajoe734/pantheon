@@ -102,6 +102,7 @@ DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-false}"
 PANTHEON_DEV_DOCKER_BUILDER_PRUNE="${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}"
+PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE="${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE:-true}"
 PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE="${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"
 PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB="${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}"
 PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED="${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}"
@@ -737,6 +738,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_stub_capabilities_configured=$([[ -n "${PANTHEON_BFF_STUB_CAPABILITIES:-}" ]] && echo true || echo false)"
   info "dev_docker_prune=${PANTHEON_DEV_DOCKER_PRUNE}"
   info "dev_docker_builder_keep_storage=${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE}"
+  info "dev_docker_dangling_image_prune=${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE}"
   info "dev_deploy_min_free_disk_gb=${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB}"
   info "dev_compose_profiles=${DEV_COMPOSE_PROFILES:-<default-safe>}"
   info "source_refresh_egress_mode=${SOURCE_REFRESH_EGRESS_MODE}"
@@ -999,6 +1001,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}")"
   command_prefix+=" PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB=$(shell_quote "${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED=$(shell_quote "${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}")"
@@ -4099,15 +4102,31 @@ prune_dev_docker_storage_for_build() {
   fi
 
   docker_storage_diagnostics "before prune"
-  if [[ "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}" != "false" ]]; then
-    if protect_dev_compose_container_images_for_builder_prune; then
-      info "bounding dev Docker build cache before root build (keep-storage=${builder_keep_storage})"
-      run_bounded_docker_prune "builder cache" docker builder prune -f --keep-storage "${builder_keep_storage}"
-    else
-      info "skipped dev Docker builder cache prune because container image protection did not complete"
-    fi
-  else
+  local builder_prune="${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}"
+  local dangling_prune="${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE:-true}"
+  if [[ "${builder_prune}" == "false" ]]; then
     info "dev Docker builder cache prune disabled before root build"
+  fi
+  if [[ "${dangling_prune}" == "false" ]]; then
+    info "dev Docker dangling-image prune disabled before root build"
+  fi
+  if [[ "${builder_prune}" != "false" || "${dangling_prune}" != "false" ]]; then
+    if protect_dev_compose_container_images_for_builder_prune; then
+      if [[ "${builder_prune}" != "false" ]]; then
+        info "bounding dev Docker build cache before root build (keep-storage=${builder_keep_storage})"
+        run_bounded_docker_prune "builder cache" docker builder prune -f --keep-storage "${builder_keep_storage}"
+      fi
+      if [[ "${dangling_prune}" != "false" ]]; then
+        # Every root build moves the :latest tags, so the previous build's
+        # images become untagged and nothing else reclaims them. Container
+        # images were just tagged pantheon-protect/*, so they are not dangling;
+        # rollback restores from release-artifacts tars, not from these images.
+        info "removing dangling dev Docker images before root build"
+        run_bounded_docker_prune "dangling images" docker image prune -f
+      fi
+    else
+      info "skipped dev Docker builder cache and dangling-image prune because container image protection did not complete"
+    fi
   fi
 
   if [[ "${PANTHEON_DEV_DOCKER_PRUNE:-false}" != "true" ]]; then

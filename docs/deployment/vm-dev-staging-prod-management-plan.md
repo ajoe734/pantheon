@@ -359,6 +359,7 @@ Dev 不因每個普通 push 自動重部署。當兩個 repository 的 protected
    - 嚴禁執行無上限的 `docker builder prune -a` 或 `docker builder prune -af`（若 `PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE` 設為 `0`/`0GB` 直接拒絕）。
    - 在執行任何 `docker builder prune -f --keep-storage` 之前，`protect_dev_compose_container_images_for_builder_prune` 會列舉所有 compose 容器（含 running 與 stopped）所引用的映像，並逐一加上保護標籤 `pantheon-protect/<service>:<id12>`（防止在 containerd image store 下，因部分建置移動 `:latest` 標籤而導致運行中或已停止容器的 untagged 映像被 builder prune 誤刪），同時僅移除沒有任何容器使用的過期 `pantheon-protect/*` 標籤；若任一容器映像無法列舉、檢查或加上保護標籤，則記錄原因並跳過本次 builder prune。
    - 在容器映像保護完成後，預設執行 `docker builder prune -f --keep-storage "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"`，將 Docker builder cache 限制在可設定上限（預設 `20GB`）。
+   - 同樣只在容器映像保護完成後，預設執行 `docker image prune -f`（只清 dangling：沒有標籤且沒有容器使用的映像；`PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=false` 可關閉）。每次 root build 都會移動 `:latest` 標籤，上一輪 build 的映像因此失去標籤；dev environment 的 `PANTHEON_DEV_DOCKER_PRUNE=false` 下沒有其他步驟會回收它們，2026-11-03 兩次失敗 build 就留下 47 個未使用映像。回退依賴 release-artifacts 的 tar，不依賴這些映像。
    - `docker image prune -af`（以及 container/system prune）維持 opt-in，預設關閉（`PANTHEON_DEV_DOCKER_PRUNE=false`），避免清除回退所需的既有映像或影響運行中容器。
 3. **部署磁碟可用空間預檢（`check_dev_deploy_disk_preflight`）**：
    - 在完成 `release-artifacts` 保留清理與 Docker builder cache 限額後、執行任何 `docker compose ... build` 之前，檢查部署檔案系統的可用空間是否達到最低門檻（`PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB`，預設 `25GB`）。
