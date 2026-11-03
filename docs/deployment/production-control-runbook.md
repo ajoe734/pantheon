@@ -28,11 +28,47 @@ Contracts the adapter relies on (to be confirmed on the first hosted run): manif
 
 Runtime config and deployment metadata: `/runtime-config.js` is rendered into `${PROD_ROOT}/config/`, served same-origin by Caddy with `no-store`, outside the sealed FE release dir (coordinated with FE-IMMUTABLE-RELEASE-CONFIG-20261024); `/deployment.json` is written into `${PROD_ROOT}/fe/releases/<id>/deployment.json` and served with `no-store` via `fe/current`. The rendered `/runtime-config.js` emits only the accepted `pantheon.fe.public-runtime-config.v1` fields (`schemaVersion`, `environment`, `configRef` = release id, `bffBaseUrl`, `gcpIdentity{apiKey,projectId,authDomain,issuer,audience}` and an optional truthful `configSha256`); deployment identity stays in `deployment.json`. Public Identity values come from Environment variables `PROD_PUBLIC_GCP_IDENTITY_API_KEY|PROJECT_ID|AUTH_DOMAIN` (required; preflight fails closed when missing) and optional `..._ISSUER|AUDIENCE`, forwarded by the workflow to the host; `verify_runtime_config` fails `RUNTIME_CONFIG_CONTRACT` on schema, `configRef`, identity or `configSha256` mismatch. Container wiring follows the accepted native ports: BFF `8001` (host blue/green ports map to it), runtime-manager `8080`, governance `8082`, deployment `8095`; the singleton projector runs `python -m services.trade_journey.lifecycle_projector run` with `GIT_SHA` and isolated `TELEMETRY_DB_DSN`/`LIFECYCLE_PROJECTOR_PROJECTION_DSN` from the secrets file (bootstrap rejects DSNs not targeting `PROD_POSTGRES_DB`). Immutable FE bundles (`fe/artifacts/<id>.tar.gz` + `.sha256`) and manifests (`manifests/<id>.json`) are retained on the control VM for rollback and audit.
 
+Migration material: the workflow renders the versioned SQL and the base-schema initializer (`scripts/db_migrate.sh`) from the manifest `backend.commit` (`prod_preflight.py migration render-commit`: shallow-fetch if absent, `git archive`), never from its own checkout, and proves the set equals `migration_set_sha256`. Fail-closed reasons: `invalid_backend_commit`, `backend_commit_fetch_failed`, `migration_path_missing`, `substrate_path_missing`, `migration_archive_failed`, `migration_digest_or_spec_mismatch`.
+
 Workflow: `PROD_*` variables are Environment-scoped, so they are read only in the `deploy` job (after Environment approval, before cloud auth). The `preflight` job has no Environment and validates only the manifest/evidence. After auth the runner takes the pre-release disk snapshot, creates `/tmp/pantheon-release-<id>` (`0700`) over IAP SSH, transports manifest, `staging_evidence`, approvals, env-policy, FE bundle, snapshot record and controller/bootstrap scripts to the control VM with `gcloud compute scp --tunnel-through-iap`, runs `bootstrap.sh` and `prod_ops.sh prepull_images`, and then runs `prod_atomic_switch.sh` on the control VM; the controller is never run on the GitHub runner.
 
 ## 2. Required explicit configuration (missing = fail closed)
 
 `PROD_GCP_PROJECT_ID` (independent of dev/staging), `PROD_GCP_ZONE`, `PROD_WIF_PROVIDER`, `PROD_SERVICE_ACCOUNT`, `PROD_IAM_POLICY_REF`, `PROD_SECRETS_REF`, `PROD_DATA_DISK`, `PROD_NETWORK`, `PROD_BFF_HOST`, `PROD_FE_HOST` (HTTPS), `PROD_IDP_ISSUER` (https), `PROD_TENANT_ID` (explicit product-owner tenant, no default), `PROD_RPO_SECONDS`, `PROD_RTO_SECONDS`, `PROD_RETENTION_DAYS`, `PROD_ONCALL_OWNER`, `PROD_ROLLBACK_OWNER`. Placeholders, retired projects/hosts and enabled provider/broker/real-write flags are rejected. No broker credentials on the control VM.
+
+### Minimum control VM size: `e2-standard-8`
+
+The Prod control VM (`pantheon-prod-control`) must be at least `e2-standard-8` (8 vCPUs). Staging measurements (operator decision 2026-11-03): `e2-standard-2` saturated CPU on the full owner closure (paper-signal-producer healthcheck timeout); `e2-standard-4` took 151-155 s for the exact-pair rollback (limit 120 s); `e2-standard-8` passed at 107.7 s / 108.6 s. The workflow runs a read-only gate (`prod_preflight.py vm-size --vcpus <guestCpus>`, after auth, before the snapshot) and fails closed below 8 vCPUs, so no release is promoted onto an undersized VM.
+
+#### Operator procedure: resize existing `pantheon-prod-control` (PREPARED, NOT EXECUTED)
+
+Run only after the operator confirms. The resize stops the VM (brief outage; no release in flight, no workflow running). The data disk is never detached, deleted or recreated.
+
+```bash
+P="$PROD_GCP_PROJECT_ID"; Z="$PROD_GCP_ZONE"; VM=pantheon-prod-control
+
+# 0. Readbacks before: size, status, attached disks (record in evidence)
+gcloud compute instances describe "$VM" --project "$P" --zone "$Z" \
+  --format='yaml(name,status,machineType.basename(),disks[].source.basename(),disks[].autoDelete)'
+# Take a fresh data-disk snapshot first (name it; retain until the resize is verified)
+gcloud compute disks snapshot "$PROD_DATA_DISK" --project "$P" --zone "$Z" --snapshot-names "pantheon-prod-pre-resize-$(date -u +%Y%m%d%H%M)"
+
+# 1. Stop (graceful)
+gcloud compute instances stop "$VM" --project "$P" --zone "$Z"
+# 2. Resize
+gcloud compute instances set-machine-type "$VM" --project "$P" --zone "$Z" --machine-type e2-standard-8
+# 3. Start
+gcloud compute instances start "$VM" --project "$P" --zone "$Z"
+
+# 4. Readbacks after: expect RUNNING, e2-standard-8, same data disk, 8 vCPUs, Caddy/stateful services up
+gcloud compute instances describe "$VM" --project "$P" --zone "$Z" --format='value(status,machineType.basename())'
+gcloud compute machine-types describe e2-standard-8 --project "$P" --zone "$Z" --format='value(guestCpus)'
+python3 -I scripts/deploy/prod_preflight.py vm-size --vcpus 8
+gcloud compute ssh "$VM" --tunnel-through-iap --project "$P" --zone "$Z" --command 'nproc; mountpoint -q "$PROD_DATA_MOUNT" && echo data-mounted; sudo docker ps --format "{{.Names}} {{.Status}}"'
+curl -fsS -o /dev/null -w '%{http_code}\n' "https://$PROD_BFF_HOST/bff/readyz"   # 503 is expected until a release is active
+```
+
+Rollback (only if the VM fails to start or the data mount is absent after resize): stop the VM, `set-machine-type ... --machine-type <previous type recorded in step 0>`, start, repeat the step 4 readbacks (the vCPU preflight is expected to fail on the old size). Do not touch the data disk; if it is damaged, recover from the step 0 snapshot onto a scratch disk per section 5, never over the live disk.
 
 ## 3. Switch sequence
 

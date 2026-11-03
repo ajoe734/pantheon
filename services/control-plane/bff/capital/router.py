@@ -358,7 +358,7 @@ def create_capital_router(
 
     # 1. Legacy Capital Pool read surface.
     @router.get("/api/v1/capital-pools")
-    async def list_capital_pools(
+    def list_capital_pools(
         status: Optional[str] = None,
         risk_policy_ref: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -376,7 +376,7 @@ def create_capital_router(
 
     # 2. Legacy Capital Pool detail surface.
     @router.get("/api/v1/capital-pools/{pool_id}")
-    async def get_capital_pool(
+    def get_capital_pool(
         pool_id: str, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
@@ -385,18 +385,18 @@ def create_capital_router(
 
     # 3. BFF Capital Pool list.
     @router.get("/bff/capital-pools")
-    async def bff_list_capital_pools(
+    def bff_list_capital_pools(
         status: Optional[str] = None,
         risk_policy_ref: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        return await list_capital_pools(status, risk_policy_ref, page_token, page_size, authorization)
+        return list_capital_pools(status, risk_policy_ref, page_token, page_size, authorization)
 
     # 4. Create a pool through the Capital Allocation Manager.
     @router.post("/bff/capital-pools", status_code=201)
-    async def bff_create_capital_pool(
+    def bff_create_capital_pool(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
@@ -410,7 +410,7 @@ def create_capital_router(
 
     # 5. BFF Capital Pool detail.
     @router.get("/bff/capital-pools/{pool_id}")
-    async def bff_get_capital_pool(
+    def bff_get_capital_pool(
         pool_id: str, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
@@ -449,7 +449,7 @@ def create_capital_router(
 
     # 7. Capital pool action command.
     @router.post("/bff/capital-pools/{pool_id}/actions/{action_id}", status_code=202)
-    async def bff_capital_pool_action(
+    def bff_capital_pool_action(
         pool_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -466,7 +466,7 @@ def create_capital_router(
 
     # 8. Evaluate one policy snapshot before a rebalance proposal is admitted.
     @router.post("/bff/management/allocation-policy/evaluate")
-    async def bff_evaluate_persona_allocation_policy(
+    def bff_evaluate_persona_allocation_policy(
         payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         identity = _require_read(authorization)
@@ -478,7 +478,7 @@ def create_capital_router(
 
     # 11. Rebalance list.
     @router.get("/bff/rebalances")
-    async def bff_list_rebalances(
+    def bff_list_rebalances(
         status: Optional[str] = None,
         capital_pool_id: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -496,7 +496,7 @@ def create_capital_router(
 
     # 12. Create a rebalance proposal through the owner.
     @router.post("/bff/rebalances", status_code=201)
-    async def bff_create_rebalance(
+    def bff_create_rebalance(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
@@ -512,7 +512,7 @@ def create_capital_router(
 
     # 13. Apply an already admitted rebalance proposal through the capital owner.
     @router.post("/bff/rebalances/{rebalance_id}/apply", status_code=202)
-    async def bff_apply_rebalance_proposal(
+    def bff_apply_rebalance_proposal(
         rebalance_id: str, request: Request, background_tasks: BackgroundTasks,
         payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
@@ -540,7 +540,7 @@ def create_capital_router(
 
     # 14. Rebalance detail.
     @router.get("/bff/rebalances/{rebalance_id}")
-    async def bff_get_rebalance(
+    def bff_get_rebalance(
         rebalance_id: str, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
@@ -564,7 +564,7 @@ def create_capital_router(
 
     # 16. Strategy allocation projection.
     @router.get("/bff/management/strategy-allocation")
-    async def bff_management_strategy_allocation(
+    def bff_management_strategy_allocation(
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
@@ -573,7 +573,7 @@ def create_capital_router(
 
     # 17. Capital flow projection from rebalance records.
     @router.get("/bff/management/capital-flow")
-    async def bff_management_capital_flow(
+    def bff_management_capital_flow(
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
@@ -650,7 +650,7 @@ def create_capital_router(
 
     # 23. Cost attribution is a read-only projection; the BFF never invents costs.
     @router.get("/bff/management/cost-attribution")
-    async def bff_management_cost_attribution(
+    def bff_management_cost_attribution(
         capital_pool_id: Optional[str] = None, persona_id: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -665,7 +665,7 @@ def create_capital_router(
 
     # 24. Compact operator board pack assembled solely from capital readbacks.
     @router.get("/bff/management/board-pack")
-    async def bff_management_board_pack(
+    def bff_management_board_pack(
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)

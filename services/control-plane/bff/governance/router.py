@@ -327,14 +327,14 @@ def create_governance_router(
     # 4-12. Consultation workbench, requests, committees, and memos ----
 
     @router.get("/api/v1/workbench/consultation")
-    async def get_consultation_workbench_overview(
+    def get_consultation_workbench_overview(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _identity(authorization)
         return _service().consultation_workbench()
 
     @router.post("/api/v1/consult/requests")
-    async def create_consult_request(
+    def create_consult_request(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -364,7 +364,7 @@ def create_governance_router(
         }
 
     @router.get("/api/v1/consult/requests")
-    async def list_consult_requests(
+    def list_consult_requests(
         status: Optional[str] = None,
         target_type: Optional[str] = None,
         consultation_type: Optional[str] = None,
@@ -400,7 +400,7 @@ def create_governance_router(
         }
 
     @router.get("/api/v1/consult/requests/{request_id}")
-    async def get_consult_request(
+    def get_consult_request(
         request_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -444,7 +444,7 @@ def create_governance_router(
         }
 
     @router.post("/api/v1/consult/requests/{request_id}/cancel")
-    async def cancel_consult_request(
+    def cancel_consult_request(
         request_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -490,7 +490,7 @@ def create_governance_router(
         }
 
     @router.get("/api/v1/committees")
-    async def list_committees(
+    def list_committees(
         quorum_state: Optional[str] = None,
         consensus_state: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -517,7 +517,7 @@ def create_governance_router(
         }
 
     @router.get("/api/v1/committees/{committee_id}")
-    async def get_committee(
+    def get_committee(
         committee_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -528,7 +528,7 @@ def create_governance_router(
         return projection
 
     @router.get("/api/v1/consult/memos")
-    async def list_consult_memos(
+    def list_consult_memos(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=25, ge=1, le=200),
@@ -558,7 +558,7 @@ def create_governance_router(
         }
 
     @router.get("/api/v1/consult/memos/{memo_id}")
-    async def get_consult_memo(
+    def get_consult_memo(
         memo_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -571,7 +571,7 @@ def create_governance_router(
     # 13-16. Operator governance queues, audit, and mutation review -----
 
     @router.get("/api/v1/operator/governance/review-queue")
-    async def list_governance_review_queue(
+    def list_governance_review_queue(
         item_type: Optional[str] = None,
         risk_level: Optional[str] = None,
         status: Optional[str] = None,
@@ -630,7 +630,7 @@ def create_governance_router(
         return response
 
     @router.get("/api/v1/operator/governance/audit")
-    async def list_governance_audit_trail(
+    def list_governance_audit_trail(
         actor: Optional[str] = None,
         action_type: Optional[str] = None,
         target_type: Optional[str] = None,
@@ -661,7 +661,7 @@ def create_governance_router(
         return response
 
     @router.get("/api/v1/operator/mutation-review/{decision_id}")
-    async def get_mutation_review(
+    def get_mutation_review(
         decision_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Any:
@@ -686,7 +686,7 @@ def create_governance_router(
         return projection
 
     @router.get("/api/v1/operator/rollback-review/{rollback_id}")
-    async def get_rollback_review(
+    def get_rollback_review(
         rollback_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -954,7 +954,7 @@ def create_governance_router(
     # 26-32. Review compatibility surfaces -----------------------------
 
     @router.get("/bff/reviews")
-    async def bff_list_reviews(
+    def bff_list_reviews(
         item_type: Optional[str] = None,
         risk_level: Optional[str] = None,
         status: Optional[str] = None,
@@ -975,7 +975,7 @@ def create_governance_router(
         return response
 
     @router.post("/bff/reviews", status_code=202)
-    async def bff_create_review(
+    def bff_create_review(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -986,7 +986,7 @@ def create_governance_router(
               "Use /bff/approvals for Governance decisions")
 
     @router.get("/bff/reviews/{review_id}")
-    async def bff_get_review(
+    def bff_get_review(
         review_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1041,7 +1041,7 @@ def create_governance_router(
         )
 
     @router.get("/bff/reviews/{review_id}/validators")
-    async def bff_review_validators(
+    def bff_review_validators(
         review_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1052,7 +1052,7 @@ def create_governance_router(
         return {"review_id": review_id.strip(), "validators": validators or [], "meta": {"snapshot_at": _now(), "staleness": _staleness()}}
 
     @router.get("/bff/reviews/{review_id}/audit")
-    async def bff_review_audit(
+    def bff_review_audit(
         review_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:

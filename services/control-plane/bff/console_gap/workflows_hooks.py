@@ -152,7 +152,7 @@ def create_workflows_hooks_router(
         operation_id="listBffWorkflowTemplates",
         response_model=ManagementRecordsEnvelope,
     )
-    async def list_workflows(
+    def list_workflows(
         page_token: Optional[str] = None,
         page_size: int = Query(default=100, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -176,7 +176,7 @@ def create_workflows_hooks_router(
         operation_id="listBffHookRegistry",
         response_model=ManagementRecordsEnvelope,
     )
-    async def list_hooks(
+    def list_hooks(
         page_token: Optional[str] = None,
         page_size: int = Query(default=100, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),

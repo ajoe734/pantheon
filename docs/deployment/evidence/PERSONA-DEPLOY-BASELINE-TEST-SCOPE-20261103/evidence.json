@@ -1,0 +1,16 @@
+{
+  "task": "PERSONA-DEPLOY-BASELINE-TEST-SCOPE-20261103",
+  "mode": "source_only",
+  "hosted_mutation": false,
+  "tests_passed": [
+    "services/control-plane/bff/tests/test_persona_create_data_scope.py",
+    "scripts/test_bootstrap_dev_paper_baseline.py",
+    "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py",
+    "services/control-plane/bff/tests/test_bff_test_architecture.py"
+  ],
+  "preexisting_failures_identical_on_base": [
+    "tests/test_persona_provisioning_reconcile.py (background pass cases)",
+    "tests/test_persona_provisioning_terminal_cleanup.py::test_reconciler_pass_reads_cron_once_and_skips_reregistering_matching_provisioning_persona",
+    "test_pathreon_market_persona_fleet_contract.py::test_fleet_overlaps_directory_capital_runtime_and_telemetry_owner_reads (flaky: failed on base, passed after)"
+  ]
+}

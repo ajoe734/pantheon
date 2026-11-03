@@ -596,7 +596,7 @@ class ProdOpsTests(OpsHarness):
 
     def test_workflow_delivers_migration_material_and_runs_migrate_before_switch(self):
         wf = WORKFLOW.read_text()
-        for needle in ("prod_preflight.py migration render", "scripts/db_migrate.sh", "migration-spec.json"):
+        for needle in ("prod_preflight.py migration render-commit", "db_migrate.sh", "migration-spec.json"):
             self.assertIn(needle, wf)
         self.assertLess(wf.index("prod_ops.sh\\\" migrate"), wf.index("prod_atomic_switch.sh\\\""))
 
@@ -1040,6 +1040,132 @@ def _fe_tarball(path: Path, marker: str) -> str:
         tar.addfile(info, io.BytesIO(data))
     path.write_bytes(buf.getvalue())
     return "sha256:" + hashlib.sha256(buf.getvalue()).hexdigest()
+
+
+class RenderFromBackendCommitTests(unittest.TestCase):
+    """The workflow renders release-pinned migration material from manifest backend.commit, not the checkout HEAD."""
+
+    PREFLIGHT = str(REPO_ROOT / "scripts/deploy/prod_preflight.py")
+
+    def _git(self, *a):
+        return subprocess.run(["git", "-C", str(self.repo), "-c", "user.email=t@t", "-c", "user.name=t", *a],
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.repo = self.tmp / "repo"
+        mig = self.repo / "services/trade_journey/migrations"
+        mig.mkdir(parents=True)
+        (self.repo / "scripts").mkdir()
+        for f in MIGRATION_FILES:
+            (mig / f["name"]).write_bytes((MIGRATIONS_SRC_DIR / f["name"]).read_bytes())
+        shutil.copy(REPO_ROOT / "scripts/db_migrate.sh", self.repo / "scripts/db_migrate.sh")
+        self._git("init", "-q")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "release")
+        self.release_commit = self._git("rev-parse", "HEAD")
+        manifest = _sample_manifest(state="staging_verified", bff_commit=self.release_commit)
+        self.mpath = self.tmp / "manifest.json"
+        self.mpath.write_text(json.dumps(manifest))
+
+    def _render(self, out="out", manifest=None):
+        return subprocess.run([sys.executable, "-I", self.PREFLIGHT, "migration", "render-commit",
+                               str(manifest or self.mpath), str(self.tmp / out), "--src", str(self.repo)],
+                              capture_output=True, text=True)
+
+    def _add_head_migration(self):
+        (self.repo / "services/trade_journey/migrations/999_extra.sql").write_text("CREATE TABLE IF NOT EXISTS extra (id TEXT);")
+        (self.repo / "scripts/db_migrate.sh").write_text("#!/bin/bash\necho 'SELECT 1;'\n")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "head moves on")
+
+    def test_renders_from_backend_commit_while_checkout_head_has_extra_migration(self):
+        self._add_head_migration()
+        self.assertNotEqual(self._git("rev-parse", "HEAD"), self.release_commit)
+        # Base behavior (render from the checkout) fails: the extra HEAD migration breaks the set digest.
+        base = subprocess.run([sys.executable, "-I", self.PREFLIGHT, "migration", "render", str(self.mpath),
+                               str(self.tmp / "base"), "--src", str(self.repo / "services/trade_journey/migrations")],
+                              capture_output=True, text=True)
+        self.assertNotEqual(base.returncode, 0)
+        r = self._render()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = self.tmp / "out"
+        self.assertFalse((out / "migrations/999_extra.sql").exists())
+        spec = json.loads((out / "migration-spec.json").read_text())
+        self.assertEqual(spec["migration_set_sha256"], MIGRATION_SET_SHA)
+        # Base-schema initializer also comes from the release commit, not HEAD.
+        self.assertEqual((out / "db_migrate.sh").read_bytes(), (REPO_ROOT / "scripts/db_migrate.sh").read_bytes())
+
+    def _fails_with(self, reason, manifest=None):
+        r = self._render(out="bad", manifest=manifest)
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn(f"reason={reason}", r.stdout + r.stderr)
+
+    def _manifest_with_commit(self, commit):
+        m = json.loads(self.mpath.read_text())
+        m["backend"]["commit"] = commit
+        path = self.tmp / f"m-{commit[:6]}.json"
+        path.write_text(json.dumps(m))
+        return path
+
+    def test_fail_closed_on_missing_unfetchable_commit(self):
+        self._fails_with("backend_commit_fetch_failed", self._manifest_with_commit("e" * 40))
+
+    def test_fail_closed_on_missing_migration_path(self):
+        self._git("rm", "-rq", "services/trade_journey/migrations")
+        self._git("commit", "-q", "-m", "drop migrations")
+        self._fails_with("migration_path_missing", self._manifest_with_commit(self._git("rev-parse", "HEAD")))
+
+    def test_fail_closed_on_missing_substrate_initializer(self):
+        self._git("rm", "-q", "scripts/db_migrate.sh")
+        self._git("commit", "-q", "-m", "drop initializer")
+        self._fails_with("substrate_path_missing", self._manifest_with_commit(self._git("rev-parse", "HEAD")))
+
+    def test_fail_closed_on_digest_mismatch(self):
+        self._add_head_migration()  # commit that carries an extra migration but the manifest digest is unchanged
+        self._fails_with("migration_digest_or_spec_mismatch", self._manifest_with_commit(self._git("rev-parse", "HEAD")))
+
+    def test_fail_closed_on_invalid_commit_format(self):
+        m = json.loads(self.mpath.read_text())
+        m["backend"]["commit"] = "main"
+        bad = self.tmp / "bad.json"
+        bad.write_text(json.dumps(m))
+        r = self._render(manifest=bad)
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_workflow_renders_from_backend_commit_not_checkout(self):
+        wf = WORKFLOW.read_text()
+        self.assertIn("migration render-commit", wf)
+        self.assertNotIn("--src services/trade_journey/migrations", wf)
+        self.assertNotIn("cp scripts/db_migrate.sh", wf)
+
+
+class ControlVmSizeTests(unittest.TestCase):
+    def test_rejects_2_and_4_vcpus_accepts_8(self):
+        for n in (2, 4, "2", "4", 0, 7):
+            with self.assertRaises(prod_preflight.PreflightError, msg=n):
+                prod_preflight.check_control_vm_vcpus(n)
+        self.assertEqual(prod_preflight.check_control_vm_vcpus(8), 8)
+        self.assertEqual(prod_preflight.check_control_vm_vcpus("16"), 16)
+
+    def test_rejects_garbage(self):
+        for bad in ("", "abc", None, True, 8.0):
+            with self.assertRaises(prod_preflight.PreflightError, msg=bad):
+                prod_preflight.check_control_vm_vcpus(bad)
+
+    def test_cli_and_workflow_gate(self):
+        run = lambda n: subprocess.run([sys.executable, "-I", str(REPO_ROOT / "scripts/deploy/prod_preflight.py"),
+                                        "vm-size", "--vcpus", str(n)], capture_output=True, text=True)
+        self.assertNotEqual(run(2).returncode, 0)
+        self.assertNotEqual(run(4).returncode, 0)
+        self.assertEqual(run(8).returncode, 0)
+        self.assertEqual(prod_preflight.MIN_CONTROL_VM_MACHINE_TYPE, "e2-standard-8")
+        wf = WORKFLOW.read_text()
+        self.assertIn("prod_preflight.py vm-size", wf)
+        self.assertLess(wf.index("vm-size"), wf.index("pantheon-prod-pre-"))
+        self.assertIn("set-machine-type", (REPO_ROOT / "docs/deployment/production-control-runbook.md").read_text())
 
 
 class PreflightTests(unittest.TestCase):

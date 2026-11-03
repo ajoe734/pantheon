@@ -51,7 +51,7 @@ def create_knowledge_router(
         operation_id="get_bff_knowledge_inbox",
         response_model=ManagementRecordsEnvelope,
     )
-    async def get_knowledge_inbox(
+    def get_knowledge_inbox(
         item_type: Optional[str] = Query(default=None),
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=100),

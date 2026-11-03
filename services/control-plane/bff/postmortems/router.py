@@ -76,7 +76,7 @@ def create_postmortem_router(
         return PostmortemService(_get_store())
 
     @router.get("/api/v1/postmortems")
-    async def list_postmortems(
+    def list_postmortems(
         time_range: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -95,7 +95,7 @@ def create_postmortem_router(
         }
 
     @router.get("/api/v1/postmortems/{report_id}")
-    async def get_postmortem(
+    def get_postmortem(
         report_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:

@@ -22,6 +22,7 @@ from ..service import (
     _normalize_persona_create_name,
     _normalize_risk_level,
     _persona_create_canonical_payload,
+    _persona_create_declared_data_scope,
     _persona_create_identity,
     _persona_create_required_data_sources,
     _persona_create_response,
@@ -224,6 +225,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 precondition_failed="name",
             )
         _persona_create_validate_paper_only(payload)
+        _persona_create_declared_data_scope(payload)
 
         requested_owner = str(payload.get("owner") or "").strip()
         if requested_owner and requested_owner != identity.operator_id:

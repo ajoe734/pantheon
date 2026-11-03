@@ -23,6 +23,8 @@ ARCHIVED_FILTERS = frozenset({"exclude", "only", "include"})
 
 _ADVISORY_CLASSES = frozenset({"agora_servant"})
 _TEST_SCOPE_VALUES = frozenset({"test", "acceptance", "fixture", "synthetic"})
+# Values a create request may declare; the test-like ones reuse the set above.
+DECLARABLE_DATA_SCOPES = frozenset({DATA_SCOPE_REGULAR}) | _TEST_SCOPE_VALUES
 _TRUTHY = frozenset({"1", "true", "yes"})
 
 

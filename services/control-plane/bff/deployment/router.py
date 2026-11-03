@@ -86,7 +86,7 @@ def create_deployment_router(
     )
 
     @router.get("/api/v1/deployment-plans")
-    async def list_deployment_plans(
+    def list_deployment_plans(
         status: Optional[str] = None,
         capital_pool_id: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
@@ -112,7 +112,7 @@ def create_deployment_router(
         }
 
     @router.post("/api/v1/deployment-plans", status_code=201)
-    async def create_deployment_plan_v1(
+    def create_deployment_plan_v1(
         response: Response,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -127,7 +127,7 @@ def create_deployment_router(
         reject_retired_command("CreateDeployment")
 
     @router.get("/api/v1/deployment-plans/{plan_id}")
-    async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Header(default=None)):
+    def get_deployment_plan(plan_id: str, authorization: Optional[str] = Header(default=None)):
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -165,7 +165,7 @@ def create_deployment_router(
         }
 
     @router.get("/api/v1/operator/deployment-plans")
-    async def list_operator_deployment_plans(
+    def list_operator_deployment_plans(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -235,7 +235,7 @@ def create_deployment_router(
         }
 
     @router.get("/api/v1/operator/deployment-review/{plan_id}")
-    async def get_deployment_review(plan_id: str, authorization: Optional[str] = Header(default=None)):
+    def get_deployment_review(plan_id: str, authorization: Optional[str] = Header(default=None)):
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -354,7 +354,7 @@ def create_deployment_router(
         }
 
     @router.get("/api/v1/operator/deployment-diff/{plan_id}")
-    async def get_deployment_diff(plan_id: str, authorization: Optional[str] = Header(default=None)):
+    def get_deployment_diff(plan_id: str, authorization: Optional[str] = Header(default=None)):
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -475,7 +475,7 @@ def create_deployment_router(
         }
 
     @router.get("/bff/deployments/{deployment_id}")
-    async def bff_get_deployment(
+    def bff_get_deployment(
         deployment_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -519,7 +519,7 @@ def create_deployment_router(
         }
 
     @router.post("/bff/deployments/{deployment_id}/actions/{action_id}", status_code=202)
-    async def bff_deployment_action(
+    def bff_deployment_action(
         deployment_id: str,
         action_id: str,
         request: Request,
@@ -535,7 +535,7 @@ def create_deployment_router(
 
 
     @router.post("/bff/deployments", status_code=201)
-    async def sem_create_deployment_command(
+    def sem_create_deployment_command(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -546,7 +546,7 @@ def create_deployment_router(
         reject_retired_command("CreateDeployment")
 
     @router.patch("/bff/deployments/{deployment_id}", status_code=202)
-    async def sem_patch_deployment_command(
+    def sem_patch_deployment_command(
         deployment_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),

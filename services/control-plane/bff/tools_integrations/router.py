@@ -236,7 +236,7 @@ def create_integrations_router(
     # ========================================================================
 
     @router.get("/api/v1/operator/openclaw/ops")
-    async def get_openclaw_ops(
+    def get_openclaw_ops(
         session_limit: int = Query(default=25, ge=1, le=100),
         audit_limit: int = Query(default=20, ge=1, le=100),
         state: Optional[str] = Query(default=None),
@@ -266,7 +266,7 @@ def create_integrations_router(
         )
 
     @router.get("/api/v1/operator/openclaw/tool-workflow-bridge")
-    async def get_openclaw_tool_workflow_bridge(
+    def get_openclaw_tool_workflow_bridge(
         session_limit: int = Query(default=25, ge=1, le=100),
         audit_limit: int = Query(default=20, ge=1, le=100),
         state: Optional[str] = Query(default=None),
@@ -296,7 +296,7 @@ def create_integrations_router(
         )
 
     @router.post("/api/v1/operator/openclaw/sessions")
-    async def create_openclaw_session(
+    def create_openclaw_session(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -349,7 +349,7 @@ def create_integrations_router(
         )
 
     @router.post("/api/v1/operator/openclaw/sessions/{session_id}/cancel")
-    async def cancel_openclaw_session(
+    def cancel_openclaw_session(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -378,7 +378,7 @@ def create_integrations_router(
         )
 
     @router.get("/api/v1/operator/openclaw/live-gate/status")
-    async def get_openclaw_live_gate_status(
+    def get_openclaw_live_gate_status(
         authorization: Optional[str] = Header(default=None),
     ) -> JSONResponse:
         identity = _extract(authorization)
@@ -399,7 +399,7 @@ def create_integrations_router(
         )
 
     @router.get("/api/v1/operator/openclaw/live-gate/audit")
-    async def get_openclaw_live_gate_audit(
+    def get_openclaw_live_gate_audit(
         capital_pool_id: Optional[str] = None,
         limit: int = 100,
         authorization: Optional[str] = Header(default=None),
@@ -436,7 +436,7 @@ def create_integrations_router(
         "/api/v1/operator/openclaw/broker/adapter-readiness",
         operation_id="get_openclaw_broker_adapter_readiness",
     )
-    async def get_openclaw_broker_adapter_readiness(
+    def get_openclaw_broker_adapter_readiness(
         authorization: Optional[str] = Header(default=None),
     ) -> JSONResponse:
         identity = _extract(authorization)
@@ -464,7 +464,7 @@ def create_integrations_router(
         "/bff/mcp-servers/{server_id}/import-tools",
         response_model=CommandResponse[McpToolImportData],
     )
-    async def import_mcp_server_tools(
+    def import_mcp_server_tools(
         server_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -487,7 +487,7 @@ def create_integrations_router(
         "/bff/mcp-tools/{tool_id}/{action}",
         response_model=CommandResponse[McpToolActionData],
     )
-    async def admit_mcp_tool_action_alias(
+    def admit_mcp_tool_action_alias(
         tool_id: str,
         action: McpToolActionVerb,
         payload: Dict[str, Any] = Body(...),
@@ -510,7 +510,7 @@ def create_integrations_router(
         resolved_server_id = resolved_service.resolve_mcp_server_id_for_tool(
             clean_tool_id, request
         )
-        return await admit_mcp_tool_action(
+        return admit_mcp_tool_action(
             server_id=resolved_server_id,
             tool_id=clean_tool_id,
             action=action,
@@ -525,7 +525,7 @@ def create_integrations_router(
         "/bff/v1/mcp/servers/{server_id}/tools/{tool_id}/actions/{action}",
         response_model=CommandResponse[McpToolActionData],
     )
-    async def admit_mcp_tool_action(
+    def admit_mcp_tool_action(
         server_id: str,
         tool_id: str,
         action: McpToolActionVerb,
@@ -577,7 +577,7 @@ def create_integrations_router(
         }
 
     @router.post("/bff/tools", status_code=201)
-    async def bff_create_tool(
+    def bff_create_tool(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -616,7 +616,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/tools/{tool_id}")
-    async def bff_get_tool(
+    def bff_get_tool(
         tool_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -659,7 +659,7 @@ def create_integrations_router(
         return record
 
     @router.patch("/bff/tools/{tool_id}")
-    async def bff_patch_tool(
+    def bff_patch_tool(
         tool_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -702,7 +702,7 @@ def create_integrations_router(
         )
 
     @router.post("/bff/tools/{tool_id}/actions/{action_id}", status_code=202)
-    async def bff_tool_action(
+    def bff_tool_action(
         tool_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -716,7 +716,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/mcp/servers")
-    async def bff_list_mcp_servers(
+    def bff_list_mcp_servers(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -728,7 +728,7 @@ def create_integrations_router(
         )
 
     @router.post("/bff/mcp/servers", status_code=201)
-    async def bff_create_mcp_server(
+    def bff_create_mcp_server(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -778,7 +778,7 @@ def create_integrations_router(
         return result
 
     @router.get("/bff/mcp/servers/{server_id}")
-    async def bff_get_mcp_server(
+    def bff_get_mcp_server(
         server_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> JSONResponse:
@@ -788,7 +788,7 @@ def create_integrations_router(
         )
 
     @router.post("/bff/mcp/servers/{server_id}/actions/{action_id}", status_code=202)
-    async def bff_mcp_server_action(
+    def bff_mcp_server_action(
         server_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -801,7 +801,7 @@ def create_integrations_router(
         reject_retired_command("McpServerAction")
 
     @router.get("/bff/mcp/servers/{server_id}/tools")
-    async def bff_list_mcp_server_tools(
+    def bff_list_mcp_server_tools(
         server_id: str,
         authorization: Optional[str] = Header(default=None),
         page_token: Optional[str] = None,
@@ -833,7 +833,7 @@ def create_integrations_router(
         }
 
     @router.post("/bff/mcp/tools/{tool_id}/actions/{action_id}", status_code=202)
-    async def bff_mcp_tool_action_compat(
+    def bff_mcp_tool_action_compat(
         tool_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -868,7 +868,7 @@ def create_integrations_router(
         }
 
     @router.post("/bff/skills", status_code=201)
-    async def bff_create_skill(
+    def bff_create_skill(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -931,7 +931,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/skills/{skill_id}")
-    async def bff_get_skill(
+    def bff_get_skill(
         skill_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -960,7 +960,7 @@ def create_integrations_router(
         return record
 
     @router.patch("/bff/skills/{skill_id}")
-    async def bff_patch_skill(
+    def bff_patch_skill(
         skill_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -1003,7 +1003,7 @@ def create_integrations_router(
         )
 
     @router.post("/bff/skills/{skill_id}/actions/{action_id}", status_code=202)
-    async def bff_skill_action(
+    def bff_skill_action(
         skill_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -1017,7 +1017,7 @@ def create_integrations_router(
         )
 
     @router.post("/bff/skills/{skill_id}/sandbox-eval", status_code=202)
-    async def bff_skill_sandbox_eval(
+    def bff_skill_sandbox_eval(
         skill_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -1107,7 +1107,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/mcp-servers/{server_id}")
-    async def bff_get_mcp_server_facade(
+    def bff_get_mcp_server_facade(
         server_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1125,7 +1125,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/mcp-tools")
-    async def bff_list_mcp_tools_facade(
+    def bff_list_mcp_tools_facade(
         status: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1143,7 +1143,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/mcp-tools/{tool_id}")
-    async def bff_get_mcp_tool_facade(
+    def bff_get_mcp_tool_facade(
         tool_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1159,7 +1159,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/channels")
-    async def bff_list_channels(
+    def bff_list_channels(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
@@ -1173,7 +1173,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/channels/{channel_id}")
-    async def bff_get_channel(
+    def bff_get_channel(
         channel_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
