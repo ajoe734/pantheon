@@ -1,0 +1,22 @@
+{
+  "task_id": "PERSONA-PROVISIONING-TERMINAL-IDEMPOTENT-20261103",
+  "root_cause": "PersonaRegistryHttpWritePort.update_persona read lifecycle=draft, PATCHed metadata, then PATCHed /lifecycle draft->research_only. Two controllers (operator reconcile route and background loop, enabled by #6929) both read draft; the loser's lifecycle PATCH was rejected by the persona owner (422, same-state) and surfaced as 400 VALIDATION_FAILED.",
+  "fix": "On a 400/409/422 rejection of the lifecycle PATCH the port re-reads the owner; if lifecycle_state is already the mapped target (research_only) it returns the readback as success. Any other rejection (readback not the target, or readback missing) re-raises the original error unchanged. The owner lifecycle guard and scripts/bootstrap_dev_paper_baseline.py are untouched.",
+  "tests": {
+    "test_terminal_transition_converges_when_lifecycle_race_is_lost": "AC1 port level; fails on dev",
+    "test_route_returns_200_when_owner_rejects_same_state_transition": "AC1 route returns 200 with lifecycle_state paper_running; fails on dev",
+    "test_terminal_transition_propagates_rejection_when_not_the_race": "AC2",
+    "test_route_and_background_pass_race_to_terminal_write_without_error": "AC3 barrier at the owner lifecycle PATCH, route and real background pass concurrent; asserts no raised errors (recorded at the owner port because the pass swallows them), owner research_only, exactly one successful owner transition, Persona paper_running; fails on dev"
+  },
+  "concurrent_write_audit": [
+    {"write": "terminal lifecycle + metadata PATCH (persist_terminal_transition)", "idempotent": true, "how": "metadata PATCH is a deterministic merge; lifecycle PATCH race fixed by re-read convergence (this change)."},
+    {"write": "provisioning ledger acquire", "idempotent": true, "how": "lease-based (lease_owner, lease_expires_at); a second controller gets None and reports committed=false without writing."},
+    {"write": "provisioning ledger checkpoint/release", "idempotent": true, "how": "checkpoint requires matching lease_owner and unexpired lease, else ProvisioningLeaseLost; terminal records (succeeded/failed/compensated) are replayed verbatim and never reversed."},
+    {"write": "cron registration", "idempotent": true, "how": "registrar names jobs deterministically (_job_name) and skips workflows already registered in the gateway snapshot; fails closed if the registered set cannot be verified."},
+    {"write": "first-evaluation schedule cleanup (terminal failed)", "idempotent": true, "how": "removal of an absent registration is a no-op with authoritative readback; outcome recorded durably."},
+    {"write": "readback summary metadata", "idempotent": true, "how": "derived from the same authoritative readback; metadata PATCH is a merge so identical content converges, last writer wins with equal values."},
+    {"write": "compensation (reconcile_failure_compensation)", "idempotent": true, "how": "runs under its own ledger lease via the coordinator and resumes from durable compensation state; a concurrent controller cannot acquire the lease."}
+  ],
+  "no_fix_needed_for_audited_writes": true,
+  "verification": "test_persona_provisioning_reconcile.py, test_persona_provisioning_terminal_cleanup.py, test_bff_test_architecture.py, test_agora_servant_production_write_owner.py: 3 failures (terminal_cleanup backoff test; two agora servant tests needing PANTHEON_EVOLUTION_API_URL) reproduce identically on unmodified HEAD and are unrelated."
+}
