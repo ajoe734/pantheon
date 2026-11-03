@@ -399,16 +399,28 @@ class PersonaRegistryHttpWritePort:
             if target_lifecycle in {"paper_only", "paper_running", "active"}:
                 target_lifecycle = "research_only"
             if target_lifecycle == "research_only" and current.get("lifecycle_state") == "draft":
-                updated = self._request(
-                    "PATCH",
-                    f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/lifecycle",
-                    dependency="persona_registry_write_owner",
-                    body={
-                        "actor_id": self._service_actor_id,
-                        "target_state": "research_only",
-                    },
-                    write=True,
-                )
+                try:
+                    updated = self._request(
+                        "PATCH",
+                        f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/lifecycle",
+                        dependency="persona_registry_write_owner",
+                        body={
+                            "actor_id": self._service_actor_id,
+                            "target_state": "research_only",
+                        },
+                        write=True,
+                    )
+                except _PersonaHttpResponseError as lifecycle_exc:
+                    # Another controller may have won the draft->research_only
+                    # race between our read and this PATCH. Converge: if the
+                    # owner now reports the mapped target, that is success.
+                    # Any other rejection propagates unchanged.
+                    if lifecycle_exc.status_code not in {400, 409, 422}:
+                        raise
+                    readback = self.get_persona(persona_id)
+                    if readback is None or readback.get("lifecycle_state") != "research_only":
+                        raise
+                    updated = readback
         except _PersonaHttpResponseError as exc:
             if exc.status_code == 404:
                 return None
