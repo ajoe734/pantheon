@@ -1416,3 +1416,46 @@ def test_consume_threshold_route_unacknowledged_publish_retryable_across_restart
         # Restore the module's own receiver so later tests that publish through
         # the canonical transport see a subscriber regardless of test order.
         main_mod._wire_canonical_performance_subscriber()
+
+
+def test_operator_payload_and_outbox_sweep_resolve_stale_agent_findings_only(monkeypatch):
+    import asyncio
+    import services.incidents.main as main_mod
+    from services.incidents.consumer import build_incident_from_infrastructure_health_payload
+
+    monkeypatch.setenv("INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS", "3600")
+    stale_finding = build_incident_from_infrastructure_health_payload(
+        {
+            "schema_version": "pantheon.infrastructure-incident/1",
+            "incident_id": "agent-route-stale-0000",
+            "source_event_id": "monitor-snapshot-20261015T000000Z-abcdef012345",
+            "tenant_id": "default",
+            "producer": "monitor-agent",
+            "created_at": "2026-10-15T00:00:00Z",
+            "component": {
+                "service_name": "agent-finding-route-stale",
+                "component_kind": "monitor-agent-finding",
+                "endpoint": "monitor-agent://route-stale",
+            },
+            "title": "Stale monitor agent finding",
+            "severity": "medium",
+            "evidence_summary": "snapshot_ref=monitor-snapshot-20261015T000000Z-abcdef012345; rationale=stale",
+        }
+    )
+    store.create_incident(stale_finding)
+    client.post("/api/incidents", json={**_BASE_PAYLOAD, "incident_id": "inc-route-runtime-open"})
+
+    asyncio.run(main_mod.process_incidents_outbox())
+
+    payload_resp = client.get("/api/incidents/agent-route-stale-0000/operator-payload")
+    assert payload_resp.status_code == 200
+    payload_body = payload_resp.json()
+    assert payload_body["status"] == "resolved"
+    assert payload_body["is_open"] is False
+    assert "resolution_reason=not_reobserved" in (payload_body.get("evidence_summary") or "")
+
+    runtime_resp = client.get("/api/incidents/inc-route-runtime-open/operator-payload")
+    assert runtime_resp.status_code == 200
+    assert runtime_resp.json()["status"] == "open"
+    assert runtime_resp.json()["is_open"] is True
+

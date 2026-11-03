@@ -1,0 +1,51 @@
+{
+  "task_id": "MONITOR-AGENT-INCIDENT-DEDUPE-RESOLVE-20261103",
+  "base_sha": "a55dbf6f607c60b970e6d59cb926f5018246994d",
+  "change_class": "corrective",
+  "summary": "Deduplicate monitor-agent finding incidents via stable open-incident references and canonical finding family normalization, report degraded without opening new incidents when open incidents are omitted from the prompt, and deterministically resolve stale monitor-agent finding incidents with not_reobserved in the incidents service.",
+  "scope": [
+    "services/monitor-agent/monitor_agent.py: include stable reference ('incident_id' / 'ref') for every open incident in OPEN_INCIDENTS, allow findings to name 'incident_id' / 'ref' in FINDINGS_SCHEMA, forward 'incident_id' to consume-agent-finding, and raise Degraded before calling ask_agent when open incidents are omitted due to MAX_PROMPT_CHARS",
+    "services/monitor-agent/test_monitor_agent.py: unit tests for stable open-incident reference in prompt/schema and degraded run with zero created incidents when open incidents are omitted",
+    "services/incident/incident.py: add strict monitor-agent finding identification (is_monitor_agent_finding_incident), observation timestamp and resolution reason extraction, canonical finding key normalization for recurring noise families, resolution_reason support in update_incident_status, and resolve_stale_monitor_agent_findings",
+    "services/incident/pg_store.py: implement guarded single-transaction _persist_batch_incident_updates on PostgresIncidentStore for stale monitor-agent finding auto-resolution",
+    "services/incident/test_incident.py: unit tests for strict monitor-agent finding scope, canonical noise family normalization, and not_reobserved auto-resolution",
+    "services/incident/test_pg_store_integration.py: Postgres integration test for resolve_stale_monitor_agent_findings",
+    "services/incidents/main.py: match open monitor-agent finding incidents by stable reference or canonical family in consume_agent_finding_incident, record observed_at and fingerprint in evidence_summary, and run resolve_stale_agent_finding_incidents (configured via INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS, default 7200s) on incident reads, finding consumption, and the outbox loop",
+    "services/incidents/test_consume_agent_finding.py: regression tests for stable reference merging, 20 differently worded reconciler generation change + 20 differently worded fleet size change findings, not_reobserved resolution after window, strict non-agent incident preservation, and automatic resolution of pre-existing legacy open finding incidents",
+    "services/incidents/test_main_routes.py: route test for operator-payload and outbox sweep resolving stale monitor-agent findings only",
+    "docker-compose.yml: wire INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS (default 7200) on the incidents service",
+    "docs/operations/monitor-agent.md: document stable reference, degraded behavior on omitted open incidents, and the not_reobserved resolution window and configuration",
+    "docs/deployment/evidence/MONITOR-AGENT-INCIDENT-DEDUPE-RESOLVE-20261103/evidence.json: verification and test classification manifest"
+  ],
+  "acceptance_criteria_verification": {
+    "ac1": "build_prompt includes 'incident_id' and 'ref' for every open incident in OPEN_INCIDENTS and FINDINGS_SCHEMA includes 'incident_id' and 'ref' on findings items; verified in test_prompt_lists_open_finding_stable_reference_and_schema_accepts_incident_id.",
+    "ac2": "consume_agent_finding_incident matches any finding naming an open finding incident's stable reference ('incident_id', 'ref', or 'fingerprint') and merges into that open incident (HTTP 200) without opening a new one; verified in test_finding_naming_stable_reference_merges_and_never_opens_new_incident.",
+    "ac3": "When open incidents are omitted from build_prompt due to MAX_PROMPT_CHARS (OMITTED_INCIDENTS > 0), run_once raises Degraded before calling the agent, opens no new incident (created=0, updated=0), and reports status='degraded'; verified in test_run_once_reports_degraded_and_opens_no_incident_when_open_incidents_omitted.",
+    "ac4": "Open monitor-agent finding incidents not re-observed within INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS (default 7200s) are resolved by the incidents service with resolution_reason=not_reobserved in evidence_summary and resolution_reason:not_reobserved in telemetry_event_ids, while the monitor-agent has no tool or route to resolve or edit incidents; verified in test_stale_finding_resolved_with_not_reobserved_after_window.",
+    "ac5": "is_monitor_agent_finding_incident restricts not_reobserved resolution strictly to monitor-agent finding incidents and never touches runtime, drift, infrastructure-health, or deployment incidents; verified in test_not_reobserved_never_resolves_runtime_drift_infrastructure_or_deployment_incidents and test_is_monitor_agent_finding_incident_strict_scope.",
+    "ac6": "test_twenty_differently_worded_reconciler_and_fleet_findings_keep_at_most_one_open_each replays 20 differently worded findings about one reconciler generation change and 20 differently worded findings about one fleet size change and proves that at most one incident stays open for each.",
+    "ac7": "test_pre_existing_legacy_open_finding_incidents_resolve_without_manual_edits proves pre-existing legacy open finding incidents older than the window are resolved automatically by the same rule without manual data edits.",
+    "ac8": "docs/operations/monitor-agent.md documents the stable reference, omitted-incident degraded behavior, and the not_reobserved resolution window and INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS configuration."
+  },
+  "test_expectation_classification": {
+    "status": "no_test_expectations_changed",
+    "details": "All pre-existing unit and route tests across services/monitor-agent, services/incident, and services/incidents continue to pass without modification or weakening. New unit, route, and integration tests were added to verify all eight acceptance criteria."
+  },
+  "validation": [
+    {
+      "suite": "services/monitor-agent/test_monitor_agent.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest services/monitor-agent -q",
+      "result": "16 passed"
+    },
+    {
+      "suite": "services/incident/test_incident.py & services/incident/smoke_test_incident.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest services/incident -q && .venv-pantheon/bin/python3 services/incident/smoke_test_incident.py",
+      "result": "137 passed, 6 skipped; 59/59 smoke checks passed"
+    },
+    {
+      "suite": "services/incidents/test_consume_agent_finding.py & services/incidents/test_main_routes.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest services/incidents/test_consume_agent_finding.py services/incidents/test_main_routes.py -q",
+      "result": "79 passed"
+    }
+  ]
+}

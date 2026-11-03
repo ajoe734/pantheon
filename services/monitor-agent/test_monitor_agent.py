@@ -231,3 +231,86 @@ def test_run_once_sends_bounded_prompt_with_50_large_open_incidents(tmp_path):
     assert len(prompt) <= 120000
     assert "... [truncated]" in prompt
 
+
+def test_prompt_lists_open_finding_stable_reference_and_schema_accepts_incident_id(tmp_path):
+    item_props = ma.FINDINGS_SCHEMA["properties"]["findings"]["items"]["properties"]
+    assert "incident_id" in item_props
+
+    open_incidents = [
+        {
+            "incident_id": "agent-112233445566-0000",
+            "title": "Reconciler generation jumped to 78",
+            "incident_cluster_id": "infrastructure:default:monitor-agent:agent-finding-112233445566",
+            "evidence_summary": "component_kind=monitor-agent-finding; snapshot_ref=snap-0",
+        }
+    ]
+    posts = []
+
+    def fetch(url, data=None, headers=None, timeout=20):
+        if "/structured" in url:
+            fetch.agent_request = data
+            return {
+                "data": {
+                    "output": {
+                        "structured_data": {
+                            "findings": [
+                                {
+                                    "incident_id": "agent-112233445566-0000",
+                                    "fingerprint": "reconciler-gen-advance-114",
+                                    "title": "Reconciler generation advanced to 114",
+                                    "severity": "medium",
+                                    "rationale": "fence_token advanced again",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        if "open_only" in url:
+            return open_incidents
+        if "consume-agent-finding" in url:
+            posts.append(data)
+            return {"_http_status": 200}
+        return {"ok": True}
+
+    record = _run(tmp_path, fetch)
+    assert record["status"] == "ok"
+    assert record["created"] == 0 and record["updated"] == 1
+    assert "agent-112233445566-0000" in fetch.agent_request["prompt"]
+    assert len(posts) == 1
+    assert posts[0]["incident_id"] == "agent-112233445566-0000"
+
+
+def test_run_once_reports_degraded_and_opens_no_incident_when_open_incidents_omitted(tmp_path):
+    open_incidents = [
+        {
+            "incident_id": f"agent-{i:012x}-0000",
+            "title": f"Breach {i} with long descriptive title that takes space in json payload",
+            "incident_cluster_id": f"infrastructure:default:monitor-agent:agent-finding-{i:012x}",
+            "evidence_summary": f"Summary {i} " + ("k" * 1500),
+        }
+        for i in range(300)
+    ]
+    posts = []
+    agent_called = False
+
+    def fetch(url, data=None, headers=None, timeout=20):
+        nonlocal agent_called
+        if "/structured" in url:
+            agent_called = True
+            return {"data": {"output": {"structured_data": {"findings": [_finding(1)]}}}}
+        if "open_only" in url:
+            return open_incidents
+        if "consume-agent-finding" in url:
+            posts.append(data)
+            return {"_http_status": 201}
+        return {"ok": True}
+
+    record = _run(tmp_path, fetch)
+    assert record["status"] == "degraded"
+    assert record["created"] == 0
+    assert record["updated"] == 0
+    assert not agent_called
+    assert posts == []
+
+
