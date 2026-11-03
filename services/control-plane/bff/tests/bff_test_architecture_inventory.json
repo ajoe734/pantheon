@@ -108,11 +108,18 @@
     "hosted": 1
   },
   "disposition_summary": {
-    "DECOUPLED": 326,
+    "DECOUPLED": 327,
     "MIGRATED": 45,
     "ALLOWLIST": 21
   },
   "tests": [
+    {
+      "file": "tests/test_owner_read_context_lifespan.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
     {
       "file": "agora/candidate_decisions/test_postgres_store.py",
       "layer": "adapter",

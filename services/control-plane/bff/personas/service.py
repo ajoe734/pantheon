@@ -54,7 +54,7 @@ BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 from services.control_plane.cron.persona_cron_registrar import (
     DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
 )
-from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope, selected_tenant, shared_persona_directory_list, submit_owner_read
+from services.control_plane.bff.core.owner_reads import _RequestReadCache, cached_owner_call, request_read_cache, request_read_scope, selected_tenant, shared_persona_directory_list, submit_owner_read
 
 from ..models import (
     ActionCommandStatus,
@@ -4201,6 +4201,15 @@ def _reconcile_persona_provisioning_once() -> int:
 
 
 # --- _persona_provisioning_reconciler_loop ---
+def _reconcile_persona_provisioning_pass() -> Any:
+    """One background pass in its own fresh read scope (never shared across passes)."""
+    token = request_read_cache.set(_RequestReadCache())
+    try:
+        return _reconcile_persona_provisioning_once()
+    finally:
+        request_read_cache.reset(token)
+
+
 async def _persona_provisioning_reconciler_loop() -> None:
     interval = max(
         1,
@@ -4209,7 +4218,7 @@ async def _persona_provisioning_reconciler_loop() -> None:
     while True:
         await asyncio.sleep(interval)
         try:
-            await asyncio.to_thread(_reconcile_persona_provisioning_once)
+            await asyncio.to_thread(_reconcile_persona_provisioning_pass)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

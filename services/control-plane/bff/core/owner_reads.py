@@ -170,6 +170,11 @@ class OwnerReadContextMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        if scope.get("type") not in ("http", "websocket"):
+            # lifespan tasks inherit this context for the process lifetime;
+            # they must never share one request cache.
+            await self.app(scope, receive, send)
+            return
         headers = dict(scope.get("headers", []))
         caller_auth = headers.get(b"authorization", b"").decode().strip()
         if not caller_auth:
