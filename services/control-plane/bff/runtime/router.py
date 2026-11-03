@@ -466,7 +466,7 @@ def create_runtime_router(
         }
 
     @router.get("/api/v1/bindings")
-    async def list_bindings(
+    def list_bindings(
         persona_id: Optional[str] = None,
         capital_pool_id: Optional[str] = None,
         role: Optional[str] = None,
@@ -495,7 +495,7 @@ def create_runtime_router(
         }
 
     @router.post("/api/v1/bindings", status_code=201)
-    async def create_binding(
+    def create_binding(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
@@ -569,7 +569,7 @@ def create_runtime_router(
         return result
 
     @router.get("/api/v1/runtime-bindings")
-    async def list_runtime_bindings(
+    def list_runtime_bindings(
         deployment_mode: Optional[str] = None,
         version: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
@@ -594,7 +594,7 @@ def create_runtime_router(
         }
 
     @router.get("/api/v1/runtimes/{runtime_id}/status")
-    async def get_runtime_status(
+    def get_runtime_status(
         runtime_id: str, authorization: Optional[str] = Header(default=None),
     ):
         """RT-03: Runtime status detail."""
@@ -624,7 +624,7 @@ def create_runtime_router(
         }
 
     @router.get("/api/v1/bindings/{binding_id}")
-    async def get_binding(binding_id: str, authorization: Optional[str] = Header(default=None)):
+    def get_binding(binding_id: str, authorization: Optional[str] = Header(default=None)):
         identity = _extract_identity(authorization)
         _require_read_role(identity)
 
@@ -656,7 +656,7 @@ def create_runtime_router(
         }
 
     @router.get("/api/v1/runtime-bindings/{binding_id}")
-    async def get_runtime_binding(binding_id: str, authorization: Optional[str] = Header(default=None)):
+    def get_runtime_binding(binding_id: str, authorization: Optional[str] = Header(default=None)):
         identity = _extract_identity(authorization)
         _require_read_role(identity)
 
@@ -688,7 +688,7 @@ def create_runtime_router(
         }
 
     @router.get("/api/v1/runtimes/{runtime_id}/rollbacks")
-    async def get_runtime_rollbacks(runtime_id: str, authorization: Optional[str] = Header(default=None)):
+    def get_runtime_rollbacks(runtime_id: str, authorization: Optional[str] = Header(default=None)):
         identity = _extract_identity(authorization)
         _require_read_role(identity)
 
@@ -708,7 +708,7 @@ def create_runtime_router(
         }
 
     @router.get("/api/v1/operator/runtime-state")
-    async def list_operator_runtime_state(
+    def list_operator_runtime_state(
         deployment_stage: Optional[str] = None,
         status: Optional[str] = None,
         sort_by: str = Query(default="last_updated_at"),
@@ -882,7 +882,7 @@ def create_runtime_router(
         }
 
     @router.get("/api/v1/operator/paper-live-drift/{runtime_id}")
-    async def get_operator_paper_live_drift(
+    def get_operator_paper_live_drift(
         runtime_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -903,7 +903,7 @@ def create_runtime_router(
         return _build_operator_paper_live_drift_payload(runtime_id, snapshot_at)
 
     @router.get("/bff/runtimes/{runtime_id}/ooda")
-    async def bff_list_runtime_ooda_packets(
+    def bff_list_runtime_ooda_packets(
         runtime_id: str,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -924,7 +924,7 @@ def create_runtime_router(
         )
 
     @router.get("/api/v1/runtime/{runtime_id}/events/stream")
-    async def stream_runtime_events(
+    def stream_runtime_events(
         runtime_id: str,
         last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
         authorization: Optional[str] = Header(default=None),
@@ -993,7 +993,7 @@ def create_runtime_router(
         }
 
     @router.post("/bff/runtimes", status_code=201)
-    async def bff_create_runtime(
+    def bff_create_runtime(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -1151,7 +1151,7 @@ def create_runtime_router(
         }
 
     @router.get("/bff/runtimes/{runtime_id}")
-    async def bff_get_runtime(
+    def bff_get_runtime(
         runtime_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -1183,7 +1183,7 @@ def create_runtime_router(
         }
 
     @router.post("/bff/runtimes/{runtime_id}/actions/{action_id}", status_code=202)
-    async def bff_runtime_action(
+    def bff_runtime_action(
         runtime_id: str,
         action_id: str,
         request: Request,
@@ -1237,7 +1237,7 @@ def create_runtime_router(
         }
 
     @router.get("/bff/v5/execution/strategy-health")
-    async def bff_v5_execution_strategy_health(
+    def bff_v5_execution_strategy_health(
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF BFF-B2-006: v5 execution strategy-health list."""

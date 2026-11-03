@@ -826,7 +826,7 @@ def create_trade_journeys_router(
         "/bff/management/trade-journeys/{journey_id}/actions",
         response_model=TradeJourneyActionEnvelope,
     )
-    async def bff_trade_journey_action(
+    def bff_trade_journey_action(
         journey_id: str,
         request: TradeJourneyActionRequest,
         tenant_id: str = Query(...),
@@ -904,7 +904,7 @@ def create_trade_journeys_router(
     # class `test_route_resolution_no_shadowing.py` guards against).
 
     @router.get("/bff/management/trade-journeys/events")
-    async def bff_trade_journeys_events(
+    def bff_trade_journeys_events(
         tenant_id: str = Query(...), environment: str = Query(...),
         authorization: Optional[str] = Header(default=None),
         last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
@@ -946,7 +946,7 @@ def create_trade_journeys_router(
         })
 
     @router.get("/bff/management/trade-journeys/attention", response_model=TradeJourneyListEnvelope)
-    async def bff_trade_journeys_attention(
+    def bff_trade_journeys_attention(
         tenant_id: str = Query(...), environment: str = Query(...),
         authorization: Optional[str] = Header(default=None),
     ):
@@ -987,7 +987,7 @@ def create_trade_journeys_router(
             )
 
     @router.get("/bff/management/trade-journeys/resolve", response_model=TradeJourneyDetailEnvelope)
-    async def bff_trade_journeys_resolve(
+    def bff_trade_journeys_resolve(
         q: str = Query(..., min_length=1),
         identifier_type: Optional[str] = Query(default=None),
         tenant_id: str = Query(...),
@@ -1030,7 +1030,7 @@ def create_trade_journeys_router(
             return _unavailable_envelope(snapshot_at, entity_id="trade-journey-resolve")
 
     @router.get("/bff/management/trade-journeys/metrics", response_model=TradeJourneyDetailEnvelope)
-    async def bff_trade_journeys_metrics(
+    def bff_trade_journeys_metrics(
         tenant_id: str = Query(...),
         environment: str = Query(...),
         authorization: Optional[str] = Header(default=None),
@@ -1059,7 +1059,7 @@ def create_trade_journeys_router(
             return _unavailable_envelope(snapshot_at, entity_id="trade-journey-metrics")
 
     @router.get("/bff/management/trade-journeys/slo", response_model=TradeJourneyDetailEnvelope)
-    async def bff_trade_journeys_slo(
+    def bff_trade_journeys_slo(
         tenant_id: str = Query(...),
         environment: str = Query(...),
         authorization: Optional[str] = Header(default=None),
@@ -1124,7 +1124,7 @@ def create_trade_journeys_router(
         "/bff/management/trade-journeys",
         response_model=TradeJourneyListEnvelope,
     )
-    async def bff_trade_journeys_list(
+    def bff_trade_journeys_list(
         tenant_id: str = Query(...),
         environment: str = Query(...),
         q: Optional[str] = Query(default=None),
@@ -1221,7 +1221,7 @@ def create_trade_journeys_router(
         }
 
     @router.get("/bff/management/trade-journeys/{journey_id}", response_model=TradeJourneyDetailEnvelope)
-    async def bff_trade_journeys_detail(
+    def bff_trade_journeys_detail(
         journey_id: str,
         tenant_id: str = Query(...),
         environment: str = Query(...),
@@ -1272,7 +1272,7 @@ def create_trade_journeys_router(
         "/bff/management/trade-journeys/{journey_id}/timeline",
         response_model=TradeJourneyListEnvelope,
     )
-    async def bff_trade_journeys_timeline(
+    def bff_trade_journeys_timeline(
         journey_id: str,
         tenant_id: str = Query(...),
         environment: str = Query(...),
@@ -1341,7 +1341,7 @@ def create_trade_journeys_router(
         }
 
     @router.get("/bff/management/trade-journeys/{journey_id}/graph", response_model=TradeJourneyDetailEnvelope)
-    async def bff_trade_journeys_graph(
+    def bff_trade_journeys_graph(
         journey_id: str,
         tenant_id: str = Query(...),
         environment: str = Query(...),
@@ -1383,7 +1383,7 @@ def create_trade_journeys_router(
         }
 
     @router.get("/bff/management/trade-journeys/{journey_id}/evidence", response_model=TradeJourneyDetailEnvelope)
-    async def bff_trade_journeys_evidence(
+    def bff_trade_journeys_evidence(
         journey_id: str,
         tenant_id: str = Query(...),
         environment: str = Query(...),
@@ -1423,7 +1423,7 @@ def create_trade_journeys_router(
         }
 
     @router.get("/bff/management/trade-journeys/{journey_id}/replay", response_model=TradeJourneyDetailEnvelope)
-    async def bff_trade_journeys_replay(
+    def bff_trade_journeys_replay(
         journey_id: str,
         tenant_id: str = Query(...),
         environment: str = Query(...),

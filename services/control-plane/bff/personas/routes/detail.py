@@ -51,7 +51,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
     _resolve_final_idempotency_key = ctx.resolve_final_idempotency_key
 
     @router.get("/api/v1/personas/{persona_id}")
-    async def get_persona_detail(persona_id: str, authorization: Optional[str] = Header(default=None)):
+    def get_persona_detail(persona_id: str, authorization: Optional[str] = Header(default=None)):
         """PS-02: Persona Detail with bindings."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
@@ -84,7 +84,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/api/v1/personas/{persona_id}/capabilities")
-    async def get_persona_capabilities(
+    def get_persona_capabilities(
         persona_id: str, authorization: Optional[str] = Header(default=None),
     ):
         """PS-06: Capability snapshot for a persona."""
@@ -126,7 +126,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/api/v1/operator/persona-management/{persona_id}")
-    async def get_persona_management(
+    def get_persona_management(
         persona_id: str,
         snapshot: str = "preferred",
         authorization: Optional[str] = Header(default=None),
@@ -392,7 +392,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.patch("/bff/personas/{persona_id}")
-    async def bff_patch_persona(
+    def bff_patch_persona(
         persona_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
@@ -452,7 +452,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/runtime-profile")
-    async def bff_get_persona_runtime_profile(
+    def bff_get_persona_runtime_profile(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -485,7 +485,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/activity")
-    async def bff_get_persona_activity(
+    def bff_get_persona_activity(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -511,7 +511,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/evaluations")
-    async def bff_get_persona_evaluations(
+    def bff_get_persona_evaluations(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -533,7 +533,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/memory")
-    async def bff_get_persona_memory(
+    def bff_get_persona_memory(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -559,7 +559,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/audit")
-    async def bff_get_persona_audit(
+    def bff_get_persona_audit(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -582,7 +582,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/skills")
-    async def bff_get_persona_skills(
+    def bff_get_persona_skills(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -619,7 +619,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/tools")
-    async def bff_get_persona_tools(
+    def bff_get_persona_tools(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -656,7 +656,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/capabilities")
-    async def bff_get_persona_capabilities_surface(
+    def bff_get_persona_capabilities_surface(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):

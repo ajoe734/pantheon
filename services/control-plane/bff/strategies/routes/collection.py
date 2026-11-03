@@ -55,7 +55,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         }
 
     @router.post("/bff/strategies", status_code=201)
-    async def bff_create_strategy(
+    def bff_create_strategy(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
