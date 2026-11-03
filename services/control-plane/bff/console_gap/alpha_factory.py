@@ -79,7 +79,7 @@ def create_alpha_factory_router(
         raise RuntimeError("Neither read_surface nor get_read_store was configured.")
 
     @router.get("/bff/alpha-factory")
-    async def get_alpha_factory(
+    def get_alpha_factory(
         lane: Optional[str] = Query(default=None, description="Filter by lane id: ideas | strategies | experiments"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),

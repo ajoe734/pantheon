@@ -145,6 +145,30 @@ def _route_endpoint(app, path: str):
     return None
 
 
+# GET routes under these prefixes are enumerated from the composed route table.
+GUARDED_PREFIXES = ("/bff/management", "/bff/v5")
+
+# Routes the table-driven guard cannot drive through a plain GET: path -> reason.
+RUNTIME_GUARD_SKIP = {
+    "/bff/management/chat/stream": "SSE stream never completes under TestClient",
+    "/bff/v5/events/stream": "SSE stream never completes under TestClient",
+}
+
+
+def _enumerate_guarded_get_paths(app) -> list[str]:
+    import re
+
+    paths: list[str] = []
+    for route in _iter_api_routes(app.routes):
+        path = getattr(route, "path", None)
+        if not path or "GET" not in (getattr(route, "methods", None) or ()):
+            continue
+        if not path.startswith(GUARDED_PREFIXES) or path in RUNTIME_GUARD_SKIP:
+            continue
+        paths.append(re.sub(r"\{[^}]+\}", "guard-id-001", path))
+    return sorted(set(paths))
+
+
 def test_converted_management_handlers_are_threadpool_sync() -> None:
     with _isolated_final_read_models() as client:
         offenders = []
@@ -183,7 +207,9 @@ def test_owner_transports_are_never_called_on_the_event_loop(monkeypatch) -> Non
         pass
 
     with _isolated_final_read_models() as client:
-        for path in RUNTIME_GET_PATHS:
+        table_paths = _enumerate_guarded_get_paths(client.app)
+        assert len(table_paths) > 50, "route table enumeration looks empty"
+        for path in [*RUNTIME_GET_PATHS, *table_paths]:
             client.get(path, headers=HEADERS)
 
     assert not violations, f"blocking owner transport invoked on the event loop: {sorted(set(violations))}"
@@ -232,3 +258,55 @@ def test_me_and_readiness_stay_responsive_while_persona_league_blocks(monkeypatc
     print(f"concurrency timings (seconds): {timings}")
     assert timings["me"] < 1.0, timings
     assert timings["readiness"] < 1.0, timings
+
+
+def test_performance_attribution_blocking_read_does_not_stall_me_or_livez(monkeypatch) -> None:
+    httpx = pytest.importorskip("httpx")
+    from services.control_plane.bff.agora.performance import service as agora_perf
+
+    entered = threading.Event()
+    hold_seconds = 4.0
+
+    def _blocking_owner_read(*_args, **_kwargs):
+        entered.set()
+        time.sleep(hold_seconds)  # stands in for the ~12s hosted owner read
+        return {"data": [], "items": [], "meta": {}}
+
+    monkeypatch.setattr(agora_perf, "pm12_performance_attribution_response", _blocking_owner_read)
+    assert not inspect.iscoroutinefunction(
+        _route_endpoint_for_probe("/bff/management/performance-attribution")
+    )
+
+    async def _drive(app) -> dict[str, float]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bff.test") as client:
+            attribution = asyncio.create_task(
+                client.get("/bff/management/performance-attribution", headers=HEADERS)
+            )
+            for _ in range(200):  # let the handler reach the blocking read
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert entered.is_set(), "performance-attribution never reached the stubbed owner read"
+            started = time.perf_counter()
+
+            async def _timed(path: str) -> float:
+                response = await client.get(path, headers=HEADERS)
+                assert response.status_code < 500, response.text
+                return time.perf_counter() - started
+
+            me, livez = await asyncio.gather(_timed("/bff/me"), _timed("/livez"))
+            await attribution
+            return {"me": me, "livez": livez}
+
+    with _isolated_final_read_models() as client:
+        timings = asyncio.run(_drive(client.app))
+
+    print(f"performance-attribution concurrency timings (seconds): {timings}")
+    assert timings["me"] < 1.0, timings
+    assert timings["livez"] < 1.0, timings
+
+
+def _route_endpoint_for_probe(path: str):
+    with _isolated_final_read_models() as client:
+        return _route_endpoint(client.app, path)

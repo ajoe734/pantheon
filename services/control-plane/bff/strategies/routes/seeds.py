@@ -777,7 +777,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             raise _strategy_seed_review_error(exc) from exc
 
     @router.get("/bff/management/strategy-seeds")
-    async def bff_list_strategy_seed_inbox(
+    def bff_list_strategy_seed_inbox(
         status: Optional[str] = None,
         source_kind: Optional[str] = None,
         strategy_family: Optional[str] = None,
@@ -804,7 +804,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         )
 
     @router.get("/bff/management/strategy-seeds/{seed_id}")
-    async def bff_get_strategy_seed_card(
+    def bff_get_strategy_seed_card(
         seed_id: str,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
@@ -819,7 +819,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         )
 
     @router.post("/bff/management/strategy-seeds/{seed_id}/review", status_code=202)
-    async def bff_review_strategy_seed(
+    def bff_review_strategy_seed(
         seed_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -841,7 +841,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         )
 
     @router.post("/bff/management/strategy-seeds/{seed_id}/merge", status_code=202)
-    async def bff_merge_strategy_seed(
+    def bff_merge_strategy_seed(
         seed_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -863,7 +863,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         )
 
     @router.post("/bff/management/strategy-seeds/{seed_id}/submit-replication", status_code=202)
-    async def bff_submit_strategy_seed_replication(
+    def bff_submit_strategy_seed_replication(
         seed_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),

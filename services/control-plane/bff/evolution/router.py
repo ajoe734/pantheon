@@ -351,7 +351,7 @@ def _register_evolution_programs_routes(
             _raise_program_command_error(bff_error, exc)
 
     @router.get("/bff/evolution-programs/{program_id}")
-    async def get_evolution_program(
+    def get_evolution_program(
         program_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -439,7 +439,7 @@ def _register_evolution_programs_routes(
         return {"data": updated, "meta": snapshot_meta(snapshot_at)}
 
     @router.get("/bff/evolution-programs/{program_id}/runs")
-    async def list_evolution_program_runs(
+    def list_evolution_program_runs(
         program_id: str,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -457,7 +457,7 @@ def _register_evolution_programs_routes(
         return {"items": page_items, "page_info": {"next_page_token": next_page_token}, "meta": meta}
 
     @router.get("/bff/evolution-programs/{program_id}/candidates")
-    async def list_evolution_program_candidates(
+    def list_evolution_program_candidates(
         program_id: str,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -475,7 +475,7 @@ def _register_evolution_programs_routes(
         return {"items": page_items, "page_info": {"next_page_token": next_page_token}, "meta": meta}
 
     @router.post("/bff/evolution-programs/{program_id}/actions/{action_id}", status_code=202)
-    async def evolution_program_action(
+    def evolution_program_action(
         program_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -624,7 +624,7 @@ def create_evolution_router(
 
     # 1. OODA Packets
     @router.get("/bff/evolution-programs/{program_id}/ooda")
-    async def bff_list_evolution_program_ooda_packets(
+    def bff_list_evolution_program_ooda_packets(
         program_id: str,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -659,7 +659,7 @@ def create_evolution_router(
 
     # 2. Evolution Decisions List
     @router.get("/api/v1/evolution-decisions")
-    async def list_evolution_decisions(
+    def list_evolution_decisions(
         action_type: Optional[str] = None,
         risk_level: Optional[str] = None,
         status: Optional[str] = None,
@@ -688,7 +688,7 @@ def create_evolution_router(
 
     # 3. Evolution Decision Detail
     @router.get("/api/v1/evolution-decisions/{decision_id}")
-    async def get_evolution_decision(
+    def get_evolution_decision(
         decision_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -709,7 +709,7 @@ def create_evolution_router(
 
     # 4. Freeze Orders
     @router.get("/api/v1/freeze-orders")
-    async def list_freeze_orders(
+    def list_freeze_orders(
         status: Optional[str] = None,
         scope: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
@@ -727,7 +727,7 @@ def create_evolution_router(
 
     # 5. Rollbacks
     @router.get("/api/v1/rollbacks")
-    async def list_rollbacks(
+    def list_rollbacks(
         runtime_id: Optional[str] = None,
         action_type: Optional[str] = None,
         time_range: Optional[str] = None,
@@ -750,7 +750,7 @@ def create_evolution_router(
 
     # 6. Lineage List
     @router.get("/api/v1/lineage")
-    async def list_lineage(
+    def list_lineage(
         artifact_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -778,7 +778,7 @@ def create_evolution_router(
 
     # 7. Lineage Edge Detail
     @router.get("/api/v1/lineage/edges/{edge_id}")
-    async def get_lineage_edge(
+    def get_lineage_edge(
         edge_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -800,7 +800,7 @@ def create_evolution_router(
 
     # 8. Lineage Graph
     @router.get("/api/v1/lineage/graph")
-    async def get_lineage_graph(
+    def get_lineage_graph(
         root_type: Optional[str] = None,
         root_id: str = Query(...),
         depth: int = 3,
@@ -833,7 +833,7 @@ def create_evolution_router(
 
     # 9. Inspiration Graph
     @router.get("/api/v1/lineage/inspiration/{artifact_id}")
-    async def get_inspiration_graph(
+    def get_inspiration_graph(
         artifact_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -867,7 +867,7 @@ def create_evolution_router(
 
     # 10. Telemetry Events List
     @router.get("/api/v1/telemetry")
-    async def list_telemetry(
+    def list_telemetry(
         pool_id: Optional[str] = None,
         artifact_id: Optional[str] = None,
         time_range: Optional[str] = None,
@@ -911,7 +911,7 @@ def create_evolution_router(
 
     # 11. Telemetry Summary
     @router.get("/api/v1/telemetry/{runtime_id}/summary")
-    async def get_telemetry_summary(
+    def get_telemetry_summary(
         runtime_id: str,
         time_range: Optional[str] = None,
         aggregate_by: Optional[str] = None,
@@ -939,7 +939,7 @@ def create_evolution_router(
 
     # 12. Telemetry Performance
     @router.get("/api/v1/telemetry/{artifact_id}/performance")
-    async def get_telemetry_performance(
+    def get_telemetry_performance(
         artifact_id: str,
         time_range: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),

@@ -421,7 +421,7 @@ def create_datasources_router(
         "/bff/management/data-sources/catalog",
         response_model=DataSourceCatalogEnvelope,
     )
-    async def bff_management_data_sources_catalog(
+    def bff_management_data_sources_catalog(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """GET /bff/management/data-sources/catalog: Deployed connector definitions catalog."""
@@ -482,7 +482,7 @@ def create_datasources_router(
         "/bff/management/data-sources/{source_instance_id}",
         response_model=DataSourceDetailEnvelope,
     )
-    async def bff_management_data_source_detail(
+    def bff_management_data_source_detail(
         source_instance_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -552,7 +552,7 @@ def create_datasources_router(
         "/bff/management/data-sources/{source_instance_id}/runs",
         response_model=DataSourceRunsEnvelope,
     )
-    async def bff_management_data_source_runs(
+    def bff_management_data_source_runs(
         source_instance_id: str,
         limit: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -601,7 +601,7 @@ def create_datasources_router(
         "/bff/management/data-sources/{source_instance_id}/receipts",
         response_model=DataSourceReceiptsEnvelope,
     )
-    async def bff_management_data_source_receipts(
+    def bff_management_data_source_receipts(
         source_instance_id: str,
         limit: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -644,7 +644,7 @@ def create_datasources_router(
         "/bff/management/source-commands/{receipt_id}",
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_management_source_command_receipt(
+    def bff_management_source_command_receipt(
         receipt_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -874,7 +874,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_create_data_source(
+    def bff_create_data_source(
         body: CreateDataSourceRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
@@ -901,7 +901,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_validate_data_source(
+    def bff_validate_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -924,7 +924,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_canary_data_source(
+    def bff_canary_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -947,7 +947,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_enable_data_source(
+    def bff_enable_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -971,7 +971,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_disable_data_source(
+    def bff_disable_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -994,7 +994,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_degrade_data_source(
+    def bff_degrade_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -1017,7 +1017,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_resume_data_source(
+    def bff_resume_data_source(
         source_instance_id: str,
         body: ActionCommandRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -1040,7 +1040,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_change_schedule_data_source(
+    def bff_change_schedule_data_source(
         source_instance_id: str,
         body: ChangeScheduleRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -1063,7 +1063,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_replace_data_source(
+    def bff_replace_data_source(
         source_instance_id: str,
         body: ReplaceDataSourceRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -1087,7 +1087,7 @@ def create_datasources_router(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=SourceCommandReceiptEnvelope,
     )
-    async def bff_retire_data_source(
+    def bff_retire_data_source(
         source_instance_id: str,
         body: RetireDataSourceRequest = Body(...),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),

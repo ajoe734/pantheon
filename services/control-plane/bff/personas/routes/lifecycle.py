@@ -62,7 +62,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
     _submit_persona_action = ctx.submit_persona_action
 
     @router.get("/api/v1/personas/{persona_id}/sessions")
-    async def list_persona_sessions(
+    def list_persona_sessions(
         persona_id: str,
         status: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
@@ -96,7 +96,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/api/v1/sessions/{session_id}")
-    async def get_session_detail(session_id: str, authorization: Optional[str] = Header(default=None)):
+    def get_session_detail(session_id: str, authorization: Optional[str] = Header(default=None)):
         """PS-04: Session detail with capability snapshot."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
@@ -133,7 +133,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/api/v1/personas/{persona_id}/teaching")
-    async def list_persona_teaching_sessions(
+    def list_persona_teaching_sessions(
         persona_id: str,
         status: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
@@ -382,7 +382,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
     @router.get("/api/v1/personas/{persona_id}/strategy-matches")
     @router.get("/bff/personas/{persona_id}/strategy-matches")
-    async def bff_get_persona_strategy_matches(
+    def bff_get_persona_strategy_matches(
         persona_id: str,
         include_retired: bool = False,
         include_blocked: bool = True,
@@ -409,7 +409,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
     @router.post("/api/v1/personas/{persona_id}/strategy-discovery", status_code=202)
     @router.post("/bff/personas/{persona_id}/strategy-discovery", status_code=202)
-    async def bff_start_persona_strategy_discovery(
+    def bff_start_persona_strategy_discovery(
         persona_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -455,7 +455,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
     @router.post("/api/v1/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
     @router.post("/bff/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
-    async def bff_persona_strategy_match_action(
+    def bff_persona_strategy_match_action(
         persona_id: str,
         match_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -478,7 +478,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.post("/bff/personas/{persona_id}/actions/{action_id}", status_code=202)
-    async def bff_persona_action(
+    def bff_persona_action(
         persona_id: str,
         action_id: str,
         request: Request,
@@ -522,7 +522,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.post("/bff/personas/{persona_id}/test-prompt", status_code=202)
-    async def bff_persona_test_prompt(
+    def bff_persona_test_prompt(
         persona_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),

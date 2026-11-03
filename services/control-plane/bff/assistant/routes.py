@@ -101,7 +101,7 @@ def create_assistant_router(
     _command_idempotency_store = CommandIdempotencyStore()
 
     @router.post("/sessions/{session_id}/context", status_code=201)
-    async def build_session_context_pack(
+    def build_session_context_pack(
         session_id: str,
         payload: AssistantContextPackRequest = Body(default_factory=AssistantContextPackRequest),
         authorization: Optional[str] = Header(default=None),
@@ -161,7 +161,7 @@ def create_assistant_router(
     # ------------------------------------------------------------------
 
     @router.post("/sessions", status_code=201)
-    async def create_assistant_session(
+    def create_assistant_session(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
@@ -206,7 +206,7 @@ def create_assistant_router(
         return {"data": session_to_dict(session)}
 
     @router.get("/sessions/{session_id}")
-    async def get_assistant_session(
+    def get_assistant_session(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
@@ -221,7 +221,7 @@ def create_assistant_router(
         return {"data": session_to_dict(session)}
 
     @router.post("/sessions/{session_id}/revoke", status_code=200)
-    async def revoke_assistant_session(
+    def revoke_assistant_session(
         session_id: str,
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -238,7 +238,7 @@ def create_assistant_router(
         return {"data": session_to_dict(session)}
 
     @router.get("/sessions/{session_id}/transcript")
-    async def get_session_transcript(
+    def get_session_transcript(
         session_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
@@ -254,7 +254,7 @@ def create_assistant_router(
         return {"data": [turn_to_dict(t) for t in turns], "meta": {"count": len(turns)}}
 
     @router.post("/sessions/{session_id}/transcript", status_code=201)
-    async def append_transcript_turn(
+    def append_transcript_turn(
         session_id: str,
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -303,7 +303,7 @@ def create_assistant_router(
         return {"data": turn_to_dict(turn)}
 
     @router.get("/mode")
-    async def get_product_mode(
+    def get_product_mode(
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
         """Return the product default mode and its capability summary.
@@ -324,7 +324,7 @@ def create_assistant_router(
         }
 
     @router.get("/control-mode")
-    async def get_control_mode(
+    def get_control_mode(
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
         identity = extract_identity(authorization)
@@ -332,7 +332,7 @@ def create_assistant_router(
         return {"data": _control_mode_store.status_for_actor(identity.operator_id)}
 
     @router.post("/control-mode/activate", status_code=202)
-    async def activate_control_mode(
+    def activate_control_mode(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -436,7 +436,7 @@ def create_assistant_router(
             return response
 
     @router.post("/control-mode/deactivate", status_code=202)
-    async def deactivate_control_mode(
+    def deactivate_control_mode(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -509,7 +509,7 @@ def create_assistant_router(
         return {"status": "ok", "data": [readiness]}
 
     @router.post("/providers", status_code=201)
-    async def register_assistant_provider(
+    def register_assistant_provider(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
@@ -555,7 +555,7 @@ def create_assistant_router(
         return {"data": registered}
 
     @router.post("/provider/reauth", status_code=202)
-    async def start_assistant_provider_reauth(
+    def start_assistant_provider_reauth(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
@@ -613,7 +613,7 @@ def create_assistant_router(
         return {"data": safe_started}
 
     @router.get("/provider/reauth/{session_id}")
-    async def get_assistant_provider_reauth_status(
+    def get_assistant_provider_reauth_status(
         session_id: str,
         provider: str = "codex",
         authorization: Optional[str] = Header(default=None),
@@ -654,7 +654,7 @@ def create_assistant_router(
         }
 
     @router.post("/provider/reauth/{session_id}/code")
-    async def submit_assistant_provider_reauth_code(
+    def submit_assistant_provider_reauth_code(
         session_id: str,
         payload: dict = Body(default_factory=dict),
         provider: str = "claude",
@@ -722,7 +722,7 @@ def create_assistant_router(
     # ------------------------------------------------------------------
 
     @router.get("/tools")
-    async def list_assistant_tools(
+    def list_assistant_tools(
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
         """Return the allowlisted tool action_ids the assistant may invoke."""
@@ -731,7 +731,7 @@ def create_assistant_router(
         return {"data": {"allowlist": sorted(ASSISTANT_TOOL_ALLOWLIST)}}
 
     @router.post("/tools/preview", status_code=200)
-    async def preview_assistant_tool(
+    def preview_assistant_tool(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
@@ -769,7 +769,7 @@ def create_assistant_router(
         }
 
     @router.post("/tools/validate", status_code=200)
-    async def validate_assistant_tool(
+    def validate_assistant_tool(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
@@ -808,7 +808,7 @@ def create_assistant_router(
         }
 
     @router.post("/tools/execute", status_code=201)
-    async def execute_assistant_tool(
+    def execute_assistant_tool(
         background_tasks: BackgroundTasks,
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
@@ -876,7 +876,7 @@ def create_assistant_router(
         return {"data": tool_receipt_to_dict(receipt)}
 
     @router.post("/control-mode/passphrase", status_code=202)
-    async def update_control_mode_passphrase(
+    def update_control_mode_passphrase(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:

@@ -27,7 +27,7 @@ def create_lineage_router(
         "/bff/lineage",
         response_model=LineageEnvelope,
     )
-    async def bff_lineage(
+    def bff_lineage(
         root_id: Optional[str] = Query(default=None),
         root_type: Optional[str] = Query(default=None),
         depth: int = Query(default=3, ge=1, le=20),

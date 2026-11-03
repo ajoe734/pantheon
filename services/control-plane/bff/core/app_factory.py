@@ -324,14 +324,14 @@ def create_settings_router(
         )
 
     @router.get("/api/v1/settings")
-    async def get_settings(authorization: Optional[str] = Header(default=None)):
+    def get_settings(authorization: Optional[str] = Header(default=None)):
         identity = extract_identity(authorization)
         bundle, redacted_count = _redact_settings_bundle(identity, settings_store.get())
         bundle["meta"] = {"redacted_evidence_count": redacted_count}
         return bundle
 
     @router.post("/api/v1/settings")
-    async def update_settings(
+    def update_settings(
         body: dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
@@ -345,7 +345,7 @@ def create_settings_router(
         return {"settings": settings}
 
     @router.get("/api/v1/settings/export")
-    async def export_settings(authorization: Optional[str] = Header(default=None)):
+    def export_settings(authorization: Optional[str] = Header(default=None)):
         identity = extract_identity(authorization)
         exported = json.loads(settings_store.export_json())
         redacted_bundle, redacted_count = _redact_settings_bundle(identity, exported)
@@ -355,7 +355,7 @@ def create_settings_router(
         }
 
     @router.post("/api/v1/settings/import")
-    async def import_settings(
+    def import_settings(
         body: dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),

@@ -81,7 +81,7 @@ def create_research_experiments_router(
     router = APIRouter()
 
     @router.get("/bff/experiments")
-    async def list_experiments(
+    def list_experiments(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -97,7 +97,7 @@ def create_research_experiments_router(
         )
 
     @router.post("/bff/experiments", status_code=201)
-    async def create_experiment(
+    def create_experiment(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -113,7 +113,7 @@ def create_research_experiments_router(
         )
 
     @router.get("/bff/experiments/{experiment_id}")
-    async def get_experiment(
+    def get_experiment(
         experiment_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -122,7 +122,7 @@ def create_research_experiments_router(
         return service.get_experiment_bff(experiment_id, snapshot_at=utc_now())
 
     @router.post("/bff/experiments/{experiment_id}/actions/{action_id}", status_code=202)
-    async def experiment_action(
+    def experiment_action(
         experiment_id: str,
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
@@ -149,7 +149,7 @@ def create_research_experiments_router(
         return res.model_dump(mode="json") if hasattr(res, "model_dump") else res
 
     @router.get("/bff/experiments/{experiment_id}/logs")
-    async def get_experiment_logs(
+    def get_experiment_logs(
         experiment_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -158,7 +158,7 @@ def create_research_experiments_router(
         return service.get_experiment_logs(experiment_id, snapshot_at=utc_now())
 
     @router.get("/bff/experiments/{experiment_id}/metrics")
-    async def get_experiment_metrics(
+    def get_experiment_metrics(
         experiment_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -167,7 +167,7 @@ def create_research_experiments_router(
         return service.get_experiment_metrics(experiment_id, snapshot_at=utc_now())
 
     @router.get("/bff/experiments/{experiment_id}/artifacts")
-    async def get_experiment_artifacts(
+    def get_experiment_artifacts(
         experiment_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -192,7 +192,7 @@ def create_research_experiments_router(
         )
 
     @router.get("/bff/research-experiments/{experiment_id}")
-    async def get_research_experiment(
+    def get_research_experiment(
         experiment_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
