@@ -1,0 +1,1 @@
+{"task_id":"TRADE-JOURNEY-LIST-IDENTITY-20261103","verification":"pytest: test_trade_journey_list_identity, shared_identity_filter, journey_search_latency, tj_e2e_005, trade_journey_contract, bff_test_architecture -> 90 passed, 3 skipped","change":"page_journeys batches one DISTINCT ON journey_stages query per page; _list_row falls back to snapshot identifiers"}

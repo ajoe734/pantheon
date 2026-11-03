@@ -484,14 +484,25 @@ def _first_value(events: Sequence[Mapping[str, Any]], keys: Sequence[str]) -> An
     return None
 
 
-def _compose_summary_fields(timeline: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
-    return {field: _first_value(timeline, keys) for field, keys in _ROW_IDENTIFIER_KEYS}
+def _compose_summary_fields(timeline: Sequence[Mapping[str, Any]], identifiers: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    summary = {field: _first_value(timeline, keys) for field, keys in _ROW_IDENTIFIER_KEYS}
+    for field, keys in _ROW_IDENTIFIER_KEYS:
+        if summary[field] is not None or not isinstance(identifiers, Mapping):
+            continue
+        for key in keys:
+            value = identifiers.get(key)
+            if isinstance(value, (list, tuple)):
+                value = next((item for item in value if item not in (None, "")), None)
+            if value not in (None, ""):
+                summary[field] = value
+                break
+    return summary
 
 
 def _list_row(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]:
     snapshot = projection.snapshot
     diagnostics = projection.diagnostics
-    summary = _compose_summary_fields(projection.timeline)
+    summary = _compose_summary_fields(projection.timeline, snapshot.get("identifiers"))
     current_stage = _current_stage(snapshot)
     stages = snapshot.get("stages") or {}
     stage_info = stages.get(current_stage, {}) if current_stage else {}
