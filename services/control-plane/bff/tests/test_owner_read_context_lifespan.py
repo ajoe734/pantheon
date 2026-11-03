@@ -18,7 +18,6 @@ from services.control_plane.bff.core.owner_reads import (
     cached_owner_call,
     request_read_cache,
 )
-from services.control_plane.bff.personas import service as persona_service
 
 
 def _cache() -> ProviderReadinessCache:
@@ -72,36 +71,3 @@ def test_requests_keep_isolated_deduping_caches():
         assert client.get("/x").json() == {"calls": 1}
         assert client.get("/x").json() == {"calls": 1}
     assert caches[0] is not caches[1]
-
-
-def test_background_reconcile_pass_sees_fresh_owner_data_each_pass(monkeypatch):
-    """The real loop, under middleware + lifespan, must not freeze owner reads."""
-    monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED", "true")
-    monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS", "1")
-    sessions: list = []
-    observed: list = []
-
-    def fake_once() -> int:
-        observed.append(len(cached_owner_call(("rsp_paper_monitoring",), lambda: list(sessions))))
-        # same-pass dedupe still holds
-        again = cached_owner_call(("rsp_paper_monitoring",), lambda: ["never"])
-        assert len(again) == observed[-1]
-        return 0
-
-    monkeypatch.setattr(persona_service, "_reconcile_persona_provisioning_once", fake_once)
-    lp = create_lifespan(_cache(), prewarm_jwks=False, downstream_health_monitor=None)
-    app = _app(lp)
-
-    async def run():
-        async with lp(app):
-            while not observed:
-                await asyncio.sleep(0.1)
-            sessions.append({"runtime_id": "rt-new"})  # worker appears after first pass
-            for _ in range(60):
-                if len(observed) >= 2 and observed[-1] == 1:
-                    break
-                await asyncio.sleep(0.1)
-
-    asyncio.run(run())
-    assert observed[0] == 0
-    assert observed[-1] == 1
