@@ -1,0 +1,30 @@
+{
+  "task_id": "PERSONA-PROVISIONING-BACKGROUND-PROMOTE-R2-20261103",
+  "reproduced_on_current_dev": {
+    "test_target": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+    "tests_failing_on_dev_before_fix": [
+      "test_route_and_background_pass_persist_the_same_paper_running_state[background]",
+      "test_background_pass_persists_provisioning_timeout_like_the_route",
+      "test_background_pass_reads_plan_directly_when_batch_lags_behind",
+      "test_background_pass_records_bounded_structure_only_summary_while_worker_missing"
+    ],
+    "composition": "PersonaService composed as core/app_factory.py does (_composed_persona_service), owner transports stubbed, _reconcile_persona_provisioning_once run from a worker thread with no request context, _persona_readback_snapshot NOT stubbed"
+  },
+  "findings": {
+    "composition_lead_1": "Ruled out by reproduction: outside a request the module-level composed PersonaService resolves the same read store, write owner and provisioning ledger as the route; the background pass promotes to paper_running when the batch snapshot agrees with the owners.",
+    "persist_terminal_transition_lead_2": "Confirmed difference: the route persisted provisioning_reconciliation_state via persist_terminal_transition, the background pass never did, so the two paths left different Persona metadata for the same readbacks.",
+    "batch_binding_decision": "Confirmed difference by construction: the background pass used the pass-wide list_all batch whenever it held ANY binding for the plan, and only fell back to list_by_plan when it held none. A lagging non-active row in the batch (for example status pending while Runtime Manager already reports active) kept binding_ok false with no failure, so the Persona stayed provisioning until the 600s timeout. The route always reads list_by_plan. The pass now re-reads the plan directly unless the batch already holds an active binding."
+  },
+  "not_proven": "The hosted canary (persona-325979a0177bc948366d) logs were not available to this task, so that the lagging-batch condition is the exact hosted cause is not proven. New diagnostics (metadata.provisioning_readback_summary) will name the unmet condition on the next hosted canary.",
+  "diagnostics": {
+    "field": "metadata.provisioning_readback_summary",
+    "shape": ["unmet", "counts", "waiting_reason", "degraded_dependencies", "evaluated_at"],
+    "content": "condition names, small integer counts and fixed dependency names only; rewritten when changed or older than 60s"
+  },
+  "fail_closed": "Unchanged: missing/stale heartbeat, missing schedule, mismatched binding still keep or fail the Persona; timeout unchanged. Direct plan read only replaces the batch when it returns bindings.",
+  "preexisting_failures_on_dev": [
+    "test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads",
+    "test_persona_provisioning_route_security.py::test_persona_list_projects_only_requested_page"
+  ],
+  "operator_verification": "Hosted canary after deployment is performed by the operator."
+}
