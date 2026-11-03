@@ -2807,6 +2807,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "PERSONA-PROVISIONING-FAILED-TERMINAL-20261020 regression coverage for terminal cleanup idempotency, bounded backoff, and single cron.list snapshot reuse; never imports main"
+    },
+    {
+      "file": "tests/test_persona_create_data_scope.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "PERSONA-DEPLOY-BASELINE-TEST-SCOPE-20261103 regression coverage for create-time data_scope declaration; never imports main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,
