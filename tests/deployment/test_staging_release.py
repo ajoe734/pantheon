@@ -149,7 +149,7 @@ def _root_owned_dirs() -> list[Path]:
                 sd = b / sub
                 if sd.exists() and sd.is_dir():
                     dirs.append(sd)
-                    for child in sd.iterdir():
+                    for child in sd.rglob("*"):
                         if not child.is_symlink() and child.is_dir():
                             dirs.append(child)
     caddy_p = os.environ.get("STAGING_CADDYFILE_PATH", "").strip()
@@ -188,18 +188,32 @@ def _relock_privileged_paths(secret_restores: list[tuple[Path, int]]) -> None:
 
 if tool == "sudo":
     cmd_args = list(args)
-    while cmd_args and cmd_args[0] in ("-E", "--preserve-env"):
+    while cmd_args and cmd_args[0] in ("-E", "--preserve-env", "-n", "--non-interactive"):
         cmd_args.pop(0)
     if not cmd_args:
         raise SystemExit(0)
-    child_env = os.environ.copy()
-    child_env["PANTHEON_PRIVILEGED"] = "1"
-    secret_restores = _unlock_privileged_paths()
-    try:
-        proc = subprocess.run(cmd_args, env=child_env)
-        raise SystemExit(proc.returncode)
-    finally:
-        _relock_privileged_paths(secret_restores)
+    if (
+        Path(cmd_args[0]).parent == Path(sys.argv[0]).parent
+        and Path(cmd_args[0]).name == "docker"
+        and (
+            cmd_args[1:2] in (["pull"], ["login"], ["inspect"], ["image"], ["logs"])
+            or (cmd_args[1:2] == ["compose"] and ("ps" in cmd_args or "version" in cmd_args))
+        )
+    ):
+        os.environ["PANTHEON_PRIVILEGED"] = "1"
+        tool = "docker"
+        args = cmd_args[1:]
+        with vm_log_file.open("a", encoding="utf-8") as lf:
+            lf.write(f"{tool} {' '.join(args)}\n")
+    else:
+        child_env = os.environ.copy()
+        child_env["PANTHEON_PRIVILEGED"] = "1"
+        secret_restores = _unlock_privileged_paths()
+        try:
+            proc = subprocess.run(cmd_args, env=child_env)
+            raise SystemExit(proc.returncode)
+        finally:
+            _relock_privileged_paths(secret_restores)
 
 if os.environ.get("FAKE_OSLOGIN_NONROOT") == "true" and os.environ.get("PANTHEON_PRIVILEGED") != "1":
     if tool in ("docker", "caddy", "mountpoint"):
@@ -283,12 +297,52 @@ if tool == "docker":
         raise SystemExit(0)
 
     if args[:1] == ["exec"]:
+        idx = 1
+        extra_env = {}
+        while idx < len(args) and args[idx].startswith("-"):
+            flag = args[idx]
+            if flag in ("-e", "--env") and idx + 1 < len(args):
+                env_spec = args[idx + 1]
+                if "=" in env_spec:
+                    ek, ev = env_spec.split("=", 1)
+                    extra_env[ek] = ev
+                elif env_spec in os.environ:
+                    extra_env[env_spec] = os.environ[env_spec]
+                idx += 2
+            elif flag.startswith("--env="):
+                env_spec = flag.split("=", 1)[1]
+                if "=" in env_spec:
+                    ek, ev = env_spec.split("=", 1)
+                    extra_env[ek] = ev
+                elif env_spec in os.environ:
+                    extra_env[env_spec] = os.environ[env_spec]
+                idx += 1
+            else:
+                idx += 1
+        cid = args[idx]
+        exec_cmd = args[idx + 1:]
+        cinfo = next((i for i in st.get("containers", {}).values() if i.get("cid") == cid), None)
+        if not cinfo or not cinfo.get("running"):
+            print(f"Error response from daemon: container {cid} is not running", file=sys.stderr)
+            raise SystemExit(1)
+        if exec_cmd and Path(exec_cmd[0]).name in ("psql", "pg_dump", "pg_restore"):
+            tool_basename = Path(exec_cmd[0]).name
+            if not str(cinfo.get("image", "")).startswith("postgres:16"):
+                print(
+                    f"Refusing to run {tool_basename} in non-PG16 container ({cinfo.get('image')!r})",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            pg_exec_env = os.environ.copy()
+            pg_exec_env.update(extra_env)
+            pg_exec_env["PANTHEON_PG_CLIENT_MAJOR"] = "16"
+            host_tool = Path(os.environ["FAKE_HOST_BIN_DIR"]) / tool_basename
+            proc = subprocess.run([str(host_tool), *exec_cmd[1:]], env=pg_exec_env, capture_output=True, text=True)
+            sys.stdout.write(proc.stdout)
+            sys.stderr.write(proc.stderr)
+            raise SystemExit(proc.returncode)
         # Runs the collector's native-store snippet against the real repo store classes, with the
         # container's own env and its /data/<owner> mounts mapped onto the fake data disk.
-        cinfo = next((i for i in st.get("containers", {}).values() if i.get("cid") == args[1]), None)
-        if not cinfo or not cinfo.get("running"):
-            print(f"Error response from daemon: container {args[1]} is not running", file=sys.stderr)
-            raise SystemExit(1)
         c_idx = args.index("-c")
         code, rest = args[c_idx + 1], args[c_idx + 2:]
         data_mount = os.environ["STAGING_DATA_MOUNT"]
@@ -384,6 +438,9 @@ if tool == "docker":
             if a == "--env-file" and i + 1 < len(args):
                 env_file = Path(args[i + 1])
         c_env = parse_env_file(env_file) if env_file else {}
+        for k in list(c_env):
+            if k in os.environ:
+                c_env[k] = os.environ[k]
 
         if "ps" in args and "-q" in args:
             svc = args[-1]
@@ -396,6 +453,16 @@ if tool == "docker":
 
         if "rm" in args and "-fsv" in args:
             svc = args[-1]
+            profiles = [args[i + 1] for i, a in enumerate(args) if a == "--profile" and i + 1 < len(args)]
+            if svc not in ("postgres", "nats") and "core" not in profiles and "stateful" not in profiles:
+                print(
+                    f'service "{svc}" depends on undefined service "nats": invalid compose project',
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if svc == "lifecycle-projector" and "singleton" not in profiles and "core" not in profiles:
+                print(f'no such service: {svc}', file=sys.stderr)
+                raise SystemExit(1)
             if os.environ.get("FAKE_WIPE_OWNER_ON_RECREATE") == "true" and svc == "operator-bff":
                 (Path(os.environ["STAGING_DATA_MOUNT"]) / "bff" / "session_lifecycle.json").unlink(missing_ok=True)
             if svc in st.get("containers", {}):
@@ -512,6 +579,8 @@ if tool == "docker":
                     )
                     db_tables["public.loop_controller_records"] = loop_rows
             st["cid_gen"] = st.get("cid_gen", 0) + 1
+            if env_file and env_file.name == "compose.baseline.env" and "governance" in target_svcs:
+                st["rollback_rehearsal_done"] = True
             save_state(st)
             # Emit ordinary Docker Compose stdout to prove deploy-host does not rely on compose printing JSON.
             print("Container pantheon-staging-operator-bff-1 Started")
@@ -564,6 +633,28 @@ if tool == "curl":
         all_up = all(st.get("containers", {}).get(s, {}).get("running") is True for s in required_up)
         if os.environ.get("FAKE_BFF_UNHEALTHY") == "true":
             all_up = False
+        if all_up and os.environ.get("FAKE_BFF_RESTART_WARMUP") == "true":
+            bff_cid = st.get("containers", {}).get("operator-bff", {}).get("cid", "")
+            if bff_cid:
+                warmup_file = vm_state_file.with_name("readyz-warmup-" + bff_cid + ".count")
+                wn = int(warmup_file.read_text()) if warmup_file.exists() else 0
+                warmup_file.write_text(str(wn + 1))
+                if wn < 1:
+                    all_up = False
+        if (
+            all_up
+            and st.get("rollback_rehearsal_done")
+            and os.environ.get("FAKE_READYZ_REQUIRES_OWNERS_HEALTHY") == "true"
+            and os.environ.get("FAKE_OWNER_HEALTH") == "starting_then_healthy"
+        ):
+            bff_info = st.get("containers", {}).get("operator-bff", {})
+            if not bff_info.get("baseline"):
+                reg_cid = st.get("containers", {}).get("registry", {}).get("cid", "")
+                if reg_cid:
+                    reg_counter = vm_state_file.with_name("health-" + reg_cid + ".count")
+                    rn = int(reg_counter.read_text()) if reg_counter.exists() else 0
+                    if rn < 2:
+                        all_up = False
         code = 200 if all_up else 503
         _emit_http(code, {"status": "ok" if all_up else "unavailable", "ready": all_up})
 
@@ -620,6 +711,21 @@ if tool == "curl":
             return None, "AUTH_INVALID"
         if claims.get("aud") != bff_env.get("PANTHEON_BFF_JWT_AUDIENCE", "pantheon-operator-bff"):
             return None, "AUTH_INVALID"
+        exp = int(claims.get("exp") or 0)
+        iat = int(claims.get("iat") or 0)
+        if exp - iat != 300:
+            return None, "AUTH_TTL_INVALID"
+        now_epoch = int(datetime.now(timezone.utc).timestamp()) + int(st.get("simulated_elapsed_seconds", 0))
+        if exp <= now_epoch:
+            return None, "AUTH_EXPIRED"
+        if st.get("rollback_rehearsal_done"):
+            if token in st.get("pre_rollback_tokens", []):
+                return None, "AUTH_EXPIRED"
+        else:
+            pre_toks = st.setdefault("pre_rollback_tokens", [])
+            if token not in pre_toks:
+                pre_toks.append(token)
+                save_state(st)
         return claims, None
 
     if url.endswith("/bff/me"):
@@ -721,6 +827,15 @@ if tool in ("psql", "pg_dump", "pg_restore"):
             file=sys.stderr,
         )
         raise SystemExit(2)
+    pg_img = str(st.get("containers", {}).get("postgres", {}).get("image", ""))
+    client_major = os.environ.get("PANTHEON_PG_CLIENT_MAJOR", "15")
+    if pg_img.startswith("postgres:16") and client_major != "16":
+        print(
+            f"{tool}: error: server version: 16.15; {tool} version: 15.19 (Debian 15.19-0+deb12u1)\n"
+            f"{tool}: error: aborting because of server version mismatch",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     expected_pw = st.get("expected_pg_password", "")
     if not os.environ.get("PGPASSWORD") or (expected_pw and os.environ.get("PGPASSWORD") != expected_pw):
         print("psql authentication failed: invalid or missing PGPASSWORD", file=sys.stderr)
@@ -735,6 +850,9 @@ if tool in ("psql", "pg_dump", "pg_restore"):
         if os.environ.get("FAKE_PG_DUMP_FAIL") == "true":
             print("simulated pg_dump failure", file=sys.stderr)
             raise SystemExit(1)
+        if os.environ.get("FAKE_CONCURRENT_OWNER_STORE_WRITE_DURING_PG_DUMP") == "true":
+            bg_file = Path(os.environ["STAGING_DATA_MOUNT"]) / "bff" / "concurrent_bg_write.json"
+            bg_file.write_text(json.dumps({"bg_tick": datetime.now(timezone.utc).isoformat()}), encoding="utf-8")
         out_f = ""
         for i, a in enumerate(args):
             if a == "-f" and i + 1 < len(args):
@@ -1198,6 +1316,16 @@ def _build_fe_tarball(path: Path, content: str = "<!doctype html><title>Pantheon
         info.size = len(raw)
         info.mtime = 0
         tar.addfile(info, io.BytesIO(raw))
+        # Build tarballs from execute-plans carry a build-time deployment.json (e.g. 6041 bytes)
+        # that bootstrap.sh write_deployment_json overwrites with the staging release identity.
+        build_dep = json.dumps(
+            {"build_time_manifest": True, "source": "execute-plans-ci", "padding": "x" * 256},
+            sort_keys=True,
+        ).encode("utf-8")
+        dep_info = tarfile.TarInfo("deployment.json")
+        dep_info.size = len(build_dep)
+        dep_info.mtime = 0
+        tar.addfile(dep_info, io.BytesIO(build_dep))
     data = buf.getvalue()
     path.write_bytes(data)
     return "sha256:" + hashlib.sha256(data).hexdigest()
@@ -1809,6 +1937,41 @@ class StagingSanitizeAndGateTests(unittest.TestCase):
             staging_sanitize.verify_security_and_safety_readbacks(sec_readback)["security_and_safety_readback_verified"]
         )
 
+    def test_gate_failure_redaction_strips_secrets_long_tokens_and_caps_at_600(self) -> None:
+        jwt_val = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcGVyYXRvciIsInRlbmFudCI6InN0ZyJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        sk_val = "sk-1234567890abcdefghijklmnop"
+        ghp_val = "ghp_1234567890abcdefghijklmnopqrstuv"
+        aiza_val = "AIzaSyA1234567890abcdefghijk_LMNOPQRST"
+        long_41 = "A" * 41
+        exact_40_sha = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4"
+        raw_message = (
+            f"rollback served_backend_commit {exact_40_sha} mismatch; "
+            f"jwt={jwt_val} key={sk_val} gh={ghp_val} gcp={aiza_val} "
+            f"Authorization: Bearer {jwt_val} "
+            f"dsn=postgresql://pantheon_stg:superSecretPgPass99@postgres:5432/pantheon_staging "
+            f"contact=ops.secret@example.com long_id={long_41} "
+            + ("tail-diagnostic-padding " * 35)
+        )
+        redacted = staging_sanitize.redact_gate_failure_message(
+            raw_message,
+            error_code="ROLLBACK_VERIFICATION_FAILED",
+            max_length=600,
+        )
+        self.assertLessEqual(len(redacted), 600)
+        self.assertIn(exact_40_sha, redacted)
+        self.assertIn("rollback served_backend_commit", redacted)
+        for forbidden in (
+            jwt_val,
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            sk_val,
+            ghp_val,
+            aiza_val,
+            "superSecretPgPass99",
+            "ops.secret@example.com",
+            long_41,
+        ):
+            self.assertNotIn(forbidden, redacted)
+
 
 class StagingControllerLifecycleTests(unittest.TestCase):
     def _unlock_vm_env_dir(self) -> None:
@@ -1915,16 +2078,6 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             json.dumps(sanitized["metadata"], indent=2, sort_keys=True),
             encoding="utf-8",
         )
-        (self.data_mount / "sanitized" / "migration-spec.json").write_text(
-            json.dumps({
-                "phase": "expand",
-                "migration_set_sha256": self.manifest["migration_set_sha256"],
-                "files": self.migration_files,
-            }, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        for mig in self.migration_files:
-            shutil.copyfile(MIGRATIONS_SRC_DIR / mig["name"], self.data_mount / "sanitized" / "migrations" / mig["name"])
 
         # Lock root-owned directories (0555) and secret files (0000) so non-root OS Login commands
         # fail with EACCES unless elevated via sudo.
@@ -2465,7 +2618,13 @@ class StagingControllerLifecycleTests(unittest.TestCase):
             text=True,
             check=True,
         )
-        mig_file = self.data_mount / "sanitized" / "migrations" / self.migration_files[0]["name"]
+        mig_file = (
+            self.staging_root
+            / "state"
+            / "migration-material"
+            / "migrations"
+            / self.migration_files[0]["name"]
+        )
         original = mig_file.read_bytes()
         self._unlock_vm_env_dir()
         mig_file.write_bytes(original + b"\n-- tampered\n")
@@ -2665,12 +2824,12 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertTrue(any("compute disks create pantheon-stg-data-pantheon-20261024-001" in c for c in cmds))
         self.assertTrue(any("compute disks create pantheon-stg-pantheon-20261024-001-boot" in c for c in cmds))
         inst_create_cmd = next(c for c in cmds if "compute instances create pantheon-stg-pantheon-20261024-001" in c)
-        self.assertIn("--machine-type=e2-standard-4", inst_create_cmd)
+        self.assertIn("--machine-type=e2-standard-8", inst_create_cmd)
         self.assertIn("--address=203.0.113.10", inst_create_cmd)
         self.assertIn("--network=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/global/networks/pantheon-staging", inst_create_cmd)
         self.assertIn("--subnet=https://www.googleapis.com/compute/v1/projects/pantheon-stg-20260902/regions/asia-east1/subnetworks/pantheon-staging-asia-east1", inst_create_cmd)
         live_inst = json.loads(self.gcloud_state_file.read_text(encoding="utf-8"))["instances"][0]
-        self.assertEqual(live_inst["machineType"], "e2-standard-4")
+        self.assertEqual(live_inst["machineType"], "e2-standard-8")
         live_nic = live_inst["networkInterfaces"][0]
         self.assertTrue(live_nic["network"].endswith("/networks/pantheon-staging"))
         self.assertTrue(live_nic["subnetwork"].endswith("/subnetworks/pantheon-staging-asia-east1"))
@@ -3638,6 +3797,502 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertNotEqual(res_late.returncode, 0)
         self.assertIn("SANITIZED_DATASET_INVALID", res_late.stderr)
 
+    def test_collector_verifies_rewritten_baseline_deployment_json_and_rejects_identity_tampering(self) -> None:
+        # 1. Baseline FE archive carries a build-time deployment.json that bootstrap.sh rewrites with
+        # the baseline release identity; valid rewritten identity succeeds, while tampering any
+        # baseline identity/safety field in deployment.json fails with BASELINE_FE_CONTENT_TAMPERED.
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+
+        prev_rel = self.manifest["rollback_baseline"]["previous_release_id"]
+        baseline_dir = self.fe_root / "releases" / prev_rel
+        baseline_dep = baseline_dir / "deployment.json"
+        self._unlock_vm_env_dir()
+        original_dep = json.loads(baseline_dep.read_text(encoding="utf-8"))
+
+        import importlib.machinery
+        import importlib.util
+
+        loader = importlib.machinery.SourceFileLoader("collector_mod_dep", str(COLLECTOR_SCRIPT))
+        spec = importlib.util.spec_from_loader("collector_mod_dep", loader)
+        assert spec is not None
+        collector_mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(collector_mod)
+
+        for field_name, bad_val in (
+            ("release_id", "pantheon-tampered-release"),
+            ("frontend_commit", "f" * 40),
+            ("frontend_artifact_sha256", "sha256:" + ("9" * 64)),
+            ("backend_commit", "e" * 40),
+            ("operator_bff_image", "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:" + ("8" * 64)),
+            ("config_schema_version", "pantheon.env-config.tampered"),
+            ("live_broker_enabled", True),
+            ("provider_enabled", 1),
+        ):
+            with self.subTest(field=field_name):
+                self._unlock_vm_env_dir()
+                tampered_doc = {**original_dep, field_name: bad_val}
+                baseline_dep.write_text(json.dumps(tampered_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    collector_mod._verify_unpacked_tarball_matches_dir(
+                        self.fe_baseline_tarball,
+                        baseline_dir,
+                        self.manifest["rollback_baseline"],
+                    )
+
+        # End-to-end VERIFY_SCRIPT check with tampered deployment.json fails closed with BASELINE_FE_CONTENT_TAMPERED.
+        self._unlock_vm_env_dir()
+        baseline_dep.write_text(
+            json.dumps({**original_dep, "release_id": "pantheon-tampered-release"}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        res = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("BASELINE_FE_CONTENT_TAMPERED", res.stderr)
+
+        self._unlock_vm_env_dir()
+        baseline_dep.write_text(json.dumps(original_dep, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def test_deploy_host_renders_and_ships_migration_material_and_fails_closed_on_manifest_mismatch(self) -> None:
+        # 2. staging_ops.sh renders migration-spec.json + migrations/*.sql via prod_preflight.py
+        # migration render into the bundle and bootstrap.sh installs them under
+        # STAGING_ROOT/state/migration-material without requiring data_mount/sanitized/migration-spec.json.
+        self.assertFalse((self.data_mount / "sanitized" / "migration-spec.json").exists())
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        self._unlock_vm_env_dir()
+        installed_spec = self.staging_root / "state" / "migration-material" / "migration-spec.json"
+        installed_dir = self.staging_root / "state" / "migration-material" / "migrations"
+        self.assertTrue(installed_spec.is_file())
+        spec_doc = json.loads(installed_spec.read_text(encoding="utf-8"))
+        self.assertEqual(spec_doc["migration_set_sha256"], self.migration_set_sha)
+        for entry in self.migration_files:
+            self.assertTrue((installed_dir / entry["name"]).is_file())
+
+        # A manifest whose migration_set_sha256 does not match the repo SQL files fails closed in deploy-host.
+        self.setUp()
+        bad_manifest = _sample_manifest(
+            release_id="pantheon-20261024-002",
+            fe_sha=self.fe_sha,
+            prev_fe_sha=self.fe_baseline_sha,
+            mig_sha="sha256:" + ("e" * 64),
+        )
+        bad_manifest_path = self.tmp_path / "bad-mig-manifest.json"
+        bad_manifest_path.write_text(json.dumps(bad_manifest), encoding="utf-8")
+        bad_manifest_sha = release_manifest.compute_manifest_sha256(bad_manifest)
+        res_bad = subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(
+                RELEASE_ID="pantheon-20261024-002",
+                RELEASE_MANIFEST_PATH=str(bad_manifest_path),
+                EXPECTED_MANIFEST_SHA256=bad_manifest_sha,
+            ),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res_bad.returncode, 0)
+        self.assertIn("MIGRATION_RENDER_FAILED", res_bad.stderr + res_bad.stdout)
+
+    def test_compose_env_file_is_not_overridden_by_collector_process_environ(self) -> None:
+        # 3. Real Docker Compose gives shell environment precedence over --env-file; collector must
+        # strip keys loaded from state/compose.env whenever --env-file is on the command line so
+        # --env-file compose.baseline.env starts the baseline BFF image.
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        gate_dir = self.state_dir / "observed-gates" / "pantheon-20261024-001"
+        mig_plan = json.loads((gate_dir / "migration-plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            mig_plan["old_app_image_observed"],
+            self.manifest["rollback_baseline"]["backend_operator_bff_image"],
+        )
+
+    def test_collector_waits_for_bff_readyz_across_all_four_owner_restart_points_and_restore_leg_order(self) -> None:
+        # 4. Verifies bounded /bff/readyz polling after (a) old-app start, (b) post-migration
+        # candidate restore, (c) rollback leg, and (d) restore leg (where _wait_product_owners()
+        # runs before /bff/readyz, matching the rollback leg).
+        ver = self._provision_and_verify(
+            FAKE_BFF_RESTART_WARMUP="true",
+            FAKE_OWNER_HEALTH="starting_then_healthy",
+            FAKE_READYZ_REQUIRES_OWNERS_HEALTHY="true",
+            STAGING_READY_INTERVAL="0",
+        )
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        gate_dir = self.state_dir / "observed-gates" / "pantheon-20261024-001"
+        rb_readback = json.loads((gate_dir / "rollback-readback.json").read_text(encoding="utf-8"))
+        self.assertTrue(rb_readback["bff_healthy"])
+        self.assertLessEqual(rb_readback["rollback_duration_seconds"], 120.0)
+
+    def test_postgres_client_tools_run_inside_pinned_pg16_container_and_reject_pg15_host_client(self) -> None:
+        # 5. psql, pg_dump, and pg_restore must run inside the pinned postgres:16 container so
+        # Debian 12's host postgresql-client (15.19) never aborts against server 16.15.
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        vm_logs = self.vm_bin_log_file.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(
+            any(l.startswith("docker exec -e PGPASSWORD cid-postgres-") and " pg_dump " in l for l in vm_logs),
+            "pg_dump must run inside the pinned postgres container via docker exec",
+        )
+        self.assertTrue(
+            any(l.startswith("docker exec -e PGPASSWORD cid-postgres-") and " pg_restore " in l for l in vm_logs),
+            "pg_restore must run inside the pinned postgres container via docker exec",
+        )
+        self.assertTrue(
+            any(l.startswith("docker exec -e PGPASSWORD cid-postgres-") and " psql " in l for l in vm_logs),
+            "psql must run inside the pinned postgres container via docker exec",
+        )
+        # Direct invocation of the host PG 15.19 client against the running PG 16.15 server fails closed.
+        direct_dump = subprocess.run(
+            [str(self.host_bin_dir / "pg_dump"), "-h", "127.0.0.1", "-p", "15432", "-U", "pantheon_stg", "-d", "pantheon_staging", "-Fc", "-f", str(self.tmp_path / "out.dump")],
+            env={**self._base_env(), "PGPASSWORD": "stg-isolated-pg-password-20261025"},
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(direct_dump.returncode, 0)
+        self.assertIn("server version: 16.15; pg_dump version: 15.19", direct_dump.stderr)
+
+    def test_safe_extract_tar_falls_back_on_python_3112_without_filter_kwarg_and_rejects_unsafe_members(self) -> None:
+        # 6. Python 3.11.2 TarFile.extractall lacks the filter= keyword argument; _safe_extract_tar
+        # must validate members first, fall back cleanly on TypeError, and reject unsafe members.
+        import importlib.machinery
+        import importlib.util
+
+        loader = importlib.machinery.SourceFileLoader("collector_mod", str(COLLECTOR_SCRIPT))
+        spec = importlib.util.spec_from_loader("collector_mod", loader)
+        assert spec is not None
+        collector_mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(collector_mod)
+
+        class _Py3112TarFile(tarfile.TarFile):
+            filter_called = False
+
+            def extractall(self, path=".", members=None, *, numeric_owner=False, **kwargs):  # type: ignore[override]
+                if "filter" in kwargs:
+                    _Py3112TarFile.filter_called = True
+                    raise TypeError("TarFile.extractall() got an unexpected keyword argument 'filter'")
+                return super().extractall(path=path, members=members, numeric_owner=numeric_owner)
+
+        valid_tar = self.tmp_path / "valid-owner.tar.gz"
+        with tarfile.open(valid_tar, "w:gz") as tf:
+            payload = b'{"sessions": {"ack-1": {"state": "acknowledged"}}}'
+            ti = tarfile.TarInfo("bff/session_lifecycle.json")
+            ti.size = len(payload)
+            tf.addfile(ti, io.BytesIO(payload))
+
+        dest_ok = self.tmp_path / "extract-ok"
+        dest_ok.mkdir(parents=True, exist_ok=True)
+        with _Py3112TarFile.open(valid_tar, "r:gz") as tf:
+            collector_mod._safe_extract_tar(tf, dest_ok)
+        self.assertTrue(_Py3112TarFile.filter_called)
+        self.assertTrue((dest_ok / "bff" / "session_lifecycle.json").is_file())
+
+        # Unsafe tar members (path traversal, absolute path, symlink, hardlink, FIFO) must fail closed.
+        for label, build_info in (
+            ("dotdot", lambda: tarfile.TarInfo("../escape.txt")),
+            ("abspath", lambda: tarfile.TarInfo("/etc/passwd")),
+            ("symlink", lambda: self._make_tarinfo("bff/link", tarfile.SYMTYPE, linkname="/etc/shadow")),
+            ("hardlink", lambda: self._make_tarinfo("bff/hlink", tarfile.LNKTYPE, linkname="/etc/shadow")),
+            ("fifo", lambda: self._make_tarinfo("bff/pipe", tarfile.FIFOTYPE)),
+        ):
+            with self.subTest(case=label):
+                bad_tar = self.tmp_path / f"bad-{label}.tar.gz"
+                with tarfile.open(bad_tar, "w:gz") as tf:
+                    ti = build_info()
+                    if ti.isfile():
+                        raw = b"bad"
+                        ti.size = len(raw)
+                        tf.addfile(ti, io.BytesIO(raw))
+                    else:
+                        tf.addfile(ti)
+                dest_bad = self.tmp_path / f"extract-bad-{label}"
+                dest_bad.mkdir(parents=True, exist_ok=True)
+                with _Py3112TarFile.open(bad_tar, "r:gz") as tf:
+                    with self.assertRaises(SystemExit):
+                        collector_mod._safe_extract_tar(tf, dest_bad)
+
+    @staticmethod
+    def _make_tarinfo(name: str, ttype: bytes, linkname: str = "") -> tarfile.TarInfo:
+        ti = tarfile.TarInfo(name)
+        ti.type = ttype
+        ti.linkname = linkname
+        return ti
+
+    def test_rollback_and_restore_drains_pass_core_and_singleton_profiles_to_compose_rm(self) -> None:
+        # 7. lifecycle-projector depends on nats (profiles: [core, stateful]); both drain calls
+        # must pass --profile core --profile singleton and absent-owner rm must pass --profile core.
+        for key in staging_sanitize.BASELINE_OPTIONAL_OWNER_IMAGE_KEYS:
+            del self.manifest["rollback_baseline"]["backend_images"][key]
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        self.manifest_sha = release_manifest.compute_manifest_sha256(self.manifest)
+
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        vm_logs = self.vm_bin_log_file.read_text(encoding="utf-8").splitlines()
+        lp_rm_cmds = [l for l in vm_logs if l.startswith("docker compose ") and " rm -fsv lifecycle-projector" in l]
+        self.assertEqual(len(lp_rm_cmds), 2)
+        for cmd in lp_rm_cmds:
+            self.assertIn("--profile core --profile singleton rm -fsv lifecycle-projector", cmd)
+        absent_rm_cmds = [
+            l for l in vm_logs if l.startswith("docker compose ") and " rm -fsv paper-fleet-reconciler" in l
+        ]
+        self.assertEqual(len(absent_rm_cmds), 1)
+        self.assertIn("--profile core rm -fsv paper-fleet-reconciler", absent_rm_cmds[0])
+
+    def test_owner_store_backup_and_manifest_use_consistent_frozen_snapshot_under_concurrent_writes(self) -> None:
+        # 8. Concurrent owner writes to data_mount/bff during pg_dump must not cause
+        # owner_store_manifest_sha256 != restored_owner_store_manifest_sha256.
+        ver = self._provision_and_verify(FAKE_CONCURRENT_OWNER_STORE_WRITE_DURING_PG_DUMP="true")
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        gate_dir = self.state_dir / "observed-gates" / "pantheon-20261024-001"
+        br_rec = json.loads((gate_dir / "backup-restore-record.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            br_rec["owner_store_manifest_sha256"],
+            br_rec["restored_owner_store_manifest_sha256"],
+        )
+
+    def test_section6_mints_fresh_300s_tokens_after_sections_3_to_5_expire_initial_tokens(self) -> None:
+        # 9. Section 3 tokens have ttl_seconds=300 and expire while Sections 3, 4, and 5 execute;
+        # Section 6 must mint fresh 300s tokens right before its probes.
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        gate_dir = self.state_dir / "observed-gates" / "pantheon-20261024-001"
+        sec_rec = json.loads((gate_dir / "security-readback.json").read_text(encoding="utf-8"))
+        self.assertTrue(sec_rec["tenant_isolation_enforced"])
+        self.assertTrue(sec_rec["viewer_mutation_rejected"])
+
+    def test_large_ssh_bundle_over_256kib_flows_through_deploy_and_collect_verify_gates(self) -> None:
+        # 10. Drill 4 regression: collector bundle > 256 KiB (well above Linux MAX_ARG_STRLEN 128 KiB)
+        # must never be passed via environment variables or argv to python3 (which died with E2BIG / exit 126
+        # at staging_ops.sh:661, :622, and :499). Both deploy-host and collect-verify-gates (plus
+        # staging_verify.sh) must read 0600 files under STATE_DIR and preserve the full bundle.
+        self._unlock_vm_env_dir()
+        raw_ds = _sample_raw_dataset(self.manifest["migration_set_sha256"])
+        for i in range(80):
+            tname = f"public.domain_table_{i:03d}"
+            raw_ds["catalog"][tname] = {
+                f"col_{j:02d}": {"type": "character varying(255)", "nullable": True, "has_default": False}
+                for j in range(25)
+            }
+            raw_ds["tables"][tname] = []
+        sanitized = staging_sanitize.sanitize_dataset(raw_ds)
+        (self.data_mount / "sanitized" / "snapshot-metadata.json").write_text(
+            json.dumps(sanitized["metadata"], indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        vm_state = json.loads(self.vm_runtime_state_file.read_text(encoding="utf-8"))
+        vm_state["databases"]["pantheon_staging"] = {
+            "tables": sanitized["tables"],
+            "schema": raw_ds["catalog"],
+        }
+        self.vm_runtime_state_file.write_text(json.dumps(vm_state, indent=2, sort_keys=True), encoding="utf-8")
+        self._lock_root_owned_paths()
+
+        # Wrap fake gcloud so SSH deploy-host also emits > 256 KiB of bootstrap log lines before its JSON readback.
+        big_ssh_wrapper = self.tmp_path / "big-ssh-gcloud.py"
+        big_ssh_wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, subprocess, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] == ['compute', 'ssh'] and any('bootstrap.sh' in a for a in args):\n"
+            "    sys.stdout.write(('bootstrap-progress-line-' + ('x' * 100) + '\\n') * 2400)\n"
+            "    sys.stdout.flush()\n"
+            f"proc = subprocess.run([{str(self.gcloud_bin)!r}] + args)\n"
+            "raise SystemExit(proc.returncode)\n",
+            encoding="utf-8",
+        )
+        big_ssh_wrapper.chmod(0o755)
+
+        ver = self._provision_and_verify(GCLOUD_BIN=str(big_ssh_wrapper))
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        ver_json = json.loads(ver.stdout)
+        self.assertEqual(ver_json["status"], "staging_verified")
+
+        deploy_out_file = self.state_dir / "artifacts" / "pantheon-20261024-001-ssh-deploy.out"
+        verify_out_file = self.state_dir / "artifacts" / "pantheon-20261024-001-ssh-verify.out"
+        self.assertTrue(deploy_out_file.is_file())
+        self.assertTrue(verify_out_file.is_file())
+        self.assertEqual(deploy_out_file.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(verify_out_file.stat().st_mode & 0o777, 0o600)
+        self.assertGreater(deploy_out_file.stat().st_size, 262144)
+        self.assertGreater(verify_out_file.stat().st_size, 262144)
+
+        gate_dir = self.state_dir / "observed-gates" / "pantheon-20261024-001"
+        for fname in (
+            "observed-deploy.json",
+            "sanitized-dataset.json",
+            "migration-plan.json",
+            "backup-restore-record.json",
+            "rollback-readback.json",
+            "security-readback.json",
+        ):
+            gfile = gate_dir / fname
+            self.assertTrue(gfile.is_file(), fname)
+            gdoc = json.loads(gfile.read_text(encoding="utf-8"))
+            self.assertTrue(gdoc["observed_from_live_vm"], fname)
+            self.assertFalse(gdoc["dry_run"], fname)
+
+        mig_plan = json.loads((gate_dir / "migration-plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(mig_plan["old_app_schema"]), 85)
+        self.assertEqual(len(mig_plan["new_schema"]), 86)
+        self.assertIn("public.domain_table_079", mig_plan["old_app_schema"])
+        self.assertEqual(len(mig_plan["old_app_schema"]["public.domain_table_079"]), 25)
+
+        # Also verify the collect-verify-gates failure branch (:622) handles > 256 KiB output without E2BIG.
+        fail_payload = json.dumps(
+            {
+                "status": "error",
+                "step": "collect-verify-gates",
+                "error_code": "PRODUCT_OWNER_UNSERVED",
+                "message": "Product owners not running/healthy: registry, agora-interaction-worker",
+            }
+        )
+        big_fail_wrapper = self.tmp_path / "big-fail-gcloud.py"
+        big_fail_wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] == ['compute', 'ssh'] and any('collect-gates' in a for a in args):\n"
+            "    sys.stdout.write(('collector-progress-line-' + ('y' * 100) + '\\n') * 2400)\n"
+            f"    print({fail_payload!r})\n"
+            "    raise SystemExit(1)\n"
+            f"os.execv({str(self.gcloud_bin)!r}, [{str(self.gcloud_bin)!r}] + args)\n",
+            encoding="utf-8",
+        )
+        big_fail_wrapper.chmod(0o755)
+        res_fail = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", GCLOUD_BIN=str(big_fail_wrapper)),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_fail.returncode, 1)
+        self.assertNotIn("Argument list too long", res_fail.stderr)
+        self.assertIn("LIVE_GATE_COLLECTION_FAILED", res_fail.stderr)
+        self.assertIn("PRODUCT_OWNER_UNSERVED", res_fail.stderr)
+        self.assertIn("unserved_product_owner_services: agora-interaction-worker,registry", res_fail.stderr)
+
+    def test_collect_verify_gates_failure_reports_redacted_message_and_uploads_gate_failure_summary(self) -> None:
+        subprocess.run(
+            [str(PROVISION_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001"),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        jwt_secret = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdGctb3AiLCJ0ZW5hbnRfaWQiOiJ0ZW5hbnQtYWxwaGEifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        sk_secret = "sk-9876543210abcdefghijklmnop"
+        ghp_secret = "ghp_9876543210abcdefghijklmnopqrstuv"
+        aiza_secret = "AIzaSyB9876543210abcdefghijk_LMNOPQRST"
+        long_token = "tok_" + ("Z" * 42)
+        fail_payload = json.dumps(
+            {
+                "status": "error",
+                "step": "collect-verify-gates",
+                "error_code": "ROLLBACK_VERIFICATION_FAILED",
+                "message": (
+                    f"rollback duration must be <= 120 seconds (got 124.512); "
+                    f"auth=Bearer {jwt_secret} key={sk_secret} gh={ghp_secret} gcp={aiza_secret} "
+                    f"long={long_token} email=leaked.operator@example.com "
+                    + ("extra-context-segment " * 35)
+                ),
+                "rollback_duration_seconds": 124.512,
+                "bff_healthy": True,
+                "phase_timings_seconds": {
+                    "drain": 4.12,
+                    "baseline_up": 41.3,
+                    "owners_healthy": 68.4,
+                    "readyz_200": 6.2,
+                    "readback": 4.492,
+                },
+            }
+        )
+        fail_wrapper = self.tmp_path / "rollback-fail-gcloud.py"
+        fail_wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] == ['compute', 'ssh'] and any('collect-gates' in a for a in args):\n"
+            "    print('raw-ssh-noise-line token=sk-rawsshsecret1234567890abcd')\n"
+            f"    print({fail_payload!r})\n"
+            "    raise SystemExit(1)\n"
+            f"os.execv({str(self.gcloud_bin)!r}, [{str(self.gcloud_bin)!r}] + args)\n",
+            encoding="utf-8",
+        )
+        fail_wrapper.chmod(0o755)
+        ver = subprocess.run(
+            [str(VERIFY_SCRIPT)],
+            env=self._base_env(RELEASE_ID="pantheon-20261024-001", GCLOUD_BIN=str(fail_wrapper)),
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(ver.returncode, 0)
+        die_doc = json.loads(ver.stderr.strip().splitlines()[-1])
+        self.assertEqual(die_doc["error_code"], "LIVE_GATE_COLLECTION_FAILED")
+        self.assertIn("ROLLBACK_VERIFICATION_FAILED", die_doc["message"])
+        self.assertIn("rollback duration must be <= 120 seconds (got 124.512)", die_doc["message"])
+        self.assertIn("rollback_duration_seconds=124.512", die_doc["message"])
+        self.assertIn("bff_healthy=true", die_doc["message"])
+
+        summary_file = self.state_dir / "evidence" / "pantheon-20261024-001-gate-failure-summary.json"
+        self.assertTrue(summary_file.is_file())
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        self.assertEqual(summary["status"], "error")
+        self.assertEqual(summary["step"], "collect-verify-gates")
+        self.assertEqual(summary["error_code"], "ROLLBACK_VERIFICATION_FAILED")
+        self.assertEqual(summary["rollback_duration_seconds"], 124.512)
+        self.assertIs(summary["bff_healthy"], True)
+        self.assertEqual(
+            set(summary["phase_timings_seconds"].keys()),
+            {"drain", "baseline_up", "owners_healthy", "readyz_200", "readback"},
+        )
+        self.assertLessEqual(len(summary["message"]), 600)
+        self.assertIn("rollback duration must be <= 120 seconds (got 124.512)", summary["message"])
+
+        # Raw SSH output must never be placed in the uploaded evidence directory.
+        evidence_files = [p.name for p in (self.state_dir / "evidence").iterdir()]
+        self.assertFalse(any("ssh" in name or name.endswith(".out") for name in evidence_files), evidence_files)
+
+        combined_public = ver.stderr + "\n" + summary_file.read_text(encoding="utf-8")
+        for secret_item in (
+            jwt_secret,
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            sk_secret,
+            "sk-rawsshsecret1234567890abcd",
+            ghp_secret,
+            aiza_secret,
+            long_token,
+            "leaked.operator@example.com",
+            "raw-ssh-noise-line",
+        ):
+            self.assertNotIn(secret_item, combined_public)
+
+    def test_rollback_readback_records_per_phase_timings_summing_to_at_most_rollback_duration(self) -> None:
+        ver = self._provision_and_verify()
+        self.assertEqual(ver.returncode, 0, ver.stderr + ver.stdout)
+        gate_dir = self.state_dir / "observed-gates" / "pantheon-20261024-001"
+        rb_readback = json.loads((gate_dir / "rollback-readback.json").read_text(encoding="utf-8"))
+        self.assertIn("phase_timings_seconds", rb_readback)
+        timings = rb_readback["phase_timings_seconds"]
+        expected_phases = ("drain", "baseline_up", "owners_healthy", "readyz_200", "readback")
+        self.assertEqual(set(timings.keys()), set(expected_phases))
+        for phase_name in expected_phases:
+            val = timings[phase_name]
+            self.assertIsInstance(val, (int, float))
+            self.assertNotIsInstance(val, bool)
+            self.assertGreaterEqual(val, 0.0, phase_name)
+        self.assertLessEqual(sum(timings.values()), rb_readback["rollback_duration_seconds"])
+        self.assertLessEqual(rb_readback["rollback_duration_seconds"], 120.0)
+
+        ver_summary = json.loads(ver.stdout)
+        self.assertEqual(
+            ver_summary["gates"]["exact_pair_rollback"]["phase_timings_seconds"],
+            timings,
+        )
+
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
     def test_ephemeral_workflow_wires_public_identity_vars_to_host(self) -> None:
@@ -3735,7 +4390,7 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
         self.assertEqual(tpl["name"], "pantheon-stg-template-20261024")
         self.assertEqual(tpl["properties"]["machineType"], "e2-standard-2")
         defaults_raw = (REPO_ROOT / "deploy" / "staging" / "staging-env.defaults").read_text(encoding="utf-8")
-        self.assertIn("STAGING_MACHINE_TYPE=e2-standard-4", defaults_raw)
+        self.assertIn("STAGING_MACHINE_TYPE=e2-standard-8", defaults_raw)
         self.assertFalse(tpl["properties"]["scheduling"]["preemptible"])
         self.assertEqual(tpl["properties"]["scheduling"]["provisioningModel"], "STANDARD")
         self.assertEqual(

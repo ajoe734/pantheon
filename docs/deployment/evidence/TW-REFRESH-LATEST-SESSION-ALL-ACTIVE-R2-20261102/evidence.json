@@ -1,0 +1,16 @@
+{
+  "task_id": "TW-REFRESH-LATEST-SESSION-ALL-ACTIVE-R2-20261102",
+  "replaces": "TW-REFRESH-LATEST-SESSION-ALL-ACTIVE-20261102 (PR 6906 not merged)",
+  "hosted_shape": {"fetch.max_records": 100, "priority_symbols": ["2330", "2317", "0050"], "history_trading_days": 40},
+  "rows_stored_per_priority_symbol": {
+    "before": {"2330": 40, "2317": 40, "0050": 20, "newest_date_kept": "oldest-only truncation (2026-09-01..09-30)"},
+    "after": {"2330": 33, "2317": 33, "0050": 33, "newest_date_kept": "latest closed session for every symbol", "non_priority_rows": 1}
+  },
+  "changes": [
+    "provider_adapters._taiwan_official: guard = len(priority) * TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL with symbols/required/allowed in error; per-symbol depth = min(history_trading_days, max_records // len(priority)) keeping newest dates; EFFECTIVE_MAX_RECORDS_KEY shares wrapper max_records with handler",
+    "deploy_nonprod_vm.sh: closed-session preflight (from PR 6906) and active symbols resolved before preflight; no_active_taiwan_symbols skip stays after it"
+  ],
+  "limits_unchanged": ["connector_definitions default_limits", "SOURCE_INGEST_MAX_RECORDS=100"],
+  "tests": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_taiwan_official_connectors.py: 139 passed, 3 skipped",
+  "hosted_verification": "pending coordinator (provider change applies after Root deploy; preflight on merge)"
+}

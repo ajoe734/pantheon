@@ -740,11 +740,191 @@ def verify_exact_pair_rollback(
             f"rollback duration must be <= 120 seconds (got {duration!r})"
         )
 
-    return {
+    result: dict[str, Any] = {
         "exact_pair_rollback_verified": True,
         "restored_release_id": rollback_baseline["previous_release_id"],
         "rollback_duration_seconds": duration,
     }
+    phase_timings = rollback_readback.get("phase_timings_seconds")
+    if isinstance(phase_timings, dict):
+        result["phase_timings_seconds"] = {
+            str(k): round(float(v), 3)
+            for k, v in phase_timings.items()
+            if type(v) in (int, float) and not isinstance(v, bool)
+        }
+    return result
+
+
+_GATE_FAILURE_PEM_BLOCK_RE = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+_GATE_FAILURE_EXTRA_SECRET_PATTERNS = (
+    re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]{4,})?\b"),
+    re.compile(r"\bya29\.[A-Za-z0-9._-]+\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{12,}\b"),
+)
+_GATE_FAILURE_BEARER_RE = re.compile(r"\b(Bearer)\s+\S+", re.IGNORECASE)
+_GATE_FAILURE_URL_CRED_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:)[^@\s/]+(@)")
+_GATE_FAILURE_KV_SECRET_RE = re.compile(
+    r"(?i)\b(password|passwd|secret|token|api_?key|apikey|private_key|credential|cookie"
+    r"|authorization|bearer|jwt|lease_token|order_id)"
+    r"(\s*['\"]?\s*[:=]\s*['\"]?)([^'\",\s;)}\]]+)"
+)
+_GATE_FAILURE_TOKEN_IDENTIFIER_RE = re.compile(
+    r"\b(?=[A-Za-z0-9_-]*[-_0-9])[A-Za-z0-9_-]*(?:secret|token|password|passwd|api_?key)[A-Za-z0-9_-]*\b",
+    re.IGNORECASE,
+)
+_GATE_FAILURE_LONG_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{41,}")
+_GATE_FAILURE_ERROR_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
+_GATE_FAILURE_STEP_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_UNSERVED_OWNER_PREFIX = "Product owners not running/healthy: "
+_ROLLBACK_UNSERVED_OWNER_PREFIX = "Baseline product owners not running/healthy after rollback: "
+_RESTORE_UNSERVED_OWNER_PREFIX = "Product owners not running/healthy after rollback rehearsal: "
+
+
+def redact_gate_failure_message(
+    message: Any,
+    *,
+    error_code: str = "",
+    max_length: int = 600,
+) -> str:
+    """Redact secrets, JWTs, tokens, emails, and >40-char [A-Za-z0-9_-] runs from a gate failure message."""
+    if not isinstance(message, str):
+        return ""
+    text = message.strip()
+    if not text:
+        return ""
+
+    allowed_owners = {k.replace("_", "-") for k in PRODUCT_OWNER_IMAGE_KEYS}
+    for owner_prefix in (
+        _UNSERVED_OWNER_PREFIX,
+        _ROLLBACK_UNSERVED_OWNER_PREFIX,
+        _RESTORE_UNSERVED_OWNER_PREFIX,
+    ):
+        if text.startswith(owner_prefix):
+            tail = text[len(owner_prefix):].strip()
+            names = [n.strip() for n in tail.split(", ") if n.strip()]
+            if names and all(n in allowed_owners for n in names) and ", ".join(names) == tail:
+                text = f"{owner_prefix}{', '.join(names)}"
+            else:
+                text = f"{owner_prefix}{REDACTED}"
+            break
+    else:
+        if error_code == "PRODUCT_OWNER_UNSERVED":
+            text = REDACTED
+
+    text = _GATE_FAILURE_PEM_BLOCK_RE.sub(REDACTED, text)
+    for pattern in SECRET_VALUE_PATTERNS:
+        text = pattern.sub(REDACTED, text)
+    for pattern in _GATE_FAILURE_EXTRA_SECRET_PATTERNS:
+        text = pattern.sub(REDACTED, text)
+    text = _GATE_FAILURE_URL_CRED_RE.sub(rf"\1{REDACTED}\2", text)
+    text = _GATE_FAILURE_BEARER_RE.sub(rf"\1 {REDACTED}", text)
+    text = _GATE_FAILURE_KV_SECRET_RE.sub(rf"\1\2{REDACTED}", text)
+    text = RAW_EMAIL_RE.sub(REDACTED, text)
+    text = _GATE_FAILURE_TOKEN_IDENTIFIER_RE.sub(REDACTED, text)
+    text = _GATE_FAILURE_LONG_TOKEN_RE.sub(REDACTED, text)
+
+    text = text.replace("\\", "/").replace('"', "'")
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if max_length > 0 and len(text) > max_length:
+        text = text[:max_length]
+    return text
+
+
+def summarize_gate_collection_failure(
+    raw_output: str,
+    *,
+    release_id: str = "",
+) -> dict[str, Any]:
+    """Build a redacted gate-failure summary from raw collect-verify-gates SSH output."""
+    text = raw_output if isinstance(raw_output, str) else ""
+    found_codes = sorted(
+        set(
+            re.findall(
+                r'"error_code"\s*:\s*"([A-Z][A-Z0-9_]{2,63})"',
+                text,
+            )
+        )
+    )
+    last_doc: dict[str, Any] = {}
+    for line in reversed(text.splitlines()):
+        candidate = line.strip()
+        if not (candidate.startswith("{") and candidate.endswith("}")):
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and ("error_code" in parsed or parsed.get("status") == "error"):
+            last_doc = parsed
+            break
+
+    raw_code = str(last_doc.get("error_code") or "").strip()
+    if _GATE_FAILURE_ERROR_CODE_RE.fullmatch(raw_code):
+        error_code = raw_code
+    elif found_codes:
+        error_code = found_codes[-1]
+    else:
+        error_code = "unknown"
+
+    if error_code != "unknown" and error_code not in found_codes:
+        found_codes.append(error_code)
+        found_codes.sort()
+
+    raw_step = str(last_doc.get("step") or "").strip()
+    step = raw_step if _GATE_FAILURE_STEP_RE.fullmatch(raw_step) else "collect-verify-gates"
+
+    raw_msg = last_doc.get("message")
+    redacted_msg = redact_gate_failure_message(raw_msg, error_code=error_code, max_length=600)
+
+    summary: dict[str, Any] = {
+        "status": "error",
+        "step": step,
+        "error_code": error_code,
+        "message": redacted_msg,
+    }
+    if release_id:
+        summary["release_id"] = release_id
+    if found_codes:
+        summary["remote_error_codes"] = found_codes
+
+    rb_nested = last_doc.get("rollback_readback")
+    rb_source = rb_nested if isinstance(rb_nested, dict) else {}
+
+    rb_duration = last_doc.get("rollback_duration_seconds", rb_source.get("rollback_duration_seconds"))
+    if type(rb_duration) in (int, float) and not isinstance(rb_duration, bool):
+        summary["rollback_duration_seconds"] = round(float(rb_duration), 3)
+
+    bff_healthy = last_doc.get("bff_healthy", rb_source.get("bff_healthy"))
+    if isinstance(bff_healthy, bool):
+        summary["bff_healthy"] = bff_healthy
+
+    phase_timings = last_doc.get("phase_timings_seconds", rb_source.get("phase_timings_seconds"))
+    if isinstance(phase_timings, dict):
+        clean_timings = {
+            str(k): round(float(v), 3)
+            for k, v in phase_timings.items()
+            if isinstance(k, str)
+            and _GATE_FAILURE_STEP_RE.fullmatch(k)
+            and type(v) in (int, float)
+            and not isinstance(v, bool)
+        }
+        if clean_timings:
+            summary["phase_timings_seconds"] = clean_timings
+
+    if error_code == "PRODUCT_OWNER_UNSERVED" and isinstance(raw_msg, str) and raw_msg.startswith(_UNSERVED_OWNER_PREFIX):
+        allowed_owners = {k.replace("_", "-") for k in PRODUCT_OWNER_IMAGE_KEYS}
+        tail = raw_msg[len(_UNSERVED_OWNER_PREFIX):]
+        names = tail.split(", ")
+        if names and all(n in allowed_owners for n in names):
+            summary["unserved_product_owner_services"] = ",".join(sorted(set(names)))
+
+    return summary
 
 
 def verify_security_and_safety_readbacks(readback: dict[str, Any]) -> dict[str, Any]:
