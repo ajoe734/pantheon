@@ -113,6 +113,10 @@ try:
         IncidentError,
         IncidentStatus,
         IncidentStore,
+        NOT_REOBSERVED_RESOLUTION_REASON,
+        canonical_monitor_agent_finding_key,
+        extract_monitor_agent_finding_references,
+        is_monitor_agent_finding_incident,
         validate_incident_case,
     )
     from services.incident.pg_store import build_incident_store  # type: ignore
@@ -123,6 +127,10 @@ except ImportError:
         IncidentError,
         IncidentStatus,
         IncidentStore,
+        NOT_REOBSERVED_RESOLUTION_REASON,
+        canonical_monitor_agent_finding_key,
+        extract_monitor_agent_finding_references,
+        is_monitor_agent_finding_incident,
         validate_incident_case,
     )
     from incident.pg_store import build_incident_store  # type: ignore
@@ -232,6 +240,112 @@ register_fastapi_health_routes(
 def _utc_now() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+DEFAULT_AGENT_FINDING_RESOLVE_AFTER_SECONDS = 7200
+AGENT_FINDING_RESOLVE_AFTER_SECONDS = int(
+    os.getenv("INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS")
+    or os.getenv("MONITOR_AGENT_FINDING_RESOLVE_AFTER_SECONDS")
+    or str(DEFAULT_AGENT_FINDING_RESOLVE_AFTER_SECONDS)
+)
+
+
+def _agent_finding_resolve_after_seconds() -> int:
+    raw = (
+        os.getenv("INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS")
+        or os.getenv("MONITOR_AGENT_FINDING_RESOLVE_AFTER_SECONDS")
+    )
+    if raw is not None and str(raw).strip():
+        try:
+            return max(0, int(str(raw).strip()))
+        except ValueError:
+            pass
+    return max(0, int(AGENT_FINDING_RESOLVE_AFTER_SECONDS))
+
+
+def _parse_iso_utc_or_now(raw: Optional[str] = None) -> datetime:
+    text = str(raw or _utc_now()).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def resolve_stale_agent_finding_incidents(
+    *,
+    now: Optional[datetime] = None,
+    resolve_after_seconds: Optional[int] = None,
+) -> List[IncidentCase]:
+    """Resolve open monitor-agent finding incidents not re-observed within the window."""
+    window = (
+        _agent_finding_resolve_after_seconds()
+        if resolve_after_seconds is None
+        else int(resolve_after_seconds)
+    )
+    if window <= 0 or not hasattr(store, "resolve_stale_monitor_agent_findings"):
+        return []
+    resolved = store.resolve_stale_monitor_agent_findings(
+        resolve_after_seconds=window,
+        now=now or _parse_iso_utc_or_now(),
+    )
+    for inc in resolved:
+        log.info(
+            "Resolved stale monitor-agent finding %s reason=%s window=%ds",
+            inc.incident_id,
+            NOT_REOBSERVED_RESOLUTION_REASON,
+            window,
+        )
+    return resolved
+
+
+def _match_open_agent_finding_incident(
+    open_incidents: List[IncidentCase],
+    *,
+    incoming: IncidentCase,
+    fingerprint: str,
+    canonical_key: str,
+    incident_id_ref: str = "",
+) -> Optional[IncidentCase]:
+    open_findings = sorted(
+        (inc for inc in open_incidents if is_monitor_agent_finding_incident(inc)),
+        key=lambda item: (item.created_at, item.incident_id),
+    )
+    if not open_findings:
+        return None
+
+    for candidate_ref in (incident_id_ref, fingerprint):
+        ref = str(candidate_ref or "").strip()
+        if not ref:
+            continue
+        ref_digest = uuid.uuid5(uuid.NAMESPACE_URL, ref).hex[:12]
+        ref_prefix = f"agent-{ref_digest}-"
+        for existing in open_findings:
+            if (
+                existing.incident_id == ref
+                or existing.incident_id.startswith(ref_prefix)
+                or ref in extract_monitor_agent_finding_references(existing)
+            ):
+                return existing
+
+    for existing in open_findings:
+        if existing.incident_cluster_id == incoming.incident_cluster_id:
+            return existing
+        refs = extract_monitor_agent_finding_references(existing)
+        if canonical_key in refs:
+            return existing
+        existing_canonical = canonical_monitor_agent_finding_key(
+            existing.incident_cluster_id or "",
+            existing.title,
+            existing.evidence_summary or "",
+        )
+        if existing_canonical == canonical_key:
+            return existing
+    return None
 
 
 def _to_response(inc: IncidentCase) -> IncidentResponse:
@@ -504,7 +618,7 @@ def consume_infrastructure_health_incident(
     "/api/incidents/consume-agent-finding",
     response_model=IncidentResponse,
     status_code=201,
-    summary="Consume a monitor-agent finding, deduped by fingerprint",
+    summary="Consume a monitor-agent finding, deduped by fingerprint or stable reference",
 )
 def consume_agent_finding_incident(
     response: Response,
@@ -512,25 +626,32 @@ def consume_agent_finding_incident(
 ) -> IncidentResponse:
     """Open an incident for an agent finding, or merge into the open one.
 
-    A finding whose fingerprint matches an open incident's cluster updates that
-    incident's evidence (new snapshot reference and rationale) instead of
-    creating another one.
+    A finding that names the stable reference of an open monitor-agent finding
+    incident (or matches its canonical finding cluster) merges into that
+    incident's evidence and never opens a duplicate.
     """
+    resolve_stale_agent_finding_incidents(
+        now=_parse_iso_utc_or_now(body.get("observed_at") if isinstance(body, dict) else None)
+    )
     try:
         fingerprint = str(body.get("fingerprint") or "").strip()
+        incident_id_ref = str(body.get("incident_id") or body.get("ref") or "").strip()
         snapshot_ref = str(body.get("snapshot_ref") or "").strip()
         rationale = str(body.get("rationale") or "").strip()
         title = str(body.get("title") or "").strip()
+        observed_at = str(body.get("observed_at") or _utc_now()).strip()
         if not (fingerprint and snapshot_ref and rationale and title):
             raise IncidentConsumerError(
                 "fingerprint, snapshot_ref, rationale and title are required"
             )
-        digest = uuid.uuid5(uuid.NAMESPACE_URL, fingerprint).hex[:12]
+        canonical_key = canonical_monitor_agent_finding_key(fingerprint, title, rationale)
+        digest = uuid.uuid5(uuid.NAMESPACE_URL, canonical_key).hex[:12]
         payload = {
             "schema_version": "pantheon.infrastructure-incident/1",
             "source_event_id": snapshot_ref,
             "tenant_id": str(body.get("tenant_id") or os.getenv("PANTHEON_TENANT_ID") or "default"),
             "producer": "monitor-agent",
+            "created_at": observed_at,
             "component": {
                 "service_name": f"agent-finding-{digest}",
                 "component_kind": "monitor-agent-finding",
@@ -538,7 +659,11 @@ def consume_agent_finding_incident(
             },
             "title": title[:200],
             "severity": body.get("severity"),
-            "evidence_summary": f"snapshot_ref={snapshot_ref}; rationale={rationale[:1500]}",
+            "evidence_summary": (
+                f"fingerprint={fingerprint}; canonical_key={canonical_key}; "
+                f"observed_at={observed_at}; snapshot_ref={snapshot_ref}; "
+                f"rationale={rationale[:1500]}"
+            ),
         }
         incoming = build_incident_from_infrastructure_health_payload(
             {**payload, "incident_id": f"agent-{digest}-0000"}
@@ -546,7 +671,7 @@ def consume_agent_finding_incident(
     except (IncidentConsumerError, IncidentError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    # Atomic dedupe: incident ids are sequential per fingerprint, so two racing
+    # Atomic dedupe: incident ids are sequential per canonical key, so two racing
     # creators pick the same id and the store's own create guard lets exactly one
     # win; the loser loops back and merges into the winner's open incident.
     prefix = f"agent-{digest}-"
@@ -554,12 +679,18 @@ def consume_agent_finding_incident(
         # Sequence is read before the open check: a creator that lost the race
         # either sees the winner's open incident or collides on the same id.
         seq = sum(1 for i in store.list_incidents() if i.incident_id.startswith(prefix))
-        for existing in store.find_open_incidents():
-            if existing.incident_cluster_id == incoming.incident_cluster_id:
-                merged = store.merge_incident_evidence(existing.incident_id, incoming)
-                response.status_code = 200
-                log.info("Merged agent finding into IncidentCase %s", merged.incident_id)
-                return _to_response(merged)
+        matched = _match_open_agent_finding_incident(
+            store.find_open_incidents(),
+            incoming=incoming,
+            fingerprint=fingerprint,
+            canonical_key=canonical_key,
+            incident_id_ref=incident_id_ref,
+        )
+        if matched is not None:
+            merged = store.merge_incident_evidence(matched.incident_id, incoming)
+            response.status_code = 200
+            log.info("Merged agent finding into IncidentCase %s", merged.incident_id)
+            return _to_response(merged)
         candidate = build_incident_from_infrastructure_health_payload(
             {**payload, "incident_id": f"{prefix}{seq:04d}"}
         )
@@ -589,6 +720,7 @@ def list_incidents(
     open_only: bool = Query(False, description="Return only open+investigating incidents"),
 ) -> List[IncidentResponse]:
     """List IncidentCases with optional filters.  Most-recent first."""
+    resolve_stale_agent_finding_incidents()
     incidents = store.list_incidents()
 
     if binding_id:
@@ -612,6 +744,7 @@ def list_incidents(
     summary="Get a single IncidentCase",
 )
 def get_incident(incident_id: str) -> IncidentResponse:
+    resolve_stale_agent_finding_incidents()
     return _to_response(_get_or_404(incident_id))
 
 
@@ -813,6 +946,7 @@ def _repair_prepared_after_transition_conflict(record: ReliableOutboxRecord) -> 
 
 # background delivery loop for incidents
 async def process_incidents_outbox():
+    resolve_stale_agent_finding_incidents()
     reconcile_incidents_outbox()
     records = outbox_store.claim_due(
         worker_id="incidents-outbox-worker",
@@ -1013,6 +1147,7 @@ def get_operator_payload(incident_id: str) -> OperatorIncidentPayload:
     linkage and evolution-decision reference so the operator console can render
     the full incident chain without cross-service joins.
     """
+    resolve_stale_agent_finding_incidents()
     inc = _get_or_404(incident_id)
 
     # Look up postmortem linkage in the same store

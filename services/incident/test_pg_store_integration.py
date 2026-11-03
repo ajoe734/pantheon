@@ -24,7 +24,17 @@ from services.foundation.reliable_delivery import (
 from services.incident.incident import (
     IncidentCase,
     IncidentConcurrencyError,
+    MONITOR_AGENT_ARTIFACT_PREFIX,
+    MONITOR_AGENT_AUTHORITY_ID,
+    MONITOR_AGENT_BINDING_ID,
+    MONITOR_AGENT_CLUSTER_PREFIX,
+    MONITOR_AGENT_COMPONENT_KIND,
+    MONITOR_AGENT_PLAN_ID,
+    MONITOR_AGENT_POOL_ID,
+    MONITOR_AGENT_RUNTIME_ID,
+    NOT_REOBSERVED_RESOLUTION_REASON,
     Postmortem,
+    extract_incident_resolution_reason,
 )
 from services.incident.pg_store import PostgresIncidentStore
 
@@ -453,3 +463,48 @@ def test_postgres_inbox_reservation_fences_stale_claimant(pg_case):
     replay_state, replay = second.reserve(event, result_ref="pm-pg-delivery")
     assert replay_state == "applied"
     assert replay["result_ref"] == "pm-pg-delivery"
+
+
+def test_postgres_resolve_stale_monitor_agent_findings_preserves_non_agent_incidents(pg_case):
+    seed = _store(pg_case, bootstrap=True)
+    stale_finding = IncidentCase(
+        incident_id="agent-pg-stale-001",
+        title="Reconciler generation jumped",
+        status="open",
+        severity="medium",
+        created_at="2026-07-15T00:00:00Z",
+        binding_id=MONITOR_AGENT_BINDING_ID,
+        deployment_stage="paper",
+        deployment_plan_id=MONITOR_AGENT_PLAN_ID,
+        capital_pool_id=MONITOR_AGENT_POOL_ID,
+        persona_capital_binding_id=MONITOR_AGENT_AUTHORITY_ID,
+        artifact_id=f"{MONITOR_AGENT_ARTIFACT_PREFIX}reconciler-generation-change",
+        artifact_version="1.0.0",
+        runtime_id=MONITOR_AGENT_RUNTIME_ID,
+        trace_id="monitor-snapshot-20260715T000000Z-111111111111",
+        telemetry_event_ids=["monitor-snapshot-20260715T000000Z-111111111111"],
+        incident_cluster_id=f"{MONITOR_AGENT_CLUSTER_PREFIX}reconciler-generation-change",
+        evidence_summary=(
+            f"component_kind={MONITOR_AGENT_COMPONENT_KIND}; "
+            "component=agent-finding-reconciler-generation-change; "
+            "snapshot_ref=monitor-snapshot-20260715T000000Z-111111111111"
+        ),
+        lineage_ref=f"{MONITOR_AGENT_ARTIFACT_PREFIX}reconciler-generation-change@1.0.0",
+    )
+    open_runtime = replace(_incident(), incident_id="inc-pg-runtime-open", status="open", resolved_at=None)
+    seed.create_incident(stale_finding)
+    seed.create_incident(open_runtime)
+
+    sweeper = _store(pg_case, bootstrap=False)
+    resolved = sweeper.resolve_stale_monitor_agent_findings(
+        resolve_after_seconds=7200,
+        now=datetime(2026, 7, 15, 3, 0, 0, tzinfo=timezone.utc),
+    )
+    assert [inc.incident_id for inc in resolved] == ["agent-pg-stale-001"]
+
+    reader = _store(pg_case, bootstrap=False)
+    durable_finding = reader.require_incident("agent-pg-stale-001")
+    assert durable_finding.status == "resolved"
+    assert extract_incident_resolution_reason(durable_finding) == NOT_REOBSERVED_RESOLUTION_REASON
+    assert reader.require_incident("inc-pg-runtime-open").status == "open"
+

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 from copy import deepcopy
@@ -43,7 +44,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Set, Tuple
 
 try:  # pragma: no cover - Linux production and CI provide fcntl.
     import fcntl
@@ -471,6 +472,223 @@ def build_postmortem_learn_feedback_writeback(
 
 
 # ---------------------------------------------------------------------------
+# Monitor-agent finding helpers (BP5-SVC-011 / MONITOR-AGENT-INCIDENT-DEDUPE)
+# ---------------------------------------------------------------------------
+
+MONITOR_AGENT_BINDING_ID = "infra-binding-monitor-agent"
+MONITOR_AGENT_PLAN_ID = "infra-plan-monitor-agent"
+MONITOR_AGENT_POOL_ID = "infra-pool-non-trading"
+MONITOR_AGENT_AUTHORITY_ID = "infra-authority-monitor-agent"
+MONITOR_AGENT_RUNTIME_ID = "infra-runtime:monitor-agent"
+MONITOR_AGENT_CLUSTER_PREFIX = "infra-cluster:monitor-agent:agent-finding-"
+MONITOR_AGENT_ARTIFACT_PREFIX = "infra-component-agent-finding-"
+MONITOR_AGENT_COMPONENT_KIND = "monitor-agent-finding"
+NOT_REOBSERVED_RESOLUTION_REASON = "not_reobserved"
+
+_OBSERVED_AT_RE = re.compile(r"(?:last_)?observed_at=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+\-Z]+)")
+_SNAPSHOT_TS_RE = re.compile(r"monitor-snapshot-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z")
+_FINGERPRINT_KV_RE = re.compile(r"fingerprint=([^;\s]+)")
+_CANONICAL_KEY_KV_RE = re.compile(r"canonical_key=([^;\s]+)")
+_COMPONENT_KV_RE = re.compile(r"(?:component|service_name)=agent-finding-([^;\s]+)")
+_RESOLUTION_REASON_KV_RE = re.compile(r"resolution_reason=([^;\s]+)")
+
+
+def _parse_iso_utc(raw: Optional[str]) -> Optional[datetime]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def is_monitor_agent_finding_incident(inc: IncidentCase) -> bool:
+    """Return True strictly for monitor-agent finding incidents.
+
+    Never matches runtime, drift, infrastructure-health, or deployment incidents.
+    """
+    if not str(inc.incident_id or "").startswith("agent-"):
+        return False
+    if inc.deployment_plan_id != MONITOR_AGENT_PLAN_ID:
+        return False
+    if inc.persona_capital_binding_id != MONITOR_AGENT_AUTHORITY_ID:
+        return False
+    cluster = str(inc.incident_cluster_id or "")
+    summary = str(inc.evidence_summary or "")
+    artifact = str(inc.artifact_id or "")
+    return (
+        ":monitor-agent:agent-finding-" in cluster
+        or f"component_kind={MONITOR_AGENT_COMPONENT_KIND}" in summary
+        or artifact.startswith(MONITOR_AGENT_ARTIFACT_PREFIX)
+    )
+
+
+def extract_incident_last_observed_at(inc: IncidentCase) -> Optional[datetime]:
+    """Return the latest UTC observation timestamp recorded on an IncidentCase."""
+    candidates: List[datetime] = []
+    created_dt = _parse_iso_utc(inc.created_at)
+    if created_dt is not None:
+        candidates.append(created_dt)
+
+    summary = str(inc.evidence_summary or "")
+    for match in _OBSERVED_AT_RE.finditer(summary):
+        parsed = _parse_iso_utc(match.group(1))
+        if parsed is not None:
+            candidates.append(parsed)
+
+    sources = [summary, *(str(item or "") for item in (inc.telemetry_event_ids or []))]
+    for source in sources:
+        for match in _SNAPSHOT_TS_RE.finditer(source):
+            y, m, d, hh, mm, ss = (int(g) for g in match.groups())
+            try:
+                candidates.append(datetime(y, m, d, hh, mm, ss, tzinfo=timezone.utc))
+            except ValueError:
+                continue
+
+    return max(candidates) if candidates else None
+
+
+def extract_incident_resolution_reason(inc: IncidentCase) -> Optional[str]:
+    """Return the recorded resolution reason on an IncidentCase, if any."""
+    summary = str(inc.evidence_summary or "")
+    matches = _RESOLUTION_REASON_KV_RE.findall(summary)
+    if matches:
+        return matches[-1]
+    for item in reversed(inc.telemetry_event_ids or []):
+        text = str(item or "").strip()
+        if text.startswith("resolution_reason:"):
+            reason = text.split(":", 1)[1].strip()
+            if reason:
+                return reason
+    return None
+
+
+def extract_monitor_agent_finding_references(inc: IncidentCase) -> Set[str]:
+    """Return all stable reference tokens that identify an agent finding incident."""
+    refs: Set[str] = set()
+    if inc.incident_id:
+        refs.add(inc.incident_id.strip())
+    cluster = str(inc.incident_cluster_id or "").strip()
+    if cluster:
+        refs.add(cluster)
+        marker = ":monitor-agent:agent-finding-"
+        if marker in cluster:
+            suffix = cluster.split(marker, 1)[1].strip()
+            if suffix:
+                refs.add(suffix)
+                refs.add(f"agent-finding-{suffix}")
+    artifact = str(inc.artifact_id or "").strip()
+    if artifact.startswith(MONITOR_AGENT_ARTIFACT_PREFIX):
+        suffix = artifact[len(MONITOR_AGENT_ARTIFACT_PREFIX):].strip()
+        if suffix:
+            refs.add(suffix)
+    summary = str(inc.evidence_summary or "")
+    for pattern in (_FINGERPRINT_KV_RE, _CANONICAL_KEY_KV_RE, _COMPONENT_KV_RE):
+        for match in pattern.finditer(summary):
+            token = match.group(1).strip()
+            if token:
+                refs.add(token)
+    return refs
+
+
+def canonical_monitor_agent_finding_key(
+    fingerprint: str,
+    title: str = "",
+    rationale: str = "",
+) -> str:
+    """Normalize recurring monitor-agent finding families into a stable dedupe key."""
+    fp_raw = str(fingerprint or "").strip()
+    text = f"{fp_raw} {title or ''} {rationale or ''}".lower()
+
+    # 1. Reconciler generation / fence_token / epoch advances or jumps
+    has_reconciler_anchor = any(
+        tok in text
+        for tok in (
+            "reconcil",
+            "fence_token",
+            "fence-token",
+            "fence token",
+            "leader_epoch",
+            "leader-epoch",
+            "leader epoch",
+        )
+    )
+    has_generation_signal = bool(
+        re.search(
+            r"(?:generations?|gen[-_=\s]*\d+|\bgen\b|fence[-_\s]*tokens?|\bfence\b|"
+            r"epochs?|tokens?|advanc\w*|jump\w*|step\w*|increment\w*|monotonic\w*|"
+            r"rollover\w*|counter\w*|restart\w*)",
+            text,
+        )
+    )
+    if has_reconciler_anchor and has_generation_signal:
+        return "reconciler-generation-change"
+
+    # 2. Paper fleet size / active runtime or binding count changes
+    has_fleet_anchor = "fleet" in text and bool(
+        re.search(
+            r"(?:size\w*|count\w*|runtimes?|active|bindings?|paper|chang\w*|drift\w*|"
+            r"mismatch\w*|scal\w*|shrink\w*|shrank|grow\w*|grew|drop\w*|increas\w*|"
+            r"decreas\w*|total|number|capacity|workers?|nodes?|slots?|instances?|"
+            r"strategies|strategy|\d+)",
+            text,
+        )
+    )
+    has_runtime_count_phrase = any(
+        phrase in text
+        for phrase in (
+            "runtime count",
+            "runtime-count",
+            "runtime_count",
+            "active_runtimes",
+            "active-runtimes",
+            "active runtimes",
+            "total_runtimes",
+            "total-runtimes",
+            "total runtimes",
+            "binding count",
+            "binding-count",
+            "binding_count",
+            "worker count",
+            "worker-count",
+            "worker_count",
+            "instance count",
+            "instance-count",
+            "strategy count",
+            "strategy-count",
+            "paper runtime",
+            "runtimes count",
+        )
+    ) or (
+        bool(re.search(r"\b(?:runtimes?|bindings?|workers?|instances?)\b", text))
+        and bool(
+            re.search(
+                r"\b(?:count\w*|size\w*|fleet|number of (?:active |paper |running )?"
+                r"(?:runtimes?|bindings?|workers?|instances?))\b",
+                text,
+            )
+        )
+    )
+    if has_fleet_anchor or has_runtime_count_phrase:
+        return "fleet-size-change"
+
+    # 3. Performance summary count / residual mismatch
+    if any(k in text for k in ("performance", "summary", "attribution")) and bool(
+        re.search(r"(?:residuals?|summary[-_\s]+counts?|count[-_\s]+residuals?|unexplained)", text)
+    ):
+        return "performance-summary-residual"
+
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "-", fp_raw.lower())[:64].strip("-")
+    return safe or "finding"
+
+
+# ---------------------------------------------------------------------------
 # IncidentStore — in-memory write-guarded store
 # ---------------------------------------------------------------------------
 
@@ -564,6 +782,56 @@ class IncidentStore:
         self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.is_open()]
 
+    @_serialized_store_read
+    def find_matching_open_monitor_agent_finding(
+        self,
+        *,
+        fingerprint: str,
+        title: str = "",
+        rationale: str = "",
+        incident_id_ref: Optional[str] = None,
+    ) -> Optional[IncidentCase]:
+        """Find an open monitor-agent finding incident matching a stable reference or canonical family."""
+        self._refresh_from_disk()
+        open_findings = sorted(
+            (
+                inc
+                for inc in self._incidents.values()
+                if inc.is_open() and is_monitor_agent_finding_incident(inc)
+            ),
+            key=lambda item: (item.created_at, item.incident_id),
+        )
+        if not open_findings:
+            return None
+
+        explicit_ref = str(incident_id_ref or "").strip()
+        if explicit_ref:
+            for inc in open_findings:
+                if inc.incident_id == explicit_ref or explicit_ref in extract_monitor_agent_finding_references(inc):
+                    return inc
+
+        fp_clean = str(fingerprint or "").strip()
+        if fp_clean:
+            for inc in open_findings:
+                if inc.incident_id == fp_clean or fp_clean in extract_monitor_agent_finding_references(inc):
+                    return inc
+
+        canonical_key = canonical_monitor_agent_finding_key(fp_clean, title, rationale)
+        canonical_cluster = f"{MONITOR_AGENT_CLUSTER_PREFIX}{canonical_key}"
+        for inc in open_findings:
+            refs = extract_monitor_agent_finding_references(inc)
+            if inc.incident_cluster_id == canonical_cluster or canonical_key in refs:
+                return inc
+            inc_canonical = canonical_monitor_agent_finding_key(
+                inc.incident_cluster_id or "",
+                inc.title,
+                inc.evidence_summary or "",
+            )
+            if inc_canonical == canonical_key:
+                return inc
+
+        return None
+
     # ---- IncidentCase writes ----
 
     @_serialized_store_write
@@ -589,6 +857,7 @@ class IncidentStore:
         *,
         resolved_at: Optional[str] = None,
         telemetry_event_ids: Optional[List[str]] = None,
+        resolution_reason: Optional[str] = None,
         expected_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> IncidentCase:
         """Transition an incident to a new status.
@@ -616,9 +885,17 @@ class IncidentStore:
             raise IncidentError(f"Incident is resolved and cannot regress to {new_status}")
 
         updates: Dict[str, Any] = {"status": new_status}
-        if telemetry_event_ids:
+        merged_telemetry = list(telemetry_event_ids or [])
+        reason_clean = str(resolution_reason or "").strip()
+        if reason_clean:
+            merged_telemetry.append(f"resolution_reason:{reason_clean}")
+            updates["evidence_summary"] = _merge_summary(
+                inc.evidence_summary,
+                f"resolution_reason={reason_clean}",
+            )
+        if merged_telemetry:
             updates["telemetry_event_ids"] = _merge_unique(
-                inc.telemetry_event_ids, telemetry_event_ids
+                inc.telemetry_event_ids, merged_telemetry
             )
         if new_status in {IncidentStatus.RESOLVED.value, IncidentStatus.CLOSED.value}:
             updates["resolved_at"] = inc.resolved_at or resolved_at or _utc_now()
@@ -634,6 +911,76 @@ class IncidentStore:
             expected_snapshot=inc.to_dict(),
         )
         return updated
+
+    @_serialized_store_write
+    def resolve_stale_monitor_agent_findings(
+        self,
+        *,
+        resolve_after_seconds: int,
+        now: Optional[datetime] = None,
+    ) -> List[IncidentCase]:
+        """Resolve open monitor-agent finding incidents not re-observed within the window.
+
+        Applies strictly to monitor-agent finding incidents and never touches
+        runtime, drift, infrastructure-health, or deployment incidents.
+        """
+        if resolve_after_seconds <= 0:
+            return []
+        now_dt = now or datetime.now(timezone.utc)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
+        else:
+            now_dt = now_dt.astimezone(timezone.utc)
+        resolved_iso = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        transitions: List[Tuple[str, Mapping[str, Any], IncidentCase]] = []
+        for inc in list(self._incidents.values()):
+            if not inc.is_open():
+                continue
+            if not is_monitor_agent_finding_incident(inc):
+                continue
+            last_obs = extract_incident_last_observed_at(inc)
+            if last_obs is None:
+                continue
+            if (now_dt - last_obs).total_seconds() < resolve_after_seconds:
+                continue
+
+            updates: Dict[str, Any] = {
+                "status": IncidentStatus.RESOLVED.value,
+                "resolved_at": inc.resolved_at or resolved_iso,
+                "telemetry_event_ids": _merge_unique(
+                    inc.telemetry_event_ids,
+                    [f"resolution_reason:{NOT_REOBSERVED_RESOLUTION_REASON}"],
+                ),
+                "evidence_summary": _merge_summary(
+                    inc.evidence_summary,
+                    f"resolution_reason={NOT_REOBSERVED_RESOLUTION_REASON}",
+                ),
+            }
+            updated = IncidentCase(**{**inc.to_dict(), **updates})
+            errors = validate_incident_case(updated)
+            if errors:
+                raise IncidentError(f"Auto-resolution produces invalid IncidentCase: {errors}")
+            transitions.append((inc.incident_id, inc.to_dict(), updated))
+
+        if not transitions:
+            return []
+        return self._persist_batch_incident_updates(transitions)
+
+    def _persist_batch_incident_updates(
+        self,
+        transitions: List[Tuple[str, Mapping[str, Any], IncidentCase]],
+    ) -> List[IncidentCase]:
+        resolved: List[IncidentCase] = []
+        for record_id, expected_snapshot, updated in transitions:
+            self._incidents[record_id] = updated
+            self._save(
+                aggregate_type="incident",
+                record_id=record_id,
+                expected_snapshot=expected_snapshot,
+            )
+            resolved.append(updated)
+        return resolved
 
     @_serialized_store_write
     def merge_incident_evidence(self, incident_id: str, incoming: IncidentCase) -> IncidentCase:

@@ -26,14 +26,29 @@ from pathlib import Path
 # Allow running directly: python -m pytest or python test_incident.py
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from datetime import datetime, timezone
+
 from services.incident.incident import (
     IncidentCase,
     IncidentError,
     IncidentSeverity,
     IncidentStatus,
     IncidentStore,
+    MONITOR_AGENT_ARTIFACT_PREFIX,
+    MONITOR_AGENT_AUTHORITY_ID,
+    MONITOR_AGENT_BINDING_ID,
+    MONITOR_AGENT_CLUSTER_PREFIX,
+    MONITOR_AGENT_COMPONENT_KIND,
+    MONITOR_AGENT_PLAN_ID,
+    MONITOR_AGENT_POOL_ID,
+    MONITOR_AGENT_RUNTIME_ID,
+    NOT_REOBSERVED_RESOLUTION_REASON,
     Postmortem,
     PostmortemStatus,
+    canonical_monitor_agent_finding_key,
+    extract_incident_last_observed_at,
+    extract_incident_resolution_reason,
+    is_monitor_agent_finding_incident,
     validate_incident_case,
     validate_postmortem,
 )
@@ -785,6 +800,169 @@ class TestIncidentEvidenceMergeBound(unittest.TestCase):
             self.assertIn("te-1", store.get_incident("inc-noop-001").telemetry_event_ids)
 
 
+def _make_agent_finding_incident(
+    incident_id: str = "agent-0123456789abcdef",
+    key: str = "reconciler-generation-change",
+    created_at: str = "2026-11-01T10:00:00Z",
+    **kw,
+) -> IncidentCase:
+    base = dict(
+        incident_id=incident_id,
+        title="Reconciler generation jumped after restart",
+        status="open",
+        severity="medium",
+        created_at=created_at,
+        binding_id=MONITOR_AGENT_BINDING_ID,
+        deployment_stage="paper",
+        deployment_plan_id=MONITOR_AGENT_PLAN_ID,
+        capital_pool_id=MONITOR_AGENT_POOL_ID,
+        persona_capital_binding_id=MONITOR_AGENT_AUTHORITY_ID,
+        artifact_id=f"{MONITOR_AGENT_ARTIFACT_PREFIX}{key}",
+        artifact_version="1.0.0",
+        runtime_id=MONITOR_AGENT_RUNTIME_ID,
+        trace_id="monitor-snapshot-20261101T100000Z-112233445566",
+        telemetry_event_ids=["monitor-snapshot-20261101T100000Z-112233445566"],
+        incident_cluster_id=f"{MONITOR_AGENT_CLUSTER_PREFIX}{key}",
+        evidence_summary=(
+            f"component_kind={MONITOR_AGENT_COMPONENT_KIND}; component=agent-finding-{key}; "
+            f"fingerprint={key}; snapshot_ref=monitor-snapshot-20261101T100000Z-112233445566; "
+            "rationale=observed generation change"
+        ),
+        lineage_ref=f"{MONITOR_AGENT_ARTIFACT_PREFIX}{key}@1.0.0",
+    )
+    base.update(kw)
+    return IncidentCase(**base)
+
+
+class TestMonitorAgentFindingDedupeAndResolve(unittest.TestCase):
+    def test_is_monitor_agent_finding_incident_strict_scope(self):
+        agent_inc = _make_agent_finding_incident()
+        self.assertTrue(is_monitor_agent_finding_incident(agent_inc))
+
+        runtime_inc = _make_incident(incident_id="inc-runtime-01")
+        self.assertFalse(is_monitor_agent_finding_incident(runtime_inc))
+
+        drift_inc = _make_incident(
+            incident_id="inc-drift-01",
+            incident_cluster_id="drift:binding-01:runtime-01:position_drift",
+        )
+        self.assertFalse(is_monitor_agent_finding_incident(drift_inc))
+
+        infra_inc = _make_incident(
+            incident_id="infra-health-01",
+            binding_id="infra-subject-default-monitor-agent-svc",
+            deployment_plan_id=MONITOR_AGENT_PLAN_ID,
+            persona_capital_binding_id=MONITOR_AGENT_AUTHORITY_ID,
+            runtime_id="infra-endpoint-1234567890ab",
+        )
+        self.assertFalse(is_monitor_agent_finding_incident(infra_inc))
+
+    def test_canonical_monitor_agent_finding_key_normalizes_noise_families(self):
+        self.assertEqual(
+            canonical_monitor_agent_finding_key(
+                "reconciler-generation-mismatch-gen78",
+                "Reconciler generation advanced to 78",
+                "fence_token jumped after restart",
+            ),
+            "reconciler-generation-change",
+        )
+        self.assertEqual(
+            canonical_monitor_agent_finding_key(
+                "paper-fleet-runtime-count-drift-12",
+                "Paper fleet runtime count changed",
+                "active_runtimes moved from 10 to 12",
+            ),
+            "fleet-size-change",
+        )
+        self.assertEqual(
+            canonical_monitor_agent_finding_key(
+                "telemetry-lag",
+                "Telemetry lag exceeds threshold",
+                "No events observed for 10m",
+            ),
+            "telemetry-lag",
+        )
+
+    def test_resolve_stale_monitor_agent_findings_only_resolves_expired_agent_findings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            stale_agent = _make_agent_finding_incident(
+                incident_id="agent-stale000000000001",
+                created_at="2026-11-01T10:00:00Z",
+            )
+            fresh_agent = _make_agent_finding_incident(
+                incident_id="agent-fresh000000000002",
+                key="fleet-size-change",
+                created_at="2026-11-01T11:30:00Z",
+                trace_id="monitor-snapshot-20261101T113000Z-abcdef123456",
+                telemetry_event_ids=["monitor-snapshot-20261101T113000Z-abcdef123456"],
+                evidence_summary=(
+                    f"component_kind={MONITOR_AGENT_COMPONENT_KIND}; component=agent-finding-fleet-size-change; "
+                    "observed_at=2026-11-01T11:30:00Z; snapshot_ref=monitor-snapshot-20261101T113000Z-abcdef123456"
+                ),
+            )
+            stale_runtime = _make_incident(
+                incident_id="inc-runtime-old",
+                created_at="2026-10-01T00:00:00Z",
+            )
+            store.create_incident(stale_agent)
+            store.create_incident(fresh_agent)
+            store.create_incident(stale_runtime)
+
+            now = datetime(2026, 11, 1, 12, 30, 0, tzinfo=timezone.utc)
+            resolved = store.resolve_stale_monitor_agent_findings(
+                resolve_after_seconds=7200,
+                now=now,
+            )
+            self.assertEqual([inc.incident_id for inc in resolved], ["agent-stale000000000001"])
+
+            reloaded_stale = store.require_incident("agent-stale000000000001")
+            self.assertEqual(reloaded_stale.status, IncidentStatus.RESOLVED.value)
+            self.assertEqual(
+                extract_incident_resolution_reason(reloaded_stale),
+                NOT_REOBSERVED_RESOLUTION_REASON,
+            )
+            self.assertIn("resolution_reason=not_reobserved", reloaded_stale.evidence_summary or "")
+            self.assertIn("resolution_reason:not_reobserved", reloaded_stale.telemetry_event_ids)
+
+            self.assertEqual(store.require_incident("agent-fresh000000000002").status, IncidentStatus.OPEN.value)
+            self.assertEqual(store.require_incident("inc-runtime-old").status, IncidentStatus.OPEN.value)
+
+    def test_reobserved_finding_updates_last_observed_at_and_stays_open(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            inc = _make_agent_finding_incident(
+                incident_id="agent-reobs00000000001",
+                created_at="2026-11-01T10:00:00Z",
+            )
+            store.create_incident(inc)
+            incoming = _make_agent_finding_incident(
+                incident_id="agent-reobs00000000001",
+                created_at="2026-11-01T11:45:00Z",
+                telemetry_event_ids=["monitor-snapshot-20261101T114500Z-999999999999"],
+                evidence_summary=(
+                    f"component_kind={MONITOR_AGENT_COMPONENT_KIND}; "
+                    "observed_at=2026-11-01T11:45:00Z; "
+                    "snapshot_ref=monitor-snapshot-20261101T114500Z-999999999999; "
+                    "rationale=re-observed generation advance"
+                ),
+            )
+            updated = store.merge_incident_evidence("agent-reobs00000000001", incoming)
+            self.assertEqual(
+                extract_incident_last_observed_at(updated),
+                datetime(2026, 11, 1, 11, 45, 0, tzinfo=timezone.utc),
+            )
+
+            now = datetime(2026, 11, 1, 12, 30, 0, tzinfo=timezone.utc)
+            resolved = store.resolve_stale_monitor_agent_findings(
+                resolve_after_seconds=7200,
+                now=now,
+            )
+            self.assertEqual(resolved, [])
+            self.assertEqual(store.require_incident("agent-reobs00000000001").status, IncidentStatus.OPEN.value)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
