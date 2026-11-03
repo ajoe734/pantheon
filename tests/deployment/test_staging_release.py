@@ -87,7 +87,7 @@ FAKE_NATIVE_ENV = {
     "operator-bff": {"BFF_DATA_DIR": "/data/bff"},
 }
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -418,12 +418,29 @@ if tool == "docker":
             mode = os.environ.get(
                 "FAKE_BASELINE_OWNER_HEALTH" if cinfo.get("baseline") else "FAKE_OWNER_HEALTH", ""
             )
+            no_healthcheck_svcs = {
+                "runtime-manager",
+                "operator-bff",
+                "lifecycle-projector",
+                "consultation-svc",
+                "agora-interaction-worker",
+            }
+            starting_health_svc = os.environ.get("FAKE_STARTING_HEALTH_OWNER", "").strip()
             health = ""
-            if mode and target_svc not in {"runtime-manager", "governance", "deployment", "operator-bff", "lifecycle-projector"}:
+            if starting_health_svc and target_svc == starting_health_svc:
+                health = "starting"
+            elif mode and target_svc not in no_healthcheck_svcs | {"governance", "deployment"}:
                 counter = vm_state_file.with_name("health-" + cid + ".count")
                 n = int(counter.read_text()) if counter.exists() else 0
                 counter.write_text(str(n + 1))
-                health = "unhealthy" if mode == "unhealthy" else ("healthy" if n >= 2 else "starting")
+                if mode == "unhealthy":
+                    health = "unhealthy"
+                elif mode == "starting":
+                    health = "starting"
+                else:
+                    health = "healthy" if n >= 2 else "starting"
+            elif target_svc not in no_healthcheck_svcs:
+                health = "healthy"
             if "RestartCount" in fmt:
                 if cinfo.get("baseline"):
                     crashloop_svc = os.environ.get("FAKE_BASELINE_CRASHLOOP_OWNER", "").strip()
@@ -434,13 +451,45 @@ if tool == "docker":
                     )
                 else:
                     crashloop_svc = os.environ.get("FAKE_CRASHLOOP_OWNER", "").strip()
+                short_uptime_svc = os.environ.get("FAKE_SHORT_UPTIME_OWNER", "").strip()
+                early_restart_svc = os.environ.get("FAKE_EARLY_RESTART_OWNER", "").strip()
+                uptime_sec = float(os.environ.get("FAKE_DEFAULT_OWNER_UPTIME_SECONDS", "60"))
                 if crashloop_svc and target_svc == crashloop_svc:
                     rc_file = vm_state_file.with_name("restart-" + cid + ".count")
                     rc = int(rc_file.read_text()) if rc_file.exists() else 0
                     rc_file.write_text(str(rc + 1))
+                    uptime_sec = 3.0
+                elif short_uptime_svc and target_svc == short_uptime_svc:
+                    sb_file = vm_state_file.with_name("short-uptime-" + cid + ".count")
+                    sb_n = int(sb_file.read_text()) if sb_file.exists() else 0
+                    sb_file.write_text(str(sb_n + 1))
+                    rc = int(cinfo.get("restart_count", 0))
+                    uptime_sec = float(os.environ.get("FAKE_SHORT_UPTIME_SECONDS", "3"))
+                elif early_restart_svc and target_svc == early_restart_svc:
+                    er_file = vm_state_file.with_name("early-restart-" + cid + ".count")
+                    er_n = int(er_file.read_text()) if er_file.exists() else 0
+                    er_file.write_text(str(er_n + 1))
+                    if er_n == 0:
+                        rc = 0
+                        uptime_sec = 2.0
+                    elif er_n == 1:
+                        rc = 1
+                        uptime_sec = 3.0
+                    elif er_n == 2:
+                        rc = 1
+                        uptime_sec = 8.0
+                    else:
+                        rc = 1
+                        uptime_sec = 20.0
                 else:
                     rc = int(cinfo.get("restart_count", 0))
-                print(f"{running} {rc}" + (f" {health}" if health else ""))
+                if "State.StartedAt" in fmt:
+                    inspect_started_at = (
+                        datetime.now(timezone.utc) - timedelta(seconds=uptime_sec)
+                    ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    print(f"{running} {rc} {inspect_started_at}" + (f" {health}" if health else ""))
+                else:
+                    print(f"{running} {rc}" + (f" {health}" if health else ""))
             else:
                 print(running + (" " + health if health else ""))
         elif "State.Status" in fmt:
@@ -4476,8 +4525,108 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(ver_ok.returncode, 0, ver_ok.stderr + ver_ok.stdout)
         self.assertEqual(json.loads(ver_ok.stdout)["status"], "staging_verified")
 
+    def test_short_uptime_early_restart_and_starting_healthcheck_owner_readiness(self) -> None:
+        base_prov_env = self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_READY_INTERVAL="0")
+        subprocess.run([str(PROVISION_SCRIPT)], env=base_prov_env, capture_output=True, text=True, check=True)
+        self._unlock_vm_env_dir()
+        (self.vm_env_dir / "pg-sim").mkdir(exist_ok=True)
+        initial_vm_state = self.vm_runtime_state_file.read_bytes()
+        self._lock_root_owned_paths()
+
+        def reset_vm_state() -> None:
+            self._unlock_vm_env_dir()
+            self.vm_runtime_state_file.write_bytes(initial_vm_state)
+            for cnt_file in self.vm_env_dir.glob("*.count"):
+                cnt_file.unlink(missing_ok=True)
+            self._lock_root_owned_paths()
+
+        # 1. Crash-looping fake with Running=true and RestartCount unchanged on two consecutive samples,
+        #    but StartedAt only 3s old (< STAGING_OWNER_MIN_UPTIME_SECONDS=15), is unserved.
+        for svc_name, expected_code in (
+            ("governance", "CORE_OWNER_UNSERVED"),
+            ("consultation-svc", "PRODUCT_OWNER_UNSERVED"),
+        ):
+            with self.subTest(case=f"short_uptime_{svc_name}"):
+                reset_vm_state()
+                ver_short = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_SHORT_UPTIME_OWNER=svc_name,
+                        FAKE_SHORT_UPTIME_SECONDS="3",
+                        STAGING_READY_INTERVAL="0.05",
+                        STAGING_OWNER_READY_TIMEOUT="0.2",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver_short.returncode, 0, f"{svc_name} with 3s StartedAt unexpectedly passed")
+                self.assertIn(expected_code, ver_short.stderr + ver_short.stdout)
+                self.assertIn(svc_name, ver_short.stderr + ver_short.stdout)
+
+        # 2. A fake that restarts once early (RestartCount 0 -> 1) and is then stable with sufficient
+        #    uptime (>= 15s) is served.
+        for svc_name in ("governance",):
+            with self.subTest(case=f"early_single_restart_{svc_name}"):
+                reset_vm_state()
+                ver_early = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_EARLY_RESTART_OWNER=svc_name,
+                        STAGING_READY_INTERVAL="0",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(ver_early.returncode, 0, ver_early.stderr + ver_early.stdout)
+                self.assertEqual(json.loads(ver_early.stdout)["status"], "staging_verified")
+
+        # 3. A healthcheck owner reporting "starting" is unserved.
+        for svc_name, expected_code in (
+            ("governance", "CORE_OWNER_UNSERVED"),
+            ("registry", "PRODUCT_OWNER_UNSERVED"),
+        ):
+            with self.subTest(case=f"starting_health_{svc_name}"):
+                reset_vm_state()
+                ver_starting = subprocess.run(
+                    [str(VERIFY_SCRIPT)],
+                    env=self._base_env(
+                        RELEASE_ID="pantheon-20261024-001",
+                        FAKE_STARTING_HEALTH_OWNER=svc_name,
+                        STAGING_READY_INTERVAL="0.05",
+                        STAGING_OWNER_READY_TIMEOUT="0.2",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ver_starting.returncode, 0, f"{svc_name} with starting health unexpectedly passed")
+                self.assertIn(expected_code, ver_starting.stderr + ver_starting.stdout)
+                self.assertIn(svc_name, ver_starting.stderr + ver_starting.stdout)
+
 
 class WorkflowAndTemplateContractTests(unittest.TestCase):
+    def test_rendered_compose_has_governance_and_deployment_healthchecks_on_health(self) -> None:
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))
+        services = compose["services"]
+        for svc_name, port in (("governance", 8082), ("deployment", 8095)):
+            with self.subTest(service=svc_name):
+                hc = services[svc_name].get("healthcheck")
+                self.assertIsInstance(hc, dict, f"{svc_name} missing healthcheck")
+                self.assertEqual(
+                    hc["test"],
+                    [
+                        "CMD",
+                        "python",
+                        "-c",
+                        f"import urllib.request; urllib.request.urlopen('http://127.0.0.1:{port}/health', timeout=5).read()",
+                    ],
+                )
+                self.assertEqual(hc["interval"], "10s")
+                self.assertEqual(hc["timeout"], "5s")
+                self.assertEqual(hc["retries"], 10)
+                self.assertEqual(hc["start_period"], "15s")
+
     def test_ephemeral_workflow_wires_public_identity_vars_to_host(self) -> None:
         raw = EPHEMERAL_WORKFLOW.read_text(encoding="utf-8")
         ops = (REPO_ROOT / "scripts" / "deploy" / "staging_ops.sh").read_text(encoding="utf-8")
