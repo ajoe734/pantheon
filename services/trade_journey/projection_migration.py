@@ -44,6 +44,7 @@ from services.trade_journey.lifecycle_projector import (
     _fingerprint,
 )
 from services.trade_journey.materializer import (
+    RECONCILIATION_DEADLINE_SECONDS,
     IDENTIFIER_FIELDS,
     JourneyMaterializer,
     SHARED_IDENTIFIER_TYPES,
@@ -1334,3 +1335,93 @@ def projection_quarantine_rows(rows: Iterable[Any]) -> list[dict[str, Any]]:
         {"event_id": _field(row, "event_id"), "ingested_seq": _field(row, "ingested_seq")}
         for row in rows
     ]
+
+
+# Rules mirror JourneyMaterializer._rollup / deadline_status:
+#   order_submission skipped                                   -> no_order
+#   open, past deadline, reconciliation absent, no order stage -> no_order
+#   open, past deadline, reconciliation absent, order stage    -> unreconciled
+# Plain SQL (no stored routine): the runtime-role reconcile refuses custom routines.
+RECLASSIFY_STALE_OPEN_SQL = """
+WITH candidates AS (
+    SELECT tenant_id, environment, journey_id,
+           CASE
+               WHEN stage_coverage -> 'order_submission' ->> 'status' = 'skipped' THEN 'no_order'
+               WHEN stage_coverage ? 'order_submission' THEN 'unreconciled'
+               ELSE 'no_order'
+           END AS target_status
+    FROM trade_journey_projection.journeys
+    WHERE status = 'open'
+      AND NOT (stage_coverage ? 'reconciliation')
+      AND (
+          stage_coverage -> 'order_submission' ->> 'status' = 'skipped'
+          OR last_occurred_at < %(as_of)s::timestamptz - make_interval(secs => %(deadline_seconds)s)
+      )
+    ORDER BY tenant_id, environment, journey_id
+    LIMIT %(batch_size)s
+    FOR UPDATE SKIP LOCKED
+), updated AS (
+    UPDATE trade_journey_projection.journeys j
+    SET status = c.target_status,
+        is_terminal = TRUE,
+        projection_revision = j.projection_revision + 1
+    FROM candidates c
+    WHERE j.tenant_id = c.tenant_id
+      AND j.environment = c.environment
+      AND j.journey_id = c.journey_id
+    RETURNING c.target_status
+)
+SELECT target_status, COUNT(*)::BIGINT FROM updated GROUP BY target_status
+"""
+
+
+def sql_reclassify_batch_runner(connect: Callable[[], Any]) -> Callable[[datetime, int, int], Mapping[str, int]]:
+    """Build a ``run_batch`` that runs ``RECLASSIFY_STALE_OPEN_SQL`` in one short transaction.
+
+    ``connect()`` returns a psycopg connection usable as a context manager.
+    """
+
+    def run_batch(as_of: datetime, deadline_seconds: int, batch_size: int) -> Mapping[str, int]:
+        params = {
+            "as_of": as_of,
+            "deadline_seconds": int(deadline_seconds),
+            "batch_size": max(1, min(int(batch_size), 10000)),
+        }
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(RECLASSIFY_STALE_OPEN_SQL, params)
+            return {status: int(count) for status, count in cur.fetchall()}
+
+    return run_batch
+
+
+def reclassify_stale_open_journeys(
+    run_batch: Callable[[datetime, int, int], Mapping[str, int]],
+    *,
+    as_of: datetime | None = None,
+    deadline_seconds: int = RECONCILIATION_DEADLINE_SECONDS,
+    batch_size: int = 1000,
+    max_batches: int = 100,
+) -> dict[str, Any]:
+    """Drive the bounded reclassification SQL (``RECLASSIFY_STALE_OPEN_SQL``).
+
+    ``run_batch(as_of, deadline_seconds, batch_size)`` executes one short
+    transaction and returns ``{new_status: rows}``. Reclassified rows leave
+    ``open``, so rerunning resumes where the last call stopped; a run bounded by
+    ``max_batches`` reports ``complete=False`` and is simply invoked again.
+    """
+    if batch_size < 1 or max_batches < 1:
+        raise ValueError("batch_size and max_batches must be positive")
+    as_of = as_of or datetime.now(timezone.utc)
+    totals: dict[str, int] = {}
+    batches = 0
+    complete = False
+    while batches < max_batches:
+        counts = run_batch(as_of, deadline_seconds, batch_size)
+        batches += 1
+        moved = sum(int(value) for value in counts.values())
+        for status, value in counts.items():
+            totals[status] = totals.get(status, 0) + int(value)
+        if moved < batch_size:
+            complete = True
+            break
+    return {"batches": batches, "reclassified": totals, "complete": complete}
