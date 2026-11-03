@@ -4201,6 +4201,12 @@ def _reconcile_persona_provisioning_once() -> int:
 
 
 # --- _persona_provisioning_reconciler_loop ---
+def _reconcile_persona_provisioning_pass() -> Any:
+    """One background pass in its own fresh read scope (never shared across passes)."""
+    with request_read_scope():
+        return _reconcile_persona_provisioning_once()
+
+
 async def _persona_provisioning_reconciler_loop() -> None:
     interval = max(
         1,
@@ -4209,7 +4215,7 @@ async def _persona_provisioning_reconciler_loop() -> None:
     while True:
         await asyncio.sleep(interval)
         try:
-            await asyncio.to_thread(_reconcile_persona_provisioning_once)
+            await asyncio.to_thread(_reconcile_persona_provisioning_pass)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

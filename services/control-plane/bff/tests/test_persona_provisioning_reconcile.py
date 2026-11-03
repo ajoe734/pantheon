@@ -1163,3 +1163,95 @@ def test_background_pass_records_bounded_structure_only_summary_while_worker_mis
         }
         assert all(isinstance(v, int) for v in summary["counts"].values())
         assert len(json.dumps(summary)) < 600
+
+
+def test_lifespan_background_loop_promotes_when_worker_session_appears_later(monkeypatch) -> None:
+    """Real middleware + ASGI lifespan + real loop and pass; no manual reconcile.
+
+    The paper worker session only appears after the first pass. With the
+    process-lifetime lifespan cache the direct per-Persona session read stays
+    frozen at the first pass's empty result and the Persona never promotes.
+    """
+    import asyncio
+
+    from starlette.middleware import Middleware
+
+    from services.control_plane.bff.auth.service import ProviderReadinessCache
+    from services.control_plane.bff.core.lifespan import create_lifespan
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+
+    monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS", "1")
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, meta = _ready_persona(client, monkeypatch, "bg-lifespan-late-worker")
+        _install_owner_cron_jobs(
+            monkeypatch,
+            persona_id=persona_id,
+            meta=meta,
+            runtime_id=f"runtime-{persona_id[-12:]}",
+            runtime_binding_id=f"rb-{persona_id[-12:]}",
+        )
+        ready_sessions = _state.read_store.list_authoritative_paper_runtime_monitoring_sessions()
+        assert len(ready_sessions) == 1
+        # Use the real read-surface method (it reads the fleet state through
+        # cached_owner_call) fed by a provider that only has the worker later.
+        del _state.read_store.list_authoritative_paper_runtime_monitoring_sessions
+        appeared = {"on": False}
+        _state.read_store._paper_runtime_monitoring_sessions_provider = (
+            lambda: list(ready_sessions) if appeared["on"] else []
+        )
+        real_snapshot = _persona_service_module._persona_readback_snapshot
+        passes = {"n": 0}
+
+        def snapshot_counting_passes():
+            passes["n"] += 1
+            if passes["n"] == 2:
+                appeared["on"] = True  # worker joins only after the first pass
+            return real_snapshot()
+
+        monkeypatch.setattr(
+            _persona_service_module, "_persona_readback_snapshot", snapshot_counting_passes
+        )
+
+        async def probe():
+            return {}
+
+        lp = create_lifespan(
+            ProviderReadinessCache(probe=probe, stale_after_seconds=10.0),
+            prewarm_jwks=False,
+            downstream_health_monitor=None,
+        )
+        app = FastAPI(lifespan=lp)
+        app.user_middleware.append(Middleware(OwnerReadContextMiddleware))
+        app.middleware_stack = None
+
+        async def drive():
+            # Drive the lifespan scope through the real middleware stack.
+            queue: asyncio.Queue = asyncio.Queue()
+            sent: list = []
+
+            async def receive():
+                return await queue.get()
+
+            async def send(message):
+                sent.append(message["type"])
+
+            task = asyncio.create_task(app({"type": "lifespan", "asgi": {}}, receive, send))
+            await queue.put({"type": "lifespan.startup"})
+            for _ in range(100):
+                if "lifespan.startup.complete" in sent:
+                    break
+                await asyncio.sleep(0.05)
+            assert "lifespan.startup.complete" in sent
+            for _ in range(120):
+                if _state.read_store.get_persona(persona_id)["lifecycle_state"] == "paper_running":
+                    break
+                await asyncio.sleep(0.1)
+            await queue.put({"type": "lifespan.shutdown"})
+            await task
+
+        asyncio.run(drive())
+
+        assert passes["n"] >= 2
+        assert _state.read_store.get_persona(persona_id)["lifecycle_state"] == "paper_running"
