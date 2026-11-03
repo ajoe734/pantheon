@@ -43,11 +43,15 @@ from services.incident.incident import (
     MONITOR_AGENT_POOL_ID,
     MONITOR_AGENT_RUNTIME_ID,
     NOT_REOBSERVED_RESOLUTION_REASON,
+    ORPHAN_RECOVERED_RESOLUTION_REASON,
     Postmortem,
     PostmortemStatus,
     canonical_monitor_agent_finding_key,
     extract_incident_last_observed_at,
     extract_incident_resolution_reason,
+    extract_infrastructure_incident_component,
+    extract_infrastructure_incident_referenced_ids,
+    is_infrastructure_health_incident,
     is_monitor_agent_finding_incident,
     validate_incident_case,
     validate_postmortem,
@@ -960,6 +964,145 @@ class TestMonitorAgentFindingDedupeAndResolve(unittest.TestCase):
             )
             self.assertEqual(resolved, [])
             self.assertEqual(store.require_incident("agent-reobs00000000001").status, IncidentStatus.OPEN.value)
+
+
+def _make_infra_health_incident(
+    incident_id: str = "infra-bff-0847594c513bbe71b6aedcd3",
+    component: str = "governance",
+    created_at: str = "2026-10-22T08:00:00Z",
+    source_event_id: str = "evt-infra-001",
+    **kw,
+) -> IncidentCase:
+    base = dict(
+        incident_id=incident_id,
+        title=f"BFF downstream degradation: {component}",
+        status="open",
+        severity="high",
+        created_at=created_at,
+        binding_id=f"infra-subject-default-control-plane-bff-{component}",
+        deployment_stage="paper",
+        deployment_plan_id="infra-plan-control-plane-bff",
+        capital_pool_id="infra-tenant-default",
+        persona_capital_binding_id="infra-authority-control-plane-bff",
+        artifact_id=f"infra-component-{component}",
+        artifact_version="endpoint-1234567890ab",
+        runtime_id="infra-endpoint-1234567890ab",
+        trace_id=source_event_id,
+        telemetry_event_ids=[source_event_id],
+        incident_cluster_id=f"infrastructure:default:control-plane-bff:{component}",
+        evidence_summary=(
+            f"non_trading_infrastructure_incident=true; tenant_id=default; "
+            f"producer=control-plane-bff; service_name={component}; "
+            f"component_kind=http_service; endpoint=http://{component}:8080/__health__; "
+            f"source_event_id={source_event_id}"
+        ),
+        lineage_ref=f"infra-component-{component}@endpoint-1234567890ab",
+    )
+    base.update(kw)
+    return IncidentCase(**base)
+
+
+class TestInfrastructureIncidentOrphanResolve(unittest.TestCase):
+    def test_is_infrastructure_health_incident_strict_scope(self):
+        infra_inc = _make_infra_health_incident()
+        self.assertTrue(is_infrastructure_health_incident(infra_inc))
+        self.assertEqual(extract_infrastructure_incident_component(infra_inc), "governance")
+
+        agent_inc = _make_agent_finding_incident()
+        self.assertFalse(is_infrastructure_health_incident(agent_inc))
+        self.assertIsNone(extract_infrastructure_incident_component(agent_inc))
+
+        runtime_inc = _make_incident(incident_id="inc-runtime-01")
+        self.assertFalse(is_infrastructure_health_incident(runtime_inc))
+
+        drift_inc = _make_incident(
+            incident_id="inc-drift-01",
+            incident_cluster_id="drift:binding-01:runtime-01:position_drift",
+        )
+        self.assertFalse(is_infrastructure_health_incident(drift_inc))
+
+        deploy_inc = _make_incident(
+            incident_id="inc-deploy-01",
+            incident_cluster_id="deployment:plan-01:rollout_failed",
+        )
+        self.assertFalse(is_infrastructure_health_incident(deploy_inc))
+
+    def test_upsert_open_infrastructure_incident_merges_second_open_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            first = _make_infra_health_incident(
+                incident_id="infra-bff-0847594c513bbe71b6aedcd3",
+                component="governance",
+                created_at="2026-10-22T08:00:00Z",
+                source_event_id="evt-gov-1022",
+            )
+            second = _make_infra_health_incident(
+                incident_id="infra-bff-2b8541b81f8d5796101ad57e",
+                component="governance",
+                created_at="2026-10-27T01:32:00Z",
+                source_event_id="evt-gov-1027",
+            )
+            inc1, created1 = store.upsert_open_infrastructure_incident(first)
+            self.assertTrue(created1)
+            self.assertEqual(inc1.incident_id, "infra-bff-0847594c513bbe71b6aedcd3")
+
+            inc2, created2 = store.upsert_open_infrastructure_incident(second)
+            self.assertFalse(created2)
+            self.assertEqual(inc2.incident_id, "infra-bff-0847594c513bbe71b6aedcd3")
+            self.assertEqual(
+                len(store.find_open_infrastructure_incidents_for_component("governance")),
+                1,
+            )
+            self.assertIn("evt-gov-1027", inc2.telemetry_event_ids)
+            self.assertIn(
+                "infra-bff-2b8541b81f8d5796101ad57e",
+                extract_infrastructure_incident_referenced_ids(inc2),
+            )
+            alias_found = store.find_infrastructure_incident_by_id_or_alias(
+                "infra-bff-2b8541b81f8d5796101ad57e"
+            )
+            self.assertIsNotNone(alias_found)
+            self.assertEqual(alias_found.incident_id, "infra-bff-0847594c513bbe71b6aedcd3")
+
+    def test_resolve_orphaned_infrastructure_incidents_records_orphan_recovered(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            orphan_gov = _make_infra_health_incident(
+                incident_id="infra-bff-0847594c513bbe71b6aedcd3",
+                component="governance",
+                created_at="2026-10-22T08:00:00Z",
+            )
+            referenced_cap = _make_infra_health_incident(
+                incident_id="infra-bff-cap-active",
+                component="capital",
+                created_at="2026-11-03T01:00:00Z",
+            )
+            agent_inc = _make_agent_finding_incident(incident_id="agent-keep-open-001")
+            runtime_inc = _make_incident(incident_id="inc-runtime-keep-open")
+
+            store.create_incident(orphan_gov)
+            store.create_incident(referenced_cap)
+            store.create_incident(agent_inc)
+            store.create_incident(runtime_inc)
+
+            resolved = store.resolve_orphaned_infrastructure_incidents(
+                healthy_components=["governance", "capital"],
+                referenced_incident_ids=["infra-bff-cap-active"],
+                resolved_at="2026-11-03T02:00:00Z",
+            )
+            self.assertEqual([i.incident_id for i in resolved], ["infra-bff-0847594c513bbe71b6aedcd3"])
+            reloaded = store.require_incident("infra-bff-0847594c513bbe71b6aedcd3")
+            self.assertEqual(reloaded.status, IncidentStatus.RESOLVED.value)
+            self.assertEqual(
+                extract_incident_resolution_reason(reloaded),
+                ORPHAN_RECOVERED_RESOLUTION_REASON,
+            )
+            self.assertIn("resolution_reason=orphan_recovered", reloaded.evidence_summary or "")
+            self.assertIn("resolution_reason:orphan_recovered", reloaded.telemetry_event_ids)
+
+            self.assertEqual(store.require_incident("infra-bff-cap-active").status, IncidentStatus.OPEN.value)
+            self.assertEqual(store.require_incident("agent-keep-open-001").status, IncidentStatus.OPEN.value)
+            self.assertEqual(store.require_incident("inc-runtime-keep-open").status, IncidentStatus.OPEN.value)
 
 
 if __name__ == "__main__":
