@@ -15,7 +15,18 @@ STAGES = (
     "order_submission", "broker_acknowledgement", "fill_management",
     "ledger_booking", "reconciliation",
 )
-TERMINAL_STATUSES = {"completed", "completed_with_variance", "failed", "cancelled", "expired"}
+# ``no_order``: the trade decision skipped order submission, so nothing exists to
+# reconcile. ``unreconciled``: an order path stopped before reconciliation and the
+# documented deadline passed; it is terminal but never a ``completed`` variant.
+TERMINAL_STATUSES = {
+    "completed", "completed_with_variance", "failed", "cancelled", "expired",
+    "no_order", "unreconciled",
+}
+# Reconciliation deadline: producers emit reconciliation within hours of ledger
+# booking; journeys older than this without it can no longer be reconciled.
+RECONCILIATION_DEADLINE_SECONDS = int(
+    os.getenv("PANTHEON_TRADE_JOURNEY_RECONCILIATION_DEADLINE_SECONDS", str(72 * 3600))
+)
 IDENTIFIER_FIELDS = (
     "research_journey_id", "strategy_lifecycle_id", "persona_id", "strategy_id",
     "signal_id", "decision_id",
@@ -96,7 +107,16 @@ class JourneyMaterializer:
     duplicate carrying different content fails closed.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        as_of: datetime | None = None,
+        reconciliation_deadline_seconds: int = RECONCILIATION_DEADLINE_SECONDS,
+    ) -> None:
+        # ``as_of`` is None for pure replays so rebuilds stay deterministic;
+        # only the live projector supplies its clock for the deadline rule.
+        self._as_of = as_of
+        self._reconciliation_deadline_seconds = reconciliation_deadline_seconds
         self._events: dict[str, dict[str, Any]] = {}
         self._event_fingerprints: dict[str, str] = {}
         self._projections: dict[tuple[str, str, str], JourneyProjection] = {}
@@ -218,6 +238,11 @@ class JourneyMaterializer:
 
         status = self._rollup(stages, corrections, explicit_cancel, diagnostics)
         occurred = [event["occurred_at"] for event in events]
+        if status == "open" and self._as_of is not None:
+            status = self.deadline_status(
+                stages, self._instant(max(occurred, key=self._instant)),
+                self._as_of, self._reconciliation_deadline_seconds,
+            ) or status
         snapshot = {
             "journey_id": journey_id, "tenant_id": tenant_id, "environment": environment,
             "status": status, "stages": stages, "revision": len(events),
@@ -259,7 +284,24 @@ class JourneyMaterializer:
             return "partially_filled"
         if statuses.get("order_submission") == "succeeded" and statuses.get("fill_management") == "active":
             return "executing"
+        if statuses.get("order_submission") == "skipped":
+            return "no_order"
         return "open" if stages else "incomplete"
+
+    @staticmethod
+    def deadline_status(stages: Mapping[str, Any], last_occurred: datetime, as_of: datetime,
+                        deadline_seconds: int = RECONCILIATION_DEADLINE_SECONDS) -> str | None:
+        """Terminal status for an open journey past the reconciliation deadline.
+
+        Returns None while the journey can still be reconciled. A journey that
+        never reached order submission has nothing to reconcile (``no_order``);
+        one with an order but no reconciliation is ``unreconciled``.
+        """
+        if (as_of - last_occurred).total_seconds() <= deadline_seconds:
+            return None
+        if "reconciliation" in stages:
+            return None
+        return "unreconciled" if "order_submission" in stages else "no_order"
 
     @staticmethod
     def _terminal_indicators(stages: Mapping[str, Mapping[str, Any]], cancelled: bool) -> set[str]:

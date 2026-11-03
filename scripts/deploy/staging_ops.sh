@@ -397,13 +397,43 @@ PY
     cp "${SCRIPT_DIR}/release_manifest.py" "${STAGE_BUNDLE_DIR}/release_manifest.py"
     chmod 0755 "${STAGE_BUNDLE_DIR}/bootstrap.sh" "${STAGE_BUNDLE_DIR}/pantheon-staging-collect-gates"
 
+    if [[ ! "${BFF_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+      rm -rf "${STAGE_BUNDLE_DIR}"
+      die_json "MIGRATION_RENDER_FAILED" "Invalid release backend commit format (reason=invalid_backend_commit)"
+    fi
+    if ! git -C "${REPO_ROOT}" cat-file -e "${BFF_COMMIT}^{commit}" 2>/dev/null; then
+      if ! git -C "${REPO_ROOT}" fetch --no-tags --depth=1 origin "${BFF_COMMIT}" >/dev/null 2>&1 \
+        || ! git -C "${REPO_ROOT}" cat-file -e "${BFF_COMMIT}^{commit}" 2>/dev/null; then
+        rm -rf "${STAGE_BUNDLE_DIR}"
+        die_json "MIGRATION_RENDER_FAILED" "Failed to fetch release backend commit ${BFF_COMMIT} (reason=backend_commit_fetch_failed)"
+      fi
+    fi
+    if [[ "$(git -C "${REPO_ROOT}" cat-file -t "${BFF_COMMIT}:services/trade_journey/migrations" 2>/dev/null || true)" != "tree" ]]; then
+      rm -rf "${STAGE_BUNDLE_DIR}"
+      die_json "MIGRATION_RENDER_FAILED" "Release backend commit ${BFF_COMMIT} is missing services/trade_journey/migrations (reason=migration_path_missing)"
+    fi
+    MIGRATION_SRC_TMP_DIR="$(mktemp -d "${STATE_DIR}/artifacts/migration-src-${RELEASE_ID}-XXXXXX")"
+    if ! (
+      set -o pipefail
+      git -C "${REPO_ROOT}" archive --format=tar "${BFF_COMMIT}" services/trade_journey/migrations \
+        | tar -xf - -C "${MIGRATION_SRC_TMP_DIR}"
+    ) >/dev/null 2>&1; then
+      rm -rf "${MIGRATION_SRC_TMP_DIR}" "${STAGE_BUNDLE_DIR}"
+      die_json "MIGRATION_RENDER_FAILED" "Failed to materialize services/trade_journey/migrations from ${BFF_COMMIT} (reason=migration_archive_failed)"
+    fi
+    MIGRATION_COMMIT_SRC_DIR="${MIGRATION_SRC_TMP_DIR}/services/trade_journey/migrations"
+    if [[ ! -d "${MIGRATION_COMMIT_SRC_DIR}" ]]; then
+      rm -rf "${MIGRATION_SRC_TMP_DIR}" "${STAGE_BUNDLE_DIR}"
+      die_json "MIGRATION_RENDER_FAILED" "Materialized migration directory missing for ${BFF_COMMIT} (reason=migration_path_missing)"
+    fi
     if ! python3 "${SCRIPT_DIR}/prod_preflight.py" migration render \
       "${RELEASE_MANIFEST_PATH}" \
       "${STAGE_BUNDLE_DIR}/migration-material" \
-      --src "${REPO_ROOT}/services/trade_journey/migrations" >/dev/null 2>&1; then
-      rm -rf "${STAGE_BUNDLE_DIR}"
-      die_json "MIGRATION_RENDER_FAILED" "Failed to render and verify versioned migration material against release manifest"
+      --src "${MIGRATION_COMMIT_SRC_DIR}" >/dev/null 2>&1; then
+      rm -rf "${MIGRATION_SRC_TMP_DIR}" "${STAGE_BUNDLE_DIR}"
+      die_json "MIGRATION_RENDER_FAILED" "Failed to render and verify versioned migration material against release manifest (reason=migration_digest_or_spec_mismatch)"
     fi
+    rm -rf "${MIGRATION_SRC_TMP_DIR}"
     tar -czf "${STAGE_BUNDLE_DIR}/migration-material.tar.gz" \
       -C "${STAGE_BUNDLE_DIR}/migration-material" \
       migration-spec.json migrations

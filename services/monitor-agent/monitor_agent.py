@@ -38,6 +38,8 @@ FINDINGS_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
+                    "incident_id": {"type": ["string", "null"], "maxLength": 120},
+                    "ref": {"type": ["string", "null"], "maxLength": 120},
                     "fingerprint": {"type": "string", "maxLength": 120},
                     "title": {"type": "string", "maxLength": 200},
                     "severity": {"type": "string", "enum": SEVERITIES},
@@ -104,12 +106,26 @@ def _omitted_note(count: int) -> str:
     return f"\nOMITTED_INCIDENTS={count} ({count} open incidents omitted / left out due to prompt limit)" if count else ""
 
 
+def _stable_incident_ref(inc: dict[str, Any]) -> str:
+    return str(
+        inc.get("incident_id")
+        or inc.get("ref")
+        or inc.get("incident_cluster_id")
+        or inc.get("title")
+        or "open-incident"
+    )
+
+
 def build_prompt(snapshot: dict[str, Any], open_incidents: list[dict[str, Any]]) -> str:
     base = (
         "You are a read-only monitor. Compare the snapshot with the open incidents. Report only "
         "anomalies in runtime status, drawdown, fill rate, slippage, persona health or control-loop "
-        "health that NO open incident already covers. Reuse the same fingerprint for the same "
-        "underlying anomaly. Return an empty findings list when nothing is unexplained.\n"
+        "health that NO open incident already covers. Each open monitor-agent finding incident in "
+        "OPEN_INCIDENTS carries a stable reference ('incident_id' / 'ref'). When a finding updates "
+        "an existing open finding incident, set 'incident_id' (or 'ref' / 'fingerprint') to that "
+        "stable reference so it merges into the open incident instead of opening a new one. Reuse "
+        "the same fingerprint for the same underlying anomaly. Return an empty findings list when "
+        "nothing is unexplained.\n"
     )
     snap = f"\nSNAPSHOT={json.dumps(snapshot)}"
     covered: list[dict[str, Any]] = []
@@ -117,7 +133,16 @@ def build_prompt(snapshot: dict[str, Any], open_incidents: list[dict[str, Any]])
         summary = inc.get("evidence_summary")
         if isinstance(summary, str) and len(summary) > MAX_INCIDENT_SUMMARY_CHARS:
             summary = summary[:MAX_INCIDENT_SUMMARY_CHARS] + "... [truncated]"
-        cand = covered + [{"title": inc.get("title"), "cluster": inc.get("incident_cluster_id"), "summary": summary}]
+        stable_ref = _stable_incident_ref(inc)
+        cand = covered + [
+            {
+                "incident_id": stable_ref,
+                "ref": stable_ref,
+                "title": inc.get("title"),
+                "cluster": inc.get("incident_cluster_id"),
+                "summary": summary,
+            }
+        ]
         note = _omitted_note(len(open_incidents) - len(cand))
         if len(f"{base}OPEN_INCIDENTS={json.dumps(cand)}{note}{snap}") > MAX_PROMPT_CHARS:
             break
@@ -193,7 +218,10 @@ def run_once(
         snapshot = collect_snapshot(sources, fetch, headers)
         open_incidents = fetch(f"{incidents_url}/api/incidents?open_only=true")
         ref = snapshot_ref(snapshot)
-        findings = ask_agent(build_prompt(snapshot, open_incidents), adapter_url, adapter_token, fetch)
+        prompt = build_prompt(snapshot, open_incidents)
+        if "\nOMITTED_INCIDENTS=" in prompt:
+            raise Degraded("open incidents omitted from prompt due to MAX_PROMPT_CHARS")
+        findings = ask_agent(prompt, adapter_url, adapter_token, fetch)
     except Exception as exc:
         return {"status": "degraded", "reason": str(exc), "created": 0, "updated": 0}
 
@@ -203,10 +231,17 @@ def run_once(
         if created >= MAX_PER_RUN or not limiter.reserve(reserved_at):
             skipped += 1
             continue
+        payload: dict[str, Any] = {
+            **{k: finding.get(k) for k in ("fingerprint", "title", "severity", "rationale")},
+            "snapshot_ref": ref,
+        }
+        inc_ref = finding.get("incident_id") or finding.get("ref")
+        if inc_ref:
+            payload["incident_id"] = str(inc_ref).strip()
         try:
             resp = fetch(
                 f"{incidents_url}/api/incidents/consume-agent-finding",
-                data={**{k: finding.get(k) for k in ("fingerprint", "title", "severity", "rationale")}, "snapshot_ref": ref},
+                data=payload,
             )
         except Exception:
             skipped += 1  # outcome unknown: the reservation is kept so a lost 201 still counts

@@ -13,6 +13,9 @@ from .incident import (
     IncidentError,
     IncidentStore,
     Postmortem,
+    _serialized_store_write,
+    extract_infrastructure_incident_component,
+    is_infrastructure_health_incident,
 )
 
 
@@ -147,6 +150,58 @@ class PostgresIncidentStore(IncidentStore):
                     f"{self._aggregate_name(aggregate_type)} changed concurrently "
                     f"before durable write: {record_id}"
                 )
+
+    def _persist_batch_incident_updates(
+        self,
+        transitions: list[tuple[str, Mapping[str, Any], IncidentCase]],
+    ) -> list[IncidentCase]:
+        """Persist a batch of guarded IncidentCase updates in one transaction.
+
+        If a specific row changed concurrently (e.g. a finding was just
+        re-observed by another instance), only that row is skipped rather than
+        aborting the rest of the batch.
+        """
+        if not transitions:
+            return []
+        if "_save" in self.__dict__ or type(self)._save is not PostgresIncidentStore._save:
+            return super()._persist_batch_incident_updates(transitions)
+
+        owner = self._incident_records
+        resolved: list[IncidentCase] = []
+        with owner._connect() as conn:
+            for record_id, expected_snapshot, updated in transitions:
+                encoded_desired = json.dumps(updated.to_dict(), ensure_ascii=True, sort_keys=True)
+                encoded_expected = json.dumps(dict(expected_snapshot), ensure_ascii=True, sort_keys=True)
+                cursor = conn.execute(
+                    f"""
+                    UPDATE {owner.table}
+                    SET payload = %s::jsonb, updated_at = now()
+                    WHERE record_id = %s AND payload = %s::jsonb
+                    RETURNING payload
+                    """,
+                    (encoded_desired, record_id, encoded_expected),
+                )
+                if owner._fetch_one(cursor) is not None:
+                    self._incidents[record_id] = updated
+                    resolved.append(updated)
+                else:
+                    self._incidents[record_id] = IncidentCase.from_dict(dict(expected_snapshot))
+        return resolved
+
+    @_serialized_store_write
+    def upsert_open_infrastructure_incident(
+        self,
+        incoming: IncidentCase,
+    ) -> tuple[IncidentCase, bool]:
+        """Postgres-backed single-open-per-component upsert with CAS retry."""
+        for attempt in range(3):
+            try:
+                return super().upsert_open_infrastructure_incident(incoming)
+            except IncidentConcurrencyError:
+                if attempt == 2:
+                    raise
+                self._refresh_from_disk()
+        return super().upsert_open_infrastructure_incident(incoming)
 
     def _owner_and_payload(
         self,

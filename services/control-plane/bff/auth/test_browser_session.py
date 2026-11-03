@@ -107,6 +107,38 @@ def test_browser_login_reload_business_and_durable_logout(app_factory):
         assert restarted.get("/api/v1/consult/test-cookie-business").status_code == 401
 
 
+def _jwt_lifetime(token):
+    import base64
+    import json
+
+    payload = token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    return claims["exp"] - claims["iat"]
+
+
+def test_browser_login_is_short_access_plus_30_day_refresh_while_bearer_login_stays_short(app_factory, monkeypatch):
+    monkeypatch.delenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS", raising=False)
+    thirty_days = 30 * 24 * 3600
+    with TestClient(app_factory(), base_url=BASE) as client:
+        response = login(client)
+        assert response.status_code == 200, response.text
+        assert response.json()["expires_in"] == 1800
+        cookies = response.headers.get_list("set-cookie")
+        access = next(c for c in cookies if c.startswith("pantheon_session=") and "Max-Age=0" not in c)
+        refresh = next(c for c in cookies if c.startswith("pantheon_refresh_token="))
+        assert "Max-Age=1800" in access
+        assert "Path=/bff/auth" in refresh and "HttpOnly" in refresh
+        assert abs(int(refresh.split("Max-Age=")[1].split(";")[0]) - thirty_days) <= 5
+        assert _jwt_lifetime(client.cookies.get("pantheon_session")) == 1800
+
+    with TestClient(app_factory(), base_url=BASE) as client:
+        bearer = client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        assert bearer.status_code == 200, bearer.text
+        assert bearer.json()["expires_in"] == 1800
+        assert _jwt_lifetime(bearer.json()["access_token"]) == 1800
+
+
 @pytest.mark.parametrize("origin", [None, "null", "https://attacker.example", ORIGIN + ".attacker.example"])
 def test_cookie_mutations_and_login_require_exact_origin(app_factory, origin):
     with TestClient(app_factory(), base_url=BASE) as client:

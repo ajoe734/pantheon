@@ -172,6 +172,11 @@ def test_dev_login_ttl_contract_supports_bounded_proof_window() -> None:
     assert bff_env["PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS"] == (
         "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}"
     )
+    assert bff_env["PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS"] == (
+        "${PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS:-2592000}"
+    )
+
+
 def test_postgres_container_shared_memory_floor_is_at_least_256m() -> None:
     services = _compose()["services"]
     postgres = services.get("postgres")

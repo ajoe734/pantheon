@@ -1161,6 +1161,85 @@ def test_infrastructure_health_incident_resolves_through_status_route():
     assert refs.count("infra-event-resolve-ok") == 1
 
 
+def test_consume_infrastructure_health_second_open_event_merges_and_resolves_via_alias():
+    first_payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-0847594c513bbe71b6aedcd3",
+        source_event_id="infra-event-gov-20261022",
+        component={
+            "service_name": "governance",
+            "component_kind": "http_service",
+            "endpoint": "http://governance:8080/__health__",
+        },
+    )
+    second_payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-2b8541b81f8d5796101ad57e",
+        source_event_id="infra-event-gov-20261027",
+        component={
+            "service_name": "governance",
+            "component_kind": "http_service",
+            "endpoint": "http://governance:8080/__health__",
+        },
+    )
+
+    first = client.post("/api/incidents/consume-infrastructure-health", json=first_payload)
+    second = client.post("/api/incidents/consume-infrastructure-health", json=second_payload)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["incident_id"] == "infra-bff-0847594c513bbe71b6aedcd3"
+    assert len(store.find_open_incidents()) == 1
+
+    # Resolving via the later incident_id resolves the canonical open incident
+    resolved = client.post(
+        "/api/incidents/infra-bff-2b8541b81f8d5796101ad57e/status",
+        json={
+            "status": "resolved",
+            "resolved_at": "2026-10-27T01:36:00Z",
+            "source_event_id": "infra-event-gov-resolve-20261027",
+            "telemetry_event_ids": ["infra-event-gov-resolve-20261027"],
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["incident_id"] == "infra-bff-0847594c513bbe71b6aedcd3"
+    assert resolved.json()["status"] == "resolved"
+    assert store.find_open_incidents() == []
+
+
+def test_reconcile_infrastructure_health_resolves_orphaned_healthy_component():
+    created = client.post(
+        "/api/incidents/consume-infrastructure-health",
+        json=_infrastructure_incident_payload(
+            incident_id="infra-bff-0ddbece9a628d5148155a9c1",
+            source_event_id="infra-event-deploy-20261022",
+            component={
+                "service_name": "deployment",
+                "component_kind": "http_service",
+                "endpoint": "http://deployment:8080/__health__",
+            },
+        ),
+    )
+    assert created.status_code == 201, created.text
+
+    reconciled = client.post(
+        "/api/incidents/reconcile-infrastructure-health",
+        json={
+            "healthy_components": ["deployment"],
+            "referenced_incident_ids": [],
+            "observed_at": "2026-11-03T02:00:00Z",
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    body = reconciled.json()
+    assert body["resolved_count"] == 1
+    assert body["resolved_incident_ids"] == ["infra-bff-0ddbece9a628d5148155a9c1"]
+    assert body["resolution_reason"] == "orphan_recovered"
+
+    inc = store.require_incident("infra-bff-0ddbece9a628d5148155a9c1")
+    assert inc.status == "resolved"
+    assert "resolution_reason=orphan_recovered" in (inc.evidence_summary or "")
+    assert "resolution_reason:orphan_recovered" in inc.telemetry_event_ids
+
+
 # ---------------------------------------------------------------------------
 # GET /api/incidents — list
 # ---------------------------------------------------------------------------
@@ -1416,3 +1495,46 @@ def test_consume_threshold_route_unacknowledged_publish_retryable_across_restart
         # Restore the module's own receiver so later tests that publish through
         # the canonical transport see a subscriber regardless of test order.
         main_mod._wire_canonical_performance_subscriber()
+
+
+def test_operator_payload_and_outbox_sweep_resolve_stale_agent_findings_only(monkeypatch):
+    import asyncio
+    import services.incidents.main as main_mod
+    from services.incidents.consumer import build_incident_from_infrastructure_health_payload
+
+    monkeypatch.setenv("INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS", "3600")
+    stale_finding = build_incident_from_infrastructure_health_payload(
+        {
+            "schema_version": "pantheon.infrastructure-incident/1",
+            "incident_id": "agent-route-stale-0000",
+            "source_event_id": "monitor-snapshot-20261015T000000Z-abcdef012345",
+            "tenant_id": "default",
+            "producer": "monitor-agent",
+            "created_at": "2026-10-15T00:00:00Z",
+            "component": {
+                "service_name": "agent-finding-route-stale",
+                "component_kind": "monitor-agent-finding",
+                "endpoint": "monitor-agent://route-stale",
+            },
+            "title": "Stale monitor agent finding",
+            "severity": "medium",
+            "evidence_summary": "snapshot_ref=monitor-snapshot-20261015T000000Z-abcdef012345; rationale=stale",
+        }
+    )
+    store.create_incident(stale_finding)
+    client.post("/api/incidents", json={**_BASE_PAYLOAD, "incident_id": "inc-route-runtime-open"})
+
+    asyncio.run(main_mod.process_incidents_outbox())
+
+    payload_resp = client.get("/api/incidents/agent-route-stale-0000/operator-payload")
+    assert payload_resp.status_code == 200
+    payload_body = payload_resp.json()
+    assert payload_body["status"] == "resolved"
+    assert payload_body["is_open"] is False
+    assert "resolution_reason=not_reobserved" in (payload_body.get("evidence_summary") or "")
+
+    runtime_resp = client.get("/api/incidents/inc-route-runtime-open/operator-payload")
+    assert runtime_resp.status_code == 200
+    assert runtime_resp.json()["status"] == "open"
+    assert runtime_resp.json()["is_open"] is True
+

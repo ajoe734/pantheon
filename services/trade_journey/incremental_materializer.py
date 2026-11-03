@@ -43,7 +43,7 @@ FILL_EVENT_TYPES = frozenset(
     {"paper_fill_simulated", "fill_received", "order_partially_filled", "order_filled"}
 )
 LOOP_TERMINAL_STATUSES = frozenset(
-    {"completed", "completed_with_variance", "failed", "cancelled"}
+    {"completed", "completed_with_variance", "failed", "cancelled", "no_order", "unreconciled"}
 )
 LOOP_ACTIVE_STATUSES = frozenset({"open", "executing", "partially_filled"})
 

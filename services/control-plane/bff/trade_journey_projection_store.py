@@ -327,12 +327,26 @@ class TradeJourneyProjectionStore:
         count_row = self._one(f"SELECT COUNT(*) AS total FROM {self.schema}.journeys WHERE {' AND '.join(base_clauses)}", base_params)
         total = int((count_row or {}).get("total") or 0)
         page_rows, has_more = rows[: int(page_size)], len(rows) > int(page_size)
-        items = [self._projection_from_journey(row, stages=[]) for row in page_rows]
+        stages_by_journey = self._latest_stages_for_page(tenant_id=tenant_id, environment=environment, journey_ids=[str(row.get("journey_id") or "") for row in page_rows])
+        items = [self._projection_from_journey(row, stages=stages_by_journey.get(str(row.get("journey_id") or ""), [])) for row in page_rows]
         next_token = None
         if has_more and page_rows:
             last = page_rows[-1]
             next_token = self.tokens.encode({**scope, "after": [_iso(last.get(field)), str(last.get("journey_id") or "")]})
         return ProjectionPage(items=items, next_page_token=next_token, total=total)
+
+    def _latest_stages_for_page(self, *, tenant_id: str, environment: str, journey_ids: Sequence[str]) -> dict[str, list[Mapping[str, Any]]]:
+        """Load the latest row per (journey, stage) for a page in one query, latest stage first."""
+        ids = [item for item in journey_ids if item]
+        if not ids:
+            return {}
+        rows = self._rows(f"SELECT DISTINCT ON (journey_id, stage_name) journey_id, source_event_id, stage_name, stage_status, stage_ordinal, source_ingested_seq, event_sequence, occurred_at, recorded_at, contract_fields, evidence_references FROM {self.schema}.journey_stages WHERE tenant_id=%s AND environment=%s AND journey_id = ANY(%s) ORDER BY journey_id, stage_name, stage_ordinal DESC, event_sequence DESC, source_ingested_seq DESC, source_event_id DESC", (tenant_id, environment, ids))
+        grouped: dict[str, list[Mapping[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get("journey_id") or ""), []).append(row)
+        for items in grouped.values():
+            items.sort(key=lambda r: (int(r.get("stage_ordinal") or 0), int(r.get("event_sequence") or 0)), reverse=True)
+        return grouped
 
     def get_journey(self, *, tenant_id: str, environment: str, journey_id: str) -> Optional[JourneyProjection]:
         self._require_scope(tenant_id, environment)

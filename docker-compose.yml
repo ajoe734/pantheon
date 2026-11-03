@@ -1141,6 +1141,7 @@ services:
       # Dev rollback defaults to JSON; staging/prod select postgres via env.
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
       INCIDENT_STORE_DSN: ${INCIDENT_STORE_DSN:-}
+      INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS: ${INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS:-7200}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH: ${PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH:-/data/incidents/agora_performance.sqlite3}
     volumes:
@@ -1384,6 +1385,7 @@ services:
       # The legacy/generic operator credential is intentionally the negative
       # no-MFA verifier identity. Dedicated governed actors may opt in to MFA.
       PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}
+      PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_REFRESH_TTL_SECONDS:-2592000}
       PANTHEON_BFF_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
       PANTHEON_BFF_ROLE_MAP: ${PANTHEON_BFF_ROLE_MAP:-}
       PANTHEON_BFF_ROLE_MAP_MODE: ${PANTHEON_BFF_ROLE_MAP_MODE:-passthrough}
