@@ -4367,6 +4367,26 @@ def _persona_create_identity(tenant_id: str, normalized_name: str) -> str:
     return f"persona-{digest}"
 
 
+# --- _persona_create_declared_data_scope ---
+def _persona_create_declared_data_scope(payload: Mapping[str, Any]) -> Optional[str]:
+    """Return the validated create-time data_scope declaration, or None if absent."""
+    raw = payload.get("data_scope")
+    if raw is None:
+        raw = payload.get("dataScope")
+    if raw is None:
+        return None
+    declared = raw.strip().lower() if isinstance(raw, str) else ""
+    if declared not in _fleet_cls.DECLARABLE_DATA_SCOPES:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "data_scope is not a supported value",
+            f"data_scope must be one of {sorted(_fleet_cls.DECLARABLE_DATA_SCOPES)}",
+            precondition_failed="data_scope",
+        )
+    return declared
+
+
 # --- _persona_create_canonical_payload ---
 def _persona_create_canonical_payload(
     payload: Mapping[str, Any],
@@ -4379,6 +4399,10 @@ def _persona_create_canonical_payload(
     canonical["name"] = name
     canonical["tenant_id"] = tenant_id
     canonical.pop("tenantId", None)
+    canonical.pop("dataScope", None)
+    declared_scope = _persona_create_declared_data_scope(payload)
+    if declared_scope is not None:
+        canonical["data_scope"] = declared_scope
     # Caller attribution is derived only from the authenticated identity.  It
     # participates in the durable request hash, so another operator cannot
     # replay the key and silently take ownership of an in-flight Persona.
@@ -12021,6 +12045,9 @@ def _persona_provisioning_metadata(
         metadata["first_evaluation_schedule_cleanup"] = deepcopy(dict(cleanup))
     if traits:
         metadata["traits"] = deepcopy(traits)
+    declared_scope = _persona_create_declared_data_scope(payload)
+    if declared_scope is not None:
+        metadata["data_scope"] = declared_scope
     metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
         {
             "id": record.persona_id,

@@ -218,6 +218,7 @@ def test_ensure_paper_baseline_creates_tw_without_contacting_source_ingest() -> 
     assert payload["market"] == "TW"
     assert payload["symbols"] == ["2330.TW"]
     assert payload["strategy_family"] == "dev_paper_baseline"
+    assert payload["data_scope"] == "test"
 
 
 
