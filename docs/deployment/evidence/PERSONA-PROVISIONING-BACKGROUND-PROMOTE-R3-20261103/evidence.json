@@ -1,0 +1,36 @@
+{
+  "task_id": "PERSONA-PROVISIONING-BACKGROUND-PROMOTE-R3-20261103",
+  "root_cause": "OwnerReadContextMiddleware set request_read_cache for the ASGI lifespan scope; lifespan-created tasks inherited one process-lifetime cache so cached_owner_call froze paper worker sessions.",
+  "fixes": [
+    "OwnerReadContextMiddleware only sets authorization/selected_tenant/request_read_cache for http and websocket scopes; other scopes pass through unchanged.",
+    "personas.service._reconcile_persona_provisioning_pass wraps each background pass in request_read_scope() (fresh cache per pass; shared within a pass, never across passes)."
+  ],
+  "lifespan_task_audit": [
+    {
+      "task": "bff-provider-readiness-refresh (refresh_provider_readiness)",
+      "reads_owner_cache": false,
+      "note": "grep: no cached_owner_call/shared_persona_directory_list/owner_reads use in auth/service.py or core/lifespan.py; unaffected, and now sees cache=None regardless."
+    },
+    {
+      "task": "replay-command-* (replay_submitted_commands)",
+      "reads_owner_cache": "not directly",
+      "note": "operates on the durable command store; any indirect owner read now sees request_read_cache=None (uncached, always fresh) because the middleware no longer sets it for lifespan."
+    },
+    {
+      "task": "DownstreamHealthMonitor.start() loops",
+      "reads_owner_cache": false,
+      "note": "downstream_health_monitor.py has no references to cached_owner_call, shared_persona_directory_list or owner_reads; unaffected, and lifespan context now carries no cache."
+    },
+    {
+      "task": "bff-persona-provisioning-reconciler",
+      "reads_owner_cache": true,
+      "note": "was stale forever; fixed by middleware change plus a per-pass fresh scope."
+    }
+  ],
+  "tests": [
+    "tests/test_owner_read_context_lifespan.py: lifespan-started task sees request_read_cache None (fails on dev); per-request caches isolated and deduped.",
+    "tests/test_persona_provisioning_reconcile.py::test_lifespan_background_loop_promotes_when_worker_session_appears_later: real OwnerReadContextMiddleware + ASGI lifespan scope + real reconciler loop + real _reconcile_persona_provisioning_once; the real read-surface list_authoritative_paper_runtime_monitoring_sessions (cached_owner_call) sees the worker only after the first pass; Persona reaches paper_running via the background pass alone. Verified failing with the middleware guard and per-pass scope reverted (stays 'provisioning'), passing with the fix.",
+    "test_persona_provisioning_reconcile.py + test_owner_read_context_lifespan.py + test_bff_test_architecture.py: 68 passed"
+  ],
+  "limitations": "Fleet state is fed through the real read-surface port's monitoring provider hook rather than a live Runtime Manager; hosted canary by operator still required."
+}
