@@ -151,7 +151,7 @@ class _FakeProgramCommandPort:
         self._store = store
         self._counter = 0
 
-    async def create_program(self, *, tenant_id, actor_id, name, idempotency_key):
+    async def create_program(self, *, caller_token, tenant_id, actor_id, name, idempotency_key):
         self._counter += 1
         program_id = f"evp-b2-002-{self._counter:04d}"
         item = {
@@ -169,7 +169,7 @@ class _FakeProgramCommandPort:
         self._store._programs[program_id] = item
         return item
 
-    async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
+    async def patch_program_name(self, *, caller_token, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
         item = self._store._programs.get(program_id)
         if item is None:
             from services.control_plane.bff.ports.evolution_program_commands import EvolutionProgramNotFoundError
