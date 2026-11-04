@@ -5,6 +5,7 @@ from .common import ResearchRouteContext
 from .experiments import build_experiments_router, create_research_experiments_router
 from .knowledge import build_knowledge_router
 from .ops import build_ops_router
+from .tasks import create_research_tasks_router
 from .tickets import build_tickets_router
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "build_ops_router",
     "build_tickets_router",
     "create_research_experiments_router",
+    "create_research_tasks_router",
 ]
