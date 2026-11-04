@@ -15,7 +15,7 @@
       "failed": 193
     }
   },
-  "mechanism": "lifecycle_projector.StaleOpenSweeper (run loop, one bounded batch per interval, own transaction); projection_migration.RECLASSIFY_STALE_OPEN_SQL updates journeys+loop_runs together; REPAIR_ACTIVE_LOOP_RUNS_SQL fixes active loop_runs beside terminal journeys",
+  "mechanism": "lifecycle_projector.StaleOpenSweeper (run loop, one bounded batch per interval, own transaction); projection_migration.RECLASSIFY_STALE_OPEN_SQL updates journeys+loop_runs together; REPAIR_ACTIVE_LOOP_RUNS_SQL fixes active loop_runs beside terminal journeys in its own separate transaction, run only when the reclassify batch in that call moved zero rows (hosted EXPLAIN ANALYZE ~3956 ms over 147149 active loop_runs vs 10 s statement_timeout, so it must never share a transaction with or run during the drain)",
   "config": {
     "LIFECYCLE_PROJECTOR_RECLASSIFY_ENABLED": "1",
     "LIFECYCLE_PROJECTOR_RECLASSIFY_INTERVAL_SECONDS": "10",
@@ -36,5 +36,6 @@
     "from_2026-10-16": "1-13 journeys per day, nearly all reach reconciliation",
     "note": "This replaces the earlier unverified hypothesis. The per-journey cause of missing reconciliation was not proven."
   },
-  "tests": "test_stale_open_terminal.py (sweeper interval/failure, BFF severity); test_projection_store.py::test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches (Postgres, requires TEST_DATABASE_URL; skipped locally, runs in CI)"
+  "tests": "test_stale_open_terminal.py (sweeper interval/failure, BFF severity, test_repair_failure_leaves_reclassify_batch_committed, test_repair_not_executed_while_batch_moves_rows); test_projection_store.py::test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches (Postgres, requires TEST_DATABASE_URL; skipped locally, runs in CI)",
+  "postgres_test_ci_status": "NOT confirmed locally: no TEST_DATABASE_URL or pytest in this worker, so the Postgres test was skipped here. Confirm in the PR #6936 CI log that test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches shows PASSED, not SKIPPED."
 }

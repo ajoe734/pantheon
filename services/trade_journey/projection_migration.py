@@ -1416,13 +1416,16 @@ WHERE l.tenant_id = s.tenant_id AND l.environment = s.environment
 
 
 def sql_reclassify_batch_runner(connect: Callable[[], Any]) -> Callable[[datetime, int, int], Mapping[str, int]]:
-    """Build a ``run_batch`` running one short transaction per call.
+    """Build a ``run_batch`` running short transactions per call.
 
-    The transaction reclassifies stale open journeys together with their linked
-    loop_runs, then repairs loop_runs still ``active`` beside terminal journeys.
-    Repairs are reported under ``loop_run_repaired``; they count toward "moved"
-    so a draining sweep keeps going. ``connect()`` returns a psycopg connection
-    usable as a context manager.
+    Transaction 1 reclassifies stale open journeys together with their linked
+    loop_runs and commits. Only when that batch moved zero rows does a second,
+    separate transaction repair loop_runs still ``active`` beside terminal
+    journeys (the repair scan is expensive, so it costs nothing while draining,
+    and its failure can never roll back a committed reclassify batch). Repairs
+    are reported under ``loop_run_repaired`` and count toward "moved". A repair
+    failure propagates to the caller (the sweeper logs it and retries later).
+    ``connect()`` returns a psycopg connection usable as a context manager.
     """
 
     def run_batch(as_of: datetime, deadline_seconds: int, batch_size: int) -> Mapping[str, int]:
@@ -1431,10 +1434,13 @@ def sql_reclassify_batch_runner(connect: Callable[[], Any]) -> Callable[[datetim
         with connect() as conn, conn.cursor() as cur:
             cur.execute(RECLASSIFY_STALE_OPEN_SQL, params)
             counts = {status: int(count) for status, count in cur.fetchall()}
+        if sum(counts.values()) > 0:
+            return counts
+        with connect() as conn, conn.cursor() as cur:
             cur.execute(REPAIR_ACTIVE_LOOP_RUNS_SQL, {"batch_size": size})
             if cur.rowcount and cur.rowcount > 0:
                 counts["loop_run_repaired"] = int(cur.rowcount)
-            return counts
+        return counts
 
     return run_batch
 
