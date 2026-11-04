@@ -936,6 +936,11 @@ def get_postmortems_read_model(
                 available, service_records = store._service.list_records("postmortems", include_snapshot_fallback=False)
             elif hasattr(store, "list_records"):
                 available, service_records = store.list_records("postmortems")
+            elif hasattr(store, "list_postmortems") and callable(store.list_postmortems):
+                service_records = list(store.list_postmortems() or [])
+                ds_fn = getattr(store, "dataset_source", None)
+                src = ds_fn("postmortems") if callable(ds_fn) else "store"
+                available = src not in ("missing", "unavailable")
         except Exception:
             available, service_records = False, []
 
@@ -964,6 +969,10 @@ def get_postmortems_read_model(
             continue
         seen_pm_ids.add(pm_id)
         item_copy["postmortem_id"] = pm_id
+        if "id" in item_copy:
+            item_copy["id"] = pm_id
+        if "report_id" in item_copy:
+            item_copy["report_id"] = pm_id
         item_copy["incident_id"] = str(item_copy.get("incident_id") or "")
         item_copy["title"] = str(item_copy.get("title") or "Postmortem Analysis")
         item_copy["status"] = str(item_copy.get("status") or "resolved")
@@ -1023,6 +1032,28 @@ def get_postmortem_detail_read_model(
                 "source": res.get("source") or "store",
                 "item": item,
             }
+    if store is not None and hasattr(store, "get_postmortem") and callable(store.get_postmortem):
+        try:
+            direct = store.get_postmortem(postmortem_id)
+        except Exception:
+            direct = None
+        if isinstance(direct, dict):
+            direct_res = get_postmortems_read_model(
+                postmortems_reader=lambda: (True, [direct]),
+                utc_now=utc_now,
+            )
+            direct_items = direct_res.get("items") or []
+            if direct_items:
+                item_out = dict(direct_items[0])
+                item_out["postmortem_id"] = postmortem_id
+                if "id" in item_out:
+                    item_out["id"] = postmortem_id
+                if "report_id" in item_out:
+                    item_out["report_id"] = postmortem_id
+                return {
+                    "source": res.get("source") or "store",
+                    "item": item_out,
+                }
     return {
         "source": res.get("source") or "missing",
         "item": None,
@@ -1535,6 +1566,25 @@ def create_management_read_models_router(
                 return None
         return None
 
+    def _default_postmortems_reader() -> Tuple[bool, List[Dict[str, Any]]]:
+        store = _resolve_store()
+        if store is None:
+            return False, []
+        if hasattr(store, "_service") and hasattr(store._service, "list_records"):
+            return store._service.list_records("postmortems", include_snapshot_fallback=False)
+        if hasattr(store, "list_records"):
+            return store.list_records("postmortems")
+        if hasattr(store, "list_postmortems") and callable(store.list_postmortems):
+            rows = list(store.list_postmortems() or [])
+            ds_fn = getattr(store, "dataset_source", None)
+            src = ds_fn("postmortems") if callable(ds_fn) else "store"
+            return (src not in ("missing", "unavailable"), rows)
+        return False, []
+
+    _effective_postmortems_reader = postmortems_reader
+    if _effective_postmortems_reader is None and read_surface is not None and hasattr(read_surface, "list_postmortems"):
+        _effective_postmortems_reader = _default_postmortems_reader
+
     _register_composed_read_models(
         router,
         _extract_id=_extract_id,
@@ -1549,7 +1599,7 @@ def create_management_read_models_router(
         telemetry_events_reader=telemetry_events_reader,
         paper_telemetry_reader=paper_telemetry_reader,
         runtime_bindings_reader=runtime_bindings_reader,
-        postmortems_reader=postmortems_reader,
+        postmortems_reader=_effective_postmortems_reader,
     )
     return router
 

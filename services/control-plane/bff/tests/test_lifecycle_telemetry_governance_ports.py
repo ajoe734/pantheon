@@ -79,20 +79,60 @@ def sample_incidents_data() -> Dict[str, Dict[str, Any]]:
 def sample_postmortems_data() -> Dict[str, Dict[str, Any]]:
     return {
         "pm-001": {
+            "postmortem_id": "pm-001",
             "report_id": "pm-001",
             "id": "pm-001",
             "incident_id": "inc-20260410-001",
+            "title": "Postmortem draft: Historical Anchor Incident",
             "summary": "Root cause analysis for anchor incident",
-            "status": "completed",
+            "status": "draft",
             "created_at": "2026-04-12T00:00:00Z",
+            "binding_id": "bind-alpha-001",
+            "deployment_stage": "paper",
+            "deployment_plan_id": "plan-alpha-001",
+            "capital_pool_id": "pool-alpha",
+            "persona_capital_binding_id": "pcb-alpha-001",
+            "artifact_id": "art-001",
+            "artifact_version": "v1.0.0",
+            "runtime_id": "rt-001",
+            "trace_id": "trace-001",
+            "telemetry_event_ids": ["tel-001"],
+            "incident_evidence_summary": "Root cause analysis for anchor incident",
+            "lineage_ref": "art-001@v1.0.0",
+            "incident_cluster_id": None,
+            "root_cause": "Root cause analysis for anchor incident",
+            "contributing_factors": ["downstream latency"],
+            "timeline": [{"ts": "2026-04-12T00:00:00Z", "event": "drafted"}],
+            "action_items": ["tighten timeout budget"],
+            "author_ids": ["system"],
         },
         "pm-002": {
+            "postmortem_id": "pm-002",
             "report_id": "pm-002",
             "id": "pm-002",
             "incident_id": "inc-20260501-002",
+            "title": "Postmortem draft: Later Incident",
             "summary": "Root cause analysis for later incident",
             "status": "draft",
             "created_at": "2026-05-02T00:00:00Z",
+            "binding_id": "bind-alpha-002",
+            "deployment_stage": "paper",
+            "deployment_plan_id": "plan-alpha-002",
+            "capital_pool_id": "pool-alpha",
+            "persona_capital_binding_id": "pcb-alpha-002",
+            "artifact_id": "art-002",
+            "artifact_version": "v1.1.0",
+            "runtime_id": "rt-002",
+            "trace_id": "trace-002",
+            "telemetry_event_ids": ["tel-002"],
+            "incident_evidence_summary": "Root cause analysis for later incident",
+            "lineage_ref": "art-002@v1.1.0",
+            "incident_cluster_id": None,
+            "root_cause": "Root cause analysis for later incident",
+            "contributing_factors": ["feed jitter"],
+            "timeline": [{"ts": "2026-05-02T00:00:00Z", "event": "drafted"}],
+            "action_items": ["add circuit breaker"],
+            "author_ids": ["system"],
         },
     }
 
@@ -370,25 +410,61 @@ def test_incident_port_detail_and_correlations(sample_incidents_data, sample_gov
     assert port.get_rollbacks_by_incident("inc-missing") == []
 
 
-def test_postmortem_port_reads(sample_incidents_data, sample_postmortems_data):
-    """PM-01 / PM-02: Verify postmortem listing, detail, and incident correlation."""
-    port = DomainIncidentPort(
-        incidents=sample_incidents_data,
-        postmortems=sample_postmortems_data,
-    )
+def test_postmortem_port_reads(sample_incidents_data, sample_postmortems_data, tmp_path, monkeypatch):
+    """PM-01 / PM-02: Verify postmortem listing, detail, and incident correlation via the owner API."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+    from fastapi.testclient import TestClient
+    from services.incident.incident import IncidentStore, Postmortem
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:8012")
+    import services.postmortems.main as pm_main
 
-    all_pm = port.list_postmortems()
-    assert len(all_pm) == 2
+    store = IncidentStore(tmp_path / "incidents.json")
+    for pm_id, raw in sample_postmortems_data.items():
+        store._postmortems[pm_id] = Postmortem.from_dict(raw)
 
-    pm1 = port.get_postmortem("pm-001")
-    assert pm1 is not None
-    assert pm1["report_id"] == "pm-001"
+    old_store = pm_main.store
+    pm_main.store = store
+    owner_client = TestClient(pm_main.app)
 
-    correlated = port.get_postmortem_by_incident("inc-20260410-001")
-    assert correlated is not None
-    assert correlated["report_id"] == "pm-001"
+    class _OwnerBridgeHandler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
 
-    assert port.get_postmortem_by_incident("inc-nonexistent") is None
+        def do_GET(self) -> None:
+            resp = owner_client.get(self.path)
+            self.send_response(resp.status_code)
+            self.send_header("Content-Type", "application/json")
+            if "x-total-count" in resp.headers:
+                self.send_header("X-Total-Count", resp.headers["x-total-count"])
+            self.end_headers()
+            self.wfile.write(resp.content)
+
+    httpd = HTTPServer(("127.0.0.1", 0), _OwnerBridgeHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = DomainIncidentPort(
+            incidents=sample_incidents_data,
+            postmortems_api_url=f"http://127.0.0.1:{httpd.server_port}",
+        )
+
+        all_pm = port.list_postmortems()
+        assert len(all_pm) == 2
+
+        pm1 = port.get_postmortem("pm-001")
+        assert pm1 is not None
+        assert pm1["postmortem_id"] == "pm-001"
+
+        correlated = port.get_postmortem_by_incident("inc-20260410-001")
+        assert correlated is not None
+        assert correlated["postmortem_id"] == "pm-001"
+
+        assert port.get_postmortem_by_incident("inc-nonexistent") is None
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        pm_main.store = old_store
 
 
 # =====================================================================

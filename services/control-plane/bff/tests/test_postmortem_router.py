@@ -13,6 +13,42 @@ from postmortems.router import create_postmortem_router
 from postmortems.service import PostmortemService
 
 
+def _real_postmortem_record(
+    postmortem_id: str,
+    *,
+    incident_id: str = "inc-1",
+    root_cause: str = "stale market snapshot",
+    created_at: str = "2026-11-03T12:00:00Z",
+    status: str = "draft",
+) -> Dict[str, Any]:
+    return {
+        "postmortem_id": postmortem_id,
+        "report_id": postmortem_id,
+        "incident_id": incident_id,
+        "title": f"Postmortem draft: BFF downstream degradation: {postmortem_id}",
+        "status": status,
+        "created_at": created_at,
+        "binding_id": f"bind-{postmortem_id}",
+        "deployment_stage": "paper",
+        "deployment_plan_id": f"plan-{postmortem_id}",
+        "capital_pool_id": "pool-alpha",
+        "persona_capital_binding_id": f"pcb-{postmortem_id}",
+        "artifact_id": f"art-{postmortem_id}",
+        "artifact_version": "v1.0.0",
+        "runtime_id": f"rt-{postmortem_id}",
+        "trace_id": f"trace-{postmortem_id}",
+        "telemetry_event_ids": [f"tel-{postmortem_id}"],
+        "incident_evidence_summary": root_cause,
+        "lineage_ref": f"art-{postmortem_id}@v1.0.0",
+        "incident_cluster_id": None,
+        "root_cause": root_cause,
+        "contributing_factors": ["downstream timeout"],
+        "timeline": [{"ts": created_at, "event": "Incident opened"}],
+        "action_items": ["Verify owner read path"],
+        "author_ids": ["system"],
+    }
+
+
 class _ReadStore:
     def __init__(self) -> None:
         self.postmortems: Dict[str, Dict[str, Any]] = {}
@@ -80,8 +116,16 @@ def test_router_registers_exactly_the_two_postmortem_decorators() -> None:
 def test_list_postmortems_preserves_time_range_data_and_meta_contract() -> None:
     store = _ReadStore()
     store.postmortems = {
-        "pm-1": {"report_id": "pm-1", "root_cause": "stale market snapshot"},
-        "pm-2": {"report_id": "pm-2", "root_cause": "broker timeout"},
+        "pm-1": _real_postmortem_record(
+            "pm-1",
+            root_cause="stale market snapshot",
+            created_at="2026-11-03T12:00:00Z",
+        ),
+        "pm-2": _real_postmortem_record(
+            "pm-2",
+            root_cause="broker timeout",
+            created_at="2026-11-02T12:00:00Z",
+        ),
     }
     auth_seen: List[Optional[str]] = []
 
@@ -96,11 +140,22 @@ def test_list_postmortems_preserves_time_range_data_and_meta_contract() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "data": list(store.postmortems.values()),
+        "page_info": {
+            "total": 2,
+            "page_size": 50,
+            "next_page_token": None,
+        },
         "meta": {
             "total": 2,
             "staleness": {
                 "served_from": "cache",
                 "last_known_at": "2026-08-30T00:00:00Z",
+            },
+            "surfaces": {
+                "postmortems": {
+                    "status": "ok",
+                    "source": "typed_store",
+                },
             },
         },
     }
@@ -110,11 +165,11 @@ def test_list_postmortems_preserves_time_range_data_and_meta_contract() -> None:
 
 def test_get_postmortem_enriches_detail_with_linked_incident_without_mutating_store() -> None:
     store = _ReadStore()
-    store.postmortems["pm-1"] = {
-        "report_id": "pm-1",
-        "incident_id": "inc-1",
-        "root_cause": "stale market snapshot",
-    }
+    store.postmortems["pm-1"] = _real_postmortem_record(
+        "pm-1",
+        incident_id="inc-1",
+        root_cause="stale market snapshot",
+    )
     store.incidents["inc-1"] = {"incident_id": "inc-1", "severity": "high"}
 
     response = _client(store).get("/api/v1/postmortems/pm-1")
@@ -131,7 +186,7 @@ def test_get_postmortem_enriches_detail_with_linked_incident_without_mutating_st
 
 def test_get_postmortem_returns_detail_without_missing_linked_incident() -> None:
     store = _ReadStore()
-    store.postmortems["pm-1"] = {"report_id": "pm-1", "incident_id": "inc-missing"}
+    store.postmortems["pm-1"] = _real_postmortem_record("pm-1", incident_id="inc-missing")
 
     response = _client(store).get("/api/v1/postmortems/pm-1")
 
@@ -165,7 +220,7 @@ def test_read_role_gate_runs_before_store_access() -> None:
 
 def test_service_uses_injected_canonical_store_for_list_and_detail() -> None:
     store = _ReadStore()
-    store.postmortems["pm-1"] = {"report_id": "pm-1", "incident_id": "inc-1"}
+    store.postmortems["pm-1"] = _real_postmortem_record("pm-1", incident_id="inc-1")
     store.incidents["inc-1"] = {"incident_id": "inc-1"}
     service = PostmortemService(store)
 

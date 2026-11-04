@@ -2821,6 +2821,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "PERSONA-DEPLOY-BASELINE-TEST-SCOPE-20261103 regression coverage for create-time data_scope declaration; never imports main"
+    },
+    {
+      "file": "tests/test_postmortem_owner_read.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "POSTMORTEM-BFF-OWNER-READ-20261104 regression coverage for postmortems owner reads, paging, surface availability, and all BFF postmortem entry points; never imports BFF main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,
