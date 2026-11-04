@@ -254,6 +254,32 @@ class StrategySpecSeedBuilder:
         )
         confidence = _effective_confidence(bundle, records, items)
         effective_seed_id = seed_id or _stable_seed_id(bundle.evidence_bundle_id, source_ids, hypothesis)
+        resolved_tenant_id = str(
+            getattr(bundle, "tenant_id", None)
+            or (bundle.metadata.get("tenant_id") if isinstance(bundle.metadata, Mapping) else "")
+            or next(
+                (
+                    getattr(r, "tenant_id", None)
+                    or (r.metadata.get("tenant_id") if isinstance(r.metadata, Mapping) else "")
+                    for r in records
+                    if getattr(r, "tenant_id", None)
+                    or (isinstance(r.metadata, Mapping) and r.metadata.get("tenant_id"))
+                ),
+                "",
+            )
+            or next(
+                (
+                    getattr(it, "tenant_id", None)
+                    or (it.metadata.get("tenant_id") if isinstance(it.metadata, Mapping) else "")
+                    for it in items
+                    if getattr(it, "tenant_id", None)
+                    or (isinstance(it.metadata, Mapping) and it.metadata.get("tenant_id"))
+                ),
+                "",
+            )
+            or ((metadata or {}).get("tenant_id") if isinstance(metadata, Mapping) else "")
+            or ""
+        ).strip()
         lineage = {
             "created_from": "evidence_bundle",
             "evidence_bundle_id": bundle.evidence_bundle_id,
@@ -265,6 +291,8 @@ class StrategySpecSeedBuilder:
             "registry_write_performed": False,
             "execution_route": "none",
         }
+        if resolved_tenant_id:
+            lineage["tenant_id"] = resolved_tenant_id
         if records:
             lineage["source_record_refs"] = [record.content_ref for record in records]
         seed_metadata = {
@@ -276,6 +304,7 @@ class StrategySpecSeedBuilder:
             "research_only": True,
             "registry_write_performed": False,
             "execution_route": "none",
+            **({"tenant_id": resolved_tenant_id} if resolved_tenant_id else {}),
             **dict(metadata or {}),
         }
         # execution_recipe is reserved: only Source.metadata.strategy_seed may
