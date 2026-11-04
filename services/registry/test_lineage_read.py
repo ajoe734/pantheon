@@ -58,15 +58,17 @@ def persona_family_entries(tenant="tenant-a"):
 
 
 def large_corpus(n=5251):
-    """5251 rows with the hosted shape: 4747 draft specs, 251 bundles, the rest other states."""
+    """5251 rows with the hosted shape: 4999 strategy_spec, 251 execution_bundle, 1 other; mostly draft."""
     rows = [lineage_row(e) for e in persona_family_entries()]
     for i in range(n - len(rows)):
-        if i < 247:  # remaining bundles (251 total with the family's 4)
+        if i < 249:  # remaining bundles (251 total with the family's 2)
             rows.append(lineage_row(_entry(
                 f"artifact-{i:05d}", "execution_bundle", f"strat-{i:05d}",
                 lineage={"source_run_ids": [f"run-{i:05d}"], "parent_registry_ids": [f"reg-spec-{i:05d}"],
                          "source_strategy_spec_id": f"reg-spec-{i:05d}"},
                 created_at=f"2026-10-{1 + i % 28:02d}T{i % 24:02d}:00:00Z")))
+        elif i == n - len(rows) - 1:  # the single non-spec/non-bundle entry (4999 + 251 + 1 = 5251)
+            rows.append(lineage_row(_entry(f"feature-{i:05d}", "feature_set", f"feat-{i:05d}", lineage={"source_run_ids": [f"run-f{i}"]})))
         else:
             rows.append(lineage_row(_entry(
                 f"reg-spec-{i:05d}", "strategy_spec", f"strat-{i:05d}",

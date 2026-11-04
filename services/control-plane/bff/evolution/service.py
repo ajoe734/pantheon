@@ -817,6 +817,7 @@ class EvolutionService:
                     if a_id and a_id not in node_map:
                         node_map[a_id] = {"id": a_id, "label": a_id}
             nodes = list(node_map.values())
+        edges = [{k: v for k, v in e.items() if k not in ("from_node", "to_node")} for e in edges]
         return nodes, edges
 
     def get_inspiration_graph(

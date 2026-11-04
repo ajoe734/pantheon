@@ -209,20 +209,20 @@ class StrategiesService:
 
     def get_strategy_lineage(self, strategy_id: str) -> Tuple[List[Dict[str, Any]], List[str]]:
         read_store = self._get_read_store_port()
-        edges = read_store.list_lineage_edges() or []
+        # The lineage owner resolves the strategy root (registry id / strategy id) and
+        # returns only the connected subgraph; no whole-population scan here.
+        edges = read_store.get_lineage_graph(root_id=strategy_id, depth=3) or []
         nodes_seen: Set[str] = set()
         related: List[Dict[str, Any]] = []
         for edge in edges:
-            node_keys = (
+            related.append(edge)
+            for key in (
                 str(edge.get("from_artifact_id") or edge.get("source_id") or ""),
                 str(edge.get("to_artifact_id") or edge.get("target_id") or ""),
                 str(edge.get("strategy_id") or ""),
-            )
-            if strategy_id in node_keys:
-                related.append(edge)
-                for key in node_keys:
-                    if key:
-                        nodes_seen.add(key)
+            ):
+                if key:
+                    nodes_seen.add(key)
         nodes_seen.add(strategy_id)
         return related, sorted(nodes_seen)
 

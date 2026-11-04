@@ -496,6 +496,9 @@ class ReadSurfacePorts:
             # consultation client/store or catalog backend surfaces as
             # unavailable rather than a false healthy default.
             return self.operations_consultation.dataset_source(dataset)
+        if dataset == "lineage_edges":
+            # Real registry-owner read outcome (service_client / unavailable), never a constant.
+            return self.lifecycle_telemetry_governance.dataset_source(dataset)
         if dataset in ("incidents", "postmortems"):
             # The incident/postmortem owners can be down while list_*() swallows
             # the outage and returns []; surface their real availability.
@@ -573,7 +576,6 @@ class ReadSurfacePorts:
             "kill_switch",
             "drift_reports",
             "telemetry_events",
-            "lineage_edges",
             "governance_audit_events",
             "approval_decisions",
             "evolution_decisions",
@@ -875,6 +877,9 @@ class ReadSurfacePorts:
 
     def get_lineage_graph_nodes(self, edges: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         return self.lifecycle_telemetry_governance.get_lineage_graph_nodes(edges)
+
+    def lineage_has_more(self) -> bool:
+        return self.lifecycle_telemetry_governance.lineage_has_more()
 
     def get_loop_run(self, loop_run_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
         return self.lifecycle_telemetry_governance.get_loop_run(loop_run_id)

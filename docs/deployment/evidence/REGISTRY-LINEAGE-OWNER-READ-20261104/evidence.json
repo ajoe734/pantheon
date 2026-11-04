@@ -1,0 +1,76 @@
+{
+  "task_id": "REGISTRY-LINEAGE-OWNER-READ-20261104",
+  "agent": "Claude",
+  "kind": "functional (no hosted/VM access; operator acceptance task verifies hosted)",
+  "owner_route": "GET /api/registry/lineage?root_id=&depth=&limit= (recorded in services/registry/contract.md)",
+  "bff_single_port": "ports/lifecycle_telemetry_governance.py::DomainLineagePort (registry client); /bff/lineage, /bff/strategies/{id}/lineage, /api/v1/lineage*, ew04 inspiration projection and incident detail all call it via ReadSurfacePorts",
+  "removed_from_production_path": "DomainLineagePort._lineage_edges and the lineage_edges=/inspiration_graphs=/artifact_registry_entries= constructor injection; the class is now the owner client. The old list lives only in the test double InMemoryLineagePort (used by InMemoryLifecycleTelemetryGovernancePort); read_surface_ports no longer hardcodes lineage_edges as typed_store.",
+  "dataset_source": "lineage_edges reports service_client on a successful owner read and unavailable on owner failure/unconfigured (regression test drives a real ECONNREFUSED); real empty graph -> status ok, zero nodes",
+  "fixture_5251_rows": {
+    "shape": "4999 strategy_spec + 251 execution_bundle + 1 other, real lineage/metadata shapes incl. JSON-null parent_registry_ids, plus the real fd1281847a3b1c6a9735 persona family",
+    "measurements_registry_graph_build_plus_json_encode_python": [
+      {
+        "params": {},
+        "nodes": 333,
+        "edges": 200,
+        "has_more": true,
+        "body_bytes": 42673,
+        "latency_ms_median": 46.74,
+        "latency_ms_max": 105.89
+      },
+      {
+        "params": {
+          "limit": 1000
+        },
+        "nodes": 759,
+        "edges": 767,
+        "has_more": false,
+        "body_bytes": 117300,
+        "latency_ms_median": 51.68,
+        "latency_ms_max": 108.49
+      },
+      {
+        "params": {
+          "root_id": "artifact-persona-paper-fd1281847a3b1c6a9735",
+          "depth": 3
+        },
+        "nodes": 8,
+        "edges": 16,
+        "has_more": false,
+        "body_bytes": 3444,
+        "latency_ms_median": 48.49,
+        "latency_ms_max": 102.2
+      },
+      {
+        "params": {
+          "root_id": "persona-3",
+          "depth": 2,
+          "limit": 200
+        },
+        "nodes": 201,
+        "edges": 200,
+        "has_more": true,
+        "body_bytes": 31670,
+        "latency_ms_median": 92.39,
+        "latency_ms_max": 241.37
+      }
+    ],
+    "note": "Measured on the pure projection/traversal over already-projected flat rows; the Postgres projection (lineage_select_sql, constant jsonb leaf paths, visible-tenant predicate, no RegistryEntry rebuild) was not run against Postgres here (no TEST_DATABASE_URL). Column assembly parity with the in-memory lineage_row is unit tested."
+  },
+  "lineage_read_service": "services/lineage-read was not written to or used; its /data/lineage edge store remains empty and unused (no file under services/lineage-read changed).",
+  "tests": {
+    "new": [
+      "services/registry/test_lineage_read.py (6)",
+      "services/control-plane/bff/tests/test_lineage_registry_read.py (7)"
+    ],
+    "changed_assertions": [
+      "tests/test_lifecycle_telemetry_governance_ports.py: two lineage tests construct InMemoryLineagePort instead of DomainLineagePort with identical assertions, because DomainLineagePort no longer accepts injected edges (that is the removed production path).",
+      "test_bff_consol_008_fixture_pack_a.py and test_bff_consol_016_detail_smoke_a.py: their fake read store gained get_lineage_graph (same root match the strategy lineage route applied before) since the strategy lineage route now asks the port for the rooted subgraph instead of scanning every edge; assertions unchanged."
+    ],
+    "no_test_deleted_or_weakened": true,
+    "preexisting_failures_not_caused_by_this_task": "services/registry test_deployment_view* (4) and BFF tests/test_bff_management_cockpit.py (9) + test_read_surface_caller_migration::test_main_py_all_read_store_attributes_are_inventoried_and_mapped fail identically on the unmodified branch"
+  },
+  "decisions": {
+    "node_ids": "raw registry/persona/pool/run/dataset ids (no prefixing); risk is metadata.risk_level only and omitted when absent; edge labels parent/source_strategy_spec/source_dataset/source_run/persona/capital_pool; default view seeds from the newest execution_bundle entries that have edges, limit-capped with has_more"
+  }
+}
