@@ -72,3 +72,65 @@ def test_replay_with_different_scope_conflicts() -> None:
         other = _post(client, _ROUTES[0], _body("Replay", data_scope="regular"), "k-r")
         assert other.status_code in (409, 422), other.text
         assert other.status_code != 201
+
+
+def test_hosted_chain_persona_metadata_classifies_and_filters_as_trading_test() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client, store = _fresh_client(td)
+        chain_id = "persona-strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a"
+        chain_metadata = {
+            "requested_by": {
+                "actor_type": "operator",
+                "actor_id": "pantheon-dev-operator-a",
+            },
+            "data_scope": "test",
+            "persona_class": "trading",
+        }
+        record = store.create_persona(
+            persona_id=chain_id,
+            tenant_id="pantheon-dev",
+            name="hosted-all12-chain-persona",
+            mandate="Paper-only hosted chain verification",
+            status="active",
+            lifecycle_state="draft",
+            state="draft",
+            owner="pantheon-dev-operator-a",
+            actor_id="operator-bff",
+            metadata=chain_metadata,
+        )
+        record["metadata"] = dict(chain_metadata)
+        assert fc.persona_classification(record) == {
+            "persona_purpose": "trading",
+            "data_scope": "test",
+            "classification_source": {
+                "purpose": "persona_class",
+                "data_scope": "data_scope",
+            },
+            "classification_confirmed": True,
+        }
+        resp = client.get(
+            "/bff/management/persona-fleet",
+            params={"purpose": "trading", "data_scope": "test", "archived": "exclude"},
+            headers=HEADERS,
+        )
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["data"]["items"]
+        matched = [item for item in items if item["persona_id"] == chain_id]
+        assert len(matched) == 1
+        assert matched[0]["persona_purpose"] == "trading"
+        assert matched[0]["data_scope"] == "test"
+        assert matched[0]["classification_confirmed"] is True
+        assert matched[0]["classification_source"] == {
+            "purpose": "persona_class",
+            "data_scope": "data_scope",
+        }
+        for other_scope in ("regular", "unknown"):
+            other_resp = client.get(
+                "/bff/management/persona-fleet",
+                params={"purpose": "trading", "data_scope": other_scope, "archived": "exclude"},
+                headers=HEADERS,
+            )
+            assert other_resp.status_code == 200, other_resp.text
+            assert chain_id not in {
+                item["persona_id"] for item in other_resp.json()["data"]["items"]
+            }

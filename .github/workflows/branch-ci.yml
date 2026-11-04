@@ -560,14 +560,17 @@ jobs:
             scripts/test_db_migrate.py \
             tests/scripts/test_bootstrap_telemetry_replay.py \
             services/telemetry/test_loop_prod_tel_002_substrate.py \
-            scripts/test_agora_workshop_restart_persistence_smoke.py
+            scripts/test_agora_workshop_restart_persistence_smoke.py \
+            scripts/test_backfill_hosted_chain_persona_scope.py
 
       - name: Run product or mixed smoke gate
         if: steps.boundary.outputs.product_touched == 'true' || (steps.boundary.outputs.development_tooling_touched != 'true' && steps.boundary.outputs.product_touched != 'true')
         run: |
           if [[ -x scripts/run-acceptance.sh ]]; then
             ./scripts/run-acceptance.sh smoke
-            python3 -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py
+            python3 -m pytest -q \
+              services/trade_journey/test_hosted_lifecycle_probe.py \
+              scripts/test_backfill_hosted_chain_persona_scope.py
           elif [[ -f scripts/ci_stage0.py ]]; then
             python3 scripts/ci_stage0.py run-baseline
           else

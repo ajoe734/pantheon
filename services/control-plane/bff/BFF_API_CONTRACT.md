@@ -831,6 +831,21 @@ New `list_*` methods were added to `ReadSurfaceStore` in `read_store.py`.
 
 ---
 
+## 14A. Research Orchestrator Tasks Read Endpoints (`RESEARCH-TASKS-READ-20261104`)
+
+Research orchestrator tasks (`research.research_tasks`) and their execution runs (`research.research_runs`) are distinct from `research.research_experiments` (which has no background executor). The BFF exposes two read-only HTTP owner-backed endpoints for research orchestrator tasks without merging them into `/bff/research-experiments` or `/bff/experiments`:
+
+| Route | RBAC | Owner Upstream | Surface Key |
+|---|---|---|---|
+| `GET /bff/research-tasks` | `viewer` (`require_read_role`) | `GET /api/research-orchestrator/tasks` + `GET /api/research-orchestrator/runs` | `research_tasks` |
+| `GET /bff/research-tasks/{task_id}` | `viewer` (`require_read_role`) | `GET /api/research-orchestrator/tasks/{task_id}` + `GET /api/research-orchestrator/runs?task_id={task_id}` | `research_tasks` |
+
+- **Verified caller auth and tenant isolation**: Uses the same caller auth and `bound_tenant` helper as `ports/job_read.py` (`verified_caller_tenant`). A task's tenant is read from top-level `tenant_id` or `constraints.tenant_id`. Tasks with neither tenant field are returned to no caller and counted in `meta.excluded_unscoped_count`. Missing tasks, unscoped tasks, and tasks belonging to another tenant return the same non-disclosing `404 RESOURCE_NOT_FOUND` on `GET /bff/research-tasks/{task_id}`.
+- **Item projection**: Each item carries `id`, `task_id`, `name` (falling back from `title` to `objective` to `task_id`), `objective`, `status` (exact owner status, never cast to the experiment state machine), `created_by`, `created_at`, `updated_at`, `run_count`, and `latest_run` (`run_id`, `adapter`, `dispatch_mode`, `status`). Stub runs report their real `adapter` and `dispatch_mode` and are never labelled as real executions.
+- **Degradation contract**: Unconfigured `PANTHEON_RESEARCH_ORCHESTRATOR_API_URL` or owner HTTP failure on `GET /bff/research-tasks` returns `meta.surfaces.research_tasks.status = "unavailable"` (never an empty `"ok"` success); a healthy owner with zero tasks returns `status = "ok"`.
+
+---
+
 ## 15. Surface Count Summary
 
 | Domain | Surface IDs | Count |
