@@ -1,0 +1,40 @@
+{
+  "task": "TRADE-JOURNEY-RECLASSIFY-SWEEP-20261104",
+  "hosted_verification": "not performed by this change; baseline is the 2026-11-04 read-only dev VM readback (deployed 8015bd2d8), expected values below are for the operator to verify after deployment",
+  "baseline": {
+    "journeys": {
+      "open": 147149,
+      "completed_with_variance": 6936,
+      "completed": 3733,
+      "failed": 193
+    },
+    "loop_runs": {
+      "active": 147149,
+      "completed_with_variance": 6936,
+      "completed": 3733,
+      "failed": 193
+    }
+  },
+  "mechanism": "lifecycle_projector.StaleOpenSweeper (run loop, one bounded batch per interval, own transaction); projection_migration.RECLASSIFY_STALE_OPEN_SQL updates journeys+loop_runs together; REPAIR_ACTIVE_LOOP_RUNS_SQL fixes active loop_runs beside terminal journeys",
+  "config": {
+    "LIFECYCLE_PROJECTOR_RECLASSIFY_ENABLED": "1",
+    "LIFECYCLE_PROJECTOR_RECLASSIFY_INTERVAL_SECONDS": "10",
+    "LIFECYCLE_PROJECTOR_RECLASSIFY_BATCH_SIZE": "1000"
+  },
+  "expected_after_deployment": {
+    "journeys": {
+      "no_order": 36124,
+      "unreconciled": 111025,
+      "open": "~0 (only journeys newer than the 72h deadline)"
+    },
+    "loop_runs": "status mirrors journeys; zero active rows beside terminal journeys; 36124+111025 = 147149",
+    "drain_time": "about 150 batches at default 1000 rows / 10s, i.e. roughly 25 minutes"
+  },
+  "october_timeline": {
+    "2026-10-02..10-06": "about 28k journeys with no orders booked",
+    "2026-10-07..10-15": "11-23k journeys per day, about 10% reached reconciliation",
+    "from_2026-10-16": "1-13 journeys per day, nearly all reach reconciliation",
+    "note": "This replaces the earlier unverified hypothesis. The per-journey cause of missing reconciliation was not proven."
+  },
+  "tests": "test_stale_open_terminal.py (sweeper interval/failure, BFF severity); test_projection_store.py::test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches (Postgres, requires TEST_DATABASE_URL; skipped locally, runs in CI)"
+}

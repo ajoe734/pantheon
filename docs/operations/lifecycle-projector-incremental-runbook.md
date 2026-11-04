@@ -405,3 +405,11 @@ Verify that `dependencies.lifecycle_projector.reader_backend` is `postgres`, `st
 | **Corrupted projection row / quarantine event** | Very Low | Medium | Strict validation on every lifecycle event; anomalous events are recorded in `quarantine` table without blocking subsequent events; `/readyz` flags non-zero quarantine count. |
 | **Recovery after node or pod restart** | Low | Low | State is durable in PostgreSQL tables (`trade_journey_projections`, `trade_journey_controller_state`); worker restarts automatically reconnect and resume from checkpoint sequence. |
 | **Accidental invocation of legacy reader** | Very Low | Low | Legacy JSON reader paths removed from code and compose; configuring `json` fails closed with 503 degraded status. |
+
+## Stale-open sweep
+
+The projector run loop reclassifies stale open journeys and their `loop_runs` automatically
+(bounded batch per interval, own short transaction, failures logged and retried). There is no
+manual drive step. Configuration, expected hosted counts (`no_order` 36,124, `unreconciled`
+111,025) and verification queries: see `lifecycle-projector-runbook.md`
+("Stale-open journey reclassification").

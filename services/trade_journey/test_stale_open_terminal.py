@@ -78,3 +78,37 @@ def test_bff_does_not_flag_new_terminal_statuses_stalled():
     for status in ("no_order", "unreconciled"):
         assert tj._is_stalled({"status": status, "updated_at": old}, now) is False
     assert tj._is_stalled({"status": "open", "updated_at": old}, now) is True
+
+
+# --- sweep wiring (no database) -------------------------------------------------
+
+import asyncio  # noqa: E402
+
+from services.trade_journey.lifecycle_projector import StaleOpenSweeper  # noqa: E402
+
+
+def test_sweeper_runs_one_batch_per_interval_and_survives_failure():
+    clock = {"t": 100.0}
+    calls: list[int] = []
+    fail = {"on": True}
+
+    def run(as_of, deadline, size):
+        calls.append(size)
+        if fail["on"]:
+            raise RuntimeError("statement timeout")
+        return {"unreconciled": size}
+
+    sweeper = StaleOpenSweeper(run, interval_seconds=10, batch_size=7, clock=lambda: clock["t"])
+    assert asyncio.run(sweeper.maybe_sweep()) is False  # failure swallowed
+    assert asyncio.run(sweeper.maybe_sweep()) is False  # not due yet, no extra call
+    assert calls == [7]
+    clock["t"] += 10
+    fail["on"] = False
+    assert asyncio.run(sweeper.maybe_sweep()) is True
+    assert calls == [7, 7] and sweeper.last_result == {"unreconciled": 7}
+
+
+def test_bff_unreconciled_is_warning_and_not_in_attention():
+    from services.control_plane.bff import trade_journeys as tj  # noqa: PLC0415
+    assert tj._severity({"status": "unreconciled"}, []) == "warning"
+    assert tj._severity({"status": "no_order"}, []) == "info"
