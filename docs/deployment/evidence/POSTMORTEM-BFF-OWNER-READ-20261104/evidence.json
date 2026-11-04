@@ -1,0 +1,224 @@
+{
+  "task_id": "POSTMORTEM-BFF-OWNER-READ-20261104",
+  "title": "Postmortem library is empty because the BFF never reads the postmortems owner",
+  "generated_at": "2026-11-04T02:32:00Z",
+  "worker": "Antigravity2",
+  "reviewer": "Claude",
+  "acceptance_criteria_evidence": {
+    "ac1_owner_read_and_in_process_dict_removed": {
+      "owner_env_vars": [
+        "PANTHEON_POSTMORTEMS_API_URL",
+        "PANTHEON_POSTMORTEMS_URL"
+      ],
+      "domain_incident_port_in_process_postmortems_removed": true,
+      "domain_incident_port_init_has_postmortems_param": false,
+      "domain_incident_port_instance_has_private_postmortems_attr": false,
+      "verified_by": [
+        "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac1_domain_incident_port_removes_in_process_postmortems_dict",
+        "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac1_ac2_all_bff_postmortem_entry_points_read_owner"
+      ]
+    },
+    "ac2_all_production_bff_postmortem_entry_points": {
+      "entry_points": [
+        {
+          "route": "GET /api/v1/postmortems",
+          "owner_endpoint": "GET /api/postmortems?page_size=50",
+          "returns_owner_row": true,
+          "sample_postmortem_id": "pm-20261104-0001",
+          "surface_status": {
+            "status": "ok",
+            "source": "service_client"
+          }
+        },
+        {
+          "route": "GET /api/v1/postmortems/{report_id}",
+          "owner_endpoint": "GET /api/postmortems/{postmortem_id}",
+          "returns_owner_row": true,
+          "sample_postmortem_id": "pm-20261104-0001",
+          "linked_incident_id": "inc-20261104-0001"
+        },
+        {
+          "route": "GET /api/v1/incidents/{incident_id}",
+          "via_method": "get_postmortem_by_incident",
+          "owner_endpoint": "GET /api/incidents/{incident_id}/postmortem",
+          "returns_owner_row": true,
+          "sample_postmortem_id": "pm-20261104-0001"
+        },
+        {
+          "route": "GET /bff/incidents/{incident_id}",
+          "via_method": "get_postmortem_by_incident",
+          "owner_endpoint": "GET /api/incidents/{incident_id}/postmortem",
+          "returns_owner_row": true,
+          "sample_postmortem_id": "pm-20261104-0001"
+        },
+        {
+          "route": "GET /api/v1/operator/post-incident-review/{incident_id}",
+          "via_method": "get_postmortem_by_incident",
+          "owner_endpoint": "GET /api/incidents/{incident_id}/postmortem",
+          "returns_owner_row": true,
+          "sample_postmortem_id": "pm-20261104-0001",
+          "surface_status": {
+            "status": "ok",
+            "source": "service_client"
+          }
+        },
+        {
+          "route": "GET /bff/management/postmortems",
+          "owner_endpoint": "GET /api/postmortems?page_size=50",
+          "returns_owner_row": true,
+          "sample_postmortem_id": "pm-20261104-0001"
+        },
+        {
+          "route": "GET /bff/management/postmortems/{postmortem_id}",
+          "owner_endpoint": "GET /api/postmortems/{postmortem_id}",
+          "returns_owner_row": true,
+          "sample_postmortem_id": "pm-20261104-0001"
+        },
+        {
+          "route": "GET /bff/agora/postmortems",
+          "owner_endpoint": "GET /api/postmortems?page_size=50",
+          "returns_owner_row": true,
+          "sample_postmortem_id": "pm-20261104-0001",
+          "surface_status": {
+            "status": "ok",
+            "source": "service_client"
+          }
+        }
+      ],
+      "verified_by": [
+        "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac1_ac2_all_bff_postmortem_entry_points_read_owner"
+      ]
+    },
+    "ac3_owner_list_paging_filtering_ordering_and_bridge_compat": {
+      "owner_route": "GET /api/postmortems",
+      "accepted_query_params": [
+        "incident_id",
+        "status",
+        "q",
+        "page_size",
+        "page_token"
+      ],
+      "ordering": "newest_first (created_at DESC, postmortem_id DESC)",
+      "total_header": "X-Total-Count",
+      "paged_envelope_keys": [
+        "items",
+        "data",
+        "total",
+        "page_info"
+      ],
+      "unpaged_published_caller": "services/persona/learning_feedback_bridge.py (GET /api/postmortems?status=published)",
+      "unpaged_caller_returns_bare_list": true,
+      "verified_by": [
+        "services/postmortems/test_main_routes.py::test_list_postmortems_bounded_paging_status_search_newest_first_and_total",
+        "services/postmortems/test_main_routes.py::test_unpaged_published_caller_learning_feedback_bridge_unchanged",
+        "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac3_owner_paging_filtering_and_learning_feedback_bridge_compat"
+      ]
+    },
+    "ac4_bff_paging_and_2027_real_shape_fixture_measurements": {
+      "bff_route": "GET /api/v1/postmortems",
+      "accepted_query_params": [
+        "time_range",
+        "status",
+        "q",
+        "page_size",
+        "page_token"
+      ],
+      "fixture_row_count": 2027,
+      "fixture_record_key_count": 23,
+      "fixture_record_keys": [
+        "action_items",
+        "artifact_id",
+        "artifact_version",
+        "author_ids",
+        "binding_id",
+        "capital_pool_id",
+        "contributing_factors",
+        "created_at",
+        "deployment_plan_id",
+        "deployment_stage",
+        "incident_cluster_id",
+        "incident_evidence_summary",
+        "incident_id",
+        "lineage_ref",
+        "persona_capital_binding_id",
+        "postmortem_id",
+        "root_cause",
+        "runtime_id",
+        "status",
+        "telemetry_event_ids",
+        "timeline",
+        "title",
+        "trace_id"
+      ],
+      "unpaged_2027_rows_bytes": 6625220,
+      "first_page_size": 50,
+      "first_page_body_bytes": 165110,
+      "first_page_limit_bytes": 1048576,
+      "first_page_under_1mb": true,
+      "owner_read_elapsed_ms": 197.27,
+      "bff_client_timeout_ms": 5000.0,
+      "completed_under_bff_client_timeout": true,
+      "page_info": {
+        "total": 2027,
+        "page_size": 50,
+        "next_page_token": "50"
+      },
+      "verified_by": [
+        "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac4_2027_real_shape_rows_paging_size_and_latency"
+      ]
+    },
+    "ac5_surface_status_and_connection_failure": {
+      "healthy_surface": {
+        "meta.surfaces.postmortems": {
+          "status": "ok",
+          "source": "service_client"
+        }
+      },
+      "connection_refused_surface": {
+        "meta.surfaces.postmortems": {
+          "status": "unavailable",
+          "source": "unavailable"
+        },
+        "data": [],
+        "page_info.total": 0
+      },
+      "empty_list_never_reported_as_ok_on_failure": true,
+      "verified_by": [
+        "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac5_real_connection_failure_reports_unavailable_not_ok_empty_list"
+      ]
+    },
+    "ac6_detail_id_preservation_and_404": {
+      "requested_postmortem_id": "pm-canonical-001",
+      "injected_conflicting_report_id": "legacy-report-999",
+      "returned_postmortem_id": "pm-canonical-001",
+      "returned_report_id": "pm-canonical-001",
+      "missing_id_status_code": 404,
+      "verified_by": [
+        "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac6_detail_lookup_preserves_postmortem_id_when_report_id_differs"
+      ]
+    },
+    "ac7_authorization_and_tenant_invariants": {
+      "authorization_guard": "require_read_role (same read role gate as incident routes)",
+      "hosted_incident_owner_records_carry_tenant_field": false,
+      "hosted_postmortem_owner_records_carry_tenant_field": false,
+      "bff_invents_tenant_data": false,
+      "verified_by": [
+        "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac7_read_role_authorization_and_no_invented_tenant_field"
+      ]
+    },
+    "ac8_real_record_shape_and_changed_test_assertion_justifications": {
+      "uses_real_23_key_postmortem_shape": true,
+      "owner_http_client_not_stubbed": true,
+      "changed_existing_test_assertions": [
+        {
+          "test": "services/control-plane/bff/tests/test_postmortem_router.py::test_list_postmortems_preserves_time_range_data_and_meta_contract",
+          "reason": "Updated expected GET /api/v1/postmortems envelope to include the new page_info (total, page_size, next_page_token) and meta.surfaces.postmortems fields required by AC4 and AC5, and expanded fixture rows to the real 23-key Postmortem record shape required by AC8."
+        },
+        {
+          "test": "services/control-plane/bff/tests/test_lifecycle_telemetry_governance_ports.py::test_postmortem_port_reads",
+          "reason": "DomainIncidentPort no longer accepts an in-process postmortems dictionary (AC1); updated the test to start a local HTTPServer backed by services.postmortems.main:app with real 23-key Postmortem records and pass postmortems_api_url to DomainIncidentPort."
+        }
+      ]
+    }
+  }
+}

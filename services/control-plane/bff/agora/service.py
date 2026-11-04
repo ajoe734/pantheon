@@ -459,10 +459,10 @@ class AgoraService:
                 "served_from": "local_snapshot",
                 "last_known_at": snapshot_at or self.utc_now(),
             }
-        elif source == "missing":
+        elif source in ("missing", "unavailable"):
             surface["status"] = "unavailable"
             surface["staleness"] = {
-                "served_from": "unverifiable",
+                "served_from": "unverifiable" if source == "missing" else source,
                 "last_known_at": snapshot_at or self.utc_now(),
             }
         return surface
@@ -476,6 +476,14 @@ class AgoraService:
             if source == "missing" and records:
                 source = "local_snapshot"
             return source, records
+
+        if dataset == "postmortems" and store is not None and hasattr(store, "list_postmortems") and callable(store.list_postmortems):
+            data = getattr(store, "_data", None)
+            if not (isinstance(data, dict) and "postmortems" in data):
+                records = [dict(item) for item in (store.list_postmortems() or []) if isinstance(item, dict)]
+                source_fn = getattr(store, "dataset_source", None)
+                source = source_fn("postmortems") if callable(source_fn) else "service_client"
+                return source, records
 
         data = getattr(store, "_data", {}) if store is not None else {}
         raw = data.get(dataset) if isinstance(data, dict) else None
@@ -494,7 +502,7 @@ class AgoraService:
             dataset,
             snapshot_at=snapshot_at,
             source=source,
-            has_data=(source != "missing"),
+            has_data=(source not in ("missing", "unavailable")),
         )
         meta = _default_read_surface_meta(
             dataset,
@@ -1283,7 +1291,12 @@ class AgoraService:
     # --- Read Surface Projections & Semantic Lists --- #
 
     def list_postmortems(self) -> Dict[str, Any]:
-        return self.sem_list_payload("postmortems", "agora_postmortems")
+        res = self.sem_list_payload("postmortems", "agora_postmortems")
+        if isinstance(res.get("meta"), dict) and isinstance(res["meta"].get("surfaces"), dict):
+            surf = res["meta"]["surfaces"].get("agora_postmortems")
+            if surf is not None:
+                res["meta"]["surfaces"]["postmortems"] = surf
+        return res
 
     def publish_sse_event(self, channel: str, event_type: str, data: Dict[str, Any]) -> None:
         buf = self._sse_buffers.get(channel, [])

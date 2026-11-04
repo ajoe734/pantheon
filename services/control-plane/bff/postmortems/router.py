@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from services.control_plane.bff.models import ErrorCode
 
@@ -78,6 +78,10 @@ def create_postmortem_router(
     @router.get("/api/v1/postmortems")
     def list_postmortems(
         time_range: Optional[str] = None,
+        status: Optional[str] = Query(default=None),
+        q: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
+        page_token: Optional[str] = Query(default=None),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """IN-03: Postmortem List."""
@@ -85,12 +89,37 @@ def create_postmortem_router(
         identity = _extract_identity(authorization)
         _require_read_role(identity)
 
-        postmortems = _get_service().list_postmortems(time_range=time_range)
+        svc = _get_service()
+        page = svc.list_postmortems_page(
+            time_range=time_range,
+            status=status,
+            q=q,
+            page_size=page_size,
+            page_token=page_token,
+        )
+        surface = svc.get_surface_status()
+        if surface.get("status") == "unavailable":
+            postmortems = []
+            total = 0
+            next_page_token = None
+        else:
+            postmortems = list(page.get("items") or [])
+            total = int(page.get("total", len(postmortems)))
+            next_page_token = page.get("next_page_token")
+
         return {
             "data": postmortems,
+            "page_info": {
+                "total": total,
+                "page_size": page_size,
+                "next_page_token": next_page_token,
+            },
             "meta": {
-                "total": len(postmortems),
+                "total": total,
                 "staleness": _meta_staleness(),
+                "surfaces": {
+                    "postmortems": surface,
+                },
             },
         }
 

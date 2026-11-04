@@ -3211,6 +3211,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/evidence/{ref_id}",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/management/evolution-journal",
       "family": "unknown",
       "status": "implemented"

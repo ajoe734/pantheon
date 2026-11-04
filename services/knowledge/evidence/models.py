@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
@@ -39,6 +39,11 @@ def validate_confidence(value: float, field_name: str = "confidence") -> float:
 
 class EvidenceValidationError(ValueError):
     """Raised when evidence-plane invariants are violated."""
+
+
+# Per-row metadata that is ~16 KB on real market rows (614 rows -> 10 MB list).
+# List responses omit them; the item-detail route still returns them.
+EVIDENCE_LIST_OMITTED_METADATA_KEYS = ("raw_storage_refs", "calendar_evidence")
 
 
 @dataclass(frozen=True)
@@ -306,3 +311,13 @@ class KnowledgeObject:
             metadata=dict(data.get("metadata", {})),
             created_at=data.get("created_at") or utc_now(),
         )
+
+
+def strip_list_heavy_metadata(item: "EvidenceItem") -> "EvidenceItem":
+    """Return ``item`` without the list-omitted metadata keys."""
+    if not any(key in item.metadata for key in EVIDENCE_LIST_OMITTED_METADATA_KEYS):
+        return item
+    return replace(
+        item,
+        metadata={k: v for k, v in item.metadata.items() if k not in EVIDENCE_LIST_OMITTED_METADATA_KEYS},
+    )

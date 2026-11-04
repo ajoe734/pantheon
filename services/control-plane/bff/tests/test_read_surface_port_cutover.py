@@ -122,7 +122,6 @@ class TestOperationsConsultationPortCutover(unittest.TestCase):
             memory_governance_rules=[{"rule_id": "mg-1", "retention_days": 90}],
             consult_rules=[{"rule_id": "cr-1", "min_participants": 2}],
             route_policies=[{"route": "/bff/orders", "rate_limit": 100}],
-            alpha_factory_cards=[{"id": "af-1", "lane": "momentum"}],
             skills=[{"skill_id": "sk-1", "name": "Arbitrage"}],
             tools=[{"tool_id": "tl-1", "name": "OrderSubmitter"}],
             mcp_servers=[{"server_id": "mcp-1", "name": "LocalGateway"}],
@@ -143,7 +142,6 @@ class TestOperationsConsultationPortCutover(unittest.TestCase):
         self.assertEqual(len(self.ports.list_memory_governance_rules()), 1)
         self.assertEqual(len(self.ports.list_consult_rules()), 1)
         self.assertEqual(len(self.ports.list_route_policies()), 1)
-        self.assertEqual(len(self.ports.list_alpha_factory_cards()), 1)
         self.assertEqual(len(self.ports.list_skills()), 1)
         self.assertEqual(len(self.ports.list_tools()), 1)
         self.assertEqual(len(self.ports.list_mcp_servers()), 1)

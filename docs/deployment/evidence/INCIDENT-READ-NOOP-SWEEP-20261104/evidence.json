@@ -1,0 +1,185 @@
+{
+  "task_id": "INCIDENT-READ-NOOP-SWEEP-20261104",
+  "title": "Every incident read takes over a second because a no-op sweep reloads and deep-copies the whole store",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-04T04:13:00Z",
+  "base_branch": "origin/dev",
+  "base_commit": "035d8e3d3aedaecfd88905cad466b5c857870cc4",
+  "verification_scope": "functional_local_only_per_task_brief_hosted_deferred_to_HUMAN-INBOX-HOSTED-ACCEPTANCE-20261104",
+  "summary": {
+    "cause": "Incident read routes (GET /api/incidents, GET /api/incidents/{incident_id}, GET /api/incidents/{incident_id}/operator-payload) invoked resolve_stale_monitor_agent_findings (@_serialized_store_write) unconditionally. Even when zero records needed resolution, @_serialized_store_write entered _write_guard (acquiring flock and unconditionally clearing and reloading the entire 16.5MB JSON store) and performed whole-store deepcopy of _incidents and _postmortems while holding _thread_lock.",
+    "fix": "Added read-only predicates under @_serialized_store_read (IncidentStore.has_stale_monitor_agent_findings and IncidentStore.has_orphaned_infrastructure_incidents) that share single candidate-selection helpers (_stale_monitor_agent_finding_candidates and _orphaned_infrastructure_incident_candidates) with the write methods. Updated resolve_stale_agent_finding_incidents and reconcile_orphaned_infrastructure_incidents in services/incidents/main.py to check the read-only predicate first and proceed only when work exists, while keeping the original per-incident outbox-prepare -> update_incident_status(expected_snapshot=...) -> outbox-activate loop in reconcile_orphaned_infrastructure_incidents so a prepare failure leaves the incident open. Preserved the unconditional reload in _write_guard and rollback deepcopy in _serialized_store_write unchanged, and re-evaluated candidates inside _write_guard on the write path."
+  },
+  "acceptance_criteria": {
+    "ac1_noop_get_skips_write_guard_load_and_deepcopy": {
+      "status": "passed",
+      "test": "services/incidents/test_read_sweep_cost.py::test_ac1_get_routes_with_no_stale_finding_skip_write_guard_load_and_deepcopy",
+      "fixture": {
+        "incidents_count": 2600,
+        "postmortems_count": 2000,
+        "postmortem_key_count": 23,
+        "json_file_size_bytes": 17468237
+      },
+      "measured_counts_across_get_routes": {
+        "routes_exercised": [
+          "GET /api/incidents?open_only=true",
+          "GET /api/incidents/agent-open00002592-0000",
+          "GET /api/incidents/inc-20261104-0001/operator-payload",
+          "GET /api/incidents?binding_id=bind-paper-000"
+        ],
+        "write_guard_entries": 0,
+        "load_calls": 0,
+        "whole_store_deepcopy_calls": 0,
+        "save_calls": 0
+      }
+    },
+    "ac2_noop_reconcile_infrastructure_health_skips_write_guard_load_and_deepcopy": {
+      "status": "passed",
+      "test": "services/incidents/test_read_sweep_cost.py::test_ac2_reconcile_infrastructure_health_noop_skips_write_guard_load_and_deepcopy",
+      "prepare_failure_regression_test": "services/incidents/test_read_sweep_cost.py::test_reconcile_infrastructure_health_prepare_failure_leaves_incident_open",
+      "route": "POST /api/incidents/reconcile-infrastructure-health",
+      "measured_counts": {
+        "write_guard_entries": 0,
+        "load_calls": 0,
+        "whole_store_deepcopy_calls": 0,
+        "save_calls": 0
+      },
+      "details": "reconcile_orphaned_infrastructure_incidents checks has_orphaned_infrastructure_incidents first (0 write_guard / 0 _load / 0 deepcopy on no-op) and keeps the original per-incident find_open_incidents -> _prepare_postmortem_delivery -> update_incident_status(expected_snapshot=...) -> outbox_store.activate loop so a prepare failure leaves the incident open."
+    },
+    "ac3_stale_finding_resolved_once_before_response": {
+      "status": "passed",
+      "tests": [
+        "services/incidents/test_read_sweep_cost.py::test_ac3_stale_finding_resolved_once_before_response_then_subsequent_reads_noop",
+        "services/incidents/test_consume_agent_finding.py::test_stale_finding_auto_resolves_on_read",
+        "services/incident/test_incident.py::TestMonitorAgentFindingDedupeAndResolve::test_resolve_stale_monitor_agent_findings_only_resolves_expired_agent_findings"
+      ],
+      "details": "First GET resolves the stale finding once (write_guard=1, save=1) before constructing the response so the response omits the resolved finding from open_only=true; subsequent GET performs 0 _load and 0 deepcopy calls."
+    },
+    "ac4_write_path_reevaluates_candidates_inside_write_guard": {
+      "status": "passed",
+      "test": "services/incidents/test_read_sweep_cost.py::test_ac4_write_path_reevaluates_candidates_inside_write_guard_on_concurrent_change",
+      "subcases_verified": [
+        "Finding re-observed by another process between has_stale_monitor_agent_findings() and _write_guard reload remains open with fresh observation evidence preserved",
+        "Finding already closed by another process between has_stale_monitor_agent_findings() and _write_guard reload keeps its concurrent closed status and resolution_reason",
+        "Orphaned infrastructure incident already resolved by another process between has_orphaned_infrastructure_incidents() and find_open_incidents() keeps its concurrent resolution_reason",
+        "Orphaned infrastructure incident resolved by another process after find_open_incidents() / outbox prepare is caught by expected_snapshot CAS inside _write_guard and keeps its concurrent resolution_reason"
+      ]
+    },
+    "ac5_cross_process_mtime_refresh_sees_stale_finding": {
+      "status": "passed",
+      "test": "services/incidents/test_read_sweep_cost.py::test_ac5_cross_process_mtime_refresh_sees_and_resolves_stale_finding_from_other_instance",
+      "details": "Two IncidentStore instances sharing one JSON file confirm that a stale monitor-agent finding written by the second instance updates file mtime/size, is loaded by _refresh_from_disk inside has_stale_monitor_agent_findings on the first instance, and is resolved before the GET response is returned."
+    },
+    "ac6_postgres_incident_store_behaviour_and_owner_table_reads": {
+      "status": "passed",
+      "tests": [
+        "services/incident/test_pg_store_integration.py::test_postgres_resolve_stale_monitor_agent_findings_preserves_non_agent_incidents",
+        "services/incident/test_pg_store_integration.py::test_postgres_upsert_and_resolve_orphaned_infrastructure_incidents",
+        "services/incidents/test_read_sweep_cost.py::test_ac6_postgres_incident_store_owner_table_reads_per_get_before_and_after"
+      ],
+      "postgres_owner_table_reads_per_get": {
+        "explanation": "PostgresIncidentStore._refresh_from_disk() executes 2 owner table reads per store operation: 1 SELECT on incident.incident_cases (_incident_records.list_all) and 1 SELECT on incident.postmortems (_postmortem_records.list_all). On a no-op GET, replacing the unconditional @_serialized_store_write call (resolve_stale_monitor_agent_findings) with the @_serialized_store_read predicate (has_stale_monitor_agent_findings) preserves the exact same number of owner table reads per GET while eliminating 2 whole-store deepcopy calls per GET.",
+        "routes": {
+          "GET /api/incidents (including ?open_only=true)": {
+            "before": {
+              "total_owner_table_reads": 4,
+              "incident_cases_reads": 2,
+              "postmortems_reads": 2,
+              "whole_store_deepcopy_calls": 2
+            },
+            "after_noop": {
+              "total_owner_table_reads": 4,
+              "incident_cases_reads": 2,
+              "postmortems_reads": 2,
+              "whole_store_deepcopy_calls": 0
+            }
+          },
+          "GET /api/incidents/{incident_id}": {
+            "before": {
+              "total_owner_table_reads": 4,
+              "incident_cases_reads": 2,
+              "postmortems_reads": 2,
+              "whole_store_deepcopy_calls": 2
+            },
+            "after_noop": {
+              "total_owner_table_reads": 4,
+              "incident_cases_reads": 2,
+              "postmortems_reads": 2,
+              "whole_store_deepcopy_calls": 0
+            }
+          },
+          "GET /api/incidents/{incident_id}/operator-payload": {
+            "before": {
+              "total_owner_table_reads": 6,
+              "incident_cases_reads": 3,
+              "postmortems_reads": 3,
+              "whole_store_deepcopy_calls": 2
+            },
+            "after_noop": {
+              "total_owner_table_reads": 6,
+              "incident_cases_reads": 3,
+              "postmortems_reads": 3,
+              "whole_store_deepcopy_calls": 0
+            }
+          }
+        }
+      }
+    },
+    "ac7_open_only_latency_benchmark_50_sequential_requests": {
+      "status": "passed",
+      "test": "services/incidents/test_read_sweep_cost.py::test_ac7_fifty_sequential_open_only_requests_under_50ms_median",
+      "route": "GET /api/incidents?open_only=true",
+      "sequential_requests": 50,
+      "fixture": {
+        "incidents_count": 2600,
+        "postmortems_count": 2000,
+        "open_incidents_returned": 8,
+        "json_file_size_bytes": 17468237
+      },
+      "before_latency_ms": {
+        "count": 50,
+        "min_ms": 393.388,
+        "median_ms": 474.99,
+        "mean_ms": 467.977,
+        "p95_ms": 533.952,
+        "max_ms": 559.97
+      },
+      "after_latency_ms": {
+        "count": 50,
+        "min_ms": 9.138,
+        "median_ms": 10.102,
+        "mean_ms": 10.826,
+        "p95_ms": 10.82,
+        "max_ms": 46.395,
+        "threshold_median_ms": 50.0
+      }
+    },
+    "ac8_contract_and_test_preservation": {
+      "status": "passed",
+      "route_or_response_shape_changes": false,
+      "scheduler_or_background_thread_added": false,
+      "new_environment_variables_added": false,
+      "existing_tests_weakened_or_deleted": false,
+      "test_expectation_classification": "no_test_expectations_changed",
+      "justification": "No existing test assertions were modified, weakened, or removed. Only additive predicate assertions in services/incident/test_incident.py and the new regression/benchmark suite in services/incidents/test_read_sweep_cost.py were added."
+    }
+  },
+  "validation_commands": [
+    {
+      "command": "TEST_DATABASE_URL=\"postgresql://postgres:t@127.0.0.1:55432/postgres\" .venv-pantheon/bin/python3 -m pytest services/incident -v",
+      "exit_code": 0,
+      "result": "147 passed, 4 subtests passed in 24.35s"
+    },
+    {
+      "command": "TEST_DATABASE_URL=\"postgresql://postgres:t@127.0.0.1:55432/postgres\" .venv-pantheon/bin/python3 -m pytest services/incidents -v",
+      "exit_code": 0,
+      "result": "116 passed, 3 warnings in 49.69s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/incidents/test_read_sweep_cost.py -v",
+      "exit_code": 0,
+      "result": "8 passed, 3 warnings in 7.12s"
+    }
+  ]
+}

@@ -21,6 +21,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 log = logging.getLogger(__name__)
 
 
+class _EvidenceOwnerReadError(RuntimeError):
+    """The evidence owner read failed or timed out."""
+
+
 class ResearchWriteOwnerUnavailableError(RuntimeError):
     """Raised when the Postgres-backed ResearchWriteOwner is not configured.
 
@@ -54,6 +58,60 @@ try:
     from services.source_ingestion.registry.data_source_registry import DataSourceRegistry
 except ImportError:  # pragma: no cover
     DataSourceRegistry = None  # type: ignore[assignment,misc]
+
+
+EVIDENCE_OWNER_PAGE_SIZE = 200
+
+
+@dataclass
+class EvidenceReadResult:
+    """Outcome of ONE evidence read. Availability belongs to the read that
+    produced the rows, never to shared instance state."""
+
+    items: List[Dict[str, Any]]
+    total: Optional[int]
+    status: str  # "ok" | "unavailable"
+    source: str  # "typed_store" | "service_client" | "unavailable" | "missing"
+    next_page_token: Optional[str] = None
+
+    @property
+    def available(self) -> bool:
+        return self.status == "ok"
+
+
+def normalize_source_ingest_evidence_item(item: Mapping[str, Any]) -> Dict[str, Any]:
+    """The one mapping from a source-ingest evidence item to a BFF evidence ref.
+
+    Never fills a field with the current time: ``captured_at`` is
+    ``available_time`` then ``event_time`` and stays ``None`` when neither
+    exists.
+    """
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+    ref_id = item.get("evidence_item_id") or item.get("ref_id")
+    label = item.get("citation_label") or ref_id
+    try:
+        confidence = float(item.get("confidence") if item.get("confidence") is not None else 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    verified = confidence >= 0.8
+    body = item.get("body") or None
+    return {
+        "ref_id": ref_id,
+        "evidence_origin": "source_ingest",
+        "evidence_type": item.get("item_type") or None,
+        "display_label": label,
+        "summary": body,
+        "source_document": {
+            "title": label,
+            "source_type": metadata.get("source_class") or item.get("item_type") or "internal",
+            "source_ref": item.get("content_ref"),
+            "captured_at": item.get("available_time") or item.get("event_time") or None,
+            "excerpt": body,
+        },
+        "link_type": "supporting",
+        "credibility": {"tier": "verified" if verified else "unverified", "verified": verified},
+        "metadata": dict(metadata),
+    }
 
 
 def _utc_now_rfc3339() -> str:
@@ -151,6 +209,9 @@ class ResearchKnowledgeSourcePort:
         source_types: Optional[set[str]] = None,
         include_scope_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def read_evidence_refs(self, **kwargs: Any) -> "EvidenceReadResult":
         raise NotImplementedError
 
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -437,7 +498,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         http_post_fn: Optional[Callable[[str, str, Dict[str, Any]], Tuple[bool, Any]]] = None,
     ) -> None:
         self._evidence_repo = evidence_repository
-        self._evidence_status: Optional[str] = None
         self._institutional_memory_store = institutional_memory_store
         self._search_gateway = search_gateway
         self._search_index_store = search_index_store
@@ -536,19 +596,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if dataset == "institutional_memory_entries":
             return "typed_store" if self._institutional_memory_store is not None else ("bff_composed" if self._notes else "missing")
         if dataset in ("evidence_refs", "knowledge_evidence"):
-            if self._evidence_repo is not None:
-                try:
-                    self._evidence_repo.list_evidence_items()
-                    return "typed_store"
-                except Exception:
-                    return "unavailable"
-            if self._evidence_refs:
+            # Configuration only. Whether a particular read succeeded is the
+            # EvidenceReadResult of that read, not instance state.
+            if self._evidence_repo is not None or self._evidence_refs:
                 return "typed_store"
-            if self._source_ingest_service_url:
-                if not self._evidence_status:
-                    self._collect_raw_evidence_refs()
-                return self._evidence_status or "unavailable"
-            return "missing"
+            if not self._source_ingest_service_url:
+                return "missing"
+            # A fresh one-row probe on every call: nothing is cached on the
+            # instance, so one request's failure can never label another's.
+            try:
+                next(self._iter_owner_evidence_pages(page_size=1))
+            except (_EvidenceOwnerReadError, StopIteration):
+                return "unavailable"
+            return "service_client"
         if dataset == "research_experiments":
             return "typed_store" if self._get_research_write_owner() is not None else "missing"
         if dataset == "strategy_specs":
@@ -915,6 +975,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             },
             "resolved_link": self._kw03_normalize_resolved_link(evidence_ref.get("resolved_link")),
         }
+        if evidence_ref.get("summary"):
+            payload["summary"] = evidence_ref["summary"]
+        if evidence_ref.get("evidence_origin"):
+            payload["evidence_origin"] = evidence_ref["evidence_origin"]
         artifact_manifest = evidence_ref.get("artifact_manifest")
         if isinstance(artifact_manifest, dict):
             payload["artifact_manifest"] = json.loads(json.dumps(artifact_manifest))
@@ -978,7 +1042,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             else None
         )
 
-        return {
+        detail = {
             "ref_id": projected.get("ref_id"),
             "evidence_type": projected.get("evidence_type"),
             "display_label": projected.get("display_label"),
@@ -1008,44 +1072,34 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "source_memory_context": json.loads(json.dumps(source_memory_context)),
             "created_at": evidence_ref.get("created_at") or projected["source_document"].get("captured_at"),
         }
+        if projected.get("summary"):
+            detail["summary"] = projected["summary"]
+        if projected.get("evidence_origin"):
+            detail["evidence_origin"] = projected["evidence_origin"]
+        return detail
 
-    def _collect_raw_evidence_refs(self) -> List[Dict[str, Any]]:
-        if self._evidence_repo is not None:
-            # Reconstruct from evidence repository if present
-            refs: List[Dict[str, Any]] = []
+    def _iter_owner_evidence_pages(self, *, start: int = 0, page_size: int = EVIDENCE_OWNER_PAGE_SIZE):
+        """Yield ``(items, total)`` per owner page; raise ``_EvidenceOwnerReadError``."""
+        offset = start
+        while True:
             try:
-                items = self._evidence_repo.list_evidence_items()
-            except Exception:
-                return []
-            for item in items:
-                src = self._evidence_repo.get_source_record(item.source_id)
-                refs.append({
-                    "ref_id": item.evidence_item_id,
-                    "display_label": item.citation_label or (src.title if src else item.evidence_item_id),
-                    "source_document": {
-                        "title": src.title if src else item.citation_label,
-                        "source_type": src.source_type if src else "internal",
-                        "source_ref": src.content_ref if src else None,
-                        "captured_at": item.metadata.get("captured_at") or _utc_now_rfc3339(),
-                    },
-                    "link_type": "supporting",
-                    "credibility": {"tier": "verified" if item.confidence >= 0.8 else "unverified", "verified": item.confidence >= 0.8},
-                    "metadata": dict(item.metadata),
-                })
-            return refs
-        if self._source_ingest_service_url and not self._evidence_refs:
-            try:
-                avail, payload = self._http_get(self._source_ingest_service_url, "/api/source-ingest/evidence/items")
-                items = payload.get("items") if avail and isinstance(payload, dict) else None
-                self._evidence_status = "service_client" if isinstance(items, list) else "unavailable"
-                if isinstance(items, list):
-                    return [dict(it, ref_id=it.get("evidence_item_id") or it.get("ref_id")) for it in items]
-            except Exception:
-                self._evidence_status = "unavailable"
-            return []
-        return list(self._evidence_refs.values())
+                avail, payload = self._http_get(
+                    self._source_ingest_service_url,
+                    f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={offset}",
+                )
+            except Exception as exc:  # noqa: BLE001 - any transport failure means unavailable
+                raise _EvidenceOwnerReadError("source-ingest evidence owner read failed") from exc
+            items = payload.get("items") if avail and isinstance(payload, dict) else None
+            if not isinstance(items, list):
+                raise _EvidenceOwnerReadError("source-ingest evidence owner read failed")
+            total = payload.get("total")
+            total = int(total) if isinstance(total, int) else offset + len(items)
+            yield items, total
+            offset += len(items)
+            if not items or offset >= total or not payload.get("next_page_token"):
+                return
 
-    def list_evidence_refs(
+    def read_evidence_refs(
         self,
         *,
         tenant_id: Optional[str] = None,
@@ -1053,21 +1107,49 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         linked_entities: Optional[set[tuple[str, str]]] = None,
         source_types: Optional[set[str]] = None,
         include_scope_metadata: bool = False,
-    ) -> List[Dict[str, Any]]:
-        raw_refs = self._collect_raw_evidence_refs()
+        page_token: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> EvidenceReadResult:
+        """One evidence read. With ``page_size`` and no scope filter against the
+        owner service, exactly one owner page is fetched; otherwise every owner
+        page is streamed and filtered so totals stay correct."""
+        unscoped = not linked_entities and not source_types
+        if (
+            page_size
+            and unscoped
+            and self._evidence_repo is None
+            and not self._evidence_refs
+            and self._source_ingest_service_url
+        ):
+            try:
+                start = int(page_token) if page_token else 0
+            except ValueError:
+                start = 0
+            try:
+                items, total = next(self._iter_owner_evidence_pages(start=start, page_size=page_size))
+            except (_EvidenceOwnerReadError, StopIteration):
+                return EvidenceReadResult([], None, "unavailable", "unavailable")
+            rows = [
+                self._project_evidence_ref_list_item(
+                    normalize_source_ingest_evidence_item(it), include_scope_metadata=include_scope_metadata
+                )
+                for it in items
+                if self._record_matches_tenant(it, tenant_id, include_tenant_agnostic=include_tenant_agnostic)
+            ]
+            nxt = start + len(items)
+            return EvidenceReadResult(
+                rows, total, "ok", "service_client", str(nxt) if nxt < total else None
+            )
+
+        try:
+            raw_refs, source = self._collect_raw_evidence_refs()
+        except _EvidenceOwnerReadError:
+            return EvidenceReadResult([], None, "unavailable", "unavailable")
         filtered = [
             ref
             for ref in raw_refs
-            if self._record_matches_tenant(
-                ref,
-                tenant_id,
-                include_tenant_agnostic=include_tenant_agnostic,
-            )
-            and self._evidence_matches_scope(
-                ref,
-                linked_entities=linked_entities,
-                source_types=source_types,
-            )
+            if self._record_matches_tenant(ref, tenant_id, include_tenant_agnostic=include_tenant_agnostic)
+            and self._evidence_matches_scope(ref, linked_entities=linked_entities, source_types=source_types)
         ]
         filtered.sort(
             key=lambda ref: (
@@ -1078,23 +1160,134 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             ),
             reverse=True,
         )
-        return [
+        total = len(filtered)
+        nxt_token: Optional[str] = None
+        if page_size:
+            try:
+                start = int(page_token) if page_token else 0
+            except ValueError:
+                start = 0
+            window = filtered[start: start + page_size]
+            nxt_token = str(start + page_size) if start + page_size < total else None
+        else:
+            window = filtered
+        rows = [
             self._project_evidence_ref_list_item(ref, include_scope_metadata=include_scope_metadata)
-            for ref in filtered
+            for ref in window
         ]
+        if source == "missing":
+            # Nothing configured to read from: unknown, not an empty "ok".
+            return EvidenceReadResult([], None, "unavailable", "missing")
+        return EvidenceReadResult(rows, total, "ok", source, nxt_token)
+
+    def _collect_raw_evidence_refs(self) -> Tuple[List[Dict[str, Any]], str]:
+        """Return ``(raw_refs, source)``; raise on owner read failure."""
+        if self._evidence_repo is not None:
+            try:
+                items = self._evidence_repo.list_evidence_items()
+            except Exception as exc:
+                raise _EvidenceOwnerReadError("evidence repository read failed") from exc
+            return [normalize_source_ingest_evidence_item(it.to_dict()) for it in items], "typed_store"
+        if self._source_ingest_service_url and not self._evidence_refs:
+            refs: List[Dict[str, Any]] = []
+            for items, _total in self._iter_owner_evidence_pages():
+                refs.extend(normalize_source_ingest_evidence_item(it) for it in items)
+            return refs, "service_client"
+        return list(self._evidence_refs.values()), "typed_store" if self._evidence_refs else "missing"
+
+    def list_evidence_refs(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        include_tenant_agnostic: bool = True,
+        linked_entities: Optional[set[tuple[str, str]]] = None,
+        source_types: Optional[set[str]] = None,
+        include_scope_metadata: bool = False,
+    ) -> List[Dict[str, Any]]:
+        return self.read_evidence_refs(
+            tenant_id=tenant_id,
+            include_tenant_agnostic=include_tenant_agnostic,
+            linked_entities=linked_entities,
+            source_types=source_types,
+            include_scope_metadata=include_scope_metadata,
+        ).items
+
+    def _read_raw_evidence_ref_checked(
+        self, ref_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], str, str]:
+        """Read ONE evidence item (owner item route / repo get), never the list.
+
+        Returns ``(raw_or_None, status, source)``; ``status`` is ``ok`` (found
+        or genuinely absent) or ``unavailable`` (the owner read failed).
+        """
+        clean = str(ref_id or "").strip()
+        if not clean:
+            return None, "ok", "typed_store"
+        if self._evidence_repo is not None:
+            try:
+                item = self._evidence_repo.get_evidence_item(clean)
+            except Exception:
+                return None, "unavailable", "unavailable"
+            raw = normalize_source_ingest_evidence_item(item.to_dict()) if item is not None else None
+            return raw, "ok", "typed_store"
+        if self._evidence_refs:
+            ref = next((r for r in self._evidence_refs.values() if str(r.get("ref_id") or "") == clean), None)
+            return (dict(ref) if ref else None), "ok", "typed_store"
+        if self._source_ingest_service_url:
+            from urllib.parse import quote
+
+            try:
+                avail, payload = self._http_get(
+                    self._source_ingest_service_url, f"/api/source-ingest/evidence/items/{quote(clean, safe='')}"
+                )
+            except Exception:  # noqa: BLE001
+                return None, "unavailable", "unavailable"
+            record = payload.get("item") if avail and isinstance(payload, dict) else None
+            if isinstance(record, dict):
+                return normalize_source_ingest_evidence_item(record), "ok", "service_client"
+            if avail:
+                return None, "ok", "service_client"
+            # The helper reports 404 and transport failure alike; a one-row
+            # list probe tells "absent" apart from "owner down".
+            try:
+                next(self._iter_owner_evidence_pages(page_size=1))
+            except (_EvidenceOwnerReadError, StopIteration):
+                return None, "unavailable", "unavailable"
+            return None, "ok", "service_client"
+        return None, "unavailable", "missing"
+
+    def _read_raw_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._read_raw_evidence_ref_checked(ref_id)[0]
+
+    def read_evidence_ref_item(self, ref_id: Optional[str]) -> "EvidenceReadResult":
+        """One owner item read; availability belongs to this read."""
+        raw, status, source = self._read_raw_evidence_ref_checked(ref_id)
+        if status != "ok":
+            return EvidenceReadResult([], None, "unavailable", source)
+        rows = [self._project_evidence_ref_list_item(raw)] if raw else []
+        return EvidenceReadResult(rows, len(rows), "ok", source)
+
+    def read_evidence_ref_detail(
+        self, ref_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], "EvidenceReadResult"]:
+        """One owner item read returning the detail record plus that read's
+        own availability (no separate dataset probe)."""
+        raw, status, source = self._read_raw_evidence_ref_checked(ref_id)
+        if status != "ok":
+            return None, EvidenceReadResult([], None, "unavailable", source)
+        detail = self._project_evidence_ref_detail(raw) if raw else None
+        return detail, EvidenceReadResult([detail] if detail else [], 1 if detail else 0, "ok", source)
 
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ref_id:
             return None
-        raw_refs = {str(r.get("ref_id") or ""): r for r in self._collect_raw_evidence_refs()}
-        ref = raw_refs.get(str(ref_id))
+        ref = self._read_raw_evidence_ref(ref_id)
         return self._project_evidence_ref_list_item(ref) if ref else None
 
     def get_evidence_ref_detail(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ref_id:
             return None
-        raw_refs = {str(r.get("ref_id") or ""): r for r in self._collect_raw_evidence_refs()}
-        ref = raw_refs.get(str(ref_id))
+        ref = self._read_raw_evidence_ref(ref_id)
         return self._project_evidence_ref_detail(ref) if ref else None
 
     # -------------------------------------------------------------------------

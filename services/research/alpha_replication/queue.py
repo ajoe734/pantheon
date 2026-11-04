@@ -70,7 +70,9 @@ class AlphaReplicationQueue:
     """Process-safe durable queue for approved immutable StrategySpecs."""
 
     def __init__(self, data_dir: str | Path) -> None:
-        self._path = Path(data_dir) / "alpha_replication_queue.jsonl"
+        self._data_dir = Path(data_dir)
+        self._path = self._data_dir / "alpha_replication_queue.jsonl"
+        self._legacy_json_path = self._data_dir / "queue.json"
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock_path = self._path.with_suffix(".lock")
         self._lock = threading.Lock()
@@ -501,16 +503,32 @@ class AlphaReplicationQueue:
             entry.pop(field_name, None)
 
     def _read(self) -> list[dict[str, Any]]:
-        if not self._path.exists():
-            return []
         entries: list[dict[str, Any]] = []
-        for line in self._path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            payload = json.loads(line)
-            if isinstance(payload, dict):
-                entries.append(payload)
+        seen: set[tuple[str, str]] = set()
+        if self._path.exists():
+            for line in self._path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                payload = json.loads(line)
+                if isinstance(payload, dict):
+                    entries.append(payload)
+                    seen.add(_key(payload))
+        if self._legacy_json_path.exists():
+            raw = self._legacy_json_path.read_text(encoding="utf-8").strip()
+            if raw:
+                parsed = json.loads(raw)
+                items = (
+                    list(parsed.values())
+                    if isinstance(parsed, dict)
+                    else (parsed if isinstance(parsed, list) else [])
+                )
+                for item in items:
+                    if isinstance(item, dict):
+                        key = _key(item)
+                        if key not in seen:
+                            entries.append(item)
+                            seen.add(key)
         return entries
 
     def _rewrite_durable(self, entries: list[dict[str, Any]]) -> None:
