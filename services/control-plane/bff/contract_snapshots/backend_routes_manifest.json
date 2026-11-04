@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-10-24",
+    "snapshot_date": "2026-11-04",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 621,
+    "total_routes": 623,
     "status_values": [
       "implemented",
       "alias",
@@ -1703,6 +1703,18 @@
     {
       "method": "GET",
       "path": "/bff/research-experiments/{param}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/research-tasks",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/research-tasks/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },

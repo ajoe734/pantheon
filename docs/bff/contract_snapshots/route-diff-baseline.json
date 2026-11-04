@@ -233,13 +233,6 @@
         "status": "implemented"
       },
       {
-        "family": "sse-substrate",
-        "key": "GET /api/v1/kill-switch/updates",
-        "method": "GET",
-        "path": "/api/v1/kill-switch/updates",
-        "status": "implemented"
-      },
-      {
         "family": "api-v1",
         "key": "GET /api/v1/knowledge/evidence",
         "method": "GET",
@@ -619,6 +612,20 @@
       },
       {
         "family": "api-v1",
+        "key": "GET /api/v1/research/analyses",
+        "method": "GET",
+        "path": "/api/v1/research/analyses",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/analyses/{param}",
+        "method": "GET",
+        "path": "/api/v1/research/analyses/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
         "key": "GET /api/v1/research/analysis",
         "method": "GET",
         "path": "/api/v1/research/analysis",
@@ -629,6 +636,27 @@
         "key": "GET /api/v1/research/analysis/{param}",
         "method": "GET",
         "path": "/api/v1/research/analysis/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/artifacts",
+        "method": "GET",
+        "path": "/api/v1/research/artifacts",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/artifacts/compare",
+        "method": "GET",
+        "path": "/api/v1/research/artifacts/compare",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/artifacts/{param}",
+        "method": "GET",
+        "path": "/api/v1/research/artifacts/{param}",
         "status": "implemented"
       },
       {
@@ -815,27 +843,6 @@
       },
       {
         "family": "agora-core",
-        "key": "GET /bff/agora/alerts/triage",
-        "method": "GET",
-        "path": "/bff/agora/alerts/triage",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "GET /bff/agora/ask/sessions",
-        "method": "GET",
-        "path": "/bff/agora/ask/sessions",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "GET /bff/agora/ask/sessions/{param}",
-        "method": "GET",
-        "path": "/bff/agora/ask/sessions/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
         "key": "GET /bff/agora/candidate-pools",
         "method": "GET",
         "path": "/bff/agora/candidate-pools",
@@ -912,48 +919,6 @@
         "status": "implemented"
       },
       {
-        "family": "agora-extended",
-        "key": "GET /bff/agora/committee/sessions",
-        "method": "GET",
-        "path": "/bff/agora/committee/sessions",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-extended",
-        "key": "GET /bff/agora/committee/sessions/{param}",
-        "method": "GET",
-        "path": "/bff/agora/committee/sessions/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-extended",
-        "key": "GET /bff/agora/committee/sessions/{param}/memos",
-        "method": "GET",
-        "path": "/bff/agora/committee/sessions/{param}/memos",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-extended",
-        "key": "GET /bff/agora/committee/sessions/{param}/memos/{param}",
-        "method": "GET",
-        "path": "/bff/agora/committee/sessions/{param}/memos/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "GET /bff/agora/dashboard-recipes/{param}",
-        "method": "GET",
-        "path": "/bff/agora/dashboard-recipes/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "GET /bff/agora/dashboard-recipes/{param}/versions",
-        "method": "GET",
-        "path": "/bff/agora/dashboard-recipes/{param}/versions",
-        "status": "implemented"
-      },
-      {
         "family": "agora-core",
         "key": "GET /bff/agora/dataset-worker/backlog",
         "method": "GET",
@@ -993,27 +958,6 @@
         "key": "GET /bff/agora/decision-projection/events/{param}",
         "method": "GET",
         "path": "/bff/agora/decision-projection/events/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "GET /bff/agora/evaluation-runs",
-        "method": "GET",
-        "path": "/bff/agora/evaluation-runs",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "GET /bff/agora/evaluation-suites",
-        "method": "GET",
-        "path": "/bff/agora/evaluation-suites",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "GET /bff/agora/inbox",
-        "method": "GET",
-        "path": "/bff/agora/inbox",
         "status": "implemented"
       },
       {
@@ -1060,16 +1004,16 @@
       },
       {
         "family": "agora-core",
-        "key": "GET /bff/agora/performance/action-receipts/{param}",
+        "key": "GET /bff/agora/operational-readiness",
         "method": "GET",
-        "path": "/bff/agora/performance/action-receipts/{param}",
+        "path": "/bff/agora/operational-readiness",
         "status": "implemented"
       },
       {
-        "family": "agora-extended",
-        "key": "GET /bff/agora/persona-lab/runs",
+        "family": "agora-core",
+        "key": "GET /bff/agora/performance/action-receipts/{param}",
         "method": "GET",
-        "path": "/bff/agora/persona-lab/runs",
+        "path": "/bff/agora/performance/action-receipts/{param}",
         "status": "implemented"
       },
       {
@@ -1158,6 +1102,13 @@
       },
       {
         "family": "agora-core",
+        "key": "GET /bff/agora/servant",
+        "method": "GET",
+        "path": "/bff/agora/servant",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "GET /bff/agora/servant/sessions/{param}",
         "method": "GET",
         "path": "/bff/agora/servant/sessions/{param}",
@@ -1172,23 +1123,9 @@
       },
       {
         "family": "agora-core",
-        "key": "GET /bff/agora/skill-coaching/sessions",
-        "method": "GET",
-        "path": "/bff/agora/skill-coaching/sessions",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
         "key": "GET /bff/agora/strategies/{param}/candidate-pool",
         "method": "GET",
         "path": "/bff/agora/strategies/{param}/candidate-pool",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "GET /bff/agora/strategies/{param}/dashboard-recipes",
-        "method": "GET",
-        "path": "/bff/agora/strategies/{param}/dashboard-recipes",
         "status": "implemented"
       },
       {
@@ -1676,13 +1613,6 @@
       },
       {
         "family": "unknown",
-        "key": "GET /bff/management/intervention-stream",
-        "method": "GET",
-        "path": "/bff/management/intervention-stream",
-        "status": "implemented"
-      },
-      {
-        "family": "unknown",
         "key": "GET /bff/management/loop-throughput",
         "method": "GET",
         "path": "/bff/management/loop-throughput",
@@ -1924,13 +1854,6 @@
         "key": "GET /bff/management/risk-radar",
         "method": "GET",
         "path": "/bff/management/risk-radar",
-        "status": "implemented"
-      },
-      {
-        "family": "unknown",
-        "key": "GET /bff/management/sentinel-pulse",
-        "method": "GET",
-        "path": "/bff/management/sentinel-pulse",
         "status": "implemented"
       },
       {
@@ -2231,6 +2154,20 @@
         "status": "implemented"
       },
       {
+        "family": "evolution-experiment-jobs-events",
+        "key": "GET /bff/research-tasks",
+        "method": "GET",
+        "path": "/bff/research-tasks",
+        "status": "implemented"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "GET /bff/research-tasks/{param}",
+        "method": "GET",
+        "path": "/bff/research-tasks/{param}",
+        "status": "implemented"
+      },
+      {
         "family": "governance-sub-rules",
         "key": "GET /bff/route-policies",
         "method": "GET",
@@ -2287,13 +2224,6 @@
         "status": "implemented"
       },
       {
-        "family": "v5-interventions",
-        "key": "GET /bff/v5/interventions/{param}",
-        "method": "GET",
-        "path": "/bff/v5/interventions/{param}",
-        "status": "implemented"
-      },
-      {
         "family": "execute-plans-cutover-smoke",
         "key": "GET /bff/v5/loop-health",
         "method": "GET",
@@ -2326,13 +2256,6 @@
         "key": "GET /bff/v5/loop-runs/{param}",
         "method": "GET",
         "path": "/bff/v5/loop-runs/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "execute-plans-cutover-smoke",
-        "key": "GET /bff/v5/sentinel/findings/{param}",
-        "method": "GET",
-        "path": "/bff/v5/sentinel/findings/{param}",
         "status": "implemented"
       },
       {
@@ -2421,13 +2344,6 @@
       },
       {
         "family": "agora-core",
-        "key": "PATCH /bff/agora/dashboard-recipes/{param}/layout",
-        "method": "PATCH",
-        "path": "/bff/agora/dashboard-recipes/{param}/layout",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
         "key": "PATCH /bff/agora/trading-room/workspaces/{param}/layout",
         "method": "PATCH",
         "path": "/bff/agora/trading-room/workspaces/{param}/layout",
@@ -2469,25 +2385,17 @@
         "status": "implemented"
       },
       {
-        "covered_by": "PATCH /bff/ranking/formulas/{param}",
         "family": "capital-ranking-rebalance",
         "key": "PATCH /bff/ranking-formulas/{param}",
         "method": "PATCH",
         "path": "/bff/ranking-formulas/{param}",
-        "status": "alias"
+        "status": "implemented"
       },
       {
         "family": "capital-ranking-rebalance",
         "key": "PATCH /bff/rebalances/{param}",
         "method": "PATCH",
         "path": "/bff/rebalances/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "evolution-experiment-jobs-events",
-        "key": "PATCH /bff/research-experiments/{param}",
-        "method": "PATCH",
-        "path": "/bff/research-experiments/{param}",
         "status": "implemented"
       },
       {
@@ -2551,13 +2459,6 @@
         "key": "POST /api/v1/knowledge/notes",
         "method": "POST",
         "path": "/api/v1/knowledge/notes",
-        "status": "implemented"
-      },
-      {
-        "family": "operator",
-        "key": "POST /api/v1/operator/commands",
-        "method": "POST",
-        "path": "/api/v1/operator/commands",
         "status": "implemented"
       },
       {
@@ -2687,34 +2588,6 @@
         "status": "implemented"
       },
       {
-        "family": "final-contract",
-        "key": "POST /bff/actions/{param}/{param}/{param}",
-        "method": "POST",
-        "path": "/bff/actions/{param}/{param}/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/ask",
-        "method": "POST",
-        "path": "/bff/agora/ask",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/ask/sessions",
-        "method": "POST",
-        "path": "/bff/agora/ask/sessions",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/ask/sessions/{param}/close",
-        "method": "POST",
-        "path": "/bff/agora/ask/sessions/{param}/close",
-        "status": "implemented"
-      },
-      {
         "family": "agora-core",
         "key": "POST /bff/agora/candidate-pools",
         "method": "POST",
@@ -2757,62 +2630,6 @@
         "status": "implemented"
       },
       {
-        "family": "agora-extended",
-        "key": "POST /bff/agora/committee/sessions",
-        "method": "POST",
-        "path": "/bff/agora/committee/sessions",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-extended",
-        "key": "POST /bff/agora/committee/sessions/{param}/close",
-        "method": "POST",
-        "path": "/bff/agora/committee/sessions/{param}/close",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-extended",
-        "key": "POST /bff/agora/committee/sessions/{param}/memos",
-        "method": "POST",
-        "path": "/bff/agora/committee/sessions/{param}/memos",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-extended",
-        "key": "POST /bff/agora/committee/sessions/{param}/memos/{param}/publish",
-        "method": "POST",
-        "path": "/bff/agora/committee/sessions/{param}/memos/{param}/publish",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-extended",
-        "key": "POST /bff/agora/committee/sessions/{param}/open",
-        "method": "POST",
-        "path": "/bff/agora/committee/sessions/{param}/open",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/dashboard-recipes/{param}/accept",
-        "method": "POST",
-        "path": "/bff/agora/dashboard-recipes/{param}/accept",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/dashboard-recipes/{param}/feedback",
-        "method": "POST",
-        "path": "/bff/agora/dashboard-recipes/{param}/feedback",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/dashboard-recipes/{param}/rollback",
-        "method": "POST",
-        "path": "/bff/agora/dashboard-recipes/{param}/rollback",
-        "status": "implemented"
-      },
-      {
         "family": "agora-core",
         "key": "POST /bff/agora/dataset-worker/dlq/{param}/replay",
         "method": "POST",
@@ -2838,13 +2655,6 @@
         "key": "POST /bff/agora/decision-projection/events",
         "method": "POST",
         "path": "/bff/agora/decision-projection/events",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/feedback",
-        "method": "POST",
-        "path": "/bff/agora/feedback",
         "status": "implemented"
       },
       {
@@ -2996,20 +2806,6 @@
       },
       {
         "family": "agora-core",
-        "key": "POST /bff/agora/signals",
-        "method": "POST",
-        "path": "/bff/agora/signals",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/strategies/{param}/dashboard-recipes/proposals",
-        "method": "POST",
-        "path": "/bff/agora/strategies/{param}/dashboard-recipes/proposals",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
         "key": "POST /bff/agora/strategies/{param}/trading-room/proposals",
         "method": "POST",
         "path": "/bff/agora/strategies/{param}/trading-room/proposals",
@@ -3094,27 +2890,6 @@
       },
       {
         "family": "agora-core",
-        "key": "POST /bff/agora/widgets/propose-plugin",
-        "method": "POST",
-        "path": "/bff/agora/widgets/propose-plugin",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/widgets/validate",
-        "method": "POST",
-        "path": "/bff/agora/widgets/validate",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
-        "key": "POST /bff/agora/widgets/{param}/feedback",
-        "method": "POST",
-        "path": "/bff/agora/widgets/{param}/feedback",
-        "status": "implemented"
-      },
-      {
-        "family": "agora-core",
         "key": "POST /bff/agora/workshops",
         "method": "POST",
         "path": "/bff/agora/workshops",
@@ -3167,6 +2942,13 @@
         "key": "POST /bff/agora/workshops/{param}/research-plans",
         "method": "POST",
         "path": "/bff/agora/workshops/{param}/research-plans",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/workshops/{param}/research-plans/servant-proposal",
+        "method": "POST",
+        "path": "/bff/agora/workshops/{param}/research-plans/servant-proposal",
         "status": "implemented"
       },
       {
@@ -3465,13 +3247,6 @@
       },
       {
         "family": "unknown",
-        "key": "POST /bff/management/promotion-reviews/{param}/decisions",
-        "method": "POST",
-        "path": "/bff/management/promotion-reviews/{param}/decisions",
-        "status": "implemented"
-      },
-      {
-        "family": "unknown",
         "key": "POST /bff/management/quarterly-ranking/recommendations/{param}/submit",
         "method": "POST",
         "path": "/bff/management/quarterly-ranking/recommendations/{param}/submit",
@@ -3503,6 +3278,20 @@
         "key": "POST /bff/management/trade-journeys/{param}/actions",
         "method": "POST",
         "path": "/bff/management/trade-journeys/{param}/actions",
+        "status": "implemented"
+      },
+      {
+        "family": "strategy-persona",
+        "key": "POST /bff/personas/{param}/provisioning/paper-capital",
+        "method": "POST",
+        "path": "/bff/personas/{param}/provisioning/paper-capital",
+        "status": "implemented"
+      },
+      {
+        "family": "strategy-persona",
+        "key": "POST /bff/personas/{param}/provisioning/paper-capital/retire",
+        "method": "POST",
+        "path": "/bff/personas/{param}/provisioning/paper-capital/retire",
         "status": "implemented"
       },
       {
@@ -3563,27 +3352,6 @@
         "status": "implemented"
       },
       {
-        "family": "capital-ranking-rebalance",
-        "key": "POST /bff/rebalances/{param}/approve",
-        "method": "POST",
-        "path": "/bff/rebalances/{param}/approve",
-        "status": "implemented"
-      },
-      {
-        "family": "capital-ranking-rebalance",
-        "key": "POST /bff/rebalances/{param}/two-man-sign",
-        "method": "POST",
-        "path": "/bff/rebalances/{param}/two-man-sign",
-        "status": "implemented"
-      },
-      {
-        "family": "evolution-experiment-jobs-events",
-        "key": "POST /bff/research-experiments",
-        "method": "POST",
-        "path": "/bff/research-experiments",
-        "status": "implemented"
-      },
-      {
         "family": "governance-runtime-risk-audit",
         "key": "POST /bff/runtimes",
         "method": "POST",
@@ -3602,55 +3370,6 @@
         "key": "POST /bff/v5/downstream-health/dlq/replay",
         "method": "POST",
         "path": "/bff/v5/downstream-health/dlq/replay",
-        "status": "implemented"
-      },
-      {
-        "family": "v5-interventions",
-        "key": "POST /bff/v5/interventions/{param}/claim",
-        "method": "POST",
-        "path": "/bff/v5/interventions/{param}/claim",
-        "status": "implemented"
-      },
-      {
-        "family": "v5-interventions",
-        "key": "POST /bff/v5/interventions/{param}/decide",
-        "method": "POST",
-        "path": "/bff/v5/interventions/{param}/decide",
-        "status": "implemented"
-      },
-      {
-        "family": "v5-interventions",
-        "key": "POST /bff/v5/interventions/{param}/escalate",
-        "method": "POST",
-        "path": "/bff/v5/interventions/{param}/escalate",
-        "status": "implemented"
-      },
-      {
-        "family": "v5-interventions",
-        "key": "POST /bff/v5/interventions/{param}/release",
-        "method": "POST",
-        "path": "/bff/v5/interventions/{param}/release",
-        "status": "implemented"
-      },
-      {
-        "family": "execute-plans-cutover-smoke",
-        "key": "POST /bff/v5/sentinel/findings/{param}/status",
-        "method": "POST",
-        "path": "/bff/v5/sentinel/findings/{param}/status",
-        "status": "implemented"
-      },
-      {
-        "family": "execute-plans-cutover-smoke",
-        "key": "POST /bff/v5/sentinel/remediation/build",
-        "method": "POST",
-        "path": "/bff/v5/sentinel/remediation/build",
-        "status": "implemented"
-      },
-      {
-        "family": "execute-plans-cutover-smoke",
-        "key": "POST /bff/v5/sentinel/remediation/{param}/execute",
-        "method": "POST",
-        "path": "/bff/v5/sentinel/remediation/{param}/execute",
         "status": "implemented"
       },
       {
@@ -3675,27 +3394,6 @@
       {
         "backend": {
           "family": "agora-core",
-          "key": "GET /bff/agora/committee-sessions",
-          "method": "GET",
-          "path": "/bff/agora/committee-sessions",
-          "status": "implemented"
-        },
-        "backend_family": "agora-core",
-        "frontend": {
-          "covered_by": "GET /bff/agora/sessions",
-          "family": "agora-extended",
-          "key": "GET /bff/agora/committee-sessions",
-          "method": "GET",
-          "path": "/bff/agora/committee-sessions",
-          "proof": "test_agora_daily_signals_sessions_and_research_task_reads",
-          "status": "implemented_by_alias"
-        },
-        "frontend_family": "agora-extended",
-        "key": "GET /bff/agora/committee-sessions"
-      },
-      {
-        "backend": {
-          "family": "agora-core",
           "key": "GET /bff/agora/decision-journal",
           "method": "GET",
           "path": "/bff/agora/decision-journal",
@@ -3713,96 +3411,12 @@
         },
         "frontend_family": "agora-extended",
         "key": "GET /bff/agora/decision-journal"
-      },
-      {
-        "backend": {
-          "family": "agora-core",
-          "key": "GET /bff/agora/incoming",
-          "method": "GET",
-          "path": "/bff/agora/incoming",
-          "status": "implemented"
-        },
-        "backend_family": "agora-core",
-        "frontend": {
-          "covered_by": "GET /bff/agora/handoffs",
-          "family": "agora-extended",
-          "key": "GET /bff/agora/incoming",
-          "method": "GET",
-          "path": "/bff/agora/incoming",
-          "proof": "test_persona_lab_submit_commit_creates_management_handoff",
-          "status": "implemented_by_alias"
-        },
-        "frontend_family": "agora-extended",
-        "key": "GET /bff/agora/incoming"
-      },
-      {
-        "backend": {
-          "family": "agora-core",
-          "key": "GET /bff/agora/market-notes",
-          "method": "GET",
-          "path": "/bff/agora/market-notes",
-          "status": "implemented"
-        },
-        "backend_family": "agora-core",
-        "frontend": {
-          "covered_by": "GET /bff/agora/notes",
-          "family": "agora-extended",
-          "key": "GET /bff/agora/market-notes",
-          "method": "GET",
-          "path": "/bff/agora/market-notes",
-          "proof": "test_agora_note_journal_insight_and_training_creation",
-          "status": "implemented_by_alias"
-        },
-        "frontend_family": "agora-extended",
-        "key": "GET /bff/agora/market-notes"
-      },
-      {
-        "backend": {
-          "family": "agora-core",
-          "key": "GET /bff/agora/markets",
-          "method": "GET",
-          "path": "/bff/agora/markets",
-          "status": "implemented"
-        },
-        "backend_family": "agora-core",
-        "frontend": {
-          "covered_by": "GET /bff/agora/watchlist",
-          "family": "agora-extended",
-          "key": "GET /bff/agora/markets",
-          "method": "GET",
-          "path": "/bff/agora/markets",
-          "proof": "test_agora_daily_signals_sessions_and_research_task_reads",
-          "status": "implemented_by_alias"
-        },
-        "frontend_family": "agora-extended",
-        "key": "GET /bff/agora/markets"
-      },
-      {
-        "backend": {
-          "family": "agora-core",
-          "key": "GET /bff/agora/research-tasks",
-          "method": "GET",
-          "path": "/bff/agora/research-tasks",
-          "status": "implemented"
-        },
-        "backend_family": "agora-core",
-        "frontend": {
-          "covered_by": "GET /bff/research/tasks",
-          "family": "agora-extended",
-          "key": "GET /bff/agora/research-tasks",
-          "method": "GET",
-          "path": "/bff/agora/research-tasks",
-          "proof": "test_agora_daily_signals_sessions_and_research_task_reads",
-          "status": "implemented_by_alias"
-        },
-        "frontend_family": "agora-extended",
-        "key": "GET /bff/agora/research-tasks"
       }
     ]
   },
   "metadata": {
     "backend_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
-    "backend_snapshot_date": "2026-08-27",
+    "backend_snapshot_date": "2026-11-04",
     "frontend_manifest": "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
     "frontend_snapshot_date": "2026-06-28",
     "generator": "scripts/bff_route_diff.py",
@@ -3824,17 +3438,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 701,
-    "failure_count": 529,
+    "backend_routes": 623,
+    "failure_count": 484,
     "failures": {
-      "backend_missing_frontend": 523,
+      "backend_missing_frontend": 483,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
-      "naming_mismatches": 6
+      "naming_mismatches": 1
     },
-    "frontend_routes": 187,
-    "mode_failure_count": 529,
+    "frontend_routes": 184,
+    "mode_failure_count": 484,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

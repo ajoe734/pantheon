@@ -14,6 +14,7 @@ from .routes import (
     build_ops_router,
     build_tickets_router,
     create_research_experiments_router,
+    create_research_tasks_router,
 )
 from .routes.common import (
     ConflictLogGet,
@@ -157,6 +158,18 @@ def create_research_router(
                 dataset_surface_status=dataset_surface_status,
             ).routes
         )
+        router.routes.extend(
+            create_research_tasks_router(
+                extract_identity=extract_identity,
+                require_read_role=require_read_role,
+                bff_error=bff_error,
+                utc_now=utc_now,
+                page_slice=page_slice,
+                snapshot_meta=snapshot_meta,
+                dataset_surface_status=dataset_surface_status,
+                service=ctx.service,
+            ).routes
+        )
         if require_operator_role is not None:
             router.routes.extend(
                 create_research_experiments_router(
@@ -190,4 +203,5 @@ __all__ = [
     "SurfaceStatus",
     "create_research_experiments_router",
     "create_research_router",
+    "create_research_tasks_router",
 ]
