@@ -505,3 +505,326 @@ def test_monitor_agent_runtime_drift_and_deployment_incidents_are_unaffected():
 
     for protected_id in (agent_id, "inc-runtime-001", "inc-drift-001", "inc-deploy-001"):
         assert store.require_incident(protected_id).status == IncidentStatus.OPEN.value
+
+
+# ---------------------------------------------------------------------------
+# INFRA-INCIDENT-DEAD-LETTER-SWEEP-20261104 regression tests
+# ---------------------------------------------------------------------------
+
+HOSTED_20261104_DEAD_LETTER_INCIDENTS: Dict[str, str] = {
+    "paper-signal-producer": "infra-bff-752855512ba57805b91d420c",
+    "capital": "infra-bff-f15b59d579abe4c783d75af1",
+    "memory": "infra-bff-501b68949743a1a31d313812",
+    "openclaw-gateway-adapter": "infra-bff-a7c42d396bb90b53703bd67b",
+    "research-worker-gateway": "infra-bff-d73a5e8b3c6c83d718d7e94e",
+    "persona": "infra-bff-2a3766dd77efbee49c08d6c6",
+    "deployment-outbox-consumer": "infra-bff-c7410d5c7cb51d2dff63772b",
+}
+
+
+def test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless(tmp_path):
+    """AC1, AC4, AC5 & AC6: Reproduce the 2026-11-03 deploy outage -> 2026-11-04 sweep.
+
+    1. All 7 hosted targets fail while incidents authority is reachable, opening
+       their 7 incidents in the incidents store and BFF SQLite ledger.
+    2. All 7 targets recover at 2026-11-03T10:23:55Z while the incidents authority
+       is blocked during a deploy; each incident_resolve delivery fails 5/5 with
+       network_error and lands in dead_letter while incident_mappings.status='resolving'.
+    3. The incidents authority returns with all 7 targets healthy; the next probe
+       interval's orphan reconcile omits dead-lettered resolves from
+       referenced_incident_ids, resolves all 7 incidents with orphan_recovered,
+       and marks all 7 BFF incident_mappings rows 'resolved'.
+    4. Later replaying those dead letters via monitor.replay_dead_letters(...)
+       is harmless: it does not reopen any incident or fail the delivery permanently.
+    """
+    monitor = DownstreamHealthMonitor(
+        telemetry_url="",
+        incidents_url="http://incidents.local:8090",
+        tenant_id="default",
+        probe_interval_seconds=60,
+        failure_threshold=1,
+        delivery_max_attempts=5,
+        delivery_backoff_seconds=0.1,
+        state_path=str(tmp_path / "bff-dead-letter-hosted-20261104.sqlite3"),
+    )
+    monitor._resolve_target_registry = lambda: {  # type: ignore[assignment]
+        comp: DownstreamTarget(
+            name=comp,
+            base_url=f"http://{comp}:8080",
+            health_path="/__health__",
+        )
+        for comp in HOSTED_20261104_DEAD_LETTER_INCIDENTS
+    }
+
+    incidents_reachable = True
+    reconcile_payloads: List[Dict[str, Any]] = []
+
+    def route_to_incidents_or_fail(url: str, body: Dict[str, Any], timeout: float):
+        if not incidents_reachable:
+            return False, -1
+        path = "/" + url.split("://", 1)[1].split("/", 1)[1]
+        if path.endswith("/api/incidents/reconcile-infrastructure-health"):
+            reconcile_payloads.append(dict(body))
+        resp = client.post(path, json=body)
+        return 200 <= resp.status_code < 300, resp.status_code
+
+    # Step 1: Seed the exact 7 hosted incident IDs as open in IncidentStore and BFF ledger.
+    for comp, inc_id in HOSTED_20261104_DEAD_LETTER_INCIDENTS.items():
+        open_event_id = f"evt-open-{comp}-20261103"
+        create_delivery_id = f"incident-open:{open_event_id}"
+        payload = _infra_payload(
+            incident_id=inc_id,
+            service_name=comp,
+            source_event_id=open_event_id,
+            created_at="2026-11-03T10:19:00Z",
+        )
+        r_open = client.post("/api/incidents/consume-infrastructure-health", json=payload)
+        assert r_open.status_code == 201, r_open.text
+        with monitor._store._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO incident_mappings(
+                    target_name, incident_id, status, opening_event_id,
+                    create_delivery_id, last_event_id, updated_at
+                ) VALUES (?, ?, 'open', ?, ?, ?, '2026-11-03T10:19:00Z')
+                """,
+                (comp, inc_id, open_event_id, create_delivery_id, open_event_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO delivery_outbox(
+                    delivery_id, event_id, channel, target_name, url,
+                    body_json, dependency_ids_json, status, attempt_count,
+                    max_attempts, next_attempt_at, claim_owner, claim_token,
+                    claim_until, last_error, created_at, updated_at
+                ) VALUES (?, ?, 'incident_open', ?, 'http://incidents.local:8090/api/incidents/consume-infrastructure-health',
+                          '{}', '[]', 'delivered', 1, 5, 0, NULL, NULL, NULL, NULL,
+                          '2026-11-03T10:19:00Z', '2026-11-03T10:19:01Z')
+                """,
+                (create_delivery_id, open_event_id, comp),
+            )
+        monitor._open_incident_ids[comp] = inc_id
+
+    # Step 2: Incidents service is blocked during deploy while all 7 targets recover.
+    incidents_reachable = False
+    with patch(
+        "services.control_plane.bff.downstream_health_monitor._post_json",
+        side_effect=route_to_incidents_or_fail,
+    ):
+        for comp in HOSTED_20261104_DEAD_LETTER_INCIDENTS:
+            asyncio.run(
+                monitor._handle_probe_result(
+                    DownstreamProbeResult(
+                        target_name=comp,
+                        ok=True,
+                        status_code=200,
+                        latency_ms=4.0,
+                        checked_at="2026-11-03T10:23:55Z",
+                    )
+                )
+            )
+        for _ in range(4):
+            with monitor._store._connect() as conn:
+                conn.execute(
+                    "UPDATE delivery_outbox SET next_attempt_at=0 WHERE channel='incident_resolve'"
+                )
+            monitor._deliver_due_sync()
+
+    # Verify all 7 are now in the exact hosted stuck state before the fix:
+    # incident_mappings.status='resolving', probe ok=1 consecutive_failures=0,
+    # incident_resolve status='dead_letter' attempt_count=5/5 last_error='network_error',
+    # and all 7 incidents are still OPEN in the incidents authority.
+    resolve_deliveries = [
+        d for d in monitor.list_delivery_records() if d["channel"] == "incident_resolve"
+    ]
+    assert len(resolve_deliveries) == 7
+    for d in resolve_deliveries:
+        assert d["status"] == "dead_letter"
+        assert d["attempt_count"] == 5
+        assert d["max_attempts"] == 5
+        assert d["last_error"] == "network_error"
+    for comp, inc_id in HOSTED_20261104_DEAD_LETTER_INCIDENTS.items():
+        assert monitor._store.get_incident(comp)["status"] == "resolving"
+        probe = monitor._store.get_probe(comp)
+        assert probe is not None and probe.ok is True and probe.consecutive_failures == 0
+        assert store.require_incident(inc_id).status == IncidentStatus.OPEN.value
+
+    # Step 3: Incidents authority returns; next probe interval sweeps and resolves all 7.
+    incidents_reachable = True
+    with (
+        patch(
+            "services.control_plane.bff.downstream_health_monitor._probe_http",
+            return_value=(True, 200, ""),
+        ),
+        patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            side_effect=route_to_incidents_or_fail,
+        ),
+    ):
+        asyncio.run(monitor._probe_all())
+
+    assert len(reconcile_payloads) == 1
+    assert reconcile_payloads[0]["healthy_components"] == sorted(
+        HOSTED_20261104_DEAD_LETTER_INCIDENTS.keys()
+    )
+    assert reconcile_payloads[0]["referenced_incident_ids"] == []
+    assert reconcile_payloads[0]["resolution_reason"] == ORPHAN_RECOVERED_RESOLUTION_REASON
+
+    for comp, inc_id in HOSTED_20261104_DEAD_LETTER_INCIDENTS.items():
+        resolved_inc = store.require_incident(inc_id)
+        assert resolved_inc.status == IncidentStatus.RESOLVED.value
+        assert (
+            extract_incident_resolution_reason(resolved_inc)
+            == ORPHAN_RECOVERED_RESOLUTION_REASON
+        )
+        assert "resolution_reason=orphan_recovered" in (resolved_inc.evidence_summary or "")
+        assert "resolution_reason:orphan_recovered" in resolved_inc.telemetry_event_ids
+        assert monitor._store.get_incident(comp)["status"] == "resolved"
+        assert comp not in monitor._open_incident_ids
+
+    # Step 4 (AC4): Replaying the 7 dead-lettered incident_resolve deliveries later
+    # through the existing replay path is harmless, does not reopen any incident,
+    # and delivers all 7 cleanly without failing permanently.
+    with patch(
+        "services.control_plane.bff.downstream_health_monitor._post_json",
+        side_effect=route_to_incidents_or_fail,
+    ):
+        replay_result = monitor.replay_dead_letters(
+            actor_id="operator-1",
+            approval_ref="apr-20261104",
+            reason="drain post-deploy resolve dead letters",
+            channel="incident_resolve",
+        )
+
+    assert replay_result["replayed"] == 7
+    assert replay_result["delivered_now"] == 7
+    assert replay_result["delivery"]["dead_letter"] == 0
+    for d in monitor.list_delivery_records():
+        if d["channel"] == "incident_resolve":
+            assert d["status"] == "delivered"
+            assert d["last_error"] is None
+    for comp, inc_id in HOSTED_20261104_DEAD_LETTER_INCIDENTS.items():
+        inc_after_replay = store.require_incident(inc_id)
+        assert inc_after_replay.status == IncidentStatus.RESOLVED.value
+        assert (
+            extract_incident_resolution_reason(inc_after_replay)
+            == ORPHAN_RECOVERED_RESOLUTION_REASON
+        )
+        assert monitor._store.get_incident(comp)["status"] == "resolved"
+
+
+def test_inflight_deliveries_and_unhealthy_targets_with_dead_letter_stay_open(tmp_path):
+    """AC2 & AC3: Active (pending/retry/claimed) deliveries and unhealthy targets stay open."""
+    monitor = DownstreamHealthMonitor(
+        telemetry_url="",
+        incidents_url="http://incidents.local:8090",
+        tenant_id="default",
+        probe_interval_seconds=60,
+        failure_threshold=1,
+        state_path=str(tmp_path / "bff-active-and-unhealthy.sqlite3"),
+    )
+
+    seeded_incidents = {
+        "pending-comp": ("infra-bff-pending-comp-001", "resolving", "incident_resolve", "pending", True),
+        "retry-comp": ("infra-bff-retry-comp-001", "resolving", "incident_resolve", "retry", True),
+        "claimed-comp": ("infra-bff-claimed-comp-001", "resolving", "incident_resolve", "claimed", True),
+        "open-inflight-comp": ("infra-bff-open-inflight-001", "opening", "incident_open", "retry", True),
+        "unhealthy-dlq-open": ("infra-bff-unhealthy-dlq-open-001", "open", "incident_open", "dead_letter", False),
+        "unhealthy-dlq-resolving": ("infra-bff-unhealthy-dlq-res-001", "resolving", "incident_resolve", "dead_letter", False),
+        "healthy-dlq-resolving": ("infra-bff-healthy-dlq-res-001", "resolving", "incident_resolve", "dead_letter", True),
+    }
+
+    for comp, (inc_id, mapping_status, channel, delivery_status, is_healthy) in seeded_incidents.items():
+        r = client.post(
+            "/api/incidents/consume-infrastructure-health",
+            json=_infra_payload(
+                incident_id=inc_id,
+                service_name=comp,
+                source_event_id=f"evt-{comp}",
+            ),
+        )
+        assert r.status_code == 201, r.text
+        monitor._store.record_probe(
+            DownstreamProbeResult(
+                target_name=comp,
+                ok=is_healthy,
+                status_code=200 if is_healthy else 503,
+                latency_ms=5.0,
+                checked_at="2026-11-04T00:10:00Z",
+                consecutive_failures=0 if is_healthy else 3,
+            )
+        )
+        with monitor._store._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO incident_mappings(
+                    target_name, incident_id, status, opening_event_id,
+                    create_delivery_id, last_event_id, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, '2026-11-04T00:10:00Z')
+                """,
+                (
+                    comp,
+                    inc_id,
+                    mapping_status,
+                    f"evt-{comp}",
+                    f"incident-open:evt-{comp}",
+                    f"evt-{comp}",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO delivery_outbox(
+                    delivery_id, event_id, channel, target_name, url,
+                    body_json, dependency_ids_json, status, attempt_count,
+                    max_attempts, next_attempt_at, claim_owner, claim_token,
+                    claim_until, last_error, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, 5, 5, 0, NULL, NULL, NULL,
+                          'network_error', '2026-11-04T00:09:00Z', '2026-11-04T00:10:00Z')
+                """,
+                (
+                    f"{channel}:{comp}",
+                    f"evt-{comp}",
+                    channel,
+                    comp,
+                    f"http://incidents.local:8090/api/incidents/{inc_id}/status",
+                    f'{{"incident_id": "{inc_id}", "status": "resolved"}}',
+                    delivery_status,
+                ),
+            )
+
+    def route_to_incidents(url: str, body: Dict[str, Any], timeout: float):
+        path = "/" + url.split("://", 1)[1].split("/", 1)[1]
+        resp = client.post(path, json=body)
+        return 200 <= resp.status_code < 300, resp.status_code
+
+    with patch(
+        "services.control_plane.bff.downstream_health_monitor._post_json",
+        side_effect=route_to_incidents,
+    ):
+        ok = monitor.reconcile_orphaned_incidents_sync(observed_at="2026-11-04T00:11:00Z")
+    assert ok is True
+
+    # Only healthy-dlq-resolving is resolved; all active deliveries and unhealthy targets stay open.
+    assert (
+        store.require_incident("infra-bff-healthy-dlq-res-001").status
+        == IncidentStatus.RESOLVED.value
+    )
+    assert monitor._store.get_incident("healthy-dlq-resolving")["status"] == "resolved"
+
+    for keep_open_comp in (
+        "pending-comp",
+        "retry-comp",
+        "claimed-comp",
+        "open-inflight-comp",
+        "unhealthy-dlq-open",
+        "unhealthy-dlq-resolving",
+    ):
+        inc_id = seeded_incidents[keep_open_comp][0]
+        expected_mapping_status = seeded_incidents[keep_open_comp][1]
+        assert store.require_incident(inc_id).status == IncidentStatus.OPEN.value, (
+            f"Expected {keep_open_comp} ({inc_id}) to stay open"
+        )
+        assert (
+            monitor._store.get_incident(keep_open_comp)["status"]
+            == expected_mapping_status
+        )
