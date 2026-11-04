@@ -1038,7 +1038,6 @@ def mount_bff_routers(
     from ..console_gap.alpha_factory import create_alpha_factory_router
     app.include_router(
         create_alpha_factory_router(
-            read_surface=app_deps.read_surface,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             utc_now=_dep("utc_now"),

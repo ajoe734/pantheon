@@ -1,154 +1,602 @@
-"""Contract tests for GET /bff/alpha-factory (BFF-AF-001).
+"""Contract tests for GET /bff/alpha-factory (BFF-AF-001 / ALPHA-FACTORY-REPLICATION-READ-20261104).
 
-Covers:
-  - Happy path: seeded store → 200 with canonical list envelope.
-  - Empty / missing store → 200 with degraded envelope (status:unavailable, source:missing).
-  - Auth guard: unauthenticated → 401.
-  - Lane filter is reflected in response meta.
+Verifies:
+1. GET /bff/alpha-factory builds its cards over HTTP from
+   GET /api/research-orchestrator/alpha-replication/entries with verified caller auth and tenant.
+2. Each card preserves strategy_id, strategy_spec_id, admission status, queue status,
+   attempt_count, experiment_task_id, experiment_run_ids, authority_task_id,
+   last_revalidation_at, approver, and approved_at without inventing metrics/Sharpe/risk,
+   and keeps missing values as null.
+3. Lanes are discovered, scaffolded, and replicated: completed queue entries land in
+   replicated; non-completed or unqueued admissions land in scaffolded; discovered is
+   empty with reason 'no_candidate_source'.
+4. Owner read failure or unconfigured PANTHEON_RESEARCH_ORCHESTRATOR_API_URL returns
+   meta.surfaces.alpha_factory.status == 'unavailable' with items == []; a healthy owner
+   with no records returns status == 'ok' with empty lanes.
+5. Two-tenant isolation holds across both the owner route and the BFF route with real
+   auth middleware active.
+6. Dead alpha_factory_cards / list_alpha_factory_cards readers are removed from the
+   read-surface ports.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import importlib.util
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from unittest import mock
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.middleware import Middleware
 
-from services.control_plane.bff.auth.policy import extract_identity, require_read_role
+from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.console_gap.alpha_factory import create_alpha_factory_router
-from services.control_plane.bff.models import utc_now
-from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+from services.control_plane.bff.ports.operations_consultation import (
+    CompositeOperationsConsultationPort,
+    DomainWorkflowCatalogPort,
+    InMemoryOperationsConsultationPort,
+    WorkflowHookCatalogReaderPort,
+)
+from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
-OPERATOR_HEADERS = {"Authorization": "Bearer op-af:operator,reviewer"}
+REPO_ROOT = Path(__file__).resolve().parents[4]
+FIXED_NOW = "2026-11-04T00:00:00Z"
+JWT_SECRET = "bff-alpha-factory-contract-secret-0123456789abcdef"
 
-_SAMPLE_CARDS = [
-    {
-        "id": "card-af-001",
-        "lane": "ideas",
-        "title": "Mean-reversion on AAPL intraday",
-        "status": "draft",
-        "created_at": "2026-06-10T09:00:00Z",
-    },
-    {
-        "id": "card-af-002",
-        "lane": "strategies",
-        "title": "Momentum cross-section v2",
-        "status": "active",
-        "created_at": "2026-06-10T10:00:00Z",
-    },
-]
+HOSTED_TW_OFFICIAL_SPEC_ID = (
+    "reg-strategy-spec-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-da7cb8297afb"
+)
+HOSTED_TW_OFFICIAL_STRATEGY_ID = (
+    "strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
+)
+VALID_CHECKSUM = "sha256:" + ("a" * 64)
 
 
-def _make_client(store: Any) -> TestClient:
-    app = FastAPI()
+def _hs256_bearer(
+    tenant_id: str,
+    *,
+    roles: Optional[List[str]] = None,
+    sub: str = "pantheon-dev-operator",
+    secret: str = JWT_SECRET,
+) -> str:
+    def _b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+    eff_roles = roles if roles is not None else ["operator", "reviewer"]
+    header = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode("utf-8"))
+    payload = _b64(
+        json.dumps(
+            {
+                "sub": sub,
+                "roles": eff_roles,
+                "tenant_id": tenant_id,
+            }
+        ).encode("utf-8")
+    )
+    sig = _b64(
+        hmac.new(
+            secret.encode("utf-8"),
+            f"{header}.{payload}".encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+    )
+    return f"Bearer {header}.{payload}.{sig}"
+
+
+def _auth_headers(tenant_id: str = "tenant-dev", *, roles: Optional[List[str]] = None) -> Dict[str, str]:
+    return {
+        "Authorization": _hs256_bearer(tenant_id, roles=roles),
+        "X-Tenant-Id": tenant_id,
+    }
+
+
+def _hosted_owner_entries() -> List[Dict[str, Any]]:
+    return [
+        {
+            "admission_id": "adm-5dc7be51a48996e4",
+            "tenant_id": "tenant-dev",
+            "strategy_spec_id": HOSTED_TW_OFFICIAL_SPEC_ID,
+            "strategy_id": HOSTED_TW_OFFICIAL_STRATEGY_ID,
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-tw-2330-001",
+            "approver": "pantheon-dev-approver",
+            "approved_at": "2026-08-14T01:00:00Z",
+            "requested_by": "pantheon-dev-operator",
+            "review_ref": None,
+            "mode": "initial",
+            "created_at": "2026-08-14T01:05:00Z",
+            "admission_status": "admitted",
+            "status": "admitted",
+            "queue_status": "completed",
+            "enqueued_at": "2026-08-14T01:10:00Z",
+            "enqueued_by": "alpha-replication-controller",
+            "attempt_count": 1,
+            "max_attempts": 1,
+            "experiment_task_id": "etask-alpha-6ef7a5a6d3a4ae4b",
+            "experiment_run_ids": ["run-exp-2330-001"],
+            "authority_task_id": "rtask-20261015-002",
+            "authority_run_ids": ["run-auth-2330-001"],
+            "last_revalidation_at": "2026-10-15T08:30:00Z",
+            "last_error": None,
+        },
+        {
+            "admission_id": "adm-pending-2317",
+            "tenant_id": "tenant-dev",
+            "strategy_spec_id": "reg-strategy-spec-tw-official:tw_price_daily:TWSE:2317:pending-spec",
+            "strategy_id": "strat-tw-official:tw_price_daily:TWSE:2317:pending-strat",
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-tw-2317-001",
+            "approver": "pantheon-dev-approver",
+            "approved_at": "2026-08-15T01:00:00Z",
+            "requested_by": "pantheon-dev-operator",
+            "review_ref": None,
+            "mode": "initial",
+            "created_at": "2026-08-15T01:05:00Z",
+            "admission_status": "admitted",
+            "status": "admitted",
+            "queue_status": "pending",
+            "enqueued_at": "2026-08-15T01:10:00Z",
+            "enqueued_by": "alpha-replication-controller",
+            "attempt_count": 0,
+            "max_attempts": 3,
+            "experiment_task_id": None,
+            "experiment_run_ids": [],
+            "authority_task_id": None,
+            "authority_run_ids": None,
+            "last_revalidation_at": None,
+            "last_error": None,
+        },
+        {
+            "admission_id": "adm-failed-2454",
+            "tenant_id": "tenant-dev",
+            "strategy_spec_id": "reg-strategy-spec-tw-official:tw_price_daily:TWSE:2454:failed-spec",
+            "strategy_id": "strat-tw-official:tw_price_daily:TWSE:2454:failed-strat",
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-tw-2454-001",
+            "approver": "pantheon-dev-approver",
+            "approved_at": "2026-08-16T01:00:00Z",
+            "requested_by": "pantheon-dev-operator",
+            "review_ref": None,
+            "mode": "initial",
+            "created_at": "2026-08-16T01:05:00Z",
+            "admission_status": "admitted",
+            "status": "admitted",
+            "queue_status": "failed",
+            "enqueued_at": "2026-08-16T01:10:00Z",
+            "enqueued_by": "alpha-replication-controller",
+            "attempt_count": 2,
+            "max_attempts": 2,
+            "experiment_task_id": "etask-alpha-failed-2454",
+            "experiment_run_ids": ["run-exp-2454-001", "run-exp-2454-002"],
+            "authority_task_id": None,
+            "authority_run_ids": None,
+            "last_revalidation_at": None,
+            "last_error": "worker timeout",
+        },
+        {
+            "admission_id": "adm-unqueued-2308",
+            "tenant_id": "tenant-dev",
+            "strategy_spec_id": "reg-strategy-spec-tw-official:tw_price_daily:TWSE:2308:unqueued-spec",
+            "strategy_id": "strat-tw-official:tw_price_daily:TWSE:2308:unqueued-strat",
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-tw-2308-001",
+            "approver": "pantheon-dev-approver",
+            "approved_at": "2026-08-17T01:00:00Z",
+            "requested_by": "pantheon-dev-operator",
+            "review_ref": None,
+            "mode": "initial",
+            "created_at": "2026-08-17T01:05:00Z",
+            "admission_status": "admitted",
+            "status": "admitted",
+            "queue_status": None,
+            "enqueued_at": None,
+            "enqueued_by": None,
+            "attempt_count": None,
+            "max_attempts": None,
+            "experiment_task_id": None,
+            "experiment_run_ids": None,
+            "authority_task_id": None,
+            "authority_run_ids": None,
+            "last_revalidation_at": None,
+            "last_error": None,
+        },
+    ]
+
+
+def _make_bff_client(
+    monkeypatch,
+    *,
+    http_get: Optional[ Any ] = None,
+    orchestrator_url: Optional[str] = "http://research-orchestrator.local",
+) -> TestClient:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", JWT_SECRET)
+    if orchestrator_url is not None:
+        monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", orchestrator_url)
+    else:
+        monkeypatch.delenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", raising=False)
+
+    app = FastAPI(middleware=[Middleware(OwnerReadContextMiddleware)])
     router = create_alpha_factory_router(
-        read_surface=store,
-        extract_identity=extract_identity,
-        require_read_role=require_read_role,
-        utc_now=utc_now,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        utc_now=lambda: FIXED_NOW,
+        http_get=http_get,
     )
     app.include_router(router)
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(app)
 
 
-def _seeded_client(td: str) -> TestClient:
-    store = create_in_memory_read_surface_ports()
-    store.dataset_source = lambda dataset, **kwargs: (
-        "service_store" if dataset == "alpha_factory_cards" else "missing"
+def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypatch) -> None:
+    observed_calls: List[Tuple[str, Optional[str], Optional[str]]] = []
+
+    def fake_http_get(
+        url: str,
+        *,
+        auth_header: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Tuple[int, Any]:
+        observed_calls.append((url, auth_header, tenant_id))
+        return 200, _hosted_owner_entries()
+
+    client = _make_bff_client(monkeypatch, http_get=fake_http_get)
+    resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
+    assert resp.status_code == 200
+    assert len(observed_calls) == 1
+    assert observed_calls[0][0] == (
+        "http://research-orchestrator.local/api/research-orchestrator/alpha-replication/entries"
     )
-    store.list_alpha_factory_cards = lambda page=1, page_size=20, lane=None: (
-        [c for c in _SAMPLE_CARDS if lane is None or c["lane"] == lane]
-    )
-    return _make_client(store)
+    assert observed_calls[0][1] and observed_calls[0][1].startswith("Bearer ")
+    assert observed_calls[0][2] == "tenant-dev"
 
+    payload = resp.json()
+    assert payload["meta"]["snapshot_at"] == FIXED_NOW
+    assert payload["meta"]["surfaces"]["alpha_factory"] == {
+        "status": "ok",
+        "source": "research_orchestrator",
+    }
 
-def _missing_client(td: str) -> TestClient:
-    store = create_in_memory_read_surface_ports()
-    store.dataset_source = lambda dataset, **kwargs: "missing"
-    return _make_client(store)
-
-
-# ---------------------------------------------------------------------------
-# Happy-path tests
-# ---------------------------------------------------------------------------
-
-
-def test_alpha_factory_returns_canonical_list_envelope() -> None:
-    client = _seeded_client("")
-    r = client.get("/bff/alpha-factory", headers=OPERATOR_HEADERS)
-    assert r.status_code == 200, r.text
-    payload = r.json()
-
-    # top-level canonical envelope keys
-    assert "data" in payload
-    assert "items" in payload
-    assert "page_info" in payload
-    assert "meta" in payload
-
-    # data shape
     data = payload["data"]
     assert data["id"] == "alpha-factory"
-    assert "snapshotAt" in data or "snapshot_at" in data
-    assert isinstance(data["lanes"], list)
-    assert len(data["lanes"]) == 3
-    assert isinstance(data["items"], list)
+    assert data["reason"] == "no_candidate_source"
+    assert data["discovered_reason"] == "no_candidate_source"
+    assert data["discovered"] == []
 
-    # items match seeded cards
-    assert len(payload["items"]) == 2
-    ids = {c["id"] for c in payload["items"]}
-    assert "card-af-001" in ids
-    assert "card-af-002" in ids
+    lanes = {lane["id"]: lane for lane in data["lanes"]}
+    assert list(lanes.keys()) == ["discovered", "scaffolded", "replicated"]
+    assert lanes["discovered"]["reason"] == "no_candidate_source"
+    assert lanes["discovered"]["items"] == []
 
-    # page_info
-    pi = payload["page_info"]
-    assert pi["total"] == 2
-    assert pi["page"] == 1
-    assert pi["page_size"] == 20
+    replicated_cards = lanes["replicated"]["items"]
+    assert len(replicated_cards) == 1
+    rep = replicated_cards[0]
+    assert rep["id"] == "adm-5dc7be51a48996e4"
+    assert rep["lane"] == "replicated"
+    assert rep["strategy_id"] == HOSTED_TW_OFFICIAL_STRATEGY_ID
+    assert rep["strategy_spec_id"] == HOSTED_TW_OFFICIAL_SPEC_ID
+    assert rep["status"] == "admitted"
+    assert rep["admission_status"] == "admitted"
+    assert rep["queue_status"] == "completed"
+    assert rep["attempt_count"] == 1
+    assert rep["experiment_task_id"] == "etask-alpha-6ef7a5a6d3a4ae4b"
+    assert rep["experiment_run_ids"] == ["run-exp-2330-001"]
+    assert rep["authority_task_id"] == "rtask-20261015-002"
+    assert rep["authority_run_ids"] == ["run-auth-2330-001"]
+    assert rep["last_revalidation_at"] == "2026-10-15T08:30:00Z"
+    assert rep["approver"] == "pantheon-dev-approver"
+    assert rep["approved_at"] == "2026-08-14T01:00:00Z"
+    for invented_field in ("sharpe", "sharpe_ratio", "metrics", "risk", "win_rate"):
+        assert invented_field not in rep
 
-    # meta surface ok
-    surface = payload["meta"]["surfaces"]["alpha_factory"]
-    assert surface["status"] == "ok"
-    assert surface["source"] == "service_store"
+    scaffolded_cards = lanes["scaffolded"]["items"]
+    assert len(scaffolded_cards) == 3
+    scaffolded_by_id = {c["id"]: c for c in scaffolded_cards}
+    assert set(scaffolded_by_id.keys()) == {
+        "adm-pending-2317",
+        "adm-failed-2454",
+        "adm-unqueued-2308",
+    }
+
+    unqueued = scaffolded_by_id["adm-unqueued-2308"]
+    assert unqueued["lane"] == "scaffolded"
+    assert unqueued["status"] == "admitted"
+    assert unqueued["admission_status"] == "admitted"
+    assert unqueued["queue_status"] is None
+    assert unqueued["attempt_count"] is None
+    assert unqueued["experiment_task_id"] is None
+    assert unqueued["experiment_run_ids"] is None
+    assert unqueued["authority_task_id"] is None
+    assert unqueued["last_revalidation_at"] is None
 
 
-def test_alpha_factory_lane_filter_is_honoured() -> None:
-    client = _seeded_client("")
-    r = client.get("/bff/alpha-factory?lane=ideas", headers=OPERATOR_HEADERS)
-    assert r.status_code == 200, r.text
-    payload = r.json()
-    assert all(c["lane"] == "ideas" for c in payload["items"])
-    assert payload["meta"]["filters"]["lane"] == "ideas"
+def test_alpha_factory_lane_filter_is_honoured(monkeypatch) -> None:
+    client = _make_bff_client(
+        monkeypatch,
+        http_get=lambda url, **kw: (200, _hosted_owner_entries()),
+    )
+
+    rep_resp = client.get("/bff/alpha-factory?lane=replicated", headers=_auth_headers("tenant-dev"))
+    assert rep_resp.status_code == 200
+    rep_body = rep_resp.json()
+    assert rep_body["meta"]["filters"]["lane"] == "replicated"
+    assert [c["id"] for c in rep_body["items"]] == ["adm-5dc7be51a48996e4"]
+    assert rep_body["page_info"]["total"] == 1
+
+    scaf_resp = client.get("/bff/alpha-factory?lane=scaffolded", headers=_auth_headers("tenant-dev"))
+    assert scaf_resp.status_code == 200
+    scaf_body = scaf_resp.json()
+    assert scaf_body["meta"]["filters"]["lane"] == "scaffolded"
+    assert len(scaf_body["items"]) == 3
+    assert all(c["lane"] == "scaffolded" for c in scaf_body["items"])
+
+    disc_resp = client.get("/bff/alpha-factory?lane=discovered", headers=_auth_headers("tenant-dev"))
+    assert disc_resp.status_code == 200
+    disc_body = disc_resp.json()
+    assert disc_body["items"] == []
+    assert disc_body["data"]["reason"] == "no_candidate_source"
 
 
-# ---------------------------------------------------------------------------
-# Degraded / missing store tests
-# ---------------------------------------------------------------------------
-
-
-def test_alpha_factory_missing_store_returns_degraded_envelope() -> None:
-    """When dataset_source returns 'missing', items must be [] and surface unavailable."""
-    client = _missing_client("")
-    r = client.get("/bff/alpha-factory", headers=OPERATOR_HEADERS)
-    assert r.status_code == 200, r.text
-    payload = r.json()
-
-    # items must be empty list, not omitted
+def test_alpha_factory_unconfigured_url_returns_unavailable_envelope(monkeypatch) -> None:
+    client = _make_bff_client(monkeypatch, orchestrator_url=None)
+    resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
+    assert resp.status_code == 200
+    payload = resp.json()
     assert payload["items"] == []
     assert payload["data"]["items"] == []
-
-    # surface status must be unavailable with source:missing
     surface = payload["meta"]["surfaces"]["alpha_factory"]
     assert surface["status"] == "unavailable"
-    assert surface["source"] == "missing"
+    assert surface["source"] == "research_orchestrator"
+    assert surface["staleness"]["served_from"] == "unverifiable"
 
-    # page_info still present
-    assert "page_info" in payload
+
+def test_alpha_factory_owner_http_failure_returns_unavailable_envelope(monkeypatch) -> None:
+    client = _make_bff_client(
+        monkeypatch,
+        http_get=lambda url, **kw: (503, {"detail": "orchestrator down"}),
+    )
+    resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["items"] == []
+    assert payload["data"]["items"] == []
     assert payload["page_info"]["total"] == 0
+    surface = payload["meta"]["surfaces"]["alpha_factory"]
+    assert surface["status"] == "unavailable"
+    assert surface["source"] == "research_orchestrator"
 
 
-# ---------------------------------------------------------------------------
-# Auth tests
-# ---------------------------------------------------------------------------
+def test_alpha_factory_healthy_empty_owner_returns_ok_with_empty_lanes(monkeypatch) -> None:
+    client = _make_bff_client(
+        monkeypatch,
+        http_get=lambda url, **kw: (200, []),
+    )
+    resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["items"] == []
+    assert payload["data"]["items"] == []
+    assert payload["data"]["discovered"] == []
+    assert payload["data"]["scaffolded"] == []
+    assert payload["data"]["replicated"] == []
+    assert payload["data"]["reason"] == "no_candidate_source"
+    surface = payload["meta"]["surfaces"]["alpha_factory"]
+    assert surface == {"status": "ok", "source": "research_orchestrator"}
 
 
-def test_alpha_factory_requires_auth() -> None:
-    client = _seeded_client("")
-    r = client.get("/bff/alpha-factory")
-    assert r.status_code == 401
+def test_alpha_factory_two_tenant_isolation_across_owner_and_bff_with_real_auth(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_RESEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", JWT_SECRET)
+
+    research_dir = tmp_path / "research-orchestrator"
+    alpha_dir = tmp_path / "alpha-replication"
+    env = {
+        "RESEARCH_ORCHESTRATOR_DATA_DIR": str(research_dir),
+        "ALPHA_REPLICATION_DATA_DIR": str(alpha_dir),
+        "PANTHEON_RESEARCH_AUTH_MODE": "strict",
+        "PANTHEON_RESEARCH_JWT_SECRET": JWT_SECRET,
+    }
+    module_name = "research_main_bff_tenant_isolation"
+    with mock.patch.dict(os.environ, env):
+        spec = importlib.util.spec_from_file_location(
+            module_name, REPO_ROOT / "services" / "research" / "main.py"
+        )
+        assert spec and spec.loader
+        owner_mod = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = owner_mod
+        spec.loader.exec_module(owner_mod)
+
+    alpha_dir.mkdir(parents=True, exist_ok=True)
+    other_spec_id = "reg-strategy-spec-tw-official:tw_price_daily:TWSE:2303:tenant-other-spec"
+    admissions = {
+        f"tenant-dev:{HOSTED_TW_OFFICIAL_SPEC_ID}": {
+            "admission_id": "adm-5dc7be51a48996e4",
+            "tenant_id": "tenant-dev",
+            "strategy_spec_id": HOSTED_TW_OFFICIAL_SPEC_ID,
+            "strategy_id": HOSTED_TW_OFFICIAL_STRATEGY_ID,
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-dev-2330",
+            "approver": "pantheon-dev-approver",
+            "approved_at": "2026-08-14T01:00:00Z",
+            "requested_by": "pantheon-dev-operator",
+            "review_ref": None,
+            "mode": "initial",
+            "status": "admitted",
+            "created_at": "2026-08-14T01:05:00Z",
+        },
+        f"tenant-other:{other_spec_id}": {
+            "admission_id": "adm-other-2303",
+            "tenant_id": "tenant-other",
+            "strategy_spec_id": other_spec_id,
+            "strategy_id": "strat-tw-official:tw_price_daily:TWSE:2303:tenant-other-strat",
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-other-2303",
+            "approver": "other-approver",
+            "approved_at": "2026-08-14T02:00:00Z",
+            "requested_by": "other-operator",
+            "review_ref": None,
+            "mode": "initial",
+            "status": "admitted",
+            "created_at": "2026-08-14T02:05:00Z",
+        },
+    }
+    queue_entries = {
+        f"tenant-dev:{HOSTED_TW_OFFICIAL_SPEC_ID}": {
+            "strategy_spec_id": HOSTED_TW_OFFICIAL_SPEC_ID,
+            "tenant_id": "tenant-dev",
+            "strategy_id": HOSTED_TW_OFFICIAL_STRATEGY_ID,
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-dev-2330",
+            "approver": "pantheon-dev-approver",
+            "approved_at": "2026-08-14T01:00:00Z",
+            "enqueued_at": "2026-08-14T01:10:00Z",
+            "enqueued_by": "alpha-replication-controller",
+            "status": "completed",
+            "attempt_count": 1,
+            "max_attempts": 1,
+            "experiment_task_id": "etask-alpha-6ef7a5a6d3a4ae4b",
+            "experiment_run_ids": ["run-exp-2330-001"],
+            "authority_task_id": "rtask-20261015-002",
+            "authority_run_ids": ["run-auth-2330-001"],
+            "last_revalidation_at": "2026-10-15T08:30:00Z",
+        },
+        f"tenant-other:{other_spec_id}": {
+            "strategy_spec_id": other_spec_id,
+            "tenant_id": "tenant-other",
+            "strategy_id": "strat-tw-official:tw_price_daily:TWSE:2303:tenant-other-strat",
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-other-2303",
+            "approver": "other-approver",
+            "approved_at": "2026-08-14T02:00:00Z",
+            "enqueued_at": "2026-08-14T02:10:00Z",
+            "enqueued_by": "alpha-replication-controller",
+            "status": "pending",
+            "attempt_count": 0,
+            "max_attempts": 1,
+            "experiment_task_id": None,
+            "experiment_run_ids": [],
+            "authority_task_id": None,
+            "authority_run_ids": None,
+            "last_revalidation_at": None,
+        },
+    }
+    (alpha_dir / "admissions.json").write_text(json.dumps(admissions), encoding="utf-8")
+    (alpha_dir / "queue.json").write_text(json.dumps(queue_entries), encoding="utf-8")
+
+    owner_client = TestClient(owner_mod.app)
+
+    def bridge_http_request(
+        url: str,
+        method: str = "GET",
+        payload: Optional[Dict[str, Any]] = None,
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
+        timeout: Optional[int] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Tuple[int, Dict[str, str], Any]:
+        del payload, mfa_token, timeout
+        path = url.replace("http://research-orchestrator.local", "")
+        req_headers: Dict[str, str] = {}
+        if auth_token:
+            req_headers["Authorization"] = (
+                auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+            )
+        if tenant_id:
+            req_headers["X-Tenant-Id"] = tenant_id
+        resp = owner_client.request(method, path, headers=req_headers)
+        return resp.status_code, dict(resp.headers), resp.json()
+
+    monkeypatch.setattr(
+        "services.control_plane.bff.console_gap.alpha_factory.http_request_json_with_headers",
+        bridge_http_request,
+    )
+
+    bff_client = _make_bff_client(monkeypatch)
+
+    # 1. Owner route directly isolates tenant-dev vs tenant-other
+    owner_dev = owner_client.get(
+        "/api/research-orchestrator/alpha-replication/entries",
+        headers=_auth_headers("tenant-dev"),
+    )
+    assert owner_dev.status_code == 200
+    assert [e["strategy_spec_id"] for e in owner_dev.json()] == [HOSTED_TW_OFFICIAL_SPEC_ID]
+
+    owner_other = owner_client.get(
+        "/api/research-orchestrator/alpha-replication/entries",
+        headers=_auth_headers("tenant-other"),
+    )
+    assert owner_other.status_code == 200
+    assert [e["strategy_spec_id"] for e in owner_other.json()] == [other_spec_id]
+
+    # 2. BFF route over HTTP isolates tenant-dev vs tenant-other
+    bff_dev = bff_client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
+    assert bff_dev.status_code == 200
+    bff_dev_body = bff_dev.json()
+    assert [c["strategy_spec_id"] for c in bff_dev_body["items"]] == [HOSTED_TW_OFFICIAL_SPEC_ID]
+    assert [c["id"] for c in bff_dev_body["data"]["replicated"]] == ["adm-5dc7be51a48996e4"]
+    assert bff_dev_body["data"]["scaffolded"] == []
+
+    bff_other = bff_client.get("/bff/alpha-factory", headers=_auth_headers("tenant-other"))
+    assert bff_other.status_code == 200
+    bff_other_body = bff_other.json()
+    assert [c["strategy_spec_id"] for c in bff_other_body["items"]] == [other_spec_id]
+    assert [c["id"] for c in bff_other_body["data"]["scaffolded"]] == ["adm-other-2303"]
+    assert bff_other_body["data"]["replicated"] == []
+
+    # 3. Cross-tenant header spoofing is rejected with 403 at BFF boundary
+    spoof = bff_client.get(
+        "/bff/alpha-factory",
+        headers={
+            "Authorization": _hs256_bearer("tenant-dev"),
+            "X-Tenant-Id": "tenant-other",
+        },
+    )
+    assert spoof.status_code == 403
+
+
+def test_alpha_factory_requires_auth(monkeypatch) -> None:
+    client = _make_bff_client(
+        monkeypatch,
+        http_get=lambda url, **kw: (200, []),
+    )
+    assert client.get("/bff/alpha-factory").status_code == 401
+    assert (
+        client.get(
+            "/bff/alpha-factory",
+            headers=_auth_headers("tenant-dev", roles=["guest"]),
+        ).status_code
+        == 403
+    )
+
+
+def test_alpha_factory_cards_removed_from_read_surface_ports() -> None:
+    for cls in (
+        WorkflowHookCatalogReaderPort,
+        DomainWorkflowCatalogPort,
+        CompositeOperationsConsultationPort,
+        InMemoryOperationsConsultationPort,
+        ReadSurfacePorts,
+    ):
+        assert not hasattr(cls, "list_alpha_factory_cards"), (
+            f"{cls.__name__} must not retain dead list_alpha_factory_cards reader"
+        )
+    assert "alpha_factory_cards" not in ReadSurfacePorts._OPERATIONS_CONSULTATION_OWNED_DATASETS
