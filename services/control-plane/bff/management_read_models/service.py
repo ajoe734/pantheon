@@ -668,6 +668,8 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
         "redacted": False,
     }
+    if item.get("summary"):
+        public_item["summary"] = item["summary"]
     artifact_manifest = item.get("artifact_manifest")
     if isinstance(artifact_manifest, dict):
         public_item["artifact_manifest"] = json.loads(json.dumps(artifact_manifest))
@@ -690,7 +692,22 @@ def _management_evidence_summary(
     filtered_total: int,
     page_items: List[Dict[str, Any]],
     redacted_count: int,
+    unavailable: bool = False,
 ) -> Dict[str, Any]:
+    if unavailable:
+        # An unreadable owner is "unknown", not zero.
+        return {
+            "total_evidence": None,
+            "total_items": None,
+            "returned_evidence": None,
+            "visible_evidence": None,
+            "redacted_evidence": None,
+            "verified_evidence": None,
+            "verified_count": None,
+            "by_source_type": {},
+            "by_link_type": {},
+            "by_credibility_tier": {},
+        }
     visible_items = [item for item in page_items if not item.get("redacted")]
     verified_count = len(
         [
@@ -5426,6 +5443,23 @@ class ManagementService:
     # -----------------------------------------------------------------------
     # 12. Evidence Explorer
     # -----------------------------------------------------------------------
+    def get_evidence_item(self, ref_id: str, identity: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+        """Management detail of one evidence item, or None when absent.
+
+        Same read, redaction and mapping as the list with ``ref_id`` so the
+        two surfaces cannot disagree.
+        """
+        payload = self.get_evidence(ref_id=ref_id, page_size=1, identity=identity)
+        items = (payload.get("data") or {}).get("items") or []
+        wanted = str(ref_id or "").strip()
+        for item in items:
+            if str(item.get("ref_id") or item.get("id") or "") == wanted:
+                return {**payload, "data": {**payload["data"], "items": [item]}}
+        status = ((payload.get("meta") or {}).get("surfaces") or {}).get("management_evidence", {})
+        if isinstance(status, dict) and status.get("status") == "unavailable":
+            return payload
+        return None
+
     def get_evidence(
         self,
         ref_id: Optional[str] = None,
@@ -5457,11 +5491,64 @@ class ManagementService:
 
         snap = self._utc_now()
         current_run_evidence_refs = _management_current_run_live_evidence_refs()
+        clean_ref_id = str(ref_id or "").strip()
+        filters_active = bool(
+            clean_ref_id
+            or validated_linked_entity_type
+            or linked_entity_ref is not None
+            or validated_link_type
+            or validated_credibility_tier
+            or verified is not None
+        )
         stored_evidence_refs: List[Dict[str, Any]] = []
+        owner_total: Optional[int] = None
+        owner_next_token: Optional[str] = None
+        owner_page_served = False
+        # Availability is decided by THIS read, never by shared store state.
+        read_available: Optional[bool] = None
+        read_source: Optional[str] = None
 
         store = self._resolve_store()
+        read_evidence_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
         if store is not None:
-            if hasattr(store, "list_evidence_refs"):
+            if callable(read_evidence_fn):
+                paged = not filters_active and not current_run_evidence_refs
+                read_item_fn = getattr(store, "read_evidence_ref_item", None)
+                # A lone ref_id reads ONE item through the owner item route
+                # instead of streaming every owner page.
+                single_item = bool(
+                    clean_ref_id
+                    and callable(read_item_fn)
+                    and not (
+                        validated_linked_entity_type
+                        or linked_entity_ref is not None
+                        or validated_link_type
+                        or validated_credibility_tier
+                        or verified is not None
+                    )
+                    and not any(
+                        str(r.get("ref_id") or r.get("id") or "") == clean_ref_id
+                        for r in current_run_evidence_refs
+                    )
+                )
+                try:
+                    if single_item:
+                        result = read_item_fn(clean_ref_id)
+                    elif paged:
+                        result = read_evidence_fn(page_token=page_token, page_size=page_size)
+                    else:
+                        result = read_evidence_fn()
+                    stored_evidence_refs = list(result.items or [])
+                    owner_total = result.total
+                    owner_next_token = result.next_page_token
+                    owner_page_served = paged
+                    read_available = bool(result.available)
+                    read_source = result.source
+                except Exception:
+                    stored_evidence_refs = []
+                    read_available = False
+                    read_source = "unavailable"
+            elif hasattr(store, "list_evidence_refs"):
                 try:
                     stored_evidence_refs = store.list_evidence_refs() or []
                 except Exception:
@@ -5482,17 +5569,22 @@ class ManagementService:
 
         evidence_refs = [*current_run_evidence_refs, *stored_evidence_refs]
 
-        dataset_source_fn = getattr(store, "dataset_source", None)
-        if callable(dataset_source_fn):
-            try:
-                evidence_dataset_source = dataset_source_fn("evidence_refs")
-            except Exception:
-                evidence_dataset_source = "missing"
+        if read_available is not None:
+            evidence_dataset_source = read_source or "unavailable"
+            evidence_dataset_available = bool(read_available) or bool(current_run_evidence_refs)
         else:
-            evidence_dataset_source = "service_backend" if stored_evidence_refs else "missing"
-
-        evidence_dataset_available = (evidence_dataset_source != "missing") or bool(current_run_evidence_refs)
-        if evidence_dataset_source != "missing":
+            dataset_source_fn = getattr(store, "dataset_source", None)
+            if callable(dataset_source_fn):
+                try:
+                    evidence_dataset_source = dataset_source_fn("evidence_refs")
+                except Exception:
+                    evidence_dataset_source = "missing"
+            else:
+                evidence_dataset_source = "service_backend" if stored_evidence_refs else "missing"
+            evidence_dataset_available = (
+                evidence_dataset_source not in ("missing", "unavailable")
+            ) or bool(current_run_evidence_refs)
+        if evidence_dataset_source not in ("missing", "unavailable") and (read_available is None or read_available):
             evidence_surface_source = evidence_dataset_source
         elif current_run_evidence_refs:
             evidence_surface_source = "bff_current_run_artifact"
@@ -5568,10 +5660,14 @@ class ManagementService:
             degraded_message="Management evidence aggregate is available, but the evidence read surface is degraded.",
         )
 
-        total = len(evidence_refs)
-        if evidence_surface.get("status") == "unavailable" and not evidence_refs:
+        unavailable = evidence_surface.get("status") == "unavailable" and not evidence_refs
+        total: int = len(evidence_refs)
+        if unavailable:
             page_items: List[Dict[str, Any]] = []
             next_page_token = None
+        elif owner_page_served:
+            page_items, next_page_token = evidence_refs, owner_next_token
+            total = owner_total if owner_total is not None else len(evidence_refs)
         else:
             page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
 
@@ -5608,6 +5704,7 @@ class ManagementService:
             filtered_total=total,
             page_items=processed_items,
             redacted_count=redacted_count,
+            unavailable=unavailable,
         )
         facets = {
             "source_types": summary["by_source_type"],

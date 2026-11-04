@@ -1,0 +1,121 @@
+{
+  "task_id": "EVIDENCE-OWNER-LIST-BOUNDED-20261104",
+  "owner": "Claude",
+  "kind": "functional (offline, real row shape); hosted verification is left to the operator acceptance task",
+  "no_vm_or_ssh_access": true,
+  "measurements": {
+    "fixture": "rows built from the real hosted row shape (tw_price_daily/TWSE/0050; raw_storage_refs + calendar_evidence + normalized_row). Fixture rows are ~27 KB each, heavier than the ~16.5 KB reported on hosted, so the before figures are conservative upper bounds and the after figures are unaffected by that difference only because the heavy keys are dropped.",
+    "614_rows": {
+      "before_body_bytes": 16532389,
+      "before_encode_seconds": 0.144,
+      "after_first_page_bytes": 145263,
+      "after_first_page_rows": 200,
+      "after_total": 614,
+      "after_latency_seconds_max_of_5": 0.014
+    },
+    "5000_rows": {
+      "before_body_bytes": 135064001,
+      "before_encode_seconds": 1.233,
+      "after_first_page_bytes": 145464,
+      "after_first_page_rows": 200,
+      "after_total": 5000,
+      "after_latency_seconds_max_of_5": 0.016
+    },
+    "bff_client_timeout_seconds": 2.0,
+    "note": "latency is in-process TestClient against the in-memory repository; the Postgres path additionally strips the two keys in SQL and is covered structurally (LIMIT/OFFSET + #- in SQL) by test_postgres_owner_page_query_bounds_rows_and_drops_heavy_keys_in_sql, not timed against a database.",
+    "reproduce": "PYTHONPATH=. python /tmp/measure_claude.py equivalent: owner_repo(n) from tests/test_evidence_owner_list_bounded.py, GET /api/source-ingest/evidence/items"
+  },
+  "timeout_cause": "Reproduced with a real hung TCP socket through DefaultResearchKnowledgeSourcePort._default_http_get (test_real_socket_timeout_through_default_http_helper_is_unavailable): the helper swallows the timeout and returns (False, None); previously the caller then returned [] and dataset_source stayed != missing, so the surface said ok/0. It is now an unavailable read result. The live authenticated cause on hosted was not observed (no hosted access).",
+  "acceptance_map": {
+    "1": "owner route page_size/page_token/total; list rows omit raw_storage_refs+calendar_evidence; item route unchanged and full; no new route (test_owner_pages_cover_every_row_once_and_detail_stays_full)",
+    "2": "test_owner_first_page_is_bounded_and_fast[614,5000]; numbers above",
+    "3": "test_unfiltered_management_page_does_not_download_every_owner_row; test_filtered_management_read_has_correct_totals_across_owner_pages",
+    "4": "normalize_source_ingest_evidence_item shared by owner-HTTP and repository branches; test_normalizer_maps_real_row_without_inventing_time; test_repository_branch_uses_the_same_normalizer",
+    "5": "test_four_surfaces_agree_for_the_same_real_item (management list, knowledge list, knowledge detail; detail read through the owner item route)",
+    "6": "test_owner_failure_reports_unavailable_with_null_totals; test_real_socket_timeout_through_default_http_helper_is_unavailable",
+    "7": "EvidenceReadResult is returned per read; _evidence_status removed; dataset_source probes per call with no cached state; test_one_failed_read_does_not_mislabel_the_next",
+    "8": "console_gap/knowledge.py reads only research_notes/insight_cards/institutional_memory_entries; test_bff_knowledge_inbox_never_calls_evidence_or_registry_owners",
+    "9": "personas.service._pm12_quarter_evidence_refs drops evidence_origin=source_ingest rows with no linked entity; test_pm12_quarter_excludes_unlinked_source_ingest_rows",
+    "10": "tests use the real row shape; see changed_assertions",
+    "5_rework": "GET /bff/management/evidence/{ref_id} added (router + ManagementService.get_evidence_item); ?ref_id= and the path route read ONE item via port.read_evidence_ref_item (owner item route), no list streaming; knowledge list+detail keep display_label. test_four_surfaces_agree_for_the_same_real_item now covers all four routes; test_ref_id_filter_reads_one_owner_item_not_every_page.",
+    "7_rework": "ResearchRouterService.list/get_evidence_ref decide surface state from the read result (_evidence_read_surface_state / read_evidence_ref_detail); no dataset_source(\"evidence_refs\") ?page_size=1 probe. personas _pm12_public_quarter_evidence_refs uses read_evidence_refs() availability. test_knowledge_list_and_detail_issue_no_extra_availability_probe, test_pm12_availability_comes_from_the_read_that_produced_the_rows."
+  },
+  "callers_of_list_evidence_refs_and_dataset_source_evidence_refs": [
+    {
+      "caller": "management_read_models/service.py get_evidence",
+      "result": "uses read_evidence_refs per read (paged when unfiltered); tests/test_bff_b3_management_evidence.py passes"
+    },
+    {
+      "caller": "research/service.py list_evidence_refs (/api/v1/knowledge/evidence)",
+      "result": "uses read_evidence_refs availability; tests/test_research_router.py, test_kw03_evidence_refs_contract.py pass"
+    },
+    {
+      "caller": "research/service.py get_evidence_ref + ports get_evidence_ref/get_evidence_ref_detail (also research_knowledge_source.py insight/note evidence lookups)",
+      "result": "single-item read (owner item route / repo get), not a list scan; kw03/kw04/kw02 contract tests pass"
+    },
+    {
+      "caller": "personas/service.py _pm12_public_quarter_evidence_refs",
+      "result": "still list_evidence_refs + dataset_source; unlinked source-ingest rows excluded from quarterly evidence; own regression test passes (the pm12 quarterly end-to-end tests cannot run in this environment, see preexisting_failures)"
+    },
+    {
+      "caller": "assistant/management_service.py NL ask (linked_entities/source_types scoped)",
+      "result": "scoped call streams all owner pages then filters; tests/test_bff_b6_management_nl_ask.py 16 passed"
+    },
+    {
+      "caller": "console_gap/knowledge.py /bff/knowledge",
+      "result": "removed"
+    },
+    {
+      "caller": "tests/management_session_harness.py list_evidence_refs",
+      "result": "unchanged; no read_evidence_refs so the old list path is used; test_management_session_harness passes except preexisting test_standalone_import_no_main"
+    }
+  ],
+  "changed_assertions": [
+    {
+      "file": "tests/test_bff_knowledge_inbox.py",
+      "change": "total/returned 5 -> 3, inboxType set loses evidence_ref and strategy_spec, composition_sources no longer lists evidence/strategy-specs",
+      "why": "acceptance 8 removes those two datasets from the inbox by operator decision"
+    },
+    {
+      "file": "tests/test_bff_b3_management_evidence.py",
+      "change": "_EvidenceRefsTestStore gains read_evidence_refs mirroring its list_evidence_refs; no assertion changed",
+      "why": "the store delegates unknown attributes to default ports, which would bypass the file-backed fixture now that the management route reads via read_evidence_refs"
+    },
+    {
+      "file": "test_mgmt_load_005_read_concurrency.py",
+      "change": "the two slow-evidence-read tests patch store.read_evidence_refs instead of store.list_evidence_refs; timing/degraded assertions unchanged",
+      "why": "the route's read entry point is now read_evidence_refs"
+    },
+    {
+      "file": "tests/test_management_read_models_router.py",
+      "change": "route count 15->16 and EXPECTED_17_ROUTES gains GET /bff/management/evidence/{ref_id}",
+      "why": "the new acceptance-5 detail route is intentionally registered; contract_snapshots/backend_routes_manifest.json updated to match"
+    },
+    {
+      "file": "tests/test_bff_b3_management_evidence.py",
+      "change": "_EvidenceRefsTestStore gains read_evidence_ref_item/read_evidence_ref_detail",
+      "why": "fixture delegates unknown attrs to default ports; mirrors the file-backed data like its existing read_evidence_refs; assertions unchanged"
+    },
+    {
+      "file": "tests/test_ppl_alloc_012_ranking_projection.py",
+      "change": "_install_evidence_records also installs read_evidence_refs",
+      "why": "PM12 now reads availability from read_evidence_refs; fixture serves same records; assertions unchanged"
+    }
+  ],
+  "preexisting_failures_unrelated_to_this_change": [
+    "tests/test_evidence_redaction_fail_closed.py pm12_quarterly_* (3): AttributeError count_strategy_persona_bindings on _Pm12LeagueTestStore",
+    "tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary",
+    "tests/test_bff_pm12_persona_league.py and tests/test_pm12_request_scoped_reads.py: strategy registry count payload / count_strategy_persona_bindings",
+    "tests/test_ranking_evidence_surfaces_default_composition.py (5)",
+    "tests/test_read_surface_caller_migration.py::test_main_py_all_read_store_attributes_are_inventoried_and_mapped (main.py untouched)",
+    "tests/test_management_session_harness.py::test_standalone_import_no_main",
+    "test_mgmt_load_005_read_concurrency.py::test_human_inbox_timeout_returns_degraded_envelope_without_hanging",
+    "These fail identically on the untouched base b61a5c60f extracted to a scratch directory, or touch code this change does not modify; the shared venv /tmp/svc-venv is not the repo's own, so some baseline failures are environmental."
+  ],
+  "verified_commands": [
+    "/tmp/svc-venv/bin/python -m pytest services/source_ingestion/test_service.py (34 passed, 2 skipped)",
+    "cd services/control-plane/bff && pytest tests/test_evidence_owner_list_bounded.py (13 passed)",
+    "pytest tests/test_bff_b3_management_evidence.py tests/test_bff_knowledge_inbox.py tests/test_research_knowledge_source_ports.py tests/test_research_router.py tests/test_bff_test_architecture.py tests/test_ranking_default_owner_integrity.py tests/test_ranking_real_source_owner_admission.py tests/test_ppl_alloc_012_ranking_projection.py tests/test_console_research_projection.py tests/test_bff_management_gap_003_contract_schema.py tests/test_management_read_models_router.py tests/test_read_surface_port_cutover.py (all pass)",
+    "/tmp/svc-venv/bin/python -m pytest (rework batches): owner_list_bounded+ports+b3+research_router+cutover+architecture+mgmt router+gap_003+console_research = 221 passed; ppl_alloc_012+ranking+knowledge_inbox+nl_ask = 53 passed. Remaining failures (pm12 league/request_scoped/ranking_evidence_surfaces/redaction pm12/main.py attrs/session harness/route_diff baseline) fail identically on unmodified HEAD."
+  ]
+}

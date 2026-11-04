@@ -49,6 +49,7 @@ EXPECTED_17_ROUTES = {
     ("GET", "/bff/management/human-inbox/{item_id}"),
     ("GET", "/bff/management/hiq-backlog"),
     ("GET", "/bff/management/evidence"),
+    ("GET", "/bff/management/evidence/{ref_id}"),
     ("GET", "/bff/management/operations-read-model/{persona_id}"),
     ("GET", "/api/v1/operator/degraded-control-guidance"),
 }
@@ -239,7 +240,7 @@ def test_router_registers_exact_17_catalogued_decorators() -> None:
         for route in router.routes
         for method in getattr(route, "methods", set())
     }
-    assert len(router.routes) == 15
+    assert len(router.routes) == 16
     assert actual == EXPECTED_17_ROUTES
 
 

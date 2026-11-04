@@ -31,6 +31,7 @@ from services.registry.strategy_artifact import (
 )
 from services.registry.storage import get_store as get_registry_store
 from services.research.alpha_replication.admission import ReplicationAdmissionStore
+from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.experiments import (
     ExperimentRegistryWritebackError,
     ExperimentRun,
@@ -564,6 +565,7 @@ def set_write_owner(owner: Optional[Any]) -> None:
     global _write_owner
     _write_owner = owner
 alpha_replication_admission_store = ReplicationAdmissionStore(ALPHA_REPLICATION_DATA_DIR)
+alpha_replication_queue = AlphaReplicationQueue(ALPHA_REPLICATION_DATA_DIR)
 register_fastapi_health_routes(
     app,
     "research-orchestrator",
@@ -960,6 +962,129 @@ def get_alpha_replication_admission(tenant_id: str, strategy_spec_id: str) -> Di
     if admission is None:
         raise HTTPException(status_code=404, detail="alpha replication admission not found")
     return admission
+
+
+_ALPHA_REPLICATION_READ_ROLES = tuple(
+    dict.fromkeys(("viewer", "view_only", "operator", "approver", "admin", "reviewer", *AUTHENTICATED_SERVICE_ROLES))
+)
+
+
+def _structured_token_tenants(authorization: Optional[str]) -> set[str]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return set()
+    token = authorization.split(" ", 1)[1].strip()
+    if not token or "." in token or ":" not in token:
+        return set()
+    parts = token.split(":")
+    raw_tenants = ""
+    if len(parts) == 3 and parts[2].strip().lower() != "mfa":
+        raw_tenants = parts[2].strip()
+    elif len(parts) >= 5 and parts[2].strip().lower() == "mfa":
+        raw_tenants = parts[4].strip()
+    if not raw_tenants:
+        return set()
+    return {t.strip() for t in raw_tenants.split(",") if t.strip()}
+
+
+def _authenticated_alpha_replication_tenant(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> str:
+    """Verified bearer identity bound to an explicit tenant; anonymous or cross-tenant is denied."""
+    try:
+        verified = authenticate_tenant(
+            authorization=authorization,
+            tenant_id=x_tenant_id,
+            service_prefix="RESEARCH",
+            required_roles=_ALPHA_REPLICATION_READ_ROLES,
+        ).tenant_id
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except TenantBoundaryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    structured_tenants = _structured_token_tenants(authorization)
+    if structured_tenants and "*" not in structured_tenants and verified not in structured_tenants:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Authenticated actor is not authorized for tenant {verified!r}.",
+        )
+    return verified
+
+
+def _build_alpha_replication_entry(
+    admission: Dict[str, Any],
+    queue_entry: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    q = queue_entry if isinstance(queue_entry, dict) else {}
+    has_q = isinstance(queue_entry, dict)
+    adm_status = admission.get("status")
+    q_status = q.get("status") if has_q else None
+    raw_exp_runs = q.get("experiment_run_ids") if has_q else None
+    exp_run_ids = list(raw_exp_runs) if isinstance(raw_exp_runs, list) else None
+    raw_auth_runs = q.get("authority_run_ids") if has_q else None
+    auth_run_ids = list(raw_auth_runs) if isinstance(raw_auth_runs, list) else None
+    return {
+        "admission_id": admission.get("admission_id"),
+        "tenant_id": admission.get("tenant_id"),
+        "strategy_spec_id": admission.get("strategy_spec_id"),
+        "strategy_id": admission.get("strategy_id") or (q.get("strategy_id") if has_q else None),
+        "spec_version": admission.get("spec_version") or (q.get("spec_version") if has_q else None),
+        "checksum": admission.get("checksum") or (q.get("checksum") if has_q else None),
+        "approval_decision_id": admission.get("approval_decision_id") or (q.get("approval_decision_id") if has_q else None),
+        "approver": admission.get("approver") if admission.get("approver") is not None else (q.get("approver") if has_q else None),
+        "approved_at": admission.get("approved_at") if admission.get("approved_at") is not None else (q.get("approved_at") if has_q else None),
+        "requested_by": admission.get("requested_by"),
+        "review_ref": admission.get("review_ref"),
+        "mode": admission.get("mode"),
+        "created_at": admission.get("created_at"),
+        "admission_status": adm_status,
+        "status": adm_status,
+        "queue_status": q_status,
+        "enqueued_at": q.get("enqueued_at") if has_q else None,
+        "enqueued_by": q.get("enqueued_by") if has_q else None,
+        "attempt_count": q.get("attempt_count") if has_q else None,
+        "max_attempts": q.get("max_attempts") if has_q else None,
+        "experiment_task_id": q.get("experiment_task_id") if has_q else None,
+        "experiment_run_ids": exp_run_ids,
+        "authority_task_id": q.get("authority_task_id") if has_q else None,
+        "authority_run_ids": auth_run_ids,
+        "last_revalidation_at": q.get("last_revalidation_at") if has_q else None,
+        "last_error": q.get("last_error") if has_q else None,
+    }
+
+
+@app.get("/api/research-orchestrator/alpha-replication/entries")
+def list_alpha_replication_entries(
+    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+) -> List[Dict[str, Any]]:
+    """Return every replication admission of the authenticated tenant joined with its queue entry."""
+    admissions = alpha_replication_admission_store.list_admissions(tenant_id=tenant_id)
+    queue_store = (
+        alpha_replication_queue
+        if getattr(alpha_replication_queue, "_data_dir", None)
+        == getattr(alpha_replication_admission_store, "_data_dir", None)
+        else AlphaReplicationQueue(alpha_replication_admission_store._data_dir)
+    )
+    queue_by_key: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for entry in queue_store.list_all():
+        if not isinstance(entry, dict):
+            continue
+        entry_tenant = str(entry.get("tenant_id") or "").strip()
+        entry_spec_id = str(entry.get("strategy_spec_id") or "").strip()
+        if entry_tenant == tenant_id and entry_spec_id:
+            queue_by_key[(entry_tenant, entry_spec_id)] = entry
+
+    results: List[Dict[str, Any]] = []
+    for admission in admissions:
+        if not isinstance(admission, dict):
+            continue
+        adm_tenant = str(admission.get("tenant_id") or "").strip()
+        if adm_tenant != tenant_id:
+            continue
+        spec_id = str(admission.get("strategy_spec_id") or "").strip()
+        queue_entry = queue_by_key.get((adm_tenant, spec_id))
+        results.append(_build_alpha_replication_entry(admission, queue_entry))
+    return results
 
 
 @app.get("/api/research-orchestrator/tasks")

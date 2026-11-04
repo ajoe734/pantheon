@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 from services.source_ingestion.connectors.base import SourceRecord
 
-from .models import EvidenceBundle, EvidenceItem, EvidenceValidationError, KnowledgeObject
+from .models import EvidenceBundle, EvidenceItem, EvidenceValidationError, KnowledgeObject, strip_list_heavy_metadata
 
 
 class _Unscoped:
@@ -166,6 +166,23 @@ class InMemoryEvidenceRepository:
         if tenant_id is not _UNSCOPED:
             return [i for (t, _), i in self._evidence_items_by_tenant.items() if t == tenant_id]
         return list(self._evidence_items.values())
+
+    def list_evidence_items_page(
+        self,
+        tenant_id: str | None | _Unscoped = _UNSCOPED,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> Tuple[List[EvidenceItem], int]:
+        """Newest-first page of list-weight evidence items plus the full total.
+
+        Heavy metadata keys (``EVIDENCE_LIST_OMITTED_METADATA_KEYS``) are
+        omitted; ``get_evidence_item`` still returns the full record.
+        """
+        items = self.list_evidence_items(tenant_id=tenant_id)
+        total = len(items)
+        window = list(reversed(items))[offset: offset + limit]
+        return [strip_list_heavy_metadata(i) for i in window], total
 
 
 class JsonlEvidenceRepository(InMemoryEvidenceRepository):

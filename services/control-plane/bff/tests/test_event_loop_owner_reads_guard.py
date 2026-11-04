@@ -61,6 +61,7 @@ SYNC_HANDLER_PATHS = [
     "/bff/search",
     "/bff/agora/capabilities",
     "/bff/agora/journal",
+    "/bff/alpha-factory",
 ]
 
 # Handlers that stay ``async def`` because they await, but must offload
@@ -115,6 +116,7 @@ RUNTIME_GET_PATHS = [
     "/bff/skills",
     "/bff/mcp-servers",
     "/bff/strategies",
+    "/bff/alpha-factory",
 ]
 
 

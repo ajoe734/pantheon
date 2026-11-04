@@ -62,6 +62,7 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 
+from services.control_plane.bff.ports.research_knowledge_source import EvidenceReadResult
 from services.control_plane.bff.core.app_factory import create_core_router
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.governance.router import (
@@ -311,11 +312,13 @@ def test_evidence_slow_read_completes_without_hanging() -> None:
     real payload once it completes, rather than degrading early.
     """
     with _isolated_bff() as (client, store):
-        def slow_list_evidence_refs():
+        def slow_read_evidence_refs(**_kwargs):
+            # /bff/management/evidence now reads via the per-read
+            # ``read_evidence_refs`` (EVIDENCE-OWNER-LIST-BOUNDED-20261104).
             time.sleep(0.2)
-            return []
+            return EvidenceReadResult([], 0, "ok", "typed_store")
 
-        store.list_evidence_refs = slow_list_evidence_refs
+        store.read_evidence_refs = slow_read_evidence_refs
         started = time.monotonic()
         response = client.get("/bff/management/evidence", headers=HEADERS)
         elapsed = time.monotonic() - started
@@ -333,13 +336,13 @@ def test_evidence_timeout_returns_degraded_envelope_without_hanging() -> None:
     contract already covered for ``/bff/alerts`` above.
     """
 
-    def slow_list_evidence_refs():
+    def slow_read_evidence_refs(**_kwargs):
         time.sleep(0.6)
-        return [{"ref_id": "should-not-appear"}]
+        return EvidenceReadResult([{"ref_id": "should-not-appear"}], 1, "ok", "typed_store")
 
     with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
         with _isolated_bff() as (client, store):
-            store.list_evidence_refs = slow_list_evidence_refs
+            store.read_evidence_refs = slow_read_evidence_refs
             started = time.monotonic()
             response = client.get("/bff/management/evidence", headers=HEADERS)
             elapsed = time.monotonic() - started

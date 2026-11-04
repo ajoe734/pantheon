@@ -15,16 +15,13 @@ UtcNow = Callable[[], str]
 DatasetSurfaceStatus = Callable[..., Dict[str, Any]]
 
 
+# The inbox is for research notes, insights and institutional memory and may
+# be empty. Market evidence lives in the evidence explorer, and strategy specs
+# (thousands of registry drafts) are not inbox material, so this route reads
+# neither the source-ingest owner nor the registry owner.
 _SOURCE_DATASETS = (
     ("research_notes", "research_note", "knowledge_inbox_notes", "GET /api/v1/knowledge/notes"),
-    ("evidence_refs", "evidence_ref", "knowledge_inbox_evidence", "GET /api/v1/knowledge/evidence"),
     ("insight_cards", "insight", "knowledge_inbox_insights", "GET /api/v1/knowledge/insights"),
-    (
-        "strategy_specs",
-        "strategy_spec",
-        "knowledge_inbox_strategy_specs",
-        "GET /api/v1/knowledge/strategy-specs",
-    ),
     (
         "institutional_memory_entries",
         "memory_entry",
@@ -158,28 +155,9 @@ def _records_for_dataset(store: Any, dataset: str) -> List[Dict[str, Any]]:
     if dataset == "research_notes":
         reader = getattr(store, "list_research_notes", None)
         return _safe_list(reader)
-    if dataset == "evidence_refs":
-        reader = getattr(store, "list_evidence_refs", None)
-        return _safe_list(reader)
     if dataset == "insight_cards":
         reader = getattr(store, "list_insight_cards", None)
         return _safe_list(reader)
-    if dataset == "strategy_specs":
-        reader = getattr(store, "list_strategy_specs", None)
-        if not callable(reader):
-            return []
-        try:
-            return [
-                item
-                for item in reader(
-                    lifecycle_state="all",
-                    include_retired=True,
-                    include_fixture_pack=False,
-                )
-                if isinstance(item, dict)
-            ]
-        except TypeError:
-            return _safe_list(reader)
     if dataset == "institutional_memory_entries":
         reader = getattr(store, "list_institutional_memory_entries", None)
         return _safe_list(reader)

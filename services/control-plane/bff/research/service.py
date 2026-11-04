@@ -27,6 +27,7 @@ try:
         redact_evidence_refs,
     )
     from services.control_plane.bff.ports.research_knowledge_source import (
+        EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
     )
@@ -37,6 +38,7 @@ except (ImportError, ValueError):
         redact_evidence_refs,
     )
     from ..ports.research_knowledge_source import (  # type: ignore[no-redef]
+        EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
     )
@@ -314,12 +316,67 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             )
         raise AttributeError("Research port operation 'list_evidence_refs' not implemented")
 
+    def read_evidence_refs(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        include_tenant_agnostic: bool = True,
+        linked_entities: Optional[set[tuple[str, str]]] = None,
+        source_types: Optional[set[str]] = None,
+        include_scope_metadata: bool = False,
+        page_token: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> EvidenceReadResult:
+        read_args = dict(
+            tenant_id=tenant_id,
+            include_tenant_agnostic=include_tenant_agnostic,
+            linked_entities=linked_entities,
+            source_types=source_types,
+            include_scope_metadata=include_scope_metadata,
+            page_token=page_token,
+            page_size=page_size,
+        )
+        if self._read_surface is not None and hasattr(self._read_surface, "read_evidence_refs"):
+            return self._read_surface.read_evidence_refs(**read_args)
+        if self._ks is not None and hasattr(self._ks, "read_evidence_refs"):
+            return self._ks.read_evidence_refs(**read_args)
+        # Port without per-read availability: infer from the list call itself.
+        items = self.list_evidence_refs()
+        owner = self._ks if self._ks is not None else self._read_surface
+        source_fn = getattr(owner, "dataset_source", None)
+        source = source_fn("evidence_refs") if callable(source_fn) else "missing"
+        return EvidenceReadResult(
+            list(items or []),
+            len(items or []),
+            "unavailable" if source in ("missing", "unavailable") else "ok",
+            source,
+        )
+
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "get_evidence_ref"):
             return self._read_surface.get_evidence_ref(ref_id)
         if self._ks is not None and hasattr(self._ks, "get_evidence_ref"):
             return self._ks.get_evidence_ref(ref_id)
         raise AttributeError("Research port operation 'get_evidence_ref' not implemented")
+
+    def read_evidence_ref_detail(self, ref_id: Optional[str]) -> Any:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_evidence_ref_detail"):
+                return owner.read_evidence_ref_detail(ref_id)
+        record = self.get_evidence_ref_detail(ref_id)
+        source = self.dataset_source("evidence_refs")
+        return record, EvidenceReadResult(
+            [record] if record else [],
+            1 if record else 0,
+            "unavailable" if source in ("missing", "unavailable") else "ok",
+            source,
+        )
+
+    def read_evidence_ref_item(self, ref_id: Optional[str]) -> Any:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_evidence_ref_item"):
+                return owner.read_evidence_ref_item(ref_id)
+        raise AttributeError("Research port operation 'read_evidence_ref_item' not implemented")
 
     def get_evidence_ref_detail(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "get_evidence_ref_detail"):
@@ -1056,6 +1113,35 @@ class ResearchRouterService:
             return "ok"
         if source == "missing" or not has_data:
             return "unavailable"
+        return "ok"
+
+    def _evidence_read_surface_state(self, read: Any, *, snapshot_at: str) -> str:
+        """Surface state decided by the read that produced the rows, with no
+        extra dataset_source probe against the owner."""
+        if not getattr(read, "available", False):
+            return "unavailable"
+        raw_port = self.port_getter() if callable(getattr(self, "port_getter", None)) else None
+        surface_fn = (
+            self.dataset_surface_status
+            or getattr(raw_port, "dataset_surface_status", None)
+            or getattr(self._port(), "dataset_surface_status", None)
+        )
+        if surface_fn is None:
+            return "ok"
+        surface = surface_fn(
+            "evidence_refs",
+            snapshot_at=snapshot_at,
+            source=getattr(read, "source", "service_client"),
+            has_data=True,
+            missing_message=None,
+        )
+        if isinstance(surface, str):
+            return surface
+        status = str((surface or {}).get("status") or "")
+        if status == "unavailable":
+            return "unavailable"
+        if status == "degraded" or (surface or {}).get("source") == "local_snapshot":
+            return "degraded"
         return "ok"
 
     def _get_capabilities_for(self, identity: Any) -> Optional[List[str]]:
@@ -1870,9 +1956,37 @@ class ResearchRouterService:
             self._bad_request(f"Invalid {field}", f"{field} must be one of {sorted(allowed)}", field)
         return normalized
 
+    def _redact_evidence_items(
+        self, identity: Any, items: List[Dict[str, Any]], *, capabilities: Any = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Capability-redact evidence. Source-ingest market rows carry no
+        capability-bearing evidence_type, so (like /bff/management/evidence)
+        they are gated as ``artifact``; every other ref keeps the strict,
+        unresolved-kind-withheld policy."""
+        caps = capabilities if capabilities is not None else self._get_capabilities_for(identity)
+        out: List[Optional[Dict[str, Any]]] = [None] * len(items)
+        redacted_total = 0
+        for default_kind, wanted in (("artifact", True), (None, False)):
+            idx = [
+                n for n, it in enumerate(items)
+                if (isinstance(it, dict) and it.get("evidence_origin") == "source_ingest") is wanted
+            ]
+            if not idx:
+                continue
+            processed, count = redact_evidence_refs(
+                identity, [items[n] for n in idx], capabilities=caps, default_kind=default_kind
+            )
+            redacted_total += count
+            for n, value in zip(idx, processed):
+                out[n] = value
+        return [o for o in out], redacted_total
+
     def _evidence_list_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        summary = {"summary": item["summary"]} if item.get("summary") else {}
         return {
+            **summary,
             "ref_id": item.get("ref_id"),
+            **({"display_label": item["display_label"]} if item.get("display_label") else {}),
             "source_document": json.loads(json.dumps(item.get("source_document") or {})),
             "link_type": item.get("link_type"),
             "credibility": json.loads(json.dumps(item.get("credibility") or {})),
@@ -1888,16 +2002,15 @@ class ResearchRouterService:
         ref_id: str,
         identity: Any,
         snapshot_at: str,
+        surface_state: Optional[str] = None,
     ) -> Dict[str, Any]:
-        detail_surface = self._knowledge_surface_state("evidence_refs", snapshot_at=snapshot_at, has_data=True)
+        detail_surface = surface_state or self._knowledge_surface_state(
+            "evidence_refs", snapshot_at=snapshot_at, has_data=True
+        )
         capabilities = self._get_capabilities_for(identity)
         self_ref = json.loads(json.dumps(evidence_ref))
         self_ref["ref_id"] = ref_id
-        [processed_self], _ = redact_evidence_refs(
-            identity,
-            [self_ref],
-            capabilities=capabilities,
-        )
+        [processed_self], _ = self._redact_evidence_items(identity, [self_ref], capabilities=capabilities)
         if isinstance(processed_self, dict) and processed_self.get("redacted"):
             return {
                 **processed_self,
@@ -1935,7 +2048,9 @@ class ResearchRouterService:
             for original, processed in zip(raw_linked_decisions, processed_decisions)
         ]
         return {
+            **({"summary": evidence_ref["summary"]} if evidence_ref.get("summary") else {}),
             "ref_id": evidence_ref.get("ref_id"),
+            **({"display_label": evidence_ref["display_label"]} if evidence_ref.get("display_label") else {}),
             "source_document": json.loads(json.dumps(evidence_ref.get("source_document") or {})),
             "link_type": evidence_ref.get("link_type"),
             "credibility": json.loads(json.dumps(evidence_ref.get("credibility") or {})),
@@ -1982,8 +2097,16 @@ class ResearchRouterService:
                 self._bad_request("Invalid verified", "verified must be a boolean", "verified")
             verified = normalized_verified == "true"
         port = self._port()
+        read_refs = getattr(port, "read_evidence_refs", None)
+        read_available: Optional[bool] = None
+        read_result: Any = None
         with self._map_port_errors("list_evidence_refs"):
-            records = list(port.list_evidence_refs() or [])
+            if callable(read_refs):
+                read_result = read_refs()
+                records = list(read_result.items or [])
+                read_available = bool(read_result.available)
+            else:
+                records = list(port.list_evidence_refs() or [])
         if val_entity_type:
             records = [item for item in records if str(((item.get("linked_object_summary") or {}).get("entity_type")) or "").lower() == val_entity_type]
         if linked_entity_ref is not None:
@@ -1994,17 +2117,20 @@ class ResearchRouterService:
             records = [item for item in records if str(((item.get("credibility") or {}).get("tier")) or "").lower() == val_tier]
         if verified is not None:
             records = [item for item in records if bool((item.get("credibility") or {}).get("verified")) is verified]
-        port = self._port()
-        available = getattr(port, "dataset_source", lambda _d: "missing")("evidence_refs") != "missing"
-        surface_state = self._knowledge_surface_state("evidence_refs", snapshot_at=snap, has_data=available)
+        if read_available is not None:
+            surface_state = self._evidence_read_surface_state(read_result, snapshot_at=snap)
+        else:
+            surface_state = self._knowledge_surface_state(
+                "evidence_refs",
+                snapshot_at=snap,
+                has_data=getattr(port, "dataset_source", lambda _d: "missing")("evidence_refs") != "missing",
+            )
         if surface_state == "unavailable":
             page_items, next_token, has_more = [], None, False
         else:
             page_items, next_token = self.page_slice(records, page_token, page_size)
             has_more = next_token is not None
-        processed, redacted_count = redact_evidence_refs(
-            identity, page_items, capabilities=self._get_capabilities_for(identity)
-        )
+        processed, redacted_count = self._redact_evidence_items(identity, page_items)
         response_items = [
             item if isinstance(item, dict) and item.get("redacted") else self._evidence_list_item(item)
             for item in processed
@@ -2026,11 +2152,26 @@ class ResearchRouterService:
         snap = snapshot_at or self.utc_now()
         identifier = str(ref_id or "").strip()
         port = self._port()
+        read_detail = getattr(port, "read_evidence_ref_detail", None)
+        surface_state: Optional[str] = None
         with self._map_port_errors("get_evidence_ref_detail"):
-            record = port.get_evidence_ref_detail(identifier)
+            if callable(read_detail):
+                record, read = read_detail(identifier)
+                surface_state = self._evidence_read_surface_state(read, snapshot_at=snap)
+            else:
+                record = port.get_evidence_ref_detail(identifier)
+        if surface_state == "unavailable":
+            self._raise_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Evidence owner read failed",
+                "The evidence owner could not be read; retry later.",
+            )
         if not record:
             self._not_found("Research record", identifier)
-        return self._evidence_detail_payload(record, ref_id=identifier, identity=identity, snapshot_at=snap)
+        return self._evidence_detail_payload(
+            record, ref_id=identifier, identity=identity, snapshot_at=snap, surface_state=surface_state
+        )
 
     # --- KW-04: Insight Cards helpers and use cases ---
     def _insight_list_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
