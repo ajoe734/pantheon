@@ -73,11 +73,31 @@ Rollup rule (`JourneyMaterializer._rollup` / `deadline_status`):
 Deadline: `PANTHEON_TRADE_JOURNEY_RECONCILIATION_DEADLINE_SECONDS`, default 72h. Both statuses are in `TERMINAL_STATUSES`, so the BFF never flags them stalled; `unreconciled` is never presented as `completed`. The runtime-binding-ended signal is not carried on projection rows, so the deadline is the only criterion. Pure replays pass no `as_of` and stay deterministic; only the live projector applies the deadline.
 
 Existing rows: migration `003_reclassify_stale_open_journeys.sql` only adds a partial
-index on open journeys (no routines, no row writes, so it never blocks readiness and
-the runtime-role reconcile stays idempotent). Drive the reclassification with
-`projection_migration.reclassify_stale_open_journeys(sql_reclassify_batch_runner(connect), ...)`,
-which loops the bounded `RECLASSIFY_STALE_OPEN_SQL` UPDATE (default 1000 rows,
-`max_batches` per run) and reports `complete`.
-Rerun until `complete=true`; reclassified rows leave `open`, so it is resumable and idempotent.
+index on open journeys (no routines, no row writes, so it never blocks readiness).
+Reclassification is **automatic**: once the projector is ready and polling, its run loop
+(`StaleOpenSweeper`, next to `record_poll`) applies at most one bounded batch per interval
+in its own short transaction on the projection DSN (role `pantheon_app`). No manual step.
+Each batch (`RECLASSIFY_STALE_OPEN_SQL`) updates the
+`journeys` row and its linked `loop_runs` row together (loop `status` = terminal status,
+`activePeriod.end` = journey `last_occurred_at`) and commits. Only when a call's batch
+moved zero rows does a separate short transaction run `REPAIR_ACTIVE_LOOP_RUNS_SQL`,
+repairing loop_runs still `active` beside an already-terminal journey; the repair scan is
+costly, so it is skipped while draining and its failure never undoes a reclassify batch. A sweep failure is logged and retried next interval; it
+never fails the tick, changes readiness, or pauses source polling. A late event re-reduces
+the journey, so a late `reconciliation` moves it to its normal `completed` status.
 
-Verify after deployment: `SELECT status, count(*) FROM trade_journey_projection.journeys GROUP BY 1`.
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `LIFECYCLE_PROJECTOR_RECLASSIFY_ENABLED` | `1` | `0` disables the sweep |
+| `LIFECYCLE_PROJECTOR_RECLASSIFY_INTERVAL_SECONDS` | `10` | one batch per interval |
+| `LIFECYCLE_PROJECTOR_RECLASSIFY_BATCH_SIZE` | `1000` | keep near 1000: hosted statement timeout is ~10s |
+
+Defaults drain about 360k rows/hour, so the ~150k backlog clears in well under an hour.
+An empty sweep is one index probe on `idx_journeys_open_last_occurred` plus a scan for
+active loop_runs beside terminal journeys.
+
+Expected hosted result after deployment (from the 2026-11-04 baseline of 147,149 open):
+`no_order` 36,124 and `unreconciled` 111,025, `open` ~0, and `loop_runs` with no `active`
+row beside a terminal journey.
+
+Verify after deployment: `SELECT status, count(*) FROM trade_journey_projection.journeys GROUP BY 1` and the same on `trade_journey_projection.loop_runs` (statuses must match).

@@ -442,7 +442,7 @@ def _severity(snapshot: Mapping[str, Any], diagnostics: Sequence[Mapping[str, An
     codes = {item.get("code") for item in diagnostics}
     if status in {"failed", "incomplete"} or (codes & _ANOMALY_DIAGNOSTIC_CODES):
         return "critical"
-    if status in {"blocked", "waiting_human", "completed_with_variance"}:
+    if status in {"blocked", "waiting_human", "completed_with_variance", "unreconciled"}:
         return "warning"
     return "info"
 
