@@ -26,6 +26,7 @@ from .command_adapters.evolution_adapter import resolve_evolution_actor
 from .command_adapters.base import (
     _token_tenant,
     bound_tenant,
+    evolution_owner_request,
     get_base_url,
     governance_approval_url,
 )
@@ -213,6 +214,16 @@ def _post_json(
     except Exception as exc:
         _record_outcome_for_target(url, ok=False, status_code=-1, detail=str(exc))
         raise
+
+
+def _post_evolution_owner(url: str, payload: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[str, Any]:
+    """POST to the Evolution owner with the service credential and the verified caller tenant.
+
+    The operator JWT is only used to bind the tenant; it is never forwarded.
+    """
+    return evolution_owner_request(
+        url, caller_token=auth_token, method="POST", payload=payload, timeout=_REQUEST_TIMEOUT
+    )
 
 
 def _get_json(
@@ -746,7 +757,7 @@ def _execute_approve_evolution_decision(
         payload["note"] = note
 
     url = _evolution_url(f"/api/evolution/proposals/{decision_id}/{approval_action}")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    body = _post_evolution_owner(url, payload, auth_token=auth_token)
     return {
         "authoritative_readback": body,
         "command_id": command_id,
@@ -790,7 +801,7 @@ def _execute_evolution_action(
         payload["note"] = note
 
     url = _evolution_url(f"/api/evolution/proposals/{decision_id}/execute")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    body = _post_evolution_owner(url, payload, auth_token=auth_token)
     execution_result = body.get("execution_result") or {}
 
     freeze_mode = params.get("freeze_mode")
@@ -849,7 +860,7 @@ def _execute_approve_mutation(
         payload["note"] = note
 
     url = _evolution_url(f"/api/evolution/proposals/{decision_id}/approve")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    body = _post_evolution_owner(url, payload, auth_token=auth_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
         "authoritative_readback": body,
@@ -886,7 +897,7 @@ def _execute_reject_mutation(
         payload["note"] = note
 
     url = _evolution_url(f"/api/evolution/proposals/{decision_id}/reject")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    body = _post_evolution_owner(url, payload, auth_token=auth_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
         "authoritative_readback": body,
@@ -924,7 +935,7 @@ def _execute_review_mutation(
         payload["note"] = note
 
     url = _evolution_url(f"/api/evolution/proposals/{decision_id}/review")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    body = _post_evolution_owner(url, payload, auth_token=auth_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
         "authoritative_readback": body,
@@ -971,7 +982,7 @@ def _execute_execute_mutation(
         payload["note"] = note
 
     url = _evolution_url(f"/api/evolution/proposals/{decision_id}/execute")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    body = _post_evolution_owner(url, payload, auth_token=auth_token)
     execution_result = body.get("execution_result") or {}
     committed_at = body.get("updated_at") or execution_result.get("executed_at") or _utc_now()
 

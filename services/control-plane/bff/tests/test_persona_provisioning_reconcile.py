@@ -60,6 +60,7 @@ class _TestHarnessState:
     read_store: Any = None
     mutation_port_updates: List[Dict[str, Any]] = []
     transport: Any = None
+    http_owner: Any = None
 
 
 _state = _TestHarnessState()
@@ -88,6 +89,10 @@ class _RecordingPersonaMutationPort:
         }
         self.updates.append(record)
         _state.mutation_port_updates.append(record)
+        if _state.http_owner is not None:
+            _state.http_owner.update_persona(
+                persona_id, lifecycle_state=lifecycle_state, metadata=metadata
+            )
         return self.target_store.update_persona(
             persona_id,
             lifecycle_state=lifecycle_state,
@@ -1254,4 +1259,210 @@ def test_lifespan_background_loop_promotes_when_worker_session_appears_later(mon
         asyncio.run(drive())
 
         assert passes["n"] >= 2
+        assert _state.read_store.get_persona(persona_id)["lifecycle_state"] == "paper_running"
+
+
+# --- terminal transition idempotency (PERSONA-PROVISIONING-TERMINAL-IDEMPOTENT-20261103) ---
+import io
+import threading
+import urllib.error
+
+from services.control_plane.bff.ports.persona_write_owner import (
+    PersonaRegistryHttpWritePort,
+    PersonaWriteConflict,
+)
+
+
+class _Resp:
+    def __init__(self, payload: Any) -> None:
+        self._raw = json.dumps(payload).encode()
+
+    def read(self) -> bytes:
+        return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        return False
+
+
+class _FakePersonaOwnerHttp:
+    """Persona owner HTTP double with the real same-state/undeclared guard."""
+
+    def __init__(self, persona_id: str, *, barrier: Optional[threading.Barrier] = None) -> None:
+        self.persona_id = persona_id
+        self.lock = threading.Lock()
+        self.state = "draft"
+        self.metadata: Dict[str, Any] = {}
+        self.lifecycle_ok = 0
+        self.lifecycle_rejected = 0
+        self.barrier = barrier
+        self.force_reject_with_state: Optional[str] = None
+
+    def _persona(self) -> Dict[str, Any]:
+        return {
+            "persona_id": self.persona_id,
+            "lifecycle_state": self.state,
+            "metadata": dict(self.metadata),
+            "tenant_id": "t",
+        }
+
+    def _error(self, request: Any, code: int, detail: str) -> None:
+        raise urllib.error.HTTPError(
+            request.full_url, code, "err", {}, io.BytesIO(json.dumps({"detail": detail}).encode())
+        )
+
+    def __call__(self, request: Any, timeout: float = 1.0) -> Any:
+        path = request.full_url.split("?")[0]
+        body = json.loads(request.data.decode()) if request.data else {}
+        if request.get_method() == "GET":
+            with self.lock:
+                return _Resp(self._persona())
+        if path.endswith("/lifecycle"):
+            if self.barrier is not None:
+                self.barrier.wait(timeout=10)
+            with self.lock:
+                target = body["target_state"]
+                if self.force_reject_with_state is not None:
+                    self.state = self.force_reject_with_state
+                    self.lifecycle_rejected += 1
+                    self._error(request, 422, f"invalid lifecycle transition {target!r}")
+                if self.state == target or (self.state, target) != ("draft", "research_only"):
+                    self.lifecycle_rejected += 1
+                    self._error(
+                        request, 422, f"invalid lifecycle transition '{self.state}' -> '{target}'"
+                    )
+                self.state = target
+                self.lifecycle_ok += 1
+                return _Resp(self._persona())
+        with self.lock:
+            self.metadata.update(body.get("metadata") or {})
+            return _Resp(self._persona())
+
+
+class _RaiseRecordingPort:
+    """Records exceptions the owner port raises (the background pass swallows them)."""
+
+    def __init__(self, port: Any) -> None:
+        self._port = port
+        self.errors: List[BaseException] = []
+
+    def update_persona(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return self._port.update_persona(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001
+            self.errors.append(exc)
+            raise
+
+
+def _http_port(owner: _FakePersonaOwnerHttp) -> PersonaRegistryHttpWritePort:
+    return PersonaRegistryHttpWritePort(
+        base_url="http://owner.invalid", service_token="tok", opener=owner
+    )
+
+
+def test_terminal_transition_converges_when_lifecycle_race_is_lost() -> None:
+    owner = _FakePersonaOwnerHttp("p1")
+    port = _http_port(owner)
+    real_get = port.get_persona
+    calls = {"n": 0}
+
+    def stale_first_read(persona_id: str) -> Any:
+        calls["n"] += 1
+        value = real_get(persona_id)
+        if calls["n"] == 1:
+            return {**value, "lifecycle_state": "draft"}
+        return value
+
+    port.get_persona = stale_first_read  # type: ignore[method-assign]
+    owner.state = "research_only"  # the other controller already promoted it
+    result = port.update_persona("p1", lifecycle_state="paper_running", metadata={"k": "v"})
+    assert result is not None and result["lifecycle_state"] == "research_only"
+    assert owner.lifecycle_ok == 0 and owner.lifecycle_rejected == 1
+
+
+def test_terminal_transition_propagates_rejection_when_not_the_race() -> None:
+    owner = _FakePersonaOwnerHttp("p1")
+    owner.force_reject_with_state = "draft"
+    port = _http_port(owner)
+    with pytest.raises(PersonaWriteConflict, match="invalid lifecycle transition"):
+        port.update_persona("p1", lifecycle_state="paper_running", metadata={})
+
+
+def test_route_returns_200_when_owner_rejects_same_state_transition() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, data, meta = _create_persona(client, "idem-route")
+        _install_authoritative_readback(
+            persona_id=persona_id,
+            plan_id=data["deploymentPlanId"],
+            saga_id=meta["deployment_saga_id"],
+            persona_capital_binding_id=meta["persona_capital_binding_id"],
+        )
+        owner = _FakePersonaOwnerHttp(persona_id)
+        owner.force_reject_with_state = "research_only"
+        _state.http_owner = _http_port(owner)
+        try:
+            resp = client.post(
+                f"/bff/personas/{persona_id}/provisioning/reconcile", headers=HEADERS
+            )
+        finally:
+            _state.http_owner = None
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["meta"]["lifecycle_state"] == "paper_running"
+        assert _state.read_store.get_persona(persona_id)["lifecycle_state"] == "paper_running"
+
+
+def test_route_and_background_pass_race_to_terminal_write_without_error() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id, data, meta = _create_persona(client, "idem-race")
+        _install_authoritative_readback(
+            persona_id=persona_id,
+            plan_id=data["deploymentPlanId"],
+            saga_id=meta["deployment_saga_id"],
+            persona_capital_binding_id=meta["persona_capital_binding_id"],
+        )
+        owner = _FakePersonaOwnerHttp(persona_id, barrier=threading.Barrier(2))
+        recorder = _RaiseRecordingPort(_http_port(owner))
+        _state.http_owner = recorder
+        out: Dict[str, Any] = {}
+
+        def route() -> None:
+            try:
+                out["route"] = client.post(
+                    f"/bff/personas/{persona_id}/provisioning/reconcile", headers=HEADERS
+                )
+            except BaseException as exc:  # noqa: BLE001
+                out["route_error"] = exc
+
+        def background() -> None:
+            try:
+                out["bg"] = _persona_service_module._reconcile_persona_provisioning_once()
+            except BaseException as exc:  # noqa: BLE001
+                out["bg_error"] = exc
+
+        previous = _persona_service_module._composed_persona_service
+        try:
+            import types
+
+            _persona_service_module._composed_persona_service = types.SimpleNamespace(
+                get_read_store=lambda: _state.read_store,
+                get_write_owner=lambda: _persona_service_module.persona_write_owner,
+                get_command_store=lambda: None,
+            )
+            threads = [threading.Thread(target=route), threading.Thread(target=background)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(30)
+        finally:
+            _persona_service_module._composed_persona_service = previous
+            _state.http_owner = None
+        assert "route_error" not in out and "bg_error" not in out, out
+        assert out["route"].status_code == 200, out["route"].text
+        assert recorder.errors == []
+        assert owner.state == "research_only"
+        assert owner.lifecycle_ok == 1
         assert _state.read_store.get_persona(persona_id)["lifecycle_state"] == "paper_running"
