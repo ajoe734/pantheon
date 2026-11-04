@@ -1,0 +1,80 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-STRATEGY-METRICS-TRUTH-20261104-EXACT-HEAD-MERGE-CONFLICT-8C7A41077E85",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "source_task": "STRATEGY-METRICS-TRUTH-20261104",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/6942",
+  "unblock_request": {
+    "command_runtime_sha": "c8513d2819dad3cc37b48d3f11268f7f1fb6d656",
+    "head_sha": "09ffda07a7248ba9905c225f8b57807145f55c43",
+    "pr": 6942,
+    "repository_slug": "ajoe734/pantheon",
+    "request_sha256": "478fb3ca49d61e9e8874f763ab2ecf9fdb0a0754b424519fb21abde4c5c435f5",
+    "source_task_generation": 1,
+    "source_task_id": "STRATEGY-METRICS-TRUTH-20261104",
+    "auto_integrator_finding": "exact-head-merge-conflict",
+    "finding_site": "scripts/git/auto_integrator.py:1675-1689, 3214-3246 (run_rebase_smoke merges origin/dev into a disposable worktree of the exact reviewed head when exact_head is behind origin/dev; non-zero merge exit returns exact_head_merge_conflict)"
+  },
+  "root_cause": {
+    "mechanism": "PR #6942 (STRATEGY-METRICS-TRUTH-20261104) had its reviewed head 09ffda07a7248ba9905c225f8b57807145f55c43 cut from dev base cc074638f1814beed7f7f3e33e7307134b2bf39e. Between approval and integration, PR #6941 (RESEARCH-TASKS-READ-20261104, commit d2d6f7689, merge commit 67db4a6a4dab88dfdad605844ef5939ea1a9f944) merged into dev. Both PRs appended a new DECOUPLED router test entry at the end of the tests[] array in services/control-plane/bff/tests/bff_test_architecture_inventory.json (tests/test_research_tasks_read.py in PR #6941 and tests/test_strategy_metrics_truth.py in PR #6942) immediately after tests/test_persona_create_data_scope.py, and both incremented total_test_files (391 -> 392), layer_summary.router (117 -> 118), and disposition_summary.DECOUPLED (327 -> 328). When auto_integrator.py exercised a disposable merge of origin/dev into 09ffda07a7248ba9905c225f8b57807145f55c43, git merge encountered a real content conflict at the tail of tests[] in services/control-plane/bff/tests/bff_test_architecture_inventory.json.",
+    "conflicting_paths": [
+      "services/control-plane/bff/tests/bff_test_architecture_inventory.json"
+    ],
+    "cleanly_auto_merged_paths": [
+      "services/control-plane/bff/BFF_API_CONTRACT.md"
+    ],
+    "integrator_disposition": "No code change to scripts/git/auto_integrator.py is needed. Under the review-before-merge policy, auto_integrator.py correctly detected that merging current origin/dev into the immutable approved head 09ffda07a7248ba9905c225f8b57807145f55c43 produced a real merge conflict, refused to rewrite the reviewed head without a fresh review, and failed closed by opening this unblock task."
+  },
+  "remediation": {
+    "method": "Merged origin/dev (67db4a6a4dab88dfdad605844ef5939ea1a9f944) into PR #6942's reviewed head (09ffda07a7248ba9905c225f8b57807145f55c43) on branch task/STRATEGY-METRICS-TRUTH-20261104, resolved services/control-plane/bff/tests/bff_test_architecture_inventory.json by retaining both tests/test_research_tasks_read.py and tests/test_strategy_metrics_truth.py in tests[] and updating the additive summary counters (total_test_files: 393, layer_summary.router: 119, disposition_summary.DECOUPLED: 329), re-ran the strategy metrics and BFF architecture test suites, and pushed the fast-forward merge commit to origin/task/STRATEGY-METRICS-TRUTH-20261104.",
+    "previous_head_sha": "09ffda07a7248ba9905c225f8b57807145f55c43",
+    "new_head_sha": "01e61f6949ac871d284fb7d1469383c6804504b3",
+    "new_head_parents": [
+      "09ffda07a7248ba9905c225f8b57807145f55c43",
+      "67db4a6a4dab88dfdad605844ef5939ea1a9f944"
+    ],
+    "push_command": "git push origin 01e61f6949ac871d284fb7d1469383c6804504b3:refs/heads/task/STRATEGY-METRICS-TRUTH-20261104",
+    "push_result": "09ffda07a..01e61f694 01e61f6949ac871d284fb7d1469383c6804504b3 -> task/STRATEGY-METRICS-TRUTH-20261104 (fast-forward, non-force)",
+    "gh_pr_status_after_push": {
+      "number": 6942,
+      "state": "OPEN",
+      "baseRefName": "dev",
+      "headRefName": "task/STRATEGY-METRICS-TRUTH-20261104",
+      "headRefOid": "01e61f6949ac871d284fb7d1469383c6804504b3",
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "BLOCKED"
+    }
+  },
+  "validation": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_ranking_router.py",
+      "exit_code": 0,
+      "result": "55 passed, 3 warnings in 59.96s"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_bff_test_architecture.py -k \"strategy or ranking or inventory or layers or entry\"",
+      "exit_code": 0,
+      "result": "19 passed, 36 deselected, 3 warnings in 10.65s"
+    },
+    {
+      "command": "git merge-base --is-ancestor 09ffda07a7248ba9905c225f8b57807145f55c43 01e61f6949ac871d284fb7d1469383c6804504b3 && git merge-base --is-ancestor 67db4a6a4dab88dfdad605844ef5939ea1a9f944 01e61f6949ac871d284fb7d1469383c6804504b3",
+      "exit_code": 0,
+      "result": "Both previous reviewed head 09ffda07a and current dev tip 67db4a6a4 are ancestors of new PR head 01e61f694"
+    },
+    {
+      "command": "gh pr view 6942 --repo ajoe734/pantheon --json number,state,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus",
+      "exit_code": 0,
+      "result": "PR #6942 is OPEN, headRefOid=01e61f6949ac871d284fb7d1469383c6804504b3, mergeable=MERGEABLE, mergeStateStatus=BLOCKED (pending review-before-merge gate for the refreshed head)"
+    }
+  ],
+  "review_gate_observation": {
+    "canonical_source_status_at_time_of_fix": "review_approved",
+    "review_binding_head_at_time_of_fix": "09ffda07a7248ba9905c225f8b57807145f55c43",
+    "note": "This worker lease is scoped to INTEGRATION-UNBLOCK-STRATEGY-METRICS-TRUTH-20261104-EXACT-HEAD-MERGE-CONFLICT-8C7A41077E85; governed status commands refuse cross-task mutation of STRATEGY-METRICS-TRUTH-20261104 from this lease. scripts/git/task_review_merge_gate.py fails closed on approval_head_mismatch because review_binding.head_sha (09ffda07a) differs from the refreshed PR head (01e61f694). Under STRATEGY-METRICS-TRUTH-20261104's own dispatch/lease, owner Antigravity reopens and re-hands off PR #6942 at head 01e61f6949ac871d284fb7d1469383c6804504b3 with REVIEW_FILE=docs/deployment/evidence/STRATEGY-METRICS-TRUTH-20261104/evidence.json for reviewer Claude's exact-head approval."
+  },
+  "acceptance": {
+    "root_cause_documented": true,
+    "original_pr_updated_or_superseded_and_no_longer_stranded": true
+  }
+}
