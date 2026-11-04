@@ -1900,7 +1900,11 @@ def test_hosted_ensure_persona_pairs_service_token_with_service_actor(
     import l12_owner_auth
     human = l12_owner_auth.token_subject(l12_owner_auth.human_token("OPERATOR"))
     assert post[2]["owner"] == human and human != "operator-bff"
-    assert post[2]["metadata"] == {"requested_by": {"actor_type": "operator", "actor_id": human}}
+    assert post[2]["metadata"] == {
+        "requested_by": {"actor_type": "operator", "actor_id": human},
+        "data_scope": "test",
+        "persona_class": "trading",
+    }
     assert {c[3] for c in seen} == {"Bearer opaque-persona-service-token"}
 
     # without a staged writer (isolated / ordinary operator) the caller identity is untouched
@@ -1909,6 +1913,19 @@ def test_hosted_ensure_persona_pairs_service_token_with_service_actor(
     monkeypatch.delenv("PANTHEON_L12_HOSTED_CHAIN")
     monkeypatch.setenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "x")
     assert mod.persona_writer_identity() is None
+    monkeypatch.setenv("PANTHEON_L12_OPERATOR_TOKEN", EXECUTOR_TOKEN)
+    seen.clear()
+    state["n"] = 0
+    harness._ensure_persona("p-1", name="n", mandate="m")
+    isolated_post = next(c for c in seen if c[0] == "POST")
+    assert isolated_post[2] == {
+        "actor_id": human,
+        "persona_id": "p-1",
+        "name": "n",
+        "mandate": "m",
+        "tenant_id": harness.tenant_id,
+        "status": "active",
+    }
 
 
 def test_hosted_agora_content_rejects_unauthenticated_or_non_operator_token(

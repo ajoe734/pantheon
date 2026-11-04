@@ -256,7 +256,10 @@ def persona_create_identity() -> dict[str, Any]:
 
     ``actor_id``/``created_by`` is the Persona service actor; ``owner`` and
     ``metadata.requested_by`` keep the genuine human subject so the logical owner does not
-    silently become the service actor. Isolated mode keeps the human as the actor.
+    silently become the service actor. Hosted chain personas also declare
+    ``metadata.data_scope = "test"`` and ``metadata.persona_class = "trading"`` so the
+    Persona fleet classifies them as confirmed trading test data. Isolated mode keeps the
+    human as the actor.
     """
     writer = persona_writer_identity()
     human = token_subject(human_token("OPERATOR"))
@@ -265,7 +268,11 @@ def persona_create_identity() -> dict[str, Any]:
     return {
         "actor_id": writer[1],
         "owner": human,
-        "metadata": {"requested_by": {"actor_type": "operator", "actor_id": human}},
+        "metadata": {
+            "requested_by": {"actor_type": "operator", "actor_id": human},
+            "data_scope": "test",
+            "persona_class": "trading",
+        },
     }
 
 
