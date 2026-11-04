@@ -496,10 +496,10 @@ class ReadSurfacePorts:
             # consultation client/store or catalog backend surfaces as
             # unavailable rather than a false healthy default.
             return self.operations_consultation.dataset_source(dataset)
-        if dataset == "incidents":
-            # The incident owner can be down while list_incidents() swallows
-            # the outage and returns []; surface its real availability.
-            return self.lifecycle_telemetry_governance.dataset_source("incidents")
+        if dataset in ("incidents", "postmortems"):
+            # The incident/postmortem owners can be down while list_*() swallows
+            # the outage and returns []; surface their real availability.
+            return self.lifecycle_telemetry_governance.dataset_source(dataset)
         if dataset == "paper_runtime_monitoring_sessions":
             provider = self._paper_runtime_monitoring_sessions_provider
             base_url = self._paper_fleet_reconciler_url or os.getenv(
@@ -800,6 +800,9 @@ class ReadSurfacePorts:
 
     def list_postmortems(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.list_postmortems(**kwargs)
+
+    def list_postmortems_page(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.lifecycle_telemetry_governance.list_postmortems_page(**kwargs)
 
     def get_postmortem(self, report_id: str) -> Optional[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.get_postmortem(report_id)

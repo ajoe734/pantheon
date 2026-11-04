@@ -514,8 +514,13 @@ class IncidentService:
             src = "missing"
         elif dataset == "incidents" and getattr(inc_port, "_last_error", False):
             src = "unavailable"
-        elif dataset == "incidents" and store_src in ("typed_store", None) and inc_port is not None and hasattr(inc_port, "dataset_source"):
-            src = inc_port.dataset_source()
+        elif dataset == "postmortems" and getattr(inc_port, "_last_postmortems_error", False):
+            src = "unavailable"
+        elif dataset in ("incidents", "postmortems") and store_src in ("typed_store", None) and inc_port is not None and hasattr(inc_port, "dataset_source"):
+            try:
+                src = inc_port.dataset_source(dataset)
+            except TypeError:
+                src = inc_port.dataset_source() if dataset == "incidents" else "typed_store"
         else:
             src = store_src or "missing"
 
@@ -593,7 +598,20 @@ class IncidentService:
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
         store = self.get_read_store()
         if store and hasattr(store, "get_incident"):
-            return store.get_incident(incident_id)
+            incident = store.get_incident(incident_id)
+            if isinstance(incident, dict):
+                payload = dict(incident)
+                if hasattr(store, "get_postmortem_by_incident") and "postmortem" not in payload:
+                    try:
+                        pm = store.get_postmortem_by_incident(incident_id.strip())
+                    except Exception:
+                        pm = None
+                    if isinstance(pm, dict):
+                        payload["postmortem"] = pm
+                        if not payload.get("postmortem_id") and pm.get("postmortem_id"):
+                            payload["postmortem_id"] = pm["postmortem_id"]
+                return payload
+            return incident
         return None
 
     def list_bff_incidents(
