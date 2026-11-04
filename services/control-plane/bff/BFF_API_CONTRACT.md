@@ -408,19 +408,19 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 
 ### 9.9 AlphaFactory Board (AF-01)
 
-**Canonical source**: Research-to-strategy pipeline read-model.
-**Consumer**: `FE AlphaFactoryBoard` (idea→strategy kanban view).
-**Implementation**: `console_gap/alpha_factory.py` — registered via `app.include_router` in `main.py`.
+**Canonical source**: `GET /api/research-orchestrator/alpha-replication/entries` (Research Orchestrator replication admission & queue join).
+**Consumer**: `FE AlphaFactoryBoard` (replication admission & queue kanban view).
+**Implementation**: `console_gap/alpha_factory.py` — registered via `app.include_router` in `core/app_factory.py`.
 
 | Route | Method | Surface ID | Min Role | Response |
 |---|---|---|---|---|
-| `/bff/alpha-factory` | GET | AF-01 | `operator` | Canonical list envelope — see below |
+| `/bff/alpha-factory` | GET | AF-01 | `viewer` | Canonical list envelope — see below |
 
 **Request parameters**:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `lane` | string | — | Filter cards to one lane: `ideas`, `strategies`, or `experiments` |
+| `lane` | string | — | Filter cards to one lane: `discovered`, `scaffolded`, or `replicated` |
 | `page` | int | 1 | Page number (min 1) |
 | `page_size` | int | 20 | Items per page (min 1, max 100) |
 
@@ -432,24 +432,30 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
     "id": "alpha-factory",
     "snapshotAt": "<RFC3339>",
     "snapshot_at": "<RFC3339>",
+    "reason": "no_candidate_source",
+    "discovered_reason": "no_candidate_source",
     "lanes": [
-      { "id": "ideas",       "label": "Ideas" },
-      { "id": "strategies",  "label": "Strategies" },
-      { "id": "experiments", "label": "Experiments" }
+      { "id": "discovered", "label": "Discovered", "reason": "no_candidate_source", "items": [] },
+      { "id": "scaffolded", "label": "Scaffolded", "items": [] },
+      { "id": "replicated", "label": "Replicated", "items": [ { "id": "adm-001", "lane": "replicated", "strategy_id": "...", "strategy_spec_id": "...", "status": "admitted", "queue_status": "completed" } ] }
     ],
-    "items": [ { "id": "card-001", "lane": "ideas", "title": "...", "status": "..." } ]
+    "discovered": [],
+    "scaffolded": [],
+    "replicated": [ { "...": "..." } ],
+    "items": [ { "id": "adm-001", "lane": "replicated", "strategy_id": "...", "strategy_spec_id": "...", "status": "admitted", "queue_status": "completed" } ]
   },
   "items": [ { "...": "..." } ],
   "page_info": { "page": 1, "page_size": 20, "total": 1, "next_page_token": null },
   "meta": {
     "snapshot_at": "<RFC3339>",
-    "surfaces": { "alpha_factory": { "status": "ok", "source": "service_store" } },
-    "filters": { "lane": null }
+    "surfaces": { "alpha_factory": { "status": "ok", "source": "research_orchestrator" } },
+    "filters": { "lane": null },
+    "discovered": { "reason": "no_candidate_source" }
   }
 }
 ```
 
-**Degraded response** — store unavailable (HTTP 200, never bare `[]`):
+**Degraded response** — owner unavailable or unconfigured (HTTP 200, never bare `[]`):
 
 ```json
 {
@@ -461,19 +467,21 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
     "surfaces": {
       "alpha_factory": {
         "status": "unavailable",
-        "source": "missing",
+        "source": "research_orchestrator",
+        "reason": "unconfigured",
         "staleness": { "served_from": "unverifiable", "last_known_at": "<RFC3339>" }
       }
     },
-    "filters": { "lane": null }
+    "filters": { "lane": null },
+    "discovered": { "reason": "no_candidate_source" }
   }
 }
 ```
 
 **Design notes**:
-- The "never show none" rule applies: the BFF never returns bare `[]` due to a downstream failure.  When the backing dataset is missing the surface status is `unavailable` and `items` is an explicit empty list with degradation metadata.
-- Auth/CORS re-uses the existing BFF token-stub and CORS middleware; no new middleware needed.
-- The backing store method is `ReadSurfaceStore.list_alpha_factory_cards(page, page_size, lane)`.
+- The "never show none" rule applies: the BFF never returns bare `[]` due to a downstream failure. When the Research Orchestrator owner is unconfigured or fails, the surface status is `unavailable` and `items` is an explicit empty list with degradation metadata. A healthy owner with zero admissions returns `status: "ok"` with empty lanes.
+- Auth/CORS re-uses the existing BFF token/JWT and CORS middleware; caller auth and verified tenant are forwarded to `GET /api/research-orchestrator/alpha-replication/entries`.
+- Cards are built over HTTP from `GET /api/research-orchestrator/alpha-replication/entries` via `PANTHEON_RESEARCH_ORCHESTRATOR_API_URL`.
 
 ### 9.10 Automation Registry BFF Surfaces (AR-01–AR-02)
 
