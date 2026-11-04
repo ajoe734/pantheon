@@ -110,7 +110,17 @@ required) additionally sets an opaque rotating refresh credential:
   (default 2592000 = 30 days). Rotation never extends it.
 - `POST /bff/auth/refresh` (allowed Origin required, access cookie may be
   expired or absent) reissues the access cookie and rotates the refresh cookie.
-  Reusing an already-rotated credential returns 401 and revokes the whole chain.
+  Reusing an already-rotated credential returns 401 and revokes the whole chain,
+  with one exception: the credential replaced by the latest rotation is accepted
+  for `REUSE_GRACE_SECONDS = 60` after that rotation (browser tabs share one cookie
+  jar, so a second tab can present the just-rotated value). That request returns
+  200, reissues the access cookie, and neither rotates nor sets a refresh cookie
+  (`meta.auth.rotated` is `false`); identity checks and the absolute expiry still
+  apply. Trade-off: a stolen credential replayed inside that 60 s window is not
+  detected; older credentials, or the previous one after 60 s, still revoke the
+  chain. Residual: a response lost in transit and retried after more than 60 s
+  still revokes. Only the SHA-256 of the previous credential (`previous_hash`) is
+  stored; records without it keep working.
   It also returns 401 if the record is expired/revoked/unknown or the identity's
   registry roles/tenant/client changed. It returns 403 where dev login is forbidden.
 - `POST /bff/logout` revokes the chain (via the `refresh_chain` access claim or
