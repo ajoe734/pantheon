@@ -1,0 +1,24 @@
+{
+  "task": "EVOLUTION-OWNER-WRITE-SERVICE-AUTH-20261104",
+  "change": "BFF Evolution owner writes use EVOLUTION_AUTH_TOKEN + verified tenant via shared evolution_owner_request; failed-command idempotent replay returns original command and failure",
+  "call_sites": {
+    "command_executor._execute_approve_evolution_decision": "changed -> _post_evolution_owner",
+    "command_executor._execute_evolution_action": "changed -> _post_evolution_owner",
+    "command_executor._execute_approve_mutation": "changed -> _post_evolution_owner",
+    "command_executor._execute_reject_mutation": "changed -> _post_evolution_owner",
+    "command_executor._execute_review_mutation": "changed -> _post_evolution_owner",
+    "command_executor._execute_execute_mutation": "changed -> _post_evolution_owner",
+    "evolution_adapter._execute_proposal_review": "retired (unreachable: _EXECUTORS handles these commands)",
+    "evolution_adapter._execute_proposal_execute": "retired (unreachable)",
+    "evolution_adapter._execute_program_action": "changed -> evolution_owner_request (no operator-token fallback)"
+  },
+  "tests": {
+    "new_test_before_fix": "2 of 5 fail: Command backend returned 401 / no clear auth error",
+    "after_fix": "5 passed",
+    "required_suite": "74 passed (six required files)"
+  },
+  "preexisting_failures_on_base": [
+    "test_tenant_fallback_audit capital_command_route x2",
+    "test_command_route_binds_owner_write_to_jwt_tenant"
+  ]
+}

@@ -300,6 +300,10 @@ def test_execute_mutation_writes_to_governance_when_frozen(configure_urls, monke
         return {}
 
     monkeypatch.setattr(bff_executor, "_post_json", mock_post_json)
+    monkeypatch.setattr(
+        bff_executor, "_post_evolution_owner",
+        lambda url, payload, auth_token=None: mock_post_json(url, payload, auth_token=auth_token),
+    )
 
     params = {
         "decision_id": "evo-sweep-1",
@@ -342,6 +346,10 @@ def test_execute_mutation_non_freeze_does_not_emit_freeze_order(configure_urls, 
         return {}
 
     monkeypatch.setattr(bff_executor, "_post_json", mock_post_json)
+    monkeypatch.setattr(
+        bff_executor, "_post_evolution_owner",
+        lambda url, payload, auth_token=None: mock_post_json(url, payload, auth_token=auth_token),
+    )
 
     params = {
         "decision_id": "evo-sweep-2",

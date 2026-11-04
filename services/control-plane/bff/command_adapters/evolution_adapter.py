@@ -18,6 +18,7 @@ from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
+    evolution_owner_request,
     evolution_url,
     http_request_json as _base_http_request_json,
     utc_now,
@@ -28,6 +29,11 @@ from .base import (
 http_request_json = _base_http_request_json
 
 log = logging.getLogger(__name__)
+
+_PROPOSAL_COMMANDS = frozenset({
+    "ApproveEvolutionDecision", "ApproveMutation", "RejectMutation", "ReviewMutation",
+    "ExecuteEvolutionAction", "ExecuteMutation",
+})
 
 _EVOLUTION_ACTOR_ROLE_PREFERENCE = (
     "governance_committee",
@@ -184,10 +190,14 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
 
         entity_id = str(params.get("evolution_decision_id") or params.get("decision_id") or params.get("program_id") or params.get("experiment_id") or params.get("job_id") or params.get("entity_id") or "").strip()
 
-        if command_type in {"ApproveEvolutionDecision", "ApproveMutation", "RejectMutation", "ReviewMutation"}:
-            return self._execute_proposal_review(command_id, entity_id, command_type, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ExecuteEvolutionAction", "ExecuteMutation"}:
-            return self._execute_proposal_execute(command_id, entity_id, command_type, params, auth_token=auth_token, mfa_token=mfa_token)
+        if command_type in _PROPOSAL_COMMANDS:
+            # Proposal review/approve/reject/execute are served only by command_executor._EXECUTORS
+            # (service credential + verified tenant); this adapter never owned a live path for them.
+            raise ActionUnavailableError(
+                f"{command_type} is executed by the Evolution proposal executor, not the domain adapter.",
+                action_id=action_id,
+                entity_type="EvolutionDecision",
+            )
         elif command_type == "EvolutionProgramAction" or command_type in _CMD_TO_ACTION_ID or str(params.get("entity_type") or "").strip().lower() in self._HANDLED_ENTITIES:
             return self._execute_program_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
@@ -196,95 +206,6 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
                 action_id=action_id,
                 entity_type="EvolutionDecision",
             )
-
-    def _execute_proposal_review(
-        self,
-        command_id: str,
-        decision_id: str,
-        command_type: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_id = decision_id or str(params.get("evolution_decision_id") or params.get("decision_id") or "").strip()
-        if not target_id:
-            raise ValueError(f"{command_type} requires evolution_decision_id.")
-
-        verb_map = {
-            "ApproveEvolutionDecision": params.get("approval_action", "approve"),
-            "ApproveMutation": "approve",
-            "RejectMutation": "reject",
-            "ReviewMutation": "review",
-        }
-        subpath = str(verb_map.get(command_type, "approve")).lower()
-        actor_id, actor_role = resolve_evolution_actor(params, auth_token, mfa_token=mfa_token)
-        payload = {
-            "actor_id": actor_id,
-            "actor_role": actor_role,
-            "note": params.get("note") or params.get("rationale") or f"Operator {command_type}",
-        }
-        if "approval_decision_id" in params:
-            payload["approval_decision_id"] = params["approval_decision_id"]
-
-        url = evolution_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/{subpath}")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="EvolutionDecision",
-            entity_id=target_id,
-            action_id=command_type,
-            status=body.get("decision_state") or subpath,
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback=body,
-            extra={
-                "evolution_decision_id": target_id,
-                "decision_state": body.get("decision_state"),
-            },
-        )
-
-    def _execute_proposal_execute(
-        self,
-        command_id: str,
-        decision_id: str,
-        command_type: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_id = decision_id or str(params.get("evolution_decision_id") or params.get("decision_id") or "").strip()
-        if not target_id:
-            raise ValueError(f"{command_type} requires evolution_decision_id.")
-
-        actor_id, actor_role = resolve_evolution_actor(params, auth_token, mfa_token=mfa_token)
-        payload = {
-            "actor_id": actor_id,
-            "actor_role": "evolution_controller" if actor_role == "evolution_controller" else "operator",
-            "note": params.get("note") or params.get("rationale") or "Operator execute mutation",
-        }
-        for key in ("execution_receipt", "tenant_id", "has_active_runtime", "active_binding_id",
-                    "freeze_mode", "rollback_action_type", "fallback_artifact_id",
-                    "fallback_artifact_version", "force_stage_freeze"):
-            if key in params:
-                payload[key] = params[key]
-        url = evolution_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/execute")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="EvolutionDecision",
-            entity_id=target_id,
-            action_id=command_type,
-            status=body.get("decision_state") or "executed",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback=body,
-            extra={
-                "evolution_decision_id": target_id,
-                "execution_result": body.get("execution_result"),
-            },
-        )
 
     def _execute_program_action(
         self,
@@ -385,15 +306,13 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             dispatch_headers["Idempotency-Key"] = str(idempotency_key)
             dispatch_headers["X-Idempotency-Key"] = str(idempotency_key)
 
-        auth = auth_token or os.getenv("EVOLUTION_AUTH_TOKEN")
-
         try:
-            body = http_request_json(
+            body = evolution_owner_request(
                 url,
+                caller_token=auth_token,
                 method="POST",
                 payload=payload,
-                auth_token=auth,
-                mfa_token=mfa_token,
+                tenant_id=tenant_id,
                 headers=dispatch_headers,
             )
         except urllib.error.HTTPError as exc:

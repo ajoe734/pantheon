@@ -24,7 +24,6 @@ os.environ.setdefault("EVOLUTION_DATA_DIR", _tmp)
 os.environ.setdefault("INCIDENT_DATA_DIR", _tmp)
 
 from services.evolution.main import app as evolution_app  # noqa: E402
-from services.control_plane.bff.command_adapters.evolution_adapter import EvolutionCommandAdapter  # noqa: E402
 from services.control_plane.bff.command_adapters.preconditions import (  # noqa: E402
     _approval_decision_applies_to_command,
 )
@@ -43,7 +42,7 @@ from services.control_plane.bff.tests.conftest import (  # noqa: E402
     noop_process_command,
 )
 
-ADAPTER_HTTP = "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json"
+EXEC_POST = "services.control_plane.bff.command_executor._post_evolution_owner"
 PRINCIPAL = "rita"
 BEARER = f"Bearer {PRINCIPAL}:operator,risk_owner:mfa"
 HEADERS = {"Authorization": BEARER, "X-Trace-Id": "trace-h4", "X-Correlation-Id": "corr-h4"}
@@ -152,20 +151,26 @@ def _approve_params(did: str, apv: str) -> dict:
     }
 
 
-def _owner_http(url, method="GET", payload=None, **_kw):
+def _owner_http(url, payload=None, auth_token=None, **_kw):
+    # Service-credential/tenant transport is covered by test_evolution_owner_write_service_auth.py.
     path = "/" + url.split("://", 1)[1].split("/", 1)[1]
-    response = owner.post(path, json=payload) if method.upper() == "POST" else owner.get(path)
+    response = owner.post(path, json=payload)
     assert response.status_code == 200, response.text
     return response.json()
 
 
 def _replay(ctx: _Ctx, response, command_type: str) -> dict:
-    """Run an admitted command's stored params through the Evolution adapter."""
+    """Run an admitted command's stored params through the real command executor."""
     command_id = response.json()["data"]["command_id"]
     record = ctx.store.get_command(command_id)
     params = dict(record["params"])
-    with patch(ADAPTER_HTTP, side_effect=_owner_http):
-        receipt = EvolutionCommandAdapter().execute(command_id, command_type, params, auth_token=ADAPTER_TOKEN)
+    from services.control_plane.bff import command_executor
+
+    with patch(EXEC_POST, side_effect=_owner_http):
+        status, receipt, error = command_executor.execute_command_with_status(
+            command_id, CommandType(command_type), params, auth_token=ADAPTER_TOKEN
+        )
+    assert status == CommandStatus.EXECUTED, error
     ctx.store.update_status(command_id, CommandStatus.EXECUTED)
     return receipt
 
@@ -267,10 +272,12 @@ def test_actor_binding_still_refuses_foreign_actor_or_unheld_role(params):
     from starlette.exceptions import HTTPException
 
     did = _propose()
-    with patch(ADAPTER_HTTP) as http:
+    from services.control_plane.bff import command_executor
+
+    with patch(EXEC_POST) as http:
         with pytest.raises(HTTPException) as exc:
-            EvolutionCommandAdapter().execute(
-                "c", "ReviewMutation", {"decision_id": did, "approval_decision_id": "apv", **params},
+            command_executor._execute_review_mutation(
+                "c", {"decision_id": did, "approval_decision_id": "apv", **params},
                 auth_token=ADAPTER_TOKEN,
             )
         assert exc.value.status_code == 403

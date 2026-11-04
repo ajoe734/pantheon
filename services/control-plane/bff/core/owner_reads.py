@@ -157,6 +157,7 @@ from ..command_adapters.base import (
     bound_tenant,
     capital_url,
     deployment_url,
+    evolution_owner_request,
     evolution_url,
     get_base_url,
     http_request_json,
@@ -223,26 +224,10 @@ def read_records(url_builder, path, key=None):
     return cached_owner_call(("http_records", path, url, key, token, tenant), _fetch)
 
 
-def _evolution_http_get(url: str, service_token: str, tenant_id: str) -> Any:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "X-Pantheon-Service": "control-plane-bff",
-            "Authorization": f"Bearer {service_token}",
-            "X-Tenant-Id": tenant_id,
-        },
-        method="GET",
-    )
-    timeout = int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))
+def _evolution_http_get(url: str, caller_token: str, tenant_id: str) -> Any:
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            status_code = int(resp.status)
-            body = json.loads(resp.read().decode("utf-8"))
-            record_downstream_outcome(url, ok=True, status_code=status_code)
-            return body
+        return evolution_owner_request(url, caller_token=caller_token, tenant_id=tenant_id)
     except urllib.error.HTTPError as exc:
-        record_downstream_outcome(url, ok=False, status_code=int(exc.code), detail=f"HTTP {exc.code}")
         if exc.code == 403:
             raise ActionUnavailableError(
                 f"Evolution owner access forbidden for tenant {tenant_id}",
@@ -253,15 +238,13 @@ def _evolution_http_get(url: str, service_token: str, tenant_id: str) -> Any:
                 "Evolution owner authentication failed",
                 downstream_status=403,
             ) from exc
-        else:
-            raise ActionUnavailableError(
-                f"Evolution owner request failed with status {exc.code}",
-                downstream_status=exc.code if exc.code in (403, 503) else 503,
-            ) from exc
+        raise ActionUnavailableError(
+            f"Evolution owner request failed with status {exc.code}",
+            downstream_status=exc.code if exc.code in (403, 503) else 503,
+        ) from exc
     except ActionUnavailableError:
         raise
     except Exception as exc:
-        record_downstream_outcome(url, ok=False, status_code=-1, detail=str(exc))
         raise ActionUnavailableError(
             f"Evolution owner unavailable: {exc}",
             downstream_status=503,
@@ -288,7 +271,7 @@ def read_evolution_records(url_builder, path, key=None):
         )
 
     def _fetch():
-        body = _evolution_http_get(url, service_token, caller_tenant)
+        body = _evolution_http_get(url, caller_token, caller_tenant)
         records = body.get(key) if key and isinstance(body, dict) else body
         if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
             raise RuntimeError(f"Invalid owner collection for {path}")

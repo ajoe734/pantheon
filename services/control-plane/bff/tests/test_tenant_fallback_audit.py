@@ -339,8 +339,9 @@ def test_evolution_adapter_requires_verified_tenant_and_rejects_foreign_params(m
     calls: list = []
     monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.invalid")
     monkeypatch.setenv("EVOLUTION_DEFAULT_TENANT_ID", "tenant-env-default")
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "svc-token")
     monkeypatch.setattr(
-        "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+        "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
         lambda *a, **k: calls.append(k) or {"receipt_id": "r", "program_id": "p", "status": "paused"},
     )
     adapter = EvolutionCommandAdapter()
