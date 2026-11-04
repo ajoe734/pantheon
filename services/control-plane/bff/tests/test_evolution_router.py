@@ -200,7 +200,7 @@ class _FakeProgramCommandPort:
         self._read_store = read_store
         self._seq = 0
 
-    async def create_program(self, *, tenant_id, actor_id, name, idempotency_key):
+    async def create_program(self, *, caller_token, tenant_id, actor_id, name, idempotency_key):
         self._seq += 1
         program_id = f"prog-{self._seq}"
         program = {
@@ -217,7 +217,7 @@ class _FakeProgramCommandPort:
         self._read_store.seed_evolution_program(program)
         return program
 
-    async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
+    async def patch_program_name(self, *, caller_token, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
         current = self._read_store.get_evolution_program(program_id)
         if current is None:
             raise EvolutionProgramNotFoundError(f"Evolution program not found: {program_id}")

@@ -4223,9 +4223,8 @@ from .assistant.management_service import (
 from .ports.evolution_program_commands import (
     EvolutionServiceProgramCommandPort as _EvolutionServiceProgramCommandPort,
 )
-from services.evolution.client import EvolutionClient as _EvolutionClient
 
-_evolution_program_commands = _EvolutionServiceProgramCommandPort(_EvolutionClient())
+_evolution_program_commands = _EvolutionServiceProgramCommandPort()
 
 
 async def bff_events_stream_alias(
