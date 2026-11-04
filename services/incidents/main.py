@@ -1201,45 +1201,69 @@ def reconcile_orphaned_infrastructure_incidents(
     resolution_reason: str = ORPHAN_RECOVERED_RESOLUTION_REASON,
 ) -> List[IncidentCase]:
     """Resolve open infrastructure incidents whose component is healthy and unreferenced by the BFF ledger."""
-    if not hasattr(store, "resolve_orphaned_infrastructure_incidents"):
+    healthy_set = {
+        normalize_infrastructure_component(item)
+        for item in (healthy_components or [])
+        if normalize_infrastructure_component(item)
+    }
+    if not healthy_set:
         return []
     if hasattr(store, "has_orphaned_infrastructure_incidents") and not store.has_orphaned_infrastructure_incidents(
         healthy_components=healthy_components,
         referenced_incident_ids=referenced_incident_ids,
     ):
         return []
+    referenced_set = {
+        str(item or "").strip()
+        for item in (referenced_incident_ids or [])
+        if str(item or "").strip()
+    }
     resolved_iso = str(resolved_at or _utc_now()).strip() or _utc_now()
     reason_clean = (
         str(resolution_reason or ORPHAN_RECOVERED_RESOLUTION_REASON).strip()
         or ORPHAN_RECOVERED_RESOLUTION_REASON
     )
     events = list(telemetry_event_ids or [])
-    resolved = store.resolve_orphaned_infrastructure_incidents(
-        healthy_components=healthy_components,
-        referenced_incident_ids=referenced_incident_ids,
-        resolved_at=resolved_iso,
-        telemetry_event_ids=events,
-        resolution_reason=reason_clean,
+
+    candidates = sorted(
+        store.find_open_incidents(),
+        key=lambda item: (item.created_at, item.incident_id),
     )
-    for updated in resolved:
-        comp = extract_infrastructure_incident_component(updated) or ""
+    resolved: List[IncidentCase] = []
+    for inc in candidates:
+        if not inc.is_open() or not is_infrastructure_health_incident(inc):
+            continue
+        comp = extract_infrastructure_incident_component(inc)
+        if not comp or comp not in healthy_set:
+            continue
+        if extract_infrastructure_incident_referenced_ids(inc) & referenced_set:
+            continue
         prepared: ReliableOutboxRecord | None = None
         try:
-            prepared = _prepare_postmortem_delivery(updated.incident_id)
+            prepared = _prepare_postmortem_delivery(inc.incident_id)
+            updated = store.update_incident_status(
+                inc.incident_id,
+                IncidentStatus.RESOLVED.value,
+                resolved_at=inc.resolved_at or resolved_iso,
+                telemetry_event_ids=events,
+                resolution_reason=reason_clean,
+                expected_snapshot=inc.to_dict(),
+            )
             outbox_store.activate(prepared)
+            resolved.append(updated)
+            log.info(
+                "Resolved orphaned infrastructure IncidentCase %s component=%s reason=%s",
+                inc.incident_id,
+                comp,
+                reason_clean,
+            )
         except Exception:
             if prepared is not None:
                 _repair_prepared_after_transition_conflict(prepared)
             log.exception(
-                "AUDIT: Could not activate outbox for resolved orphaned infrastructure incident %s",
-                updated.incident_id,
+                "AUDIT: Could not resolve orphaned infrastructure incident %s",
+                inc.incident_id,
             )
-        log.info(
-            "Resolved orphaned infrastructure IncidentCase %s component=%s reason=%s",
-            updated.incident_id,
-            comp,
-            reason_clean,
-        )
     return resolved
 
 

@@ -3,13 +3,13 @@
   "title": "Every incident read takes over a second because a no-op sweep reloads and deep-copies the whole store",
   "owner": "Antigravity2",
   "reviewer": "Claude",
-  "recorded_at": "2026-11-04T03:56:00Z",
+  "recorded_at": "2026-11-04T04:13:00Z",
   "base_branch": "origin/dev",
-  "base_commit": "3f55f90f399d8e41b865f3031ea8bf4a3da17cfa",
+  "base_commit": "035d8e3d3aedaecfd88905cad466b5c857870cc4",
   "verification_scope": "functional_local_only_per_task_brief_hosted_deferred_to_HUMAN-INBOX-HOSTED-ACCEPTANCE-20261104",
   "summary": {
-    "cause": "Incident read routes (GET /api/incidents, GET /api/incidents/{incident_id}, GET /api/incidents/{incident_id}/operator-payload) and POST /api/incidents/reconcile-infrastructure-health invoked @_serialized_store_write methods (resolve_stale_monitor_agent_findings and resolve_orphaned_infrastructure_incidents) unconditionally. Even when zero records needed resolution, @_serialized_store_write entered _write_guard (acquiring flock and unconditionally clearing and reloading the entire 16.5MB JSON store) and performed whole-store deepcopy of _incidents and _postmortems while holding _thread_lock.",
-    "fix": "Added read-only predicates under @_serialized_store_read (IncidentStore.has_stale_monitor_agent_findings and IncidentStore.has_orphaned_infrastructure_incidents) that share single candidate-selection helpers (_stale_monitor_agent_finding_candidates and _orphaned_infrastructure_incident_candidates) with the write methods. Updated resolve_stale_agent_finding_incidents and reconcile_orphaned_infrastructure_incidents in services/incidents/main.py to check the read-only predicate first and enter the write method only when work exists. Preserved the unconditional reload in _write_guard and rollback deepcopy in _serialized_store_write unchanged, and re-evaluated candidates inside _write_guard on the write path."
+    "cause": "Incident read routes (GET /api/incidents, GET /api/incidents/{incident_id}, GET /api/incidents/{incident_id}/operator-payload) invoked resolve_stale_monitor_agent_findings (@_serialized_store_write) unconditionally. Even when zero records needed resolution, @_serialized_store_write entered _write_guard (acquiring flock and unconditionally clearing and reloading the entire 16.5MB JSON store) and performed whole-store deepcopy of _incidents and _postmortems while holding _thread_lock.",
+    "fix": "Added read-only predicates under @_serialized_store_read (IncidentStore.has_stale_monitor_agent_findings and IncidentStore.has_orphaned_infrastructure_incidents) that share single candidate-selection helpers (_stale_monitor_agent_finding_candidates and _orphaned_infrastructure_incident_candidates) with the write methods. Updated resolve_stale_agent_finding_incidents and reconcile_orphaned_infrastructure_incidents in services/incidents/main.py to check the read-only predicate first and proceed only when work exists, while keeping the original per-incident outbox-prepare -> update_incident_status(expected_snapshot=...) -> outbox-activate loop in reconcile_orphaned_infrastructure_incidents so a prepare failure leaves the incident open. Preserved the unconditional reload in _write_guard and rollback deepcopy in _serialized_store_write unchanged, and re-evaluated candidates inside _write_guard on the write path."
   },
   "acceptance_criteria": {
     "ac1_noop_get_skips_write_guard_load_and_deepcopy": {
@@ -37,13 +37,15 @@
     "ac2_noop_reconcile_infrastructure_health_skips_write_guard_load_and_deepcopy": {
       "status": "passed",
       "test": "services/incidents/test_read_sweep_cost.py::test_ac2_reconcile_infrastructure_health_noop_skips_write_guard_load_and_deepcopy",
+      "prepare_failure_regression_test": "services/incidents/test_read_sweep_cost.py::test_reconcile_infrastructure_health_prepare_failure_leaves_incident_open",
       "route": "POST /api/incidents/reconcile-infrastructure-health",
       "measured_counts": {
         "write_guard_entries": 0,
         "load_calls": 0,
         "whole_store_deepcopy_calls": 0,
         "save_calls": 0
-      }
+      },
+      "details": "reconcile_orphaned_infrastructure_incidents checks has_orphaned_infrastructure_incidents first (0 write_guard / 0 _load / 0 deepcopy on no-op) and keeps the original per-incident find_open_incidents -> _prepare_postmortem_delivery -> update_incident_status(expected_snapshot=...) -> outbox_store.activate loop so a prepare failure leaves the incident open."
     },
     "ac3_stale_finding_resolved_once_before_response": {
       "status": "passed",
@@ -60,7 +62,8 @@
       "subcases_verified": [
         "Finding re-observed by another process between has_stale_monitor_agent_findings() and _write_guard reload remains open with fresh observation evidence preserved",
         "Finding already closed by another process between has_stale_monitor_agent_findings() and _write_guard reload keeps its concurrent closed status and resolution_reason",
-        "Orphaned infrastructure incident already resolved by another process between has_orphaned_infrastructure_incidents() and _write_guard reload keeps its concurrent resolution_reason"
+        "Orphaned infrastructure incident already resolved by another process between has_orphaned_infrastructure_incidents() and find_open_incidents() keeps its concurrent resolution_reason",
+        "Orphaned infrastructure incident resolved by another process after find_open_incidents() / outbox prepare is caught by expected_snapshot CAS inside _write_guard and keeps its concurrent resolution_reason"
       ]
     },
     "ac5_cross_process_mtime_refresh_sees_stale_finding": {
@@ -166,17 +169,17 @@
     {
       "command": "TEST_DATABASE_URL=\"postgresql://postgres:t@127.0.0.1:55432/postgres\" .venv-pantheon/bin/python3 -m pytest services/incident -v",
       "exit_code": 0,
-      "result": "147 passed, 4 subtests passed in 24.59s"
+      "result": "147 passed, 4 subtests passed in 24.35s"
     },
     {
       "command": "TEST_DATABASE_URL=\"postgresql://postgres:t@127.0.0.1:55432/postgres\" .venv-pantheon/bin/python3 -m pytest services/incidents -v",
       "exit_code": 0,
-      "result": "115 passed, 3 warnings in 48.02s"
+      "result": "116 passed, 3 warnings in 49.69s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/incidents/test_read_sweep_cost.py -v",
       "exit_code": 0,
-      "result": "7 passed in 6.45s"
+      "result": "8 passed, 3 warnings in 7.12s"
     }
   ]
 }

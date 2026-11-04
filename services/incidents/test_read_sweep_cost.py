@@ -648,6 +648,109 @@ def test_ac4_write_path_reevaluates_candidates_inside_write_guard_on_concurrent_
     assert after_c.resolved_at == "2026-11-04T02:15:00Z"
     assert extract_incident_resolution_reason(after_c) == "direct_probe_recovery"
 
+    # Subcase D: Orphaned infrastructure incident resolved by another process after
+    # find_open_incidents / outbox prepare, caught by expected_snapshot CAS inside _write_guard
+    path_orphan_cas = tmp_path / "incidents_orphan_cas.json"
+    reader_store_d = IncidentStore(path=path_orphan_cas)
+    writer_store_d = IncidentStore(path=path_orphan_cas)
+
+    orphan_dict_d = _build_real_incident_dict(2594, now_dt=now_dt)
+    orphan_dict_d["incident_id"] = "infra-bff-race-orphan-0002"
+    reader_store_d.create_incident(IncidentCase.from_dict(orphan_dict_d))
+
+    orig_prepare = incidents_main._prepare_postmortem_delivery
+
+    def prepare_then_other_process_resolves(incident_id: str):
+        prepared = orig_prepare(incident_id)
+        writer_store_d.update_incident_status(
+            incident_id,
+            IncidentStatus.RESOLVED.value,
+            resolved_at="2026-11-04T02:20:00Z",
+            resolution_reason="concurrent_cas_winner",
+        )
+        return prepared
+
+    monkeypatch.setattr(incidents_main, "store", reader_store_d)
+    monkeypatch.setattr(
+        incidents_main,
+        "_prepare_postmortem_delivery",
+        prepare_then_other_process_resolves,
+    )
+
+    resolved_d = incidents_main.reconcile_orphaned_infrastructure_incidents(
+        healthy_components=["telemetry"],
+        referenced_incident_ids=[],
+        resolved_at="2026-11-04T03:30:00Z",
+    )
+    assert resolved_d == []
+    after_d = IncidentStore(path=path_orphan_cas).require_incident("infra-bff-race-orphan-0002")
+    assert after_d.status == IncidentStatus.RESOLVED.value
+    assert after_d.resolved_at == "2026-11-04T02:20:00Z"
+    assert extract_incident_resolution_reason(after_d) == "concurrent_cas_winner"
+
+
+def test_reconcile_infrastructure_health_prepare_failure_leaves_incident_open(
+    tmp_path, monkeypatch
+):
+    store_path = tmp_path / "incidents_prepare_fail.json"
+    store = IncidentStore(path=store_path)
+    now_dt = datetime(2026, 11, 4, 3, 30, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(incidents_main, "store", store)
+    monkeypatch.setattr(incidents_main, "_utc_now", lambda: "2026-11-04T03:30:00Z")
+
+    outbox_path = tmp_path / "incidents_outbox_prepare_fail.json"
+    if hasattr(outbox_store, "impl") and hasattr(outbox_store.impl, "path"):
+        monkeypatch.setattr(outbox_store.impl, "path", outbox_path)
+
+    orphan_dict = _build_real_incident_dict(2594, now_dt=now_dt)
+    orphan_dict["incident_id"] = "infra-bff-prepare-fail-0001"
+    store.create_incident(IncidentCase.from_dict(orphan_dict))
+
+    orig_prepare = incidents_main._prepare_postmortem_delivery
+
+    def failing_prepare(incident_id: str):
+        raise RuntimeError(f"simulated outbox prepare failure for {incident_id}")
+
+    monkeypatch.setattr(incidents_main, "_prepare_postmortem_delivery", failing_prepare)
+    client = TestClient(app)
+
+    with _count_store_ops(store, monkeypatch) as fail_counts:
+        resp_fail = client.post(
+            "/api/incidents/reconcile-infrastructure-health",
+            json={
+                "healthy_components": ["telemetry"],
+                "referenced_incident_ids": [],
+                "observed_at": "2026-11-04T03:30:00Z",
+            },
+        )
+        assert resp_fail.status_code == 200
+        assert resp_fail.json()["resolved_count"] == 0
+        assert resp_fail.json()["resolved_incident_ids"] == []
+
+    assert fail_counts["write_guard"] == 0
+    assert fail_counts["save"] == 0
+    still_open = IncidentStore(path=store_path).require_incident("infra-bff-prepare-fail-0001")
+    assert still_open.status == IncidentStatus.OPEN.value
+    assert still_open.resolved_at is None
+    assert extract_incident_resolution_reason(still_open) is None
+
+    # Once outbox prepare succeeds, the incident is resolved and delivery is activated
+    monkeypatch.setattr(incidents_main, "_prepare_postmortem_delivery", orig_prepare)
+    resp_ok = client.post(
+        "/api/incidents/reconcile-infrastructure-health",
+        json={
+            "healthy_components": ["telemetry"],
+            "referenced_incident_ids": [],
+            "observed_at": "2026-11-04T03:30:00Z",
+        },
+    )
+    assert resp_ok.status_code == 200
+    assert resp_ok.json()["resolved_count"] == 1
+    assert resp_ok.json()["resolved_incident_ids"] == ["infra-bff-prepare-fail-0001"]
+    resolved_after = IncidentStore(path=store_path).require_incident("infra-bff-prepare-fail-0001")
+    assert resolved_after.status == IncidentStatus.RESOLVED.value
+    assert extract_incident_resolution_reason(resolved_after) == ORPHAN_RECOVERED_RESOLUTION_REASON
+
 
 def test_ac5_cross_process_mtime_refresh_sees_and_resolves_stale_finding_from_other_instance(
     tmp_path, monkeypatch
