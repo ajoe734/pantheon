@@ -376,3 +376,53 @@ def test_pm12_quarter_excludes_unlinked_source_ingest_rows() -> None:
 
     linked = dict(market[0], linked_object_summary={"entity_type": "persona", "entity_ref": "persona-1"})
     assert _pm12_quarter_evidence_refs([*market, linked], window) == [linked]
+
+
+# --------------------------------------------------------------------------
+# Postgres owner path: SQL strips the heavy keys and bounds rows in the DB
+# --------------------------------------------------------------------------
+def test_postgres_owner_page_query_bounds_rows_and_drops_heavy_keys_in_sql() -> None:
+    from contextlib import contextmanager
+
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+
+    repo = PostgresSourceEvidenceRepository.__new__(PostgresSourceEvidenceRepository)
+    repo.table = "source_ingest.source_evidence"
+    repo._replaying = False
+    seen: List[Tuple[str, tuple]] = []
+    stripped_rows = []
+    for i in range(3):
+        row = real_row(i)
+        row["metadata"].pop("raw_storage_refs")
+        row["metadata"].pop("calendar_evidence")
+        stripped_rows.append(row)
+
+    class Result:
+        def __init__(self, rows: list) -> None:
+            self.rows = rows
+
+        def fetchall(self) -> list:
+            return self.rows
+
+        def fetchone(self) -> Any:
+            return self.rows[0]
+
+    class Conn:
+        def execute(self, sql: str, params: tuple) -> Result:
+            seen.append((sql, params))
+            if "COUNT(*)" in sql:
+                return Result([(614,)])
+            return Result([(r,) for r in stripped_rows])
+
+    @contextmanager
+    def fake_connection():
+        yield Conn()
+
+    repo._get_connection = fake_connection  # type: ignore[method-assign]
+    items, total = repo.list_evidence_items_page(tenant_id=TENANT, limit=3, offset=6)
+    assert total == 614 and len(items) == 3
+    page_sql, page_params = seen[1]
+    assert "LIMIT %s OFFSET %s" in page_sql
+    assert "#- '{metadata,raw_storage_refs}'" in page_sql and "#- '{metadata,calendar_evidence}'" in page_sql
+    assert page_params[-2:] == (3, 6)
+    assert all("raw_storage_refs" not in i.metadata for i in items)

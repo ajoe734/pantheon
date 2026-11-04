@@ -600,7 +600,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             # EvidenceReadResult of that read, not instance state.
             if self._evidence_repo is not None or self._evidence_refs:
                 return "typed_store"
-            return "service_client" if self._source_ingest_service_url else "missing"
+            if not self._source_ingest_service_url:
+                return "missing"
+            # A fresh one-row probe on every call: nothing is cached on the
+            # instance, so one request's failure can never label another's.
+            try:
+                next(self._iter_owner_evidence_pages(page_size=1))
+            except (_EvidenceOwnerReadError, StopIteration):
+                return "unavailable"
+            return "service_client"
         if dataset == "research_experiments":
             return "typed_store" if self._get_research_write_owner() is not None else "missing"
         if dataset == "strategy_specs":
@@ -1074,10 +1082,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         """Yield ``(items, total)`` per owner page; raise ``_EvidenceOwnerReadError``."""
         offset = start
         while True:
-            avail, payload = self._http_get(
-                self._source_ingest_service_url,
-                f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={offset}",
-            )
+            try:
+                avail, payload = self._http_get(
+                    self._source_ingest_service_url,
+                    f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={offset}",
+                )
+            except Exception as exc:  # noqa: BLE001 - any transport failure means unavailable
+                raise _EvidenceOwnerReadError("source-ingest evidence owner read failed") from exc
             items = payload.get("items") if avail and isinstance(payload, dict) else None
             if not isinstance(items, list):
                 raise _EvidenceOwnerReadError("source-ingest evidence owner read failed")
@@ -1218,9 +1229,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if self._source_ingest_service_url:
             from urllib.parse import quote
 
-            avail, payload = self._http_get(
-                self._source_ingest_service_url, f"/api/source-ingest/evidence/items/{quote(clean, safe='')}"
-            )
+            try:
+                avail, payload = self._http_get(
+                    self._source_ingest_service_url, f"/api/source-ingest/evidence/items/{quote(clean, safe='')}"
+                )
+            except Exception:  # noqa: BLE001
+                return None
             record = payload.get("item") if avail and isinstance(payload, dict) else None
             if isinstance(record, dict):
                 return normalize_source_ingest_evidence_item(record)

@@ -5406,21 +5406,14 @@ def _pm12_public_quarter_evidence_refs(
     quarter_window: Dict[str, Any],
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, bool]:
     store = _get_active_read_store()
-    read_evidence_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
-    read_ok: Optional[bool] = None
     try:
-        if callable(read_evidence_fn):
-            _read = read_evidence_fn()
-            raw_evidence_refs = list(_read.items or [])
-            read_ok = bool(_read.available)
-        else:
-            raw_evidence_refs = store.list_evidence_refs() if store is not None else []
+        raw_evidence_refs = store.list_evidence_refs() if store is not None else []
     except Exception:
         raw_evidence_refs = []
-        read_ok = False
+    # dataset_source probes the owner on every call (nothing cached on the
+    # instance), so a failed owner reads as unavailable for this request only.
     evidence_dataset_available = (
         store is not None
-        and read_ok is not False
         and store.dataset_source("evidence_refs") not in ("missing", "unavailable")
     )
     quarter_evidence_refs = (

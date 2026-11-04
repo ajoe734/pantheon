@@ -316,11 +316,30 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             )
         raise AttributeError("Research port operation 'list_evidence_refs' not implemented")
 
-    def read_evidence_refs(self, **kwargs: Any) -> Any:
+    def read_evidence_refs(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        include_tenant_agnostic: bool = True,
+        linked_entities: Optional[set[tuple[str, str]]] = None,
+        source_types: Optional[set[str]] = None,
+        include_scope_metadata: bool = False,
+        page_token: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> EvidenceReadResult:
+        read_args = dict(
+            tenant_id=tenant_id,
+            include_tenant_agnostic=include_tenant_agnostic,
+            linked_entities=linked_entities,
+            source_types=source_types,
+            include_scope_metadata=include_scope_metadata,
+            page_token=page_token,
+            page_size=page_size,
+        )
         if self._read_surface is not None and hasattr(self._read_surface, "read_evidence_refs"):
-            return self._read_surface.read_evidence_refs(**kwargs)
+            return self._read_surface.read_evidence_refs(**read_args)
         if self._ks is not None and hasattr(self._ks, "read_evidence_refs"):
-            return self._ks.read_evidence_refs(**kwargs)
+            return self._ks.read_evidence_refs(**read_args)
         # Port without per-read availability: infer from the list call itself.
         items = self.list_evidence_refs()
         owner = self._ks if self._ks is not None else self._read_surface

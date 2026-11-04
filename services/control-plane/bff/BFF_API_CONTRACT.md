@@ -529,7 +529,7 @@ return a bare `[]`. The unavailable condition is explicit in
 |---|---|---|---|
 | `/bff/alerts` | `/api/v1/operator/alerts` | `{ alerts, summary, meta }` with backend-owned severity, category, target refs, and surface degradation metadata | `operator` |
 | `/bff/alerts/{id}` | `/api/v1/operator/alerts` | `{ data: AlertProjection, meta }` for a single projected alert id | `operator` |
-| `/bff/knowledge` | Composed Knowledge inbox over `/api/v1/knowledge/notes`, `/api/v1/knowledge/evidence`, `/api/v1/knowledge/insights`, `/api/v1/knowledge/strategy-specs`, and `/api/v1/knowledge/memory` | `{ data, items, page_info, meta }`; when no backing knowledge store is readable, returns an empty `data/items` list with `meta.surfaces.knowledge_inbox.status: unavailable` and `source: missing` rather than a bare array | `operator` |
+| `/bff/knowledge` | Composed Knowledge inbox over `/api/v1/knowledge/notes`, `/api/v1/knowledge/insights`, and `/api/v1/knowledge/memory` only (EVIDENCE-OWNER-LIST-BOUNDED-20261104: market evidence stays in the evidence explorer, strategy specs are not inbox material, and the route never calls the source-ingest or registry owners; an empty inbox is valid) | `{ data, items, page_info, meta }`; when no backing knowledge store is readable, returns an empty `data/items` list with `meta.surfaces.knowledge_inbox.status: unavailable` and `source: missing` rather than a bare array | `operator` |
 
 ### 10.1.2 BFF Management Endpoints (BFFGAP-CONSOLE Series)
 
@@ -547,7 +547,7 @@ when the backing store is unconfigured or unreachable (§7.2).
 | `GET /bff/lineage` | lineage-edge store (`lineage_edges`) via `ReadSurfaceStore` | `LineageEnvelope`; `data: { id, nodes, edges, status, source }`; typed `page_info`; typed `meta.surfaces.lineage`; query params: `root_id`, `root_type`, `depth` (default 3, max 20), `artifact_id` | When lineage store is missing (`source:missing`): empty `nodes`/`edges`/`items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
 | `GET /bff/workflows` | workflow template registry (`workflow_templates`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.workflow_templates` | When the registry is missing: empty `data/items`, `meta.degradation.reason`, surface `status:unavailable` | `operator` |
 | `GET /bff/hooks` | hook registry (`hook_registry`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.hook_registry` | When the registry is missing: empty `data/items`, `meta.degradation.reason`, surface `status:unavailable` | `operator` |
-| `GET /bff/knowledge` | composed knowledge inbox over notes, evidence, insights, strategy specs, and memory | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.knowledge_inbox` plus source surfaces and `composition_sources` | When all source datasets are missing: empty `data/items`, `knowledge_inbox.status:unavailable`, and per-source surface `source:missing` | `operator` |
+| `GET /bff/knowledge` | composed knowledge inbox over research notes, insights, and memory (no evidence, no strategy specs) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.knowledge_inbox` plus source surfaces and `composition_sources` | When all source datasets are missing: empty `data/items`, `knowledge_inbox.status:unavailable`, and per-source surface `source:missing` | `operator` |
 
 **Degraded envelope example** (source-ingest unconfigured in dev):
 
@@ -871,3 +871,10 @@ double-counted in the additive total.
 ---
 
 *End of BFF API Contract (v1)*
+
+## Evidence explorer owner read (EVIDENCE-OWNER-LIST-BOUNDED-20261104)
+
+- `GET /api/source-ingest/evidence/items` (owner) accepts `page_size` (1-500, default 200) and `page_token` and returns `{items, total, page_size, next_page_token}`. List rows omit `metadata.raw_storage_refs` and `metadata.calendar_evidence`; `GET /api/source-ingest/evidence/items/{id}` still returns the full record.
+- `/bff/management/evidence` serves an unfiltered page with exactly one owner page read. Filtered reads stream every owner page so `page_info.total` stays correct.
+- When the owner read fails or times out, `management_evidence`, `evidence_refs`, and `knowledge_evidence` are all `status: unavailable` and the `data.summary` totals (`total_evidence`, `total_items`, `returned_evidence`, `visible_evidence`, `redacted_evidence`, `verified_evidence`, `verified_count`) are `null`, not `0`. Availability is decided by the read that produced the rows, never by shared instance state.
+- Source-ingest items map through one normalizer: `display_label` and `source_document.title` from `citation_label`, `summary` from `body`, `source_document.captured_at` from `available_time` then `event_time` (never the current time), `source_document.source_ref` from `content_ref`, `source_document.source_type` from `metadata.source_class`.
