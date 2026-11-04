@@ -597,6 +597,15 @@ class ReadSurfacePorts:
     def list_evidence_refs(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_evidence_refs(**kwargs)
 
+    def read_evidence_refs(self, **kwargs: Any) -> Any:
+        return self.research_knowledge_source.read_evidence_refs(**kwargs)
+
+    def read_evidence_ref_item(self, ref_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_evidence_ref_item(ref_id)
+
+    def read_evidence_ref_detail(self, ref_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_evidence_ref_detail(ref_id)
+
     def get_evidence_ref(self, evidence_id: str) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_evidence_ref(evidence_id)
 

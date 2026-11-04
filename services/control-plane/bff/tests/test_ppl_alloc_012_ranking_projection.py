@@ -252,7 +252,16 @@ def _install_evidence_records(
     def list_evidence_refs(**_: Any) -> list[dict[str, Any]]:
         return [dict(record) for record in records]
 
+    def read_evidence_refs(**_: Any) -> Any:
+        # Availability now comes from the read that produced the rows; mirror
+        # the per-read contract on top of the same installed records.
+        from services.control_plane.bff.ports.research_knowledge_source import EvidenceReadResult
+
+        rows = list_evidence_refs()
+        return EvidenceReadResult(rows, len(rows), "ok", "typed_store")
+
     store.list_evidence_refs = list_evidence_refs  # type: ignore[method-assign]
+    store.read_evidence_refs = read_evidence_refs  # type: ignore[method-assign]
 
 
 def _install_runtime_observations(

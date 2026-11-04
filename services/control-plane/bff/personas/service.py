@@ -5380,9 +5380,24 @@ def _pm12_quarter_evidence_refs(
     return [
         item
         for item in evidence_refs
+        if not _pm12_is_unlinked_source_ingest_row(item)
         for timestamp in [_pm12_evidence_timestamp(item)]
         if timestamp is not None and start_at <= timestamp < end_exclusive_at
     ]
+
+
+def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
+    """Market rows from source-ingest carry real timestamps; with no linked
+    entity they are not quarterly decision evidence and must not enter it."""
+    if not isinstance(item, dict) or item.get("evidence_origin") != "source_ingest":
+        return False
+    summary = item.get("linked_object_summary")
+    if isinstance(summary, dict) and str(summary.get("entity_ref") or "").strip():
+        return False
+    for key in ("linked_decisions", "linked_entities", "related_entities"):
+        if any(isinstance(x, dict) for x in item.get(key) or []):
+            return False
+    return True
 
 
 # --- _pm12_public_quarter_evidence_refs ---
@@ -5391,14 +5406,22 @@ def _pm12_public_quarter_evidence_refs(
     quarter_window: Dict[str, Any],
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, bool]:
     store = _get_active_read_store()
+    # Availability is decided by the read that produced the rows, never by a
+    # separate dataset_source probe.
+    raw_evidence_refs: List[Dict[str, Any]] = []
+    evidence_dataset_available = False
+    read_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
     try:
-        raw_evidence_refs = store.list_evidence_refs() if store is not None else []
+        if callable(read_fn):
+            result = read_fn()
+            raw_evidence_refs = list(result.items or [])
+            evidence_dataset_available = bool(result.available)
+        elif store is not None:
+            raw_evidence_refs = list(store.list_evidence_refs() or [])
+            evidence_dataset_available = store.dataset_source("evidence_refs") not in ("missing", "unavailable")
     except Exception:
         raw_evidence_refs = []
-    evidence_dataset_available = (
-        store is not None
-        and store.dataset_source("evidence_refs") not in ("missing", "unavailable")
-    )
+        evidence_dataset_available = False
     quarter_evidence_refs = (
         _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
         if evidence_dataset_available
