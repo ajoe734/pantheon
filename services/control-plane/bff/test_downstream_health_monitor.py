@@ -550,6 +550,167 @@ class TestIncidentResolveTransition:
         assert monitor._store.get_incident("governance")["status"] == "resolved"
         assert monitor._store.get_incident("telemetry")["status"] == "open"
 
+    @pytest.mark.parametrize("channel", ["incident_open", "incident_resolve"])
+    @pytest.mark.parametrize(
+        ("status", "expected_active"),
+        [
+            ("pending", True),
+            ("retry", True),
+            ("claimed", True),
+            ("dead_letter", False),
+            ("delivered", False),
+            ("quarantined", False),
+        ],
+    )
+    def test_has_active_incident_delivery_excludes_dead_letter_and_keeps_inflight_statuses(
+        self, tmp_path, channel, status, expected_active
+    ):
+        monitor = _safety_monitor(tmp_path)
+        inc_id = "infra-bff-f15b59d579abe4c783d75af1"
+        delivery_id = f"{channel}:evt-cap-1"
+        url = (
+            "http://inc:8090/api/incidents/consume-infrastructure-health"
+            if channel == "incident_open"
+            else f"http://inc:8090/api/incidents/{inc_id}/status"
+        )
+        body = (
+            {"incident_id": inc_id, "status": "open"}
+            if channel == "incident_open"
+            else {"status": "resolved", "source_event_id": "evt-cap-1"}
+        )
+        monitor._store.queue_delivery(
+            delivery_id=delivery_id,
+            event_id="evt-cap-1",
+            channel=channel,
+            target_name="capital",
+            url=url,
+            body=body,
+            dependency_ids=[],
+            max_attempts=5,
+        )
+        _set_rows(monitor, [delivery_id], status=status)
+
+        assert (
+            monitor._store.has_active_incident_delivery(
+                target_name="capital",
+                incident_id=inc_id,
+            )
+            is expected_active
+        )
+
+    def test_reconcile_resolves_healthy_target_when_resolve_delivery_is_dead_letter_and_keeps_active_or_unhealthy(
+        self, tmp_path
+    ):
+        monitor = _safety_monitor(tmp_path)
+        for name, ok, failures in (
+            ("capital", True, 0),
+            ("pending-svc", True, 0),
+            ("retry-svc", True, 0),
+            ("claimed-svc", True, 0),
+            ("unhealthy-resolving", False, 3),
+            ("unhealthy-open", False, 4),
+        ):
+            monitor._store.record_probe(
+                DownstreamProbeResult(
+                    target_name=name,
+                    ok=ok,
+                    status_code=200 if ok else 503,
+                    latency_ms=4.0,
+                    checked_at="2026-11-04T00:00:00Z",
+                    consecutive_failures=failures,
+                )
+            )
+
+        with monitor._store._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO incident_mappings(
+                    target_name, incident_id, status, opening_event_id,
+                    create_delivery_id, last_event_id, updated_at
+                ) VALUES
+                ('capital', 'infra-bff-f15b59d579abe4c783d75af1', 'resolving',
+                 'evt-cap-open', 'incident-open:evt-cap-open',
+                 'evt-cap-resolve', '2026-11-03T10:23:55Z'),
+                ('pending-svc', 'infra-bff-pending-001', 'resolving',
+                 'evt-pend-open', 'incident-open:evt-pend-open',
+                 'evt-pend-resolve', '2026-11-04T00:00:00Z'),
+                ('retry-svc', 'infra-bff-retry-001', 'resolving',
+                 'evt-retry-open', 'incident-open:evt-retry-open',
+                 'evt-retry-resolve', '2026-11-04T00:00:00Z'),
+                ('claimed-svc', 'infra-bff-claimed-001', 'resolving',
+                 'evt-claim-open', 'incident-open:evt-claim-open',
+                 'evt-claim-resolve', '2026-11-04T00:00:00Z'),
+                ('unhealthy-resolving', 'infra-bff-unhealthy-resolving-001', 'resolving',
+                 'evt-unh-open', 'incident-open:evt-unh-open',
+                 'evt-unh-resolve', '2026-11-03T10:23:55Z'),
+                ('unhealthy-open', 'infra-bff-unhealthy-open-001', 'open',
+                 'evt-unh2-open', 'incident-open:evt-unh2-open',
+                 'evt-unh2-open', '2026-11-03T10:23:55Z')
+                """
+            )
+
+        outbox_rows = [
+            ("capital", "infra-bff-f15b59d579abe4c783d75af1", "incident_resolve", "dead_letter"),
+            ("pending-svc", "infra-bff-pending-001", "incident_resolve", "pending"),
+            ("retry-svc", "infra-bff-retry-001", "incident_resolve", "retry"),
+            ("claimed-svc", "infra-bff-claimed-001", "incident_resolve", "claimed"),
+            ("unhealthy-resolving", "infra-bff-unhealthy-resolving-001", "incident_resolve", "dead_letter"),
+            ("unhealthy-open", "infra-bff-unhealthy-open-001", "incident_open", "dead_letter"),
+        ]
+        for target_name, inc_id, channel, status in outbox_rows:
+            did = f"{channel}:{target_name}"
+            monitor._store.queue_delivery(
+                delivery_id=did,
+                event_id=f"evt-{target_name}",
+                channel=channel,
+                target_name=target_name,
+                url=f"http://inc:8090/api/incidents/{inc_id}/status",
+                body={"incident_id": inc_id, "status": "resolved"},
+                dependency_ids=[],
+                max_attempts=5,
+            )
+            _set_rows(
+                monitor,
+                [did],
+                status=status,
+                attempt_count=5 if status == "dead_letter" else 1,
+                last_error="network_error" if status == "dead_letter" else None,
+            )
+
+        captured: List[Dict[str, Any]] = []
+
+        def mock_post(url, body, timeout):
+            captured.append({"url": url, "body": body})
+            return True, 200
+
+        with patch("downstream_health_monitor._post_json", side_effect=mock_post):
+            ok = monitor.reconcile_orphaned_incidents_sync(
+                observed_at="2026-11-04T00:01:00Z"
+            )
+
+        assert ok is True
+        assert len(captured) == 1
+        body = captured[0]["body"]
+        assert body["healthy_components"] == [
+            "capital",
+            "claimed-svc",
+            "pending-svc",
+            "retry-svc",
+        ]
+        assert "infra-bff-f15b59d579abe4c783d75af1" not in body["referenced_incident_ids"]
+        assert set(body["referenced_incident_ids"]) == {
+            "infra-bff-claimed-001",
+            "infra-bff-pending-001",
+            "infra-bff-retry-001",
+            "infra-bff-unhealthy-open-001",
+        }
+        assert monitor._store.get_incident("capital")["status"] == "resolved"
+        assert monitor._store.get_incident("pending-svc")["status"] == "resolving"
+        assert monitor._store.get_incident("retry-svc")["status"] == "resolving"
+        assert monitor._store.get_incident("claimed-svc")["status"] == "resolving"
+        assert monitor._store.get_incident("unhealthy-resolving")["status"] == "resolving"
+        assert monitor._store.get_incident("unhealthy-open")["status"] == "open"
+
 
 class _FakeLoopControllerWriter:
     calls: List[Any] = []
