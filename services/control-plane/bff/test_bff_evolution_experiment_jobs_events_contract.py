@@ -212,7 +212,7 @@ class _EvolutionProgramCommandsTestDouble:
         assert isinstance(ds, dict)
         return ds
 
-    async def create_program(self, *, tenant_id, actor_id, name, idempotency_key):
+    async def create_program(self, *, caller_token, tenant_id, actor_id, name, idempotency_key):
         self._counter += 1
         program_id = f"evp-test-{self._counter:04d}"
         record = {
@@ -231,7 +231,7 @@ class _EvolutionProgramCommandsTestDouble:
         self._dataset()[program_id] = record
         return record
 
-    async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
+    async def patch_program_name(self, *, caller_token, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
         from services.control_plane.bff.ports.evolution_program_commands import (
             EvolutionProgramConflictError,
             EvolutionProgramNotFoundError,

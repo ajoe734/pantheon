@@ -1,0 +1,28 @@
+{
+  "task": "EVOLUTION-PROGRAM-CREATE-TENANT-20261104",
+  "change": "POST /bff/evolution-programs and program name PATCH are issued by EvolutionServiceProgramCommandPort through the shared evolution_owner_request: X-Tenant-Id is the verified caller tenant, Authorization is EVOLUTION_AUTH_TOKEN, the operator JWT never reaches Evolution. Missing EVOLUTION_AUTH_TOKEN fails closed (503) before any HTTP call.",
+  "call_sites": {
+    "ports.evolution_program_commands.create_program": "changed -> evolution_owner_request (caller_token + verified tenant, actor_id from verified identity)",
+    "ports.evolution_program_commands.patch_program_name": "changed -> evolution_owner_request",
+    "evolution.router create/patch handlers": "now pass caller_token=authorization to the port (tenant_id was already resolved from identity)",
+    "services/evolution/client.py create_program + patch_program": "removed (no second HTTP path for these writes; no other caller existed)",
+    "main.py / core/app_factory.py": "port constructed without EvolutionClient"
+  },
+  "tests": {
+    "new_test": "services/control-plane/bff/tests/test_evolution_program_create_owner_auth.py (9 tests): real BFF route + real JWT identity + real owner-read surface against real services/evolution/main.py app in EVOLUTION_AUTH_MODE=token; only urllib.request.urlopen is a pass-through seam, headers are not rewritten",
+    "new_test_before_fix": "run against origin/dev sources (port built on EvolutionClient with an ASGI transport to the real Evolution app, same test body): create returned 403 'authenticated caller is not authorized for this tenant' because X-Tenant-Id was the env default pantheon-default, not tenant-a",
+    "after_fix": "9 passed",
+    "required_and_affected_suites": "155 passed, 3 skipped (the five required files plus test_bff_b2_002_evolution_jobs_ops, evolution/test_router, test_bff_evolution_experiment_jobs_events_contract, test_idempotency_concurrency_guard, test_bff_test_architecture)"
+  },
+  "changed_existing_test_code": "Fake program-command ports in 6 existing test files gained a caller_token keyword so they match the port signature. No assertion was changed, weakened or deleted.",
+  "acceptance_coverage": {
+    "1": "test_create_binds_verified_tenant_and_service_credential, test_name_patch_binds_verified_tenant_and_service_credential",
+    "2": "test_actor_comes_from_verified_identity_and_overrides_are_422, test_role_and_session_gates",
+    "3": "all tests drive POST then GET /bff/evolution-programs; readback is draft",
+    "5": "test_idempotency_replay_and_divergence, test_tenants_never_see_each_others_programs",
+    "6": "test_created_program_stays_draft_without_decision_outbox_or_run",
+    "7": "test_created_program_survives_restart",
+    "8": "test_missing_service_token_fails_closed_before_any_http_call"
+  },
+  "hosted_verification": "not performed here; belongs to EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104"
+}

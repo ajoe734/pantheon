@@ -87,7 +87,7 @@ class _FakeProgramCommandPort:
         self._read_store = read_store
         self._programs: Dict[str, Dict[str, Any]] = {}
 
-    async def create_program(self, *, tenant_id, actor_id, name, idempotency_key):
+    async def create_program(self, *, caller_token, tenant_id, actor_id, name, idempotency_key):
         program_id = f"evp-{uuid.uuid4().hex[:8]}"
         program = {
             "program_id": program_id,
@@ -105,7 +105,7 @@ class _FakeProgramCommandPort:
         self._read_store.seed(program)
         return program
 
-    async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
+    async def patch_program_name(self, *, caller_token, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
         current = self._programs.get(program_id)
         if current is None:
             raise EvolutionProgramNotFoundError(f"Evolution program not found: {program_id}")

@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -2045,3 +2046,84 @@ def test_shared_dimensions_do_not_conflict_but_per_journey_ids_do(postgres_dsn: 
         cur.execute(f"SELECT count(*) FROM {schema_name}.identity_links WHERE identifier_type = ANY(%s)", (list(shared),))
         assert cur.fetchone()[0] == 1
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches(postgres_dsn: str) -> None:
+    """Drains seeded stale journeys + loop_runs in bounded batches; rerun moves zero."""
+    import psycopg  # type: ignore[import]
+    from datetime import timedelta
+
+    from services.trade_journey.projection_migration import (
+        reclassify_stale_open_journeys,
+        sql_reclassify_batch_runner,
+    )
+
+    ProjectionStore(postgres_dsn, bootstrap=True)
+    tenant = f"sweep-{uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=10)
+    fresh = now - timedelta(minutes=5)
+    schema = "trade_journey_projection"
+
+    def seed(cur, jid, status, coverage, last, loop_status, terminal=False):
+        cur.execute(
+            f"""INSERT INTO {schema}.journeys (tenant_id, environment, journey_id, status,
+                stage_coverage, is_terminal, first_occurred_at, last_occurred_at,
+                first_ingested_seq, last_ingested_seq, loop_run_id)
+                VALUES (%s,'paper',%s,%s,%s::jsonb,%s,%s,%s,1,1,%s)""",
+            (tenant, jid, status, json.dumps(coverage), terminal, last, last, f"lr-{jid}"),
+        )
+        payload = json.dumps({"status": loop_status, "activePeriod": {"start": old.isoformat(), "end": None}})
+        cur.execute(
+            f"""INSERT INTO {schema}.loop_runs (tenant_id, environment, loop_run_id, journey_id,
+                status, lifecycle_summary, contract_payload)
+                VALUES (%s,'paper',%s,%s,%s,%s::jsonb,%s::jsonb)""",
+            (tenant, f"lr-{jid}", jid, loop_status, payload, payload),
+        )
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        for i in range(5):
+            seed(cur, f"noorder-{i}", "open", {"trade_decision": {"status": "succeeded"}}, old, "active")
+        for i in range(4):
+            seed(cur, f"unrec-{i}", "open", {"order_submission": {"status": "succeeded"}}, old, "active")
+        seed(cur, "fresh", "open", {"order_submission": {"status": "succeeded"}}, fresh, "active")
+        seed(cur, "reconciled", "open", {"reconciliation": {"status": "succeeded"}}, old, "active")
+        # terminal journey whose loop run was left active by the earlier journeys-only sweep
+        seed(cur, "legacy", "unreconciled", {"order_submission": {"status": "succeeded"}}, old, "active", True)
+        conn.commit()
+
+    def connect():
+        return psycopg.connect(postgres_dsn)
+
+    try:
+        result = reclassify_stale_open_journeys(sql_reclassify_batch_runner(connect), as_of=now, batch_size=3)
+        assert result["complete"] and result["batches"] >= 3
+        assert result["reclassified"]["no_order"] == 5
+        assert result["reclassified"]["unreconciled"] == 4
+        assert result["reclassified"]["loop_run_repaired"] == 1
+
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT j.journey_id, j.status, j.is_terminal, l.status,
+                           l.contract_payload->>'status', l.contract_payload->'activePeriod'->>'end'
+                    FROM {schema}.journeys j JOIN {schema}.loop_runs l
+                      ON l.tenant_id=j.tenant_id AND l.environment=j.environment AND l.journey_id=j.journey_id
+                    WHERE j.tenant_id=%s""",
+                (tenant,),
+            )
+            rows = {r[0]: r[1:] for r in cur.fetchall()}
+        for i in range(5):
+            assert rows[f"noorder-{i}"][0] == "no_order" and rows[f"noorder-{i}"][2] == "no_order"
+            assert rows[f"noorder-{i}"][3] is not None
+        for i in range(4):
+            assert rows[f"unrec-{i}"][:3] == ("unreconciled", True, "unreconciled")
+        assert rows["legacy"][2] == "unreconciled" and rows["legacy"][3] is not None
+        assert rows["fresh"][:3] == ("open", False, "active")
+        assert rows["reconciled"][:3] == ("open", False, "active")
+
+        rerun = reclassify_stale_open_journeys(sql_reclassify_batch_runner(connect), as_of=now, batch_size=3)
+        assert rerun == {"batches": 1, "reclassified": {}, "complete": True}
+    finally:
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            for table in ("loop_runs", "journeys"):
+                cur.execute(f"DELETE FROM {schema}.{table} WHERE tenant_id=%s", (tenant,))

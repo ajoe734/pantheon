@@ -15,10 +15,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
 import sys
+import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from services.trade_journey.correlation_envelope import (
@@ -192,6 +194,9 @@ _PASSTHROUGH_FIELDS = (
     "quantity",
     "price",
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class LifecycleProjectionError(RuntimeError):
@@ -1655,6 +1660,75 @@ def _configured_relational_projector() -> RelationalLifecycleProjector:
     )
 
 
+SWEEP_ENABLED_ENV = "LIFECYCLE_PROJECTOR_RECLASSIFY_ENABLED"
+SWEEP_INTERVAL_ENV = "LIFECYCLE_PROJECTOR_RECLASSIFY_INTERVAL_SECONDS"
+SWEEP_BATCH_ENV = "LIFECYCLE_PROJECTOR_RECLASSIFY_BATCH_SIZE"
+DEFAULT_SWEEP_INTERVAL_SECONDS = 10.0
+DEFAULT_SWEEP_BATCH_SIZE = 1000
+
+
+class StaleOpenSweeper:
+    """Applies at most one bounded stale-open reclassification batch per interval.
+
+    Runs only after the projector has been ready (source verified), in its own
+    short transaction on a worker thread, and never raises: a failure is logged
+    and retried at the next interval.
+    """
+
+    def __init__(
+        self,
+        run_batch: Callable[[datetime, int, int], Mapping[str, int]],
+        *,
+        interval_seconds: float = DEFAULT_SWEEP_INTERVAL_SECONDS,
+        batch_size: int = DEFAULT_SWEEP_BATCH_SIZE,
+        deadline_seconds: int | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.run_batch = run_batch
+        self.interval_seconds = max(0.1, float(interval_seconds))
+        self.batch_size = max(1, int(batch_size))
+        self.deadline_seconds = deadline_seconds
+        self._clock = clock
+        self._next_due = 0.0
+        self.last_result: Mapping[str, int] = {}
+
+    async def maybe_sweep(self) -> bool:
+        now = self._clock()
+        if now < self._next_due:
+            return False
+        self._next_due = now + self.interval_seconds
+        from services.trade_journey.materializer import RECONCILIATION_DEADLINE_SECONDS  # noqa: PLC0415
+
+        deadline = self.deadline_seconds if self.deadline_seconds is not None else RECONCILIATION_DEADLINE_SECONDS
+        try:
+            result = await asyncio.to_thread(
+                self.run_batch, datetime.now(timezone.utc), int(deadline), self.batch_size
+            )
+        except Exception:  # noqa: BLE001 - sweep must never fail the tick
+            logger.exception("stale-open reclassification sweep failed; retrying next interval")
+            return False
+        self.last_result = dict(result)
+        if result:
+            logger.info("stale-open reclassification batch: %s", dict(result))
+        return True
+
+
+def _configured_sweeper(projector: "RelationalLifecycleProjector") -> StaleOpenSweeper | None:
+    if os.getenv(SWEEP_ENABLED_ENV, "1").strip().lower() in {"0", "false", "no", "off"}:
+        return None
+    from services.trade_journey.projection_migration import sql_reclassify_batch_runner  # noqa: PLC0415
+
+    interval = _validate_source_timeout(
+        os.getenv(SWEEP_INTERVAL_ENV, ""), name=SWEEP_INTERVAL_ENV, default=DEFAULT_SWEEP_INTERVAL_SECONDS
+    )
+    batch = max(1, int(os.getenv(SWEEP_BATCH_ENV, "") or DEFAULT_SWEEP_BATCH_SIZE))
+    return StaleOpenSweeper(
+        sql_reclassify_batch_runner(projector.store._connect_db),
+        interval_seconds=interval,
+        batch_size=batch,
+    )
+
+
 async def run_worker() -> int:
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
@@ -1688,6 +1762,8 @@ async def run_worker() -> int:
     recovery_target = 0
     source_ready = False
     projector: RelationalLifecycleProjector | None = None
+    sweeper: StaleOpenSweeper | None = None
+    sweep_configured = False
     try:
         while True:
             tick += 1
@@ -1726,6 +1802,15 @@ async def run_worker() -> int:
                     )
                 if projector.checkpoint >= recovery_target:
                     recovery_target = projector.checkpoint
+                if not sweep_configured and source_ready:
+                    sweep_configured = True
+                    try:
+                        sweeper = _configured_sweeper(projector)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("stale-open sweep configuration invalid; sweep disabled")
+                        sweeper = None
+                if sweeper is not None:
+                    await sweeper.maybe_sweep()
             except (RuntimeError, ValueError):
                 raise
             except Exception as exc:  # noqa: BLE001 - durable controller records failure

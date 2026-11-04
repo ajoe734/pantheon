@@ -1097,10 +1097,9 @@ def mount_bff_routers(
     # 16: Evolution
     from ..evolution.router import create_evolution_router
     from ..ports.evolution_program_commands import EvolutionServiceProgramCommandPort
-    from services.evolution.client import EvolutionClient
     evolution_program_commands = _dep(
         "_evolution_program_commands",
-        lambda: EvolutionServiceProgramCommandPort(EvolutionClient()),
+        lambda: EvolutionServiceProgramCommandPort(),
     )
     app.include_router(
         create_evolution_router(
