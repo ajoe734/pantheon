@@ -5443,6 +5443,23 @@ class ManagementService:
     # -----------------------------------------------------------------------
     # 12. Evidence Explorer
     # -----------------------------------------------------------------------
+    def get_evidence_item(self, ref_id: str, identity: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+        """Management detail of one evidence item, or None when absent.
+
+        Same read, redaction and mapping as the list with ``ref_id`` so the
+        two surfaces cannot disagree.
+        """
+        payload = self.get_evidence(ref_id=ref_id, page_size=1, identity=identity)
+        items = (payload.get("data") or {}).get("items") or []
+        wanted = str(ref_id or "").strip()
+        for item in items:
+            if str(item.get("ref_id") or item.get("id") or "") == wanted:
+                return {**payload, "data": {**payload["data"], "items": [item]}}
+        status = ((payload.get("meta") or {}).get("surfaces") or {}).get("management_evidence", {})
+        if isinstance(status, dict) and status.get("status") == "unavailable":
+            return payload
+        return None
+
     def get_evidence(
         self,
         ref_id: Optional[str] = None,
@@ -5496,12 +5513,31 @@ class ManagementService:
         if store is not None:
             if callable(read_evidence_fn):
                 paged = not filters_active and not current_run_evidence_refs
-                try:
-                    result = (
-                        read_evidence_fn(page_token=page_token, page_size=page_size)
-                        if paged
-                        else read_evidence_fn()
+                read_item_fn = getattr(store, "read_evidence_ref_item", None)
+                # A lone ref_id reads ONE item through the owner item route
+                # instead of streaming every owner page.
+                single_item = bool(
+                    clean_ref_id
+                    and callable(read_item_fn)
+                    and not (
+                        validated_linked_entity_type
+                        or linked_entity_ref is not None
+                        or validated_link_type
+                        or validated_credibility_tier
+                        or verified is not None
                     )
+                    and not any(
+                        str(r.get("ref_id") or r.get("id") or "") == clean_ref_id
+                        for r in current_run_evidence_refs
+                    )
+                )
+                try:
+                    if single_item:
+                        result = read_item_fn(clean_ref_id)
+                    elif paged:
+                        result = read_evidence_fn(page_token=page_token, page_size=page_size)
+                    else:
+                        result = read_evidence_fn()
                     stored_evidence_refs = list(result.items or [])
                     owner_total = result.total
                     owner_next_token = result.next_page_token

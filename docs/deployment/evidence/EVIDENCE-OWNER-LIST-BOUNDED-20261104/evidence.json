@@ -36,7 +36,9 @@
     "7": "EvidenceReadResult is returned per read; _evidence_status removed; dataset_source probes per call with no cached state; test_one_failed_read_does_not_mislabel_the_next",
     "8": "console_gap/knowledge.py reads only research_notes/insight_cards/institutional_memory_entries; test_bff_knowledge_inbox_never_calls_evidence_or_registry_owners",
     "9": "personas.service._pm12_quarter_evidence_refs drops evidence_origin=source_ingest rows with no linked entity; test_pm12_quarter_excludes_unlinked_source_ingest_rows",
-    "10": "tests use the real row shape; see changed_assertions"
+    "10": "tests use the real row shape; see changed_assertions",
+    "5_rework": "GET /bff/management/evidence/{ref_id} added (router + ManagementService.get_evidence_item); ?ref_id= and the path route read ONE item via port.read_evidence_ref_item (owner item route), no list streaming; knowledge list+detail keep display_label. test_four_surfaces_agree_for_the_same_real_item now covers all four routes; test_ref_id_filter_reads_one_owner_item_not_every_page.",
+    "7_rework": "ResearchRouterService.list/get_evidence_ref decide surface state from the read result (_evidence_read_surface_state / read_evidence_ref_detail); no dataset_source(\"evidence_refs\") ?page_size=1 probe. personas _pm12_public_quarter_evidence_refs uses read_evidence_refs() availability. test_knowledge_list_and_detail_issue_no_extra_availability_probe, test_pm12_availability_comes_from_the_read_that_produced_the_rows."
   },
   "callers_of_list_evidence_refs_and_dataset_source_evidence_refs": [
     {
@@ -83,6 +85,21 @@
       "file": "test_mgmt_load_005_read_concurrency.py",
       "change": "the two slow-evidence-read tests patch store.read_evidence_refs instead of store.list_evidence_refs; timing/degraded assertions unchanged",
       "why": "the route's read entry point is now read_evidence_refs"
+    },
+    {
+      "file": "tests/test_management_read_models_router.py",
+      "change": "route count 15->16 and EXPECTED_17_ROUTES gains GET /bff/management/evidence/{ref_id}",
+      "why": "the new acceptance-5 detail route is intentionally registered; contract_snapshots/backend_routes_manifest.json updated to match"
+    },
+    {
+      "file": "tests/test_bff_b3_management_evidence.py",
+      "change": "_EvidenceRefsTestStore gains read_evidence_ref_item/read_evidence_ref_detail",
+      "why": "fixture delegates unknown attrs to default ports; mirrors the file-backed data like its existing read_evidence_refs; assertions unchanged"
+    },
+    {
+      "file": "tests/test_ppl_alloc_012_ranking_projection.py",
+      "change": "_install_evidence_records also installs read_evidence_refs",
+      "why": "PM12 now reads availability from read_evidence_refs; fixture serves same records; assertions unchanged"
     }
   ],
   "preexisting_failures_unrelated_to_this_change": [
@@ -98,6 +115,7 @@
   "verified_commands": [
     "/tmp/svc-venv/bin/python -m pytest services/source_ingestion/test_service.py (34 passed, 2 skipped)",
     "cd services/control-plane/bff && pytest tests/test_evidence_owner_list_bounded.py (13 passed)",
-    "pytest tests/test_bff_b3_management_evidence.py tests/test_bff_knowledge_inbox.py tests/test_research_knowledge_source_ports.py tests/test_research_router.py tests/test_bff_test_architecture.py tests/test_ranking_default_owner_integrity.py tests/test_ranking_real_source_owner_admission.py tests/test_ppl_alloc_012_ranking_projection.py tests/test_console_research_projection.py tests/test_bff_management_gap_003_contract_schema.py tests/test_management_read_models_router.py tests/test_read_surface_port_cutover.py (all pass)"
+    "pytest tests/test_bff_b3_management_evidence.py tests/test_bff_knowledge_inbox.py tests/test_research_knowledge_source_ports.py tests/test_research_router.py tests/test_bff_test_architecture.py tests/test_ranking_default_owner_integrity.py tests/test_ranking_real_source_owner_admission.py tests/test_ppl_alloc_012_ranking_projection.py tests/test_console_research_projection.py tests/test_bff_management_gap_003_contract_schema.py tests/test_management_read_models_router.py tests/test_read_surface_port_cutover.py (all pass)",
+    "/tmp/svc-venv/bin/python -m pytest (rework batches): owner_list_bounded+ports+b3+research_router+cutover+architecture+mgmt router+gap_003+console_research = 221 passed; ppl_alloc_012+ranking+knowledge_inbox+nl_ask = 53 passed. Remaining failures (pm12 league/request_scoped/ranking_evidence_surfaces/redaction pm12/main.py attrs/session harness/route_diff baseline) fail identically on unmodified HEAD."
   ]
 }

@@ -1981,6 +1981,23 @@ def create_management_router(
                 )
             raise
 
+    @router.get("/bff/management/evidence/{ref_id}")
+    async def bff_management_evidence_detail(
+        ref_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: one evidence item, read through the owner item route."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+
+        def _do_read():
+            return svc.get_evidence_item(ref_id, identity=identity)
+
+        result = await run_management_read(_do_read) if run_management_read is not None else _do_read()
+        if result is None:
+            raise _err(404, ErrorCode.RESOURCE_NOT_FOUND, "Evidence not found", f"No evidence item {ref_id}")
+        return result
+
     # -----------------------------------------------------------------------
     # 16. Operations Read Model
     # -----------------------------------------------------------------------

@@ -1212,20 +1212,27 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             include_scope_metadata=include_scope_metadata,
         ).items
 
-    def _read_raw_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Read ONE evidence item (owner item route / repo get), never the list."""
+    def _read_raw_evidence_ref_checked(
+        self, ref_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], str, str]:
+        """Read ONE evidence item (owner item route / repo get), never the list.
+
+        Returns ``(raw_or_None, status, source)``; ``status`` is ``ok`` (found
+        or genuinely absent) or ``unavailable`` (the owner read failed).
+        """
         clean = str(ref_id or "").strip()
         if not clean:
-            return None
+            return None, "ok", "typed_store"
         if self._evidence_repo is not None:
             try:
                 item = self._evidence_repo.get_evidence_item(clean)
             except Exception:
-                return None
-            return normalize_source_ingest_evidence_item(item.to_dict()) if item is not None else None
+                return None, "unavailable", "unavailable"
+            raw = normalize_source_ingest_evidence_item(item.to_dict()) if item is not None else None
+            return raw, "ok", "typed_store"
         if self._evidence_refs:
             ref = next((r for r in self._evidence_refs.values() if str(r.get("ref_id") or "") == clean), None)
-            return dict(ref) if ref else None
+            return (dict(ref) if ref else None), "ok", "typed_store"
         if self._source_ingest_service_url:
             from urllib.parse import quote
 
@@ -1234,11 +1241,42 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     self._source_ingest_service_url, f"/api/source-ingest/evidence/items/{quote(clean, safe='')}"
                 )
             except Exception:  # noqa: BLE001
-                return None
+                return None, "unavailable", "unavailable"
             record = payload.get("item") if avail and isinstance(payload, dict) else None
             if isinstance(record, dict):
-                return normalize_source_ingest_evidence_item(record)
-        return None
+                return normalize_source_ingest_evidence_item(record), "ok", "service_client"
+            if avail:
+                return None, "ok", "service_client"
+            # The helper reports 404 and transport failure alike; a one-row
+            # list probe tells "absent" apart from "owner down".
+            try:
+                next(self._iter_owner_evidence_pages(page_size=1))
+            except (_EvidenceOwnerReadError, StopIteration):
+                return None, "unavailable", "unavailable"
+            return None, "ok", "service_client"
+        return None, "unavailable", "missing"
+
+    def _read_raw_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._read_raw_evidence_ref_checked(ref_id)[0]
+
+    def read_evidence_ref_item(self, ref_id: Optional[str]) -> "EvidenceReadResult":
+        """One owner item read; availability belongs to this read."""
+        raw, status, source = self._read_raw_evidence_ref_checked(ref_id)
+        if status != "ok":
+            return EvidenceReadResult([], None, "unavailable", source)
+        rows = [self._project_evidence_ref_list_item(raw)] if raw else []
+        return EvidenceReadResult(rows, len(rows), "ok", source)
+
+    def read_evidence_ref_detail(
+        self, ref_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], "EvidenceReadResult"]:
+        """One owner item read returning the detail record plus that read's
+        own availability (no separate dataset probe)."""
+        raw, status, source = self._read_raw_evidence_ref_checked(ref_id)
+        if status != "ok":
+            return None, EvidenceReadResult([], None, "unavailable", source)
+        detail = self._project_evidence_ref_detail(raw) if raw else None
+        return detail, EvidenceReadResult([detail] if detail else [], 1 if detail else 0, "ok", source)
 
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ref_id:

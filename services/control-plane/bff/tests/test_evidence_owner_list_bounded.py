@@ -289,6 +289,65 @@ def test_four_surfaces_agree_for_the_same_real_item() -> None:
     assert mgmt["source_type"] == kn_list["source_document"]["source_type"] == "official_reference"
     detail_calls = [c for c in owner.calls if f"/evidence/items/{target}" in c]
     assert detail_calls, "detail must read one item through the owner item route"
+    # The fourth surface: /bff/management/evidence/{id}.
+    mgmt_detail = client.get(f"/bff/management/evidence/{target}", headers=ADMIN_HEADERS)
+    assert mgmt_detail.status_code == 200
+    md = mgmt_detail.json()["data"]["items"][0]
+    for key in ("title", "summary", "captured_at", "source_ref", "source_type"):
+        assert md[key] == mgmt[key], key
+    # display_label is kept by both knowledge projections.
+    assert kn_list["display_label"] == kn_detail["display_label"] == row["citation_label"]
+    assert client.get("/bff/management/evidence/evi-ffffffffffffffff", headers=ADMIN_HEADERS).status_code == 404
+
+
+def test_ref_id_filter_reads_one_owner_item_not_every_page() -> None:
+    owner = FakeOwner(614)
+    store, _ks = store_with(owner)
+    client = mounted(store)
+    target = "evi-0000000000000002"
+    body = client.get(f"/bff/management/evidence?ref_id={target}", headers=ADMIN_HEADERS).json()
+    assert [i["ref_id"] for i in body["data"]["items"]] == [target]
+    assert [c for c in owner.calls if "/evidence/items?" in c] == []
+    assert len([c for c in owner.calls if f"/evidence/items/{target}" in c]) == 1
+    owner.calls.clear()
+    owner.fail = True
+    down = client.get(f"/bff/management/evidence/{target}", headers=ADMIN_HEADERS).json()
+    assert down["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
+    assert down["data"]["summary"]["total_evidence"] is None
+
+
+def test_knowledge_list_and_detail_issue_no_extra_availability_probe() -> None:
+    owner = FakeOwner(614)
+    store, _ks = store_with(owner)
+    client = mounted(store)
+    r = client.get("/api/v1/knowledge/evidence?page_size=20", headers=ADMIN_HEADERS)
+    assert r.status_code == 200
+    # Streaming the rows is the read; no page_size=1 dataset probe on top.
+    assert [c for c in owner.calls if "page_size=1&" in c] == []
+    owner.calls.clear()
+    target = "evi-0000000000000002"
+    assert client.get(f"/api/v1/knowledge/evidence/{target}", headers=ADMIN_HEADERS).status_code == 200
+    assert owner.calls == [f"/api/source-ingest/evidence/items/{target}"]
+    owner.fail = True
+    down = client.get("/api/v1/knowledge/evidence?page_size=20", headers=ADMIN_HEADERS).json()
+    assert down["meta"]["surfaces"]["evidence_refs_list"] == "unavailable"
+    assert down["evidence_refs"] == []
+
+
+def test_pm12_availability_comes_from_the_read_that_produced_the_rows(monkeypatch) -> None:
+    from services.control_plane.bff.personas import service as persona_service
+
+    owner = FakeOwner(30)
+    store, _ks = store_with(owner)
+    monkeypatch.setattr(persona_service, "_get_active_read_store", lambda: store)
+    window = {"start_at": "2026-10-01T00:00:00Z", "end_exclusive_at": "2027-01-01T00:00:00Z"}
+    identity = type("I", (), {"capabilities": []})()
+    _items, _raw, _n, available = persona_service._pm12_public_quarter_evidence_refs(identity, window)
+    assert available is True
+    assert [c for c in owner.calls if "page_size=1&" in c] == []
+    owner.fail = True
+    *_rest, available = persona_service._pm12_public_quarter_evidence_refs(identity, window)
+    assert available is False
 
 
 # --------------------------------------------------------------------------
