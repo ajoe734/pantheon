@@ -299,9 +299,15 @@ def resolve_stale_agent_finding_incidents(
     )
     if window <= 0 or not hasattr(store, "resolve_stale_monitor_agent_findings"):
         return []
+    effective_now = now or _parse_iso_utc_or_now()
+    if hasattr(store, "has_stale_monitor_agent_findings") and not store.has_stale_monitor_agent_findings(
+        resolve_after_seconds=window,
+        now=effective_now,
+    ):
+        return []
     resolved = store.resolve_stale_monitor_agent_findings(
         resolve_after_seconds=window,
-        now=now or _parse_iso_utc_or_now(),
+        now=effective_now,
     )
     for inc in resolved:
         log.info(
@@ -1201,6 +1207,11 @@ def reconcile_orphaned_infrastructure_incidents(
         if normalize_infrastructure_component(item)
     }
     if not healthy_set:
+        return []
+    if hasattr(store, "has_orphaned_infrastructure_incidents") and not store.has_orphaned_infrastructure_incidents(
+        healthy_components=healthy_components,
+        referenced_incident_ids=referenced_incident_ids,
+    ):
         return []
     referenced_set = {
         str(item or "").strip()

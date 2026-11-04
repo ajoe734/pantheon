@@ -2088,8 +2088,6 @@ def test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches(postgres_dsn
             seed(cur, f"unrec-{i}", "open", {"order_submission": {"status": "succeeded"}}, old, "active")
         seed(cur, "fresh", "open", {"order_submission": {"status": "succeeded"}}, fresh, "active")
         seed(cur, "reconciled", "open", {"reconciliation": {"status": "succeeded"}}, old, "active")
-        # terminal journey whose loop run was left active by the earlier journeys-only sweep
-        seed(cur, "legacy", "unreconciled", {"order_submission": {"status": "succeeded"}}, old, "active", True)
         conn.commit()
 
     def connect():
@@ -2100,7 +2098,6 @@ def test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches(postgres_dsn
         assert result["complete"] and result["batches"] >= 3
         assert result["reclassified"]["no_order"] == 5
         assert result["reclassified"]["unreconciled"] == 4
-        assert result["reclassified"]["loop_run_repaired"] == 1
 
         with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
             cur.execute(
@@ -2117,7 +2114,6 @@ def test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches(postgres_dsn
             assert rows[f"noorder-{i}"][3] is not None
         for i in range(4):
             assert rows[f"unrec-{i}"][:3] == ("unreconciled", True, "unreconciled")
-        assert rows["legacy"][2] == "unreconciled" and rows["legacy"][3] is not None
         assert rows["fresh"][:3] == ("open", False, "active")
         assert rows["reconciled"][:3] == ("open", False, "active")
 

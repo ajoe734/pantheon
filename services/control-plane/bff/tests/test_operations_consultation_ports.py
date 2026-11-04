@@ -104,7 +104,6 @@ class TestWorkflowHookCatalogPort:
         assert port.list_memory_governance_rules() == []
         assert port.list_consult_rules() == []
         assert port.list_route_policies() == []
-        assert port.list_alpha_factory_cards() == []
         assert port.list_skills() == []
         assert port.list_tools() == []
         assert port.list_mcp_servers() == []
@@ -119,11 +118,6 @@ class TestWorkflowHookCatalogPort:
             "hook_registry": [
                 {"hook_id": "hook-2", "event": "on_trade"},
                 {"hook_id": "hook-1", "event": "on_signal"},
-            ],
-            "alpha_factory_cards": [
-                {"id": "card-1", "lane": "momentum", "score": 0.9},
-                {"id": "card-2", "lane": "mean_reversion", "score": 0.8},
-                {"id": "card-3", "lane": "momentum", "score": 0.85},
             ],
             "skills": [{"id": "skill-1", "name": "analyze_market"}],
             "tools": [{"id": "tool-1", "name": "fetch_orderbook"}],
@@ -140,16 +134,6 @@ class TestWorkflowHookCatalogPort:
 
         hooks = port.list_hook_registry()
         assert [h["hook_id"] for h in hooks] == ["hook-1", "hook-2"]
-
-        # Check alpha factory cards with lane filtering and pagination
-        momentum_cards = port.list_alpha_factory_cards(lane="momentum", page=1, page_size=10)
-        assert len(momentum_cards) == 2
-        assert {c["id"] for c in momentum_cards} == {"card-1", "card-3"}
-
-        page1 = port.list_alpha_factory_cards(page=1, page_size=2)
-        assert len(page1) == 2
-        page2 = port.list_alpha_factory_cards(page=2, page_size=2)
-        assert len(page2) == 1
 
         assert len(port.list_skills()) == 1
         assert len(port.list_tools()) == 1

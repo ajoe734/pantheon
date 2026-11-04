@@ -79,10 +79,7 @@ Reclassification is **automatic**: once the projector is ready and polling, its 
 in its own short transaction on the projection DSN (role `pantheon_app`). No manual step.
 Each batch (`RECLASSIFY_STALE_OPEN_SQL`) updates the
 `journeys` row and its linked `loop_runs` row together (loop `status` = terminal status,
-`activePeriod.end` = journey `last_occurred_at`) and commits. Only when a call's batch
-moved zero rows does a separate short transaction run `REPAIR_ACTIVE_LOOP_RUNS_SQL`,
-repairing loop_runs still `active` beside an already-terminal journey; the repair scan is
-costly, so it is skipped while draining and its failure never undoes a reclassify batch. A sweep failure is logged and retried next interval; it
+`activePeriod.end` = journey `last_occurred_at`) and commits. An empty sweep runs only this one bounded statement; there is no separate repair scan. A sweep failure is logged and retried next interval; it
 never fails the tick, changes readiness, or pauses source polling. A late event re-reduces
 the journey, so a late `reconciliation` moves it to its normal `completed` status.
 

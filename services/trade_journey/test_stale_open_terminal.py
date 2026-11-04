@@ -129,13 +129,9 @@ class _FakeCursor:
     def execute(self, sql, params=None):
         from services.trade_journey import projection_migration as pm
 
-        self.conn.log.append(("execute", self.conn.txn, "RECLASSIFY" if sql is pm.RECLASSIFY_STALE_OPEN_SQL else "REPAIR"))
-        if sql is pm.RECLASSIFY_STALE_OPEN_SQL:
-            self._rows = self.conn.factory.reclassify_rows
-        else:
-            if self.conn.factory.repair_error:
-                raise RuntimeError("statement timeout")
-            self.rowcount = 2
+        self.conn.log.append(("execute", self.conn.txn, "RECLASSIFY" if sql is pm.RECLASSIFY_STALE_OPEN_SQL else "OTHER"))
+        assert sql is pm.RECLASSIFY_STALE_OPEN_SQL
+        self._rows = self.conn.factory.reclassify_rows
 
     def fetchall(self):
         return self._rows
@@ -159,9 +155,8 @@ class _FakeConn:
 
 
 class _FakeFactory:
-    def __init__(self, reclassify_rows, repair_error=False):
+    def __init__(self, reclassify_rows):
         self.reclassify_rows = reclassify_rows
-        self.repair_error = repair_error
         self.log: list = []
         self.n = 0
 
@@ -170,34 +165,10 @@ class _FakeFactory:
         return _FakeConn(self, self.n)
 
 
-def test_repair_failure_leaves_reclassify_batch_committed() -> None:
-    import pytest
-
+def test_empty_sweep_issues_exactly_one_statement() -> None:
     from services.trade_journey.projection_migration import sql_reclassify_batch_runner
-
-    factory = _FakeFactory([], repair_error=True)
-    # first call moves rows: commit, no repair
-    factory.reclassify_rows = [("no_order", 3)]
-    run = sql_reclassify_batch_runner(factory)
-    assert run(datetime.now(timezone.utc), 3600, 10) == {"no_order": 3}
-    assert ("commit", 1) in factory.log
-    # drained call: repair in a separate txn fails, earlier commit untouched
-    factory.reclassify_rows = []
-    with pytest.raises(RuntimeError):
-        run(datetime.now(timezone.utc), 3600, 10)
-    assert ("commit", 2) in factory.log  # reclassify txn of the 2nd call committed
-    assert ("rollback", 3) in factory.log  # repair ran in its own txn
-    assert [e for e in factory.log if e[0] == "execute" and e[1] == 3] == [("execute", 3, "REPAIR")]
-
-
-def test_repair_not_executed_while_batch_moves_rows() -> None:
-    from services.trade_journey.projection_migration import sql_reclassify_batch_runner
-
-    factory = _FakeFactory([("unreconciled", 5)])
-    out = sql_reclassify_batch_runner(factory)(datetime.now(timezone.utc), 3600, 10)
-    assert out == {"unreconciled": 5}
-    assert not any(e[0] == "execute" and e[2] == "REPAIR" for e in factory.log)
 
     factory = _FakeFactory([])
     out = sql_reclassify_batch_runner(factory)(datetime.now(timezone.utc), 3600, 10)
-    assert out == {"loop_run_repaired": 2}
+    assert out == {}
+    assert factory.log == [("execute", 1, "RECLASSIFY"), ("commit", 1)]

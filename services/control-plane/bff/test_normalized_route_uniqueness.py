@@ -347,7 +347,7 @@ def _instantiate_domain_routers() -> List[Tuple[str, APIRouter]]:
         ("trade_journal", create_trade_journal_router(extract_identity=mock_fn, require_read_role=mock_fn, require_operator_role=mock_fn)),
         ("trade_journeys", create_trade_journeys_router(extract_identity=mock_fn, require_read_role=mock_fn)),
         ("lineage", create_lineage_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn, snapshot_meta=mock_dict, utc_now=mock_str)),
-        ("alpha_factory", create_alpha_factory_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn, utc_now=mock_str)),
+        ("alpha_factory", create_alpha_factory_router(extract_identity=mock_fn, require_read_role=mock_fn, utc_now=mock_str)),
         ("agora", create_agora_router(extract_identity=mock_fn, require_read_role=mock_fn, require_write_role=mock_fn, bff_error=mock_fn, utc_now=mock_str, get_read_store=mock_store, sync_servant_agent=mock_fn)),
     ]
 
