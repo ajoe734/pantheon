@@ -1,0 +1,97 @@
+{
+  "task_id": "STRATEGY-METRICS-TRUTH-20261104",
+  "status": "verified_functional",
+  "summary": "Replaced hardcoded zero strategy metrics (pnl30d, sharpe, drawdown) in project_strategy_dto with real ranking snapshot truth read at most once per request through RankingSnapshotReadPort and matched via strategy_ids gated by telemetry_resolution != 'missing'; prohibited create and PATCH from defaulting or setting pnl30d/sharpe/drawdown; populated capitalPoolId from registry metadata.capital_pool_id when execution_profile/governance/summary lookups are empty.",
+  "drawdown_unit": {
+    "unit": "dimensionless_fraction_0_to_1",
+    "formula": "min(max((peak_portfolio_value - current_portfolio_value) / peak_portfolio_value, 0.0), 1.0)",
+    "owner_code_refs": [
+      "services/execution/lean_runtime/performance_telemetry.py:843 (RollingDrawdownTracker.observe computes peak-to-trough portfolio value decline divided by peak portfolio value clamped to [0.0, 1.0])",
+      "services/execution/lean_runtime/paper_runtime.py:1228 (enforces 0 <= drawdown <= 1)",
+      "services/telemetry/runtime_summary.py:733-765 (projects metrics.drawdown into runtime summary unchanged)",
+      "services/control-plane/bff/personas/service.py:12731-12817 (_pm12_telemetry_metrics_from_records aggregates max(drawdown_values) into ranking item metrics.drawdown)",
+      "services/rankings/store.py:240-275 (RankingSnapshotRecord persists items[].metrics.drawdown unchanged)"
+    ],
+    "example": "For a $100,000 initial peak portfolio with pnl = -5.5 (portfolio_value = 99,994.5), drawdown = (100000 - 99994.5) / 100000 = 0.000055 (0.0055%)."
+  },
+  "acceptance_criteria_verification": {
+    "ac1_no_hardcoded_zero_and_no_create_or_patch_writes": {
+      "code_refs": [
+        "services/control-plane/bff/strategies/routes/common.py:_project_strategy_ranking_metrics",
+        "services/control-plane/bff/strategies/routes/common.py:StrategyRouteContext.project_strategy_dto",
+        "services/control-plane/bff/strategies/service.py:StrategiesService.create_strategy",
+        "services/control-plane/bff/strategies/routes/detail.py:bff_patch_strategy"
+      ],
+      "test_refs": [
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_create_and_patch_strategy_cannot_default_or_set_pnl30d_sharpe_drawdown"
+      ]
+    },
+    "ac2_once_per_request_snapshot_read_and_unchanged_telemetry_projection": {
+      "code_refs": [
+        "services/control-plane/bff/ports/rankings.py:RankingSnapshotReadPort.get_latest_ranking_snapshot",
+        "services/control-plane/bff/core/owner_reads.py:latest_ranking_snapshot",
+        "services/control-plane/bff/ports/read_surface_ports.py:ReadSurfacePorts.get_latest_ranking_snapshot",
+        "services/control-plane/bff/strategies/service.py:StrategiesService.get_latest_ranking_snapshot",
+        "services/control-plane/bff/strategies/routes/collection.py:bff_list_strategies"
+      ],
+      "test_refs": [
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_strategy_list_and_detail_project_real_ranking_snapshot_and_read_once_per_request",
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_ranking_snapshot_read_port_selects_latest_snapshot_by_surface"
+      ]
+    },
+    "ac3_null_pnl30d_sharpe_absolute_pnl_and_drawdown_unit": {
+      "code_refs": [
+        "services/control-plane/bff/strategies/routes/common.py:_project_strategy_ranking_metrics"
+      ],
+      "test_refs": [
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_strategy_list_and_detail_project_real_ranking_snapshot_and_read_once_per_request"
+      ]
+    },
+    "ac4_ambiguous_and_unavailable_resolution": {
+      "code_refs": [
+        "services/control-plane/bff/strategies/routes/common.py:_project_strategy_ranking_metrics",
+        "services/control-plane/bff/strategies/service.py:StrategiesService.get_latest_ranking_snapshot"
+      ],
+      "test_refs": [
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_ambiguous_multi_row_mapping_and_unavailable_ranking_read"
+      ]
+    },
+    "ac5_missing_telemetry_and_real_row_shapes_regression": {
+      "code_refs": [
+        "services/control-plane/bff/strategies/routes/common.py:_project_strategy_ranking_metrics"
+      ],
+      "test_refs": [
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_strategy_list_and_detail_project_real_ranking_snapshot_and_read_once_per_request"
+      ]
+    },
+    "ac6_capital_pool_id_from_registry_metadata": {
+      "code_refs": [
+        "services/control-plane/bff/ports/research_knowledge_source.py:DefaultResearchKnowledgeSourcePort._fetch_canonical_strategy_specs",
+        "services/control-plane/bff/ports/research_knowledge_source.py:DefaultResearchKnowledgeSourcePort._kw05_normalize_version_candidate",
+        "services/control-plane/bff/ports/research_knowledge_source.py:DefaultResearchKnowledgeSourcePort.list_strategy_specs",
+        "services/control-plane/bff/strategies/routes/common.py:StrategyRouteContext.project_strategy_dto"
+      ],
+      "test_refs": [
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_capital_pool_id_populated_from_registry_metadata_capital_pool_id"
+      ]
+    },
+    "ac7_test_integrity_and_justification": {
+      "changed_existing_tests": [
+        {
+          "file": "services/control-plane/bff/tests/test_strategy_ranking_router.py",
+          "justification": "Aligned the in-memory research_knowledge_source._strategy_specs fixture seeding in test_bff_strategy_create_list_get_round_trip (added risk='high' to match the POST payload) and test_bff_strategy_patch_updates_overlay_fields (seeded the created strategy into _strategy_specs before PATCH because get_strategy reads exclusively from research_knowledge_source rather than falling back to strategy_write_owner). No assertion was weakened or deleted."
+        }
+      ]
+    }
+  },
+  "validation_commands": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_ranking_router.py",
+      "result": "16 passed in 8.77s"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "39 passed in 56.16s"
+    }
+  ]
+}

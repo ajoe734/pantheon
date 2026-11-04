@@ -1493,6 +1493,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             extra_val = raw_version.get(extra_key) or strategy_spec.get(extra_key)
             if extra_val:
                 version[extra_key] = str(extra_val)
+        raw_meta = raw_version.get("metadata") if isinstance(raw_version.get("metadata"), dict) else {}
+        spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
+        merged_meta = {**spec_meta, **raw_meta}
+        if merged_meta:
+            version["metadata"] = copy.deepcopy(merged_meta)
+        top_cap_pool_id = (
+            raw_version.get("capital_pool_id")
+            or raw_version.get("capitalPoolId")
+            or strategy_spec.get("capital_pool_id")
+            or strategy_spec.get("capitalPoolId")
+        )
+        if top_cap_pool_id:
+            version["capital_pool_id"] = str(top_cap_pool_id).strip()
         version["allowedActions"] = cls._kw05_allowed_actions(version)
         return version
 
@@ -1719,30 +1732,33 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 candidate_count=candidate_count,
                 include_detail_bundles=False,
             )
-            items.append(
-                {
-                    "object_ref": dict(current_version.get("object_ref") or {}),
-                    "strategy_id": strategy_id,
-                    "current_spec_version_id": current_version.get("spec_version_id"),
-                    "current_spec_version": current_version.get("spec_version"),
-                    "title": current_version.get("title"),
-                    "lifecycle_state": current_lifecycle_state,
-                    "source_kind": current_source_kind,
-                    "hypothesis_excerpt": self._kw05_hypothesis_excerpt(current_version.get("hypothesis")),
-                    "version_count": version_count,
-                    "last_modified_at": current_version.get("last_modified_at"),
-                    "route_href": self._kw05_strategy_route_href(strategy_id),
-                    "persona_ids": persona_list,
-                    "governance": current_version.get("governance"),
-                    "market_scope": current_version.get("market_scope"),
-                    "execution_profile": current_version.get("execution_profile"),
-                    "allowedActions": current_version.get("allowedActions"),
-                    "risk": current_version.get("risk"),
-                    "created_at": current_version.get("created_at"),
-                    "tenant_id": current_version.get("tenant_id"),
-                    "strategy_spec_registry_id": current_version.get("strategy_spec_registry_id"),
-                }
-            )
+            item_dict: Dict[str, Any] = {
+                "object_ref": dict(current_version.get("object_ref") or {}),
+                "strategy_id": strategy_id,
+                "current_spec_version_id": current_version.get("spec_version_id"),
+                "current_spec_version": current_version.get("spec_version"),
+                "title": current_version.get("title"),
+                "lifecycle_state": current_lifecycle_state,
+                "source_kind": current_source_kind,
+                "hypothesis_excerpt": self._kw05_hypothesis_excerpt(current_version.get("hypothesis")),
+                "version_count": version_count,
+                "last_modified_at": current_version.get("last_modified_at"),
+                "route_href": self._kw05_strategy_route_href(strategy_id),
+                "persona_ids": persona_list,
+                "governance": current_version.get("governance"),
+                "market_scope": current_version.get("market_scope"),
+                "execution_profile": current_version.get("execution_profile"),
+                "allowedActions": current_version.get("allowedActions"),
+                "risk": current_version.get("risk"),
+                "created_at": current_version.get("created_at"),
+                "tenant_id": current_version.get("tenant_id"),
+                "strategy_spec_registry_id": current_version.get("strategy_spec_registry_id"),
+            }
+            if current_version.get("capital_pool_id"):
+                item_dict["capital_pool_id"] = current_version.get("capital_pool_id")
+            if current_version.get("metadata"):
+                item_dict["metadata"] = current_version.get("metadata")
+            items.append(item_dict)
 
         items.sort(
             key=lambda item: (
@@ -1787,7 +1803,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
         if not d:
             return None
-        return {
+        spec: Dict[str, Any] = {
             "strategy_id": d.get("strategy_id"), "tenant_id": d.get("tenant_id"),
             "title": d.get("title"), "name": d.get("title"),
             "spec_version_id": d.get("spec_version_id"),
@@ -1795,6 +1811,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "spec_version": d.get("spec_version"), "lifecycle_state": d.get("lifecycle_state"),
             "risk": d.get("risk"), "last_modified_at": d.get("last_modified_at"),
         }
+        if d.get("capital_pool_id"):
+            spec["capital_pool_id"] = d.get("capital_pool_id")
+        if d.get("metadata"):
+            spec["metadata"] = d.get("metadata")
+        return spec
 
     @staticmethod
     def _strategy_owner_error(status: int, code: str, message: str, reason: str) -> Any:
@@ -1882,6 +1903,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             state = entry.get("artifact_state") or inner.get("lifecycle_state") or meta.get("lifecycle_state") or meta.get("state") or meta.get("status") or "draft"
             title = inner.get("title") or meta.get("title") or meta.get("name") or entry_sid
             risk = meta.get("risk") or inner.get("risk") or eval_summary.get("risk_level") or (inner.get("governance") or {}).get("risk_level") or (meta.get("governance") or {}).get("risk_level")
+            merged_meta = {**inner_meta, **meta}
             ver_dict: Dict[str, Any] = {
                 **inner, "strategy_id": entry_sid, "tenant_id": entry_tenant or caller_tenant,
                 "strategy_spec_registry_id": reg_id, "spec_version_id": reg_id,
@@ -1892,6 +1914,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "updated_at": entry.get("updated_at") or entry.get("created_at"),
                 "created_by": prov.get("created_by") or meta.get("requested_by") or (entry.get("last_actor") or {}).get("actor_id"),
             }
+            if merged_meta:
+                ver_dict["metadata"] = merged_meta
             if risk:
                 ver_dict["risk"] = risk
             grouped.setdefault(entry_sid, []).append(ver_dict)
@@ -1900,13 +1924,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         for entry_sid, versions in grouped.items():
             ordered = self._kw05_sort_versions(versions)
             latest = ordered[0]
-            specs.append({
+            spec_entry: Dict[str, Any] = {
                 "strategy_id": entry_sid, "tenant_id": latest.get("tenant_id"),
                 "title": latest.get("title"), "name": latest.get("name"),
                 "lifecycle_state": latest.get("lifecycle_state"), "risk": latest.get("risk"),
                 "current_spec_version_id": latest.get("spec_version_id"),
                 "current_spec_version": latest.get("spec_version"), "versions": ordered,
-            })
+            }
+            if latest.get("metadata"):
+                spec_entry["metadata"] = latest.get("metadata")
+            specs.append(spec_entry)
         return specs
 
     def _resolve_canonical_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:

@@ -144,6 +144,7 @@ class ReadSurfacePorts:
         paper_fleet_reconciler_url: Optional[str] = None,
         paper_fleet_transport: Optional[Any] = None,
         reconciliation_drift_reads: Optional[ReconciliationDriftReadsPort] = None,
+        latest_ranking_snapshot_reader: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
     ) -> None:
         self._active_delegate = None
         self.operations_consultation = operations_consultation or create_operations_consultation_port()
@@ -159,6 +160,7 @@ class ReadSurfacePorts:
         self._paper_fleet_reconciler_url = paper_fleet_reconciler_url
         self._paper_fleet_transport = paper_fleet_transport
         self.reconciliation_drift_reads = reconciliation_drift_reads or ReconciliationDriftReadsPort()
+        self._latest_ranking_snapshot_reader = latest_ranking_snapshot_reader
 
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -180,6 +182,7 @@ class ReadSurfacePorts:
             "_paper_fleet_reconciler_url",
             "_paper_fleet_transport",
             "reconciliation_drift_reads",
+            "_latest_ranking_snapshot_reader",
         ):
             super().__setattr__(name, value)
             return
@@ -209,6 +212,7 @@ class ReadSurfacePorts:
             "_paper_fleet_reconciler_url",
             "_paper_fleet_transport",
             "reconciliation_drift_reads",
+            "_latest_ranking_snapshot_reader",
         ):
             return super().__getattribute__(name)
 
@@ -389,6 +393,15 @@ class ReadSurfacePorts:
 
     def get_ranking(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.persona_capital_runtime.get_ranking(ranking_id)
+
+    def get_latest_ranking_snapshot(self, *, surface: str = "quarterly") -> Optional[Dict[str, Any]]:
+        if self._latest_ranking_snapshot_reader is not None:
+            return self._latest_ranking_snapshot_reader(surface=surface)
+        if hasattr(self.persona_capital_runtime, "get_latest_ranking_snapshot"):
+            return self.persona_capital_runtime.get_latest_ranking_snapshot(surface=surface)
+        from services.control_plane.bff.core.owner_reads import latest_ranking_snapshot
+
+        return latest_ranking_snapshot(None, surface=surface)
 
     def list_ranking_formulas(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_ranking_formulas(**kwargs)
@@ -1481,7 +1494,12 @@ def create_read_surface_ports(
     **kwargs: Any,
 ) -> ReadSurfacePorts:
     """Factory creating a production-grade composite ReadSurfacePorts instance."""
-    from ..core.owner_reads import approval_records, create_owner_domain_ports, telemetry_summaries
+    from ..core.owner_reads import (
+        approval_records,
+        create_owner_domain_ports,
+        latest_ranking_snapshot,
+        telemetry_summaries,
+    )
     if lifecycle_telemetry_governance is None:
         lifecycle_telemetry_governance = create_lifecycle_telemetry_governance_port(
             telemetry_port=DomainTelemetryPort(telemetry_summaries_reader=telemetry_summaries),
@@ -1521,6 +1539,9 @@ def create_read_surface_ports(
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
         reconciliation_drift_reads=reconciliation_drift_reads,
+        latest_ranking_snapshot_reader=lambda surface="quarterly": latest_ranking_snapshot(
+            ranking_store, surface=surface
+        ),
     )
 
 
