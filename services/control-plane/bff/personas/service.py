@@ -5380,9 +5380,24 @@ def _pm12_quarter_evidence_refs(
     return [
         item
         for item in evidence_refs
+        if not _pm12_is_unlinked_source_ingest_row(item)
         for timestamp in [_pm12_evidence_timestamp(item)]
         if timestamp is not None and start_at <= timestamp < end_exclusive_at
     ]
+
+
+def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
+    """Market rows from source-ingest carry real timestamps; with no linked
+    entity they are not quarterly decision evidence and must not enter it."""
+    if not isinstance(item, dict) or item.get("evidence_origin") != "source_ingest":
+        return False
+    summary = item.get("linked_object_summary")
+    if isinstance(summary, dict) and str(summary.get("entity_ref") or "").strip():
+        return False
+    for key in ("linked_decisions", "linked_entities", "related_entities"):
+        if any(isinstance(x, dict) for x in item.get(key) or []):
+            return False
+    return True
 
 
 # --- _pm12_public_quarter_evidence_refs ---
@@ -5391,12 +5406,21 @@ def _pm12_public_quarter_evidence_refs(
     quarter_window: Dict[str, Any],
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, bool]:
     store = _get_active_read_store()
+    read_evidence_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
+    read_ok: Optional[bool] = None
     try:
-        raw_evidence_refs = store.list_evidence_refs() if store is not None else []
+        if callable(read_evidence_fn):
+            _read = read_evidence_fn()
+            raw_evidence_refs = list(_read.items or [])
+            read_ok = bool(_read.available)
+        else:
+            raw_evidence_refs = store.list_evidence_refs() if store is not None else []
     except Exception:
         raw_evidence_refs = []
+        read_ok = False
     evidence_dataset_available = (
         store is not None
+        and read_ok is not False
         and store.dataset_source("evidence_refs") not in ("missing", "unavailable")
     )
     quarter_evidence_refs = (

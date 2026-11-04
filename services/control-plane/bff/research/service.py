@@ -27,6 +27,7 @@ try:
         redact_evidence_refs,
     )
     from services.control_plane.bff.ports.research_knowledge_source import (
+        EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
     )
@@ -37,6 +38,7 @@ except (ImportError, ValueError):
         redact_evidence_refs,
     )
     from ..ports.research_knowledge_source import (  # type: ignore[no-redef]
+        EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
     )
@@ -313,6 +315,23 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
                 include_scope_metadata=include_scope_metadata,
             )
         raise AttributeError("Research port operation 'list_evidence_refs' not implemented")
+
+    def read_evidence_refs(self, **kwargs: Any) -> Any:
+        if self._read_surface is not None and hasattr(self._read_surface, "read_evidence_refs"):
+            return self._read_surface.read_evidence_refs(**kwargs)
+        if self._ks is not None and hasattr(self._ks, "read_evidence_refs"):
+            return self._ks.read_evidence_refs(**kwargs)
+        # Port without per-read availability: infer from the list call itself.
+        items = self.list_evidence_refs()
+        owner = self._ks if self._ks is not None else self._read_surface
+        source_fn = getattr(owner, "dataset_source", None)
+        source = source_fn("evidence_refs") if callable(source_fn) else "missing"
+        return EvidenceReadResult(
+            list(items or []),
+            len(items or []),
+            "unavailable" if source in ("missing", "unavailable") else "ok",
+            source,
+        )
 
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "get_evidence_ref"):
@@ -1871,7 +1890,9 @@ class ResearchRouterService:
         return normalized
 
     def _evidence_list_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        summary = {"summary": item["summary"]} if item.get("summary") else {}
         return {
+            **summary,
             "ref_id": item.get("ref_id"),
             "source_document": json.loads(json.dumps(item.get("source_document") or {})),
             "link_type": item.get("link_type"),
@@ -1982,8 +2003,15 @@ class ResearchRouterService:
                 self._bad_request("Invalid verified", "verified must be a boolean", "verified")
             verified = normalized_verified == "true"
         port = self._port()
+        read_refs = getattr(port, "read_evidence_refs", None)
+        read_available: Optional[bool] = None
         with self._map_port_errors("list_evidence_refs"):
-            records = list(port.list_evidence_refs() or [])
+            if callable(read_refs):
+                read_result = read_refs()
+                records = list(read_result.items or [])
+                read_available = bool(read_result.available)
+            else:
+                records = list(port.list_evidence_refs() or [])
         if val_entity_type:
             records = [item for item in records if str(((item.get("linked_object_summary") or {}).get("entity_type")) or "").lower() == val_entity_type]
         if linked_entity_ref is not None:
@@ -1995,7 +2023,11 @@ class ResearchRouterService:
         if verified is not None:
             records = [item for item in records if bool((item.get("credibility") or {}).get("verified")) is verified]
         port = self._port()
-        available = getattr(port, "dataset_source", lambda _d: "missing")("evidence_refs") != "missing"
+        available = (
+            read_available
+            if read_available is not None
+            else getattr(port, "dataset_source", lambda _d: "missing")("evidence_refs") != "missing"
+        )
         surface_state = self._knowledge_surface_state("evidence_refs", snapshot_at=snap, has_data=available)
         if surface_state == "unavailable":
             page_items, next_token, has_more = [], None, False

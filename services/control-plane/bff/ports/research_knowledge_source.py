@@ -97,6 +97,7 @@ def normalize_source_ingest_evidence_item(item: Mapping[str, Any]) -> Dict[str, 
     body = item.get("body") or None
     return {
         "ref_id": ref_id,
+        "evidence_origin": "source_ingest",
         "evidence_type": item.get("item_type") or None,
         "display_label": label,
         "summary": body,
@@ -968,6 +969,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         }
         if evidence_ref.get("summary"):
             payload["summary"] = evidence_ref["summary"]
+        if evidence_ref.get("evidence_origin"):
+            payload["evidence_origin"] = evidence_ref["evidence_origin"]
         artifact_manifest = evidence_ref.get("artifact_manifest")
         if isinstance(artifact_manifest, dict):
             payload["artifact_manifest"] = json.loads(json.dumps(artifact_manifest))
