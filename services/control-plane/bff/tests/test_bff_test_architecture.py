@@ -1750,7 +1750,7 @@ def test_five_domain_routers_have_no_direct_store_access() -> None:
             src = py_path.read_text(encoding="utf-8")
             v = scan_route_source_for_store_access(src, filename=str(py_path.relative_to(BFF_DIR)), is_service=False)
             violations.extend(v)
-    assert scanned_files == 25, f"Expected 25 route/context files across 5 domains, found {scanned_files}"
+    assert scanned_files == 26, f"Expected 26 route/context files across 5 domains, found {scanned_files}"
 
     service_files = [
         "personas/service.py",

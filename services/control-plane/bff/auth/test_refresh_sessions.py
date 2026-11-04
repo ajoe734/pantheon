@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 
 from services.control_plane.bff.auth.handlers import create_auth_handlers
 from services.control_plane.bff.auth.policy import create_auth_dependencies
-from services.control_plane.bff.auth.refresh_sessions import RefreshRejected, RefreshSessionStore
+from services.control_plane.bff.auth import refresh_sessions
+from services.control_plane.bff.auth.refresh_sessions import REUSE_GRACE_SECONDS, RefreshRejected, RefreshSessionStore
 from services.control_plane.bff.auth.router import create_auth_router
 from services.control_plane.bff.auth.service import AuthFacadeService
 from services.control_plane.bff.core.errors import register_error_handlers
@@ -89,9 +90,11 @@ def test_store_persists_only_hashes_and_rotation_keeps_absolute_expiry(tmp_path)
 
 
 def test_store_reuse_revokes_whole_chain(tmp_path):
-    store = RefreshSessionStore(str(tmp_path / "refresh.json"))
+    clock = Clock()
+    store = RefreshSessionStore(str(tmp_path / "refresh.json"), clock=clock)
     first = store.issue(identity="operator", client_id="c", roles=["operator"], tenant_id="t")
     second = store.rotate(first.token)
+    clock.now += REUSE_GRACE_SECONDS + 1
     with pytest.raises(RefreshRejected) as exc:
         store.rotate(first.token)
     assert exc.value.reason == "reuse_detected"
@@ -99,6 +102,95 @@ def test_store_reuse_revokes_whole_chain(tmp_path):
         store.rotate(second.token)
     with pytest.raises(RefreshRejected):
         store.rotate("pdr1.never-issued")
+
+
+def test_store_previous_credential_within_grace_does_not_rotate_or_revoke(tmp_path):
+    clock = Clock()
+    path = str(tmp_path / "refresh.json")
+    store = RefreshSessionStore(path, clock=clock)
+    first = store.issue(identity="operator", client_id="c", roles=["operator"], tenant_id="t", ttl_seconds=1000)
+    second = store.rotate(first.token)
+    before = open(path).read()
+    clock.now += REUSE_GRACE_SECONDS
+    grace = store.rotate(first.token)
+    assert grace.token is None and grace.expires_at == first.expires_at and grace.chain_id == first.chain_id
+    assert open(path).read() == before
+    assert store.rotate(first.token).token is None
+    third = store.rotate(second.token)
+    assert third.token
+    # Only the immediately previous credential is tolerated.
+    with pytest.raises(RefreshRejected):
+        store.rotate(first.token)
+    with pytest.raises(RefreshRejected):
+        store.rotate(third.token)
+
+
+def test_store_grace_expires_and_older_credentials_revoke(tmp_path):
+    clock = Clock()
+    store = RefreshSessionStore(str(tmp_path / "refresh.json"), clock=clock)
+    first = store.issue(identity="operator", client_id="c", roles=["operator"], tenant_id="t")
+    second = store.rotate(first.token)
+    third = store.rotate(second.token)
+    with pytest.raises(RefreshRejected) as exc:
+        store.rotate(first.token)  # two generations old, inside the time window
+    assert exc.value.reason == "reuse_detected"
+    with pytest.raises(RefreshRejected):
+        store.rotate(third.token)
+
+
+def test_store_grace_keeps_validate_and_expiry_checks(tmp_path):
+    clock = Clock()
+    store = RefreshSessionStore(str(tmp_path / "refresh.json"), clock=clock)
+    first = store.issue(identity="operator", client_id="c", roles=["operator"], tenant_id="t", ttl_seconds=100)
+    store.rotate(first.token)
+
+    def deny(_record):
+        raise RefreshRejected("identity_changed")
+
+    with pytest.raises(RefreshRejected) as exc:
+        store.rotate(first.token, validate=deny)
+    assert exc.value.reason == "identity_changed"
+    clock.now += 100
+    with pytest.raises(RefreshRejected) as exc:
+        store.rotate(first.token)
+    assert exc.value.reason == "expired"
+
+
+def test_store_record_without_previous_hash_still_works(tmp_path):
+    clock = Clock()
+    path = tmp_path / "refresh.json"
+    store = RefreshSessionStore(str(path), clock=clock)
+    first = store.issue(identity="operator", client_id="c", roles=["operator"], tenant_id="t")
+    second = store.rotate(first.token)
+    data = json.loads(path.read_text())
+    for record in data["chains"].values():
+        record.pop("previous_hash", None)  # legacy on-disk shape
+    path.write_text(json.dumps(data))
+    reloaded = RefreshSessionStore(str(path), clock=clock)
+    with pytest.raises(RefreshRejected) as exc:
+        reloaded.rotate(first.token)  # unrecorded predecessor: revoke as before
+    assert exc.value.reason == "reuse_detected"
+    with pytest.raises(RefreshRejected):
+        reloaded.rotate(second.token)
+
+    legacy = RefreshSessionStore(str(tmp_path / "legacy.json"), clock=clock)
+    one = legacy.issue(identity="operator", client_id="c", roles=["operator"], tenant_id="t")
+    data = json.loads((tmp_path / "legacy.json").read_text())
+    for record in data["chains"].values():
+        record.pop("previous_hash", None)
+    (tmp_path / "legacy.json").write_text(json.dumps(data))
+    assert RefreshSessionStore(str(tmp_path / "legacy.json"), clock=clock).rotate(one.token).token
+
+
+def test_store_persists_only_hash_of_previous_credential(tmp_path):
+    path = tmp_path / "refresh.json"
+    store = RefreshSessionStore(str(path))
+    first = store.issue(identity="operator", client_id="c", roles=["operator"], tenant_id="t")
+    second = store.rotate(first.token)
+    text = path.read_text()
+    assert first.token not in text and second.token not in text
+    record = next(iter(json.loads(text)["chains"].values()))
+    assert record["previous_hash"] == refresh_sessions._hash(first.token)
 
 
 def test_store_file_is_json_with_chain_records(tmp_path):
@@ -151,12 +243,77 @@ def test_refresh_with_expired_access_reissues_access_and_rotates(tmp_path):
     assert me.json()["data"]["session"]["refresh_expires_at"] == data["refresh_expires_at"]
 
 
-def test_reused_refresh_credential_revokes_chain(tmp_path):
+def _patch_time(monkeypatch):
+    clock = Clock()
+    clock.now = refresh_sessions.time.time()
+    monkeypatch.setattr(refresh_sessions.time, "time", clock)
+    return clock
+
+
+def _with_cookie(client, token):
+    other = TestClient(client.app, base_url="https://testserver")
+    other.cookies.set("pantheon_refresh_token", token, path="/bff/auth")
+    return other
+
+
+def test_previous_credential_within_grace_reissues_access_only(tmp_path, monkeypatch):
+    clock = _patch_time(monkeypatch)
+    client = _client(tmp_path)
+    login = _login(client)
+    old = client.cookies.get("pantheon_refresh_token", path="/bff/auth")
+    assert client.post("/bff/auth/refresh", json={}, headers=HEADERS).status_code == 200
+    newer = client.cookies.get("pantheon_refresh_token", path="/bff/auth")
+    clock.now += 59
+
+    tab = _with_cookie(client, old)
+    response = tab.post("/bff/auth/refresh", json={}, headers=HEADERS)
+    assert response.status_code == 200, response.text
+    cookies = response.headers.get_list("set-cookie")
+    assert any(c.startswith("pantheon_session=") for c in cookies)
+    assert not any(c.startswith("pantheon_refresh_token=") for c in cookies)
+    body = response.json()
+    assert body["meta"]["auth"]["rotated"] is False
+    assert body["data"]["expires_at"] and body["data"]["refresh_expires_at"] == login.json()["refresh_expires_at"]
+    assert _with_cookie(client, newer).post("/bff/auth/refresh", json={}, headers=HEADERS).status_code == 200
+
+
+def test_two_tabs_with_same_credential_both_succeed(tmp_path, monkeypatch):
+    _patch_time(monkeypatch)
+    client = _client(tmp_path)
+    _login(client)
+    shared = client.cookies.get("pantheon_refresh_token", path="/bff/auth")
+    first = _with_cookie(client, shared).post("/bff/auth/refresh", json={}, headers=HEADERS)
+    second = _with_cookie(client, shared).post("/bff/auth/refresh", json={}, headers=HEADERS)
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.json()["meta"]["auth"]["rotated"] is True and second.json()["meta"]["auth"]["rotated"] is False
+    rotated = next(c for c in first.headers.get_list("set-cookie") if c.startswith("pantheon_refresh_token="))
+    token = rotated.split(";", 1)[0].split("=", 1)[1]
+    assert _with_cookie(client, token).post("/bff/auth/refresh", json={}, headers=HEADERS).status_code == 200
+
+
+def test_grace_path_keeps_identity_check_and_logout(tmp_path, monkeypatch):
+    _patch_time(monkeypatch)
+    client = _client(tmp_path)
+    _login(client)
+    old = client.cookies.get("pantheon_refresh_token", path="/bff/auth")
+    assert client.post("/bff/auth/refresh", json={}, headers=HEADERS).status_code == 200
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-other")
+    assert _with_cookie(client, old).post("/bff/auth/refresh", json={}, headers=HEADERS).status_code == 401
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    # identity failure does not revoke; logout then does.
+    assert _with_cookie(client, old).post("/bff/auth/refresh", json={}, headers=HEADERS).status_code == 200
+    assert client.post("/bff/logout", json={}, headers=HEADERS).status_code == 200
+    assert _with_cookie(client, old).post("/bff/auth/refresh", json={}, headers=HEADERS).status_code == 401
+
+
+def test_reused_refresh_credential_revokes_chain(tmp_path, monkeypatch):
+    clock = _patch_time(monkeypatch)
     client = _client(tmp_path)
     _login(client)
     old = client.cookies.get("pantheon_refresh_token", path="/bff/auth")
     assert client.post("/bff/auth/refresh", json={}, headers=HEADERS).status_code == 200
     newer = client.cookies.get("pantheon_refresh_token", path="/bff/auth")
+    clock.now += 61
 
     attacker = TestClient(client.app, base_url="https://testserver")
     attacker.cookies.set("pantheon_refresh_token", old, path="/bff/auth")

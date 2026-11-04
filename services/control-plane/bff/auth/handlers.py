@@ -538,10 +538,11 @@ def _refresh_with_cookie(token: str, *, response: Any, refresh_store: Optional[R
     result["data"]["auth"] = {"refresh_credential": descriptor, "refreshCredential": descriptor}
     result["data"]["expires_at"] = issued["expires_at"]
     result["data"]["refresh_expires_at"] = iso_utc(grant.expires_at)
-    result["meta"]["auth"] = {"refreshCredentialSource": "refresh_cookie", "sessionKind": "cookie", "rotated": True}
+    result["meta"]["auth"] = {"refreshCredentialSource": "refresh_cookie", "sessionKind": "cookie", "rotated": grant.token is not None}
     if response is not None:
         set_access_cookie(response, issued["access_token"], issued["expires_in"])
-        set_refresh_cookie(response, grant.token, grant.expires_at)
+        if grant.token is not None:
+            set_refresh_cookie(response, grant.token, grant.expires_at)
     return result
 
 

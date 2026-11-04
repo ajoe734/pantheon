@@ -1,0 +1,14 @@
+{
+  "task": "BFF-REFRESH-REUSE-GRACE-20261104",
+  "date": "2026-11-04",
+  "change": "rotate() records previous_hash; presenting it within REUSE_GRACE_SECONDS=60 of rotation returns a grant with token=None (no rotation, no refresh cookie, access cookie reissued, meta.auth.rotated=false). Older or later reuse still revokes the chain.",
+  "tests": {
+    "command": "pytest services/control-plane/bff/auth services/control-plane/bff/tests/test_bff_auth_refresh.py",
+    "result": "60 passed"
+  },
+  "residual_risks": [
+    "A refresh response lost in transit and retried after more than 60 seconds still revokes the chain.",
+    "A stolen credential replayed inside the 60 s window after rotation is not detected (accepted by operator)."
+  ],
+  "hosted_verification": "Done by coordinator after deploy by reading chain states."
+}
