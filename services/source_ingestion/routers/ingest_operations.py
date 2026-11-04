@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any, Literal, Sequence
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from services.runtime_auth_inbound import AuthError, AuthContext, validate_request_auth
 
@@ -119,6 +119,10 @@ def _guard_job_mutation(
                 status_code=403,
                 detail={"code": "TENANT_SCOPE_DENIED", "message": "Cannot mutate connector owned by another tenant"},
             )
+
+
+_EVIDENCE_PAGE_DEFAULT = 200
+_EVIDENCE_PAGE_MAX = 500
 
 
 def _owned_evidence_read(repository: Any, method: str, tenant: str, record_id: str | None = None, not_found_msg: str | None = None):
@@ -376,8 +380,28 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
         return {"source_record": source.to_dict()}
 
     @router.get("/api/source-ingest/evidence/items")
-    def list_evidence_items(authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
-        return {"items": [r.to_dict() for r in _owned_evidence_read(runtime.evidence_repository, "list_evidence_items", _source_read_tenant(authorization, tenant_id))]}
+    def list_evidence_items(
+        page_size: int = Query(default=_EVIDENCE_PAGE_DEFAULT, ge=1, le=_EVIDENCE_PAGE_MAX),
+        page_token: str | None = Query(default=None),
+        authorization: str | None = Header(default=None),
+        tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        try:
+            offset = max(int(page_token), 0) if page_token else 0
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid page_token") from None
+        tenant = _source_read_tenant(authorization, tenant_id)
+        try:
+            items, total = runtime.evidence_repository.list_evidence_items_page(tenant_id=tenant, limit=page_size, offset=offset)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Source evidence owner unavailable") from exc
+        next_offset = offset + page_size
+        return {
+            "items": [r.to_dict() for r in items],
+            "total": total,
+            "page_size": page_size,
+            "next_page_token": str(next_offset) if next_offset < total else None,
+        }
 
     @router.get("/api/source-ingest/evidence/items/{evidence_item_id}")
     def get_evidence_item(evidence_item_id: str, authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:

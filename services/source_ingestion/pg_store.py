@@ -23,7 +23,7 @@ from services.knowledge.evidence import (
     KnowledgeObject,
 )
 from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped
-from services.knowledge.evidence.models import EvidenceValidationError
+from services.knowledge.evidence.models import EVIDENCE_LIST_OMITTED_METADATA_KEYS, EvidenceValidationError
 from services.source_ingestion.connectors.base import SourceRecord
 
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -374,6 +374,37 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     def list_evidence_items(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[EvidenceItem]:
         return self._read_many("evidence_item", tenant_id)
+
+    def list_evidence_items_page(
+        self,
+        tenant_id: str | None | _Unscoped = _UNSCOPED,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> tuple[List[EvidenceItem], int]:
+        if getattr(self, "_replaying", False):
+            return super().list_evidence_items_page(tenant_id=tenant_id, limit=limit, offset=offset)
+        if tenant_id is not _UNSCOPED:
+            where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
+            scope_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
+        else:
+            where, scope_params = "TRUE", ()
+        # The heavy metadata keys are dropped in SQL so they never leave the DB.
+        stripped = "payload" + "".join(f" #- '{{metadata,{k}}}'" for k in EVIDENCE_LIST_OMITTED_METADATA_KEYS)
+        base = f"FROM {self.table} WHERE record_type = %s AND {where}"
+        try:
+            with self._get_connection() as conn:
+                count_row = conn.execute(f"SELECT COUNT(*) {base}", ("evidence_item", *scope_params)).fetchone()
+        except Exception as exc:
+            raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
+        total = int((count_row[0] if isinstance(count_row, tuple) else list(count_row.values())[0]) if count_row else 0)
+        items = self._fetch_records(
+            f"SELECT {stripped} {base} ORDER BY append_id DESC LIMIT %s OFFSET %s",
+            ("evidence_item", *scope_params, int(limit), int(offset)),
+            "evidence_item",
+            tenant_id=tenant_id,
+        )
+        return items, total
 
     def get_bundle(self, evidence_bundle_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceBundle | None:
         if getattr(self, "_replaying", False):
