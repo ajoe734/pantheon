@@ -5625,9 +5625,8 @@ class ManagementService:
         )
 
         unavailable = evidence_surface.get("status") == "unavailable" and not evidence_refs
-        total: Optional[int] = len(evidence_refs)
+        total: int = len(evidence_refs)
         if unavailable:
-            total = None
             page_items: List[Dict[str, Any]] = []
             next_page_token = None
         elif owner_page_served:

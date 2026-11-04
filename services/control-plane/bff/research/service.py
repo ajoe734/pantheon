@@ -1889,6 +1889,31 @@ class ResearchRouterService:
             self._bad_request(f"Invalid {field}", f"{field} must be one of {sorted(allowed)}", field)
         return normalized
 
+    def _redact_evidence_items(
+        self, identity: Any, items: List[Dict[str, Any]], *, capabilities: Any = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Capability-redact evidence. Source-ingest market rows carry no
+        capability-bearing evidence_type, so (like /bff/management/evidence)
+        they are gated as ``artifact``; every other ref keeps the strict,
+        unresolved-kind-withheld policy."""
+        caps = capabilities if capabilities is not None else self._get_capabilities_for(identity)
+        out: List[Optional[Dict[str, Any]]] = [None] * len(items)
+        redacted_total = 0
+        for default_kind, wanted in (("artifact", True), (None, False)):
+            idx = [
+                n for n, it in enumerate(items)
+                if (isinstance(it, dict) and it.get("evidence_origin") == "source_ingest") is wanted
+            ]
+            if not idx:
+                continue
+            processed, count = redact_evidence_refs(
+                identity, [items[n] for n in idx], capabilities=caps, default_kind=default_kind
+            )
+            redacted_total += count
+            for n, value in zip(idx, processed):
+                out[n] = value
+        return [o for o in out], redacted_total
+
     def _evidence_list_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         summary = {"summary": item["summary"]} if item.get("summary") else {}
         return {
@@ -1914,11 +1939,7 @@ class ResearchRouterService:
         capabilities = self._get_capabilities_for(identity)
         self_ref = json.loads(json.dumps(evidence_ref))
         self_ref["ref_id"] = ref_id
-        [processed_self], _ = redact_evidence_refs(
-            identity,
-            [self_ref],
-            capabilities=capabilities,
-        )
+        [processed_self], _ = self._redact_evidence_items(identity, [self_ref], capabilities=capabilities)
         if isinstance(processed_self, dict) and processed_self.get("redacted"):
             return {
                 **processed_self,
@@ -1956,6 +1977,7 @@ class ResearchRouterService:
             for original, processed in zip(raw_linked_decisions, processed_decisions)
         ]
         return {
+            **({"summary": evidence_ref["summary"]} if evidence_ref.get("summary") else {}),
             "ref_id": evidence_ref.get("ref_id"),
             "source_document": json.loads(json.dumps(evidence_ref.get("source_document") or {})),
             "link_type": evidence_ref.get("link_type"),
@@ -2034,9 +2056,7 @@ class ResearchRouterService:
         else:
             page_items, next_token = self.page_slice(records, page_token, page_size)
             has_more = next_token is not None
-        processed, redacted_count = redact_evidence_refs(
-            identity, page_items, capabilities=self._get_capabilities_for(identity)
-        )
+        processed, redacted_count = self._redact_evidence_items(identity, page_items)
         response_items = [
             item if isinstance(item, dict) and item.get("redacted") else self._evidence_list_item(item)
             for item in processed

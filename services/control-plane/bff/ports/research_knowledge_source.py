@@ -1066,6 +1066,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         }
         if projected.get("summary"):
             detail["summary"] = projected["summary"]
+        if projected.get("evidence_origin"):
+            detail["evidence_origin"] = projected["evidence_origin"]
         return detail
 
     def _iter_owner_evidence_pages(self, *, start: int = 0, page_size: int = EVIDENCE_OWNER_PAGE_SIZE):
@@ -1162,6 +1164,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             self._project_evidence_ref_list_item(ref, include_scope_metadata=include_scope_metadata)
             for ref in window
         ]
+        if source == "missing":
+            # Nothing configured to read from: unknown, not an empty "ok".
+            return EvidenceReadResult([], None, "unavailable", "missing")
         return EvidenceReadResult(rows, total, "ok", source, nxt_token)
 
     def _collect_raw_evidence_refs(self) -> Tuple[List[Dict[str, Any]], str]:
@@ -1216,8 +1221,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             avail, payload = self._http_get(
                 self._source_ingest_service_url, f"/api/source-ingest/evidence/items/{quote(clean, safe='')}"
             )
-            if avail and isinstance(payload, dict):
-                return normalize_source_ingest_evidence_item(payload)
+            record = payload.get("item") if avail and isinstance(payload, dict) else None
+            if isinstance(record, dict):
+                return normalize_source_ingest_evidence_item(record)
         return None
 
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:

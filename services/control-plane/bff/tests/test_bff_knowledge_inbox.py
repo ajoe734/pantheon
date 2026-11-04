@@ -118,15 +118,15 @@ def test_bff_knowledge_inbox_returns_canonical_list_envelope() -> None:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["data"] == body["items"]
-        assert body["page_info"]["total"] == 5
+        # EVIDENCE-OWNER-LIST-BOUNDED-20261104: the inbox composes research
+        # notes, insights and memory only (was 5 with evidence + strategy specs).
+        assert body["page_info"]["total"] == 3
         assert body["page_info"]["page_size"] == 20
-        assert body["page_info"]["returned"] == 5
+        assert body["page_info"]["returned"] == 3
         assert body["page_info"]["next_page_token"] is None
         assert {item["inboxType"] for item in body["items"]} == {
             "research_note",
-            "evidence_ref",
             "insight",
-            "strategy_spec",
             "memory_entry",
         }
         assert body["meta"]["surfaces"]["knowledge_inbox"] == {
@@ -135,7 +135,33 @@ def test_bff_knowledge_inbox_returns_canonical_list_envelope() -> None:
         }
         assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["source"] == "service_store"
         assert body["meta"]["composition"]["itemCounts"]["research_note"] == 1
-        assert "GET /api/v1/knowledge/evidence" in body["meta"]["composition_sources"]
+        assert "GET /api/v1/knowledge/evidence" not in body["meta"]["composition_sources"]
+        assert "GET /api/v1/knowledge/strategy-specs" not in body["meta"]["composition_sources"]
+        assert body["meta"]["composition"]["datasets"] == [
+            "research_notes",
+            "insight_cards",
+            "institutional_memory_entries",
+        ]
+        assert "knowledge_inbox_evidence" not in body["meta"]["surfaces"]
+        assert "knowledge_inbox_strategy_specs" not in body["meta"]["surfaces"]
+
+
+def test_bff_knowledge_inbox_never_calls_evidence_or_registry_owners() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = _knowledge_store(td)
+
+        def _forbidden(*_a: Any, **_k: Any) -> Any:
+            raise AssertionError("inbox must not call the source-ingest or registry owner")
+
+        store.list_evidence_refs = _forbidden
+        store.read_evidence_refs = _forbidden
+        store.list_strategy_specs = _forbidden
+        client = TestClient(_create_app(lambda: store))
+
+        response = client.get("/bff/knowledge", headers=OPERATOR_HEADERS)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["page_info"]["total"] == 3
 
 
 def test_bff_knowledge_inbox_empty_store_returns_degraded_envelope() -> None:
