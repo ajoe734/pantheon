@@ -1,0 +1,19 @@
+{
+ "task": "INTEGRATION-UNBLOCK-PERSONA-PROVISIONING-TERMINAL-IDEMPOTENT-20261103-CI-RED-72EF0E2A1BAB",
+ "blocked_pr": 6931,
+ "failed_check": "Persona provisioning owner contracts",
+ "root_cause": "Job timeout-minutes was 15; typical wall time 14.3-14.8 min sits at the limit, and run 41705032890 was cancelled at 15.2 min after its tests had passed. Not a test failure.",
+ "fix": ".github/workflows/persona-owner-contract.yml timeout-minutes 15 -> 30",
+ "superseding_branch": "task/INTEGRATION-UNBLOCK-PERSONA-PROVISIONING-TERMINAL-IDEMPOTENT-20261103-CI-RED-72EF0E2A1BAB",
+ "blocked_pr_status": "merged to dev (8015bd2d8) after rerun; code changes already on dev, not carried here",
+ "scope": "only timeout-minutes 15 -> 30 for the 'Persona provisioning owner contracts' job; no test selection or other job settings changed",
+ "duration_data": {
+  "source": "last 20 runs of persona-owner-contract.yml",
+  "typical_wall_time_min": "14.3-14.8 (many runs)",
+  "cancelled_run": {
+   "id": 41705032890,
+   "cancelled_at_min": 15.2,
+   "tests": "passed"
+  }
+ }
+}
