@@ -8,16 +8,16 @@ import pytest
 from starlette.exceptions import HTTPException
 
 from services.control_plane.bff.auth import policy as auth_policy
-from services.control_plane.bff.command_adapters import evolution_adapter as adapter_mod
-from services.control_plane.bff.command_adapters.evolution_adapter import EvolutionCommandAdapter
 from services.control_plane.bff.command_executor import (
     _actor_context,
     _execute_approve_evolution_decision,
     _execute_approve_mutation,
+    _execute_execute_mutation,
+    _execute_reject_mutation,
+    _execute_review_mutation,
 )
 
-EXEC = "services.control_plane.bff.command_executor._post_json"
-ADAPTER_HTTP = "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json"
+EXEC = "services.control_plane.bff.command_executor._post_evolution_owner"
 
 
 @pytest.fixture(autouse=True)
@@ -77,14 +77,15 @@ def test_test_admin_reviews_and_approves_low_paper_retrain_as_reviewer_on_duty()
     assert "reviewer_on_duty" in roles
     token = "admin-test:" + ",".join(sorted(roles))
     for verb in ("review", "approve"):
-        with patch(ADAPTER_HTTP, return_value={"decision_state": verb}) as http:
-            EvolutionCommandAdapter().execute(
+        fn = _execute_review_mutation if verb == "review" else _execute_approve_mutation
+        with patch(EXEC, return_value={"decision_state": verb}) as http:
+            fn(
                 "cmd-2",
-                "ReviewMutation" if verb == "review" else "ApproveMutation",
-                {"evolution_decision_id": "evo-low", "actor_role": "reviewer_on_duty"},
+                {"evolution_decision_id": "evo-low", "actor_role": "reviewer_on_duty",
+                 "approval_decision_id": "apv-low"},
                 auth_token=token,
             )
-        payload = http.call_args.kwargs["payload"]
+        payload = http.call_args[0][1]
         assert payload["actor_id"] == "admin-test"
         assert payload["actor_role"] == "reviewer_on_duty"
         # governance review/approval OWNER_MATRIX[LOW] == {reviewer_on_duty, automated_gate}
@@ -99,20 +100,27 @@ def test_test_admin_reviews_and_approves_low_paper_retrain_as_reviewer_on_duty()
         ("ExecuteMutation", {"actor_id": "other"}),
     ],
 )
-def test_adapter_rejects_unheld_role_or_foreign_actor(command, params):
-    with patch(ADAPTER_HTTP) as http:
+def test_executor_rejects_unheld_role_or_foreign_actor(command, params):
+    fn = {
+        "ApproveMutation": _execute_approve_mutation,
+        "ReviewMutation": _execute_review_mutation,
+        "RejectMutation": _execute_reject_mutation,
+        "ExecuteMutation": _execute_execute_mutation,
+    }[command]
+    with patch(EXEC) as http:
         with pytest.raises(HTTPException) as exc:
-            EvolutionCommandAdapter().execute(
-                "cmd-3", command, {"evolution_decision_id": "evo-1", **params}, auth_token="alice:approver",
+            fn(
+                "cmd-3", {"evolution_decision_id": "evo-1", "approval_decision_id": "apv", **params},
+                auth_token="alice:approver",
             )
         assert exc.value.status_code == 403
         http.assert_not_called()
 
 
-def test_adapter_without_principal_sends_nothing():
-    with patch(ADAPTER_HTTP) as http:
+def test_executor_without_principal_sends_nothing():
+    with patch(EXEC) as http:
         with pytest.raises(HTTPException) as exc:
-            EvolutionCommandAdapter().execute("c", "ApproveMutation", {"evolution_decision_id": "e"})
+            _execute_approve_mutation("c", {"evolution_decision_id": "e"})
         assert exc.value.status_code == 403
         http.assert_not_called()
 

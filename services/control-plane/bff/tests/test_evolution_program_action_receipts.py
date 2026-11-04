@@ -127,7 +127,7 @@ def test_adapter_dispatches_all_canonical_actions(action_id: str) -> None:
 
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000"}):
         with patch(
-            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             return_value=expected_backend_receipt,
         ) as mock_http:
             receipt = adapter.execute(
@@ -190,7 +190,7 @@ def test_adapter_handles_idempotent_replay() -> None:
 
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000"}):
         with patch(
-            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             return_value=replayed_receipt,
         ):
             receipt = adapter.execute(
@@ -218,7 +218,7 @@ def test_adapter_propagates_idempotency_and_tenant_headers() -> None:
         "EVOLUTION_DEFAULT_TENANT_ID": "tenant-env-default",
     }):
         with patch(
-            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             return_value={"receipt_id": "rcpt-hdr", "program_id": program_id, "status": "active"},
         ) as mock_http:
             adapter.execute(
@@ -239,7 +239,7 @@ def test_adapter_propagates_idempotency_and_tenant_headers() -> None:
             assert headers.get("Idempotency-Key") == "unique-idemp-12345"
             assert headers.get("X-Idempotency-Key") == "unique-idemp-12345"
             assert headers.get("X-Tenant-Id") == "tenant-custom-xyz"
-            assert kwargs.get("auth_token") == _tenant_token("tenant-custom-xyz")
+            assert kwargs.get("caller_token") == _tenant_token("tenant-custom-xyz")
 
 
 def test_adapter_propagates_409_conflict() -> None:
@@ -257,7 +257,7 @@ def test_adapter_propagates_409_conflict() -> None:
 
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000"}):
         with patch(
-            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             side_effect=http_err,
         ):
             with pytest.raises(ActionUnavailableError) as exc_info:
@@ -277,7 +277,7 @@ def test_adapter_propagates_503_on_connection_failure() -> None:
 
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000"}):
         with patch(
-            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             side_effect=urllib.error.URLError("Connection refused"),
         ):
             with pytest.raises(ActionUnavailableError) as exc_info:
@@ -367,7 +367,7 @@ def test_router_allows_approver_role_for_approver_actions(action_id: str) -> Non
 
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000"}):
         with patch(
-            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             return_value=backend_receipt,
         ):
             resp = client.post(f"/bff/evolution-programs/evp-role-2/actions/{action_id}", json={})
@@ -397,7 +397,7 @@ def test_router_allows_operator_for_non_approver_actions() -> None:
 
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000"}):
         with patch(
-            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             return_value=backend_receipt,
         ):
             resp = client.post(
@@ -471,7 +471,7 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
 
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://evolution-backend"}):
         with patch(
-            "services.control_plane.bff.command_adapters.evolution_adapter.http_request_json",
+            "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             side_effect=dispatch_to_backend,
         ):
             # Test 1: promote_candidate_paper through adapter to real router (flat fields parsed cleanly)

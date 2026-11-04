@@ -1442,6 +1442,24 @@ class CommandAdapterService:
                         _execute_command_background_task, self._process_command_task, str(duplicate["command_id"])
                     )
                 duplicate_status = CommandStatus.SUBMITTED
+            if duplicate_status in {CommandStatus.FAILED, CommandStatus.TIMEOUT}:
+                # Replay of a command that already reached a terminal failure: return the
+                # original command and its recorded failure, not a projection error.
+                recorded_error = duplicate.get("error") if isinstance(duplicate.get("error"), dict) else {}
+                raise self._raise_error(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    "Command already failed for this Idempotency-Key",
+                    str(recorded_error.get("message") or "Command failed"),
+                    precondition_failed="idempotent_replay_of_failed_command",
+                    suggestion="Submit a new command with a new Idempotency-Key to retry.",
+                    details_extra={
+                        "command_id": str(duplicate["command_id"]),
+                        "status": duplicate_status.value,
+                        "failure": recorded_error,
+                        "replayed": True,
+                    },
+                )
             return project_final_command_response(
                 command_id=duplicate["command_id"],
                 command=cmd.command,

@@ -207,7 +207,7 @@ class TestEvolutionDecisionExecutor(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    @patch("services.control_plane.bff.command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
     def test_approve_evolution_decision_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-001",
@@ -233,7 +233,6 @@ class TestEvolutionDecisionExecutor(unittest.TestCase):
                 "note": "Looks good",
             },
             auth_token=auth_token,
-            mfa_token=None,
         )
 
 
@@ -243,7 +242,7 @@ class TestEvolutionActionExecutor(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    @patch("services.control_plane.bff.command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
     def test_execute_evolution_action_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-002",
@@ -285,10 +284,9 @@ class TestEvolutionActionExecutor(unittest.TestCase):
                 "note": "Execute approved evolution action",
             },
             auth_token=auth_token,
-            mfa_token=None,
         )
 
-    @patch("services.control_plane.bff.command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
     def test_execute_revalidate_action_preserves_research_dispatch_result(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-reval-002",
@@ -323,7 +321,6 @@ class TestEvolutionActionExecutor(unittest.TestCase):
                 "note": "Execute approved revalidation",
             },
             auth_token=auth_token,
-            mfa_token=None,
         )
 
 
@@ -333,7 +330,7 @@ class TestMutationReviewExecutors(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    @patch("services.control_plane.bff.command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
     def test_approve_mutation_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-dec-88f3a2c1",
@@ -362,10 +359,9 @@ class TestMutationReviewExecutors(unittest.TestCase):
                 "note": "Ready for final approval",
             },
             auth_token=auth_token,
-            mfa_token=None,
         )
 
-    @patch("services.control_plane.bff.command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
     def test_reject_mutation_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-dec-88f3a2c1",
@@ -394,10 +390,9 @@ class TestMutationReviewExecutors(unittest.TestCase):
                 "note": "Risk evidence still incomplete",
             },
             auth_token=auth_token,
-            mfa_token=None,
         )
 
-    @patch("services.control_plane.bff.command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
     def test_review_mutation_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-dec-88f3a2c1",
@@ -429,7 +424,6 @@ class TestMutationReviewExecutors(unittest.TestCase):
                 "note": "Slippage drift confirmed",
             },
             auth_token=auth_token,
-            mfa_token=None,
         )
 
     def test_review_mutation_requires_approval_decision_id(self):
@@ -440,7 +434,7 @@ class TestMutationReviewExecutors(unittest.TestCase):
                 auth_token="op-reviewer:reviewer",
             )
 
-    @patch("services.control_plane.bff.command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
     def test_execute_mutation_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-dec-88f3a2c1",
@@ -477,7 +471,6 @@ class TestMutationReviewExecutors(unittest.TestCase):
                 "note": "Executing approved freeze",
             },
             auth_token=auth_token,
-            mfa_token=None,
         )
 
 
