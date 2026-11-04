@@ -1,0 +1,98 @@
+{
+  "task_id": "ALPHA-FACTORY-REPLICATION-READ-20261104",
+  "title": "Alpha 工廠 API 沒有資料來源：改讀真實的重現 admission 與 queue 紀錄",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "base_branch": "dev",
+  "branch": "task/ALPHA-FACTORY-REPLICATION-READ-20261104",
+  "recorded_at": "2026-11-04T03:00:00Z",
+  "summary": "Replaced dead alpha_factory_cards read-store reader with an authoritative HTTP read from GET /bff/alpha-factory to GET /api/research-orchestrator/alpha-replication/entries joining ReplicationAdmissionStore.list_admissions and AlphaReplicationQueue.list_all on (tenant_id, strategy_spec_id) for the verified caller tenant.",
+  "acceptance_criteria_verification": [
+    {
+      "criterion": "1. New owner route GET /api/research-orchestrator/alpha-replication/entries joins ReplicationAdmissionStore.list_admissions with AlphaReplicationQueue.list_all on (tenant_id, strategy_spec_id) and returns every admission of the authenticated tenant.",
+      "status": "verified",
+      "files": [
+        "services/research/main.py",
+        "services/research/alpha_replication/admission.py",
+        "services/research/alpha_replication/queue.py",
+        "services/research/alpha_replication/test_replication_entries_read.py"
+      ]
+    },
+    {
+      "criterion": "2. GET /bff/alpha-factory builds its cards from that owner route over HTTP with the verified caller auth and tenant; follows _default_http_get and PANTHEON_RESEARCH_ORCHESTRATOR_API_URL from job_read.py without adding a new client class or reading orchestrator data dir or strategy registry.",
+      "status": "verified",
+      "files": [
+        "services/control-plane/bff/console_gap/alpha_factory.py",
+        "services/control-plane/bff/core/app_factory.py"
+      ]
+    },
+    {
+      "criterion": "3. Each card carries strategy_id, strategy_spec_id, admission status, queue status, attempt_count, experiment_task_id, experiment_run_ids, authority_task_id, last_revalidation_at, approver, and approved_at exactly as recorded by the owner; no metric, Sharpe, or risk value is invented and missing values stay null.",
+      "status": "verified",
+      "files": [
+        "services/control-plane/bff/console_gap/alpha_factory.py",
+        "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py"
+      ]
+    },
+    {
+      "criterion": "4. Lanes are discovered, scaffolded, and replicated: completed queue entries are replicated; non-completed or unqueued admissions are scaffolded; discovered is empty with reason 'no_candidate_source'.",
+      "status": "verified",
+      "files": [
+        "services/control-plane/bff/console_gap/alpha_factory.py",
+        "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py"
+      ]
+    },
+    {
+      "criterion": "5. Owner read failure or unconfigured orchestrator URL returns meta.surfaces.alpha_factory with status 'unavailable' and no items; healthy owner with no records returns status 'ok' with empty lanes; separate tests cover both.",
+      "status": "verified",
+      "files": [
+        "services/control-plane/bff/console_gap/alpha_factory.py",
+        "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py"
+      ]
+    },
+    {
+      "criterion": "6. Caller sees only records of its verified tenant; two-tenant test proves the other tenant is absent from both the owner route and the BFF route.",
+      "status": "verified",
+      "files": [
+        "services/research/alpha_replication/test_replication_entries_read.py",
+        "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py"
+      ]
+    },
+    {
+      "criterion": "7. Dead alpha_factory_cards dataset and list_alpha_factory_cards readers removed from WorkflowHookCatalogReaderPort, DomainWorkflowCatalogPort, CompositeOperationsConsultationPort, InMemoryOperationsConsultationPort, and ReadSurfacePorts; tests and inventories updated.",
+      "status": "verified",
+      "files": [
+        "services/control-plane/bff/ports/operations_consultation.py",
+        "services/control-plane/bff/ports/read_surface_ports.py",
+        "services/control-plane/bff/tests/test_operations_consultation_ports.py",
+        "services/control-plane/bff/tests/test_read_surface_port_cutover.py",
+        "services/control-plane/bff/tests/read_store_migration_inventory.json"
+      ]
+    },
+    {
+      "criterion": "8. BFF route is a sync def so the owner HTTP call cannot block the event loop and test_event_loop_owner_reads_guard.py stays green.",
+      "status": "verified",
+      "files": [
+        "services/control-plane/bff/console_gap/alpha_factory.py",
+        "services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py"
+      ]
+    },
+    {
+      "criterion": "9. Tests use the real hosted admission and queue record shapes including a tw-official strategy_spec_id containing colons in the join key (reg-strategy-spec-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-da7cb8297afb).",
+      "status": "verified",
+      "files": [
+        "services/research/alpha_replication/test_replication_entries_read.py",
+        "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py"
+      ]
+    },
+    {
+      "criterion": "10. Targeted pytest suites pass.",
+      "status": "verified",
+      "test_results": {
+        "alpha_replication_and_bff_alpha_factory": "77 passed in 37.82s",
+        "event_loop_owner_reads_guard_and_bff_test_architecture": "43 passed in 83.21s",
+        "operations_consultation_and_read_surface_cutover_and_route_uniqueness": "77 passed (1 pre-existing unrelated failure on dev in test_architecture_boundaries.py::test_mutation_route_ownership_mapping_contract from commit a03438afe for POST /bff/personas/{param}/provisioning/paper-capital*)"
+      }
+    }
+  ]
+}

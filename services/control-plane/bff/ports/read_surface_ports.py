@@ -278,9 +278,6 @@ class ReadSurfacePorts:
     def list_route_policies(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.operations_consultation.list_route_policies(**kwargs)
 
-    def list_alpha_factory_cards(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.operations_consultation.list_alpha_factory_cards(**kwargs)
-
     def list_skills(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.operations_consultation.list_skills(**kwargs)
 
@@ -478,7 +475,6 @@ class ReadSurfacePorts:
             "hook_registry",
             "governance_permissions",
             "memory_governance_rules",
-            "alpha_factory_cards",
             "skills",
             "tools",
             "mcp_servers",

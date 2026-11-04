@@ -356,14 +356,6 @@ class WorkflowHookCatalogReaderPort(Protocol):
 
     def list_route_policies(self) -> List[Dict[str, Any]]: ...
 
-    def list_alpha_factory_cards(
-        self,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        lane: Optional[str] = None,
-    ) -> List[Dict[str, Any]]: ...
-
     def list_skills(self) -> List[Dict[str, Any]]: ...
 
     def list_tools(self) -> List[Dict[str, Any]]: ...
@@ -596,19 +588,6 @@ class DomainWorkflowCatalogPort:
     def list_route_policies(self) -> List[Dict[str, Any]]:
         _, records = self._resolve_dataset_records("route_policies")
         return records
-
-    def list_alpha_factory_cards(
-        self,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-        lane: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        _, records = self._resolve_dataset_records("alpha_factory_cards")
-        if lane:
-            records = [r for r in records if str(r.get("lane") or "").lower() == lane.lower()]
-        start = (page - 1) * page_size
-        return records[start : start + page_size]
 
     def list_skills(self) -> List[Dict[str, Any]]:
         _, records = self._resolve_dataset_records("skills")
@@ -2692,9 +2671,6 @@ class CompositeOperationsConsultationPort:
     def list_route_policies(self) -> List[Dict[str, Any]]:
         return self._workflow.list_route_policies()
 
-    def list_alpha_factory_cards(self, *, page: int = 1, page_size: int = 20, lane: Optional[str] = None) -> List[Dict[str, Any]]:
-        return self._workflow.list_alpha_factory_cards(page=page, page_size=page_size, lane=lane)
-
     def list_skills(self) -> List[Dict[str, Any]]:
         return self._workflow.list_skills()
 
@@ -2894,7 +2870,7 @@ class CompositeOperationsConsultationPort:
     def dataset_source(self, dataset: str) -> str:
         if dataset in ("decision_journal_entries", "decision_journal"):
             return "governance_decision_journal"
-        if dataset in ("workflow_templates", "hook_registry", "governance_permissions", "memory_governance_rules", "consult_rules", "route_policies", "alpha_factory_cards", "skills", "tools", "mcp_servers", "mcp_tools"):
+        if dataset in ("workflow_templates", "hook_registry", "governance_permissions", "memory_governance_rules", "consult_rules", "route_policies", "skills", "tools", "mcp_servers", "mcp_tools"):
             return self._workflow.dataset_source(dataset)
         return self._consultation.dataset_source(dataset)
 
@@ -2911,7 +2887,6 @@ class InMemoryOperationsConsultationPort:
         memory_governance_rules: Optional[List[Dict[str, Any]]] = None,
         consult_rules: Optional[List[Dict[str, Any]]] = None,
         route_policies: Optional[List[Dict[str, Any]]] = None,
-        alpha_factory_cards: Optional[List[Dict[str, Any]]] = None,
         skills: Optional[List[Dict[str, Any]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         mcp_servers: Optional[List[Dict[str, Any]]] = None,
@@ -2931,7 +2906,6 @@ class InMemoryOperationsConsultationPort:
         self.memory_governance_rules = list(memory_governance_rules or [])
         self.consult_rules = list(consult_rules or [])
         self.route_policies = list(route_policies or [])
-        self.alpha_factory_cards = list(alpha_factory_cards or [])
         self.skills = list(skills or [])
         self.tools = list(tools or [])
         self.mcp_servers = list(mcp_servers or [])
@@ -2969,13 +2943,6 @@ class InMemoryOperationsConsultationPort:
 
     def list_route_policies(self) -> List[Dict[str, Any]]:
         return list(self.route_policies)
-
-    def list_alpha_factory_cards(self, *, page: int = 1, page_size: int = 20, lane: Optional[str] = None) -> List[Dict[str, Any]]:
-        records = self.alpha_factory_cards
-        if lane:
-            records = [r for r in records if str(r.get("lane") or "").lower() == lane.lower()]
-        start = (page - 1) * page_size
-        return records[start : start + page_size]
 
     def list_skills(self) -> List[Dict[str, Any]]:
         return list(self.skills)
