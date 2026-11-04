@@ -16,7 +16,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
-from services.control_plane.bff.research.router import create_research_experiments_router  # noqa: E402
+from services.control_plane.bff.research.router import (  # noqa: E402
+    create_research_experiments_router,
+    create_research_router,
+    create_research_tasks_router,
+)
 
 
 class _FakeIdentity:
@@ -232,3 +236,29 @@ def test_action_dispatches_through_injected_callable():
         "payload": {"reason": "budget"},
         "authorization": "Bearer op:operator",
     }
+
+
+def test_create_research_router_mounts_research_tasks_routes():
+    router = create_research_router(
+        get_read_store=lambda: _FakeReadStore(),
+        extract_identity=lambda authorization: _FakeIdentity(),
+        require_read_role=lambda identity: None,
+        require_operator_role=lambda identity: None,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-08-28T00:00:00Z",
+    )
+    paths = {
+        (method, route.path)
+        for route in router.routes
+        for method in (getattr(route, "methods", None) or ())
+        if method not in {"HEAD", "OPTIONS"}
+    }
+    assert ("GET", "/bff/research-tasks") in paths
+    assert ("GET", "/bff/research-tasks/{task_id}") in paths
+    tasks_router = create_research_tasks_router(
+        extract_identity=lambda authorization: _FakeIdentity(),
+        require_read_role=lambda identity: None,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-08-28T00:00:00Z",
+    )
+    assert len(tasks_router.routes) == 2

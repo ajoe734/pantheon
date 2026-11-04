@@ -141,6 +141,7 @@ FAMILY_RULES: list[tuple[str, str]] = [
     ("/bff/evolution-programs", "evolution-experiment-jobs-events"),
     ("/bff/experiments", "evolution-experiment-jobs-events"),
     ("/bff/research-experiments", "evolution-experiment-jobs-events"),
+    ("/bff/research-tasks", "evolution-experiment-jobs-events"),
     ("/bff/jobs", "evolution-experiment-jobs-events"),
     ("/bff/events", "evolution-experiment-jobs-events"),
     ("/bff/artifacts", "evolution-experiment-jobs-events"),
