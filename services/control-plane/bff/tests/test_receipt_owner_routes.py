@@ -22,6 +22,7 @@ from services.evolution.program_service import ProgramService
 from services.evolution.program_store import JsonProgramStore
 
 
+_EVOLUTION_SERVICE_TOKEN = "receipt-owner-evolution-service-token"
 _JWT_ENV = {"PANTHEON_BFF_JWT_SECRET": "receipt-owner-signing-secret-0123456789",
             "PANTHEON_BFF_JWT_ISSUER": "receipt-owner-tests", "PANTHEON_BFF_JWT_AUDIENCE": "bff-operators",
             "PANTHEON_BFF_AUTH_MODE": "strict"}
@@ -54,6 +55,7 @@ def identity(auth=None, **kwargs):
 def owner(tmp_path, monkeypatch):
     for key, value in _JWT_ENV.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", _EVOLUTION_SERVICE_TOKEN)
     state = tmp_path / "owner.json"
     state.write_text(json.dumps({"plans": {"plan-a": {"plan_id": "plan-a", "status": "draft", "tenant_id": "tenant-a"}}, "programs": {
         "program-a": {"program_id": "program-a", "status": "active", "tenant_id": "tenant-a"},
@@ -72,7 +74,14 @@ def owner(tmp_path, monkeypatch):
 
         def handle_request(self):
             data = json.loads(state.read_text())
-            tenant = _tenant_of_auth(self.headers.get("Authorization", ""))
+            auth_header = self.headers.get("Authorization", "")
+            if auth_header == f"Bearer {_EVOLUTION_SERVICE_TOKEN}" and self.path.startswith("/api/evolution"):
+                # Evolution owner accepts only the service credential + X-Tenant-Id, never operator JWTs.
+                tenant = self.headers.get("X-Tenant-Id")
+            elif self.path.startswith("/api/evolution"):
+                tenant = None
+            else:
+                tenant = _tenant_of_auth(auth_header)
             if not tenant:
                 return self.send_json(401, {})
             path = self.path

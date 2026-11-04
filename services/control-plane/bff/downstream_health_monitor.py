@@ -1289,7 +1289,7 @@ class _DurableHealthStore:
                 SELECT 1 FROM delivery_outbox
                 WHERE target_name=?
                   AND channel IN ('incident_open', 'incident_resolve')
-                  AND status IN ('pending', 'retry', 'claimed', 'dead_letter')
+                  AND status IN ('pending', 'retry', 'claimed')
                   AND (url LIKE ? OR body_json LIKE ?)
                 LIMIT 1
                 """,

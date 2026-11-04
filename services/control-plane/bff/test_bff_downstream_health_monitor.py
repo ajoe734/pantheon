@@ -606,6 +606,114 @@ class TestRecoveryTracking:
         assert reconcile_calls[0]["body"]["referenced_incident_ids"] == []
         assert reconcile_calls[0]["body"]["resolution_reason"] == "orphan_recovered"
 
+    def test_probe_all_sweeps_resolving_target_after_resolve_delivery_dead_letters(self):
+        from services.control_plane.bff.downstream_health_monitor import DownstreamTarget
+
+        monitor = DownstreamHealthMonitor(
+            telemetry_url="",
+            incidents_url="http://inc:8090",
+            tenant_id="tenant-test",
+            probe_interval_seconds=60,
+            failure_threshold=1,
+            delivery_max_attempts=5,
+            delivery_backoff_seconds=0.1,
+        )
+        monitor._resolve_target_registry = lambda: {  # type: ignore[assignment]
+            "capital": DownstreamTarget(
+                name="capital",
+                base_url="http://capital:8080",
+                health_path="/__health__",
+            ),
+        }
+
+        # 1. Open incident when capital is unhealthy and incidents service is reachable.
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            return_value=(True, 201),
+        ):
+            _run(
+                monitor._handle_probe_result(
+                    DownstreamProbeResult(
+                        target_name="capital",
+                        ok=False,
+                        status_code=503,
+                        latency_ms=10.0,
+                        checked_at="2026-11-03T10:20:00Z",
+                        failure_reason="HTTP 503",
+                        consecutive_failures=1,
+                    )
+                )
+            )
+        inc_id = monitor._store.get_incident("capital")["incident_id"]
+        assert monitor._store.get_incident("capital")["status"] == "open"
+
+        # 2. Capital recovers while incidents service is blocked (network_error -> -1)
+        # across all 5 attempts until incident_resolve enters dead_letter.
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            return_value=(False, -1),
+        ):
+            _run(
+                monitor._handle_probe_result(
+                    DownstreamProbeResult(
+                        target_name="capital",
+                        ok=True,
+                        status_code=200,
+                        latency_ms=3.0,
+                        checked_at="2026-11-03T10:23:55Z",
+                    )
+                )
+            )
+            for _ in range(4):
+                with monitor._store._connect() as conn:
+                    conn.execute(
+                        "UPDATE delivery_outbox SET next_attempt_at=0 WHERE channel='incident_resolve'"
+                    )
+                monitor._deliver_due_sync()
+
+        resolve_row = next(
+            r for r in monitor.list_delivery_records() if r["channel"] == "incident_resolve"
+        )
+        assert resolve_row["status"] == "dead_letter"
+        assert resolve_row["attempt_count"] == 5
+        assert resolve_row["last_error"] == "network_error"
+        assert monitor._store.get_incident("capital")["status"] == "resolving"
+        assert (
+            monitor._store.has_active_incident_delivery(
+                target_name="capital",
+                incident_id=inc_id,
+            )
+            is False
+        )
+
+        # 3. Incidents service returns; next _probe_all() reconciles without listing
+        # the dead-lettered incident in referenced_incident_ids and resolves the ledger row.
+        reconcile_calls: List[Dict[str, Any]] = []
+
+        def mock_post(url, body, timeout):
+            if "/api/incidents/reconcile-infrastructure-health" in url:
+                reconcile_calls.append({"url": url, "body": body})
+            return True, 200
+
+        with (
+            patch(
+                "services.control_plane.bff.downstream_health_monitor._probe_http",
+                return_value=(True, 200, ""),
+            ),
+            patch(
+                "services.control_plane.bff.downstream_health_monitor._post_json",
+                side_effect=mock_post,
+            ),
+        ):
+            _run(monitor._probe_all())
+
+        assert len(reconcile_calls) == 1
+        assert reconcile_calls[0]["body"]["healthy_components"] == ["capital"]
+        assert reconcile_calls[0]["body"]["referenced_incident_ids"] == []
+        assert reconcile_calls[0]["body"]["resolution_reason"] == "orphan_recovered"
+        assert monitor._store.get_incident("capital")["status"] == "resolved"
+        assert "capital" not in monitor._open_incident_ids
+
 
 # ---------------------------------------------------------------------------
 # BFF route contract tests

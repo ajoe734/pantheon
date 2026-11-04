@@ -254,6 +254,17 @@ actor value is refused with 403.
    `{"command":"ApproveEvolutionDecision","target":{"type":"EvolutionDecision","id":"<evo id>"},"params":{"evolution_decision_id":"<evo id>","approval_action":"approve","approval_decision_id":"<apv id>","actor_role":"risk_owner"},"audit_context":{"reason":"H4 approve"}}`
    (reviewed -> approved)
 
+### 7.2 Evolution owner write credential
+
+Every BFF write to the Evolution owner (ReviewMutation, ApproveEvolutionDecision, ApproveMutation,
+RejectMutation, ExecuteEvolutionAction, ExecuteMutation, EvolutionProgramAction) goes through
+`command_adapters.base.evolution_owner_request`, the same helper Evolution owner reads use. The tenant is
+bound from the verified operator token (payload tenant may only equal it), and the call is made with
+`Authorization: Bearer $EVOLUTION_AUTH_TOKEN` plus `X-Tenant-Id`. The operator JWT is never forwarded; a
+missing `EVOLUTION_AUTH_TOKEN` fails the command closed (503, no HTTP call). `actor_id`/`actor_role` still
+come from the verified operator principal. Replaying an `Idempotency-Key` whose command already failed
+returns 409 `RESOURCE_CONFLICT` with `details.command_id` and the recorded `details.failure`.
+
 ## 8. Command Adapter Mapping
 
 The `/bff/actions/{entityType}/{entityId}/{actionId}` routes and their compact

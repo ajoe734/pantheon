@@ -254,6 +254,60 @@ def http_request_json(
         raise
 
 
+def evolution_owner_request(
+    url: str,
+    *,
+    caller_token: Optional[str],
+    method: str = "GET",
+    payload: Optional[Dict[str, Any]] = None,
+    tenant_id: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: Optional[int] = None,
+) -> Any:
+    """Single request path for every BFF call to the Evolution owner (reads and writes).
+
+    The tenant is bound from the verified *caller* token, then the call is made with the
+    Evolution service credential (EVOLUTION_AUTH_TOKEN). The operator JWT is never
+    forwarded. Missing service credential fails closed before any HTTP call. Raises
+    ``urllib.error.HTTPError`` for non-2xx so callers keep their own error mapping.
+    """
+    caller = str(caller_token or "").strip()
+    if caller.startswith("Bearer "):
+        caller = caller[len("Bearer "):].strip()
+    trusted_tenant = bound_tenant(payload if isinstance(payload, dict) else {}, tenant_id, caller)
+    service_token = os.getenv("EVOLUTION_AUTH_TOKEN", "").strip()
+    if not service_token:
+        raise ActionUnavailableError(
+            "Evolution owner authentication is unconfigured (missing EVOLUTION_AUTH_TOKEN)",
+            error_code="OWNER_AUTH_UNCONFIGURED",
+            downstream_status=503,
+        )
+    req_headers: Dict[str, str] = {
+        **(headers or {}),
+        "Accept": "application/json",
+        "X-Pantheon-Service": "control-plane-bff",
+        "Authorization": f"Bearer {service_token}",
+        "X-Tenant-Id": trusted_tenant,
+    }
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        req_headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout or _DEFAULT_REQUEST_TIMEOUT) as resp:
+            status_code = int(resp.status)
+            body = json.loads(resp.read().decode("utf-8"))
+            record_downstream_outcome(url, ok=True, status_code=status_code)
+            return body
+    except urllib.error.HTTPError as exc:
+        record_downstream_outcome(url, ok=False, status_code=int(exc.code), detail=f"HTTP {exc.code}")
+        raise
+    except Exception as exc:
+        record_downstream_outcome(url, ok=False, status_code=-1, detail=str(exc))
+        raise
+
+
 def http_request_json_with_headers(
     url: str,
     method: str = "GET",

@@ -1,0 +1,97 @@
+{
+  "task_id": "INFRA-INCIDENT-DEAD-LETTER-SWEEP-20261104",
+  "base_sha": "4fc701a0732cd445082cf253b52190f2859553c0",
+  "change_class": "corrective",
+  "summary": "Exclude dead_letter from _DurableHealthStore.has_active_incident_delivery in downstream_health_monitor.py so reconcile_orphaned_incidents_sync treats a resolving ledger row whose resolve delivery exhausted retries (dead_letter) for a currently healthy target as an orphaned resolving target rather than an actively referenced incident, allowing the incidents authority to resolve the incident with orphan_recovered and the BFF ledger row to transition to resolved within one probe interval.",
+  "scope": [
+    "services/control-plane/bff/downstream_health_monitor.py: remove 'dead_letter' from _DurableHealthStore.has_active_incident_delivery status filter so only ('pending', 'retry', 'claimed') deliveries count as active",
+    "services/control-plane/bff/test_downstream_health_monitor.py: add unit tests for has_active_incident_delivery across all delivery statuses and channels, and verify reconcile_orphaned_incidents_sync resolves healthy targets with dead-lettered resolves while keeping active deliveries and unhealthy targets referenced/open",
+    "services/control-plane/bff/test_bff_downstream_health_monitor.py: add unit test verifying _probe_all sweeps a resolving target after its incident_resolve delivery exhausts 5 attempts into dead_letter",
+    "services/control-plane/bff/tests/test_bff_lifespan_background_work.py: add lifespan integration test verifying a dead-lettered resolving incident is reconciled and marked resolved within one probe interval",
+    "services/incidents/test_infrastructure_orphan_recovery.py: add end-to-end regression tests reproducing the 2026-11-03 deploy outage to 2026-11-04 orphan sweep across all 7 hosted incidents, active delivery preservation, unhealthy target preservation, and harmless later dead-letter replay",
+    "docs/deployment/evidence/INFRA-INCIDENT-DEAD-LETTER-SWEEP-20261104/evidence.json: verification manifest and operator verification checklist for the 7 hosted incidents"
+  ],
+  "hosted_incidents_expected_resolution": {
+    "expected_behavior": "All seven hosted incidents listed in the task brief have incident_mappings.status='resolving', probe_state ok=1 consecutive_failures=0, and their newest incident_resolve delivery in dead_letter (attempt_count 5/5, last_error=network_error from the 2026-11-03T10:23:5xZ deploy window). Once this change is deployed, all seven incidents are expected to resolve within one BFF downstream health probe interval via POST /api/incidents/reconcile-infrastructure-health with resolution_reason='orphan_recovered', and their BFF SQLite incident_mappings rows will transition from 'resolving' to 'resolved'.",
+    "incidents": [
+      {
+        "incident_id": "infra-bff-752855512ba57805b91d420c",
+        "component": "paper-signal-producer",
+        "expected_status_after_one_probe_interval": "resolved",
+        "expected_resolution_reason": "orphan_recovered",
+        "expected_bff_ledger_status": "resolved"
+      },
+      {
+        "incident_id": "infra-bff-f15b59d579abe4c783d75af1",
+        "component": "capital",
+        "expected_status_after_one_probe_interval": "resolved",
+        "expected_resolution_reason": "orphan_recovered",
+        "expected_bff_ledger_status": "resolved"
+      },
+      {
+        "incident_id": "infra-bff-501b68949743a1a31d313812",
+        "component": "memory",
+        "expected_status_after_one_probe_interval": "resolved",
+        "expected_resolution_reason": "orphan_recovered",
+        "expected_bff_ledger_status": "resolved"
+      },
+      {
+        "incident_id": "infra-bff-a7c42d396bb90b53703bd67b",
+        "component": "openclaw-gateway-adapter",
+        "expected_status_after_one_probe_interval": "resolved",
+        "expected_resolution_reason": "orphan_recovered",
+        "expected_bff_ledger_status": "resolved"
+      },
+      {
+        "incident_id": "infra-bff-d73a5e8b3c6c83d718d7e94e",
+        "component": "research-worker-gateway",
+        "expected_status_after_one_probe_interval": "resolved",
+        "expected_resolution_reason": "orphan_recovered",
+        "expected_bff_ledger_status": "resolved"
+      },
+      {
+        "incident_id": "infra-bff-2a3766dd77efbee49c08d6c6",
+        "component": "persona",
+        "expected_status_after_one_probe_interval": "resolved",
+        "expected_resolution_reason": "orphan_recovered",
+        "expected_bff_ledger_status": "resolved"
+      },
+      {
+        "incident_id": "infra-bff-c7410d5c7cb51d2dff63772b",
+        "component": "deployment-outbox-consumer",
+        "expected_status_after_one_probe_interval": "resolved",
+        "expected_resolution_reason": "orphan_recovered",
+        "expected_bff_ledger_status": "resolved"
+      }
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "ac1": "A ledger row in resolving state whose resolve delivery is dead_letter and whose target is healthy is no longer sent in referenced_incident_ids by reconcile_orphaned_incidents_sync, so POST /api/incidents/reconcile-infrastructure-health resolves the incident with resolution_reason=orphan_recovered and the BFF ledger row transitions to resolved; verified in test_reconcile_resolves_healthy_target_when_resolve_delivery_is_dead_letter_and_keeps_active_or_unhealthy, test_probe_all_sweeps_resolving_target_after_resolve_delivery_dead_letters, test_lifespan_monitor_reconciles_dead_lettered_resolving_incident_within_one_interval, and test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless.",
+    "ac2": "Resolve or open deliveries in pending, retry, or claimed state still return True from has_active_incident_delivery and keep their incident IDs in referenced_incident_ids; verified in test_has_active_incident_delivery_excludes_dead_letter_and_keeps_inflight_statuses, test_reconcile_resolves_healthy_target_when_resolve_delivery_is_dead_letter_and_keeps_active_or_unhealthy, and test_inflight_deliveries_and_unhealthy_targets_with_dead_letter_stay_open.",
+    "ac3": "An incident whose target is currently unhealthy stays open in both the incidents authority and the BFF ledger even when its open or resolve delivery is dead_letter; verified in test_reconcile_resolves_healthy_target_when_resolve_delivery_is_dead_letter_and_keeps_active_or_unhealthy and test_inflight_deliveries_and_unhealthy_targets_with_dead_letter_stay_open.",
+    "ac4": "A later replay of the dead-lettered incident_resolve delivery through monitor.replay_dead_letters(...) after orphan reconciliation has already resolved the incident succeeds idempotently (HTTP 200), marks the delivery 'delivered' without permanent failure, and keeps the incident resolved without reopening it; verified in test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless.",
+    "ac5": "Regression tests reproduce the exact hosted sequence where the incidents authority is unreachable until the resolve delivery reaches dead_letter (attempt_count 5/5, last_error=network_error) and then returns with the target healthy so the next reconcile resolves the incident; verified in test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless and test_probe_all_sweeps_resolving_target_after_resolve_delivery_dead_letters.",
+    "ac6": "hosted_incidents_expected_resolution above lists all seven hosted incidents from the task brief and states that they are expected to resolve within one probe interval after deployment so the operator can verify them."
+  },
+  "test_expectation_classification": {
+    "status": "no_test_expectations_changed",
+    "details": "All pre-existing tests pass unmodified. New unit, lifespan, and end-to-end regression tests were added for AC1-AC5."
+  },
+  "validation": [
+    {
+      "suite": "services/control-plane/bff/test_downstream_health_monitor.py & services/control-plane/bff/tests/test_bff_lifespan_background_work.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_downstream_health_monitor.py services/control-plane/bff/tests/test_bff_lifespan_background_work.py",
+      "result": "57 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/test_bff_downstream_health_monitor.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py",
+      "result": "49 passed"
+    },
+    {
+      "suite": "services/incidents/test_infrastructure_orphan_recovery.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/incidents/test_infrastructure_orphan_recovery.py",
+      "result": "7 passed"
+    }
+  ]
+}

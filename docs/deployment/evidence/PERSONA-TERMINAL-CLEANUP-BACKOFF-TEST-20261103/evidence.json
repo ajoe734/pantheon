@@ -1,0 +1,8 @@
+{
+  "task": "PERSONA-TERMINAL-CLEANUP-BACKOFF-TEST-20261103",
+  "mode": "source_only",
+  "hosted_mutation": false,
+  "change": "Pass 1 of test_failed_schedule_cleanup_retries_with_bounded_backoff now expects two owner writes (pending receipt + terminal marker) per PR #6919; later assertions unchanged",
+  "tests_passed": ["services/control-plane/bff/tests/test_persona_provisioning_terminal_cleanup.py (3 passed)"],
+  "production_code_modified": false
+}
