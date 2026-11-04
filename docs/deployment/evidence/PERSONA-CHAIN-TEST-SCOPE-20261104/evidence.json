@@ -1,0 +1,17 @@
+{
+  "task": "PERSONA-CHAIN-TEST-SCOPE-20261104",
+  "mode": "source_only",
+  "hosted_mutation": false,
+  "hosted_verification_claimed": false,
+  "coordinator_post_merge_backfill_targets": [
+    "persona-strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a",
+    "persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8"
+  ],
+  "tests_passed": [
+    "tests/unit/l12/test_hosted_domain_contract.py",
+    "scripts/test_backfill_hosted_chain_persona_scope.py",
+    "services/control-plane/bff/tests/test_persona_create_data_scope.py",
+    "services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "scripts/test_branch_ci_gate_selection.py"
+  ]
+}

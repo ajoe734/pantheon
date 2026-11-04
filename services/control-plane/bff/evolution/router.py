@@ -342,6 +342,7 @@ def _register_evolution_programs_routes(
         key = (idempotency_key or x_idempotency_key or "").strip() or None
         try:
             return await resolved_commands.create_program(
+                caller_token=authorization,
                 tenant_id=tenant_id,
                 actor_id=actor_id,
                 name=name,
@@ -427,6 +428,7 @@ def _register_evolution_programs_routes(
         snapshot_at = utc_now()
         try:
             updated = await resolved_commands.patch_program_name(
+                caller_token=authorization,
                 tenant_id=tenant_id,
                 actor_id=actor_id,
                 program_id=clean_id,

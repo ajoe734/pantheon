@@ -42,7 +42,7 @@ class _DirectProgramCommandPort:
     def __init__(self, service: ProgramService) -> None:
         self._service = service
 
-    async def create_program(self, *, tenant_id, actor_id, name, idempotency_key):
+    async def create_program(self, *, caller_token, tenant_id, actor_id, name, idempotency_key):
         program, _replayed = self._service.create_program(
             tenant_id=tenant_id or "pantheon-default",
             actor_id=actor_id,
@@ -51,7 +51,7 @@ class _DirectProgramCommandPort:
         )
         return program
 
-    async def patch_program_name(self, *, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
+    async def patch_program_name(self, *, caller_token, tenant_id, actor_id, program_id, name, expected_revision, idempotency_key):
         program, _replayed = self._service.patch_program_name(
             tenant_id=tenant_id or "pantheon-default",
             actor_id=actor_id,

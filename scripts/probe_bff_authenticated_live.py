@@ -81,6 +81,7 @@ READ_PROBES: tuple[Probe, ...] = (
     Probe("GET", "/bff/tools", "tools"),
     Probe("GET", "/bff/ranking-formulas", "ranking-formulas"),
     Probe("GET", "/bff/research-experiments", "research"),
+    Probe("GET", "/bff/research-tasks", "research-tasks", required_paths=(("items",), ("meta", "surfaces", "research_tasks"))),
     Probe("GET", "/bff/agora/journal", "agora-journal"),
     Probe("GET", "/bff/agora/postmortems", "agora-postmortems"),
     Probe(
