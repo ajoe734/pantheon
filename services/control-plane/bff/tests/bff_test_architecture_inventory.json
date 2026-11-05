@@ -82,6 +82,7 @@
     "tests/test_governance_router.py",
     "tests/test_incident_router.py",
     "tests/test_jobs_source_owner_contract.py",
+    "tests/test_shell_summary_jobs_read.py",
     "tests/test_legacy_command_write_retirement.py",
     "tests/test_management_domain_actions.py",
     "tests/test_management_nl_assistant_provider.py",
@@ -2296,6 +2297,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_shell_summary_jobs_read.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Real ReadSurfacePorts and ManagementService against real local HTTP job sources; no main composition globals"
     },
     {
       "file": "tests/test_journal_context_resolver_owner.py",

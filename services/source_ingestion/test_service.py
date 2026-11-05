@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -2410,3 +2411,81 @@ def test_evaluator_viewer_token_read_and_mutation_boundaries(client) -> None:
     assert res_strip.status_code == 403
     assert res_strip.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
 
+
+
+def _seed_hosted_scale_journal(store, runs: int) -> int:
+    """Write real IngestRun/IngestReceipt records (full event history) to the real journal in one pass."""
+    from services.source_ingestion.connectors.base import IngestRun
+    from services.source_ingestion.scheduler import IngestReceipt
+
+    lines: list[str] = []
+
+    def add(kind: str, rid: str, payload: dict) -> None:
+        lines.append(json.dumps({"schema_version": "ingest_schedule_store.v1", "record_type": kind,
+                                 "record_id": rid, "payload": payload}, sort_keys=True, separators=(",", ":")))
+
+    for i in range(runs):
+        run = IngestRun(
+            ingest_run_id=f"ingest-{i:08x}", connector_id=f"conn-{i % 40}", source_type="paper",
+            trigger_type="scheduled", trace_id=f"trace-{i:08x}",
+            started_at=f"2026-10-{1 + i % 28:02d}T10:{i % 60:02d}:{i % 59:02d}+00:00",
+            raw_count=50, normalized_count=48, rejected_count=2,
+        )
+        if i % 500 != 0:  # a handful of active (queued) runs; the rest finished
+            for state in ("fetching", "normalizing", "indexing", "completed"):
+                run.transition(state, message=f"{state} connector conn-{i % 40} batch {i}")
+            run.finished_at = "2026-10-01T10:00:09+00:00"
+        add("ingest_run", run.ingest_run_id, run.to_dict())
+        add("ingest_receipt", run.ingest_run_id, IngestReceipt(
+            ingest_run_id=run.ingest_run_id, connector_id=run.connector_id,
+            status="completed" if i % 500 else "processing", trigger_type="scheduled", trace_id=run.trace_id,
+            started_at="2026-10-01T10:00:00+00:00", finished_at="2026-10-01T10:00:09+00:00",
+            raw_count=50, normalized_count=48, rejected_count=2, watermark="w" * 40,
+            source_timestamp="2026-10-01T09:00:00+00:00", source_timestamp_status="valid",
+            evidence_refs={"source_ids": [f"src-{i}-{k}" for k in range(20)]},
+            storage_refs={"raw": f"s3://bucket/raw/{i}", "normalized": f"s3://bucket/norm/{i}"},
+        ).to_dict())
+    with store.path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    return runs
+
+
+def test_bounded_jobs_listing_at_hosted_scale_stays_small_and_fast(client) -> None:
+    test_client, _, module = client
+    _seed_hosted_scale_journal(module.store, int(os.environ.get("SOURCE_INGEST_TEST_HOSTED_RUNS", "9000")))
+
+    started = time.perf_counter()
+    unbounded = test_client.get("/api/source-ingest/jobs")
+    unbounded_s = time.perf_counter() - started
+    assert unbounded.status_code == 200
+    assert {"runs", "receipts"} <= set(unbounded.json())  # unbounded callers keep working
+    assert len(unbounded.json()["runs"]) == 9000
+    assert len(unbounded.content) > 15_000_000  # hosted-size body (hosted measured 19.6 MB)
+
+    started = time.perf_counter()
+    active = test_client.get("/api/source-ingest/jobs", params={"status": "queued,running,in_progress", "page_size": 200})
+    active_s = time.perf_counter() - started
+    assert active.status_code == 200
+    body = active.json()
+    assert all(run["status"] == "queued" for run in body["runs"])
+    assert body["page_info"]["total"] == len(body["runs"]) == 18
+    assert len(body["receipts"]) == len(body["runs"])
+    assert len(active.content) < 1_000_000 and active_s < 2.0
+
+    # Paging: every run is reachable exactly once and the total is stable across owner pages.
+    seen: list[str] = []
+    token = None
+    while True:
+        params = {"page_size": 250, **({"page_token": token} if token else {})}
+        page = test_client.get("/api/source-ingest/jobs", params=params)
+        assert page.status_code == 200 and len(page.content) < 1_000_000
+        info = page.json()["page_info"]
+        assert info["total"] == 9000
+        seen += [run["ingest_run_id"] for run in page.json()["runs"]]
+        token = info["next_page_token"]
+        if not token:
+            break
+    assert len(seen) == len(set(seen)) == 9000
+    assert test_client.get("/api/source-ingest/jobs", params={"page_token": "bad"}).status_code == 422
+    print(f"SOURCE_INGEST_EVIDENCE unbounded_bytes={len(unbounded.content)} unbounded_s={unbounded_s:.3f} "
+          f"bounded_bytes={len(active.content)} bounded_s={active_s:.3f}")

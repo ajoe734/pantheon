@@ -19,6 +19,8 @@ for the Management System domain:
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 import logging
 import math
@@ -322,6 +324,27 @@ _HUMAN_INBOX_PRIORITY_RANK: Dict[str, int] = {
     "medium": 2,
     "low": 1,
 }
+
+_SHELL_SUMMARY_ACTIVE_JOB_STATES = frozenset({"running", "in_progress", "queued"})
+_SHELL_SUMMARY_JOBS_PAGE_SIZE = 200
+
+
+def _shell_summary_jobs_budget_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_SHELL_SUMMARY_JOBS_BUDGET_SECONDS", "1.5").strip()
+    try:
+        value = max(float(raw), 0.1)
+    except ValueError:
+        value = 1.5
+    remaining = remaining_management_read_budget()
+    return value if remaining is None else max(0.1, min(value, remaining))
+
+
+def _shell_summary_caller_key() -> str:
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+
+    raw = f"{authorization.get() or ''}|{selected_tenant.get() or ''}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
 
 _SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
 _SHELL_SUMMARY_COUNT_CACHE_LOCK = threading.Lock()
@@ -2677,15 +2700,73 @@ class ManagementService:
     # -----------------------------------------------------------------------
     # 1. Shell Summary
     # -----------------------------------------------------------------------
+    def _shell_summary_jobs_read(self, store: Any, degraded_state: bool) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Bounded active-job read; the surface is decided by this read, not a dataset lookup."""
+        if store is not None and not hasattr(store, "list_jobs_bff") and hasattr(store, "list_records"):
+            # Store without the typed job port: its generic record read is the only job read there is.
+            try:
+                res = store.list_records("jobs")
+            except Exception as exc:
+                return [], {"status": "unavailable", "source": "service_store",
+                            "message": f"jobs read failed: {type(exc).__name__}"}
+            avail, items = res if isinstance(res, tuple) else (True, res)
+            if not avail:
+                return [], {"status": "unavailable", "source": "service_store"}
+            return [r for r in (items or []) if isinstance(r, dict)], {
+                "status": "degraded" if degraded_state else "ok", "source": "service_store"}
+        if store is None or not hasattr(store, "list_jobs_bff"):
+            return [], {"status": "unavailable", "source": "missing"}
+        budget = _shell_summary_jobs_budget_seconds()
+        diagnostics: Dict[str, Any] = {}
+        kwargs: Dict[str, Any] = {
+            "diagnostics": diagnostics,
+            "statuses": sorted(_SHELL_SUMMARY_ACTIVE_JOB_STATES),
+            "page_size": _SHELL_SUMMARY_JOBS_PAGE_SIZE,
+            "deadline_seconds": budget,
+        }
+        try:
+            accepted = inspect.signature(store.list_jobs_bff).parameters
+            if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in accepted.values()):
+                kwargs = {k: v for k, v in kwargs.items() if k in accepted}
+            rows_ = store.list_jobs_bff(**kwargs)
+        except Exception as exc:
+            return [], {"status": "unavailable", "source": "service_client",
+                        "message": f"jobs read failed: {type(exc).__name__}"}
+        items = [r for r in (rows_ or []) if isinstance(r, dict)]
+        if "healthy_sources" not in diagnostics:
+            # Narrow stand-in store with no per-source diagnostics: the read itself succeeded.
+            return items, {"status": "degraded" if degraded_state else "ok", "source": "service_store"}
+        healthy = list(diagnostics.get("healthy_sources") or [])
+        failed = dict(diagnostics.get("degraded_sources") or {})
+        configured = list(diagnostics.get("configured_sources") or [])
+        if not configured and not healthy:
+            return [], {"status": "unavailable", "source": "missing",
+                        "message": "no job source is configured.", "degraded_sources": failed}
+        if not healthy:
+            return [], {"status": "unavailable", "source": "service_client",
+                        "message": "every configured job source failed.", "degraded_sources": failed}
+        # A source reported "truncated" still answered; only unconfigured/failed ones degrade.
+        if failed or degraded_state:
+            surface: Dict[str, Any] = {"status": "degraded", "source": "bff_composed"}
+            if failed:
+                surface["degraded_sources"] = failed
+                surface["message"] = "Partial job source degradation (" + ", ".join(
+                    f"{k}={v}" for k, v in failed.items()) + ")."
+            return items, surface
+        return items, {"status": "ok", "source": "bff_composed"}
+
     def build_shell_summary_counts(self, ttl_seconds: float = 5.0) -> Dict[str, Any]:
         now_str = self._utc_now()
         now_mono = time.monotonic()
         store = self._resolve_store()
 
+        # The jobs read runs with the caller's authorization, so a cached result
+        # (healthy or failed) must only ever be served to that same caller.
+        caller_key = _shell_summary_caller_key()
         with _SHELL_SUMMARY_COUNT_CACHE_LOCK:
             cached = _SHELL_SUMMARY_COUNT_CACHE.get("latest")
             if cached and (now_mono - cached.get("cached_at", 0.0) < ttl_seconds):
-                if cached.get("store_id") == id(store):
+                if cached.get("store_id") == id(store) and cached.get("caller_key") == caller_key:
                     return cached["payload"]
 
         degraded_state = os.getenv("BFF_READ_SURFACE_STATE", "fresh") in {"degraded", "stale"}
@@ -2729,7 +2810,7 @@ class ManagementService:
         )
         reviews = rows("governance_review_queue_items", lambda st: st.list_governance_review_queue_items())
         incidents = rows("incidents", lambda st: st.list_incidents())
-        jobs = rows("jobs", lambda st: st.list_jobs_bff(), lambda st: st.list_records("jobs"))
+        jobs, sources["jobs"] = self._shell_summary_jobs_read(store, degraded_state)
         pending_states = {"pending", "in_review"}
         pending_approvals = count(approvals, {*pending_states, "proposed", "under_review", "reviewed"}, "decision_state", "status")
         open_alerts = (
@@ -2764,7 +2845,8 @@ class ManagementService:
                 ["incidents", "governance_review_queue_items", "approval_queue_items", "kill_switch"],
                 source="bff_cheap_count",
             ),
-            "running_jobs": group("running_jobs", ["jobs"]),
+            "running_jobs": {**sources["jobs"], "snapshot_at": now_str,
+                             "freshness": {"computed_at": now_str, "ttl_seconds": ttl_seconds, "cache": "miss"}},
         }
         shell_surface = _aggregate_group_surface("shell_summary", list(count_surfaces.values()), snapshot_at=now_str)
         shell_surface["freshness"] = count_surfaces["running_jobs"]["freshness"]
@@ -2782,6 +2864,7 @@ class ManagementService:
             _SHELL_SUMMARY_COUNT_CACHE["latest"] = {
                 "cached_at": now_mono,
                 "store_id": id(store),
+                "caller_key": caller_key,
                 "payload": payload,
             }
         return payload
