@@ -1153,3 +1153,113 @@ def test_execution_artifact_rejects_recipe_spec_contradiction_and_same_id():
         build_execution_artifact_registration(
             _spec_entry_with_recipe(), artifact_id="spec-reg-1", algorithm_commit="b" * 40
         )
+
+
+def test_list_strategy_artifacts_catalog_flat_projection_and_paging():
+    """GET /api/registry/strategy-artifacts returns flat execution_bundle rows without full metadata,
+    excludes strategy_spec entries, extracts risk_level from evaluation_summary, and pages with total."""
+    from .models import Lineage, RegistryEntryCreate, StorageBackend, StorageRef
+    from .pg_store import strategy_artifact_rows_from_columns, strategy_artifact_select_sql
+    from .storage import STRATEGY_ARTIFACT_EVAL_KEYS, STRATEGY_ARTIFACT_ROW_KEYS
+
+    unit_tenant = service_module._caller_tenant(
+        service_module._authenticate_registry_read(registry_unit_headers()["Authorization"])
+    )
+    store = get_store()
+    # Seed a strategy_spec row that must NOT appear in GET /api/registry/strategy-artifacts
+    store.create(
+        RegistryEntryCreate(
+            artifact_type=ArtifactType.STRATEGY_SPEC,
+            strategy_id="spec-only-family",
+            version="1.0.0",
+            artifact_state=ArtifactState.APPROVED,
+            lineage=Lineage(source_run_ids=["run-spec"]),
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+            checksum="sha256:spec-only",
+            evaluation_summary={"risk_level": "medium"},
+            metadata={"strategy_spec": {"strategy_id": "spec-only-family"}},
+        ),
+        "spec-only-1",
+        actor={"tenant": unit_tenant},
+    )
+
+    # Seed 3 execution_bundle rows with real evaluation_summary shape and ~5.9 KB metadata
+    expected_keys = set(STRATEGY_ARTIFACT_ROW_KEYS) | set(STRATEGY_ARTIFACT_EVAL_KEYS)
+    for idx, (state, risk, ts) in enumerate(
+        [
+            (ArtifactState.APPROVED, "low", "2026-11-04T01:00:00Z"),
+            (ArtifactState.CANDIDATE, "medium", "2026-11-04T02:00:00Z"),
+            (ArtifactState.RETIRED, "high", "2026-11-04T03:00:00Z"),
+        ],
+        start=1,
+    ):
+        entry = store.create(
+            RegistryEntryCreate(
+                artifact_type=ArtifactType.EXECUTION_BUNDLE,
+                strategy_id=f"strat-bundle-{idx}",
+                version=f"1.{idx}.0",
+                artifact_state=state,
+                lineage=Lineage(source_run_ids=[f"run-{idx}"]),
+                storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_artifact"),
+                checksum=f"sha256:bundle-{idx:04d}",
+                evaluation_summary={
+                    "admission": "persona_paper_bootstrap",
+                    "risk_level": risk,
+                    "capital_scale_pct": 0.0,
+                    "execution_context": "paper",
+                },
+                metadata={"strategy_artifact": {"artifact_id": f"bundle-{idx}", "blob": "x" * 5800}},
+            ),
+            f"bundle-{idx}",
+            actor={"tenant": unit_tenant},
+        )
+        entry.created_at = ts
+        entry.approver = f"approver-{idx}" if state == ArtifactState.APPROVED else None
+        store.put(entry)
+
+    client = TestClient(app, headers=registry_unit_headers())
+    page1 = client.get("/api/registry/strategy-artifacts?page_size=2")
+    assert page1.status_code == 200, page1.text
+    body1 = page1.json()
+    assert body1["total"] == 3
+    assert body1["page_size"] == 2
+    assert body1["next_page_token"] == "2"
+    assert [r["registry_id"] for r in body1["items"]] == ["bundle-3", "bundle-2"]
+    for row in body1["items"]:
+        assert set(row.keys()) == expected_keys
+        assert "metadata" not in row
+
+    assert body1["items"][0]["risk_level"] == "high"
+    assert body1["items"][0]["artifact_state"] == "retired"
+    assert body1["items"][1]["risk_level"] == "medium"
+    assert body1["items"][1]["artifact_state"] == "candidate"
+
+    page2 = client.get(f"/api/registry/strategy-artifacts?page_size=2&page_token={body1['next_page_token']}")
+    assert page2.status_code == 200, page2.text
+    body2 = page2.json()
+    assert body2["total"] == 3
+    assert body2["next_page_token"] is None
+    assert [r["registry_id"] for r in body2["items"]] == ["bundle-1"]
+    assert body2["items"][0]["approver"] == "approver-1"
+    assert body2["items"][0]["risk_level"] == "low"
+
+    # Verify Postgres SQL select expression and column assembly twin
+    select_sql = strategy_artifact_select_sql()
+    assert "metadata" not in select_sql
+    assert "evaluation_summary" in select_sql
+    assembled = strategy_artifact_rows_from_columns(
+        [
+            (
+                '"bundle-1"',
+                '"strat-bundle-1"',
+                '"1.1.0"',
+                '"approved"',
+                '"sha256:bundle-0001"',
+                '"2026-11-04T01:00:00Z"',
+                '"approver-1"',
+                '"low"',
+            )
+        ]
+    )
+    assert assembled == [body2["items"][0]]
+
