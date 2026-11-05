@@ -1,13 +1,13 @@
 {
   "task": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
-  "recordedAt": "2026-11-05T01:25Z",
+  "recordedAt": "2026-11-05T03:00Z",
   "status": "in_progress_not_accepted",
   "hosted": {
     "profile": "read-only",
     "deploymentState": "accepted",
-    "frontendSha": "809e1ce0a3643d3f62c99261f3fc99a513612894",
-    "bffSha": "cc074638f1814beed7f7f3e33e7307134b2bf39e",
-    "releaseName": "20261104T032534Z-809e1ce0a364-gate-41763319265-41765339420-1-3667520",
+    "frontendSha": "b15608ce1aad37cc80fc6bf1ef09382c17d369eb",
+    "bffSha": "0bd88495e27e90f6cfaadc1991139d28a8809501",
+    "releaseName": "20261105T023205Z (run 41947653837)",
     "buildMode": {
       "VITE_BFF_MODE": "live",
       "VITE_BFF_FALLBACK": "strict",
@@ -18,7 +18,8 @@
     "bffConfigPosture": {
       "auth_mode": "strict",
       "auth_stub": false
-    }
+    },
+    "pairId": "560966946e67b01c6e188d5ff065c282a3c2d3accfe915d22130c0b3c5d4f6bf"
   },
   "rootCause": "nonprod-deploy.yml frontend_profile defaults to read-only and scripts/auto_deploy_dev_pair.py preserves the accepted hosted profile, so Dev stays read-only until one operator-live deploy is dispatched.",
   "sourceChangesNeeded": false,
@@ -27,9 +28,10 @@
     "41947126368": "completed failure (capture stage); lease released/expired; not mine",
     "41946522116": "failure at capture stage (DEV_ARTIFACT_OPERATION_FAILED exit 75) for backend 0bd88495e + FE b15608ce1; not mine",
     "41758658026": "last success, current served pair",
-    "41947653837": "in_progress since 2026-11-05T01:18:50Z, pair BFF 0bd88495e + FE b15608ce1, holds shared Dev lease; not mine; profile input not observable until logs finalize"
+    "41947653837": "completed success; served pair FE b15608ce1 / BFF 0bd88495e (read-only)",
+    "41956583442/41956938180": "success, all-12 chain segments only; deploy jobs skipped, no release"
   },
-  "rollbackTarget": "FE 809e1ce0a3643d3f62c99261f3fc99a513612894 / BFF cc074638f1814beed7f7f3e33e7307134b2bf39e (read-only)",
+  "rollbackTarget": "FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb / BFF 0bd88495e27e90f6cfaadc1991139d28a8809501 (read-only, pair 560966946e67...)",
   "acceptanceMatrix": {
     "operatorLiveDeploy": "not-run",
     "loginUiOperatorCreateEditReload": "not-run",
@@ -41,8 +43,12 @@
     "testResourceDisposition": "none created"
   },
   "blockers": [
-    "Shared Dev lease held by in-progress run 41947653837; no second release started, lease not touched.",
-    "Operator-live dispatch deferred until that run reaches terminal state; then recheck live lease and deployment.json profile.",
-    "Human-login (admintest) confirmed available server-side via approved helper per task next; browser acceptance still not-run."
-  ]
+    "Served FE b15608ce1 lacks the workspace restore fix (execute-plans dev c5a3156bf); a qualified pair must be released first.",
+    "Operator-live dispatch not started by this worker: brief keeps root as sole serial Dev publisher; OPS-DEV-LEASE-TRANSIENT-20261105 lease-controller repair (run 41957902456) in flight; no deploy currently running as of 03:00Z.",
+    "Next: root/publisher releases a pair containing c5a3156bf with frontend_profile=operator-live via Nonprod Deploy, then this task runs login-UI create/edit/reload, viewer403, 401, tenant, idempotency."
+  ],
+  "dependencies": {
+    "EVOLUTION-OWNER-WRITE-SERVICE-AUTH-20261104": "done",
+    "FE-TRADINGROOM-WORKSPACE-RESTORE-20261105": "done; execute-plans dev c5a3156bf (PR913) merged 02:51:48Z, NOT yet served"
+  }
 }
