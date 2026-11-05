@@ -920,3 +920,14 @@ double-counted in the additive total.
   - Deep-link override: when explicit target filter `decision`, `mutation_review`, or `persona` is supplied, the `view` filter is bypassed so a deep link returns its target record under any `view`.
 - `data.auto_proposal_counts` is returned on every response with `{incident_followup, incident_severity, postmortem_draft, total}` counted per underlying record so a decision and its `mutation_review` item count once.
 - Postmortem owner reads use the bounded `list_postmortems_page` from `POSTMORTEM-BFF-OWNER-READ-20261104` so the postmortems owner is never asked for all 2027 draft postmortems on each page read.
+
+## Shell summary running_jobs surface and bounded source-ingest job list (BFF-SHELL-SUMMARY-JOBS-SOURCE-20261105)
+
+- `GET /bff/management/shell-summary` decides `surfaces.running_jobs` from the jobs read itself (`JobReadPort.list_jobs_bff` diagnostics), never from a `dataset_source("jobs")` lookup:
+  - all configured sources answered: `status=ok`, `source=bff_composed`;
+  - some sources failed, were unconfigured, or exceeded the shell-summary jobs budget: `status=degraded`, `source=bff_composed`, `degraded_sources={<source>: unreachable|unconfigured|timeout}`; `counts.running_jobs` covers the healthy sources;
+  - every configured source failed: `status=unavailable`, `source=service_client`, `degraded_sources` names them (never reported as zero with `status=ok`);
+  - no job source configured at all: `status=unavailable`, `source=missing`.
+- `counts.running_jobs` is the number of jobs in `running`, `in_progress` or `queued` across sources. The read is bounded: one owner page (`page_size=200`, status filter) per source, all sources read concurrently, whole read capped by `PANTHEON_BFF_SHELL_SUMMARY_JOBS_BUDGET_SECONDS` (default 1.5 s, further capped by the active management read budget). A stalled source is reported as `timeout`.
+- The process-wide count cache entry is keyed by the caller (authorization + selected tenant) as well as the store, so one caller's failed or healthy jobs read is never served to another caller.
+- `GET /api/source-ingest/jobs` keeps its unbounded `{runs, receipts}` form. Supplying any of `status` (comma-separated run statuses), `page_size` (1..250, default 100) or `page_token` selects the bounded form: newest runs first, receipts only for the returned runs, plus `page_info {total, page_size, next_page_token}`. No second list route exists. The BFF job port always uses the bounded form and follows `next_page_token`, so `/bff/jobs` totals span every owner page.

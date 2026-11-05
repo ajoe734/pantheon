@@ -1,0 +1,48 @@
+{
+  "task_id": "BFF-SHELL-SUMMARY-JOBS-SOURCE-20261105",
+  "title": "SNAPSHOT DATA badge is a permanent false alarm: shell summary never reads jobs",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "recorded_at": "2026-11-05T05:00:00Z",
+  "verification_scope": "functional_local_only_hosted_verification_by_coordinator",
+  "fix": {
+    "shell_summary": "ManagementService._shell_summary_jobs_read decides surfaces.running_jobs from the JobReadPort read diagnostics (healthy/degraded/configured sources); the dataset_source('jobs') lookup (always 'missing') is no longer consulted. ok->bff_composed ok; some failed/unconfigured/timeout->degraded bff_composed with degraded_sources; all configured failed->unavailable service_client with degraded_sources; none configured->unavailable missing.",
+    "bounded_reads": "Shell summary asks each source for one owner page (page_size 200, status in running/in_progress/queued); sources are read concurrently and the whole read is capped by PANTHEON_BFF_SHELL_SUMMARY_JOBS_BUDGET_SECONDS (default 1.5 s, capped by the management read budget); unfinished sources are reported as 'timeout'.",
+    "cache": "Process-wide shell summary count cache entry now carries a caller key (sha256 of authorization + selected tenant); another caller never receives it.",
+    "owner": "GET /api/source-ingest/jobs: status (comma list), page_size (1..250, default 100), page_token select a bounded form (newest first, receipts only for returned runs, page_info.total/next_page_token). Unbounded form unchanged. IngestStore.list_runs_page skips the full journal replay while the journal inode/size/mtime is unchanged.",
+    "job_port": "ports/job_read.py reads sources concurrently (copying the request context so caller authorization/tenant are preserved), uses the bounded ingest form and follows owner pages (page 250, cap 100 pages -> 'truncated' degraded marker), so /bff/jobs totals span all owner pages."
+  },
+  "measurements_local": {
+    "fixture": "9000 real IngestRun (5 events each) + IngestReceipt records written to the real journal; served by the real source_ingestion app (TestClient and uvicorn on a real socket)",
+    "before_unbounded_body_bytes": 19787271,
+    "before_unbounded_latency_s": 2.673,
+    "after_bounded_active_body_bytes": 24227,
+    "after_bounded_active_latency_s": 0.857,
+    "note_latency": "hosted measured 19.6 MB / 3.27 s unbounded; local fixture 19.8 MB. Bounded latency is dominated by the first journal replay; later pages in the same journal state skip it.",
+    "bff_full_list_9000_ingest_jobs_via_real_socket_s": 2.672,
+    "bff_full_list_all_ids_unique_and_complete": true,
+    "shell_summary_with_hosted_size_ingest_s": 0.014,
+    "shell_summary_with_one_stalled_socket_s": 0.609,
+    "shell_summary_stalled_budget_s": 0.6,
+    "stalled_other_counts_correct": true
+  },
+  "acceptance_map": {
+    "1": "test_shell_summary_jobs_read.py::test_healthy_sources_give_ok_live_surface_and_nonzero_count, test_no_job_source_configured_is_unavailable_missing (real create_read_surface_ports)",
+    "2": "test_healthy_sources_give_ok_live_surface_and_nonzero_count (real local HTTP sources, count 4)",
+    "3": "test_partial_failure_is_degraded_live_and_names_failed_sources, test_all_sources_failing_is_unavailable_and_not_zero_ok",
+    "4": "same tests assert every emitted source in {bff_composed, service_client, service_store, bff_cheap_count}",
+    "5": "services/source_ingestion/test_service.py::test_bounded_jobs_listing_at_hosted_scale_stays_small_and_fast",
+    "6": "test_real_source_ingestion_at_hosted_size_is_reachable_and_totals_span_owner_pages",
+    "7": "test_stalled_source_does_not_delay_beyond_budget_and_other_counts_hold, test_shell_summary_requests_only_bounded_active_ingest_pages",
+    "8": "no existing test weakened or deleted; no existing assertion changed"
+  },
+  "existing_test_notes": {
+    "test_mgmt_load_005_read_concurrency.py::test_human_inbox_timeout_returns_degraded_envelope_without_hanging": "fails identically on the unmodified HEAD (0.65 s vs 0.4 s bound); unrelated",
+    "test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos": "fails identically on the unmodified HEAD (/bff/alerts empty); unrelated",
+    "bff_test_architecture_inventory.json": "registered the new test file (total_test_files 393->394)"
+  },
+  "limitations": [
+    "Hosted behaviour not verified here; coordinator verifies.",
+    "Other job sources (worker gateway, orchestrator 354 KB, training, policy) have no bounded owner form; they are read in full, concurrently, and filtered client-side."
+  ]
+}
