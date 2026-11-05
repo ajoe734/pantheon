@@ -76,7 +76,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
         for field_name in (
             "name", "owner", "state", "risk", "alpha",
-            "capitalPoolId", "personaIds", "pnl30d", "sharpe", "drawdown",
+            "capitalPoolId", "personaIds",
             "availableActions",
         ):
             if field_name in payload:
