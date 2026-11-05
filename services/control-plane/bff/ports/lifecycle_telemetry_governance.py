@@ -75,6 +75,8 @@ class IncidentReaderPort(Protocol):
         status: Optional[str] = None,
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
+        open_only: bool = False,
+        raise_on_error: bool = False,
     ) -> List[Dict[str, Any]]: ...
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]: ...
@@ -479,16 +481,32 @@ class DomainIncidentPort:
         status: Optional[str] = None,
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
+        open_only: bool = False,
+        raise_on_error: bool = False,
     ) -> List[Dict[str, Any]]:
+        """List incidents.
+
+        ``open_only`` asks the incidents owner for its own open definition
+        (status open or investigating) via ``?open_only=true``.
+        ``raise_on_error`` lets a caller that must tell a failed read from an
+        empty queue see the failure; the default keeps the historical
+        swallow-to-empty behavior for every other caller.
+        """
         if self._incidents is not None:
             incidents = list(self._incidents.values())
+            if open_only:
+                incidents = [i for i in incidents if str(i.get("status") or "").lower() in ("open", "investigating")]
         elif not self._incidents_api_url:
             self._last_error = True
+            if raise_on_error:
+                raise RuntimeError("PANTHEON_INCIDENTS_API_URL is unconfigured")
             return []
         else:
             q = [("severity", severity)] if severity else []
             if affected_pool_id:
                 q.append(("capital_pool_id", affected_pool_id))
+            if open_only:
+                q.append(("open_only", "true"))
             st_parts = [s.strip() for s in status.split(",") if s.strip()] if status else []
             if len(st_parts) == 1:
                 q.append(("status", st_parts[0].lower()))
@@ -502,6 +520,8 @@ class DomainIncidentPort:
                 )
                 incidents = [r for r in fetched if isinstance(r, dict)]
             except Exception:
+                if raise_on_error:
+                    raise
                 return []
         if status:
             requested = {s.strip().lower() for s in status.split(",") if s.strip()}
@@ -1722,9 +1742,16 @@ class CompositeLifecycleTelemetryGovernancePort:
         status: Optional[str] = None,
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
+        open_only: bool = False,
+        raise_on_error: bool = False,
     ) -> List[Dict[str, Any]]:
+        extra: Dict[str, Any] = {}
+        if open_only:
+            extra["open_only"] = True
+        if raise_on_error:
+            extra["raise_on_error"] = True
         return self.incidents.list_incidents(
-            status=status, severity=severity, affected_pool_id=affected_pool_id
+            status=status, severity=severity, affected_pool_id=affected_pool_id, **extra
         )
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
