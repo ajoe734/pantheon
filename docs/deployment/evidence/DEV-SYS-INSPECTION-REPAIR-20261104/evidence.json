@@ -8,7 +8,7 @@
     "downstream_health_monitor.publish_loop_12_controller_truth: last_success_at/last_tick_at only when overall_ok and targets>0"
   ],
   "commands": [
-    {"cmd": "pytest services/loop-control/test_heartbeat_truth.py services/control-plane/bff/tests/test_trade_journey_metrics_scope.py", "result": "11 passed"},
+    {"cmd": "pytest services/loop-control/test_loop_control.py (heartbeat truth cases) services/control-plane/bff/tests/test_trade_journey_metrics_scope.py", "result": "11 passed"},
     {"cmd": "pytest bff test_downstream_health_monitor.py -k Loop12", "result": "6 passed"},
     {"cmd": "pytest bff tests/test_bff_test_architecture.py tests/test_research_knowledge_source_ports.py agora/test_operational_readiness.py tests/test_agora_operational_readiness_live_binding.py", "result": "103 passed"},
     {"cmd": "pytest services/source_ingestion/tests/test_strategy_seed_builder.py", "result": "11 passed"}
