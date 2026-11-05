@@ -1,0 +1,33 @@
+{
+  "task_id": "EVOLUTION-QUALIFIER-OWNER-READS-20261105",
+  "evidence_kind": "source_functional",
+  "hosted_dry_run_findings_2026_11_05": {
+    "source": "read-only dry run of the merged qualifier inside the hosted evolution container (reported in the task brief; not re-run here)",
+    "report": "441 evaluated, 0 qualified, all failing real_threshold_signal; later criteria never ran on real data",
+    "real_target_for": "artifact-persona-paper-298e138c136c9840b0e4 -> failed target_unverifiable: registry owner read is not configured",
+    "container_env": "EVOLUTION_REGISTRY_SERVICE_TOKEN and EVOLUTION_PERSONA_SERVICE_TOKEN empty, _FILE variables empty; only EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE set",
+    "registry": "all 5280 entries had deployment_summary null (5023 strategy_spec, 257 execution_bundle), so RegistryEntryView.deployment_stage was always none",
+    "token_lifetime": "TTL_SECONDS 24h; reader resolved tokens once at import",
+    "verified_fine_unchanged": ["drift reads", "telemetry summary and event reads", "_mark_date", "staleness checks"]
+  },
+  "changes": {
+    "scripts/issue_dev_paper_principals.py": "READERS gains EVOLUTION_REGISTRY_SERVICE_TOKEN (registry-reader) and EVOLUTION_PERSONA_SERVICE_TOKEN (viewer); CONSUMER_FILES['evolution'] lists both, so issue_environment derives the _FILE variables under /run/pantheon-principals; no new issuer, no writer/decide/admin role",
+    "services/evolution/program_qualification.py": "QualificationOwnerReader.from_env passes a callable per file-backed token resolved via configured_service_token on every read; an unreadable file raises OwnerReadError for that read only (reported as target_unverifiable / evidence_unreadable). real_target takes the stage from the runtime summary (artifact_id must equal target_id); registry readback still proves identity and artifact_type",
+    "docker-compose.yml, docker-compose.control.yml, services/evolution/main.py": "unchanged; already pass the variables and mount the evolution principals volume"
+  },
+  "changed_assertions_justification": {
+    "FakeOwners.entry and fresh_summary fixtures": "now use the hosted shapes (execution_bundle, deployment_summary null, summary carrying artifact_id); the stage is no longer a registry field",
+    "test_target_criterion_variants": "the 'deployment_stage live' case moved from the registry entry to the runtime summary, and the artifact_type case no longer carries a registry deployment_stage; added cases for another-artifact summary, unreadable summary, decision without runtime",
+    "test_fresh_evidence_variants": "the unreadable-summary case is now injected via evidence_summary (second summary read) because the first summary read belongs to real_target; the asserted evidence_unreadable reason is unchanged"
+  },
+  "new_tests": [
+    "test_owner_reader_resolves_file_backed_tokens_at_read_time (replaced file -> next read sends new token; unreadable file fails only that read)",
+    "test_real_target_passes_through_real_registry_and_persona_with_issued_tokens (real registry+persona apps, strict auth, tokens from issue_environment)",
+    "test_real_target_refuses_test_scope_persona_unless_allowed",
+    "test_real_target_without_issued_principals_is_unverifiable",
+    "test_evolution_owner_read_principals_are_reader_only_and_file_delivered",
+    "test_evolution_owner_read_files_rotate_and_are_removed_on_withdrawal"
+  ],
+  "pytest": "111 passed: services/evolution/test_program_qualification.py, services/evolution/test_compose_activation.py, scripts/test_issue_dev_paper_principals.py, scripts/test_dev_paper_principal_renewal.py (run with a venv containing flask; a venv without flask fails only the pre-existing telemetry flask test)",
+  "hosted_verification": "not performed. Belongs to the operator acceptance task EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104; no VM/SSH access used."
+}

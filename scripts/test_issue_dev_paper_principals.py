@@ -346,3 +346,19 @@ def test_persona_evaluator_bff_reader_has_viewer_and_registry_read_only():
     assert claims["scope"] == "pantheon:dev-owner-read"
     assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
     assert not {"admin", "operator", "registry-writer", "capital", "runtime", "automated_gate"}.intersection(claims["roles"])
+
+
+def test_evolution_owner_read_principals_are_reader_only_and_file_delivered():
+    values = issue_environment(configured(), now=NOW)
+    expected = {
+        "EVOLUTION_REGISTRY_SERVICE_TOKEN": ["registry-reader"],
+        "EVOLUTION_PERSONA_SERVICE_TOKEN": ["viewer"],
+    }
+    for variable, roles in expected.items():
+        claims = verify(values[variable])
+        assert claims["roles"] == roles
+        assert claims["scope"] == "pantheon:dev-owner-read"
+        assert claims["tenant_id"] == "tenant-dev"
+        assert variable in CONSUMER_FILES["evolution"]
+        assert values[variable + "_FILE"] == f"/run/pantheon-principals/{variable}"
+        assert not {"registry-writer", "approval_proposer", "approval_decider", "admin", "operator"}.intersection(claims["roles"])
