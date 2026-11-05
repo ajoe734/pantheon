@@ -341,7 +341,7 @@ def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
         return None
     decision_type = str(item.get("decision_type") or item.get("target_type") or "ApprovalDecision").strip()
     risk_level = str(item.get("risk_level") or "unknown").strip().lower() or "unknown"
-    state = str(item.get("decision_state") or item.get("state") or "pending").strip().lower() or "pending"
+    state = str(item.get("decision_state") or item.get("state") or item.get("status") or "pending").strip().lower() or "pending"
     context = item.get("decision_context") if isinstance(item.get("decision_context"), dict) else {}
     governance_chain = context.get("governance_chain") if isinstance(context.get("governance_chain"), dict) else {}
     priority = _human_inbox_priority(item.get("priority") or risk_level, fallback="medium")
