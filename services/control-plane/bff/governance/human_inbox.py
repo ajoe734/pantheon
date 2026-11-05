@@ -7,7 +7,9 @@ from main.py globals.
 """
 from __future__ import annotations
 
+import inspect
 import json
+import logging
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -201,15 +203,6 @@ def _management_prune_camel_aliases(value: Any) -> Any:
     return pruned
 
 
-def human_inbox_surface_timeout_seconds() -> float:
-    raw = os.getenv("PANTHEON_BFF_HUMAN_INBOX_TIMEOUT_SECONDS", "3.0").strip()
-    try:
-        val = float(raw)
-        return max(0.1, val)
-    except (TypeError, ValueError):
-        return 3.0
-
-
 def _human_inbox_csv_filter(value: Optional[str]) -> Optional[set[str]]:
     if not value:
         return None
@@ -260,27 +253,57 @@ def _human_inbox_action_state(status: str, open_statuses: set[str]) -> str:
     return "pending" if status in open_statuses else "resolved"
 
 
+def _human_inbox_review_allows_decision(item: Dict[str, Any]) -> bool:
+    actions = item.get("allowedActions")
+    if not isinstance(actions, dict):
+        return True
+    return bool(actions.get("canApprove") or actions.get("canReject"))
+
+
+def _human_inbox_record_time(record: Dict[str, Any], *keys: str) -> Optional[str]:
+    """First real timestamp of a source record; never the request time."""
+    details = record.get("details") if isinstance(record.get("details"), dict) else {}
+    for source in (record, details):
+        for key in keys:
+            value = source.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return None
+
+
 def _human_inbox_governance_review_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     item_id = _management_record_id(item, "item_id", "id", "review_id")
     if not item_id:
         return None
     review_type = str(item.get("item_type") or item.get("review_type") or "GovernanceReview").strip()
+    if review_type == "EvolutionDecision" and not _human_inbox_review_allows_decision(item):
+        # Not decidable by a human yet: it enters the inbox once it is.
+        return None
     status = str(item.get("status") or item.get("governance_outcome") or "pending").strip().lower() or "pending"
     risk_level = str(item.get("risk_level") or "unknown").strip().lower() or "unknown"
     priority = _human_inbox_priority(item.get("priority") or risk_level, fallback="medium")
-    created_at = item.get("submitted_at") or item.get("created_at")
-    updated_at = item.get("updated_at") or created_at
+    created_at = _human_inbox_record_time(item, "submitted_at", "created_at")
+    updated_at = _human_inbox_record_time(item, "updated_at") or created_at
     route = f"{_GOVERNANCE_REVIEW_QUEUE_ROUTE}?item={item_id}"
     action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES)
+    review_summary = item.get("review_summary") if isinstance(item.get("review_summary"), dict) else {}
+    review_target_type = str(review_summary.get("target_type") or "").strip()
+    review_target_id = review_summary.get("target_id")
     projected = {
         "id": f"governance_review:{item_id}",
+        "item_id": item_id,
         "inbox_id": f"governance_review:{item_id}",
         "inboxType": "governance_review",
         "source_type": "governance_review",
         "source_id": item_id,
         "review_item_id": item_id,
-        "title": item.get("title") or f"Governance review: {review_type}",
-        "summary": item.get("summary") or item.get("description") or "Governance review awaiting human action.",
+        "title": item.get("title") or f"Governance review: {review_target_type or review_type}",
+        "summary": (
+            item.get("summary")
+            or item.get("description")
+            or review_summary.get("riskSummary")
+            or "Governance review awaiting human action."
+        ),
         "priority": priority,
         "risk_level": risk_level,
         "status": status,
@@ -290,7 +313,7 @@ def _human_inbox_governance_review_item(item: Dict[str, Any]) -> Optional[Dict[s
         "submitted_by": item.get("submitted_by"),
         "target": {
             "type": review_type,
-            "id": item.get("target_id") or item.get("plan_id") or item.get("artifact_id") or item_id,
+            "id": item.get("target_id") or review_target_id or item.get("plan_id") or item.get("artifact_id") or item_id,
         },
         "route": route,
         "bff_detail_path": route,
@@ -298,6 +321,7 @@ def _human_inbox_governance_review_item(item: Dict[str, Any]) -> Optional[Dict[s
             "canReview": action_state == "pending",
             "canRequestRevision": action_state == "pending",
         }),
+        "details": _management_json_clone(item),
     }
     return _human_inbox_attach_common_fields(
         projected,
@@ -326,17 +350,19 @@ def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
     target_id = str(governance_chain.get("target_id") or governance_chain.get("linked_review_item_id") or "").strip()
     action_state = "pending" if state in _HUMAN_INBOX_OPEN_APPROVAL_STATES else "resolved"
     route = f"/management/approvals?approval={decision_id}"
-    created_at = item.get("submitted_at")
-    updated_at = item.get("updated_at") or created_at
+    created_at = _human_inbox_record_time(item, "submitted_at", "created_at", "recorded_at")
+    updated_at = _human_inbox_record_time(item, "updated_at") or created_at
     projected = {
         "id": f"approval:{decision_id}",
+        "item_id": decision_id,
         "inbox_id": f"approval:{decision_id}",
         "inboxType": "approval",
         "source_type": "approval",
         "source_id": decision_id,
         "approval_decision_id": decision_id,
+        "decision_id": decision_id,
         "title": item.get("title") or f"{decision_type} approval",
-        "summary": risk_summary or "Approval decision awaiting human review.",
+        "summary": risk_summary or str(item.get("rationale") or "").strip() or "Approval decision awaiting human review.",
         "priority": priority,
         "risk_level": risk_level,
         "status": state,
@@ -352,6 +378,7 @@ def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "bff_detail_path": f"/bff/approvals/{decision_id}",
         "decision_context": json.loads(json.dumps(context)),
         "allowedActions": json.loads(json.dumps(item.get("allowedActions") or {})),
+        "details": _management_json_clone(item),
     }
     return _human_inbox_attach_common_fields(
         projected,
@@ -375,7 +402,7 @@ def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
     kind = str(record.get("kind") or "incident").strip().lower() or "incident"
     risk_level = str(record.get("severity") or record.get("risk_level") or "high").strip().lower() or "high"
     priority = _human_inbox_priority(record.get("priority") or risk_level, fallback="high")
-    created_at = record.get("triggered_at") or record.get("created_at") or record.get("opened_at")
+    created_at = _human_inbox_record_time(record, "triggered_at", "created_at", "opened_at")
     updated_at = record.get("updated_at") or record.get("last_seen_at") or created_at
     runtime_id = record.get("runtime_id") or record.get("target_id")
     persona_id = record.get("persona_id")
@@ -385,12 +412,19 @@ def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
     action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_INCIDENT_STATUSES)
     projected = {
         "id": f"incident:{incident_id}",
+        "item_id": incident_id,
         "inbox_id": f"incident:{incident_id}",
         "inboxType": "incident",
         "source_type": "incident",
         "source_id": incident_id,
+        "incident_id": incident_id,
         "title": record.get("title") or f"Incident: {kind}",
-        "summary": record.get("summary") or record.get("description") or "Incident requires operator review.",
+        "summary": (
+            record.get("summary")
+            or record.get("evidence_summary")
+            or record.get("description")
+            or "Incident requires operator review."
+        ),
         "priority": priority,
         "risk_level": risk_level,
         "status": status,
@@ -412,6 +446,7 @@ def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
             "canReview": action_state == "pending",
             "canRemediate": action_state == "pending",
         }),
+        "details": _management_json_clone(record),
     }
     return _human_inbox_attach_common_fields(
         projected,
@@ -462,6 +497,7 @@ def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str
     )
     projected = {
         "id": f"readiness_blocker:persona:{persona_id}",
+        "item_id": persona_id,
         "inbox_id": f"readiness_blocker:persona:{persona_id}",
         "inboxType": "readiness_blocker",
         "source_type": "readiness_blocker",
@@ -497,6 +533,7 @@ def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str
             "canOpenResearch": bool(current_projects or research_status),
             "canRequestRevision": True,
         },
+        "details": _management_json_clone(row),
     }
     return _human_inbox_attach_common_fields(
         projected,
@@ -903,6 +940,15 @@ def _submitted_promotion_review_records(
     return records
 
 
+def _human_inbox_review_duplicates_approval(record: Dict[str, Any], approval_ids: set[str]) -> bool:
+    summary = record.get("review_summary") if isinstance(record.get("review_summary"), dict) else {}
+    linked = str(summary.get("linked_approval_decision_id") or "").strip()
+    if linked and linked in approval_ids:
+        return True
+    item_id = _management_record_id(record, "item_id", "id", "review_id")
+    return item_id.startswith("review-") and item_id[len("review-"):] in approval_ids
+
+
 def _human_inbox_project_items(
     *,
     snapshot_at: str,
@@ -913,6 +959,21 @@ def _human_inbox_project_items(
 ) -> List[Dict[str, Any]]:
     """Project already-loaded contributors into the canonical inbox rows."""
     items: List[Dict[str, Any]] = []
+    # A proposed approval decision is also surfaced by the governance review
+    # queue as review-<decision_id>; list the decision once, as the approval.
+    approval_ids = {
+        decision_id
+        for decision_id in (
+            _management_record_id(record, "decision_id", "id", "approval_decision_id")
+            for record in approval_records
+        )
+        if decision_id
+    }
+    if approval_ids:
+        review_records = [
+            record for record in review_records
+            if not _human_inbox_review_duplicates_approval(record, approval_ids)
+        ]
     projectors: Sequence[tuple[Sequence[Dict[str, Any]], Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]]] = (
         (review_records, _human_inbox_governance_review_item),
         (approval_records, _human_inbox_approval_item),
@@ -998,6 +1059,27 @@ def _human_inbox_approval_contributor(
     return records, surface
 
 
+def read_open_incidents(read_store: Any) -> List[Dict[str, Any]]:
+    """Read open incidents once, through the owner's open_only filter.
+
+    A failed owner read raises instead of reading as an empty queue. A store
+    whose ``list_incidents`` predates ``open_only`` is read as before and the
+    projector keeps only open rows.
+    """
+    reader = read_store.list_incidents
+    try:
+        params = inspect.signature(reader).parameters
+    except (TypeError, ValueError):
+        params = {}
+    var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    kwargs: Dict[str, Any] = {}
+    if "open_only" in params or var_kw:
+        kwargs["open_only"] = True
+        if "raise_on_error" in params or var_kw:
+            kwargs["raise_on_error"] = True
+    return [row for row in (reader(**kwargs) or []) if isinstance(row, dict)]
+
+
 def _human_inbox_incident_contributor(
     snapshot_at: str,
     *,
@@ -1010,7 +1092,7 @@ def _human_inbox_incident_contributor(
         except (ImportError, AttributeError):
             read_store = None
     available = bool(read_store and hasattr(read_store, "list_incidents"))
-    records = list(read_store.list_incidents() or []) if available else []
+    records = read_open_incidents(read_store) if available else []
     try:
         from ..personas.service import _dataset_surface_status
         surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
@@ -1184,15 +1266,42 @@ def _human_inbox_all_items(
     incident_records: List[Dict[str, Any]] = []
     persona_rows: List[Dict[str, Any]] = []
     surfaces: Dict[str, Dict[str, Any]] = {}
+    failures: Dict[str, Dict[str, Any]] = {}
+
+    def _failed(surface_key: str, exc: BaseException) -> None:
+        logging.getLogger(__name__).warning(
+            "bff.human_inbox contributor %s failed: %s", surface_key, type(exc).__name__
+        )
+        failures[surface_key] = {
+            "status": "degraded",
+            "source": "read_store",
+            "reason": "contributor_read_error",
+            "message": f"{surface_key} contributor failed: {type(exc).__name__}",
+            "snapshot_at": snapshot_at,
+        }
+        surfaces[surface_key] = failures[surface_key]
+
     if include_all or "governance_review" in source_types:
-        review_records, surfaces["governance_review_queue"] = _human_inbox_governance_contributor(snapshot_at)
+        try:
+            review_records, surfaces["governance_review_queue"] = _human_inbox_governance_contributor(snapshot_at)
+        except Exception as exc:
+            _failed("governance_review_queue", exc)
     if include_all or "approval" in source_types:
-        approval_records, surfaces["approval_queue"] = _human_inbox_approval_contributor(snapshot_at)
+        try:
+            approval_records, surfaces["approval_queue"] = _human_inbox_approval_contributor(snapshot_at)
+        except Exception as exc:
+            _failed("approval_queue", exc)
     if include_all or "incident" in source_types:
-        incident_result, surfaces["incidents"] = _human_inbox_incident_contributor(snapshot_at)
-        incident_available, incident_records = incident_result
+        try:
+            incident_result, surfaces["incidents"] = _human_inbox_incident_contributor(snapshot_at)
+            incident_available, incident_records = incident_result
+        except Exception as exc:
+            _failed("incidents", exc)
     if include_all or "readiness_blocker" in source_types:
-        persona_rows, surfaces["persona_readiness"] = _human_inbox_persona_contributor(snapshot_at)
+        try:
+            persona_rows, surfaces["persona_readiness"] = _human_inbox_persona_contributor(snapshot_at)
+        except Exception as exc:
+            _failed("persona_readiness", exc)
     items = _human_inbox_project_items(
         snapshot_at=snapshot_at,
         review_records=review_records,
@@ -1207,6 +1316,7 @@ def _human_inbox_all_items(
         "incident_records": incident_records,
         "persona_rows": persona_rows,
         "surfaces": surfaces,
+        "failures": failures,
     }
 
 
@@ -1317,7 +1427,6 @@ def _human_inbox_surfaces(
             snapshot_at=snapshot_at,
             source="read_store",
             has_data=bool(governance_review_records),
-            empty_is_unavailable=True,
             missing_message="Governance review queue has no readable source records.",
         )
     if include_all or "approval" in source_types:
@@ -1327,7 +1436,6 @@ def _human_inbox_surfaces(
             snapshot_at=snapshot_at,
             source="read_store",
             has_data=bool(approval_records),
-            empty_is_unavailable=True,
             missing_message="Approval queue has no readable source records.",
         )
     if include_all or "incident" in source_types:
@@ -1452,4 +1560,5 @@ def _human_inbox_payload(
         priority=priority,
         page_token=page_token,
         page_size=page_size,
+        surface_failures=sources.get("failures") or None,
     )
