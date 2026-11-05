@@ -857,3 +857,49 @@ def test_keyed_existence_reads_are_tenant_scoped(tmp_path) -> None:
     assert store.reconciliation_record_exists("rc-1", "t1")
     assert not store.reconciliation_record_exists("rc-2", "t1")
     assert [r["evaluation_id"] for r in store.list_evaluations_for_binding("b2")] == ["ev-2"]
+
+
+def _evaluation(evaluation_id: str, binding_id: str, evaluated_at: str, *, breached: bool) -> dict:
+    # Shape of a real hosted drift_evaluations row (reduced to the fields read).
+    return {
+        "id": evaluation_id,
+        "evaluation_id": evaluation_id,
+        "tenant_id": "tenant-a",
+        "binding_id": binding_id,
+        "evaluated_at": evaluated_at,
+        "drift_checks": [
+            {
+                "metric": "drawdown",
+                "status": "ok",
+                "baseline": 0.0325,
+                "observed": 0.0,
+                "one_sided": True,
+                "comparator": "gt",
+                "signal_type": "performance_degradation",
+                "threshold_value": 1.25,
+                "threshold_metric": "rolling_drawdown_multiple",
+                "governed_threshold_breached": breached,
+            }
+        ],
+    }
+
+
+def test_json_store_filters_evaluations_by_window_and_governed_breach(tmp_path: Path) -> None:
+    store_module = _load_store_module()
+    store = store_module.ReconciliationDriftStore(tmp_path)
+    store.put_evaluation(_evaluation("e1", "b1", "2026-11-01T10:00:00Z", breached=True))
+    store.put_evaluation(_evaluation("e2", "b1", "2026-11-02T10:00:00Z", breached=False))
+    store.put_evaluation(_evaluation("e3", "b1", "2026-11-03T10:00:00Z", breached=True))
+    store.put_evaluation(_evaluation("e4", "b2", "2026-11-03T10:00:00Z", breached=True))
+
+    assert {r["id"] for r in store.list_evaluations_for_binding("b1")} == {"e1", "e2", "e3"}
+    windowed = store.list_evaluations_for_binding("b1", since="2026-11-02T00:00:00Z")
+    assert {r["id"] for r in windowed} == {"e2", "e3"}
+    breached = store.list_evaluations_for_binding(
+        "b1", since="2026-11-02T00:00:00Z", governed_breached_only=True
+    )
+    assert [r["id"] for r in breached] == ["e3"]
+    until = store.list_evaluations_for_binding("b1", until="2026-11-01T23:59:59Z")
+    assert [r["id"] for r in until] == ["e1"]
+    assert {r["id"] for r in store.list_evaluations(governed_breached_only=True)} == {"e1", "e3", "e4"}
+    assert len(store.list_evaluations()) == 4

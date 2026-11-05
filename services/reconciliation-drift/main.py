@@ -1723,11 +1723,30 @@ def create_live_reconciliation_record(body: LiveRunReconciliationBody) -> Dict[s
 
 
 @app.get("/api/reconciliation-drift/evaluations")
-def list_evaluations(binding_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-    evaluations = _tenant_scoped(store.list_evaluations())
+def list_evaluations(
+    binding_id: Optional[str] = Query(default=None),
+    since: Optional[str] = Query(default=None),
+    until: Optional[str] = Query(default=None),
+    governed_breached_only: bool = Query(default=False),
+) -> List[Dict[str, Any]]:
+    # Filters are applied inside the store query so a binding query does not
+    # load the whole evaluation table.
+    since = since or None
+    until = until or None
     if binding_id:
-        evaluations = [item for item in evaluations if item.get("binding_id") == binding_id]
-    return evaluations
+        evaluations = store.list_evaluations_for_binding(
+            binding_id,
+            since=since,
+            until=until,
+            governed_breached_only=governed_breached_only,
+        )
+    else:
+        evaluations = store.list_evaluations(
+            since=since,
+            until=until,
+            governed_breached_only=governed_breached_only,
+        )
+    return _tenant_scoped(evaluations)
 
 
 @app.get("/api/reconciliation-drift/evaluations/{evaluation_id}")
@@ -1788,7 +1807,9 @@ def get_drift_report(report_id: str) -> Dict[str, Any]:
 
 @app.get("/api/reconciliation-drift/summary")
 def summary(binding_id: Optional[str] = Query(default=None)) -> Dict[str, Any]:
-    evaluations = list_evaluations(binding_id=binding_id)
+    evaluations = list_evaluations(
+        binding_id=binding_id, since=None, until=None, governed_breached_only=False
+    )
     alerts = list_alert_handoffs(binding_id=binding_id, handoff_state=None)
     drift_reports = _tenant_scoped(store.list_drift_reports())
     if binding_id:
@@ -1811,7 +1832,9 @@ def summary(binding_id: Optional[str] = Query(default=None)) -> Dict[str, Any]:
 
 @app.get("/api/reconciliation-drift/reconciliation-status/{binding_id}")
 def reconciliation_status(binding_id: str) -> Dict[str, Any]:
-    evaluations = list_evaluations(binding_id=binding_id)
+    evaluations = list_evaluations(
+        binding_id=binding_id, since=None, until=None, governed_breached_only=False
+    )
     if not evaluations:
         raise HTTPException(status_code=404, detail="no reconciliation status for binding")
     latest = sorted(evaluations, key=lambda item: str(item.get("evaluated_at") or ""))[-1]
@@ -1897,6 +1920,23 @@ def _trigger_evaluation_id(trigger_id: str, binding_id: str) -> str:
     safe_trigger = _safe_id_component(trigger_id, fallback="trigger", limit=48)
     safe_binding = _safe_id_component(binding_id, fallback="binding", limit=24)
     return f"rdeval-incident-{safe_trigger}-{safe_binding}"
+
+
+def _record_causal_drawdown_event(
+    drift_checks: List[Dict[str, Any]], summary: Dict[str, Any]
+) -> None:
+    """Name the telemetry event that produced a baseline-sourced drawdown check.
+
+    ``evidence_refs`` lists every cited event without saying which one is the
+    drawdown snapshot; consumers that must date a breach by its market mark
+    need that identity on the check itself.
+    """
+    event_id = str(summary.get("drawdown_event_id") or "").strip()
+    if not event_id:
+        return
+    for check in drift_checks:
+        if check.get("metric") == "drawdown" and check.get("baseline_source"):
+            check["drawdown_event_id"] = event_id
 
 
 def _summary_telemetry_event_ids(summary: Dict[str, Any]) -> List[str]:
@@ -3298,6 +3338,7 @@ def _execute_scheduled_reconcile(
             thresholds,
             baseline_sources,
         )
+        _record_causal_drawdown_event(drift_checks, summary)
         reconciliation_checks = _summary_actual_state_checks(
             summary,
             binding_id=binding_id,
