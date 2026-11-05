@@ -4388,6 +4388,157 @@ class MultiTaskPerRunOrderingTests(unittest.TestCase):
         )
 
 
+class BehindReturnToOwnerTests(unittest.TestCase):
+    """An approved, green, clean-trial-merge PR that is BEHIND goes back to its owner."""
+
+    def _candidates(self, extra_raw: Mapping[str, Any] | None = None):
+        out = []
+        for index, task_id in enumerate(("THRU-101", "THRU-102"), start=1):
+            raw = {
+                "generation": 1,
+                "delivery_binding": {"pr": 300 + index, "head_sha": APPROVED_HEAD},
+            }
+            if task_id == "THRU-101" and extra_raw:
+                raw.update(extra_raw)
+            out.append(
+                auto_integrator.TaskCandidate(
+                    task_id=task_id,
+                    title=task_id,
+                    owner="Codex",
+                    reviewer="Claude",
+                    branch=f"task/{task_id}",
+                    repository_slug="ajoe734/pantheon",
+                    raw_task=raw,
+                )
+            )
+        return out
+
+    def _gate(self) -> auto_integrator.ReviewGate:
+        # THRU-102 is approved EARLIER than THRU-101 although it is listed
+        # second, so ordering must follow approval time, not row order.
+        events = []
+        for task_id, number, ts in (
+            ("THRU-101", 301, "2026-06-12T00:46:00Z"),
+            ("THRU-102", 302, "2026-06-12T00:45:00Z"),
+        ):
+            events.append(
+                {
+                    "ts": ts,
+                    "agent": "Claude",
+                    "type": "review_approved",
+                    "task_id": task_id,
+                    "message": "Independent review approved.",
+                    "review_binding": {
+                        "pr": number,
+                        "head_sha": APPROVED_HEAD,
+                        "head_branch": f"task/{task_id}",
+                        "base": "dev",
+                    },
+                }
+            )
+        return auto_integrator.ReviewGate(
+            state={
+                "tasks": [
+                    {"id": t, "title": t, "status": "review_approved",
+                     "owner": "Codex", "reviewer": "Claude"}
+                    for t in ("THRU-101", "THRU-102")
+                ]
+            },
+            events=events,
+        )
+
+    def _run(self, *, merge_state="BEHIND", ephemeral_merge_returncode=0, extra_raw=None):
+        prs = {}
+        for task_id, number in (("THRU-101", 301), ("THRU-102", 302)):
+            pr = green_pr(number=number, task_id=task_id)
+            pr["mergeStateStatus"] = merge_state
+            prs[f"task/{task_id}"] = pr
+        runner = TwoTaskFakeRunner(prs)
+        runner.merge_base_returncode = 1
+        runner.ephemeral_merge_returncode = ephemeral_merge_returncode
+        settings = auto_integrator.Settings(
+            smoke_commands=("true",),
+            status_identity_sha256="d" * 64,
+            command_runtime_sha="b" * 40,
+        )
+        candidates = self._candidates(extra_raw)
+        gate = self._gate()
+        results = [
+            auto_integrator.integrate_candidate(
+                c, settings, runner, execute=False, open_unblock=False, gate=gate
+            )
+            for c in candidates
+        ]
+        return candidates, results, settings, runner
+
+    def test_oldest_behind_routed_and_newer_queued(self) -> None:
+        candidates, results, settings, runner = self._run()
+        self.assertTrue(all(r.action == "waiting" and r.behind_route for r in results))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            auto_integrator.route_behind_results(
+                candidates, results, settings, runner, root=root, execute=True
+            )
+            requests = list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            self.assertEqual(len(requests), 1)
+            payload = json.loads(requests[0].read_text())
+            self.assertEqual(payload["source_task_id"], "THRU-102")
+            self.assertEqual(payload["reason"], "final-merge-state-not-direct")
+        by_id = {r.task_id: r for r in results}
+        self.assertEqual(by_id["THRU-102"].action, "blocked")
+        self.assertTrue(by_id["THRU-102"].unblock_task_id)
+        self.assertEqual(by_id["THRU-101"].action, "waiting")
+        self.assertIsNone(by_id["THRU-101"].unblock_task_id)
+        self.assertIn("Queued behind", by_id["THRU-101"].detail)
+        self.assertIn("THRU-102", by_id["THRU-101"].detail)
+        # The approved head is never pushed or rewritten.
+        self.assertFalse(any("push" in c for c in runner.commands))
+
+    def test_repeated_pass_reuses_content_addressed_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ids = []
+            for _ in range(2):
+                candidates, results, settings, runner = self._run()
+                auto_integrator.route_behind_results(
+                    candidates, results, settings, runner, root=root, execute=True
+                )
+                ids.append(next(r.unblock_task_id for r in results if r.unblock_task_id))
+            self.assertEqual(ids[0], ids[1])
+            self.assertEqual(
+                len(list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))), 1
+            )
+
+    def test_real_conflict_keeps_exact_head_merge_conflict_path(self) -> None:
+        candidates, results, _settings, _runner = self._run(ephemeral_merge_returncode=1)
+        for result in results:
+            self.assertEqual(result.action, "blocked")
+            self.assertIsNone(result.behind_route)
+
+    def test_non_behind_states_keep_waiting_without_route(self) -> None:
+        for state in ("BLOCKED", "DIRTY", "DRAFT"):
+            with self.subTest(state=state):
+                _c, results, _s, _r = self._run(merge_state=state)
+                self.assertTrue(all(r.behind_route is None for r in results))
+
+    def test_repair_of_repair_is_refused_and_waits_for_operator(self) -> None:
+        candidates, results, settings, runner = self._run(
+            extra_raw={"unblock_request": {"source_task_id": "X"}}
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            auto_integrator.route_behind_results(
+                candidates, results, settings, runner, root=root, execute=True
+            )
+            requests = list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            # THRU-101 is a repair and is excluded; the other one routes.
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(json.loads(requests[0].read_text())["source_task_id"], "THRU-102")
+        by_id = {r.task_id: r for r in results}
+        self.assertEqual(by_id["THRU-101"].action, "waiting")
+        self.assertIn("waiting for an operator", by_id["THRU-101"].detail)
+
+
 class AutoIntegratorProcessE2ETests(unittest.TestCase):
     def _run_child(self, body: str, *arguments: str) -> dict[str, Any]:
         environment = os.environ.copy()

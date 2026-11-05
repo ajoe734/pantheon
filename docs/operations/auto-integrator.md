@@ -123,3 +123,28 @@ Do not copy credentials, environment contents, full process command lines, or
 unredacted host configuration into repository evidence. A worker that cannot
 read the host crontab must label the single-entry binding as Human/Ops-attested
 and independently verify the runtime paths, receipts, ancestry, and lock log.
+
+## BEHIND return-to-owner routing
+
+An approved (review-before-merge), green PR whose fresh `mergeStateStatus` is
+`BEHIND` and whose disposable trial merge of the target branch is clean
+(`exact_head_verified_clean`) used to stay `waiting` forever. It is now routed
+through the existing unblock request path (reason `final-merge-state-not-direct`;
+no new dispatcher, inbox, or status mutation):
+
+- At most one BEHIND candidate per repository/target branch is routed per pass:
+  the oldest by approval time (task id breaks ties; never dict or row order).
+  Other BEHIND candidates stay `waiting` and say they are queued behind it.
+- The routed result is `blocked` and carries the unblock task id. Repeated passes
+  for the same PR head and task generation reuse the content-addressed request.
+- Only `BEHIND` routes. Other non-direct merge states keep waiting; a real
+  conflict keeps the `exact-head-merge-conflict` path.
+- The integrator never pushes or rewrites the approved head. The owner merges the
+  target branch into the task branch (no force-push); the source task then needs
+  the normal reviewer `reopen` and owner re-handoff at the new head for a new
+  exact-head review. The repair task cannot mutate the source task, so that
+  reopen/re-handoff is a manual canonical step the repair detail states.
+- The one-level repair rule still applies: a repair task that is itself BEHIND is
+  excluded from routing and reported as waiting for an operator.
+- Branch protection and the strict requirement are unchanged. Takes effect only
+  after a runtime promotion.

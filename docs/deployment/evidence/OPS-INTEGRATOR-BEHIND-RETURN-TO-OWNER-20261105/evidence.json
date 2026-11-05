@@ -1,0 +1,15 @@
+{
+  "task_id": "OPS-INTEGRATOR-BEHIND-RETURN-TO-OWNER-20261105",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "change": "route_behind_results in scripts/git/auto_integrator.py routes the oldest approved BEHIND PR (clean trial merge) per repository through open_unblock_task with reason final-merge-state-not-direct; others stay waiting as queued.",
+  "tests": {
+    "command": "python3 -m pytest -q scripts/git/test_auto_integrator.py",
+    "exit_code": 0,
+    "result": "168 passed, 652 subtests passed in 30.88s",
+    "new_tests": "BehindReturnToOwnerTests: routed+queued, repeated-pass dedupe, conflict unchanged, non-BEHIND unchanged, repair-of-repair refused"
+  },
+  "source_binding_note": "Like EXACT-HEAD-MERGE-CONFLICT repairs, the repair task cannot mutate the source task; after the owner syncs the branch the source (review_approved at the old head) needs reviewer reopen and owner re-handoff for a new exact-head review, else the gate reports declared_head_sha_mismatch/approval_head_mismatch. The repair detail and docs state this; no new canonical mutation path was added.",
+  "not_changed": ["branch protection", "strict required checks", "unblock_contract.REASONS", "supervisor"],
+  "activation": "Requires runtime promotion by the coordinator after merge."
+}

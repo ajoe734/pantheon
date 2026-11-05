@@ -102,6 +102,7 @@ FAILURE_VALUES = {
 IGNORABLE_DIAGNOSTIC_WORKFLOWS = frozenset({"Canonical Review Attestation Audit"})
 ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNSTABLE", "UNKNOWN"}
 ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNSTABLE", "UNKNOWN"}
+BEHIND_MERGE_STATE = "BEHIND"
 PR_DETAIL_FIELDS = (
     "number,title,url,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,"
     "reviewDecision,statusCheckRollup,state,mergeCommit,mergedAt,commits,"
@@ -157,6 +158,9 @@ class IntegrationResult:
     unblock_task_id: str | None = None
     dry_run: bool = True
     commands: list[list[str]] = field(default_factory=list)
+    # Set only for a clean-trial-merge BEHIND PR awaiting per-repo routing;
+    # (approved_at_text, head_sha). Never serialized.
+    behind_route: tuple[str, str] | None = field(default=None, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -216,11 +220,19 @@ class IntegrationLockHeld(IntegrationLockError):
 class FinalMergeRevalidationError(AutoIntegratorError):
     """Live canonical state or PR state changed after smoke validation."""
 
-    def __init__(self, reason: str, detail: str, *, waiting: bool = False) -> None:
+    def __init__(
+        self,
+        reason: str,
+        detail: str,
+        *,
+        waiting: bool = False,
+        merge_state: str = "",
+    ) -> None:
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
         self.waiting = waiting
+        self.merge_state = merge_state
 
 
 class ExecuteAuthorityError(AutoIntegratorError):
@@ -1972,6 +1984,7 @@ def revalidate_before_merge(
             f"PR #{fresh_number} final mergeStateStatus={fresh_merge_state}; "
             "refusing an auto-merge or merge-queue handoff.",
             waiting=True,
+            merge_state=fresh_merge_state,
         )
     return fresh_pr, fresh_decision, fresh_checks
 
@@ -2187,6 +2200,83 @@ def open_unblock_task(
         )
         return None
     return outcome.task_id
+
+
+def route_behind_results(
+    candidates: Sequence[TaskCandidate],
+    results: Sequence[IntegrationResult],
+    settings: Settings,
+    runner: CommandRunner,
+    *,
+    root: Path,
+    execute: bool,
+    open_unblock: bool = True,
+) -> None:
+    """Send at most the oldest BEHIND approved PR per repository back to its owner.
+
+    Mutates ``results`` in place. Uses the existing unblock request path only;
+    never pushes or rewrites an approved head. Ordering is by approval time then
+    task id, so it does not depend on candidate or dict order.
+    """
+
+    by_repo: dict[tuple[str, str], list[tuple[Any, str, TaskCandidate, IntegrationResult]]] = {}
+    for candidate, result in zip(candidates, results):
+        if result.behind_route is None:
+            continue
+        approved_text, _head = result.behind_route
+        approved = review_gate.parse_timestamp(approved_text) if approved_text else None
+        sort_key = (approved is None, approved.timestamp() if approved else 0.0)
+        by_repo.setdefault(
+            (candidate.repository_slug, candidate.target_branch), []
+        ).append((sort_key, candidate.task_id, candidate, result))
+
+    for key in sorted(by_repo):
+        queue = sorted(by_repo[key], key=lambda item: (item[0], item[1]))
+        routable: list[tuple[Any, str, TaskCandidate, IntegrationResult]] = []
+        for item in queue:
+            _, _, candidate, result = item
+            try:
+                unblock_contract.require_root_repair_source(
+                    candidate.task_id, candidate.raw_task
+                )
+            except ValueError:
+                result.detail += (
+                    " This task is itself a repair (depth limit 1); waiting for an "
+                    "operator to refresh its branch."
+                )
+                continue
+            routable.append(item)
+        if not routable:
+            continue
+        _, head_id, head_candidate, head_result = routable[0]
+        for _, task_id, _, result in routable[1:]:
+            result.detail += (
+                f" Queued behind older approved BEHIND PR for {head_id}; "
+                "one repair is routed per repository per pass."
+            )
+        if not open_unblock:
+            continue
+        detail = (
+            f"{head_result.detail} Clean trial merge: owner merges "
+            f"origin/{head_candidate.target_branch} into the task branch (no force-push), "
+            "then reopens/re-hands off the source task at the new head for a new "
+            "exact-head review. The integrator never moves the approved head."
+        )
+        unblock = open_unblock_task(
+            head_candidate,
+            "final-merge-state-not-direct",
+            detail,
+            settings,
+            runner,
+            root=root,
+            execute=execute,
+        )
+        if unblock:
+            head_result.action = "blocked"
+            head_result.detail = detail
+            head_result.unblock_task_id = unblock
+        else:
+            head_result.detail += " Unblock request was not published; waiting for an operator."
 
 
 def preflight_repository(
@@ -3296,6 +3386,25 @@ def integrate_candidate(
         # Canonical locks have exited before any task-state mutation below.
         action = "waiting" if exc.waiting else "blocked"
         detail = f"PR #{number} failed final merge revalidation: {exc.detail}"
+        if (
+            exc.reason == "final-merge-state-not-direct"
+            and exc.merge_state == BEHIND_MERGE_STATE
+            and gated
+            and rebase_status == "exact_head_verified_clean"
+        ):
+            # Approved, green and merely stale (clean trial merge): defer to
+            # the per-repository routing step so only the oldest is sent back.
+            return IntegrationResult(
+                candidate.task_id,
+                "waiting",
+                detail,
+                number,
+                url,
+                None,
+                not execute,
+                runner.commands[:],
+                behind_route=(str(decision.approved_at or ""), decision.head_oid),
+            )
         unblock = (
             open_unblock_task(
                 candidate,
@@ -3581,6 +3690,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     actionable_count += 1
                     if actionable_count >= max_tasks:
                         break
+            route_behind_results(
+                candidates,
+                results,
+                settings,
+                runner,
+                root=status_root,
+                execute=args.execute,
+                open_unblock=not args.no_open_unblock,
+            )
     except IntegrationLockHeld as exc:
         payload = {
             "dry_run": not args.execute,
