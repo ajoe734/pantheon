@@ -237,7 +237,13 @@ def stack(monkeypatch, tmp_path):
             raise urllib.error.HTTPError(url, resp.status_code, "err", {}, io.BytesIO(resp.content))
         return _Resp(resp.status_code, resp.content)
 
+    from services.governance import approval_authority
+
+    class _Opener:
+        open = staticmethod(transport)
+
     monkeypatch.setattr(urllib.request, "urlopen", transport)
+    monkeypatch.setattr(approval_authority, "build_opener", lambda *handlers: _Opener())
 
     commands = CommandStore(str(tmp_path / "commands.jsonl"))
     read_store = ApprovalDecisionReadSurface()

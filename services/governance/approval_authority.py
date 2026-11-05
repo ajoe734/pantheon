@@ -10,12 +10,9 @@ import math
 import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
-import urllib.request
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
-
-_DEFAULT_URLOPEN = urllib.request.urlopen
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -151,13 +148,8 @@ class ApprovalReader:
             headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + token},
             method='GET',
         )
-        open_fn = (
-            urllib.request.urlopen
-            if urllib.request.urlopen is not _DEFAULT_URLOPEN
-            else self._opener.open
-        )
         try:
-            with open_fn(request, timeout=self.timeout_seconds) as response:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
                 if response.status != 200 or response.headers.get_content_type() != 'application/json':
                     raise ApprovalUnavailable('Governance did not return a JSON decision')
                 body = json.loads(response.read().decode('utf-8'))
