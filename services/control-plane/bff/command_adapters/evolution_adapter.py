@@ -494,3 +494,76 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
                 "live_capital_side_effects": False,
             },
         )
+
+
+def _decision_approval_error_code(status_code: int):
+    from services.control_plane.bff.models import ErrorCode
+
+    return {
+        401: ErrorCode.AUTH_REQUIRED,
+        403: ErrorCode.FORBIDDEN,
+        404: ErrorCode.RESOURCE_NOT_FOUND,
+        409: ErrorCode.RESOURCE_CONFLICT,
+        422: ErrorCode.VALIDATION_FAILED,
+    }.get(status_code, ErrorCode.DEPENDENCY_UNAVAILABLE)
+
+
+def create_evolution_decision_approval_router(
+    *,
+    extract_identity: Any,
+    require_operator_role: Any,
+    bff_error: Any,
+):
+    """Build the BFF route that asks the Evolution owner to file ``evolution_execute``.
+
+    EVOLUTION-BFF-FREEZE-EXEC-20261105: the Evolution owner computes the binding
+    and files the Governance request under its propose-only principal; the BFF
+    computes no digest and files nothing itself.  The operator then decides it
+    once via ``POST /bff/approvals/{id}/decide``.
+    """
+    from fastapi import APIRouter, Header
+    from services.control_plane.bff.models import ErrorCode
+
+    router = APIRouter()
+
+    @router.post("/bff/evolution-decisions/{decision_id}/execution-approval-request", status_code=200)
+    def request_decision_execution_approval(
+        decision_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_operator_role(identity)
+        clean_id = decision_id.strip()
+        try:
+            body = evolution_owner_request(
+                evolution_url(f"/api/evolution/proposals/{quote(clean_id, safe='')}/execution-approval-request"),
+                caller_token=authorization,
+                method="POST",
+                payload={"actor_id": getattr(identity, "operator_id", None)},
+            )
+        except urllib.error.HTTPError as exc:
+            status = exc.code if exc.code in (403, 404, 409, 422, 503) else 502
+            raise bff_error(
+                status,
+                _decision_approval_error_code(status),
+                "Evolution owner refused the execute approval request",
+                f"Evolution owner returned HTTP {exc.code}",
+            ) from exc
+        except ActionUnavailableError as exc:
+            raise bff_error(
+                int(getattr(exc, "downstream_status", None) or 503),
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Evolution owner is unavailable",
+                str(exc),
+            ) from exc
+        return {
+            "approval_decision_id": body.get("approval_decision_id"),
+            "decision_id": body.get("decision_id", clean_id),
+            "target_type": body.get("target_type"),
+            "target_id": body.get("target_id"),
+            "created": bool(body.get("created")),
+            "next": "Decide this approval once via POST /bff/approvals/{id}/decide, "
+                    "then submit ReviewMutation and ApproveEvolutionDecision with the approval_decision_id.",
+        }
+
+    return router

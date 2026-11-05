@@ -354,6 +354,22 @@ human_correction:
 
 - governance-only `freeze` / `retire` / `restrict_pool_eligibility`：
   - governance state change 已寫入，並取得 state-change ref
+  - 目前唯一可執行的是 **paper 階段、`candidate_artifact` 的 freeze**，且只有一條序列：
+    Evolution owner 以自己的 propose-only service principal 向 Governance 提出一筆
+    `evolution_execute` 申請（owner 自行計算 `subject.proposal_id` 與 `subject.proposal_content_digest`，
+    request id 為 deterministic，重送會重用同一筆）→ 人類在既有 `/bff/approvals/{id}/decide` 決定**一次**
+    （決定者不得是提案者，Governance 語意不變）→ 同一筆核准同時供 `ReviewMutation` 與
+    `ApproveEvolutionDecision` 使用 → `ExecuteEvolutionAction` 先向 owner 取得 receipt binding
+    （owner 重跑 `require_execution_approval`，失敗則不寫任何 Governance 資料）→ 在 Governance 寫入綁定
+    decision 的 FreezeOrder（`scope=artifact`、`status=active`，帶 `evolution_decision_id`、`tenant_id`、
+    `target_id`、`target_version`、`proposal_content_digest`、`approval_decision_id`）→ 以
+    `execution_receipt`（`governance_freeze_order`）呼叫 `/execute`。重試會重用同一筆 FreezeOrder，
+    不會重複建立，也不會產生第二個 cooldown。其他 freeze 範圍以 `unsupported_freeze_scope` 拒絕。
+  - **重要**：FreezeOrder 只是治理隔離紀錄（governance quarantine record）。目前除 BFF read model 外，
+    沒有任何服務會讀取並強制執行它，所以 `executed` **不會停止交易**；本變更不新增任何 enforcement，
+    回應與 BFF 契約都明確標示 `trading_stopped: false`。
+  - governance plane 永不自動派工：dispatch worker 對這類已核准的 decision 只保持（hold），
+    不 submit、不計失敗次數、不進 dead letter；decision 被 executed 後由既有 converged 路徑發佈 outbox。
 - research `retrain` / `revalidate`：
   - research job 或 governed work item 已建立
 - deployment follow-through：

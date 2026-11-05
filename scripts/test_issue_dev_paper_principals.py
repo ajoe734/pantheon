@@ -362,3 +362,21 @@ def test_evolution_owner_read_principals_are_reader_only_and_file_delivered():
         assert variable in CONSUMER_FILES["evolution"]
         assert values[variable + "_FILE"] == f"/run/pantheon-principals/{variable}"
         assert not {"registry-writer", "approval_proposer", "approval_decider", "admin", "operator"}.intersection(claims["roles"])
+
+
+def test_evolution_execute_proposer_is_propose_only_and_mounted_for_evolution():
+    variable = "EVOLUTION_EXECUTE_PROPOSER_TOKEN"
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == claims["service"] == "evolution-execute-proposer"
+    assert claims["roles"] == ["approval_proposer"]
+    assert claims["scope"] == "pantheon:dev-owner-write"
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
+    # No decide/revoke/read-write authority: a human must decide, never the proposer.
+    assert not {"admin", "operator", "approver", "risk_owner", "governance_reviewer",
+                "governance_committee", "approval_reader", "registry-writer", "automated_gate"}.intersection(claims["roles"])
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    from scripts import issue_dev_paper_principals as issuer
+    assert variable in issuer.CONSUMER_FILES["evolution"]
+    assert not any(variable in names for consumer, names in issuer.CONSUMER_FILES.items() if consumer != "evolution")

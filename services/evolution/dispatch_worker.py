@@ -267,6 +267,7 @@ def run_poll(
         "claimed": 0,
         "executed": 0,
         "pending": 0,
+        "held": 0,
         "retried": 0,
         "dead_lettered": 0,
         "compensated": 0,
@@ -446,6 +447,22 @@ def _deliver_one(
             result,
             permanent=True,
             now=now,
+        )
+        return
+
+    if getattr(adapter, "auto_dispatch", True) is False:
+        # The plane is owner-recorded and never auto-dispatched (governance
+        # freeze order).  An approved decision here waits for the owner path
+        # (BFF ExecuteEvolutionAction) to execute it; once executed, the
+        # converged branch above publishes the outbox record.  This is not a
+        # delivery attempt: no submit, no failed attempt, no dead letter, and
+        # no approval check that could log an error for a binding that is
+        # still in flight.
+        result["held"] += 1
+        item["disposition"] = "held"
+        item["detail"] = (
+            f"execution plane {plane!r} is never auto-dispatched; "
+            "awaiting owner-recorded execution"
         )
         return
 

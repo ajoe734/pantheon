@@ -61,6 +61,15 @@ WRITERS = {
         "approval_proposer",
         "pantheon:dev-owner-write",
     ),
+    # Evolution owner files the Governance evolution_execute request under this
+    # propose-only identity (owner_user_id must equal the subject). It has no
+    # decide/revoke role, so a human decides once and Governance's
+    # "decider must not be the proposer" rule stays intact.
+    "EVOLUTION_EXECUTE_PROPOSER_TOKEN": (
+        "evolution-execute-proposer",
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
 }
 # Downstream health monitor -> Telemetry infrastructure-health only. The telemetry
 # verifier needs the service role plus a producer scope inside its own allowlist.
@@ -84,6 +93,7 @@ CONSUMER_FILES = {
         "EVOLUTION_GOVERNANCE_SERVICE_TOKEN",
         "EVOLUTION_REGISTRY_SERVICE_TOKEN",
         "EVOLUTION_PERSONA_SERVICE_TOKEN",
+        "EVOLUTION_EXECUTE_PROPOSER_TOKEN",
     ),
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN", "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),

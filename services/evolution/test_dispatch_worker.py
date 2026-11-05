@@ -627,6 +627,50 @@ def test_unsupported_plane_is_dead_lettered_with_a_reason_not_executed(isolated_
     assert "authoritative governance owner" in (record.last_error or "")
 
 
+def test_governance_plane_decision_is_held_not_failed_or_dead_lettered(isolated_state, caplog):
+    """EVOLUTION-BFF-FREEZE-EXEC-20261105: a never-auto-dispatched plane holds an approved decision.
+
+    The owner path (BFF ExecuteEvolutionAction) executes it; the worker neither
+    submits nor counts a failed attempt, dead-letters, or logs an approval error.
+    """
+    import logging
+
+    evo_main.receipt_registry.update(
+        build_adapter_registry(
+            research_api_url="http://research.test", governance_api_url="http://governance.test"
+        )
+    )
+    assert evo_main.receipt_registry["governance"].auto_dispatch is False
+    decision_id = _new_decision_id("evo-freeze-hold")
+    created = client.post("/api/evolution/proposals", json={
+        "decision_id": decision_id, "tenant_id": RESEARCH_TENANT, "target_type": "candidate_artifact",
+        "target_id": f"artifact-{decision_id}", "target_version": "1.0.0", "action_type": "freeze",
+        "target_stage": "paper", "rationale": "Severity-2 incident recurrence on this artifact.",
+        "created_by_id": "evolution-controller-01", "linked_incident_id": f"inc-{decision_id}"})
+    assert created.status_code == 201, created.text
+    for step in ("review", "approve"):
+        response = client.post(f"/api/evolution/proposals/{decision_id}/{step}", json={
+            "actor_role": "risk_owner", "actor_id": "risk-01", "tenant_id": RESEARCH_TENANT,
+            "approval_decision_id": f"approval-{decision_id}"})
+        assert response.status_code == 200, response.text
+
+    outbox_id, _, _ = dispatch_identity(RESEARCH_TENANT, decision_id)
+    attempts_before = isolated_state["outbox"].get_by_id(outbox_id).delivery_attempts
+    with caplog.at_level(logging.ERROR):
+        for minutes in (0, 5, 10):  # each tick is past the previous claim's lease
+            now = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+            result = run_tick(isolated_state, now=now)
+            assert result["held"] == 1 and result["errors"] == [], result
+            assert result["retried"] == 0 and result["dead_lettered"] == 0
+            assert result["unsupported"] == 0 and result["executed"] == 0
+            assert result["items"][0]["disposition"] == "held"
+    record = isolated_state["outbox"].get_by_id(outbox_id)
+    assert record.status.value == "pending" and record.delivery_attempts == attempts_before
+    assert not record.last_error
+    assert decision_state(decision_id) == "approved"
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
 # ---------------------------------------------------------------------------
 # Proof: compensation readback
 # ---------------------------------------------------------------------------

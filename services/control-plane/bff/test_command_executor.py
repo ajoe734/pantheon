@@ -1,5 +1,6 @@
 """Unit tests for command_executor module."""
 import os
+import urllib.error
 import unittest
 from unittest.mock import patch
 
@@ -322,6 +323,92 @@ class TestEvolutionActionExecutor(unittest.TestCase):
             },
             auth_token=auth_token,
         )
+
+
+class TestPaperFreezeExecution(unittest.TestCase):
+    """EVOLUTION-BFF-FREEZE-EXEC-20261105: FreezeOrder first, then /execute, never after."""
+
+    BINDING = {
+        "tenant_id": "tenant-dev", "target_id": "artifact-1", "target_version": "v1",
+        "proposal_content_digest": "d" * 64, "approval_decision_id": "apv-1",
+    }
+
+    def setUp(self):
+        patcher = patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://localhost:5001"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _params(self, **extra):
+        return {"evolution_decision_id": "evo-f1", "action_type": "freeze", **extra}
+
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
+    @patch("services.control_plane.bff.command_executor._write_to_governance")
+    @patch("services.control_plane.bff.command_executor._get_json")
+    @patch("services.control_plane.bff.command_executor._owner_get")
+    def test_binding_then_bound_freeze_order_then_execute_with_receipt(self, owner_get, gov_get, gov_write, post):
+        order = []
+        owner_get.side_effect = lambda path, token: order.append(("GET", path)) or (
+            self.BINDING if path.endswith("receipt-binding") else {
+                "action_type": "freeze", "target_type": "candidate_artifact", "target_stage": "paper"})
+        gov_get.side_effect = urllib.error.HTTPError("u", 404, "nf", {}, None)
+        gov_write.side_effect = lambda path, payload, **kw: order.append(("WRITE", path)) or {}
+        post.side_effect = lambda url, payload, auth_token=None: order.append(("POST", url)) or {
+            "decision_id": "evo-f1", "action_type": "freeze", "decision_state": "executed",
+            "execution_result": {"execution_ref_id": "freeze-evo-f1"},
+            "cooldown_ends_at": "c", "observation_window_ends_at": "o"}
+        result = _execute_evolution_action("cmd-f1", self._params(), auth_token="op:admin")
+        kinds = [k for k, _ in order]
+        self.assertEqual(kinds.index("WRITE") < kinds.index("POST"), True)
+        self.assertEqual(kinds.count("WRITE"), 1)
+        self.assertEqual(kinds[-1], "POST")  # nothing is written after /execute
+        body = gov_write.call_args.args[1]
+        self.assertEqual(body["scope"], "artifact")
+        self.assertEqual(body["status"], "active")
+        self.assertEqual(body["evolution_decision_id"], "evo-f1")
+        for field, value in self.BINDING.items():
+            self.assertEqual(body[field], value)
+        sent = post.call_args.args[1]
+        self.assertEqual(sent["execution_receipt"], {
+            "downstream_kind": "governance_freeze_order", "downstream_ref_id": "freeze-evo-f1"})
+        self.assertEqual(result["execution_ref_id"], "freeze-evo-f1")
+        self.assertIs(result["governance_quarantine_only"], True)
+        self.assertIs(result["trading_stopped"], False)
+        self.assertIn("does not stop trading", result["notice"])
+
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
+    @patch("services.control_plane.bff.command_executor._write_to_governance")
+    @patch("services.control_plane.bff.command_executor._owner_get")
+    def test_failed_binding_means_no_governance_write(self, owner_get, gov_write, post):
+        def getter(path, token):
+            if path.endswith("receipt-binding"):
+                raise urllib.error.HTTPError("u", 403, "no grant", {}, None)
+            return {"action_type": "freeze", "target_type": "candidate_artifact", "target_stage": "paper"}
+        owner_get.side_effect = getter
+        with self.assertRaises(urllib.error.HTTPError):
+            _execute_evolution_action("cmd-f2", self._params(), auth_token="op:admin")
+        gov_write.assert_not_called()
+        post.assert_not_called()
+
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
+    @patch("services.control_plane.bff.command_executor._write_to_governance")
+    @patch("services.control_plane.bff.command_executor._owner_get")
+    def test_freeze_outside_paper_artifact_is_refused_by_name(self, owner_get, gov_write, post):
+        owner_get.return_value = {"action_type": "freeze", "target_type": "candidate_artifact", "target_stage": "live"}
+        with self.assertRaises(ValueError) as caught:
+            _execute_evolution_action("cmd-f3", self._params(), auth_token="op:admin")
+        self.assertIn("unsupported_freeze_scope", str(caught.exception))
+        gov_write.assert_not_called()
+        post.assert_not_called()
+
+    @patch("services.control_plane.bff.command_executor._post_evolution_owner")
+    @patch("services.control_plane.bff.command_executor._write_to_governance")
+    def test_non_freeze_actions_no_longer_write_an_unbound_freeze_order_after_execute(self, gov_write, post):
+        post.return_value = {"decision_id": "evo-r1", "action_type": "rollback", "decision_state": "executed",
+                             "execution_result": {"execution_ref_id": "x"}}
+        _execute_evolution_action("cmd-f4", {
+            "evolution_decision_id": "evo-r1", "action_type": "rollback",
+            "freeze_mode": "persona", "force_stage_freeze": True}, auth_token="op:admin")
+        gov_write.assert_not_called()
 
 
 class TestMutationReviewExecutors(unittest.TestCase):
