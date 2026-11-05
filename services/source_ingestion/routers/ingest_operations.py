@@ -423,12 +423,22 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
             items, total = runtime.evidence_repository.list_evidence_items_page(tenant_id=tenant, limit=page_size, offset=offset)
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Source evidence owner unavailable") from exc
+        summary: dict[str, Any] | None = None
+        summarize_fn = getattr(runtime.evidence_repository, "summarize_evidence_items", None)
+        if callable(summarize_fn):
+            try:
+                raw_summary = summarize_fn(tenant_id=tenant)
+                if isinstance(raw_summary, dict):
+                    summary = raw_summary
+            except Exception:
+                summary = None
         next_offset = offset + page_size
         return {
             "items": [r.to_dict() for r in items],
             "total": total,
             "page_size": page_size,
             "next_page_token": str(next_offset) if next_offset < total else None,
+            "summary": summary,
         }
 
     @router.get("/api/source-ingest/evidence/items/{evidence_item_id}")

@@ -73,10 +73,54 @@ class EvidenceReadResult:
     status: str  # "ok" | "unavailable"
     source: str  # "typed_store" | "service_client" | "unavailable" | "missing"
     next_page_token: Optional[str] = None
+    summary: Optional[Dict[str, Any]] = None
+    summary_unavailable: bool = False
 
     @property
     def available(self) -> bool:
         return self.status == "ok"
+
+
+def _normalize_owner_evidence_summary(
+    raw_summary: Any,
+    *,
+    default_total: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_summary, Mapping):
+        return None
+    verified_raw = (
+        raw_summary.get("verified_count")
+        if raw_summary.get("verified_count") is not None
+        else raw_summary.get("verified_evidence")
+    )
+    if not isinstance(verified_raw, int) or isinstance(verified_raw, bool) or verified_raw < 0:
+        return None
+    buckets: Dict[str, Dict[str, int]] = {}
+    for key in ("by_source_type", "by_link_type", "by_credibility_tier"):
+        raw_bucket = raw_summary.get(key)
+        if not isinstance(raw_bucket, Mapping):
+            return None
+        clean_bucket: Dict[str, int] = {}
+        for k, v in raw_bucket.items():
+            if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+                return None
+            clean_key = str(k or "").strip() or "unknown"
+            clean_bucket[clean_key] = clean_bucket.get(clean_key, 0) + int(v)
+        buckets[key] = clean_bucket
+    total_raw = raw_summary.get("total")
+    total_val = (
+        int(total_raw)
+        if isinstance(total_raw, int) and not isinstance(total_raw, bool) and total_raw >= 0
+        else default_total
+    )
+    return {
+        "total": total_val,
+        "verified_count": int(verified_raw),
+        "verified_evidence": int(verified_raw),
+        "by_source_type": buckets["by_source_type"],
+        "by_link_type": buckets["by_link_type"],
+        "by_credibility_tier": buckets["by_credibility_tier"],
+    }
 
 
 @dataclass
@@ -1205,25 +1249,33 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             detail["evidence_origin"] = projected["evidence_origin"]
         return detail
 
+    def _read_owner_evidence_page(
+        self, *, start: int = 0, page_size: int = EVIDENCE_OWNER_PAGE_SIZE
+    ) -> Tuple[List[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
+        """Read one bounded page and its tenant summary from the owner service."""
+        try:
+            avail, payload = self._http_get(
+                self._source_ingest_service_url,
+                f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}",
+            )
+        except Exception as exc:  # noqa: BLE001 - any transport failure means unavailable
+            raise _EvidenceOwnerReadError("source-ingest evidence owner read failed") from exc
+        items = payload.get("items") if avail and isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            raise _EvidenceOwnerReadError("source-ingest evidence owner read failed")
+        total = payload.get("total")
+        total = int(total) if isinstance(total, int) and not isinstance(total, bool) else start + len(items)
+        summary = _normalize_owner_evidence_summary(payload.get("summary"), default_total=total)
+        return items, total, summary
+
     def _iter_owner_evidence_pages(self, *, start: int = 0, page_size: int = EVIDENCE_OWNER_PAGE_SIZE):
         """Yield ``(items, total)`` per owner page; raise ``_EvidenceOwnerReadError``."""
         offset = start
         while True:
-            try:
-                avail, payload = self._http_get(
-                    self._source_ingest_service_url,
-                    f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={offset}",
-                )
-            except Exception as exc:  # noqa: BLE001 - any transport failure means unavailable
-                raise _EvidenceOwnerReadError("source-ingest evidence owner read failed") from exc
-            items = payload.get("items") if avail and isinstance(payload, dict) else None
-            if not isinstance(items, list):
-                raise _EvidenceOwnerReadError("source-ingest evidence owner read failed")
-            total = payload.get("total")
-            total = int(total) if isinstance(total, int) else offset + len(items)
+            items, total, _summary = self._read_owner_evidence_page(start=offset, page_size=page_size)
             yield items, total
             offset += len(items)
-            if not items or offset >= total or not payload.get("next_page_token"):
+            if not items or offset >= total:
                 return
 
     def read_evidence_refs(
@@ -1240,7 +1292,70 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         """One evidence read. With ``page_size`` and no scope filter against the
         owner service, exactly one owner page is fetched; otherwise every owner
         page is streamed and filtered so totals stay correct."""
+        from services.knowledge.evidence.models import summarize_evidence_items_collection
+
         unscoped = not linked_entities and not source_types
+        effective_tenant = str(tenant_id or "").strip() or None
+        if effective_tenant is None:
+            try:
+                from ..core.owner_reads import selected_tenant
+
+                effective_tenant = str(selected_tenant.get() or "").strip() or None
+            except Exception:
+                effective_tenant = None
+
+        if (
+            page_size
+            and unscoped
+            and self._evidence_repo is not None
+            and not self._evidence_refs
+            and hasattr(self._evidence_repo, "list_evidence_items_page")
+        ):
+            try:
+                start = int(page_token) if page_token else 0
+            except ValueError:
+                start = 0
+            try:
+                if effective_tenant is not None:
+                    repo_items, total = self._evidence_repo.list_evidence_items_page(
+                        tenant_id=effective_tenant, limit=page_size, offset=start
+                    )
+                else:
+                    repo_items, total = self._evidence_repo.list_evidence_items_page(
+                        limit=page_size, offset=start
+                    )
+            except Exception:
+                return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
+            repo_summary: Optional[Dict[str, Any]] = None
+            summarize_fn = getattr(self._evidence_repo, "summarize_evidence_items", None)
+            if callable(summarize_fn):
+                try:
+                    raw_summary = (
+                        summarize_fn(tenant_id=effective_tenant)
+                        if effective_tenant is not None
+                        else summarize_fn()
+                    )
+                    repo_summary = _normalize_owner_evidence_summary(raw_summary, default_total=total)
+                except Exception:
+                    repo_summary = None
+            rows = [
+                self._project_evidence_ref_list_item(
+                    normalize_source_ingest_evidence_item(it.to_dict()),
+                    include_scope_metadata=include_scope_metadata,
+                )
+                for it in repo_items
+            ]
+            nxt = start + len(repo_items)
+            return EvidenceReadResult(
+                rows,
+                total,
+                "ok",
+                "typed_store",
+                str(nxt) if nxt < total else None,
+                summary=repo_summary,
+                summary_unavailable=repo_summary is None,
+            )
+
         if (
             page_size
             and unscoped
@@ -1253,9 +1368,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             except ValueError:
                 start = 0
             try:
-                items, total = next(self._iter_owner_evidence_pages(start=start, page_size=page_size))
+                items, total, owner_summary = self._read_owner_evidence_page(start=start, page_size=page_size)
             except (_EvidenceOwnerReadError, StopIteration):
-                return EvidenceReadResult([], None, "unavailable", "unavailable")
+                return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             rows = [
                 self._project_evidence_ref_list_item(
                     normalize_source_ingest_evidence_item(it), include_scope_metadata=include_scope_metadata
@@ -1265,13 +1380,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             ]
             nxt = start + len(items)
             return EvidenceReadResult(
-                rows, total, "ok", "service_client", str(nxt) if nxt < total else None
+                rows,
+                total,
+                "ok",
+                "service_client",
+                str(nxt) if nxt < total else None,
+                summary=owner_summary,
+                summary_unavailable=owner_summary is None,
             )
 
         try:
-            raw_refs, source = self._collect_raw_evidence_refs()
+            raw_refs, source = self._collect_raw_evidence_refs(tenant_id=effective_tenant)
         except _EvidenceOwnerReadError:
-            return EvidenceReadResult([], None, "unavailable", "unavailable")
+            return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
         filtered = [
             ref
             for ref in raw_refs
@@ -1304,14 +1425,31 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         ]
         if source == "missing":
             # Nothing configured to read from: unknown, not an empty "ok".
-            return EvidenceReadResult([], None, "unavailable", "missing")
-        return EvidenceReadResult(rows, total, "ok", source, nxt_token)
+            return EvidenceReadResult([], None, "unavailable", "missing", summary_unavailable=True)
+        population_summary = _normalize_owner_evidence_summary(
+            summarize_evidence_items_collection(filtered), default_total=total
+        )
+        return EvidenceReadResult(
+            rows,
+            total,
+            "ok",
+            source,
+            nxt_token,
+            summary=population_summary,
+            summary_unavailable=population_summary is None,
+        )
 
-    def _collect_raw_evidence_refs(self) -> Tuple[List[Dict[str, Any]], str]:
+    def _collect_raw_evidence_refs(
+        self, *, tenant_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], str]:
         """Return ``(raw_refs, source)``; raise on owner read failure."""
         if self._evidence_repo is not None:
             try:
-                items = self._evidence_repo.list_evidence_items()
+                items = (
+                    self._evidence_repo.list_evidence_items(tenant_id=tenant_id)
+                    if tenant_id is not None
+                    else self._evidence_repo.list_evidence_items()
+                )
             except Exception as exc:
                 raise _EvidenceOwnerReadError("evidence repository read failed") from exc
             return [normalize_source_ingest_evidence_item(it.to_dict()) for it in items], "typed_store"

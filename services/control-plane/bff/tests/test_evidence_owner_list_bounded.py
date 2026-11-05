@@ -31,7 +31,7 @@ from services.control_plane.bff.ports.research_knowledge_source import (
     normalize_source_ingest_evidence_item,
 )
 from services.control_plane.bff.research.router import create_research_router
-from services.knowledge.evidence.models import EvidenceItem
+from services.knowledge.evidence.models import EvidenceItem, summarize_evidence_items_collection
 from services.knowledge.evidence.repository import InMemoryEvidenceRepository
 
 ADMIN_HEADERS = {"Authorization": "Bearer op-evid:admin"}
@@ -192,6 +192,8 @@ class FakeOwner:
         self.rows = rows
         self.calls: List[str] = []
         self.fail = False
+        self.fail_summary = False
+        self._summary = summarize_evidence_items_collection(real_row(i) for i in range(rows))
 
     def __call__(self, base_url: str, path: str) -> Tuple[bool, Any]:
         self.calls.append(path)
@@ -214,6 +216,7 @@ class FakeOwner:
                 "total": self.rows,
                 "page_size": size,
                 "next_page_token": str(nxt) if nxt < self.rows else None,
+                "summary": None if self.fail_summary else self._summary,
             }
         item_id = parsed.path.rsplit("/", 1)[-1]
         i = int(item_id.removeprefix("evi-"), 16)
@@ -485,3 +488,189 @@ def test_postgres_owner_page_query_bounds_rows_and_drops_heavy_keys_in_sql() -> 
     assert "#- '{metadata,raw_storage_refs}'" in page_sql and "#- '{metadata,calendar_evidence}'" in page_sql
     assert page_params[-2:] == (3, 6)
     assert all("raw_storage_refs" not in i.metadata for i in items)
+
+
+# --------------------------------------------------------------------------
+# BFF-EVIDENCE-SUMMARY-POPULATION-20261105: tenant population summary counts
+# --------------------------------------------------------------------------
+def test_management_evidence_summary_covers_whole_tenant_population_across_pages_with_one_bounded_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    from services.source_ingestion.routers.ingest_operations import create_ingest_operations_router
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "evid-secret")
+    repo = InMemoryEvidenceRepository()
+
+    # 518 tenant-dev rows (hosted shape: 418 verified >=0.8, 100 unverified <0.8;
+    # 400 official_reference, 118 exchange_filing).
+    for i in range(518):
+        raw = real_row(i)
+        raw["confidence"] = 0.95 if i < 418 else 0.55
+        raw["metadata"]["source_class"] = "official_reference" if i < 400 else "exchange_filing"
+        item = EvidenceItem.from_dict(raw)
+        repo._evidence_items[item.evidence_item_id] = item
+        repo._evidence_items_by_tenant[(TENANT, item.evidence_item_id)] = item
+
+    # 96 legacy rows without a tenant (614 total rows on hosted source_evidence).
+    for i in range(518, 614):
+        raw = real_row(i)
+        raw["metadata"].pop("tenant_id", None)
+        raw["confidence"] = 1.0
+        raw["metadata"]["source_class"] = "legacy_unscoped"
+        item = EvidenceItem.from_dict(raw)
+        repo._evidence_items[item.evidence_item_id] = item
+        repo._evidence_items_by_tenant[(None, item.evidence_item_id)] = item
+
+    # Foreign tenant rows that must also stay excluded from tenant-dev.
+    for i in range(614, 630):
+        raw = real_row(i)
+        raw["metadata"]["tenant_id"] = "tenant-other"
+        raw["confidence"] = 1.0
+        raw["metadata"]["source_class"] = "foreign_source"
+        item = EvidenceItem.from_dict(raw)
+        repo._evidence_items[item.evidence_item_id] = item
+        repo._evidence_items_by_tenant[("tenant-other", item.evidence_item_id)] = item
+
+    owner_app = FastAPI()
+    owner_app.include_router(create_ingest_operations_router(SimpleNamespace(evidence_repository=repo)))
+    token = encode_jwt_hs256(
+        {"sub": "r", "roles": ["operator"], "tenant_id": TENANT, "exp": int(time.time()) + 600},
+        secret="evid-secret",
+    )
+    owner_http = TestClient(owner_app, headers={"Authorization": f"Bearer {token}"})
+    owner_calls: List[str] = []
+
+    def forward_to_owner(_base_url: str, path: str) -> Tuple[bool, Any]:
+        owner_calls.append(path)
+        resp = owner_http.get(path)
+        return (resp.status_code == 200), (resp.json() if resp.status_code == 200 else None)
+
+    store, _ks = store_with(forward_to_owner)
+    bff_client = mounted(store)
+
+    page1 = bff_client.get("/bff/management/evidence?page_size=20", headers=ADMIN_HEADERS).json()
+    assert len(owner_calls) == 1
+    assert "page_size=20" in owner_calls[0] and "page_token=0" in owner_calls[0]
+
+    page2 = bff_client.get("/bff/management/evidence?page_size=20&page_token=20", headers=ADMIN_HEADERS).json()
+    assert len(owner_calls) == 2
+    assert "page_size=20" in owner_calls[1] and "page_token=20" in owner_calls[1]
+
+    assert page1["page_info"]["total"] == 518
+    assert page2["page_info"]["total"] == 518
+    assert len(page1["data"]["items"]) == 20
+    assert len(page2["data"]["items"]) == 20
+    assert {i["id"] for i in page1["data"]["items"]}.isdisjoint({i["id"] for i in page2["data"]["items"]})
+
+    expected_population_fields = {
+        "total_evidence": 518,
+        "total_items": 518,
+        "verified_count": 418,
+        "verified_evidence": 418,
+        "by_source_type": {"official_reference": 400, "exchange_filing": 118},
+        "by_link_type": {"supporting": 518},
+        "by_credibility_tier": {"verified": 418, "unverified": 100},
+    }
+    for page_payload in (page1, page2):
+        summary = page_payload["data"]["summary"]
+        for field_name, expected_val in expected_population_fields.items():
+            assert summary[field_name] == expected_val, (field_name, summary[field_name], expected_val)
+        assert summary["returned_evidence"] == 20
+        assert summary["visible_evidence"] == 20
+        assert "legacy_unscoped" not in summary["by_source_type"]
+        assert "foreign_source" not in summary["by_source_type"]
+
+
+def test_owner_count_failure_returns_null_summary_fields_and_preserves_bounded_list_total(
+    owner_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 1. Owner HTTP response where bounded page succeeds (518 total, 20 items)
+    #    but the owner summary count read failed (summary=None).
+    owner = FakeOwner(518)
+    owner.fail_summary = True
+    store, _ks = store_with(owner)
+    body = mounted(store).get("/bff/management/evidence?page_size=20", headers=ADMIN_HEADERS).json()
+    assert len(owner.calls) == 1
+    assert body["page_info"]["total"] == 518
+    assert len(body["data"]["items"]) == 20
+    summary = body["data"]["summary"]
+    assert summary["total_evidence"] == 518
+    assert summary["total_items"] == 518
+    assert summary["returned_evidence"] == 20
+    assert summary["visible_evidence"] == 20
+    for field_name in (
+        "verified_count",
+        "verified_evidence",
+        "by_source_type",
+        "by_link_type",
+        "by_credibility_tier",
+    ):
+        assert summary[field_name] is None, (field_name, summary[field_name])
+
+    # 2. Real owner route when repo.summarize_evidence_items raises while
+    #    repo.list_evidence_items_page succeeds.
+    client, repo = owner_client(518)
+
+    def _boom(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
+        raise RuntimeError("PostgreSQL evidence query failed: OperationalError")
+
+    monkeypatch.setattr(repo, "summarize_evidence_items", _boom)
+    owner_resp = client.get("/api/source-ingest/evidence/items?page_size=20&page_token=0")
+    assert owner_resp.status_code == 200
+    owner_payload = owner_resp.json()
+    assert owner_payload["total"] == 518
+    assert len(owner_payload["items"]) == 20
+    assert owner_payload["summary"] is None
+
+
+def test_postgres_owner_summarize_evidence_items_aggregates_in_sql_and_excludes_tenantless_rows() -> None:
+    from contextlib import contextmanager
+
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+
+    repo = PostgresSourceEvidenceRepository.__new__(PostgresSourceEvidenceRepository)
+    repo.table = "source_ingest.source_evidence"
+    repo._replaying = False
+    seen: List[Tuple[str, tuple]] = []
+
+    class Result:
+        def __init__(self, rows: list) -> None:
+            self.rows = rows
+
+        def fetchall(self) -> list:
+            return self.rows
+
+    class Conn:
+        def execute(self, sql: str, params: tuple) -> Result:
+            seen.append((sql, params))
+            return Result(
+                [
+                    ("official_reference", "supporting", "verified", True, 400),
+                    ("official_reference", "supporting", "unverified", False, 18),
+                    ("exchange_filing", "supporting", "verified", True, 100),
+                ]
+            )
+
+    @contextmanager
+    def fake_connection():
+        yield Conn()
+
+    repo._get_connection = fake_connection  # type: ignore[method-assign]
+    summary = repo.summarize_evidence_items(tenant_id=TENANT)
+    assert len(seen) == 1
+    sql, params = seen[0]
+    assert "GROUP BY 1, 2, 3, 4" in sql
+    assert "payload->'metadata'->>'tenant_id' = %s" in sql
+    assert params == ("evidence_item", TENANT)
+    assert summary == {
+        "total": 518,
+        "verified_count": 500,
+        "verified_evidence": 500,
+        "by_source_type": {"official_reference": 418, "exchange_filing": 100},
+        "by_link_type": {"supporting": 518},
+        "by_credibility_tier": {"verified": 500, "unverified": 18},
+    }

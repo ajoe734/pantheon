@@ -8,7 +8,14 @@ from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 from services.source_ingestion.connectors.base import SourceRecord
 
-from .models import EvidenceBundle, EvidenceItem, EvidenceValidationError, KnowledgeObject, strip_list_heavy_metadata
+from .models import (
+    EvidenceBundle,
+    EvidenceItem,
+    EvidenceValidationError,
+    KnowledgeObject,
+    strip_list_heavy_metadata,
+    summarize_evidence_items_collection,
+)
 
 
 class _Unscoped:
@@ -183,6 +190,13 @@ class InMemoryEvidenceRepository:
         total = len(items)
         window = list(reversed(items))[offset: offset + limit]
         return [strip_list_heavy_metadata(i) for i in window], total
+
+    def summarize_evidence_items(
+        self,
+        tenant_id: str | None | _Unscoped = _UNSCOPED,
+    ) -> dict[str, Any]:
+        """Aggregate population-level summary counts for the requested tenant scope."""
+        return summarize_evidence_items_collection(self.list_evidence_items(tenant_id=tenant_id))
 
 
 class JsonlEvidenceRepository(InMemoryEvidenceRepository):

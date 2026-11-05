@@ -737,6 +737,9 @@ def _management_evidence_summary(
     page_items: List[Dict[str, Any]],
     redacted_count: int,
     unavailable: bool = False,
+    population_summary: Optional[Dict[str, Any]] = None,
+    population_summary_unavailable: bool = False,
+    population_items: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     if unavailable:
         # An unreadable owner is "unknown", not zero.
@@ -748,11 +751,62 @@ def _management_evidence_summary(
             "redacted_evidence": None,
             "verified_evidence": None,
             "verified_count": None,
-            "by_source_type": {},
-            "by_link_type": {},
-            "by_credibility_tier": {},
+            "by_source_type": None,
+            "by_link_type": None,
+            "by_credibility_tier": None,
         }
-    visible_items = [item for item in page_items if not item.get("redacted")]
+    visible_page_items = [item for item in page_items if not item.get("redacted")]
+    if population_summary_unavailable:
+        # When the owner count/aggregation read fails while the bounded page
+        # read succeeded, affected summary fields are null (never page-sized).
+        return {
+            "total_evidence": filtered_total,
+            "total_items": filtered_total,
+            "returned_evidence": len(page_items),
+            "visible_evidence": len(visible_page_items),
+            "redacted_evidence": redacted_count,
+            "verified_evidence": None,
+            "verified_count": None,
+            "by_source_type": None,
+            "by_link_type": None,
+            "by_credibility_tier": None,
+        }
+    if population_summary is not None:
+        if page_items and not visible_page_items:
+            verified_count = 0
+            by_source_type: Dict[str, int] = {}
+            by_link_type: Dict[str, int] = {}
+            by_credibility_tier: Dict[str, int] = {}
+        else:
+            verified_count = int(
+                population_summary.get("verified_count")
+                if population_summary.get("verified_count") is not None
+                else (population_summary.get("verified_evidence") or 0)
+            )
+            by_source_type = {
+                str(k): int(v) for k, v in (population_summary.get("by_source_type") or {}).items()
+            }
+            by_link_type = {
+                str(k): int(v) for k, v in (population_summary.get("by_link_type") or {}).items()
+            }
+            by_credibility_tier = {
+                str(k): int(v) for k, v in (population_summary.get("by_credibility_tier") or {}).items()
+            }
+        return {
+            "total_evidence": filtered_total,
+            "total_items": filtered_total,
+            "returned_evidence": len(page_items),
+            "visible_evidence": len(visible_page_items),
+            "redacted_evidence": redacted_count,
+            "verified_evidence": verified_count,
+            "verified_count": verified_count,
+            "by_source_type": by_source_type,
+            "by_link_type": by_link_type,
+            "by_credibility_tier": by_credibility_tier,
+        }
+
+    source_items = population_items if population_items is not None else page_items
+    visible_items = [item for item in source_items if not item.get("redacted")]
     verified_count = len(
         [
             item
@@ -760,7 +814,7 @@ def _management_evidence_summary(
             if bool((item.get("credibility") or {}).get("verified") if (item.get("credibility") or {}).get("verified") is not None else item.get("verified"))
         ]
     )
-    by_source_type: Dict[str, int] = {}
+    by_source_type = {}
     for item in visible_items:
         source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
         source_type = (
@@ -772,12 +826,12 @@ def _management_evidence_summary(
         key = str(source_type or "unknown").strip() or "unknown"
         by_source_type[key] = by_source_type.get(key, 0) + 1
 
-    by_link_type: Dict[str, int] = {}
+    by_link_type = {}
     for item in visible_items:
         key = str(item.get("link_type") or "unknown").strip() or "unknown"
         by_link_type[key] = by_link_type.get(key, 0) + 1
 
-    by_credibility_tier: Dict[str, int] = {}
+    by_credibility_tier = {}
     for item in visible_items:
         cred = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
         key = str(cred.get("tier") or item.get("credibility_tier") or "unknown").strip() or "unknown"
@@ -787,7 +841,7 @@ def _management_evidence_summary(
         "total_evidence": filtered_total,
         "total_items": filtered_total,
         "returned_evidence": len(page_items),
-        "visible_evidence": len(visible_items),
+        "visible_evidence": len(visible_page_items),
         "redacted_evidence": redacted_count,
         "verified_evidence": verified_count,
         "verified_count": verified_count,
@@ -5543,6 +5597,8 @@ class ManagementService:
         stored_evidence_refs: List[Dict[str, Any]] = []
         owner_total: Optional[int] = None
         owner_next_token: Optional[str] = None
+        owner_summary: Optional[Dict[str, Any]] = None
+        owner_summary_unavailable = False
         owner_page_served = False
         # Availability is decided by THIS read, never by shared store state.
         read_available: Optional[bool] = None
@@ -5581,6 +5637,8 @@ class ManagementService:
                     stored_evidence_refs = list(result.items or [])
                     owner_total = result.total
                     owner_next_token = result.next_page_token
+                    owner_summary = getattr(result, "summary", None)
+                    owner_summary_unavailable = bool(getattr(result, "summary_unavailable", False))
                     owner_page_served = paged
                     read_available = bool(result.available)
                     read_source = result.source
@@ -5735,6 +5793,27 @@ class ManagementService:
                 list(page_items), default_kind="artifact"
             )
 
+        population_processed_items: Optional[List[Dict[str, Any]]] = None
+        if not unavailable and not owner_page_served:
+            if len(evidence_refs) == len(page_items):
+                population_processed_items = processed_items
+            elif redact_evidence_refs is not None:
+                try:
+                    population_processed_items, _ = redact_evidence_refs(
+                        identity,
+                        list(evidence_refs),
+                        capabilities=capabilities,
+                        default_kind="artifact",
+                    )
+                except Exception:
+                    population_processed_items, _ = fail_closed_redacted_refs(
+                        list(evidence_refs), default_kind="artifact"
+                    )
+            else:
+                population_processed_items, _ = fail_closed_redacted_refs(
+                    list(evidence_refs), default_kind="artifact"
+                )
+
         public_items = [
             _management_evidence_public_item(item)
             for item in processed_items
@@ -5745,11 +5824,14 @@ class ManagementService:
             page_items=processed_items,
             redacted_count=redacted_count,
             unavailable=unavailable,
+            population_summary=owner_summary if owner_page_served else None,
+            population_summary_unavailable=owner_summary_unavailable if owner_page_served else False,
+            population_items=population_processed_items,
         )
         facets = {
-            "source_types": summary["by_source_type"],
-            "link_types": summary["by_link_type"],
-            "credibility_tiers": summary["by_credibility_tier"],
+            "source_types": summary["by_source_type"] if summary["by_source_type"] is not None else {},
+            "link_types": summary["by_link_type"] if summary["by_link_type"] is not None else {},
+            "credibility_tiers": summary["by_credibility_tier"] if summary["by_credibility_tier"] is not None else {},
         }
         meta = _snapshot_meta(snap)
         meta["surfaces"] = {
