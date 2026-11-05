@@ -12,6 +12,7 @@ REQUEST_INBOX = ".orchestrator/auto-integrator-unblock-inbox"
 RECEIPT_SCHEMA = "pantheon-auto-integrator-unblock-receipt/v1"
 RECEIPT_ROOT = ".orchestrator/auto-integrator-unblock-receipts"
 TASK_ID_LIMIT = 96
+EXACT_HEAD_BEHIND_BASE_REASON = "exact-head-behind-base"
 REQUEST_FIELDS = frozenset(
     {
         "schema", "status_root", "status_identity_sha256", "command_runtime_sha",
@@ -25,7 +26,8 @@ REASONS = frozenset(
         "ambiguous-open-prs", "auto-merge-revocation-failed", "base-branch-mismatch",
         "canonical-authority-lock-failed", "canonical-state-refresh-failed", "ci-red",
         "contradictory-review-bridge-policy",
-        "dirty-repository-checkout", "exact-head-merge-conflict", "exact-head-missing",
+        "dirty-repository-checkout", "exact-head-behind-base",
+        "exact-head-merge-conflict", "exact-head-missing",
         "final-auto-merge-armed", "final-base-branch-mismatch", "final-ci-not-green",
         "final-ci-red", "final-head-branch-mismatch", "final-head-changed",
         "final-pr-changed", "final-pr-is-draft", "final-pr-missing",
@@ -120,8 +122,16 @@ def requires_repair_task(reason: str) -> bool:
     validate_reason(reason)
     return not (reason.startswith("review-gate-") or reason in {
         "canonical-authority-lock-failed", "canonical-state-refresh-failed",
+        EXACT_HEAD_BEHIND_BASE_REASON,
         "final-review-contract-changed", "final-review-gate-changed",
     })
+
+
+def requires_source_reopen(reason: str) -> bool:
+    """BEHIND returns reopen the source task rather than creating a child repair."""
+
+    validate_reason(reason)
+    return reason == EXACT_HEAD_BEHIND_BASE_REASON
 
 
 def require_root_repair_source(source_task_id: str, source: Mapping[str, Any]) -> None:
