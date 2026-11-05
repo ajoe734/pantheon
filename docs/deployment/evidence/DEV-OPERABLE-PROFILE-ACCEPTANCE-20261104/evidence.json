@@ -1,0 +1,37 @@
+{
+  "task": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
+  "recordedAt": "2026-11-05T01:20Z",
+  "status": "in_progress_not_accepted",
+  "hosted": {
+    "profile": "read-only",
+    "deploymentState": "accepted",
+    "frontendSha": "809e1ce0a3643d3f62c99261f3fc99a513612894",
+    "bffSha": "cc074638f1814beed7f7f3e33e7307134b2bf39e",
+    "releaseName": "20261104T032534Z-809e1ce0a364-gate-41763319265-41765339420-1-3667520",
+    "buildMode": {"VITE_BFF_MODE": "live", "VITE_BFF_FALLBACK": "strict", "VITE_BFF_REAL_WRITES": "false", "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false", "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"},
+    "bffConfigPosture": {"auth_mode": "strict", "auth_stub": false}
+  },
+  "rootCause": "nonprod-deploy.yml frontend_profile defaults to read-only and scripts/auto_deploy_dev_pair.py preserves the accepted hosted profile, so Dev stays read-only until one operator-live deploy is dispatched.",
+  "sourceChangesNeeded": false,
+  "regression": "scripts/test_auto_deploy_dev_pair.py + scripts/test_cross_repo_release_controller.py: 126 passed (operator-live preserved; inconsistent posture fails closed)",
+  "workflows": {
+    "41947126368": "in_progress hosted all-12 chain segment, holds Dev; not mine",
+    "41946522116": "failure at capture stage (DEV_ARTIFACT_OPERATION_FAILED exit 75) for backend 0bd88495e + FE b15608ce1; not mine",
+    "41758658026": "last success, current served pair"
+  },
+  "rollbackTarget": "FE 809e1ce0a3643d3f62c99261f3fc99a513612894 / BFF cc074638f1814beed7f7f3e33e7307134b2bf39e (read-only)",
+  "acceptanceMatrix": {
+    "operatorLiveDeploy": "not-run",
+    "loginUiOperatorCreateEditReload": "not-run",
+    "viewer403": "not-run",
+    "missingSession401": "not-run",
+    "tenantMismatch": "not-run",
+    "idempotency": "not-run",
+    "realBrokerCapitalDisabledProof": "not-run",
+    "testResourceDisposition": "none created"
+  },
+  "blockers": [
+    "Shared Dev lease/environment is occupied by hosted all-12 chain run 41947126368; deploying now would contend.",
+    "Human-login test identities for browser acceptance not confirmed available to this worker."
+  ]
+}
