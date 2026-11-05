@@ -12,6 +12,9 @@ from .store import LoopControllerStore
 _DEFAULT_LEASE_SECONDS = 60
 
 
+LOOP_12_HEALTH_MONITOR_LOOP_ID = "bff_health_monitoring"
+
+
 class LoopControllerWriter:
     """Fenced partial-update SDK shared by the twelve canonical loops."""
 
@@ -151,8 +154,12 @@ class LoopControllerWriter:
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         now = datetime.now(timezone.utc)
+        # Observed-probe success inference is only valid for Loop12, whose
+        # heartbeat carries a completed downstream probe. Other loops call
+        # heartbeat before doing work, so it must stay liveness-only.
         reconciled_probe_ok = (
-            truth_level == "reconciled_live_proof"
+            loop_id == LOOP_12_HEALTH_MONITOR_LOOP_ID
+            and truth_level == "reconciled_live_proof"
             and isinstance(desired_state, dict)
             and isinstance(downstream_actual_state, dict)
             and bool(desired_state)
