@@ -201,10 +201,27 @@ Only these roles may move `approved -> executed`:
 
 Rules:
 
-1. `proposed -> reviewed` must create an `ApprovalDecision` with `target_type = "evolution_proposal"` and `target_id = decision_id`.
-2. `reviewed -> approved` must update that `ApprovalDecision` to `decision = "approved"` and `decision_state = "decided"`.
-3. `reviewed -> rejected` must update that same `ApprovalDecision` to `decision = "rejected"` and `decision_state = "decided"`.
-4. `approval_decision_id` is required from `reviewed` onward.
+1. A direct decision is authorized by exactly one Governance `ApprovalDecision` with
+   `target_type = "evolution_execute"`, `target_id = decision_id`, `target_version` equal to the
+   decision's, and `subject.proposal_id` / `subject.proposal_content_digest` equal to the decision id
+   and its immutable content digest. The Evolution owner computes the subject and files the request
+   under its own propose-only service principal; a human decides it once. Governance approval
+   semantics are unchanged: the decider must not be the proposer.
+2. That one approved record serves both `proposed -> reviewed` and `reviewed -> approved`
+   (`approval_decision_id` is required from `reviewed` onward), and `reviewed -> rejected` is a
+   rejection of that same record.
+3. `evolution_proposal` records no longer authorize a direct decision. Program-level approvals keep
+   `evolution_proposal` (bound to the program revision and the source decisions' content digests)
+   and are checked by the same `require_execution_approval`.
+4. `approved -> executed` for a paper freeze of a `candidate_artifact` requires a Governance
+   FreezeOrder recorded first, bound to the decision (`evolution_decision_id`, `tenant_id`,
+   `target_id`, `target_version`, `proposal_content_digest`, `approval_decision_id`, `scope=artifact`,
+   `status=active`), and `/execute` carrying it as `execution_receipt`
+   (`downstream_kind=governance_freeze_order`). The governance plane is never auto-dispatched; the
+   dispatch worker holds such a decision until it is executed. Other freeze scopes are refused as
+   `unsupported_freeze_scope`.
+5. The FreezeOrder is a governance quarantine record. It does not stop trading, and nothing here adds
+   enforcement.
 
 ## 9. Lineage + Incident Integration
 

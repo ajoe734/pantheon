@@ -1,7 +1,8 @@
-"""H4: a governance ``evolution_proposal`` approval binds ReviewMutation / ApproveEvolutionDecision.
+"""H4: a governance ``evolution_execute`` approval binds ReviewMutation / ApproveEvolutionDecision.
 
-Governance can only record an Evolution proposal approval with
-``target_type=evolution_proposal``; the BFF object is ``EvolutionDecision``.
+A direct EvolutionDecision executes only on a Governance ``evolution_execute``
+approval whose target_id is the decision (EVOLUTION-BFF-FREEZE-EXEC-20261105);
+an ``evolution_proposal`` record can never execute it, so it no longer binds.
 These tests drive the real ``POST /bff/v1/commands`` admission stack and then
 replay the admitted command through the Evolution adapter against the real
 Evolution owner app.
@@ -83,7 +84,7 @@ class _Ctx:
         self.store = store
         self.read_store = read_store
 
-    def seed_approval(self, apv_id: str, target_id: str, *, state: str = "approved", target_type: str = "evolution_proposal") -> None:
+    def seed_approval(self, apv_id: str, target_id: str, *, state: str = "approved", target_type: str = "evolution_execute") -> None:
         self.read_store.seed_approval_decision({
             "id": apv_id,
             "target_type": target_type,
@@ -175,7 +176,7 @@ def _replay(ctx: _Ctx, response, command_type: str) -> dict:
     return receipt
 
 
-def test_evolution_proposal_approval_drives_proposed_reviewed_approved():
+def test_evolution_execute_approval_drives_proposed_reviewed_approved():
     did = _propose()
     with _ctx() as ctx:
         ctx.seed_approval("apv-h4-1", did)
@@ -213,14 +214,15 @@ def test_other_evolution_decision_id_is_binding_mismatch(command):
         assert _reason(mixed) == "APPROVAL_DECISION_BINDING_MISMATCH"
 
 
-def _binds(command: CommandType, target_type: ObjectType, target_id: str, params: dict | None = None) -> bool:
+def _binds(command: CommandType, target_type: ObjectType, target_id: str, params: dict | None = None,
+           record_type: str = "evolution_execute") -> bool:
     cmd = OperatorCommand(
         command=command,
         target=TargetObject(type=target_type, id=target_id),
         params=params or {},
         audit_context=AuditContext(reason="binding check"),
     )
-    record = {"id": "apv", "target_type": "evolution_proposal", "target_id": "evo-x", "decision": "approved"}
+    record = {"id": "apv", "target_type": record_type, "target_id": "evo-x", "decision": "approved"}
     return _approval_decision_applies_to_command(record, "apv", cmd)
 
 
@@ -230,6 +232,21 @@ def test_evolution_commands_bind_only_to_the_same_evolution_decision():
         assert not _binds(command, ObjectType.EVOLUTION_DECISION, "evo-y")
         assert not _binds(command, ObjectType.EVOLUTION_DECISION, "evo-x", {"decision_id": "evo-y"})
         assert not _binds(command, ObjectType.APPROVAL_DECISION, "evo-x")
+
+
+def test_evolution_proposal_record_no_longer_binds_a_direct_decision():
+    for command in (CommandType.REVIEW_MUTATION, CommandType.APPROVE_EVOLUTION_DECISION):
+        assert not _binds(command, ObjectType.EVOLUTION_DECISION, "evo-x", record_type="evolution_proposal")
+
+
+def test_evolution_proposal_record_is_refused_before_any_owner_write():
+    did = _propose()
+    with _ctx() as ctx:
+        ctx.seed_approval("apv-h4-prop", did, target_type="evolution_proposal")
+        response = ctx.post("ReviewMutation", _evo_target(did), _review_params(did, "apv-h4-prop"), "idem-prop")
+        assert response.status_code == 409, response.text
+        assert _reason(response) == "APPROVAL_DECISION_BINDING_MISMATCH"
+    assert owner.get(f"/api/evolution/proposals/{did}").json()["decision_state"] == "proposed"
 
 
 @pytest.mark.parametrize(
@@ -242,7 +259,7 @@ def test_evolution_commands_bind_only_to_the_same_evolution_decision():
         (CommandType.EXECUTE_EVOLUTION_ACTION, ObjectType.EVOLUTION_DECISION),
     ],
 )
-def test_evolution_proposal_approval_never_binds_to_other_commands(command, target_type):
+def test_evolution_execute_approval_never_binds_to_other_commands(command, target_type):
     assert not _binds(command, target_type, "evo-x")
 
 

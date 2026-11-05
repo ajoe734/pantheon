@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -586,6 +587,32 @@ def build_adapter_registry(
             api_url=governance_api_url, timeout=timeout, http_json=http_json
         )
     return registry
+
+
+def configured_adapter_registry(
+    *,
+    research_api_url: str | None = None,
+    timeout: float = 20.0,
+    http_json: Callable[..., tuple[int, Any]] = _http_json,
+) -> dict[str, Any]:
+    """Build the plane -> adapter registry from current environment configuration.
+
+    Shared by ``services.evolution.main`` and ``services.evolution.dispatch_worker``
+    so both processes wire ``EVOLUTION_GOVERNANCE_BASE_URL`` identically and cannot
+    drift on which planes have owner-receipt / hold adapters.
+    """
+    resolved_research_url = (
+        research_api_url
+        or os.getenv("EVOLUTION_RESEARCH_API_URL")
+        or os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://research-orchestrator-svc:8101")
+    )
+    governance_api_url = (os.getenv("EVOLUTION_GOVERNANCE_BASE_URL") or "").strip() or None
+    return build_adapter_registry(
+        research_api_url=resolved_research_url,
+        timeout=timeout,
+        http_json=http_json,
+        governance_api_url=governance_api_url,
+    )
 
 
 def supported_planes(registry: Mapping[str, Any]) -> list[str]:
