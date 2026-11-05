@@ -740,3 +740,152 @@ def test_create_program_api_cannot_set_origin_or_qualification(tmp_path):
     for forbidden in ("origin", "source_decision_ids", "qualification"):
         with pytest.raises(ValidationError):
             ProgramCreateRequest(name="n", actor_id="a", **{forbidden: "auto_qualified"})
+
+
+# -- Sweep hook, report endpoint, status ---------------------------------------
+
+@pytest.fixture
+def evo_client(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from services.evolution import main as evo_main
+
+    saved = dict(evo_main._sweep_state)
+    reports = QualificationReportStore(tmp_path / "http-report.json")
+    qualifier = ProgramQualifier(
+        decision_store=evo_main.store,
+        program_service=evo_main.program_service,
+        owner_reader=FakeOwners(),
+        report_store=reports,
+        action_paths=evo_main._ACTION_PATHS,
+        summary_field_for_metric=summary_field_for_metric,
+        summary_is_stale_or_degraded=summary_is_stale_or_degraded,
+        metric_is_stale=metric_is_stale,
+    )
+    monkeypatch.setattr(evo_main, "program_qualifier", qualifier)
+    yield TestClient(evo_main.app), evo_main, qualifier
+    evo_main._sweep_state.clear()
+    evo_main._sweep_state.update(saved)
+
+
+def test_sweep_runs_the_qualifier_and_report_endpoint_pages_every_decision(evo_client):
+    client, evo_main, _ = evo_client
+    tenant = evo_main._current_tenant()
+    decisions = []
+    for index in range(3):
+        decision = replace(
+            infra_flag_decision(),
+            decision_id=f"evo-sweep-agent-{index:04d}",
+            target_id=f"infra-component-agent-finding-{index:012d}",
+            tenant_id=tenant,
+        )
+        evo_main.store.put(decision)
+        decisions.append(decision.decision_id)
+    try:
+        response = client.post("/api/evolution/daily-sweep", json={"sweep_id": "qualify-http"})
+        assert response.status_code == 200, response.text
+        report = client.get("/api/evolution/program-qualification", params={"limit": 2}).json()
+        assert report["policy_version"] == load_policy().policy_version
+        assert (report["evaluated"], report["qualified"], report["drafted"]) == (3, 0, 0)
+        assert report["counts_by_first_failing_criterion"] == {"real_threshold_signal": 3}
+        assert report["total"] == 3 and len(report["items"]) == 2
+        assert {c["criterion"] for c in report["items"][0]["criteria"]} == set(CRITERIA)
+        assert client.get("/api/evolution/program-qualification", params={"qualified": "true"}).json()["total"] == 0
+        status = client.get("/api/evolution/sweep-status").json()
+        assert status["qualifier_last_success_at"] and status["qualifier_last_failure_reason"] is None
+    finally:
+        for decision_id in decisions:
+            evo_main.store._decisions.pop(decision_id, None)
+
+
+def test_qualifier_failure_never_fails_the_sweep_and_is_exposed_in_status(evo_client, monkeypatch):
+    client, evo_main, qualifier = evo_client
+
+    def boom(**kwargs):
+        raise RuntimeError("owner exploded")
+
+    monkeypatch.setattr(qualifier, "run", boom)
+    response = client.post("/api/evolution/daily-sweep", json={"sweep_id": "qualify-fail"})
+    assert response.status_code == 200
+    assert response.json()["sweep_id"] == "qualify-fail"
+    status = client.get("/api/evolution/sweep-status").json()
+    assert status["qualifier_last_failure_at"]
+    assert "owner exploded" in status["qualifier_last_failure_reason"]
+    assert status["last_success_at"]  # the sweep itself still counts as a success
+
+
+def test_invalid_policy_is_recorded_as_a_sweep_status_failure(evo_client, tmp_path, monkeypatch):
+    client, evo_main, qualifier = evo_client
+    bad = tmp_path / "bad-policy.json"
+    bad.write_text("{}")
+    monkeypatch.setattr(qualifier, "_policy_loader", lambda: load_policy(str(bad)))
+    assert client.post("/api/evolution/daily-sweep", json={"sweep_id": "bad-policy"}).status_code == 200
+    status = client.get("/api/evolution/sweep-status").json()
+    assert status["qualifier_last_failure_reason"].startswith("policy_invalid")
+    report = client.get("/api/evolution/program-qualification").json()
+    assert report["drafted"] == 0 and report["failure_reason"].startswith("policy_invalid")
+
+
+# -- Owner reader against the real drift service, auth middleware active --------
+
+def _drift_app(tmp_path, monkeypatch):
+    import importlib.util
+    import sys
+
+    service_dir = Path(__file__).resolve().parents[1] / "reconciliation-drift"
+    monkeypatch.setenv("RECONCILIATION_DRIFT_DATA_DIR", str(tmp_path / "drift"))
+    monkeypatch.setenv("RECONCILIATION_DRIFT_AUTH_MODE", "token")
+    monkeypatch.setenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "drift-token-for-test")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry:8083")
+    monkeypatch.setenv("PANTHEON_LINEAGE_READ_URL", "http://lineage-read:8094")
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime-manager:8081")
+    sys.modules.pop("store", None)
+    sys.path.insert(0, str(service_dir))
+    try:
+        spec = importlib.util.spec_from_file_location("drift_main_for_qualification_test", service_dir / "main.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["drift_main_for_qualification_test"] = module
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop("store", None)
+        sys.path.remove(str(service_dir))
+    return module
+
+
+def test_owner_reader_reads_filtered_history_from_real_drift_service_with_auth(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    drift = _drift_app(tmp_path, monkeypatch)
+    for item in (
+        evaluation(datetime(2026, 10, 1, 16, tzinfo=timezone.utc), event_id="evt-old", n=1),
+        evaluation(datetime(2026, 11, 3, 16, tzinfo=timezone.utc), event_id="evt-a", n=2),
+        evaluation(datetime(2026, 11, 4, 16, tzinfo=timezone.utc), event_id="evt-b", breached=False, n=3),
+    ):
+        drift.store.put_evaluation(item)
+    other = evaluation(datetime(2026, 11, 3, 17, tzinfo=timezone.utc), event_id="evt-c", n=4)
+    other["tenant_id"] = "tenant-b"
+    drift.store.put_evaluation(other)
+
+    http = TestClient(drift.app)
+    reader = QualificationOwnerReader(drift_url="http://drift", drift_token="drift-token-for-test", http=http)
+    breached = reader.list_evaluations(
+        BINDING, tenant_id=TENANT, timeout=5, since="2026-11-01T00:00:00Z", governed_breached_only=True
+    )
+    assert [e["evaluation_id"] for e in breached] == ["rdeval-2"]  # window + breach + tenant scoping
+    assert breached[0]["drift_checks"][0]["drawdown_event_id"] == "evt-a"
+    latest = reader.list_evaluations(
+        BINDING, tenant_id=TENANT, timeout=5, since="2026-11-01T00:00:00Z", governed_breached_only=False
+    )
+    assert {e["evaluation_id"] for e in latest} == {"rdeval-2", "rdeval-3"}
+
+    wrong = QualificationOwnerReader(drift_url="http://drift", drift_token="wrong", http=http)
+    with pytest.raises(OwnerReadError, match="HTTP 401"):
+        wrong.list_evaluations(BINDING, tenant_id=TENANT, timeout=5, since="2026-11-01T00:00:00Z", governed_breached_only=True)
+
+
+def test_owner_reader_fails_closed_when_an_owner_is_not_configured():
+    reader = QualificationOwnerReader()
+    with pytest.raises(OwnerReadError, match="not configured"):
+        reader.get_registry_entry("x", tenant_id=TENANT, timeout=1)
+    with pytest.raises(OwnerReadError, match="PANTHEON_TELEMETRY_SERVICE_TOKEN"):
+        reader.get_runtime_summary("rt", tenant_id=TENANT, timeout=1)
