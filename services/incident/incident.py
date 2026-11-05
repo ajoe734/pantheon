@@ -1092,6 +1092,51 @@ class IncidentStore:
         )
         return updated
 
+    def _stale_monitor_agent_finding_candidates(
+        self,
+        *,
+        resolve_after_seconds: int,
+        now_dt: datetime,
+    ) -> List[IncidentCase]:
+        if resolve_after_seconds <= 0:
+            return []
+        candidates: List[IncidentCase] = []
+        for inc in self._incidents.values():
+            if not inc.is_open():
+                continue
+            if not is_monitor_agent_finding_incident(inc):
+                continue
+            last_obs = extract_incident_last_observed_at(inc)
+            if last_obs is None:
+                continue
+            if (now_dt - last_obs).total_seconds() < resolve_after_seconds:
+                continue
+            candidates.append(inc)
+        return candidates
+
+    @_serialized_store_read
+    def has_stale_monitor_agent_findings(
+        self,
+        *,
+        resolve_after_seconds: int,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        """Return True when at least one open monitor-agent finding is stale."""
+        if resolve_after_seconds <= 0:
+            return False
+        self._refresh_from_disk()
+        now_dt = now or datetime.now(timezone.utc)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
+        else:
+            now_dt = now_dt.astimezone(timezone.utc)
+        return bool(
+            self._stale_monitor_agent_finding_candidates(
+                resolve_after_seconds=resolve_after_seconds,
+                now_dt=now_dt,
+            )
+        )
+
     @_serialized_store_write
     def resolve_stale_monitor_agent_findings(
         self,
@@ -1114,17 +1159,10 @@ class IncidentStore:
         resolved_iso = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
         transitions: List[Tuple[str, Mapping[str, Any], IncidentCase]] = []
-        for inc in list(self._incidents.values()):
-            if not inc.is_open():
-                continue
-            if not is_monitor_agent_finding_incident(inc):
-                continue
-            last_obs = extract_incident_last_observed_at(inc)
-            if last_obs is None:
-                continue
-            if (now_dt - last_obs).total_seconds() < resolve_after_seconds:
-                continue
-
+        for inc in self._stale_monitor_agent_finding_candidates(
+            resolve_after_seconds=resolve_after_seconds,
+            now_dt=now_dt,
+        ):
             updates: Dict[str, Any] = {
                 "status": IncidentStatus.RESOLVED.value,
                 "resolved_at": inc.resolved_at or resolved_iso,
@@ -1361,6 +1399,56 @@ class IncidentStore:
             return []
         return self._persist_batch_incident_updates(transitions)
 
+    def _orphaned_infrastructure_incident_candidates(
+        self,
+        *,
+        healthy_components: List[str],
+        referenced_incident_ids: Optional[List[str]] = None,
+    ) -> List[IncidentCase]:
+        healthy_set = {
+            normalize_infrastructure_component(item)
+            for item in (healthy_components or [])
+            if normalize_infrastructure_component(item)
+        }
+        if not healthy_set:
+            return []
+        referenced_set = {
+            str(item or "").strip()
+            for item in (referenced_incident_ids or [])
+            if str(item or "").strip()
+        }
+        candidates = sorted(
+            self._incidents.values(),
+            key=lambda item: (item.created_at, item.incident_id),
+        )
+        matched: List[IncidentCase] = []
+        for inc in candidates:
+            if not inc.is_open() or not is_infrastructure_health_incident(inc):
+                continue
+            comp = extract_infrastructure_incident_component(inc)
+            if not comp or comp not in healthy_set:
+                continue
+            if extract_infrastructure_incident_referenced_ids(inc) & referenced_set:
+                continue
+            matched.append(inc)
+        return matched
+
+    @_serialized_store_read
+    def has_orphaned_infrastructure_incidents(
+        self,
+        *,
+        healthy_components: List[str],
+        referenced_incident_ids: Optional[List[str]] = None,
+    ) -> bool:
+        """Return True when at least one open infrastructure incident is orphaned."""
+        self._refresh_from_disk()
+        return bool(
+            self._orphaned_infrastructure_incident_candidates(
+                healthy_components=healthy_components,
+                referenced_incident_ids=referenced_incident_ids,
+            )
+        )
+
     @_serialized_store_write
     def resolve_orphaned_infrastructure_incidents(
         self,
@@ -1376,37 +1464,19 @@ class IncidentStore:
         Applies strictly to non-trading infrastructure-health incidents and never
         touches monitor-agent finding, runtime, drift, or deployment incidents.
         """
-        healthy_set = {
-            normalize_infrastructure_component(item)
-            for item in (healthy_components or [])
-            if normalize_infrastructure_component(item)
-        }
-        if not healthy_set:
+        candidates = self._orphaned_infrastructure_incident_candidates(
+            healthy_components=healthy_components,
+            referenced_incident_ids=referenced_incident_ids,
+        )
+        if not candidates:
             return []
-        referenced_set = {
-            str(item or "").strip()
-            for item in (referenced_incident_ids or [])
-            if str(item or "").strip()
-        }
         resolved_iso = str(resolved_at or _utc_now()).strip() or _utc_now()
         reason_clean = str(resolution_reason or ORPHAN_RECOVERED_RESOLUTION_REASON).strip() or ORPHAN_RECOVERED_RESOLUTION_REASON
         extra_events = list(telemetry_event_ids or [])
         extra_events.append(f"resolution_reason:{reason_clean}")
 
         transitions: List[Tuple[str, Mapping[str, Any], IncidentCase]] = []
-        candidates = sorted(
-            self._incidents.values(),
-            key=lambda item: (item.created_at, item.incident_id),
-        )
         for inc in candidates:
-            if not inc.is_open() or not is_infrastructure_health_incident(inc):
-                continue
-            comp = extract_infrastructure_incident_component(inc)
-            if not comp or comp not in healthy_set:
-                continue
-            if extract_infrastructure_incident_referenced_ids(inc) & referenced_set:
-                continue
-
             updates: Dict[str, Any] = {
                 "status": IncidentStatus.RESOLVED.value,
                 "resolved_at": inc.resolved_at or resolved_iso,
