@@ -112,28 +112,10 @@
     }
   },
   "published_staging_verification": {
-    "purpose": "Public-safe allowlisted summaries consumable as production-release staging_evidence_path; prod_preflight.check_staging_evidence passes natively for the exact manifest.",
+    "purpose": "Top-level status/dry_run/observed_from_live_vm/release_id/manifest/gates/workflow_run_id fields of this file are the latest native verification (run 41581135775) and are consumable as production-release staging_evidence_path; prod_preflight.check_staging_evidence passes natively for the exact manifest. Both runs listed in staging_verification_runs.",
     "release_id": "pantheon-20261028-102",
     "manifest_sha256": "sha256:617e2936f3534a1f425e8c71726750826979c5b1d98cf767fec2fdb0c728bcf3",
     "control_source_commit": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
-    "runs": [
-      {
-        "workflow_run_id": "41579314601",
-        "artifact": "staging-release102-run41579314601.json",
-        "sha256": "78e115d257210065875143f75709c45f9dbe1777ccd57ecd049e9275e6fe3c74",
-        "rollback_duration_seconds": 107.727,
-        "cleanup_deleted_resources": 4,
-        "post_delete_readback_verified": true
-      },
-      {
-        "workflow_run_id": "41581135775",
-        "artifact": "staging-release102-run41581135775.json",
-        "sha256": "fdc0f7ec3312caa92451473fb3bed79128c0d985db662e74ee1170ff0719c3b2",
-        "rollback_duration_seconds": 108.599,
-        "cleanup_deleted_resources": 4,
-        "post_delete_readback_verified": true
-      }
-    ],
     "omitted": "owner timestamps, per-table row counts, schema names, resource identities, secrets",
     "scope_limits": {
       "hosted_QA_step": "skipped (QA 0, step 9 skipped in both runs)",
@@ -153,5 +135,120 @@
   },
   "production_environment_config": {
     "scope": "PROD_* values are GitHub Environment-scoped in 'production' (not repository-only); read-only readback 2026-11-05: 20 required names present, none missing, safe defaults accepted; metadata only, not live VM proof. The earlier 'missing 21 PROD vars' claim is disproved."
-  }
+  },
+  "actual_final_teardown": {
+    "deleted_resource_count": 4,
+    "evidence_sha256": "sha256:08029feda84a4c2a7f2c800bb0d4a3f8b807d1b055a757ef4491e299ea8ab8c9",
+    "post_delete_readback_verified": true
+  },
+  "dry_run": false,
+  "gates": {
+    "backup_restore_readability": {
+      "backup_id": "stg-backup-pantheon-20261028-102",
+      "backup_restore_verified": true,
+      "backup_sha256": "sha256:09fd5eb59dae679452d176e5ab044dbc585fc90a53932372fde01c871b4ef84f",
+      "owner_store_backup_sha256": "sha256:68b7c6f7b45880db55398d79e169f7efb5d1591b663b31cb2889a5e052370312"
+    },
+    "cleanup_dry_run": {
+      "deleted_resources": [],
+      "dry_run": true,
+      "mode": "orphan-sweep",
+      "post_delete_readback_verified": false,
+      "retained_active_resource_count": 4,
+      "status": "ok"
+    },
+    "exact_pair_rollback": {
+      "exact_pair_rollback_verified": true,
+      "phase_timings_seconds": {
+        "baseline_up": 54.903,
+        "drain": 10.694,
+        "owners_healthy": 35.789,
+        "readback": 7.074,
+        "readyz_200": 0.137
+      },
+      "restored_release_id": "pantheon-20261028-100",
+      "rollback_duration_seconds": 108.599
+    },
+    "migration_and_compatibility": {
+      "migration_set_sha256": "sha256:a35cb55989d3eb8c3919c6158a98f30d686416aee703597b018cbfe72441210c",
+      "migration_verified": true,
+      "old_app_new_schema_compatible": true
+    },
+    "sanitized_data": {
+      "dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+      "live_dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+      "metadata_dataset_sha256": "sha256:ceee5257748c9877f16852d13fa55cf000ef7111ca73451fb81f0cf303ce282c",
+      "observed_at": "2026-11-03T05:06:40.800441Z",
+      "observed_phase": "pre_owner_start",
+      "sanitized_verified": true,
+      "snapshot_name": "pantheon-stg-sanitized-seed-20261030-v5",
+      "source_environment": "dev_sanitized_seed",
+      "table_count": 97,
+      "verified": true
+    },
+    "security_and_safety_readbacks": {
+      "live_broker_enabled": false,
+      "provider_enabled": false,
+      "real_writes_enabled": false,
+      "security_and_safety_readback_verified": true
+    }
+  },
+  "manifest": {
+    "backend_commit": "9a12eb361165867d39b7c7c6f55e846a1b4564e1",
+    "frontend_artifact_sha256": "sha256:47cfd8d3c0f970569c22cfb9736294f6e7c01ed73f0141c3d07c7de9b0ead69a",
+    "frontend_commit": "24534489030770f9e7a52cb893e97efa14b53cc4",
+    "manifest_sha256": "sha256:617e2936f3534a1f425e8c71726750826979c5b1d98cf767fec2fdb0c728bcf3",
+    "operator_bff_image": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:ccb9b9291521b360ce8ac1fed682df36b4b39f9d45dfd74efe5e2d9eb65913b8",
+    "release_id": "pantheon-20261028-102",
+    "release_state": "dev_verified",
+    "rollback_frontend_artifact_sha256": "sha256:d58fdf8dae491bc47c9b83dcf6e636a1de4c90fe29d8862a399522cbee79a093",
+    "rollback_operator_bff_image": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:3ca3d75e51a48cede9e0771db83eb5e842b0eb0da4e20080538ab56bc381610c",
+    "rollback_previous_release_id": "pantheon-20261028-100"
+  },
+  "observed_from_live_vm": true,
+  "provenance": {
+    "artifact_id": 13205758813,
+    "control_source_commit": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
+    "original_verification_sha256": "sha256:fe505400f0f0a1d71fb1b68291ea5bea4da1fa8aae3c4f5d7d72e7c07b737f88",
+    "projection": "Allowlisted public contract summary; owner timestamps, per-table row counts, schema names and resource identities omitted; observed values retained.",
+    "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/41581135775"
+  },
+  "release_id": "pantheon-20261028-102",
+  "scope_limits": {
+    "both_native_drills_same_release": "pantheon-20261028-102",
+    "complete_original_acceptance": false,
+    "distinct_release103_verified": false,
+    "hosted_QA_step": "skipped",
+    "hosted_QA_window_seconds": 0,
+    "production_acceptance_verified": false,
+    "three_account_hosted_QA": "not_executed"
+  },
+  "status": "staging_verified",
+  "workflow_run_id": "41581135775",
+  "staging_verification_runs": [
+    {
+      "workflow_run_id": "41579314601",
+      "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/41579314601",
+      "artifact_id": 13205541547,
+      "original_verification_sha256": "sha256:87367805143a43cb7edee18cb6c708e87ba7be4216c80b950342cc6155337d6c",
+      "rollback_duration_seconds": 107.727,
+      "cleanup": {
+        "deleted_resource_count": 4,
+        "evidence_sha256": "sha256:97bca5012934cf14a2e3902335458802eee6adbc10c18284bc625a040c608ba3",
+        "post_delete_readback_verified": true
+      }
+    },
+    {
+      "workflow_run_id": "41581135775",
+      "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/41581135775",
+      "artifact_id": 13205758813,
+      "original_verification_sha256": "sha256:fe505400f0f0a1d71fb1b68291ea5bea4da1fa8aae3c4f5d7d72e7c07b737f88",
+      "rollback_duration_seconds": 108.599,
+      "cleanup": {
+        "deleted_resource_count": 4,
+        "evidence_sha256": "sha256:08029feda84a4c2a7f2c800bb0d4a3f8b807d1b055a757ef4491e299ea8ab8c9",
+        "post_delete_readback_verified": true
+      }
+    }
+  ]
 }
