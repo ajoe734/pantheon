@@ -31,6 +31,9 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+AUTO_QUALIFIED_ORIGIN = "auto_qualified"
+
+
 class ProgramValidationError(ValueError):
     """A create/patch request failed input validation (maps to HTTP 422)."""
 
@@ -133,6 +136,76 @@ class ProgramService:
         except ProgramStoreConflictError as exc:
             raise ProgramConflictError(program_id) from exc
         return committed, replayed
+
+    def create_auto_qualified_program(
+        self,
+        *,
+        tenant_id: str,
+        actor_id: str,
+        name: str,
+        decision_id: str,
+        qualification: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], bool]:
+        """Create the one program a qualified daily-sweep decision earns.
+
+        This is deliberately a separate method from :meth:`create_program`:
+        the public create API accepts only ``name``, so no API caller can set
+        ``origin``/``source_decision_ids``/``qualification`` or mark a program
+        qualified. The idempotency key is derived from the decision, so a
+        repeated sweep replays the committed program instead of creating a
+        second one.
+        """
+        clean_tenant = str(tenant_id or "").strip()
+        clean_actor = str(actor_id or "").strip()
+        clean_name = str(name or "").strip()
+        clean_decision = str(decision_id or "").strip()
+        if not clean_tenant:
+            raise ProgramValidationError("tenant_id is required")
+        if not clean_actor:
+            raise ProgramValidationError("actor_id is required")
+        if not clean_name:
+            raise ProgramValidationError("name must be a non-empty string")
+        if not clean_decision:
+            raise ProgramValidationError("decision_id is required")
+        if not isinstance(qualification, dict) or not qualification.get("policy_version"):
+            raise ProgramValidationError("qualification record with policy_version is required")
+
+        program_id = f"evp-{uuid.uuid4().hex}"
+        request_fingerprint = {
+            "operation": "create_auto_qualified_program",
+            "tenant_id": clean_tenant,
+            "actor_id": clean_actor,
+            "decision_id": clean_decision,
+        }
+
+        def factory() -> Dict[str, Any]:
+            now = utc_now_iso()
+            return EvolutionProgram(
+                program_id=program_id,
+                tenant_id=clean_tenant,
+                created_by=clean_actor,
+                name=clean_name,
+                status=ProgramStatus.DRAFT,
+                revision=1,
+                created_at=now,
+                updated_at=now,
+                origin=AUTO_QUALIFIED_ORIGIN,
+                source_decision_ids=[clean_decision],
+                qualification=dict(qualification),
+            ).to_dict()
+
+        try:
+            return self._store.create_with_receipt(
+                tenant_id=clean_tenant,
+                actor_id=clean_actor,
+                idempotency_key=f"auto-qualify:{clean_decision}",
+                request_fingerprint=request_fingerprint,
+                program_factory=factory,
+            )
+        except ProgramStoreDivergentReplayError as exc:
+            raise ProgramDivergentReplayError(exc.idempotency_key) from exc
+        except ProgramStoreConflictError as exc:
+            raise ProgramConflictError(program_id) from exc
 
     # -- Read ------------------------------------------------------------
 

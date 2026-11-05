@@ -68,6 +68,13 @@ class EvolutionProgram:
     mutation_rules: List[Dict[str, Any]] = dataclass_field(default_factory=list)
     promotions: List[Dict[str, Any]] = dataclass_field(default_factory=list)
     action_receipts: List[Dict[str, Any]] = dataclass_field(default_factory=list)
+    # How the program came to exist. ``manual`` is every program created through
+    # the create API; ``auto_qualified`` is set only by the daily-sweep
+    # qualifier (EVOLUTION-PROGRAM-QUALIFY-R2-20261105) and never from a
+    # request body.
+    origin: str = "manual"
+    source_decision_ids: List[str] = dataclass_field(default_factory=list)
+    qualification: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -90,6 +97,9 @@ class EvolutionProgram:
             "mutation_rules": list(self.mutation_rules or []),
             "promotions": list(self.promotions or []),
             "action_receipts": list(self.action_receipts or []),
+            "origin": self.origin or "manual",
+            "source_decision_ids": list(self.source_decision_ids or []),
+            "qualification": dict(self.qualification) if self.qualification else None,
         }
 
     @classmethod
@@ -115,6 +125,13 @@ class EvolutionProgram:
             mutation_rules=list(data.get("mutation_rules") or []),
             promotions=list(data.get("promotions") or []),
             action_receipts=list(data.get("action_receipts") or []),
+            origin=str(data.get("origin") or "manual"),
+            source_decision_ids=list(data.get("source_decision_ids") or []),
+            qualification=(
+                dict(data["qualification"])
+                if isinstance(data.get("qualification"), dict)
+                else None
+            ),
         )
 
 

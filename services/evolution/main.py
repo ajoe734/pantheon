@@ -159,6 +159,9 @@ from services.evolution.threshold_sweep_worker import (
     default_fetch_summaries,
     load_baselines,
     load_thresholds,
+    metric_is_stale,
+    summary_field_for_metric,
+    summary_is_stale_or_degraded,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -482,6 +485,11 @@ evaluator = ThresholdEvaluator()
 # /api/evolution path above; real lifecycle actions remain U8B's obligation
 # and are not exposed by this router.
 # ---------------------------------------------------------------------------
+from services.evolution.program_qualification import (
+    ProgramQualifier,
+    QualificationOwnerReader,
+    QualificationReportStore,
+)
 from services.evolution.program_router import create_program_router
 from services.evolution.program_service import ProgramService
 from services.evolution.program_store import build_program_store
@@ -549,6 +557,12 @@ _sweep_state: Dict[str, Any] = {
     "total_sweeps_run": 0,
     "total_proposals_created": 0,
 }
+
+_sweep_state.update({
+    "qualifier_last_success_at": None,
+    "qualifier_last_failure_at": None,
+    "qualifier_last_failure_reason": None,
+})
 
 register_fastapi_health_routes(
     app,
@@ -1576,6 +1590,7 @@ def daily_sweep(body: DailySweepRequest):
     persistent store.
     """
     now_str = _format_rfc3339(datetime.now(timezone.utc))
+    tenant_id = _authorized_request_tenant(None)
     try:
         result = run_daily_sweep(
             incident_store=incident_store,
@@ -1585,7 +1600,7 @@ def daily_sweep(body: DailySweepRequest):
             max_incidents=body.max_incidents,
             sweep_id=body.sweep_id,
             evaluator=evaluator,
-            tenant_id=_authorized_request_tenant(None),
+            tenant_id=tenant_id,
         )
     except ValueError as exc:
         _sweep_state["last_failure_at"] = now_str
@@ -1604,7 +1619,76 @@ def daily_sweep(body: DailySweepRequest):
         result.cooldown_blocked,
         result.scanned_incidents,
     )
+    _run_program_qualification(tenant_id, body.sweep_id)
     return result.to_dict()
+
+
+def _run_program_qualification(tenant_id: str, sweep_id: str) -> None:
+    """Qualify proposed decisions after the sweep.
+
+    A qualifier failure never fails or rolls back the sweep response; it is
+    recorded and exposed through ``GET /api/evolution/sweep-status``.
+    """
+    moment = _format_rfc3339(datetime.now(timezone.utc))
+    try:
+        report = program_qualifier.run(tenant_id=tenant_id, sweep_id=sweep_id)
+    except Exception as exc:
+        log.exception("evolution.program_qualification failed sweep_id=%s", sweep_id)
+        _sweep_state["qualifier_last_failure_at"] = moment
+        _sweep_state["qualifier_last_failure_reason"] = f"{exc.__class__.__name__}: {exc}"
+        return
+    if report.get("failure_reason"):
+        _sweep_state["qualifier_last_failure_at"] = moment
+        _sweep_state["qualifier_last_failure_reason"] = report["failure_reason"]
+        return
+    _sweep_state["qualifier_last_success_at"] = moment
+    log.info(
+        "evolution.program_qualification sweep_id=%s evaluated=%d qualified=%d drafted=%d",
+        sweep_id,
+        report["evaluated"],
+        report["qualified"],
+        report["drafted"],
+    )
+
+
+@app.get("/api/evolution/program-qualification")
+def program_qualification_report(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    qualified: Optional[bool] = Query(default=None),
+):
+    """Last qualification report with a paged per-decision list.
+
+    Every decision shows every criterion result so an unqualified decision says
+    why. The report is persisted, so it survives an Evolution restart.
+    """
+    tenant_id = _authorized_request_tenant(None)
+    try:
+        report = program_qualifier.report(tenant_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if report is None:
+        return {
+            "tenant_id": tenant_id,
+            "policy_version": None,
+            "evaluated_at": None,
+            "evaluated": 0,
+            "qualified": 0,
+            "drafted": 0,
+            "counts_by_first_failing_criterion": {},
+            "failure_reason": "no qualification has run",
+            "items": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+        }
+    rows = [
+        row for row in report.get("decisions", [])
+        if qualified is None or bool(row.get("qualified")) is qualified
+    ]
+    page = {key: value for key, value in report.items() if key != "decisions"}
+    page.update({"items": rows[offset:offset + limit], "total": len(rows), "limit": limit, "offset": offset})
+    return page
 
 
 @app.get("/api/evolution/sweep-status")
@@ -1624,6 +1708,9 @@ def sweep_status():
         "last_failure_reason": _sweep_state["last_failure_reason"],
         "total_sweeps_run": _sweep_state["total_sweeps_run"],
         "total_proposals_created": _sweep_state["total_proposals_created"],
+        "qualifier_last_success_at": _sweep_state["qualifier_last_success_at"],
+        "qualifier_last_failure_at": _sweep_state["qualifier_last_failure_at"],
+        "qualifier_last_failure_reason": _sweep_state["qualifier_last_failure_reason"],
         "scheduler_attach": {
             "route": "POST /api/evolution/daily-sweep",
             "worker_module": "services.evolution.scheduler_worker",
@@ -2513,6 +2600,22 @@ _ACTION_PATHS = [
         "notes": "Redeploy is not an independent EvolutionDecision. It must occur within the parent executed decision's observation window and still pass the stage deployment gate.",
     },
 ]
+
+
+# ---------------------------------------------------------------------------
+# Program qualification (EVOLUTION-PROGRAM-QUALIFY-R2-20261105): runs at the end
+# of POST /api/evolution/daily-sweep; see services/evolution/program_qualification.py.
+# ---------------------------------------------------------------------------
+program_qualifier = ProgramQualifier(
+    decision_store=store,
+    program_service=program_service,
+    owner_reader=QualificationOwnerReader.from_env(),
+    report_store=QualificationReportStore(Path(EVOLUTION_DATA_DIR) / "program_qualification_report.json"),
+    action_paths=_ACTION_PATHS,
+    summary_field_for_metric=summary_field_for_metric,
+    summary_is_stale_or_degraded=summary_is_stale_or_degraded,
+    metric_is_stale=metric_is_stale,
+)
 
 
 # --- Durable dispatch outbox -------------------------------------------------
