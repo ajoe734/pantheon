@@ -1377,7 +1377,7 @@ def test_e_close_proven_pre_e_external_replacement_keeps_baseline_immutable_and_
     assert phase["baseline_external_replacement"] == repl
     assert repl["classification"] == "observed_external_replacement"
     assert repl["original_baseline_fleet"] == ORIG_BASELINE
-    assert repl["active_count_restored"] == 1 and repl["chain_active_bindings"] == []
+    assert repl["baseline_active_count"] == 1 and repl["active_count_after_close"] == 1 and "active_count_restored" not in repl and repl["chain_active_bindings"] == []
     assert repl["retired_baseline_bindings"][0]["binding_id"] == HIST_BINDING_ID
     assert repl["retired_baseline_bindings"][0]["deployment_correlation_id"] == "dev-paper-release-40035859151-1"
     assert repl["replacement_active_bindings"][0]["binding_id"] == REPL_BINDING_ID
@@ -1528,3 +1528,153 @@ def test_later_natural_d_report_never_downgrades_a_recorded_operator_stimulus(mo
     runner.run()
     assert runner.l10_trigger == "operator_test_stimulus"
     assert _receipt(tmp_path)["hosted"]["l10_trigger"] == "operator_test_stimulus"
+
+
+# -- E_close baseline growth (HOSTED-E-BASELINE-GROWTH-20261105) --
+
+
+def _grown_records(*, old_retired: bool = True, extra: int = 0, drop_repl: bool = False) -> dict[tuple[str, str], Any]:
+    records = _replacement_owner_records(old_retired=old_retired)
+    extra_ids = []
+    for i in range(extra):
+        bid = f"rb-ext{i:028d}"
+        aid = f"artifact-ext-{i}"
+        extra_ids.append(bid)
+        records[("runtime", f"/api/runtime-bindings/{bid}")] = _nonchain_binding_record(
+            bid,
+            status="active",
+            artifact_id=aid,
+            checksum=f"sha256:{i}",
+            correlation_id=f"dev-daily-learning-2026110{i}",
+            persona_id=f"persona-ext-{i}",
+            runtime_id=f"rt-ext-{i}",
+            plan_id=f"plan-ext-{i}",
+            pool_id=f"pool-ext-{i}",
+            pcb_id=f"pcb-ext-{i}",
+            effective_at="2026-10-25T03:31:50Z",
+        )
+        records[("registry", f"/api/registry/strategy-artifacts/{aid}")] = _nonchain_artifact_record(
+            aid, f"sha256:{i}", f"apv-ext-{i}"
+        )
+    if drop_repl:
+        del records[("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}")]
+
+    def fleet() -> dict[str, Any]:
+        active = []
+        for bid in (HIST_BINDING_ID, REPL_BINDING_ID, CHAIN_RB_ID, *extra_ids):
+            entry = records.get(("runtime", f"/api/runtime-bindings/{bid}"))
+            rec = entry.get("binding") if isinstance(entry, dict) else None
+            if isinstance(rec, dict) and rec.get("status") == "active":
+                active.append(dict(rec))
+        return {"active_count": len(active), "bindings": active}
+
+    records[("runtime", FLEET)] = fleet
+    return records
+
+
+def _run_grown(tmp_path, records, *, prior=None):
+    _runner(tmp_path, "E_close", FakeOwner(records), prior=prior or _baseline_close_prior()).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    return hosted, hosted["phases"]["E_close"]
+
+
+def test_e_close_one_retired_plus_four_external_is_verified_with_honest_counts(tmp_path):
+    records = _grown_records(old_retired=True, extra=3)
+    hosted, phase = _run_grown(tmp_path, records)
+    assert phase["baseline_fleet_check"] == "verified" and phase["phase_status"] == "completed"
+    repl = phase["observed_external_replacement"]
+    assert repl["baseline_active_count"] == 1 and repl["active_count_after_close"] == 4
+    assert "active_count_restored" not in repl and repl["classification"] == "observed_external_replacement"
+    assert hosted["baseline_fleet"] == ORIG_BASELINE
+    assert hosted["all12_natural"] is False
+
+
+def test_e_close_all12_passed_true_with_grown_fleet(tmp_path):
+    prior = _baseline_close_prior()
+    prior["hosted"]["phases"] = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:-1]}
+    runner = _runner(tmp_path, "E_close", FakeOwner(_grown_records(old_retired=True, extra=3)), prior=prior)
+    runner.run()
+    assert runner.phases["E_close"]["baseline_fleet_check"] == "verified"
+    runner.loops = {loop_id: {"loop_id": loop_id} for loop_id in parent.CANONICAL_LOOP_IDS}
+    runner.l10_trigger = "operator_test_stimulus"
+    receipt = runner._receipt()
+    assert receipt["all12_passed"] is True and receipt["all12_natural"] is False
+
+
+def test_e_close_baseline_still_active_plus_one_external_addition_is_verified(tmp_path):
+    hosted, phase = _run_grown(tmp_path, _grown_records(old_retired=False, extra=0))
+    assert phase["baseline_fleet_check"] == "verified" and phase["phase_status"] == "completed"
+
+
+def _set_repl(field_path):
+    def mutate(r):
+        rec = r[("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}")]["binding"]
+        target = rec
+        *parents, last = field_path[0]
+        for p in parents:
+            target = target[p]
+        target[last] = field_path[1]
+
+    return mutate
+
+
+def _owner_404(r):
+    r.pop(("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}"))
+    r[("runtime", FLEET)] = _fleet(2, [HIST_BINDING_ID, REPL_BINDING_ID])
+
+
+@pytest.mark.parametrize(
+    "mutate,needle",
+    [
+        (_owner_404, "Runtime owner GET returned 404"),
+        (lambda r: r.pop(("registry", f"/api/registry/strategy-artifacts/{REPL_ART_ID}")), "Registry owner GET returned 404"),
+        (_set_repl((("effective_at",), "2099-01-01T00:00:00Z")), "after E_close start"),
+        (_set_repl((("metadata", "tenant_id"), "other-tenant")), "tenant"),
+        (_set_repl((("deployment_mode",), "live")), "deployment_mode"),
+        (_set_repl((("plan_id",), "plan-chain")), "plan_id=plan-chain"),
+        (_set_repl((("capital_pool_id",), "cp-1")), "capital_pool_id=cp-1"),
+        (_set_repl((("persona_capital_binding_id",), "cb-1")), "persona_capital_binding_id=cb-1"),
+        (_set_repl((("metadata", "persona_id"), "persona-chain")), "persona_id=persona-chain"),
+        (_set_repl((("runtime_id",), "rt-chain")), "runtime_id=rt-chain"),
+    ],
+)
+def test_e_close_added_binding_failures_are_mismatch(tmp_path, mutate, needle):
+    records = _grown_records(old_retired=False, extra=0)
+    mutate(records)
+    prior = _baseline_close_prior()
+    prior["hosted"]["resource_ids"].update(plan_id="plan-chain", persona_id="persona-chain", runtime_id="rt-chain")
+    hosted, phase = _run_grown(tmp_path, records, prior=prior)
+    assert phase["baseline_fleet_check"] == "mismatch" and hosted["all12_passed"] is False
+    assert needle in " ".join(phase["incomplete_cleanup"])
+
+
+def test_e_close_added_binding_with_chain_label_is_never_verified(tmp_path):
+    records = _grown_records(old_retired=False, extra=0)
+    records[("runtime", f"/api/runtime-bindings/{REPL_BINDING_ID}")]["binding"]["metadata"]["chain_id"] = CHAIN
+    hosted, phase = _run_grown(tmp_path, records)
+    # Existing label check fires first (chain_binding_still_active), unchanged by this task
+    assert phase["baseline_fleet_check"] == "chain_binding_still_active" and hosted["all12_passed"] is False
+
+
+def test_e_close_baseline_binding_not_retired_is_mismatch_when_count_differs(tmp_path):
+    records = _grown_records(old_retired=True, extra=3)
+    records[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"]["status"] = "active"
+    records[("runtime", f"/api/runtime-bindings/{HIST_BINDING_ID}")]["binding"]["retired_at"] = None
+    # Fleet no longer lists it as retired-and-gone: drop it from the fleet while owner says active
+    orig = records[("runtime", FLEET)]
+    records[("runtime", FLEET)] = lambda: {
+        "active_count": orig()["active_count"] - 1,
+        "bindings": [b for b in orig()["bindings"] if b["binding_id"] != HIST_BINDING_ID],
+    }
+    hosted, phase = _run_grown(tmp_path, records)
+    assert phase["baseline_fleet_check"] == "mismatch" and hosted["all12_passed"] is False
+    assert "expected 'retired'" in " ".join(phase["incomplete_cleanup"])
+
+
+def test_e_close_inconsistent_fleet_snapshot_is_mismatch(tmp_path):
+    records = _grown_records(old_retired=False, extra=0)
+    orig = records[("runtime", FLEET)]
+    records[("runtime", FLEET)] = lambda: dict(orig(), active_count=orig()["active_count"] + 3)
+    hosted, phase = _run_grown(tmp_path, records)
+    assert phase["baseline_fleet_check"] == "mismatch" and hosted["all12_passed"] is False
+    assert "inconsistent" in " ".join(phase["incomplete_cleanup"])
