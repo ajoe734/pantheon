@@ -10,6 +10,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
@@ -508,6 +509,47 @@ def _decision_approval_error_code(status_code: int):
     }.get(status_code, ErrorCode.DEPENDENCY_UNAVAILABLE)
 
 
+def _reused_approval_conflict(body: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Classify an existing Governance approval request when it cannot be reused.
+
+    Pending (``proposed`` / ``under_review``) and still-valid ``approved``
+    requests keep reusing the deterministic id.  Rejected, revoked, or expired
+    requests are dead ends and must be refused with 409 so the operator cancels
+    the decision and proposes anew.
+    """
+    state = str(body.get("decision_state") or "").strip().lower()
+    decision = str(body.get("decision") or "").strip().lower()
+    if state == "rejected" or decision == "rejected":
+        return (
+            "approval_rejected",
+            "Execution approval request was rejected; cancel the decision and propose anew.",
+        )
+    if state == "revoked" or decision == "revoked":
+        return (
+            "approval_revoked",
+            "Execution approval request was revoked; cancel the decision and propose anew.",
+        )
+    if state == "expired" or decision == "expired":
+        return (
+            "approval_expired",
+            "Execution approval request has expired; cancel the decision and propose anew.",
+        )
+    expires_raw = str(body.get("expires_at") or "").strip()
+    if expires_raw:
+        try:
+            expires_dt = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+            if expires_dt.tzinfo is None:
+                expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+            if expires_dt <= datetime.now(timezone.utc):
+                return (
+                    "approval_expired",
+                    "Execution approval request has expired; cancel the decision and propose anew.",
+                )
+        except ValueError:
+            pass
+    return None
+
+
 def create_evolution_decision_approval_router(
     *,
     extract_identity: Any,
@@ -543,11 +585,19 @@ def create_evolution_decision_approval_router(
             )
         except urllib.error.HTTPError as exc:
             status = exc.code if exc.code in (403, 404, 409, 422, 503) else 502
+            detail_msg = f"Evolution owner returned HTTP {exc.code}"
+            try:
+                raw_err = exc.read().decode("utf-8") if hasattr(exc, "read") else ""
+                parsed_err = json.loads(raw_err) if raw_err else {}
+                if isinstance(parsed_err, dict) and parsed_err.get("detail"):
+                    detail_msg = str(parsed_err["detail"])
+            except Exception:
+                pass
             raise bff_error(
                 status,
                 _decision_approval_error_code(status),
                 "Evolution owner refused the execute approval request",
-                f"Evolution owner returned HTTP {exc.code}",
+                detail_msg,
             ) from exc
         except ActionUnavailableError as exc:
             raise bff_error(
@@ -556,12 +606,33 @@ def create_evolution_decision_approval_router(
                 "Evolution owner is unavailable",
                 str(exc),
             ) from exc
+        conflict = _reused_approval_conflict(body)
+        if conflict is not None:
+            reason_code, conflict_message = conflict
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                conflict_message,
+                reason_code,
+                precondition_failed=reason_code,
+                suggestion="Cancel the EvolutionDecision and propose anew.",
+                details_extra={
+                    "approval_decision_id": body.get("approval_decision_id"),
+                    "decision_id": body.get("decision_id", clean_id),
+                    "decision_state": body.get("decision_state"),
+                    "decision": body.get("decision"),
+                    "expires_at": body.get("expires_at"),
+                },
+            )
         return {
             "approval_decision_id": body.get("approval_decision_id"),
             "decision_id": body.get("decision_id", clean_id),
             "target_type": body.get("target_type"),
             "target_id": body.get("target_id"),
             "created": bool(body.get("created")),
+            "decision_state": body.get("decision_state"),
+            "decision": body.get("decision"),
+            "expires_at": body.get("expires_at"),
             "next": "Decide this approval once via POST /bff/approvals/{id}/decide, "
                     "then submit ReviewMutation and ApproveEvolutionDecision with the approval_decision_id.",
         }

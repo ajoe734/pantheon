@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
@@ -246,6 +247,38 @@ def _default_proposer_token() -> str:
         ) from exc
 
 
+def _read_existing_approval_request(
+    *,
+    base: str,
+    approval_id: str,
+    token: str,
+    timeout: float,
+) -> dict[str, Any]:
+    read_req = urllib.request.Request(
+        f"{base}/api/governance/approvals/{urllib.parse.quote(approval_id, safe='')}",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(read_req, timeout=timeout) as response:
+            raw = response.read()
+        parsed = json.loads(raw.decode("utf-8")) if raw else {}
+        return dict(parsed) if isinstance(parsed, Mapping) else {}
+    except urllib.error.HTTPError as exc:
+        status = 503 if exc.code in (502, 503, 504) else 502
+        raise ExecutionApprovalRequestError(
+            f"Governance approval readback failed after conflict: HTTP {exc.code}",
+            status=status,
+        ) from exc
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
+        raise ExecutionApprovalRequestError(
+            f"Governance approval readback unavailable: {exc}", status=503
+        ) from exc
+
+
 def file_execution_approval_request(
     decision: Mapping[str, Any],
     *,
@@ -257,8 +290,10 @@ def file_execution_approval_request(
 ) -> dict[str, Any]:
     """File (or reuse) the deterministic ``evolution_execute`` request.
 
-    Returns ``{"approval_id", "created"}``.  A 409 from Governance means the
-    deterministic request already exists and is reused.
+    Returns ``{"approval_id", "created", "decision_state", "decision", "expires_at"}``.
+    A 409 from Governance means the deterministic request already exists; the
+    owner reads the existing request back under its proposer principal so the
+    caller can see whether it is still pending/valid or already terminal/expired.
     """
     base = (governance_base_url or os.getenv("EVOLUTION_GOVERNANCE_BASE_URL") or "").strip().rstrip("/")
     if not base:
@@ -283,17 +318,41 @@ def file_execution_approval_request(
             "Content-Type": "application/json",
             "Accept": "application/json",
             "Authorization": f"Bearer {token}",
-            "Idempotency-Key": approval_id,
+            "Idempotency-Key": f"{approval_id}:{uuid.uuid4().hex}",
         },
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            response.read()
-        return {"approval_id": approval_id, "created": True}
+            raw = response.read()
+        try:
+            created_doc = json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            created_doc = {}
+        if not isinstance(created_doc, Mapping):
+            created_doc = {}
+        return {
+            "approval_id": approval_id,
+            "created": True,
+            "decision_state": created_doc.get("decision_state", "proposed"),
+            "decision": created_doc.get("decision"),
+            "expires_at": created_doc.get("expires_at", body["expires_at"]),
+        }
     except urllib.error.HTTPError as exc:
         if exc.code == 409:
-            return {"approval_id": approval_id, "created": False}
+            existing = _read_existing_approval_request(
+                base=base,
+                approval_id=approval_id,
+                token=token,
+                timeout=timeout,
+            )
+            return {
+                "approval_id": approval_id,
+                "created": False,
+                "decision_state": existing.get("decision_state"),
+                "decision": existing.get("decision"),
+                "expires_at": existing.get("expires_at"),
+            }
         status = 503 if exc.code in (502, 503, 504) else 502
         raise ExecutionApprovalRequestError(
             f"Governance refused the execute approval request: HTTP {exc.code}", status=status

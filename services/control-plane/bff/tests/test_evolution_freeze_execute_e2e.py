@@ -153,13 +153,27 @@ def stack(monkeypatch, tmp_path):
     monkeypatch.setenv("EVOLUTION_EXECUTE_PROPOSER_TOKEN", PROPOSER)
     monkeypatch.delenv("EVOLUTION_EXECUTE_PROPOSER_TOKEN_FILE", raising=False)
 
+    from services.evolution.program_service import ProgramApprovalVerifier, ProgramService
+    from services.evolution.program_store import build_program_store
+
     monkeypatch.setattr(evo_main, "store", evo_main.EvolutionDecisionStore(
         storage_path=str(tmp_path / "decisions.json")))
+    p_store = build_program_store(tmp_path / "programs.json")
+    monkeypatch.setattr(evo_main, "program_store", p_store)
+    monkeypatch.setattr(
+        evo_main,
+        "program_service",
+        ProgramService(
+            p_store,
+            approval_verifier=ProgramApprovalVerifier(evo_main._program_approval_reader),
+            decisions=evo_main._EvolutionDecisionGateway(),
+        ),
+    )
     outbox = EvolutionDispatchOutbox(build_dispatch_outbox_store(data_dir=tmp_path))
     monkeypatch.setattr(evo_main, "dispatch_outbox", outbox)
     monkeypatch.setattr(evo_main, "compensation_ledger", CompensationLedger(data_dir=tmp_path))
-    monkeypatch.setattr(evo_main, "receipt_registry", build_adapter_registry(
-        research_api_url="http://research.test", timeout=5.0, governance_api_url="http://governance.test"))
+    monkeypatch.setattr(evo_main, "receipt_registry", dispatch_worker.configured_adapter_registry(
+        research_api_url="http://research.test", timeout=5.0))
     monkeypatch.setattr(gov_main, "store", ApprovalDecisionStore(storage_path=str(tmp_path / "approvals.json")))
     freeze_store = JsonGovernanceRecordStore(str(tmp_path / "freeze.json"), id_fields=("freeze_order_id", "id"))
     monkeypatch.setattr(gov_main, "freeze_order_store", freeze_store)
@@ -315,7 +329,10 @@ def _tick(*, later: bool = False):
     now = datetime.now(timezone.utc) + (timedelta(minutes=5) if later else timedelta(0))
     return dispatch_worker.run_poll(
         api_url="http://evolution.test", outbox=evo_main.dispatch_outbox,
-        registry=evo_main.receipt_registry, compensations=evo_main.compensation_ledger,
+        registry=dispatch_worker.configured_adapter_registry(
+            research_api_url="http://research.test", timeout=5.0
+        ),
+        compensations=evo_main.compensation_ledger,
         timeout_seconds=5.0, auth_token=SERVICE_TOKEN, now=now,
     )
 
@@ -559,3 +576,110 @@ def test_freeze_outside_paper_artifact_scope_is_refused_by_name(stack):
     assert "unsupported_freeze_scope" in json.dumps(refused)
     assert _freeze_orders(s) == []
     assert _state(did) != "executed"
+
+
+def test_rerequest_reuses_pending_and_valid_approved_but_refuses_rejected_revoked_and_expired(
+    stack, monkeypatch
+):
+    """P2: Re-requesting an approval after rejection, revocation, or expiry returns 409 with named reason."""
+    s = stack
+
+    # 1. Pending and still-valid approved requests reuse the deterministic id.
+    did_valid = _propose(s)
+    approval_valid = _request_approval(s, did_valid)
+    re_pending = s.client.post(
+        f"/bff/evolution-decisions/{did_valid}/execution-approval-request",
+        headers={"Authorization": f"Bearer {OPERATOR}"},
+    )
+    assert re_pending.status_code == 200, re_pending.text
+    assert re_pending.json()["approval_decision_id"] == approval_valid
+    assert re_pending.json()["created"] is False
+    assert re_pending.json()["decision_state"] == "proposed"
+
+    assert _decide(s, approval_valid, "approved").status_code == 202
+    re_approved = s.client.post(
+        f"/bff/evolution-decisions/{did_valid}/execution-approval-request",
+        headers={"Authorization": f"Bearer {OPERATOR}"},
+    )
+    assert re_approved.status_code == 200, re_approved.text
+    assert re_approved.json()["approval_decision_id"] == approval_valid
+    assert re_approved.json()["created"] is False
+    assert re_approved.json()["decision"] == "approved"
+
+    # 2. Revoking the approved request makes re-request fail with 409 (approval_revoked).
+    current_ver = s.governance.get(
+        f"/api/governance/approvals/{approval_valid}",
+        headers={"Authorization": f"Bearer {DECIDER}"},
+    ).json()["version"]
+    revoked = s.governance.post(
+        f"/api/governance/approvals/{approval_valid}/revoke",
+        headers={"Authorization": f"Bearer {DECIDER}", "Idempotency-Key": f"revoke-{approval_valid}"},
+        json={
+            "actor_role": "risk_owner",
+            "actor_id": "pantheon-dev-admin-test",
+            "expected_version": current_ver,
+        },
+    )
+    assert revoked.status_code == 200, revoked.text
+    re_revoked = s.client.post(
+        f"/bff/evolution-decisions/{did_valid}/execution-approval-request",
+        headers={"Authorization": f"Bearer {OPERATOR}"},
+    )
+    assert re_revoked.status_code == 409, re_revoked.text
+    err_revoked = re_revoked.json()["error"]
+    assert err_revoked["details"]["reason"] == "approval_revoked"
+    assert "cancel the decision and propose anew" in err_revoked["message"].lower()
+
+    # 3. Rejecting the request makes re-request fail with 409 (approval_rejected).
+    did_rej = _propose(s)
+    approval_rej = _request_approval(s, did_rej)
+    assert _decide(s, approval_rej, "rejected").status_code == 202
+    re_rejected = s.client.post(
+        f"/bff/evolution-decisions/{did_rej}/execution-approval-request",
+        headers={"Authorization": f"Bearer {OPERATOR}"},
+    )
+    assert re_rejected.status_code == 409, re_rejected.text
+    err_rejected = re_rejected.json()["error"]
+    assert err_rejected["details"]["reason"] == "approval_rejected"
+    assert "cancel the decision and propose anew" in err_rejected["message"].lower()
+
+    # 4. An expired request makes re-request fail with 409 (approval_expired).
+    did_exp = _propose(s)
+    approval_exp = _request_approval(s, did_exp)
+    stored_exp = gov_main.store.get(approval_exp)
+    stored_exp.expires_at = "2020-01-01T00:00:00Z"
+    gov_main.store.put(stored_exp)
+    re_expired = s.client.post(
+        f"/bff/evolution-decisions/{did_exp}/execution-approval-request",
+        headers={"Authorization": f"Bearer {OPERATOR}"},
+    )
+    assert re_expired.status_code == 409, re_expired.text
+    err_expired = re_expired.json()["error"]
+    assert err_expired["details"]["reason"] == "approval_expired"
+    assert "cancel the decision and propose anew" in err_expired["message"].lower()
+
+
+def test_program_linked_decision_cannot_request_direct_execution_approval(stack):
+    """P3: A decision listed in a program's source_decision_ids is not a direct EvolutionDecision."""
+    s = stack
+    did = _propose(s)
+    evo_main.program_service.create_auto_qualified_program(
+        tenant_id=TENANT,
+        actor_id="evolution-daily-sweep",
+        name="Qualified Program",
+        decision_id=did,
+        qualification={"policy_version": "v1", "qualified": True},
+    )
+    gov_posts_before = [
+        c for c in s.seen if c["host"] == "governance.test" and c["method"] == "POST"
+    ]
+    refused = s.client.post(
+        f"/bff/evolution-decisions/{did}/execution-approval-request",
+        headers={"Authorization": f"Bearer {OPERATOR}"},
+    )
+    assert refused.status_code == 409, refused.text
+    assert "direct EvolutionDecision" in refused.text
+    gov_posts_after = [
+        c for c in s.seen if c["host"] == "governance.test" and c["method"] == "POST"
+    ]
+    assert gov_posts_after == gov_posts_before

@@ -3120,7 +3120,21 @@ _EA_TENANT = "tenant-exec-approval"
 
 @pytest.fixture
 def _exec_approval_env(tmp_path, monkeypatch):
+    from services.evolution.program_service import ProgramApprovalVerifier, ProgramService
+    from services.evolution.program_store import build_program_store
+
     monkeypatch.setattr(evo_main, "store", evo_main.EvolutionDecisionStore(storage_path=str(tmp_path / "d.json")))
+    p_store = build_program_store(tmp_path / "programs.json")
+    monkeypatch.setattr(evo_main, "program_store", p_store)
+    monkeypatch.setattr(
+        evo_main,
+        "program_service",
+        ProgramService(
+            p_store,
+            approval_verifier=ProgramApprovalVerifier(evo_main._program_approval_reader),
+            decisions=evo_main._EvolutionDecisionGateway(),
+        ),
+    )
     monkeypatch.setenv("EVOLUTION_GOVERNANCE_BASE_URL", "http://governance.test")
 
 
@@ -3137,6 +3151,9 @@ def _propose_ea(decision_id: str, *, stage: str = "paper", target_type: str = "c
 class _EaOk:
     status = 201
 
+    def __init__(self, payload: bytes = b"{}"):
+        self._payload = payload
+
     def __enter__(self):
         return self
 
@@ -3144,7 +3161,7 @@ class _EaOk:
         return False
 
     def read(self):
-        return b"{}"
+        return self._payload
 
 
 def test_body_binds_the_exact_decision_and_digest_under_the_propose_only_principal(_exec_approval_env):
@@ -3164,24 +3181,54 @@ def test_filing_posts_with_the_proposer_credential_and_reuses_on_conflict(_exec_
     _propose_ea("evo-ea-2")
     data = evo_main.store.get("evo-ea-2").to_dict()
     digest = approval_gate.immutable_decision_fingerprint(data)
+    expected_id = approval_gate.execution_approval_id("evo-ea-2", digest)
     calls = []
 
     def urlopen(req, timeout=0):
         calls.append(req)
+        if len(calls) == 1:
+            return _EaOk(
+                json.dumps(
+                    {
+                        "decision_id": expected_id,
+                        "decision_state": "proposed",
+                        "decision": None,
+                        "expires_at": "2026-11-06T00:00:00Z",
+                    }
+                ).encode("utf-8")
+            )
         if len(calls) == 2:
             raise urllib.error.HTTPError(req.full_url, 409, "exists", {}, io.BytesIO(b"{}"))
-        return _EaOk()
+        if len(calls) == 3:
+            return _EaOk(
+                json.dumps(
+                    {
+                        "decision_id": expected_id,
+                        "decision_state": "decided",
+                        "decision": "rejected",
+                        "expires_at": "2026-11-06T00:00:00Z",
+                    }
+                ).encode("utf-8")
+            )
+        raise AssertionError(f"unexpected HTTP call: {req.full_url}")
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     first = approval_gate.file_execution_approval_request(data, content_digest=digest, token_provider=lambda: "tok")
     again = approval_gate.file_execution_approval_request(data, content_digest=digest, token_provider=lambda: "tok")
-    assert first["approval_id"] == again["approval_id"]
+    assert first["approval_id"] == again["approval_id"] == expected_id
     assert first["created"] is True and again["created"] is False
+    assert first["decision_state"] == "proposed" and first["decision"] is None
+    assert again["decision_state"] == "decided" and again["decision"] == "rejected"
+    assert again["expires_at"] == "2026-11-06T00:00:00Z"
     request = calls[0]
     assert request.full_url == "http://governance.test/api/governance/approvals"
     assert request.get_header("Authorization") == "Bearer tok"
-    assert request.get_header("Idempotency-key") == first["approval_id"]
+    assert request.get_header("Idempotency-key").startswith(first["approval_id"])
     assert json.loads(request.data)["subject"]["proposal_content_digest"] == digest
+    readback_req = calls[2]
+    assert readback_req.get_method() == "GET"
+    assert readback_req.full_url == f"http://governance.test/api/governance/approvals/{expected_id}"
+    assert readback_req.get_header("Authorization") == "Bearer tok"
 
 
 @pytest.mark.parametrize("code,status", [(503, 503), (403, 502)])
@@ -3250,3 +3297,29 @@ def test_unsupported_freeze_scope_is_named():
         "action_type": "freeze", "target_type": "runtime", "target_stage": "paper"})
     assert approval_gate.unsupported_freeze_reason({
         "action_type": "freeze", "target_type": "candidate_artifact", "target_stage": "paper"}) is None
+
+
+def test_program_linked_decision_is_refused_by_execution_approval_request_with_409(
+    _exec_approval_env, monkeypatch
+):
+    """P3: A decision listed in a program's source_decision_ids is not a direct EvolutionDecision."""
+    _propose_ea("evo-ea-prog-1")
+    evo_main.program_service.create_auto_qualified_program(
+        tenant_id=_EA_TENANT,
+        actor_id="evolution-daily-sweep",
+        name="Qualified Program",
+        decision_id="evo-ea-prog-1",
+        qualification={"policy_version": "v1", "qualified": True},
+    )
+    monkeypatch.setattr(
+        evo_main,
+        "file_execution_approval_request",
+        lambda *a, **k: pytest.fail("program-linked decision must be refused before filing"),
+    )
+    refused = client.post(
+        "/api/evolution/proposals/evo-ea-prog-1/execution-approval-request",
+        json={"tenant_id": _EA_TENANT},
+    )
+    assert refused.status_code == 409, refused.text
+    assert "EvolutionProgram" in refused.json()["detail"]
+    assert "direct EvolutionDecision" in refused.json()["detail"]

@@ -160,6 +160,7 @@ from services.evolution.dispatch_receipts import (
     OUTCOME_FAILED,
     OUTCOME_SUCCEEDED,
     build_adapter_registry,
+    configured_adapter_registry,
     supported_planes,
     verify_terminal_receipt,
 )
@@ -713,10 +714,9 @@ dispatch_outbox = EvolutionDispatchOutbox(
     build_dispatch_outbox_store(data_dir=EVOLUTION_DATA_DIR)
 )
 compensation_ledger = CompensationLedger(data_dir=EVOLUTION_DATA_DIR)
-receipt_registry = build_adapter_registry(
+receipt_registry = configured_adapter_registry(
     research_api_url=RESEARCH_API_URL,
     timeout=DOWNSTREAM_TIMEOUT_SECONDS,
-    governance_api_url=(os.getenv("EVOLUTION_GOVERNANCE_BASE_URL") or "").strip() or None,
 )
 
 
@@ -2454,6 +2454,14 @@ def request_execution_approval(decision_id: str, body: ExecutionApprovalRequestI
     if decision is None:
         raise _not_found(decision_id)
     tenant = _guard_actor_tenant(decision, body.tenant_id)
+    if any(
+        decision_id in (p.get("source_decision_ids") or [])
+        for p in program_service.list_programs(tenant_id=tenant)
+    ):
+        raise _delivery_conflict(
+            f"EvolutionDecision {decision_id} belongs to an EvolutionProgram; "
+            "only a direct EvolutionDecision may file an execution-approval-request"
+        )
     state = EvolutionDecisionState(decision.decision_state)
     if state not in (EvolutionDecisionState.PROPOSED, EvolutionDecisionState.REVIEWED):
         raise HTTPException(
@@ -2470,6 +2478,9 @@ def request_execution_approval(decision_id: str, body: ExecutionApprovalRequestI
     return {
         "approval_decision_id": filed["approval_id"],
         "created": filed["created"],
+        "decision_state": filed.get("decision_state"),
+        "decision": filed.get("decision"),
+        "expires_at": filed.get("expires_at"),
         "decision_id": decision.decision_id,
         "tenant_id": tenant,
         "target_type": "evolution_execute",

@@ -147,7 +147,7 @@ def _proposal(decision_id: str, target_id: str, *, action_type: str = "retrain")
         "linked_incident_id": f"inc-{decision_id}",
     }
     if action_type == "freeze":
-        payload["target_stage"] = "paper"
+        payload["target_stage"] = "canary"
     return payload
 
 
