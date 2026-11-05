@@ -1894,7 +1894,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 ),
             )
             if lifecycle_state is None and source_kind is None and persona_id is None:
-                return list(base_items)
+                return copy.deepcopy(list(base_items))
             target_pid = str(persona_id) if persona_id else None
             filtered: List[Dict[str, Any]] = []
             for item in base_items:
@@ -1905,7 +1905,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 if target_pid and target_pid not in set(item.get("persona_ids") or ()):
                     continue
                 filtered.append(item)
-            return filtered
+            return copy.deepcopy(filtered)
 
         return self._list_strategy_specs_uncached(
             use_injected=use_injected,

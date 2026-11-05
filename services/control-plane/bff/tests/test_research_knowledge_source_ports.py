@@ -1357,3 +1357,41 @@ def test_count_strategy_persona_bindings_strips_ids_before_dedup():
             strategy_specs_store={"s": {"strategy_id": "s", "spec_version": "1.0.0", "persona_ids": ids}}
         )
         assert port.count_strategy_persona_bindings() == expected
+
+
+def test_cached_strategy_specs_are_isolated_from_caller_mutation_and_tenant(monkeypatch):
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    port = DefaultResearchKnowledgeSourcePort()
+    calls = []
+
+    def fetch():
+        calls.append(1)
+        return [{
+            "strategy_id": "s", "spec_version_id": "v", "spec_version": "1.0.0",
+            "lifecycle_state": "approved", "title": "original", "persona_ids": ["p"],
+        }]
+
+    port._fetch_canonical_strategy_specs = fetch
+    with request_read_scope():
+        first = port.list_strategy_specs()
+        first[0]["title"] = "poisoned"
+        first[0]["persona_ids"].append("evil")
+        second = port.list_strategy_specs(persona_id="p")
+        third = port.list_strategy_specs()
+        assert second[0]["title"] == "original" and third[0]["title"] == "original"
+        assert third[0]["persona_ids"] == ["p"]
+        assert second[0] is not third[0]
+        second[0]["persona_ids"].append("x")
+        assert port.list_strategy_specs(persona_id="p")[0]["persona_ids"] == ["p"]
+        assert len(calls) == 1  # request-only owner-read reuse retained
+        tok = owner_reads.selected_tenant.set("other-tenant")
+        try:
+            port.list_strategy_specs()
+        finally:
+            owner_reads.selected_tenant.reset(tok)
+        assert len(calls) == 2  # tenant isolated cache key
+    port.list_strategy_specs()
+    assert len(calls) == 3  # no cross-request reuse

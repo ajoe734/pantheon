@@ -156,6 +156,7 @@ class LoopControllerWriter:
             and isinstance(desired_state, dict)
             and isinstance(downstream_actual_state, dict)
             and bool(desired_state)
+            and desired_state.get("present") is not False
             and str(downstream_actual_state.get("status") or "").lower()
             in ("ready", "ok", "healthy")
         )
