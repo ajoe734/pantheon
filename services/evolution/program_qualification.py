@@ -451,7 +451,7 @@ class ProgramQualifier:
                 criteria += [_result(name, NOT_EVALUATED) for name in CRITERIA[1:]]
                 metric = None
             qualified = all(c["result"] == PASSED for c in criteria)
-            first_failing = next((c["criterion"] for c in criteria if c["result"] != PASSED), None)
+            first_failing = next((c["criterion"] for c in criteria if c["result"] == FAILED), None)
             row: Dict[str, Any] = {
                 "decision_id": decision.decision_id,
                 "target_id": decision.target_id,
@@ -796,7 +796,10 @@ class ProgramQualifier:
             decision_id=decision.decision_id,
             qualification=qualification,
         )
-        if program.get("status") == "draft":
+        # A replay returns the originally committed snapshot, so judge the
+        # current status, not the snapshot: review is submitted once only.
+        current = self._programs.get_program(tenant_id=tenant_id, program_id=program["program_id"]) or program
+        if current.get("status") == "draft":
             # Submit for human review once and go no further.
             self._programs.execute_action(
                 tenant_id=tenant_id,
@@ -804,7 +807,7 @@ class ProgramQualifier:
                 actor_role="operator",
                 program_id=program["program_id"],
                 action_id="submit_evolution_review",
-                expected_revision=program.get("revision"),
+                expected_revision=current.get("revision"),
                 idempotency_key=f"auto-qualify-submit:{decision.decision_id}",
                 note=f"Qualified by policy {policy.policy_version}",
             )
