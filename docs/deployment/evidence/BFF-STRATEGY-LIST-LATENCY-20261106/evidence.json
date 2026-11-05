@@ -1,0 +1,73 @@
+{
+  "task_id": "BFF-STRATEGY-LIST-LATENCY-20261106",
+  "title": "Bound strategy-list owner reads after actual hosted timeout",
+  "status": "source_verified_awaiting_review_and_hosted_replay",
+  "forensic_root_cause": {
+    "candidate_commit": "2a2411124c77ddce6c6963d927d99654c7e5f6fe",
+    "pre_switch_baseline_commit": "0bd88495e27e90f6cfaadc1991139d28a8809501",
+    "deploy_run_id": 42069447329,
+    "real_request_evidence_ref": "/tmp/pantheon-dev-operable-20261104/management-candidate-reads-1793900606083.json",
+    "bff_service_log_refs": [
+      "/tmp/pantheon-dev-operable-20261104/actual420694-owner-services-174415.json",
+      "/tmp/pantheon-dev-operable-20261104/actual420694-owner-services-174450.json"
+    ],
+    "db_inventory_evidence_ref": "/tmp/pantheon-dev-operable-20261104/actual-current-owner-readonly-counts-and-table-metadata.json",
+    "pre_switch_baseline_evidence_ref": "/tmp/pantheon-dev-operable-20261104/actual420694-real-auth-paper-lifecycle-summary.json",
+    "observed_failure": {
+      "checked_at": "2026-11-05T17:43:26.077Z",
+      "endpoint": "GET /bff/strategies?page_size=100",
+      "client_timeout_ms": 20000,
+      "elapsed_ms": 20002,
+      "error": "TimeoutError: The operation was aborted due to timeout",
+      "pre_switch_baseline_ms": 183,
+      "bff_log_correlation": "At 2026-11-05T17:43:08Z the management-candidate-reads probe issued GET /bff/strategies?page_size=100 and aborted at 20,002ms before BFF completed the response; during the subsequent Playwright /strategies check starting around 17:43:48Z, BFF logged GET /bff/strategies HTTP/1.1 200 OK only at 2026-11-05T17:44:05.788Z (~17s latency)."
+    },
+    "hosted_production_scale_inventory": {
+      "registry_strategy_specs_total": 560,
+      "visible_non_retired_strategies": 555,
+      "personas_total": 544,
+      "rankings_table_rows": 140
+    },
+    "deterministic_bottlenecks_identified": [
+      {
+        "component": "services/control-plane/bff/strategies/service.py",
+        "issue": "Unbounded full-history ranking table scan and per-row freeze/thaw/SHA-256 recomputation",
+        "detail": "Candidate 2a2411124c77ddce6c6963d927d99654c7e5f6fe wired GET /bff/strategies to StrategiesService.get_latest_ranking_snapshot() -> RankingSnapshotReadPort.get_latest_ranking_snapshot(), which called records_table.list_all() (SELECT payload FROM \"rankings\".\"rankings\" ORDER BY updated_at ASC) across all 140 historical snapshot rows (each containing 544 persona items) and ran _decode_ranking_snapshot(payload) on every historical row (deep-freezing, deep-thawing, canonical JSON serializing, and SHA-256 digesting ~76,160 persona items per uncached read) before discarding 139 of the 140 rows."
+      },
+      {
+        "component": "services/control-plane/bff/strategies/routes/collection.py",
+        "issue": "Pre-filter, pre-pagination full-inventory detail fanout and DTO projection",
+        "detail": "bff_list_strategies enriched (get_strategy_spec_detail when current_spec_version_id was absent) and projected (project_strategy_dto) all N strategies in the tenant inventory before applying the state filter and before slicing to page_size."
+      },
+      {
+        "component": "services/control-plane/bff/strategies/routes/common.py",
+        "issue": "O(N_strategies * M_ranking_items) repeated linear scan of ranking_snapshot.items",
+        "detail": "_project_strategy_ranking_metrics linearly scanned all 544 items in ranking_snapshot['items'] and rebuilt normalized strategy_ids lists for every strategy projected (555 * 544 = 301,920 item inspections) instead of indexing strategy_id -> matched_rows once per request."
+      }
+    ],
+    "unknown_historical_factors_preserved": "Exact host CPU scheduling jitter and concurrent post-switch container warm-up contention at 2026-11-05T17:43:06Z were not separately captured by an in-process profiler; they determined whether the ~17-20s unindexed full-history scan + full-population projection crossed the 20,000ms probe abort boundary on a given request."
+  },
+  "bounded_remediation": {
+    "services/control-plane/bff/strategies/service.py": "Added _read_latest_ranking_snapshot_from_store and _bounded_latest_ranking_snapshot so Postgres-backed ranking stores execute a bounded SELECT payload ... ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC LIMIT 1 query and decode only the single winning row, while list_all()/list_ranking_snapshots stores select the winning latest candidate by (created_at, idx) before decoding/converting only that single snapshot.",
+    "services/control-plane/bff/strategies/routes/common.py": "Added _build_ranking_strategy_index(ranking_snapshot) for O(M) one-pass indexing and O(1) per-strategy lookup in _project_strategy_ranking_metrics while preserving fresh/missing/ambiguous/unavailable and real 0.0 semantics, and updated default_page_slice to honor page_token and emit next_page_token.",
+    "services/control-plane/bff/strategies/routes/collection.py": "Validated all summary entries up front (never silently dropping malformed records), applied persona_id and state filtering before pagination, computed exact total across the full matching population, sliced to page_size via ctx.page_slice, pre-built ranking_index once per request, and bounded get_strategy_spec_detail enrichment and DTO projection strictly to the sliced page."
+  },
+  "regression_verification": {
+    "test_files": [
+      "services/control-plane/bff/tests/test_strategy_list_latency.py",
+      "services/control-plane/bff/tests/test_strategy_metrics_truth.py",
+      "services/control-plane/bff/tests/test_strategy_ranking_router.py",
+      "services/control-plane/bff/tests/test_bff_test_architecture.py"
+    ],
+    "scale_covered": {
+      "visible_strategies_tested": 600,
+      "retired_strategies_filtered": 20,
+      "historical_ranking_snapshots_tested": 140,
+      "persona_items_per_snapshot_tested": 544,
+      "canonical_summary_detail_calls_per_request": 0,
+      "thin_summary_detail_calls_for_page_25": 25,
+      "ranking_snapshots_decoded_per_request": 1,
+      "postgres_ranking_queries_per_request": 1
+    }
+  }
+}

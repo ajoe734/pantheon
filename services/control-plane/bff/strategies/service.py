@@ -63,6 +63,184 @@ def list_strategy_summaries(read_store: Any) -> List[Dict[str, Any]]:
     return list(read_store.list_strategy_specs() or [])
 
 
+def _is_default_read_surface_ranking_closure(reader_fn: Any) -> Tuple[bool, Any]:
+    """Detect the default create_read_surface_ports ranking closure and extract its store."""
+    if not callable(reader_fn):
+        return False, None
+    code = getattr(reader_fn, "__code__", None)
+    closure = getattr(reader_fn, "__closure__", None)
+    qualname = str(getattr(reader_fn, "__qualname__", "") or "")
+    freevars = getattr(code, "co_freevars", ()) if code is not None else ()
+    if (
+        "create_read_surface_ports" in qualname
+        and "ranking_store" in freevars
+        and closure
+        and len(closure) == len(freevars)
+    ):
+        try:
+            idx = freevars.index("ranking_store")
+            return True, closure[idx].cell_contents
+        except ValueError:
+            return False, None
+    return False, None
+
+
+def _read_latest_ranking_snapshot_from_store(
+    store: Any,
+    *,
+    surface: Optional[str] = "quarterly",
+) -> Optional[Dict[str, Any]]:
+    """Read and decode only the single latest ranking snapshot for ``surface``."""
+    from services.control_plane.bff.ports import rankings as rankings_port
+    from services.rankings.store import _SNAPSHOT_RECORD_TYPE, _decode_ranking_snapshot
+
+    if store is None:
+        return None
+    if isinstance(store, rankings_port.RankingSnapshotReadPort):
+        if (
+            type(store).get_latest_ranking_snapshot
+            is not rankings_port.RankingSnapshotReadPort.get_latest_ranking_snapshot
+        ):
+            record = (
+                store.get_latest_ranking_snapshot(surface=surface)
+                if surface is not None
+                else store.get_latest_ranking_snapshot()
+            )
+            if record is None:
+                return None
+            return record.to_canonical_dict() if hasattr(record, "to_canonical_dict") else dict(record)
+        store = getattr(store, "_store", None)
+        if store is None:
+            return None
+
+    getter = getattr(store, "get_latest_ranking_snapshot", None)
+    if callable(getter):
+        record = getter(surface=surface) if surface is not None else getter()
+        if record is None:
+            return None
+        return record.to_canonical_dict() if hasattr(record, "to_canonical_dict") else dict(record)
+
+    records_table = getattr(store, "_records_table", None)
+    if records_table is not None:
+        use_conn = getattr(records_table, "_use_conn", None)
+        table_sql = getattr(records_table, "table", None)
+        instance_dict = getattr(records_table, "__dict__", {}) or {}
+        if callable(use_conn) and isinstance(table_sql, str) and "list_all" not in instance_dict:
+            lock = getattr(store, "_thread_lock", None)
+
+            def _query_latest_row() -> Optional[Dict[str, Any]]:
+                ensure_schema = getattr(records_table, "ensure_schema", None)
+                if callable(ensure_schema):
+                    ensure_schema()
+                with use_conn() as conn:
+                    with conn.cursor() as cur:
+                        if surface:
+                            cur.execute(
+                                f"""
+                                SELECT payload FROM {table_sql}
+                                WHERE jsonb_typeof(payload) = 'object'
+                                  AND payload ->> 'record_type' = %s
+                                  AND COALESCE(payload ->> 'surface', '') = %s
+                                ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC
+                                LIMIT 1
+                                """,
+                                (_SNAPSHOT_RECORD_TYPE, str(surface)),
+                            )
+                        else:
+                            cur.execute(
+                                f"""
+                                SELECT payload FROM {table_sql}
+                                WHERE jsonb_typeof(payload) = 'object'
+                                  AND payload ->> 'record_type' = %s
+                                ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC
+                                LIMIT 1
+                                """,
+                                (_SNAPSHOT_RECORD_TYPE,),
+                            )
+                        row = cur.fetchone()
+                if not row:
+                    return None
+                raw = row[0]
+                payload = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                return _decode_ranking_snapshot(payload).to_canonical_dict()
+
+            if lock is not None:
+                with lock:
+                    return _query_latest_row()
+            return _query_latest_row()
+
+        if hasattr(records_table, "list_all"):
+            lock = getattr(store, "_thread_lock", None)
+            if lock is not None:
+                with lock:
+                    payloads = list(records_table.list_all())
+            else:
+                payloads = list(records_table.list_all())
+            candidates: List[Tuple[str, int, Dict[str, Any]]] = []
+            for idx, payload in enumerate(payloads):
+                if not isinstance(payload, dict) or payload.get("record_type") != _SNAPSHOT_RECORD_TYPE:
+                    continue
+                if surface and str(payload.get("surface") or "") != str(surface):
+                    continue
+                created_at = str(payload.get("created_at") or "").strip()
+                candidates.append((created_at, idx, payload))
+            if not candidates:
+                return None
+            latest_payload = max(candidates, key=lambda item: (item[0], item[1]))[2]
+            return _decode_ranking_snapshot(latest_payload).to_canonical_dict()
+
+    list_snapshots = getattr(store, "list_ranking_snapshots", None)
+    if callable(list_snapshots):
+        raw_list = list(list_snapshots() or [])
+        filtered: List[Tuple[str, int, Any]] = []
+        for idx, item in enumerate(raw_list):
+            if isinstance(item, dict):
+                item_surface = item.get("surface")
+                created_at = str(item.get("created_at") or "")
+            else:
+                item_surface = getattr(item, "surface", None)
+                created_at = str(getattr(item, "created_at", None) or "")
+            if surface and item_surface and str(item_surface) != str(surface):
+                continue
+            filtered.append((created_at, idx, item))
+        if not filtered:
+            return None
+        winner = max(filtered, key=lambda item: (item[0], item[1]))[2]
+        if hasattr(winner, "to_canonical_dict"):
+            return winner.to_canonical_dict()
+        return dict(winner) if isinstance(winner, dict) else None
+    return None
+
+
+def _bounded_latest_ranking_snapshot(
+    ranking_store: Any = None,
+    *,
+    surface: str = "quarterly",
+) -> Optional[Dict[str, Any]]:
+    from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+    from services.control_plane.bff.ports import rankings as rankings_port
+
+    def _fetch() -> Optional[Dict[str, Any]]:
+        if isinstance(ranking_store, rankings_port.RankingSnapshotReadPort):
+            reader = ranking_store
+        elif ranking_store is not None:
+            reader = rankings_port.RankingSnapshotReadPort(ranking_store)
+        elif (
+            rankings_port.create_ranking_reader is not rankings_port._DEFAULT_CREATE_RANKING_READER
+            or os.getenv("RANKING_STORE_DSN")
+            or os.getenv("DATABASE_URL")
+        ):
+            reader = rankings_port.create_ranking_reader()
+        else:
+            return None
+        return _read_latest_ranking_snapshot_from_store(reader, surface=surface)
+
+    return cached_owner_call(
+        ("latest_ranking_snapshot", id(ranking_store), surface, selected_tenant.get()),
+        _fetch,
+    )
+
+
 class StrategiesService:
     def __init__(
         self,
@@ -139,7 +317,10 @@ class StrategiesService:
     def list_strategy_summaries(self) -> List[Dict[str, Any]]:
         if self._list_strategy_summaries is not None:
             return self._list_strategy_summaries()
-        raise NotImplementedError("list_strategy_summaries dependency was not supplied")
+        read_store = self._get_read_store_port()
+        if callable(getter := getattr(read_store, "list_strategy_summaries", None)):
+            return list(getter() or [])
+        return list_strategy_summaries(read_store)
 
     def _invoke_read_owner(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:
@@ -176,7 +357,6 @@ class StrategiesService:
     def get_latest_ranking_snapshot(self) -> Tuple[Optional[Dict[str, Any]], bool]:
         from services.control_plane.bff.core.owner_reads import (
             cached_owner_call,
-            latest_ranking_snapshot,
             selected_tenant,
         )
 
@@ -189,6 +369,34 @@ class StrategiesService:
 
         def _read() -> Tuple[Optional[Dict[str, Any]], bool]:
             if read_store is not None:
+                if isinstance(read_store, ReadSurfacePorts) and (
+                    type(read_store).get_latest_ranking_snapshot is ReadSurfacePorts.get_latest_ranking_snapshot
+                ):
+                    reader_fn = getattr(read_store, "_latest_ranking_snapshot_reader", None)
+                    is_default_closure, closure_store = _is_default_read_surface_ranking_closure(reader_fn)
+                    if is_default_closure:
+                        try:
+                            snap = _bounded_latest_ranking_snapshot(closure_store, surface="quarterly")
+                            return (snap if isinstance(snap, dict) else None), False
+                        except Exception:
+                            return None, True
+                    if reader_fn is None and not hasattr(
+                        getattr(read_store, "persona_capital_runtime", None),
+                        "get_latest_ranking_snapshot",
+                    ):
+                        try:
+                            snap = _bounded_latest_ranking_snapshot(None, surface="quarterly")
+                            return (snap if isinstance(snap, dict) else None), False
+                        except Exception:
+                            return None, True
+                elif hasattr(read_store, "_records_table") and not callable(
+                    getattr(read_store, "get_latest_ranking_snapshot", None)
+                ):
+                    try:
+                        snap = _bounded_latest_ranking_snapshot(read_store, surface="quarterly")
+                        return (snap if isinstance(snap, dict) else None), False
+                    except Exception:
+                        return None, True
                 getter = getattr(read_store, "get_latest_ranking_snapshot", None)
                 if callable(getter):
                     try:
@@ -203,23 +411,12 @@ class StrategiesService:
                 list_snaps = getattr(read_store, "list_ranking_snapshots", None)
                 if callable(list_snaps):
                     try:
-                        raw_list = list(list_snaps() or [])
-                        candidates = []
-                        for idx, item in enumerate(raw_list):
-                            payload = (
-                                item.to_canonical_dict()
-                                if hasattr(item, "to_canonical_dict")
-                                else (dict(item) if isinstance(item, dict) else None)
-                            )
-                            if isinstance(payload, dict):
-                                candidates.append((str(payload.get("created_at") or ""), idx, payload))
-                        if not candidates:
-                            return None, False
-                        return max(candidates, key=lambda entry: (entry[0], entry[1]))[2], False
+                        snap = _read_latest_ranking_snapshot_from_store(read_store, surface="quarterly")
+                        return (snap if isinstance(snap, dict) else None), False
                     except Exception:
                         return None, True
             try:
-                snap = latest_ranking_snapshot(None)
+                snap = _bounded_latest_ranking_snapshot(None, surface="quarterly")
                 return (snap if isinstance(snap, dict) else None), False
             except Exception:
                 return None, True
