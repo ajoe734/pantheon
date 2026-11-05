@@ -397,6 +397,30 @@ def _metric_is_stale(
     return age_seconds < 0 or age_seconds > max_age_seconds
 
 
+def summary_is_stale_or_degraded(summary: Mapping[str, Any], *, now: datetime) -> bool:
+    """Public name for the stale/degraded gate shared with program qualification."""
+    return _is_stale_or_degraded(summary, now=now)
+
+
+def metric_is_stale(
+    summary: Mapping[str, Any],
+    field: str,
+    *,
+    now: datetime,
+    max_age_seconds: int,
+) -> bool:
+    """Public name for the per-metric age gate shared with program qualification."""
+    return _metric_is_stale(summary, field, now=now, max_age_seconds=max_age_seconds)
+
+
+def summary_field_for_metric(metric_name: str, path: str | None = None) -> str | None:
+    """The runtime-summary field the live threshold config reads for a metric."""
+    for threshold in load_thresholds(path):
+        if threshold["metric_name"] == metric_name:
+            return str(threshold["summary_field"])
+    return None
+
+
 def evaluate_breaches(
     summaries: Sequence[Mapping[str, Any]],
     thresholds: Sequence[Mapping[str, Any]],

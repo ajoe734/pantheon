@@ -920,3 +920,11 @@ double-counted in the additive total.
   - Deep-link override: when explicit target filter `decision`, `mutation_review`, or `persona` is supplied, the `view` filter is bypassed so a deep link returns its target record under any `view`.
 - `data.auto_proposal_counts` is returned on every response with `{incident_followup, incident_severity, postmortem_draft, total}` counted per underlying record so a decision and its `mutation_review` item count once.
 - Postmortem owner reads use the bounded `list_postmortems_page` from `POSTMORTEM-BFF-OWNER-READ-20261104` so the postmortems owner is never asked for all 2027 draft postmortems on each page read.
+
+## Management evolution qualification (EVOLUTION-PROGRAM-QUALIFY-R2-20261105)
+
+- `GET /bff/management/evolution-qualification` is a read-only projection of the Evolution owner `GET /api/evolution/program-qualification`. It needs a read role and carries the caller's identity to the owner; the BFF never computes or caches a qualification of its own.
+- Query: `page_size` (1-200, default 50), `offset` (default 0), `qualified` (optional boolean filter).
+- `data` carries `policy_version`, `evaluated_at`, `evaluated`, `qualified`, `drafted`, `counts_by_first_failing_criterion`, `failure_reason` (non-null when the policy was missing or invalid and nothing was drafted), `total`, `limit`, `offset` and `items`.
+- Each `items[]` entry has `decision_id`, `target_id`, `action_type`, `metric_name`, `qualified`, `first_failing_criterion`, `program_id`, `drafted` and `criteria`, a list of all six criteria in order (`real_threshold_signal`, `real_target`, `persistent_breach`, `fresh_evidence`, `executable_action`, `no_open_duplicate`), each with `result` (`passed`, `failed` or `not_evaluated`), `observed`, `threshold` and `reason`.
+- A missing owner URL or token, an owner failure or a malformed owner answer returns HTTP 503 `DEPENDENCY_UNAVAILABLE`; it is never rendered as an empty report.

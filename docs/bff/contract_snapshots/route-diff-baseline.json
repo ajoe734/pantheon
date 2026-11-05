@@ -1564,9 +1564,23 @@
       },
       {
         "family": "unknown",
+        "key": "GET /bff/management/evidence/{param}",
+        "method": "GET",
+        "path": "/bff/management/evidence/{ref_id}",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
         "key": "GET /bff/management/evolution-journal",
         "method": "GET",
         "path": "/bff/management/evolution-journal",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
+        "key": "GET /bff/management/evolution-qualification",
+        "method": "GET",
+        "path": "/bff/management/evolution-qualification",
         "status": "implemented"
       },
       {
@@ -3438,17 +3452,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 623,
-    "failure_count": 484,
+    "backend_routes": 625,
+    "failure_count": 486,
     "failures": {
-      "backend_missing_frontend": 483,
+      "backend_missing_frontend": 485,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 484,
+    "mode_failure_count": 486,
     "status": "fail",
     "warning_count": 0,
     "warnings": {
