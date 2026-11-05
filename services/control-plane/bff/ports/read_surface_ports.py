@@ -436,6 +436,9 @@ class ReadSurfacePorts:
     def list_evolution_decisions(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_evolution_decisions(**kwargs)
 
+    def get_evolution_qualification(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.persona_capital_runtime.get_evolution_qualification(**kwargs)
+
     def list_evolution_program_runs(self, program_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_evolution_program_runs(program_id)
 

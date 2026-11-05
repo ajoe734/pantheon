@@ -280,6 +280,35 @@ def read_evolution_records(url_builder, path, key=None):
     return cached_owner_call(("evo_records", path, url, key, caller_tenant, service_token), _fetch)
 
 
+def read_evolution_object(url_builder, path, query=None):
+    """Read one JSON object from the Evolution owner with the caller's identity."""
+    from urllib.parse import urlencode
+
+    auth = authorization.get()
+    if not auth:
+        raise RuntimeError("Owner reads require the caller's authorization")
+    caller_token = auth.removeprefix("Bearer ").strip()
+    full_path = path + ("?" + urlencode(sorted((query or {}).items())) if query else "")
+    url = url_builder(full_path)
+    tenant = selected_tenant.get()
+    caller_tenant = bound_tenant({}, tenant_id=tenant, auth_token=caller_token)
+
+    service_token = os.getenv("EVOLUTION_AUTH_TOKEN", "").strip()
+    if not service_token:
+        raise ActionUnavailableError(
+            "Evolution owner authentication is unconfigured (missing EVOLUTION_AUTH_TOKEN)",
+            downstream_status=503,
+        )
+
+    def _fetch():
+        body = _evolution_http_get(url, caller_token, caller_tenant)
+        if not isinstance(body, dict):
+            raise RuntimeError(f"Invalid owner object for {path}")
+        return body
+
+    return cached_owner_call(("evo_object", full_path, url, caller_tenant, service_token), _fetch)
+
+
 def telemetry_summaries():
     """Read the authenticated Telemetry owner projection in the current request context."""
     from ..command_adapters.base import get_base_url
@@ -359,6 +388,7 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
         ),
         evolution_port=EvolutionProjectionPort(
             evolution_programs_reader=lambda: read_evolution_records(evolution_url, "/api/evolution/programs", "items"),
+            evolution_qualification_reader=lambda query: read_evolution_object(evolution_url, "/api/evolution/program-qualification", query),
             evolution_decisions_reader=lambda: persona_store.list_evolution_decisions() if hasattr(persona_store, "list_evolution_decisions") and not os.getenv("PANTHEON_EVOLUTION_API_URL", "").strip() else read_evolution_records(evolution_url, "/api/evolution/proposals"),
         ),
     )
