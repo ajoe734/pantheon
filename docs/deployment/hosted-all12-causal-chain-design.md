@@ -188,14 +188,25 @@ database by hand.
 | **Persona capital binding** (paper; no Capital approval) | C | Revoke/deactivate in `E_close`; must be done before the pool closes. |
 | **Registry artifact approval** (H1; the chain-owned distilled StrategySpec entry, never a pre-existing parent such as `artifact-tw-session-momentum-v1`) | A | Revoke approval / deprecate chain artifact in `E_close`. |
 | **Deployment plan** | C | Terminal plan state, then superseded/cancelled by the owner. |
-| **Runtime binding** | C | Deactivate in `E_close`; confirm fleet-ready count returns to the pre-run baseline. |
+| **Runtime binding** | C | Deactivate in `E_close`; confirm fleet-ready count returns to the pre-run baseline, or every difference is proven external by owner readback (2026-11-05 note below). |
 | Telemetry/reconciliation/drift/incident (loops 10) | D | Close incident; labelled history retained. |
 | Evolution decision (loop 11) | E | Terminal after H4; labelled. |
 
-`E_close` ends with a readback proving: baseline fleet-ready/binding counts restored, zero active
+`E_close` ends with a readback proving: baseline fleet-ready/binding counts restored or every difference proven external by owner readback, zero active
 chain-labelled bindings or pools, and no non-chain record changed. Live broker and real capital are
 unreachable by construction: the paper context is required by the owners, and the segment asserts
 `paper_only` and the absence of any live execution grant before every write.
+
+> **2026-11-05 amendment (counts restored, or every difference proven external).** The operator-approved
+> "counts restored" clause now reads "counts restored or every difference proven external by owner
+> readback". A differing active count is no longer a mismatch by itself: each removed baseline binding must be
+> proven retired by the Runtime owner between baseline `recorded_at` and `E_close` start, each added binding must
+> pass the owner/Registry non-chain checks with `effective_at` at or before `E_close` start, and an added binding
+> that reuses this chain's plan, pool, capital binding, persona or runtime is a mismatch as possible chain
+> residue (this replaces the protection the count comparison gave). The phase record states
+> `baseline_active_count` and `active_count_after_close` instead of claiming restoration. The release
+> coordinator decided this under the operator's standing test-run pre-authorization of 2026-10-24; the operator
+> did not individually choose this wording and may reverse it.
 
 ## 5. Cases excluded or replaced on hosted (acceptance 3)
 

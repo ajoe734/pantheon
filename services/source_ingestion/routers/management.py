@@ -46,11 +46,15 @@ def _require_seed_caller(request: Request, *, required_roles: tuple[str, ...] = 
     return auth, tenant
 
 
-def _seed_belongs_to_tenant(runtime: SourceIngestionRuntime, seed: StrategySpecSeed, tenant_id: str) -> bool:
-    meta_tenant = str(
+def _seed_meta_tenant(seed: StrategySpecSeed) -> str:
+    return str(
         (seed.metadata.get("tenant_id") or seed.metadata.get("tenant") if isinstance(seed.metadata, Mapping) else "")
         or (seed.lineage.get("tenant_id") or seed.lineage.get("tenant") if isinstance(seed.lineage, Mapping) else "") or ""
     ).strip()
+
+
+def _seed_belongs_to_tenant(runtime: SourceIngestionRuntime, seed: StrategySpecSeed, tenant_id: str) -> bool:
+    meta_tenant = _seed_meta_tenant(seed)
     if meta_tenant:
         return meta_tenant == tenant_id
     repo = runtime.evidence_repository
@@ -227,7 +231,34 @@ def create_management_router(runtime: SourceIngestionRuntime) -> APIRouter:
     def list_management_strategy_seeds(request: Request) -> dict[str, Any]:
         _, tenant_id = _require_seed_caller(request)
         store = runtime.strategy_seed_store
-        items = [s.to_dict() for s in store.list_all() if _seed_belongs_to_tenant(runtime, s, tenant_id)]
+        all_seeds = store.list_all()
+        tenant_source_ids: set[str] | None = None
+        tenant_bundle_ids: set[str] | None = None
+        tenant_item_ids: set[str] | None = None
+        repo = runtime.evidence_repository
+        items: list[dict[str, Any]] = []
+        for s in all_seeds:
+            meta_tenant = _seed_meta_tenant(s)
+            if meta_tenant:
+                if meta_tenant == tenant_id:
+                    items.append(s.to_dict())
+                continue
+            if tenant_source_ids is None:
+                tenant_source_ids = {r.source_id for r in repo.list_source_records(tenant_id=tenant_id) if r.source_id}
+            if any(sid and sid in tenant_source_ids for sid in (s.source_id, *s.source_ids)):
+                items.append(s.to_dict())
+                continue
+            if s.evidence_bundle_id:
+                if tenant_bundle_ids is None:
+                    tenant_bundle_ids = {b.evidence_bundle_id for b in repo.list_bundles(tenant_id=tenant_id) if b.evidence_bundle_id}
+                if s.evidence_bundle_id in tenant_bundle_ids:
+                    items.append(s.to_dict())
+                    continue
+            if s.evidence_item_ids:
+                if tenant_item_ids is None:
+                    tenant_item_ids = {it.evidence_item_id for it in repo.list_evidence_items(tenant_id=tenant_id) if it.evidence_item_id}
+                if any(eid and eid in tenant_item_ids for eid in s.evidence_item_ids):
+                    items.append(s.to_dict())
         return {"items": items, "count": len(items), "store_path": str(store.path)}
 
     @router.get("/api/source-ingest/management/strategy-seeds/{seed_id}")
