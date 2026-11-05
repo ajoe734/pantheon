@@ -40,6 +40,8 @@ from .storage import (
     PERSONA_BINDING_META_KEYS,
     PERSONA_BINDING_ROW_KEYS,
     PERSONA_BINDING_SPEC_KEYS,
+    STRATEGY_ARTIFACT_EVAL_KEYS,
+    STRATEGY_ARTIFACT_ROW_KEYS,
     RegistryConcurrentUpdateError,
 )
 
@@ -846,6 +848,19 @@ class PostgresRegistryStore:
             )
         )
 
+    def list_strategy_artifact_rows(
+        self, *, visible_tenants: Optional[frozenset] = None,
+    ) -> list[dict]:
+        """Flat execution_bundle catalog rows projected inside Postgres (no metadata decoded)."""
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(
+            visible_tenants, "execution_bundle",
+        )
+        return strategy_artifact_rows_from_columns(
+            self._entries.list_all_selected(
+                strategy_artifact_select_sql(), visible_sql=visible_sql, keep_params=params,
+            )
+        )
+
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         entries = self.list_by_strategy(strategy_id)
         approved = [e for e in entries if e.artifact_state.value == "approved"]
@@ -988,6 +1003,27 @@ def lineage_select_sql() -> str:
 def lineage_rows_from_columns(rows) -> list[dict]:
     """Assemble ``storage.lineage_row``-shaped dicts from the select columns."""
     names = list(LINEAGE_ROW_KEYS) + list(LINEAGE_LIST_FIELDS + LINEAGE_SCALAR_FIELDS) + list(LINEAGE_META_FIELDS)
+    return [
+        {name: (json.loads(col) if col is not None else None) for name, col in zip(names, r)}
+        for r in rows
+    ]
+
+
+def _strategy_artifact_leaf_paths() -> list[tuple[str, ...]]:
+    return (
+        [(k,) for k in STRATEGY_ARTIFACT_ROW_KEYS]
+        + [("evaluation_summary", k) for k in STRATEGY_ARTIFACT_EVAL_KEYS]
+    )
+
+
+def strategy_artifact_select_sql() -> str:
+    """One jsonb leaf (as text) per execution-bundle catalog field; no metadata decoded."""
+    return ", ".join(f"({_sql_node(p)})::text" for p in _strategy_artifact_leaf_paths())
+
+
+def strategy_artifact_rows_from_columns(rows) -> list[dict]:
+    """Assemble ``storage.strategy_artifact_row``-shaped dicts from the select columns."""
+    names = list(STRATEGY_ARTIFACT_ROW_KEYS) + list(STRATEGY_ARTIFACT_EVAL_KEYS)
     return [
         {name: (json.loads(col) if col is not None else None) for name, col in zip(names, r)}
         for r in rows

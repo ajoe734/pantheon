@@ -149,6 +149,36 @@ def lineage_row(entry: RegistryEntry) -> dict:
     return row
 
 
+# ---------------------------------------------------------------------------
+# Execution-bundle catalog read projection (ARTIFACT-CATALOG-REGISTRY-20261104)
+# ---------------------------------------------------------------------------
+# Flat row per execution_bundle entry carrying only catalog identity, version,
+# state, checksum, timestamps, approver, and evaluation_summary.risk_level
+# (no full metadata decoded). The Postgres owner computes the same row in SQL
+# (``pg_store.strategy_artifact_select_sql``).
+STRATEGY_ARTIFACT_ROW_KEYS = (
+    "registry_id",
+    "strategy_id",
+    "version",
+    "artifact_state",
+    "checksum",
+    "created_at",
+    "approver",
+)
+STRATEGY_ARTIFACT_EVAL_KEYS = ("risk_level",)
+
+
+def strategy_artifact_row(entry: RegistryEntry) -> dict:
+    """Flat execution-bundle catalog row (in-memory twin of the SQL projection)."""
+    full = entry.to_dict()
+    row = {k: full.get(k) for k in STRATEGY_ARTIFACT_ROW_KEYS}
+    eval_summary = full.get("evaluation_summary")
+    eval_summary = eval_summary if isinstance(eval_summary, dict) else {}
+    for k in STRATEGY_ARTIFACT_EVAL_KEYS:
+        row[k] = eval_summary.get(k)
+    return row
+
+
 def _lineage_ids(value: Any) -> list[str]:
     """Non-empty string ids of a lineage list; JSON null / non-list yields none."""
     if not isinstance(value, list):
@@ -602,6 +632,17 @@ class RegistryStore:
     def list_lineage_rows(self, *, visible_tenants: Optional[frozenset] = None) -> list[dict]:
         rows = [lineage_row(entry) for entry in self.list_all_entries()]
         return [r for r in rows if persona_binding_row_visible(r, visible_tenants, None)]
+
+    def list_strategy_artifact_rows(
+        self, *, visible_tenants: Optional[frozenset] = None,
+    ) -> list[dict]:
+        return [
+            strategy_artifact_row(entry)
+            for entry in self.list_all_entries()
+            if persona_binding_row_visible(
+                entry.to_dict(), visible_tenants, "execution_bundle"
+            )
+        ]
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""

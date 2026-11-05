@@ -382,6 +382,7 @@ type.
 | HTTP operation | Description |
 |---|---|
 | `POST /api/registry/strategy-artifacts` | validate and atomically register a `draft` or `candidate` StrategyArtifact; only the same normalized registration envelope (initial state, artifact, producer, evaluation, rollback, and supplemental metadata) is an idempotent retry, while any same-id difference fails closed |
+| `GET /api/registry/strategy-artifacts` | list tenant-scoped execution-bundle catalog rows (`registry_id`, `strategy_id`, `version`, `artifact_state`, `checksum`, `created_at`, `approver`, `risk_level` from `evaluation_summary`; no full `metadata`) with `page_size`, `page_token`, `total`, and `next_page_token` using the same visible-tenant rule as `view=persona_binding` |
 | `GET /api/registry/strategy-artifacts/{registry_id}` | read only an `execution_bundle` carrying the StrategyArtifact overlay |
 | `GET /api/registry/strategies/{strategy_id}/strategy-artifacts` | list StrategyArtifact revisions for a family, optionally filtered by `artifact_state` |
 | `POST /api/registry/strategy-artifacts/{registry_id}/mutate` | create a new `candidate` id/version by changing only declared controls and recording direct-parent plus producing-run lineage |

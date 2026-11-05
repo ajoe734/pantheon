@@ -3343,3 +3343,61 @@ def test_strategy_spec_persona_binding_counts_view_is_scoped_and_matches_rows(st
     assert counts.json() == {"p1": 2, "p2": 1}  # tenant-b's p9 never leaks
     assert counts.json() == persona_binding_counts([e["entry"] for e in rows.json()])
     assert strict_client.get(f"{path}?view=persona_binding_counts").status_code in (401, 403)
+
+
+def test_strategy_artifacts_list_and_detail_tenant_scope_and_x_tenant_id(strict_client):
+    """GET /api/registry/strategy-artifacts uses the same visible-tenant rule as persona_binding,
+    and GET /api/registry/strategy-artifacts/{id} never exposes another tenant's entry."""
+    token_a = _jwt(subject="sa-a", tenant="tenant-a")
+    token_b = _jwt(subject="sa-b", tenant="tenant-b")
+    token_admin = _jwt(subject="sa-admin", tenant="tenant-a", roles=["admin"])
+
+    store = get_store()
+    for rid, sid, tenant, risk in (
+        ("bundle-tenant-a", "strat-a", "tenant-a", "low"),
+        ("bundle-tenant-b", "strat-b", "tenant-b", "high"),
+        ("bundle-builtin", "strat-builtin", "__builtin__", "low"),
+    ):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type=ArtifactType.EXECUTION_BUNDLE,
+                strategy_id=sid,
+                version="1.0.0",
+                artifact_state=ArtifactState.APPROVED,
+                lineage=Lineage(source_run_ids=["run-1"]),
+                storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_artifact"),
+                checksum=f"sha256:{rid}",
+                evaluation_summary={"admission": "persona_paper_bootstrap", "risk_level": risk},
+                metadata={"strategy_artifact": {"artifact_id": rid}},
+            ),
+            rid,
+            actor={"tenant": tenant},
+        )
+
+    resp_a = strict_client.get("/api/registry/strategy-artifacts", headers=_bearer(token_a))
+    assert resp_a.status_code == 200, resp_a.text
+    ids_a = {r["registry_id"] for r in resp_a.json()["items"]}
+    assert "bundle-tenant-a" in ids_a
+    assert "bundle-builtin" in ids_a
+    assert "bundle-tenant-b" not in ids_a
+
+    # Admin narrowed with X-Tenant-Id: tenant-a only sees tenant-a + builtin
+    resp_admin_narrowed = strict_client.get(
+        "/api/registry/strategy-artifacts",
+        headers={**_bearer(token_admin), "X-Tenant-Id": "tenant-a"},
+    )
+    assert resp_admin_narrowed.status_code == 200, resp_admin_narrowed.text
+    ids_admin_narrowed = {r["registry_id"] for r in resp_admin_narrowed.json()["items"]}
+    assert "bundle-tenant-a" in ids_admin_narrowed
+    assert "bundle-tenant-b" not in ids_admin_narrowed
+
+    # Cross-tenant detail read on /api/registry/entries/{id} is denied even for admin with X-Tenant-Id: tenant-a
+    cross_entry = strict_client.get(
+        "/api/registry/entries/bundle-tenant-b",
+        headers={**_bearer(token_admin), "X-Tenant-Id": "tenant-a"},
+    )
+    assert cross_entry.status_code == 403
+
+    cross_b = strict_client.get("/api/registry/entries/bundle-tenant-b", headers=_bearer(token_a))
+    assert cross_b.status_code == 403
+
