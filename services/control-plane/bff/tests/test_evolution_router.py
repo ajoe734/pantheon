@@ -631,3 +631,108 @@ def test_evolution_programs_router_factory_compatibility():
     resp = client.get(f"/bff/evolution-programs/{prog_id}")
     assert resp.status_code == 200
     assert resp.json()["data"]["name"] == "Alpha Evolver"
+
+
+def test_evolution_journal_router_view_filter_and_evidence_class():
+    """Verify router-level evidence_class classification, view filter, and auto_proposal_counts."""
+    store = _MockReadStore()
+    store.evolution_decisions = {
+        "evo-sweep-agent-000b205c0ef9-0000": {
+            "decision_id": "evo-sweep-agent-000b205c0ef9-0000",
+            "target_type": "candidate_artifact",
+            "target_id": "infra-component-agent-finding-000b205c0ef9",
+            "risk_level": "low",
+            "linked_incident_id": "agent-000b205c0ef9-0000",
+            "action_type": "flag_for_review",
+            "decision_state": "proposed",
+            "status": "proposed",
+            "threshold_snapshots": [
+                {
+                    "breached": True,
+                    "comparator": "gte",
+                    "metric_name": "incident_followup_required",
+                    "observed_value": 1,
+                    "threshold_value": 1,
+                    "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+                    "signal_type": "manual_review",
+                    "window": "active-incident",
+                }
+            ],
+        },
+        "evo-sweep-inc-deployment-comp-deployment-saga-plan-persona-paper-1bad2eca6831457cd885": {
+            "decision_id": "evo-sweep-inc-deployment-comp-deployment-saga-plan-persona-paper-1bad2eca6831457cd885",
+            "target_type": "candidate_artifact",
+            "target_id": "artifact-persona-paper-1bad2eca6831457cd885",
+            "risk_level": "medium",
+            "action_type": "freeze",
+            "decision_state": "proposed",
+            "status": "proposed",
+            "threshold_snapshots": [
+                {
+                    "breached": True,
+                    "comparator": "gte",
+                    "metric_name": "severity1_incident_count",
+                    "observed_value": 1,
+                    "threshold_value": 1,
+                    "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+                    "signal_type": "governance_incident",
+                    "window": "active-incident",
+                }
+            ],
+        },
+        "evo-thresh-hist-1": {
+            "decision_id": "evo-thresh-hist-1",
+            "target_type": "candidate_artifact",
+            "target_id": "artifact-thresh-1",
+            "risk_level": "medium",
+            "action_type": "retrain",
+            "decision_state": "proposed",
+            "status": "proposed",
+            "threshold_snapshots": [
+                {
+                    "breached": True,
+                    "comparator": "gt",
+                    "metric_name": "rolling_drawdown_pct",
+                    "observed_value": 0.15,
+                    "threshold_value": 0.10,
+                    "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1",
+                    "signal_type": "performance_degradation",
+                    "window": "7d",
+                }
+            ],
+        },
+    }
+    store.postmortems = [
+        {"postmortem_id": "pm-draft-1", "status": "draft", "title": "Draft PM"},
+        {"postmortem_id": "pm-pub-1", "status": "published", "title": "Published PM"},
+    ]
+    store.freeze_orders = []
+    store.rollbacks = []
+
+    client = _build_test_client(store)
+
+    resp_hist = client.get("/bff/management/evolution-journal?view=history")
+    assert resp_hist.status_code == 200
+    data_hist = resp_hist.json()["data"]
+    assert data_hist["auto_proposal_counts"] == {
+        "incident_followup": 1,
+        "incident_severity": 1,
+        "postmortem_draft": 1,
+        "total": 3,
+    }
+    assert {it["id"] for it in data_hist["items"]} == {
+        "evolution_decision:evo-thresh-hist-1",
+        "mutation_review:evo-thresh-hist-1",
+        "postmortem:pm-pub-1",
+    }
+
+    resp_auto = client.get("/bff/management/evolution-journal?view=auto_proposals")
+    assert resp_auto.status_code == 200
+    data_auto = resp_auto.json()["data"]
+    assert {it["id"] for it in data_auto["items"]} == {
+        "evolution_decision:evo-sweep-agent-000b205c0ef9-0000",
+        "mutation_review:evo-sweep-agent-000b205c0ef9-0000",
+        "evolution_decision:evo-sweep-inc-deployment-comp-deployment-saga-plan-persona-paper-1bad2eca6831457cd885",
+        "mutation_review:evo-sweep-inc-deployment-comp-deployment-saga-plan-persona-paper-1bad2eca6831457cd885",
+        "postmortem:pm-draft-1",
+    }

@@ -903,3 +903,18 @@ double-counted in the additive total.
 - `/bff/management/evidence` serves an unfiltered page with exactly one owner page read. Filtered reads stream every owner page so `page_info.total` stays correct.
 - When the owner read fails or times out, `management_evidence`, `evidence_refs`, and `knowledge_evidence` are all `status: unavailable` and the `data.summary` totals (`total_evidence`, `total_items`, `returned_evidence`, `visible_evidence`, `redacted_evidence`, `verified_evidence`, `verified_count`) are `null`, not `0`. Availability is decided by the read that produced the rows, never by shared instance state.
 - Source-ingest items map through one normalizer: `display_label` and `source_document.title` from `citation_label`, `summary` from `body`, `source_document.captured_at` from `available_time` then `event_time` (never the current time), `source_document.source_ref` from `content_ref`, `source_document.source_type` from `metadata.source_class`.
+
+## Management evolution journal evidence classification and server-side view filter (EVOLUTION-JOURNAL-EVIDENCE-CLASS-20261104)
+
+- Every journal item derived from an `EvolutionDecision` (`entry_type == "evolution_decision"` and its derived `entry_type == "mutation_review"` item, as well as the nested `decision` / `mutation_review` / `record` payload) carries `evidence_class`:
+  - `"threshold_signal"` when a breached threshold snapshot (`breached=True`) has `signal_type` in `{"performance_degradation", "execution_drift", "feature_drift", "human_correction"}`.
+  - `"incident_followup"` when the only metric is `"incident_followup_required"`.
+  - `"incident_severity"` when the only metric is `"severity1_incident_count"`.
+  - `"unclassified"` otherwise.
+- `GET /bff/management/evolution-journal` accepts query parameter `view` with values `all`, `history`, and `auto_proposals` (default `all` when omitted so existing callers are unchanged; invalid values return HTTP 400 `VALIDATION_FAILED`):
+  - `view=history`: returns `freeze_order` and `rollback` items, `postmortem` items not in status `draft`, every decision (and its `mutation_review` item) not in state `proposed`, and `proposed` decisions (and their `mutation_review` items) with `evidence_class == "threshold_signal"`.
+  - `view=auto_proposals`: returns the remaining `proposed` decisions (and their `mutation_review` items) and the `draft` postmortems.
+  - The `view` filter runs before pagination so `page_info`, `next_page_token`, and `data.summary` describe the filtered set.
+  - Deep-link override: when explicit target filter `decision`, `mutation_review`, or `persona` is supplied, the `view` filter is bypassed so a deep link returns its target record under any `view`.
+- `data.auto_proposal_counts` is returned on every response with `{incident_followup, incident_severity, postmortem_draft, total}` counted per underlying record so a decision and its `mutation_review` item count once.
+- Postmortem owner reads use the bounded `list_postmortems_page` from `POSTMORTEM-BFF-OWNER-READ-20261104` so the postmortems owner is never asked for all 2027 draft postmortems on each page read.
