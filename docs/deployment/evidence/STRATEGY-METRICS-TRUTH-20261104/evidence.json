@@ -84,14 +84,39 @@
       ]
     }
   },
+  "branch_refresh_and_merge_resolution": {
+    "previous_reviewed_head": "09ffda07a7248ba9905c225f8b57807145f55c43",
+    "intermediate_merge_head": "01e61f6949ac871d284fb7d1469383c6804504b3",
+    "merged_dev_tip": "0bd88495e27e90f6cfaadc1991139d28a8809501",
+    "merge_commit_sha": "57983997d850ce3297ba24f68def93f005028dff",
+    "resolved_conflicts": [
+      {
+        "file": "services/control-plane/bff/BFF_API_CONTRACT.md",
+        "resolution": "Retained EVIDENCE-OWNER-LIST-BOUNDED-20261104's updated /bff/knowledge row alongside STRATEGY-METRICS-TRUTH-20261104's /bff/strategies and /bff/strategies/{strategy_id} contract row."
+      },
+      {
+        "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+        "resolution": "Retained POSTMORTEM-BFF-OWNER-READ-20261104's tests/test_postmortem_owner_read.py entry alongside STRATEGY-METRICS-TRUTH-20261104's tests/test_strategy_metrics_truth.py entry with additive summary counts (total_test_files: 393, layer_summary.router: 119, disposition_summary.DECOUPLED: 329)."
+      }
+    ],
+    "auto_merged_files_verified": [
+      "services/control-plane/bff/ports/read_surface_ports.py",
+      "services/control-plane/bff/ports/research_knowledge_source.py"
+    ],
+    "strategy_metrics_implementation_unchanged_from_reviewed_head": true
+  },
   "validation_commands": [
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_ranking_router.py",
-      "result": "16 passed in 8.77s"
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/strategy-metrics-truth-20261104/.venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_ranking_router.py",
+      "result": "16 passed, 3 warnings in 10.73s"
     },
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
-      "result": "39 passed in 56.16s"
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/strategy-metrics-truth-20261104/.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "39 passed, 3 warnings in 61.04s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/strategy-metrics-truth-20261104/.venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py",
+      "result": "4 passed, 3 warnings in 20.52s"
     }
   ]
 }
