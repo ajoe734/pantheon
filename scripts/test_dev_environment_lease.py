@@ -555,6 +555,182 @@ class HeartbeatRecoveryTests(unittest.TestCase):
             NOW + timedelta(seconds=3),
         )
 
+    def test_delayed_get_body_deducts_elapsed_and_blocks_put_past_fence(self) -> None:
+        server_now = datetime(2026, 11, 4, 10, 35, 58, tzinfo=timezone.utc)
+        server_date = "Wed, 04 Nov 2026 10:35:58 GMT"
+        # 119s heartbeat age at Date -> 1.0s validity remaining anchored at GET start (100.0 -> 101.0).
+        state = state_for(
+            owner="synthetic-audit-owner",
+            mode="deployment",
+            heartbeat=server_now - timedelta(seconds=119),
+            expires=server_now + timedelta(seconds=300),
+        )
+        get_payload = {
+            "encoding": "base64",
+            "content": lease.base64.b64encode(json.dumps(state).encode()).decode(),
+            "sha": "synthetic-current",
+        }
+        clock = [100.0]
+        calls: list[dict[str, object]] = []
+
+        class DelayedGetResponse:
+            status = 200
+
+            def __init__(self, method: str, get_elapsed: float) -> None:
+                self.method = method
+                self.get_elapsed = get_elapsed
+                self.headers = {"Date": server_date}
+
+            def __enter__(self) -> DelayedGetResponse:
+                return self
+
+            def __exit__(self, *_args: object) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                if self.method == "GET":
+                    clock[0] += self.get_elapsed
+                    return json.dumps(get_payload).encode()
+                raise AssertionError("PUT read should not be reached when GET exhausted fence")
+
+        def urlopen_exhausted(request: object, timeout: float) -> DelayedGetResponse:
+            method = getattr(request, "method")
+            calls.append({"method": method, "monotonic": clock[0], "timeout": timeout})
+            if method == "PUT":
+                raise AssertionError("PUT must not dispatch after delayed GET exhausted fence")
+            return DelayedGetResponse(method, 4.0)
+
+        client = lease.GitHubClient("synthetic-key-not-a-real-secret")
+        mgr = manager(client)
+        with mock.patch.object(
+            lease.time, "monotonic", side_effect=lambda: clock[0]
+        ), mock.patch.object(
+            lease.urllib.request, "urlopen", side_effect=urlopen_exhausted
+        ):
+            with self.assertRaisesRegex(lease.LeaseLost, "validity budget exhausted before renewal write") as ctx:
+                mgr.heartbeat(
+                    lease.public_state(state, content_sha="synthetic-current"),
+                    ttl_seconds=300,
+                )
+        self.assertIsNone(getattr(ctx.exception, "_verified_renewal_budget", None))
+        self.assertEqual(calls, [{"method": "GET", "monotonic": 100.0, "timeout": 5}])
+        self.assertEqual(mgr._active_deadline_monotonic, 101.0)
+
+        # Partial GET elapsed: 5s remaining at Date, 3s GET body -> 2s remaining for PUT at 103.0 (fence 105.0).
+        state_5s = state_for(
+            owner="synthetic-audit-owner",
+            mode="deployment",
+            heartbeat=server_now - timedelta(seconds=115),
+            expires=server_now + timedelta(seconds=300),
+        )
+        get_payload_5s = {
+            "encoding": "base64",
+            "content": lease.base64.b64encode(json.dumps(state_5s).encode()).decode(),
+            "sha": "synthetic-current",
+        }
+        clock_partial = [100.0]
+        calls_partial: list[dict[str, object]] = []
+
+        def urlopen_partial(request: object, timeout: float) -> DelayedGetResponse:
+            method = getattr(request, "method")
+            calls_partial.append({"method": method, "monotonic": clock_partial[0], "timeout": timeout})
+            if method == "PUT":
+                raise TimeoutError("PUT failed after capped timeout")
+            resp = DelayedGetResponse(method, 3.0)
+            resp.read = lambda: (  # type: ignore[method-assign]
+                clock_partial.__setitem__(0, clock_partial[0] + 3.0)
+                or json.dumps(get_payload_5s).encode()
+            )
+            return resp
+
+        client_partial = lease.GitHubClient("synthetic-key-not-a-real-secret")
+        mgr_partial = manager(client_partial)
+        with mock.patch.object(
+            lease.time, "monotonic", side_effect=lambda: clock_partial[0]
+        ), mock.patch.object(
+            lease.urllib.request, "urlopen", side_effect=urlopen_partial
+        ):
+            with self.assertRaises(lease.GitHubTransportError) as partial_ctx:
+                mgr_partial.heartbeat(
+                    lease.public_state(state_5s, content_sha="synthetic-current"),
+                    ttl_seconds=300,
+                )
+        self.assertEqual(
+            calls_partial,
+            [
+                {"method": "GET", "monotonic": 100.0, "timeout": 5},
+                {"method": "PUT", "monotonic": 103.0, "timeout": 2.0},
+            ],
+        )
+        partial_budget = getattr(partial_ctx.exception, "_verified_renewal_budget", None)
+        self.assertIsNotNone(partial_budget)
+        self.assertEqual(partial_budget.deadline_monotonic, 105.0)
+
+    def test_late_successful_put_body_past_validity_fence_is_rejected(self) -> None:
+        server_now = datetime(2026, 11, 4, 10, 35, 58, tzinfo=timezone.utc)
+        server_date = "Wed, 04 Nov 2026 10:35:58 GMT"
+        # 117s heartbeat age at Date -> 3.0s validity remaining anchored at 100.0 (fence 103.0).
+        state = state_for(
+            owner="synthetic-audit-owner",
+            mode="deployment",
+            heartbeat=server_now - timedelta(seconds=117),
+            expires=server_now + timedelta(seconds=300),
+        )
+        get_payload = {
+            "encoding": "base64",
+            "content": lease.base64.b64encode(json.dumps(state).encode()).decode(),
+            "sha": "synthetic-current",
+        }
+        clock = [100.0]
+        calls: list[dict[str, object]] = []
+
+        class SlowPutResponse:
+            status = 200
+
+            def __init__(self, method: str) -> None:
+                self.method = method
+                self.headers = {"Date": server_date}
+
+            def __enter__(self) -> SlowPutResponse:
+                return self
+
+            def __exit__(self, *_args: object) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                if self.method == "GET":
+                    return json.dumps(get_payload).encode()
+                clock[0] += 4.0
+                return json.dumps({"content": {"sha": "synthetic-new"}}).encode()
+
+        def synthetic_urlopen(request: object, timeout: float) -> SlowPutResponse:
+            method = getattr(request, "method")
+            calls.append({"method": method, "monotonic": clock[0], "timeout": timeout})
+            return SlowPutResponse(method)
+
+        client = lease.GitHubClient("synthetic-key-not-a-real-secret")
+        mgr = manager(client)
+        with mock.patch.object(
+            lease.time, "monotonic", side_effect=lambda: clock[0]
+        ), mock.patch.object(
+            lease.urllib.request, "urlopen", side_effect=synthetic_urlopen
+        ):
+            with self.assertRaisesRegex(lease.LeaseLost, "validity budget exhausted") as ctx:
+                mgr.heartbeat(
+                    lease.public_state(state, content_sha="synthetic-current"),
+                    ttl_seconds=300,
+                )
+        self.assertIsNone(getattr(ctx.exception, "_verified_renewal_budget", None))
+        self.assertIsNotNone(mgr._recovery_anchor)
+        self.assertEqual(mgr._active_deadline_monotonic, 103.0)
+        self.assertEqual(
+            calls,
+            [
+                {"method": "GET", "monotonic": 100.0, "timeout": 5},
+                {"method": "PUT", "monotonic": 100.0, "timeout": 3.0},
+            ],
+        )
+
     def test_owner_replacement_after_transient_error_is_never_renewed(self) -> None:
         client = FakeClient()
         client.state = state_for()

@@ -111,6 +111,8 @@ class ApiResponse:
     status: int
     headers: Mapping[str, str]
     payload: Any
+    request_started_monotonic: float | None = None
+    completed_monotonic: float | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,8 @@ class RemoteContent:
     state: dict[str, Any]
     content_sha: str
     server_now: datetime
+    request_started_monotonic: float | None = None
+    completed_monotonic: float | None = None
 
 
 @dataclass(frozen=True)
@@ -416,10 +420,11 @@ class GitHubClient:
         self.token = _require_text(token, TOKEN_ENV)
         self.api_url = api_url.rstrip("/")
         self._deadline_monotonic: float | None = None
+        self._sleep_offset: float = 0.0
         self._logical_monotonic: float | None = None
 
     def now_monotonic(self) -> float:
-        current = time.monotonic()
+        current = time.monotonic() + self._sleep_offset
         if self._logical_monotonic is None or current > self._logical_monotonic:
             self._logical_monotonic = current
         return self._logical_monotonic
@@ -427,10 +432,13 @@ class GitHubClient:
     def sleep(self, seconds: float) -> None:
         if seconds <= 0:
             return
-        before = self.now_monotonic()
+        raw_before = time.monotonic()
         time.sleep(seconds)
-        after = time.monotonic()
-        self._logical_monotonic = max(after, before + seconds)
+        raw_after = time.monotonic()
+        actual_advance = max(0.0, raw_after - raw_before)
+        if seconds > actual_advance:
+            self._sleep_offset += seconds - actual_advance
+        self.now_monotonic()
 
     def _request(
         self,
@@ -451,9 +459,10 @@ class GitHubClient:
         attempts = READ_ATTEMPTS if method == "GET" else 1
         last_error: Exception | None = None
         for attempt in range(attempts):
+            attempt_started = self.now_monotonic()
             timeout: float | int = HTTP_TIMEOUT_SECONDS
             if effective_deadline is not None:
-                remaining = effective_deadline - self.now_monotonic()
+                remaining = effective_deadline - attempt_started
                 if remaining <= 0:
                     if last_error is not None:
                         raise last_error
@@ -464,15 +473,31 @@ class GitHubClient:
                     timeout = remaining
             try:
                 if timeout == HTTP_TIMEOUT_SECONDS:
-                    return self._request_once(
+                    response = self._request_once(
                         method, route, body=body, allowed=allowed
                     )
-                return self._request_once(
-                    method,
-                    route,
-                    body=body,
-                    allowed=allowed,
-                    timeout=timeout,
+                else:
+                    response = self._request_once(
+                        method,
+                        route,
+                        body=body,
+                        allowed=allowed,
+                        timeout=timeout,
+                    )
+                completed_monotonic = self.now_monotonic()
+                if (
+                    effective_deadline is not None
+                    and completed_monotonic >= effective_deadline
+                ):
+                    raise GitHubTransportError(
+                        f"GitHub API request deadline exhausted after response: {method} {route}"
+                    )
+                return ApiResponse(
+                    response.status,
+                    response.headers,
+                    response.payload,
+                    request_started_monotonic=attempt_started,
+                    completed_monotonic=completed_monotonic,
                 )
             except (GitHubApiError, GitHubTransportError) as exc:
                 last_error = exc
@@ -596,7 +621,13 @@ class GitHubClient:
             raise LeaseError("GitHub lease content is malformed") from exc
         if not content_sha:
             raise LeaseError("GitHub lease content sha is missing")
-        return RemoteContent(state=state, content_sha=content_sha, server_now=now)
+        return RemoteContent(
+            state=state,
+            content_sha=content_sha,
+            server_now=now,
+            request_started_monotonic=response.request_started_monotonic,
+            completed_monotonic=response.completed_monotonic,
+        )
 
     def put_content(
         self,
@@ -673,6 +704,7 @@ class LeaseManager:
         self.path = path
         self.resource = resource
         self.max_heartbeat_age_seconds = DEFAULT_MAX_HEARTBEAT_AGE_SECONDS
+        self._sleep_offset: float = 0.0
         self._logical_monotonic: float | None = None
         self._active_deadline_monotonic: float | None = None
         self._recovery_anchor: VerifiedRenewalBudget | None = None
@@ -682,7 +714,7 @@ class LeaseManager:
         if callable(client_now):
             current = float(client_now())
         else:
-            current = time.monotonic()
+            current = time.monotonic() + self._sleep_offset
         if self._logical_monotonic is None or current > self._logical_monotonic:
             self._logical_monotonic = current
         if hasattr(self.client, "_logical_monotonic"):
@@ -692,16 +724,18 @@ class LeaseManager:
     def _sleep(self, seconds: float) -> None:
         if seconds <= 0:
             return
-        before = self._now_monotonic()
         client_sleep = getattr(self.client, "sleep", None)
         if callable(client_sleep):
             client_sleep(seconds)
-        else:
-            time.sleep(seconds)
-        after = time.monotonic()
-        self._logical_monotonic = max(after, before + seconds)
-        if hasattr(self.client, "_logical_monotonic"):
-            setattr(self.client, "_logical_monotonic", self._logical_monotonic)
+            self._now_monotonic()
+            return
+        raw_before = time.monotonic()
+        time.sleep(seconds)
+        raw_after = time.monotonic()
+        actual_advance = max(0.0, raw_after - raw_before)
+        if seconds > actual_advance:
+            self._sleep_offset += seconds - actual_advance
+        self._now_monotonic()
 
     @contextmanager
     def _client_deadline(self, deadline_monotonic: float | None) -> Iterator[None]:
@@ -993,8 +1027,25 @@ class LeaseManager:
             raise LeaseLost(
                 "dev environment lease validity budget exhausted before renewal read"
             )
+        read_started_monotonic = self._now_monotonic()
         with self._client_deadline(self._active_deadline_monotonic):
             state, remote = self._matching_remote(local_state, require_active=True)
+        observed_monotonic = self._now_monotonic()
+        if (
+            self._active_deadline_monotonic is not None
+            and observed_monotonic >= self._active_deadline_monotonic
+        ):
+            raise LeaseLost(
+                "dev environment lease validity budget exhausted during renewal read"
+            )
+        request_started_monotonic = getattr(
+            remote, "request_started_monotonic", None
+        )
+        anchor_monotonic = (
+            min(read_started_monotonic, float(request_started_monotonic))
+            if request_started_monotonic is not None
+            else read_started_monotonic
+        )
         now = remote.server_now
         heartbeat_at = parse_utc_iso(state["heartbeatAt"], "heartbeatAt")
         expires_at = parse_utc_iso(state["expiresAt"], "expiresAt")
@@ -1013,8 +1064,13 @@ class LeaseManager:
             raise LeaseLost(
                 f"dev environment lease validity budget exhausted at {utc_iso(now)}"
             )
-        observed_monotonic = self._now_monotonic()
-        candidate_deadline_monotonic = observed_monotonic + remaining_validity_seconds
+        get_elapsed_seconds = max(0.0, observed_monotonic - anchor_monotonic)
+        remaining_after_get_seconds = (
+            remaining_validity_seconds - get_elapsed_seconds
+        )
+        candidate_deadline_monotonic = (
+            anchor_monotonic + remaining_validity_seconds
+        )
         prior = self._recovery_anchor
         if (
             prior is not None
@@ -1026,7 +1082,8 @@ class LeaseManager:
             )
         else:
             deadline_monotonic = candidate_deadline_monotonic
-        if deadline_monotonic <= observed_monotonic:
+        if remaining_after_get_seconds <= 0 or deadline_monotonic <= observed_monotonic:
+            self._active_deadline_monotonic = deadline_monotonic
             raise LeaseLost(
                 "dev environment lease validity budget exhausted before renewal write"
             )
@@ -1039,6 +1096,7 @@ class LeaseManager:
             expires_at=expires_at,
         )
         self._recovery_anchor = budget
+        self._active_deadline_monotonic = deadline_monotonic
         renewed = dict(state)
         renewed["heartbeatAt"] = utc_iso(now)
         renewed["expiresAt"] = utc_iso(now + timedelta(seconds=ttl_seconds))
@@ -1054,8 +1112,16 @@ class LeaseManager:
                 )
         except (GitHubApiError, GitHubTransportError) as exc:
             if is_transient_error(exc):
+                if self._now_monotonic() >= deadline_monotonic:
+                    raise LeaseLost(
+                        "dev environment lease validity budget exhausted during renewal write"
+                    ) from exc
                 setattr(exc, "_verified_renewal_budget", budget)
             raise
+        if self._now_monotonic() >= deadline_monotonic:
+            raise LeaseLost(
+                "dev environment lease validity budget exhausted after renewal write"
+            )
         self._recovery_anchor = None
         self._active_deadline_monotonic = None
         return renewed, content_sha, written_at
