@@ -2489,3 +2489,68 @@ def test_bounded_jobs_listing_at_hosted_scale_stays_small_and_fast(client) -> No
     assert test_client.get("/api/source-ingest/jobs", params={"page_token": "bad"}).status_code == 422
     print(f"SOURCE_INGEST_EVIDENCE unbounded_bytes={len(unbounded.content)} unbounded_s={unbounded_s:.3f} "
           f"bounded_bytes={len(active.content)} bounded_s={active_s:.3f}")
+
+
+def test_evidence_items_route_returns_tenant_population_summary_and_excludes_tenantless_rows(client) -> None:
+    from services.knowledge.evidence.models import EvidenceItem
+
+    test_client, _, module = client
+    repo = module.evidence_repository
+    repo.clear()
+
+    for idx in range(25):
+        item = EvidenceItem(
+            evidence_item_id=f"evi-tenant-dev-{idx:03d}",
+            source_id=f"src-tenant-dev-{idx:03d}",
+            item_type="source_record",
+            content_ref=f"tw-official://0050/{idx:03d}",
+            citation_label=f"Citation {idx:03d}",
+            body="body",
+            confidence=0.9 if idx < 19 else 0.4,
+            metadata={
+                "tenant_id": "tenant-dev",
+                "source_class": "official_reference" if idx < 20 else "exchange_filing",
+            },
+        )
+        repo._evidence_items[item.evidence_item_id] = item
+        repo._evidence_items_by_tenant[("tenant-dev", item.evidence_item_id)] = item
+
+    for idx in range(5):
+        legacy = EvidenceItem(
+            evidence_item_id=f"evi-legacy-{idx:03d}",
+            source_id=f"src-legacy-{idx:03d}",
+            item_type="source_record",
+            content_ref=f"tw-official://legacy/{idx:03d}",
+            citation_label=f"Legacy {idx:03d}",
+            body="legacy",
+            confidence=1.0,
+            metadata={"source_class": "legacy_unscoped"},
+        )
+        repo._evidence_items[legacy.evidence_item_id] = legacy
+        repo._evidence_items_by_tenant[(None, legacy.evidence_item_id)] = legacy
+
+    resp_p1 = test_client.get(
+        "/api/source-ingest/evidence/items",
+        params={"page_size": 10, "page_token": "0"},
+        headers={**_read_headers("tenant-dev"), "X-Tenant-Id": "tenant-dev"},
+    )
+    resp_p2 = test_client.get(
+        "/api/source-ingest/evidence/items",
+        params={"page_size": 10, "page_token": "10"},
+        headers={**_read_headers("tenant-dev"), "X-Tenant-Id": "tenant-dev"},
+    )
+    assert resp_p1.status_code == 200 and resp_p2.status_code == 200
+    body_p1 = resp_p1.json()
+    body_p2 = resp_p2.json()
+    assert body_p1["total"] == 25 and body_p2["total"] == 25
+    assert len(body_p1["items"]) == 10 and len(body_p2["items"]) == 10
+    expected_summary = {
+        "total": 25,
+        "verified_count": 19,
+        "verified_evidence": 19,
+        "by_source_type": {"official_reference": 20, "exchange_filing": 5},
+        "by_link_type": {"supporting": 25},
+        "by_credibility_tier": {"verified": 19, "unverified": 6},
+    }
+    assert body_p1["summary"] == expected_summary
+    assert body_p2["summary"] == expected_summary

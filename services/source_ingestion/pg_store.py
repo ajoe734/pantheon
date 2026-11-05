@@ -406,6 +406,73 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         )
         return items, total
 
+    def summarize_evidence_items(
+        self,
+        tenant_id: str | None | _Unscoped = _UNSCOPED,
+    ) -> dict[str, Any]:
+        if getattr(self, "_replaying", False):
+            return super().summarize_evidence_items(tenant_id=tenant_id)
+        if tenant_id is not _UNSCOPED:
+            where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
+            scope_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
+        else:
+            where, scope_params = "TRUE", ()
+        verified_expr = (
+            "CASE "
+            "WHEN payload->'confidence' IS NULL OR jsonb_typeof(payload->'confidence') = 'null' THEN TRUE "
+            "WHEN jsonb_typeof(payload->'confidence') = 'number' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
+            "WHEN jsonb_typeof(payload->'confidence') = 'string' AND (payload->>'confidence') ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
+            "ELSE FALSE "
+            "END"
+        )
+        sql = (
+            "SELECT "
+            "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'source_class'), ''), NULLIF(BTRIM(payload->>'item_type'), ''), 'internal') AS source_type, "
+            "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'link_type'), ''), 'supporting') AS link_type, "
+            f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END) AS credibility_tier, "
+            f"({verified_expr}) AS verified, "
+            "COUNT(*) AS row_count "
+            f"FROM {self.table} WHERE record_type = %s AND {where} "
+            "GROUP BY 1, 2, 3, 4"
+        )
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(sql, ("evidence_item", *scope_params)).fetchall()
+        except Exception as exc:
+            raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
+        total = 0
+        verified_count = 0
+        by_source_type: dict[str, int] = {}
+        by_link_type: dict[str, int] = {}
+        by_credibility_tier: dict[str, int] = {}
+        for row in rows or ():
+            if isinstance(row, dict):
+                source_type = str(row.get("source_type") or "internal").strip() or "unknown"
+                link_type = str(row.get("link_type") or "supporting").strip() or "unknown"
+                credibility_tier = str(row.get("credibility_tier") or "unverified").strip() or "unknown"
+                verified = bool(row.get("verified"))
+                count = int(row.get("row_count") or 0)
+            else:
+                source_type = str(row[0] or "internal").strip() or "unknown"
+                link_type = str(row[1] or "supporting").strip() or "unknown"
+                credibility_tier = str(row[2] or "unverified").strip() or "unknown"
+                verified = bool(row[3])
+                count = int(row[4] or 0)
+            total += count
+            if verified:
+                verified_count += count
+            by_source_type[source_type] = by_source_type.get(source_type, 0) + count
+            by_link_type[link_type] = by_link_type.get(link_type, 0) + count
+            by_credibility_tier[credibility_tier] = by_credibility_tier.get(credibility_tier, 0) + count
+        return {
+            "total": total,
+            "verified_count": verified_count,
+            "verified_evidence": verified_count,
+            "by_source_type": by_source_type,
+            "by_link_type": by_link_type,
+            "by_credibility_tier": by_credibility_tier,
+        }
+
     def get_bundle(self, evidence_bundle_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceBundle | None:
         if getattr(self, "_replaying", False):
             return super().get_bundle(evidence_bundle_id, tenant_id=tenant_id)
