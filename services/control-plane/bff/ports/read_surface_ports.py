@@ -776,6 +776,27 @@ class ReadSurfacePorts:
     def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_research_artifact(artifact_id)
 
+    def read_registry_strategy_artifacts(self) -> Any:
+        return self.research_knowledge_source.read_registry_strategy_artifacts()
+
+    def read_registry_strategy_artifact_detail(self, artifact_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_registry_strategy_artifact_detail(artifact_id)
+
+    def read_research_artifact_catalog_rows(self) -> Any:
+        if "list_research_artifacts" in self.__dict__:
+            from .research_knowledge_source import ArtifactOwnerReadResult, normalize_research_catalog_row
+
+            try:
+                rows = self.list_research_artifacts() or []
+                return ArtifactOwnerReadResult(
+                    [normalize_research_catalog_row(r) for r in rows if isinstance(r, dict)],
+                    "ok",
+                    "typed_store",
+                )
+            except Exception as exc:
+                return ArtifactOwnerReadResult([], "failed", "unavailable", str(exc))
+        return self.research_knowledge_source.read_research_artifact_catalog_rows()
+
     def get_research_search_index(self) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_research_search_index()
 
