@@ -136,19 +136,30 @@ through the existing content-addressed unblock inbox with dedicated reason
 - At most one BEHIND return per repository and target branch may be outstanding
   at a time: the oldest eligible candidate by approval time (task id breaks
   ties; never dict or row order) is returned, and no further BEHIND candidate in
-  that repository/target branch is returned until the returned source task has
-  merged or is no longer open (derived from canonical state and unblock
-  receipts/inbox, with no new store). Other BEHIND candidates stay `waiting` and
-  report which task they are queued behind.
+  that repository/target branch is returned while a processed
+  `exact-head-behind-base` receipt names a source task that is still in the
+  canonical `tasks` list with status `in_progress`, `review`, or
+  `review_approved` at a generation at least the returned one (or while an
+  unprocessed `exact-head-behind-base` request is still in the inbox). `done`
+  tasks leave `tasks`, and `blocked` or `todo` source tasks do not hold the
+  queue so one stuck task cannot freeze the repository. Other BEHIND candidates
+  stay `waiting` and report which task they are queued behind.
 - Under the canonical task-state lock, the supervisor's
   `materialize_auto_integrator_unblock_requests` revalidates that the source task
   is still `review_approved` with the same `generation` and `delivery_binding`
   PR/head as the request. If stale, it records a rejected receipt and changes
-  nothing. If valid, it runs the canonical `reopen` transition as the task's
-  reviewer—without creating a child repair task—with a fixed message telling the
-  owner to merge `origin/<target>` into the task branch with no other change and
-  resubmit, and telling the reviewer to confirm `git diff origin/<target>...HEAD`
-  equals the previously approved change. Replays are idempotent.
+  nothing. If valid, after releasing the canonical lock it invokes
+  `scripts/ai_status.py reopen <source_task_id> <message>` through
+  `status_command_subprocess_context(config)` with `AI_NAME=Human/Ops`,
+  `PANTHEON_LOCAL_HUMAN_OPS=1`, and
+  `HUMAN_OPS_REASON=auto-integrator-behind-unblock:<request_sha256>`
+  (`ORCH_RUN_ID` stripped)—without creating a child repair task—with a fixed
+  message telling the owner to merge `origin/<target>` into the task branch with
+  no other change and resubmit, and telling the reviewer to confirm
+  `git diff origin/<target>...HEAD` equals the previously approved change. On a
+  non-zero exit code it keeps the request in the inbox for retry; on success it
+  writes the `processed` receipt. Replays are idempotent by revalidating that
+  the source is still `review_approved` at the request head before calling.
 - Only `BEHIND` routes. Other non-direct merge states keep waiting; a real
   conflict keeps the `exact-head-merge-conflict` path.
 - The integrator never pushes or rewrites the approved head.

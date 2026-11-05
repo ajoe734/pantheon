@@ -4619,21 +4619,9 @@ class BehindReturnToOwnerTests(unittest.TestCase):
             self.assertIn("Queued behind outstanding BEHIND return for THRU-102", only_101_results[0].detail)
             self.assertEqual(list(inbox.glob("*.json")), [])
 
-            # Once THRU-102 merges (or is no longer open), THRU-101 may be returned.
+            # Once THRU-102 finishes (`done` tasks leave `tasks`), THRU-101 may be returned.
             state_merged = {
                 "tasks": [
-                    {
-                        "id": "THRU-102",
-                        "status": "review_approved",
-                        "generation": 1,
-                        "owner": "Codex",
-                        "reviewer": "Claude",
-                        "integration_receipt": {
-                            "version": 1,
-                            "result": "landed",
-                            "task_generation": 1,
-                        },
-                    },
                     {
                         "id": "THRU-101",
                         "status": "review_approved",
@@ -4665,6 +4653,74 @@ class BehindReturnToOwnerTests(unittest.TestCase):
             second_payload = json.loads(new_requests[0].read_text(encoding="utf-8"))
             self.assertEqual(second_payload["source_task_id"], "THRU-101")
             self.assertEqual(second_payload["reason"], "exact-head-behind-base")
+
+    def test_blocked_source_does_not_hold_behind_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "processed"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / ("a" * 64 + ".json")).write_text(
+                json.dumps(
+                    {
+                        "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                        "request_sha256": "a" * 64,
+                        "outcome": "processed",
+                        "detail": "reopened source task",
+                        "task_id": "OPS-AUTO-INTEGRATOR-UNBLOCK-THRU-102-PR302",
+                        "reason": "exact-head-behind-base",
+                        "source_task_id": "THRU-102",
+                        "source_task_generation": 1,
+                        "repository_slug": "ajoe734/pantheon",
+                        "target_branch": "dev",
+                        "pr": 302,
+                        "head_sha": APPROVED_HEAD,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            for non_holding_status in ("blocked", "todo"):
+                with self.subTest(status=non_holding_status):
+                    inbox = root / auto_integrator.UNBLOCK_REQUEST_INBOX
+                    if inbox.exists():
+                        for existing in inbox.glob("*.json"):
+                            existing.unlink()
+                    state_non_holding = {
+                        "tasks": [
+                            {
+                                "id": "THRU-102",
+                                "status": non_holding_status,
+                                "generation": 1,
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            },
+                            {
+                                "id": "THRU-101",
+                                "status": "review_approved",
+                                "generation": 1,
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            },
+                        ]
+                    }
+                    candidates, results, settings, runner = self._run()
+                    only_101_candidates = [c for c in candidates if c.task_id == "THRU-101"]
+                    only_101_results = [r for r in results if r.task_id == "THRU-101"]
+                    auto_integrator.route_behind_results(
+                        only_101_candidates,
+                        only_101_results,
+                        settings,
+                        runner,
+                        root=root,
+                        execute=True,
+                        state=state_non_holding,
+                    )
+                    self.assertEqual(only_101_results[0].action, "blocked")
+                    self.assertIsNotNone(only_101_results[0].unblock_task_id)
+                    new_requests = list(inbox.glob("*.json"))
+                    self.assertEqual(len(new_requests), 1)
+                    payload = json.loads(new_requests[0].read_text(encoding="utf-8"))
+                    self.assertEqual(payload["source_task_id"], "THRU-101")
+                    self.assertEqual(payload["reason"], "exact-head-behind-base")
 
 
 class AutoIntegratorProcessE2ETests(unittest.TestCase):

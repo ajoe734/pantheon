@@ -2197,9 +2197,11 @@ def _behind_reopen_message(target_branch: str) -> str:
     )
 
 
-def _validate_auto_integrator_unblock_request_envelope(
-    config: dict[str, Any], request: Mapping[str, Any], filename: str
-) -> dict[str, Any]:
+def _validate_auto_integrator_unblock_request(
+    config: dict[str, Any], request: Mapping[str, Any], filename: str, status: Mapping[str, Any]
+) -> tuple[dict[str, Any], Mapping[str, Any]]:
+    """Validate every authority binding without granting publisher identity."""
+
     required = unblock_contract.REQUEST_FIELDS
     if set(request) != required or request.get("schema") != AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA:
         raise ValueError("unblock request schema or fields are invalid")
@@ -2214,6 +2216,7 @@ def _validate_auto_integrator_unblock_request_envelope(
     issued_runtime = status_command_runtime_record_from_env(status_command_runtime_env(config))
     if request.get("command_runtime_sha") != issued_runtime.get("source_sha"):
         raise ValueError("unblock request command runtime is stale or unpromoted")
+    source_task_id = str(request.get("source_task_id") or "")
     reason = unblock_contract.validate_reason(request.get("reason"))
     if not (
         unblock_contract.requires_repair_task(reason)
@@ -2222,21 +2225,10 @@ def _validate_auto_integrator_unblock_request_envelope(
         raise ValueError("authority/evidence blocker must be resolved on its source task")
     if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(request):
         raise ValueError("unblock request task namespace mismatch")
-    return dict(request)
-
-
-def _validate_auto_integrator_unblock_request(
-    config: dict[str, Any], request: Mapping[str, Any], filename: str, status: Mapping[str, Any]
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Validate every authority binding without granting publisher identity."""
-
-    valid = _validate_auto_integrator_unblock_request_envelope(config, request, filename)
-    source_task_id = str(valid.get("source_task_id") or "")
-    reason = str(valid.get("reason") or "")
     source = next(
         (item for item in status.get("tasks", []) if item.get("id") == source_task_id), None
     )
-    if not isinstance(source, dict):
+    if not isinstance(source, Mapping):
         raise ValueError("unblock request source task is not active")
     # Enforce again under the canonical lock, including already queued requests
     # from older producers. A caller cannot reset depth in the request body.
@@ -2248,20 +2240,20 @@ def _validate_auto_integrator_unblock_request(
             raise ValueError("unblock request source task has a pending review decision intent")
     elif str(source.get("status") or "") not in {"in_progress", "review", "review_approved"}:
         raise ValueError("unblock request source task is not integration-active")
-    if task_generation(source) != valid.get("source_task_generation"):
+    if task_generation(source) != request.get("source_task_generation"):
         raise ValueError("unblock request source generation is stale")
     binding = source.get("delivery_binding")
     if not isinstance(binding, Mapping):
         raise ValueError("unblock request source lacks canonical delivery binding")
-    if valid.get("pr") != (binding.get("pr") or binding.get("pr_number")):
+    if request.get("pr") != (binding.get("pr") or binding.get("pr_number")):
         raise ValueError("unblock request PR differs from canonical delivery binding")
-    if valid.get("head_sha") != str(binding.get("head_sha") or "").lower():
+    if request.get("head_sha") != str(binding.get("head_sha") or "").lower():
         raise ValueError("unblock request head differs from canonical delivery binding")
     repository_id = str(source.get("target_repo") or "pantheon")
-    if valid.get("repository_id") != repository_id:
+    if request.get("repository_id") != repository_id:
         raise ValueError("unblock request repository differs from canonical task")
     resolve_repository(config, repository_id)
-    if valid.get("repository_slug") != repository_slug(config, repository_id):
+    if request.get("repository_slug") != repository_slug(config, repository_id):
         raise ValueError("unblock request repository slug is not canonical")
     workflow = config.get("branch_workflow") or config.get("wave_workflow") or {}
     workflow = workflow if isinstance(workflow, Mapping) else {}
@@ -2269,116 +2261,9 @@ def _validate_auto_integrator_unblock_request(
     auto = auto if isinstance(auto, Mapping) else {}
     expected_owner = str(auto.get("unblock_owner") or source.get("owner") or "")
     expected_reviewer = str(auto.get("unblock_reviewer") or source.get("reviewer") or "")
-    if valid.get("owner") != expected_owner or valid.get("reviewer") != expected_reviewer:
+    if request.get("owner") != expected_owner or request.get("reviewer") != expected_reviewer:
         raise ValueError("unblock request owner/reviewer differs from canonical task")
-    return valid, source
-
-
-def _reopen_source_task_for_behind_unblock_locked(
-    config: dict[str, Any],
-    status: dict[str, Any],
-    source: dict[str, Any],
-    valid: Mapping[str, Any],
-    *,
-    request_sha256: str,
-) -> None:
-    source_task_id = str(valid["source_task_id"])
-    raw_owner = str(source.get("owner") or "").strip()
-    raw_reviewer = str(source.get("reviewer") or "").strip()
-    owner = canonical_agent_name(config, raw_owner) or raw_owner
-    reviewer = canonical_agent_name(config, raw_reviewer) or raw_reviewer
-    actor = reviewer
-    if not owner or not reviewer or actor not in {owner, reviewer, "Human/Ops"}:
-        raise ValueError("unblock request source task lacks a valid reviewer actor for reopen")
-    binding = source.get("delivery_binding")
-    binding = binding if isinstance(binding, Mapping) else {}
-    repo_meta = resolve_repository(config, str(valid["repository_id"]))
-    target_branch = (
-        str(binding.get("base") or repo_meta.get("default_branch") or "dev").strip()
-        or "dev"
-    )
-    message = _behind_reopen_message(target_branch)
-    timestamp = utc_now()
-    source.pop("review_decision_intent", None)
-    source.pop(REVIEW_INTENT_RECOVERY_TASK_KEY, None)
-    try:
-        source["status"] = rewrite_task_machine.transition(
-            source.get("status"),
-            rewrite_task_machine.TaskAction.REOPEN.value,
-        ).value
-    except rewrite_task_machine.TransitionError as exc:
-        raise ValueError(f"cannot reopen source task {source_task_id}: {exc}") from exc
-    preserve_hold = actor != "Human/Ops" and source.get("waiting_for") == "Human/Ops"
-    generation = max(1, int(source.get("generation", 1) or 1))
-    landed = integration_receipt.parse_integration_receipt(source.get("integration_receipt"))
-    if landed is not None and landed["task_generation"] == generation:
-        generation += 1
-    requeue_intent = {
-        "schema_version": REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
-        "task_id": source_task_id,
-        "task_generation": generation,
-        "owner": str(source.get("owner") or owner),
-        "reviewer": str(source.get("reviewer") or reviewer),
-        "reopened_at": timestamp,
-        "reopened_by": actor,
-        "reason": message,
-        "intent_id": f"review-requeue-{request_sha256}",
-        "status": "pending",
-    }
-    source[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
-    source["generation"], source["last_update"] = generation, timestamp
-    source["next"] = message
-    if not preserve_hold:
-        source.pop("waiting_for", None)
-    source.pop("delivery_binding", None)
-    source.pop("review_binding", None)
-    source.pop("review_file", None)
-    source.pop("github_review_bridge", None)
-    if not preserve_hold:
-        for blocker in status.get("blockers", []) or []:
-            if (
-                isinstance(blocker, dict)
-                and blocker.get("task_id") == source_task_id
-                and blocker.get("status") == "open"
-            ):
-                blocker["status"] = "resolved"
-                blocker["resolved_at"] = timestamp
-    for handoff in status.get("handoffs", []) or []:
-        if (
-            isinstance(handoff, dict)
-            and handoff.get("task_id") == source_task_id
-            and handoff.get("status") != "done"
-        ):
-            handoff["status"] = "done"
-            handoff["resolved_at"] = timestamp
-    if actor == reviewer and owner and owner != reviewer:
-        status.setdefault("handoffs", []).append(
-            {
-                "task_id": source_task_id,
-                "from": reviewer,
-                "to": owner,
-                "message": message,
-                "status": "pending",
-                "created_at": timestamp,
-            }
-        )
-    event: dict[str, Any] = {
-        "ts": timestamp,
-        "agent": actor,
-        "type": "reopen",
-        "task_id": source_task_id,
-        "message": message,
-        REVIEW_REQUEUE_INTENT_KEY: deepcopy(requeue_intent),
-    }
-    event_bytes = json.dumps(
-        event, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
-    event["event_id"] = "ai-status-event-" + hashlib.sha256(event_bytes).hexdigest()
-    composed = _compose_status_activity_outbox(status.get("status_activity_outbox"), event)
-    if composed is None:
-        raise RuntimeError("cannot compose canonical status activity outbox for behind reopen")
-    status["status_activity_outbox"] = composed
-    write_status(config, status, source="supervisor-auto-integrator-unblock")
+    return dict(request), source
 
 
 def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool:
@@ -2451,152 +2336,53 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
             request = load_json(path, default={})
             if not isinstance(request, Mapping):
                 raise ValueError("unblock request is not a JSON object")
-            reopened_source = False
-            with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
-                status = load_status(config)
-                envelope = _validate_auto_integrator_unblock_request_envelope(
-                    config, request, path.name
+            if unblock_contract.requires_source_reopen(str(request.get("reason") or "")):
+                with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+                    status = load_status(config)
+                    valid, source = _validate_auto_integrator_unblock_request(
+                        config, request, path.name, status
+                    )
+                    task_id = valid["unblock_task_id"]
+                    binding = source.get("delivery_binding")
+                    binding = binding if isinstance(binding, Mapping) else {}
+                    repo_meta = resolve_repository(config, str(valid["repository_id"]))
+                    target_branch = (
+                        str(binding.get("base") or repo_meta.get("default_branch") or "dev").strip()
+                        or "dev"
+                    )
+                    reopen_message = _behind_reopen_message(target_branch)
+                script, env = status_command_subprocess_context(config)
+                env["AI_NAME"] = "Human/Ops"
+                env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"
+                env["HUMAN_OPS_REASON"] = f"auto-integrator-behind-unblock:{path.stem}"
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(script),
+                        "reopen",
+                        str(valid["source_task_id"]),
+                        reopen_message,
+                    ],
+                    cwd=str(status_root),
+                    capture_output=True,
+                    text=True,
+                    env=env,
                 )
-                if unblock_contract.requires_source_reopen(str(envelope["reason"])):
-                    task_id = str(envelope["unblock_task_id"])
-                    processed_receipt_path = receipt_root / "processed" / f"{path.stem}.json"
-                    existing_receipt = (
-                        load_json(processed_receipt_path, default={})
-                        if processed_receipt_path.is_file() and not processed_receipt_path.is_symlink()
-                        else {}
-                    )
-                    source_row = next(
-                        (
-                            item
-                            for item in status.get("tasks", [])
-                            if isinstance(item, Mapping)
-                            and item.get("id") == envelope.get("source_task_id")
-                        ),
-                        None,
-                    )
-                    already_reopened = (
-                        isinstance(existing_receipt, Mapping)
-                        and existing_receipt.get("schema") == unblock_contract.RECEIPT_SCHEMA
-                        and existing_receipt.get("request_sha256") == path.stem
-                        and existing_receipt.get("outcome") == "processed"
-                        and existing_receipt.get("task_id") == task_id
-                    ) or (
-                        isinstance(source_row, Mapping)
-                        and isinstance(source_row.get(REVIEW_REQUEUE_INTENT_KEY), Mapping)
-                        and source_row[REVIEW_REQUEUE_INTENT_KEY].get("intent_id")
-                        == f"review-requeue-{path.stem}"
-                    )
-                    if already_reopened:
-                        finalize(
-                            path,
-                            "processed",
-                            "already reopened source task",
-                            task_id,
-                            request_metadata=envelope,
-                        )
-                        continue
-                valid, source = _validate_auto_integrator_unblock_request(
-                    config, request, path.name, status
-                )
-                task_id = valid["unblock_task_id"]
-                if unblock_contract.requires_source_reopen(str(valid["reason"])):
-                    _reopen_source_task_for_behind_unblock_locked(
+                if result.returncode != 0:
+                    write_activity_log(
                         config,
-                        status,
-                        source,
-                        valid,
-                        request_sha256=path.stem,
-                    )
-                    reopened_source = True
-                else:
-                    # Coalesce retry generations and changing symptoms for the same
-                    # source delivery under the canonical lock. Preserve the first
-                    # task/provenance and bind this request's receipt to that scope.
-                    identity = unblock_contract.repair_identity(valid)
-                    same_scope = [item for item in status.get("tasks", [])
-                                  if isinstance(item.get("unblock_request"), Mapping)
-                                  and unblock_contract.repair_identity(item["unblock_request"]) == identity]
-                    if len(same_scope) > 1:
-                        raise ValueError("multiple existing repair tasks for the same delivery require consolidation")
-                    if same_scope and same_scope[0].get("id") != task_id:
-                        finalize(path, "processed", "coalesced with existing delivery repair",
-                                 str(same_scope[0]["id"]), coalesced_identity=identity)
-                        continue
-                    if task_id in (status.get("terminal_facts") or {}):
-                        raise ValueError("unblock task is already terminal; cannot resurrect")
-                    existing = next(
-                        (item for item in status.get("tasks", []) if item.get("id") == task_id),
-                        None,
-                    )
-                    if existing is not None:
-                        provenance = existing.get("unblock_request")
-                        expected_provenance = {
+                        {
+                            "type": "auto_integrator_unblock_reopen_failed",
+                            "task_id": str(valid["source_task_id"]),
                             "request_sha256": path.stem,
-                            "source_task_id": valid["source_task_id"],
-                            "source_task_generation": valid["source_task_generation"],
-                            "repository_slug": valid["repository_slug"],
-                            "pr": valid["pr"],
-                            "head_sha": valid["head_sha"],
-                            "command_runtime_sha": valid["command_runtime_sha"],
-                        }
-                        if provenance != expected_provenance:
-                            raise ValueError("existing unblock task provenance mismatch")
-                        finalize(path, "processed", "already materialized", task_id)
-                        continue
-                    timestamp = utc_now()
-                    detail = str(valid["detail"])
-                    status.setdefault("tasks", []).append(
-                    {
-                        "id": task_id,
-                        "title": f"Unblock integration for {valid['source_task_id']}: {valid['reason']}",
-                        "phase": "Auto-integrator unblock",
-                        "owner": valid["owner"],
-                        "reviewer": valid["reviewer"],
-                        "status": "todo",
-                        "generation": 1,
-                        "depends_on": [],
-                        "target_repo": valid["repository_id"],
-                        "summary_zh": (
-                            f"auto-integrator 無法安全整合 {valid['source_task_id']}: "
-                            f"{valid['reason']}. 請修正 PR/rebase/CI 後交回整合。"
-                        ),
-                        "acceptance": [
-                            f"Root cause for {valid['source_task_id']} integration blocker is documented",
-                            "Original PR is updated or superseded and no longer stranded",
-                        ],
-                        "artifacts": [
-                            "scripts/git/auto_integrator.py",
-                            f"docs/deployment/evidence/{task_id}/evidence.json",
-                        ],
-                        "next": detail,
-                        "last_update": timestamp,
-                        "auto_created_by": "supervisor:auto_integrator_unblock_request",
-                        "auto_generated": True,
-                        "unblock_request": {
-                            "request_sha256": path.stem,
-                            "source_task_id": valid["source_task_id"],
-                            "source_task_generation": valid["source_task_generation"],
-                            "repository_slug": valid["repository_slug"],
-                            "pr": valid["pr"],
-                            "head_sha": valid["head_sha"],
-                            "command_runtime_sha": valid["command_runtime_sha"],
+                            "message": (
+                                result.stderr.strip()
+                                or result.stdout.strip()
+                                or "Auto-integrator BEHIND source reopen failed."
+                            )[:1000],
                         },
-                    }
                     )
-                    event = {
-                    "event_id": f"auto-integrator-unblock-{path.stem}",
-                    "ts": timestamp,
-                    "agent": "Orchestrator",
-                    "type": "auto_integrator_unblock_materialized",
-                    "task_id": task_id,
-                    "source_task_id": valid["source_task_id"],
-                    "message": detail,
-                    }
-                    status["status_activity_outbox"] = _compose_status_activity_outbox(
-                        status.get("status_activity_outbox"), event
-                    )
-                    write_status(config, status, source="supervisor-auto-integrator-unblock")
-            if reopened_source:
+                    continue
                 finalize(
                     path,
                     "processed",
@@ -2604,8 +2390,102 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                     task_id,
                     request_metadata=valid,
                 )
-            else:
-                finalize(path, "processed", "materialized", task_id)
+                changed = True
+                continue
+            with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+                status = load_status(config)
+                valid, source = _validate_auto_integrator_unblock_request(
+                    config, request, path.name, status
+                )
+                task_id = valid["unblock_task_id"]
+                # Coalesce retry generations and changing symptoms for the same
+                # source delivery under the canonical lock. Preserve the first
+                # task/provenance and bind this request's receipt to that scope.
+                identity = unblock_contract.repair_identity(valid)
+                same_scope = [item for item in status.get("tasks", [])
+                              if isinstance(item.get("unblock_request"), Mapping)
+                              and unblock_contract.repair_identity(item["unblock_request"]) == identity]
+                if len(same_scope) > 1:
+                    raise ValueError("multiple existing repair tasks for the same delivery require consolidation")
+                if same_scope and same_scope[0].get("id") != task_id:
+                    finalize(path, "processed", "coalesced with existing delivery repair",
+                             str(same_scope[0]["id"]), coalesced_identity=identity)
+                    continue
+                if task_id in (status.get("terminal_facts") or {}):
+                    raise ValueError("unblock task is already terminal; cannot resurrect")
+                existing = next(
+                    (item for item in status.get("tasks", []) if item.get("id") == task_id),
+                    None,
+                )
+                if existing is not None:
+                    provenance = existing.get("unblock_request")
+                    expected_provenance = {
+                        "request_sha256": path.stem,
+                        "source_task_id": valid["source_task_id"],
+                        "source_task_generation": valid["source_task_generation"],
+                        "repository_slug": valid["repository_slug"],
+                        "pr": valid["pr"],
+                        "head_sha": valid["head_sha"],
+                        "command_runtime_sha": valid["command_runtime_sha"],
+                    }
+                    if provenance != expected_provenance:
+                        raise ValueError("existing unblock task provenance mismatch")
+                    finalize(path, "processed", "already materialized", task_id)
+                    continue
+                timestamp = utc_now()
+                detail = str(valid["detail"])
+                status.setdefault("tasks", []).append(
+                {
+                    "id": task_id,
+                    "title": f"Unblock integration for {valid['source_task_id']}: {valid['reason']}",
+                    "phase": "Auto-integrator unblock",
+                    "owner": valid["owner"],
+                    "reviewer": valid["reviewer"],
+                    "status": "todo",
+                    "generation": 1,
+                    "depends_on": [],
+                    "target_repo": valid["repository_id"],
+                    "summary_zh": (
+                        f"auto-integrator 無法安全整合 {valid['source_task_id']}: "
+                        f"{valid['reason']}. 請修正 PR/rebase/CI 後交回整合。"
+                    ),
+                    "acceptance": [
+                        f"Root cause for {valid['source_task_id']} integration blocker is documented",
+                        "Original PR is updated or superseded and no longer stranded",
+                    ],
+                    "artifacts": [
+                        "scripts/git/auto_integrator.py",
+                        f"docs/deployment/evidence/{task_id}/evidence.json",
+                    ],
+                    "next": detail,
+                    "last_update": timestamp,
+                    "auto_created_by": "supervisor:auto_integrator_unblock_request",
+                    "auto_generated": True,
+                    "unblock_request": {
+                        "request_sha256": path.stem,
+                        "source_task_id": valid["source_task_id"],
+                        "source_task_generation": valid["source_task_generation"],
+                        "repository_slug": valid["repository_slug"],
+                        "pr": valid["pr"],
+                        "head_sha": valid["head_sha"],
+                        "command_runtime_sha": valid["command_runtime_sha"],
+                    },
+                }
+                )
+                event = {
+                "event_id": f"auto-integrator-unblock-{path.stem}",
+                "ts": timestamp,
+                "agent": "Orchestrator",
+                "type": "auto_integrator_unblock_materialized",
+                "task_id": task_id,
+                "source_task_id": valid["source_task_id"],
+                "message": detail,
+                }
+                status["status_activity_outbox"] = _compose_status_activity_outbox(
+                    status.get("status_activity_outbox"), event
+                )
+                write_status(config, status, source="supervisor-auto-integrator-unblock")
+            finalize(path, "processed", "materialized", task_id)
             changed = True
         except (KeyError, ValueError) as exc:
             finalize_safely(path, "rejected", str(exc))
