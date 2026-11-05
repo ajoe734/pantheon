@@ -1,6 +1,6 @@
 {
   "task": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
-  "recordedAt": "2026-11-05T03:07Z",
+  "recordedAt": "2026-11-05T17:06Z",
   "owner": "Antigravity",
   "reviewer": "Antigravity2",
   "status": "in_progress_not_accepted",
@@ -25,9 +25,9 @@
     },
     "pairId": "560966946e67b01c6e188d5ff065c282a3c2d3accfe915d22130c0b3c5d4f6bf"
   },
-  "rootCause": "nonprod-deploy.yml frontend_profile defaults to read-only and scripts/auto_deploy_dev_pair.py preserves the accepted hosted profile, so Dev stays read-only until one operator-live deploy is dispatched.",
+  "rootCause": "nonprod-deploy.yml frontend_profile defaults to read-only and scripts/auto_deploy_dev_pair.py preserves the accepted hosted profile, so Dev stays read-only until one operator-live deploy is dispatched and accepted.",
   "sourceChangesNeeded": false,
-  "regression": "PANTHEON_DEPENDENCY_PYTHON -m pytest -q scripts/test_auto_deploy_dev_pair.py scripts/test_cross_repo_release_controller.py -> 126 passed in 38.35s (operator-live preserved; inconsistent posture fails closed)",
+  "regression": "Rebased onto origin/dev 2a2411124c77ddce6c6963d927d99654c7e5f6fe; .venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_deploy_dev_pair.py (51 passed in 9.72s) and scripts/test_cross_repo_release_controller.py (75 passed in 18.15s) -> 126 passed total (operator-live preserved; inconsistent posture fails closed)",
   "authIdentityPreflight": {
     "artifact": "/tmp/pantheon-dev-operable-20261104/login-profile-availability.json",
     "profilesConfigured": ["TEST_ADMIN", "VIEWER", "OPERATOR_A", "OPERATOR_B"],
@@ -51,7 +51,11 @@
     "41946522116": "failure at capture stage (DEV_ARTIFACT_OPERATION_FAILED exit 75) for backend 0bd88495e + FE b15608ce1; not mine",
     "41758658026": "prior read-only baseline pair FE 809e1ce0a / BFF cc074638f",
     "41947653837": "completed success; current served pair FE b15608ce1 / BFF 0bd88495e (read-only)",
-    "41956583442/41956938180": "success, all-12 chain segments only; deploy jobs skipped, no release"
+    "41956583442/41956938180": "success, all-12 chain segments only; deploy jobs skipped, no release",
+    "41972441340": "failure at Resolve and validate dev payload (Bounded source refresh requires an isolated clean dev/root deploy with strict auth; run_bounded_source_refresh=true was combined with frontend_profile=operator-live)",
+    "41988080438": "dispatched by Hourly Publish Cut 41988024352 for BE 2a2411124 + FE d114f5720; failed at Ensure governed dev paper baseline under lease after 59 attempts/630s waiting for persona-2cc049a04aac389246cd (lifecycle provisioning, exit 75) because paper-fleet-reconciler paused new binding rb-bce2cf90 after 120s grace with market_input_stale before dev-tw-market-refresh admitted the 2026-11-05 snapshot at 15:13Z; diagnostics.json showed all 7 sampled containers healthy with 0 restarts and no runtime-manager sample/events; compensated BFF/FE back to 0bd88495e + b15608ce1 (read-only)",
+    "42067757439": "failure at Resolve and validate dev payload before lease acquisition (payload=0bd88495e while current dev=2a2411124)",
+    "42069435023": "in_progress (dispatched 2026-11-05T16:55:23Z by existing sole publisher for exact current pair BE 2a2411124c77ddce6c6963d927d99654c7e5f6fe + FE d114f57208593e553f9c6a9f892e00ffac3b4cbe under lease dcb4c003-b5d0-4944-b570-32af771e5bb6; currently in step 19 Deploy dev VM stack under lease)"
   },
   "rollbackTarget": "FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb / BFF 0bd88495e27e90f6cfaadc1991139d28a8809501 (read-only, pair 560966946e67b01c6e188d5ff065c282a3c2d3accfe915d22130c0b3c5d4f6bf)",
   "acceptanceMatrix": {
@@ -67,7 +71,7 @@
   "coreFlowInventory": {
     "publicReadManifestAndVersion": "passed (accepted read-only pair FE b15608ce1 / BFF 0bd88495e)",
     "loginUiAdminSession": "passed (read-only baseline login verified; operator-live session acceptance pending qualified operator-live pair)",
-    "tradingRoomPrivateWorkspaceCreateAcceptEditReload": "not-run (blocked on Root092748b3 publishing operator-live pair with execute-plans c5a3156bf PR #913)",
+    "tradingRoomPrivateWorkspaceCreateAcceptEditReload": "not-run (blocked on active nonprod-deploy run 42069435023 completing and serving operator-live pair with execute-plans d114f5720 containing c5a3156bf PR #913)",
     "rbacViewerWriteDenied403": "not-run (pending qualified operator-live pair)",
     "missingSessionWriteDenied401": "not-run (pending qualified operator-live pair)",
     "crossUserWorkspaceAccessDenied403": "not-run (pending qualified operator-live pair)",
@@ -76,12 +80,12 @@
     "realBrokerAndCapitalExecutionDisabled": "passed (paper/isolated Dev only; live broker authority fail-closed)"
   },
   "blockers": [
-    "Served FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb is read-only and predates the TradingRoomWorkspace reload fix (execute-plans dev c5a3156bf7fa295c60da225d8f3e76d3ec9f3df0, PR #913); a qualified operator-live pair must be published first.",
-    "Per canonical completion_tracks.hosted (external_wait) and coordinator note, Root092748b3 is the sole serial Dev publisher/hosted coordinator and OPS-DEV-LEASE-TRANSIENT-20261105 (PR #6955, review_approved at 0bfddf6fd4095fda072fda10a31848a2afee9364) is awaiting required CI/integrator merge before the next Dev release.",
-    "Next: after Root092748b3 publishes a qualified pair containing execute-plans c5a3156bf with frontend_profile=operator-live via Nonprod Deploy, reopen and run hosted login-UI private-workspace create/accept/edit/reload, viewer 403, missing-session 401, cross-user 403, tenant mismatch 403, and idempotency/ETag checks."
+    "Served FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb / BFF 0bd88495e27e90f6cfaadc1991139d28a8809501 is still read-only (VITE_BFF_REAL_WRITES=false) while nonprod-deploy run 42069435023 (BE 2a2411124c77ddce6c6963d927d99654c7e5f6fe + FE d114f57208593e553f9c6a9f892e00ffac3b4cbe) is in_progress under shared lease dcb4c003-b5d0-4944-b570-32af771e5bb6.",
+    "Per canonical completion_tracks.hosted (in_progress under Human/Ops sole serial publisher), source workers must not start a competing deployment or interfere with the active lease.",
+    "Next: once nonprod-deploy run 42069435023 (or subsequent sole-publisher operator-live release) completes and https://app.dev.mvl-cap.tw/deployment.json serves an accepted operator-live pair containing execute-plans c5a3156bf (d114f5720), reopen and execute hosted login-UI private-workspace create/accept/edit/reload, viewer 403, missing-session 401, cross-user 403, tenant mismatch 403, and idempotency/ETag checks."
   ],
   "dependencies": {
     "EVOLUTION-OWNER-WRITE-SERVICE-AUTH-20261104": "done (satisfied=true)",
-    "FE-TRADINGROOM-WORKSPACE-RESTORE-20261105": "done (satisfied=true; execute-plans dev c5a3156bf7fa295c60da225d8f3e76d3ec9f3df0 PR #913 merged 2026-11-05T02:51:48Z, not yet served on Dev)"
+    "FE-TRADINGROOM-WORKSPACE-RESTORE-20261105": "done (satisfied=true; execute-plans dev c5a3156bf7fa295c60da225d8f3e76d3ec9f3df0 PR #913 merged 2026-11-05T02:51:48Z, included in candidate FE d114f57208593e553f9c6a9f892e00ffac3b4cbe)"
   }
 }
