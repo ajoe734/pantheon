@@ -1551,6 +1551,26 @@ def _persona_binding_rows(
     return [{"entry": row} for row in rows if wanted_state is None or row.get("artifact_state") == wanted_state]
 
 
+@app.get("/api/registry/lineage")
+def read_lineage_graph(
+    root_id: Optional[str] = None,
+    depth: int = Query(default=3, ge=1, le=20),
+    limit: int = Query(default=200, ge=1, le=1000),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
+    """Tenant-scoped, bounded lineage graph (nodes/edges/has_more) derived from entry lineage.
+
+    Same visible-tenant rule as the persona-binding view; without ``root_id`` it
+    starts from the most recent execution bundles and is capped by ``limit``.
+    """
+    ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+    return JSONResponse(get_registry_service().lineage_graph(
+        visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+        root_id=root_id, depth=depth, limit=limit,
+    ))
+
+
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,

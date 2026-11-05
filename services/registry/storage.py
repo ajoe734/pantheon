@@ -114,6 +114,188 @@ def persona_binding_candidate_family_rows(rows: list[dict]) -> list[dict]:
     return [r for r in rows if r.get("strategy_id") is None or r.get("strategy_id") in bound]
 
 
+# ---------------------------------------------------------------------------
+# Lineage read projection (REGISTRY-LINEAGE-OWNER-READ-20261104)
+# ---------------------------------------------------------------------------
+# One flat row per entry carrying only identity/state and the lineage + metadata
+# fields an edge is derived from. The Postgres owner computes the same row in
+# SQL (``pg_store.lineage_select_sql``) without rebuilding any RegistryEntry.
+LINEAGE_ROW_KEYS = (
+    "registry_id", "artifact_type", "artifact_state", "strategy_id", "version",
+    "owner_tenant", "created_at",
+)
+LINEAGE_LIST_FIELDS = ("parent_registry_ids", "source_run_ids", "source_dataset_refs")
+LINEAGE_SCALAR_FIELDS = ("source_strategy_spec_id",)
+LINEAGE_META_FIELDS = ("persona_id", "capital_pool_id", "risk_level")
+LINEAGE_DEFAULT_LIMIT = 200
+LINEAGE_MAX_LIMIT = 1000
+LINEAGE_MAX_DEPTH = 20
+
+_LINEAGE_REGISTRY_TYPES = {"strategy_spec": "Strategy", "execution_bundle": "Artifact"}
+
+
+def lineage_row(entry: RegistryEntry) -> dict:
+    """Flat lineage row of one entry (in-memory twin of the SQL projection)."""
+    full = entry.to_dict()
+    row = {k: full.get(k) for k in LINEAGE_ROW_KEYS}
+    lin = full.get("lineage")
+    lin = lin if isinstance(lin, dict) else {}
+    for k in LINEAGE_LIST_FIELDS + LINEAGE_SCALAR_FIELDS:
+        row[k] = lin.get(k)
+    meta = full.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    for k in LINEAGE_META_FIELDS:
+        row[k] = meta.get(k)
+    return row
+
+
+def _lineage_ids(value: Any) -> list[str]:
+    """Non-empty string ids of a lineage list; JSON null / non-list yields none."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip() and item.strip() not in out:
+            out.append(item.strip())
+    return out
+
+
+def _lineage_id(value: Any) -> Optional[str]:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def build_lineage_graph(
+    rows: list[dict], *, root_id: Optional[str] = None, depth: int = 3, limit: int = LINEAGE_DEFAULT_LIMIT,
+) -> dict:
+    """Bounded lineage graph over visible flat lineage rows.
+
+    Edges come only from ``lineage.parent_registry_ids`` / ``source_strategy_spec_id``
+    / ``source_dataset_refs`` / ``source_run_ids`` and ``metadata.persona_id`` /
+    ``capital_pool_id``; an absent or JSON-null field yields no edge. ``root_id`` may be
+    a registry id, a strategy id or a persona id. Without a root the traversal starts
+    from the most recent ``execution_bundle`` rows, never the whole population.
+    Traversal is breadth-first over ``depth`` hops (nearest edges win the ``limit`` cap).
+    """
+    depth = max(1, min(int(depth), LINEAGE_MAX_DEPTH))
+    limit = max(1, min(int(limit), LINEAGE_MAX_LIMIT))
+    by_id = {r["registry_id"]: r for r in rows if r.get("registry_id")}
+    roles: dict[str, str] = {}  # node id -> type for ids that are not registry rows
+    edges: list[tuple[str, str, str]] = []
+    seen_edges: set = set()
+
+    def add(frm: str, to: str, label: str, to_type: Optional[str] = None, frm_type: Optional[str] = None) -> None:
+        if (frm, to, label) in seen_edges:
+            return
+        seen_edges.add((frm, to, label))
+        edges.append((frm, to, label))
+        if frm_type:
+            roles.setdefault(frm, frm_type)
+        if to_type:
+            roles.setdefault(to, to_type)
+
+    for rid in sorted(by_id):
+        r = by_id[rid]
+        for p in _lineage_ids(r.get("parent_registry_ids")):
+            add(p, rid, "parent")
+        spec = _lineage_id(r.get("source_strategy_spec_id"))
+        if spec:
+            add(spec, rid, "source_strategy_spec", frm_type="Strategy")
+        for d in _lineage_ids(r.get("source_dataset_refs")):
+            add(d, rid, "source_dataset", frm_type="Dataset")
+        for run in _lineage_ids(r.get("source_run_ids")):
+            add(run, rid, "source_run", frm_type="Experiment")
+        persona = _lineage_id(r.get("persona_id"))
+        if persona:
+            add(rid, persona, "persona", to_type="Persona")
+        pool = _lineage_id(r.get("capital_pool_id"))
+        if pool:
+            add(rid, pool, "capital_pool", to_type="CapitalPool")
+
+    adjacency: dict[str, list[int]] = {}
+    for i, (frm, to, _label) in enumerate(edges):
+        adjacency.setdefault(frm, []).append(i)
+        adjacency.setdefault(to, []).append(i)
+
+    has_more = False
+    seeds: list[str]
+    if root_id:
+        wanted = root_id.strip()
+        matched = {rid for rid, r in by_id.items() if r.get("strategy_id") == wanted}
+        if wanted in by_id or wanted in adjacency:
+            matched.add(wanted)
+        seeds = sorted(matched)
+    else:
+        bundles = sorted(
+            (r for r in by_id.values()
+             if r.get("artifact_type") == "execution_bundle" and r["registry_id"] in adjacency),
+            key=lambda r: (str(r.get("created_at") or ""), r["registry_id"]), reverse=True,
+        )
+        has_more = len(bundles) > limit
+        seeds = [r["registry_id"] for r in bundles[:limit]]
+
+    visited = set(seeds)
+    frontier = list(seeds)
+    picked: list[int] = []
+    picked_set: set[int] = set()
+    for _ in range(depth):
+        nxt: list[str] = []
+        for node in sorted(frontier):
+            for i in adjacency.get(node, []):
+                if i in picked_set:
+                    continue
+                picked_set.add(i)
+                picked.append(i)
+                for end in edges[i][:2]:
+                    if end not in visited:
+                        visited.add(end)
+                        nxt.append(end)
+        frontier = nxt
+        if not frontier:
+            break
+    if len(picked) > limit:
+        picked = picked[:limit]
+        has_more = True
+
+    node_ids: list[str] = []
+    seen_nodes: set[str] = set()
+    for sid in seeds:
+        if sid not in seen_nodes:
+            seen_nodes.add(sid)
+            node_ids.append(sid)
+    for i in picked:
+        for end in edges[i][:2]:
+            if end not in seen_nodes:
+                seen_nodes.add(end)
+                node_ids.append(end)
+
+    nodes: list[dict] = []
+    for nid in node_ids:
+        node: dict = {"id": nid, "label": nid}
+        r = by_id.get(nid)
+        if r is not None:
+            ntype = _LINEAGE_REGISTRY_TYPES.get(r.get("artifact_type"), r.get("artifact_type"))
+            if ntype:
+                node["type"] = ntype
+            if r.get("artifact_state"):
+                node["state"] = r["artifact_state"]
+            risk = _lineage_id(r.get("risk_level"))
+            if risk:
+                node["risk"] = risk
+        elif nid in roles:
+            node["type"] = roles[nid]
+        nodes.append(node)
+    return {
+        "root_id": root_id or None,
+        "depth": depth,
+        "limit": limit,
+        "nodes": nodes,
+        "edges": [
+            {"from": edges[i][0], "to": edges[i][1], "label": edges[i][2]} for i in picked
+        ],
+        "has_more": has_more,
+    }
+
+
 _BINDING_LIFECYCLE = {
     "draft": "draft", "candidate": "candidate", "approved": "approved",
     "retired": "retired", "active": "approved",
@@ -416,6 +598,10 @@ class RegistryStore:
         return persona_binding_candidate_family_rows(
             [r for r in rows if persona_binding_row_visible(r, visible_tenants, artifact_type)]
         )
+
+    def list_lineage_rows(self, *, visible_tenants: Optional[frozenset] = None) -> list[dict]:
+        rows = [lineage_row(entry) for entry in self.list_all_entries()]
+        return [r for r in rows if persona_binding_row_visible(r, visible_tenants, None)]
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""

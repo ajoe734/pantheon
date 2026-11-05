@@ -297,6 +297,30 @@ def approval_records():
     return cached_owner_call(("approval_records", authorization.get(), selected_tenant.get()), lambda: approval_owner.list_decisions(authorization.get()))
 
 
+def latest_ranking_snapshot(ranking_store=None, *, surface: str = "quarterly"):
+    from ..ports import rankings as rankings_port
+
+    def _fetch():
+        if isinstance(ranking_store, rankings_port.RankingSnapshotReadPort):
+            reader = ranking_store
+        elif ranking_store is not None:
+            reader = rankings_port.RankingSnapshotReadPort(ranking_store)
+        elif (
+            rankings_port.create_ranking_reader is not rankings_port._DEFAULT_CREATE_RANKING_READER
+            or os.getenv("RANKING_STORE_DSN")
+            or os.getenv("DATABASE_URL")
+        ):
+            reader = rankings_port.create_ranking_reader()
+        else:
+            return None
+        return reader.get_latest_ranking_snapshot(surface=surface)
+
+    return cached_owner_call(
+        ("latest_ranking_snapshot", id(ranking_store), surface, selected_tenant.get()),
+        _fetch,
+    )
+
+
 def create_owner_domain_ports(persona_store=None, ranking_store=None):
     from ..ports.persona_capital_runtime import (
         CapitalPoolPort, DeploymentPlanPort, EvolutionProjectionPort,

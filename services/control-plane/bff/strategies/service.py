@@ -173,6 +173,62 @@ class StrategiesService:
             return res
         return None
 
+    def get_latest_ranking_snapshot(self) -> Tuple[Optional[Dict[str, Any]], bool]:
+        from services.control_plane.bff.core.owner_reads import (
+            cached_owner_call,
+            latest_ranking_snapshot,
+            selected_tenant,
+        )
+
+        try:
+            read_store = self._get_read_store_port()
+        except NotImplementedError:
+            read_store = None
+        except Exception:
+            return None, True
+
+        def _read() -> Tuple[Optional[Dict[str, Any]], bool]:
+            if read_store is not None:
+                getter = getattr(read_store, "get_latest_ranking_snapshot", None)
+                if callable(getter):
+                    try:
+                        snap = getter()
+                        if snap is not None and not isinstance(snap, dict):
+                            to_dict = getattr(snap, "to_canonical_dict", None)
+                            candidate = to_dict() if callable(to_dict) else None
+                            snap = candidate if isinstance(candidate, dict) else None
+                        return snap, False
+                    except Exception:
+                        return None, True
+                list_snaps = getattr(read_store, "list_ranking_snapshots", None)
+                if callable(list_snaps):
+                    try:
+                        raw_list = list(list_snaps() or [])
+                        candidates = []
+                        for idx, item in enumerate(raw_list):
+                            payload = (
+                                item.to_canonical_dict()
+                                if hasattr(item, "to_canonical_dict")
+                                else (dict(item) if isinstance(item, dict) else None)
+                            )
+                            if isinstance(payload, dict):
+                                candidates.append((str(payload.get("created_at") or ""), idx, payload))
+                        if not candidates:
+                            return None, False
+                        return max(candidates, key=lambda entry: (entry[0], entry[1]))[2], False
+                    except Exception:
+                        return None, True
+            try:
+                snap = latest_ranking_snapshot(None)
+                return (snap if isinstance(snap, dict) else None), False
+            except Exception:
+                return None, True
+
+        return cached_owner_call(
+            ("strategy_latest_ranking_snapshot", id(self), id(read_store), selected_tenant.get()),
+            _read,
+        )
+
     def ensure_strategy_exists(self, strategy_id: str) -> None:
         strategy = self.get_strategy(strategy_id)
         if strategy:
@@ -209,20 +265,20 @@ class StrategiesService:
 
     def get_strategy_lineage(self, strategy_id: str) -> Tuple[List[Dict[str, Any]], List[str]]:
         read_store = self._get_read_store_port()
-        edges = read_store.list_lineage_edges() or []
+        # The lineage owner resolves the strategy root (registry id / strategy id) and
+        # returns only the connected subgraph; no whole-population scan here.
+        edges = read_store.get_lineage_graph(root_id=strategy_id, depth=3) or []
         nodes_seen: Set[str] = set()
         related: List[Dict[str, Any]] = []
         for edge in edges:
-            node_keys = (
+            related.append(edge)
+            for key in (
                 str(edge.get("from_artifact_id") or edge.get("source_id") or ""),
                 str(edge.get("to_artifact_id") or edge.get("target_id") or ""),
                 str(edge.get("strategy_id") or ""),
-            )
-            if strategy_id in node_keys:
-                related.append(edge)
-                for key in node_keys:
-                    if key:
-                        nodes_seen.add(key)
+            ):
+                if key:
+                    nodes_seen.add(key)
         nodes_seen.add(strategy_id)
         return related, sorted(nodes_seen)
 
@@ -563,9 +619,14 @@ class StrategiesService:
             "alpha": str(payload.get("alpha") or ""),
             "capitalPoolId": str(payload.get("capitalPoolId") or payload.get("capital_pool_id") or ""),
             "personaIds": list(payload.get("personaIds") or payload.get("persona_ids") or []),
-            "pnl30d": float(payload.get("pnl30d") or 0.0),
-            "sharpe": float(payload.get("sharpe") or 0.0),
-            "drawdown": float(payload.get("drawdown") or 0.0),
+            "pnl": None,
+            "pnl30d": None,
+            "sharpe": None,
+            "drawdown": None,
+            "totalTrades": None,
+            "metricsAsOf": None,
+            "metricsResolution": "missing",
+            "metricsPersonaId": None,
             "availableActions": ["edit", "submit", "retire"],
             "labelKey": f"strategy.{strategy_id}",
         }
