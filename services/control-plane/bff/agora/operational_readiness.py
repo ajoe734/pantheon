@@ -658,7 +658,12 @@ class EnvironmentAgoraOperationalReadinessProvider:
         metadata = _as_mapping(binding.get("metadata"))
         return _clean_text(binding.get("tenant_id") or metadata.get("tenant_id"))
 
-    def _active_binding(self, scope: Optional[AgoraCapabilityScope]) -> Dict[str, Any]:
+    def _active_binding(
+        self,
+        scope: Optional[AgoraCapabilityScope],
+        *,
+        preferred_binding_ids: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
         desired_url = f"{self._runtime_manager_url}/api/runtime-fleet/desired-state?stage=paper"
         desired = self._http_get_json(desired_url, self._headers(), self._timeout_seconds)
         candidates = [
@@ -682,9 +687,37 @@ class EnvironmentAgoraOperationalReadinessProvider:
             if scope is not None and tenant_id != scope.tenant_id:
                 continue
             hydrated.append(detail)
-        if len(hydrated) != 1:
+        if not hydrated:
             raise RuntimeError("active_paper_binding_not_unique")
-        return hydrated[0]
+        if len(hydrated) == 1:
+            return hydrated[0]
+
+        def _has_symbol(item: Mapping[str, Any]) -> bool:
+            try:
+                return bool(self._binding_symbol(item))
+            except Exception:
+                return False
+
+        by_id = {_clean_text(item.get("binding_id")): item for item in hydrated if _clean_text(item.get("binding_id"))}
+        for pref_id in preferred_binding_ids or ():
+            candidate_detail = by_id.get(_clean_text(pref_id))
+            if candidate_detail is not None and _has_symbol(candidate_detail):
+                return candidate_detail
+        for pref_id in preferred_binding_ids or ():
+            candidate_detail = by_id.get(_clean_text(pref_id))
+            if candidate_detail is not None:
+                return candidate_detail
+
+        with_symbol = [item for item in hydrated if _has_symbol(item)]
+        pool = with_symbol if with_symbol else hydrated
+        pool.sort(
+            key=lambda item: (
+                str(item.get("updated_at") or item.get("effective_at") or item.get("created_at") or ""),
+                str(item.get("binding_id") or ""),
+            ),
+            reverse=True,
+        )
+        return pool[0]
 
     @staticmethod
     def _binding_symbol(binding: Mapping[str, Any]) -> str:
@@ -713,12 +746,12 @@ class EnvironmentAgoraOperationalReadinessProvider:
         snapshot = self._http_get_json(snapshot_url, {"Accept": "application/json"}, self._timeout_seconds)
         lineage = _as_mapping(snapshot.get("lineage"))
         source_instance_id = _clean_text(snapshot.get("source_instance_id"))
+        connector_ids = {
+            str(item).strip()
+            for item in list(lineage.get("connector_ids") or [])
+            if str(item).strip()
+        }
         if not source_instance_id:
-            connector_ids = {
-                str(item).strip()
-                for item in list(lineage.get("connector_ids") or [])
-                if str(item).strip()
-            }
             sources_url = f"{self._source_ingest_url}/api/source-ingest/management/sources"
             sources_payload = self._http_get_json(
                 sources_url,
@@ -735,6 +768,35 @@ class EnvironmentAgoraOperationalReadinessProvider:
                 source_instance_id = _clean_text(
                     matches[0].get("data_source_id") or matches[0].get("source_instance_id")
                 )
+            elif not matches and len(connector_ids) == 1:
+                connector_id = next(iter(connector_ids))
+                connector_url = (
+                    f"{self._source_ingest_url}/api/source-ingest/connectors/"
+                    f"{urllib.parse.quote(connector_id, safe='')}"
+                )
+                connector_detail = self._http_get_json(
+                    connector_url,
+                    {"Accept": "application/json"},
+                    self._timeout_seconds,
+                )
+                connector = _as_mapping(connector_detail.get("connector"))
+                state = _as_mapping(connector_detail.get("state"))
+                resolved_id = _clean_text(connector.get("connector_id")) or connector_id
+                last_failure = _clean_text(state.get("last_error"))
+                instance = {
+                    **connector,
+                    "source_instance_id": resolved_id,
+                    "desired_state": _clean_text(connector.get("status")) or "enabled",
+                    "observed_state": (
+                        "error"
+                        if last_failure
+                        else ("fresh" if int(state.get("successful_attempts") or 0) > 0 else None)
+                    ),
+                    "last_failure": last_failure,
+                    "last_successful_run_at": _clean_text(state.get("updated_at")),
+                }
+                snapshot["source_instance_id"] = resolved_id
+                return snapshot, instance
         if not source_instance_id:
             raise RuntimeError("source_instance_identity_not_unique")
         detail_url = (
@@ -775,9 +837,26 @@ class EnvironmentAgoraOperationalReadinessProvider:
             result.errors["surfaces"] = "read_store_unavailable"
             store = None
 
+        producer_matched: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+        preferred_binding_ids: List[str] = []
+        telemetry_read_err: Optional[Exception] = None
+        try:
+            events = [
+                _event_payload(event)
+                for event in (self._telemetry_reader() or [])
+                if isinstance(event, Mapping)
+            ]
+            producer_matched = self._surface_adapter._paper_producer_events(events, scope)
+            for _ev, meta in producer_matched:
+                bid = _clean_text(meta.get("binding_id"))
+                if bid and bid not in preferred_binding_ids:
+                    preferred_binding_ids.append(bid)
+        except Exception as exc:
+            telemetry_read_err = exc
+
         binding: Optional[Dict[str, Any]] = None
         try:
-            binding = self._active_binding(scope)
+            binding = self._active_binding(scope, preferred_binding_ids=preferred_binding_ids)
             snapshot, instance = self._source(binding)
             result.source_snapshot = snapshot
             result.source_instance = instance
@@ -788,16 +867,12 @@ class EnvironmentAgoraOperationalReadinessProvider:
             )
 
         try:
-            events = [
-                _event_payload(event)
-                for event in (self._telemetry_reader() or [])
-                if isinstance(event, Mapping)
-            ]
-            matched = self._surface_adapter._paper_producer_events(events, scope)
+            if telemetry_read_err is not None:
+                raise telemetry_read_err
             binding_id = _clean_text(binding.get("binding_id")) if binding else None
             matched = [
                 pair
-                for pair in matched
+                for pair in producer_matched
                 if _clean_text(pair[1].get("binding_id")) == binding_id
             ]
             if not matched:

@@ -484,10 +484,13 @@ def test_human_inbox_and_details_and_hiq_backlog() -> None:
     resp = client.get("/bff/management/human-inbox", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data["data"]["items"]) == 5
-    assert data["data"]["summary"]["total_items"] == 5
+    # BFF-HUMAN-INBOX-TRUTH-20261104: only the open incident (inc-1) is listed;
+    # the resolved incident inc-2 never enters items or totals.
+    assert len(data["data"]["items"]) == 4
+    assert data["data"]["summary"]["total_items"] == 4
     assert data["data"]["summary"]["approval_count"] == 3
-    assert data["data"]["summary"]["incident_count"] == 2
+    assert data["data"]["summary"]["incident_count"] == 1
+    assert "incident:inc-2" not in {item["id"] for item in data["data"]["items"]}
 
     # 2. Human inbox item detail
     resp = client.get("/bff/management/human-inbox/app-1", headers={"Authorization": "Bearer op-1:operator"})
@@ -505,8 +508,8 @@ def test_human_inbox_and_details_and_hiq_backlog() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["data"]["id"] == "management-hiq-backlog"
-    assert len(data["data"]["items"]) == 5
-    assert data["data"]["summary"]["total"] == 5
+    assert len(data["data"]["items"]) == 4
+    assert data["data"]["summary"]["total"] == 4
 
 
 def test_human_inbox_fail_closed_on_contributor_failure_and_partial_503() -> None:

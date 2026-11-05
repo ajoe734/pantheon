@@ -1,0 +1,231 @@
+{
+  "task_id": "EVOLUTION-JOURNAL-EVIDENCE-CLASS-20261104",
+  "title": "演化日誌分不出真實演化與自動提案：BFF 依證據類別分類並提供伺服器端篩選",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "kind": "functional (offline, real hosted decision and postmortem shapes; hosted verification is owned by operator acceptance task EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104)",
+  "no_vm_or_ssh_access": true,
+  "base_branch": "dev",
+  "branch": "task/EVOLUTION-JOURNAL-EVIDENCE-CLASS-20261104",
+  "recorded_at": "2026-11-05T02:21:00Z",
+  "acceptance_criteria_evidence": {
+    "ac1_evidence_class_on_decisions_and_mutation_reviews": {
+      "helper": "services/control-plane/bff/evolution/service.py::evolution_journal_decision_evidence_class",
+      "rules": {
+        "threshold_signal": "any snapshot in threshold_snapshots with breached is True and signal_type in {'performance_degradation', 'execution_drift', 'feature_drift', 'human_correction'}",
+        "incident_followup": "non-empty metric_name set on threshold_snapshots (breached preferred) equals {'incident_followup_required'}",
+        "incident_severity": "non-empty metric_name set on threshold_snapshots (breached preferred) equals {'severity1_incident_count'}"
+      },
+      "attached_to": [
+        "evolution_decision item (services/control-plane/bff/evolution/service.py::evolution_journal_decision_item)",
+        "mutation_review item (services/control-plane/bff/evolution/router.py::bff_management_evolution_journal pre-hydration and hydrated slice)"
+      ],
+      "verified_by": [
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_evidence_class_classification_on_decisions_and_mutation_reviews_real_hosted_shapes",
+        "services/control-plane/bff/tests/test_evolution_router.py::test_evolution_journal_router_view_filter_and_evidence_class"
+      ]
+    },
+    "ac2_view_query_parameter": {
+      "route": "GET /bff/management/evolution-journal",
+      "accepted_values": [
+        "all",
+        "history",
+        "auto_proposals"
+      ],
+      "default_when_omitted": "all",
+      "invalid_value_behavior": "400 VALIDATION_FAILED (precondition_failed='view')",
+      "verified_by": [
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_view_filter_all_history_auto_proposals_and_auto_proposal_counts",
+        "services/control-plane/bff/tests/test_evolution_router.py::test_evolution_journal_router_view_filter_and_evidence_class"
+      ]
+    },
+    "ac3_view_history_and_auto_proposals_partition": {
+      "helper": "services/control-plane/bff/evolution/service.py::evolution_journal_item_is_history / evolution_journal_filter_by_view",
+      "history_includes": [
+        "freeze_order items",
+        "rollback items",
+        "postmortem items with status != 'draft'",
+        "evolution_decision and mutation_review items with decision state != 'proposed'",
+        "proposed evolution_decision and mutation_review items with evidence_class == 'threshold_signal'"
+      ],
+      "auto_proposals_includes": [
+        "proposed evolution_decision and mutation_review items with evidence_class != 'threshold_signal'",
+        "postmortem items with status == 'draft'"
+      ],
+      "partition_disjoint_and_complete": true,
+      "verified_by": [
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_view_filter_all_history_auto_proposals_and_auto_proposal_counts"
+      ]
+    },
+    "ac4_filter_before_pagination": {
+      "description": "evolution_journal_filter_by_view runs before page_slice so page_info.total, page_info.next_page_token, and data.summary (total_items, returned_items, counts_by_type, counts_by_state) describe the filtered set.",
+      "multi_page_test": "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_view_history_filter_runs_before_pagination_across_multiple_pages",
+      "multi_page_setup": "6 newest auto-proposal items occupying raw page 1 (page_size=2) followed by 4 older history items on raw pages 4-5; view=history&page_size=2 returns the first 2 history items on page 1 (next_page_token='2', total=4) and the remaining 2 history items on page 2 (page_token=2, next_page_token=None, total=4)."
+    },
+    "ac5_auto_proposal_counts_per_record": {
+      "response_path": "data.auto_proposal_counts",
+      "fields": [
+        "incident_followup",
+        "incident_severity",
+        "postmortem_draft",
+        "total"
+      ],
+      "counting_rule": "Counted once per underlying record (a proposed decision and its paired mutation_review item count as 1 decision record; each draft postmortem counts as 1 postmortem_draft record). Identical across view=all, view=history, and view=auto_proposals.",
+      "verified_by": [
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_view_filter_all_history_auto_proposals_and_auto_proposal_counts",
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_owner_write"
+      ]
+    },
+    "ac6_bounded_postmortem_reads_with_2027_real_drafts": {
+      "helper": "services/control-plane/bff/evolution/service.py::evolution_journal_read_postmortems",
+      "mechanism": "Uses list_postmortems_page from POSTMORTEM-BFF-OWNER-READ-20261104 on the postmortem owner port instead of streaming all 11 pages (2027 rows, ~5.7-8.2 MB) on every journal request. For view=history, fetches bounded non-draft postmortems and a 1-row draft probe (status=draft&page_size=1) solely to read X-Total-Count/total for auto_proposal_counts.postmortem_draft. For view=all and view=auto_proposals without narrow in-memory filters, fetches only the needed draft slice (raw_limit = offset + page_size, capped at 200) plus non-drafts for view=all, accounting for unfetched_draft_count in page_info.total and summary.",
+      "measurements_2027_real_draft_postmortems": {
+        "fixture_shape": "2027 draft postmortems built with build_real_postmortem_dict (23 keys, ~2.8 KB each, 1915 titled 'Postmortem draft: BFF downstream degradation: ...') served by LivePostmortemsOwnerServer + 3 decisions (real shape 1 incident_followup, real shape 2 incident_severity, 1 approved threshold_signal)",
+        "default_view_all_page_size_20": {
+          "owner_calls": [
+            "/api/postmortems?status=review%2Capproved%2Cpublished%2Cresolved%2Ccompleted&page_size=200",
+            "/api/postmortems?status=draft&page_size=20"
+          ],
+          "owner_call_count": 2,
+          "response_body_bytes": 139559,
+          "latency_ms": 164.12,
+          "returned_items": 20,
+          "page_info_total": 2033,
+          "auto_proposal_counts": {
+            "incident_followup": 1,
+            "incident_severity": 1,
+            "postmortem_draft": 2027,
+            "total": 2029
+          }
+        },
+        "history_view_page_size_20": {
+          "owner_calls": [
+            "/api/postmortems?status=review%2Capproved%2Cpublished%2Cresolved%2Ccompleted&page_size=200",
+            "/api/postmortems?status=draft&page_size=1"
+          ],
+          "owner_call_count": 2,
+          "response_body_bytes": 8732,
+          "latency_ms": 25.84,
+          "returned_items": 2,
+          "page_info_total": 2,
+          "auto_proposal_counts": {
+            "incident_followup": 1,
+            "incident_severity": 1,
+            "postmortem_draft": 2027,
+            "total": 2029
+          }
+        },
+        "auto_proposals_view_page_size_20": {
+          "owner_calls": [
+            "/api/postmortems?status=draft&page_size=20"
+          ],
+          "owner_call_count": 1,
+          "response_body_bytes": 149599,
+          "latency_ms": 24.38,
+          "returned_items": 20,
+          "page_info_total": 2031,
+          "auto_proposal_counts": {
+            "incident_followup": 1,
+            "incident_severity": 1,
+            "postmortem_draft": 2027,
+            "total": 2029
+          }
+        }
+      },
+      "verified_by": [
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_owner_write"
+      ]
+    },
+    "ac7_explicit_deep_link_filters_bypass_view_exclusion": {
+      "explicit_filters": [
+        "decision",
+        "mutation_review",
+        "persona"
+      ],
+      "behavior": "When any of decision, mutation_review, or persona is non-empty on the request, the view filter does not hide the targeted record(s), so deep links return their target record under view=all, view=history, and view=auto_proposals.",
+      "verified_by": [
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_target_under_any_view"
+      ]
+    },
+    "ac8_no_proposal_deleted_or_mutated_and_no_evolution_owner_write": {
+      "proposals_deleted": 0,
+      "proposals_state_changed": 0,
+      "evolution_owner_written": false,
+      "verified_by": [
+        "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_owner_write"
+      ]
+    },
+    "ac9_real_hosted_decision_shapes_used": {
+      "shape_1": {
+        "decision_id": "evo-sweep-agent-000b205c0ef9-0000",
+        "target_type": "candidate_artifact",
+        "target_id": "infra-component-agent-finding-000b205c0ef9",
+        "action": "flag_for_review",
+        "decision_state": "proposed",
+        "risk_level": "low",
+        "linked_incident_id": "agent-000b205c0ef9-0000",
+        "threshold_snapshots": [
+          {
+            "breached": true,
+            "comparator": "gte",
+            "metric_name": "incident_followup_required",
+            "observed_value": 1,
+            "threshold_value": 1,
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+            "signal_type": "manual_review",
+            "window": "active-incident"
+          }
+        ],
+        "expected_evidence_class": "incident_followup"
+      },
+      "shape_2": {
+        "decision_id": "evo-sweep-inc-deployment-comp-deployment-saga-plan-persona-paper-1bad2eca6831457cd885",
+        "target_type": "candidate_artifact",
+        "target_id": "artifact-persona-paper-1bad2eca6831457cd885",
+        "action": "freeze",
+        "decision_state": "proposed",
+        "risk_level": "medium",
+        "threshold_snapshots": [
+          {
+            "breached": true,
+            "comparator": "gte",
+            "metric_name": "severity1_incident_count",
+            "observed_value": 1,
+            "threshold_value": 1,
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+            "signal_type": "governance_incident",
+            "window": "active-incident"
+          }
+        ],
+        "expected_evidence_class": "incident_severity"
+      }
+    },
+    "ac10_pytest_verification": {
+      "changed_existing_test_assertions": [
+        {
+          "test": "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_evolution_journal_composes_required_sources",
+          "line": 434,
+          "before": "assert set(body[\"data\"].keys()) == {\"id\", \"items\", \"summary\"}",
+          "after": "assert set(body[\"data\"].keys()) == {\"id\", \"items\", \"summary\", \"auto_proposal_counts\"}",
+          "reason": "Acceptance Criterion 5 requires GET /bff/management/evolution-journal to carry auto_proposal_counts in data."
+        }
+      ],
+      "no_test_deleted_or_weakened": true,
+      "commands": [
+        {
+          "command": ".venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_bff_b3_evolution_journal.py services/control-plane/bff/tests/test_evolution_router.py services/control-plane/bff/tests/test_evochain_004_freeze_rollback_store.py services/control-plane/bff/tests/test_management_read_models_router.py -q",
+          "exit_code": 0,
+          "summary": "85 passed, 5 warnings in 65.03s"
+        },
+        {
+          "command": ".venv-pantheon/bin/python -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q",
+          "exit_code": 1,
+          "summary": "6 passed, 1 skipped, 1 pre-existing failure (test_execute_plans_final_seeded_detail_paths_use_read_model_dtos on /bff/alerts, identical on unmodified origin/dev e3bea033a)"
+        }
+      ],
+      "preexisting_failures_unrelated_to_this_change": [
+        "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos: fails identically on unmodified origin/dev (e3bea033a) on ('/bff/alerts', 'empty') because personas/service.py::_dataset_surface_status('incidents') reads app_deps.read_surface.lifecycle_telemetry_governance.incidents directly without unwrapping app_deps.read_surface._active_delegate when bff_main.read_store is rebound; also recorded in docs/deployment/evidence/BFF-MAIN-PERSONA-HELPERS-CONVERGE-EQUIV-20261008/evidence.json and docs/deployment/evidence/BFF-TEST-PREEXISTING-FAILURE-TRIAGE-001/evidence.json."
+      ]
+    }
+  }
+}

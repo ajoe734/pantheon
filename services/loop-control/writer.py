@@ -12,6 +12,9 @@ from .store import LoopControllerStore
 _DEFAULT_LEASE_SECONDS = 60
 
 
+LOOP_12_HEALTH_MONITOR_LOOP_ID = "bff_health_monitoring"
+
+
 class LoopControllerWriter:
     """Fenced partial-update SDK shared by the twelve canonical loops."""
 
@@ -150,6 +153,20 @@ class LoopControllerWriter:
         lease_duration_seconds: Optional[int] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
+        now = datetime.now(timezone.utc)
+        # Observed-probe success inference is only valid for Loop12, whose
+        # heartbeat carries a completed downstream probe. Other loops call
+        # heartbeat before doing work, so it must stay liveness-only.
+        reconciled_probe_ok = (
+            loop_id == LOOP_12_HEALTH_MONITOR_LOOP_ID
+            and truth_level == "reconciled_live_proof"
+            and isinstance(desired_state, dict)
+            and isinstance(downstream_actual_state, dict)
+            and bool(desired_state)
+            and desired_state.get("present") is not False
+            and str(downstream_actual_state.get("status") or "").lower()
+            in ("ready", "ok", "healthy")
+        )
         await self._write_status(
             loop_id,
             truth_level,
@@ -157,7 +174,9 @@ class LoopControllerWriter:
             actual_state_query=actual_state_query,
             desired_state=desired_state,
             downstream_actual_state=downstream_actual_state,
-            last_heartbeat_at=datetime.now(timezone.utc),
+            last_heartbeat_at=now,
+            last_tick_at=now if reconciled_probe_ok else None,
+            last_success_at=now if reconciled_probe_ok else None,
             backlog=backlog,
             lag=lag,
             dlq_count=dlq_count,

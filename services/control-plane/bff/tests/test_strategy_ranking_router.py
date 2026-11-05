@@ -349,7 +349,16 @@ def test_bff_strategy_create_list_get_round_trip() -> None:
         if rks and hasattr(rks, "_strategy_specs"):
             rks._strategy_specs[strategy_id] = {
                 "strategy_id": strategy_id,
-                "versions": [{"version_id": "v1", "lifecycle_state": "draft", "name": "Momentum Alpha", "persona_ids": []}],
+                "risk": "high",
+                "versions": [
+                    {
+                        "version_id": "v1",
+                        "lifecycle_state": "draft",
+                        "name": "Momentum Alpha",
+                        "risk": "high",
+                        "persona_ids": [],
+                    }
+                ],
                 "current_version_id": "v1",
             }
 
@@ -434,6 +443,13 @@ def test_bff_strategy_patch_updates_overlay_fields() -> None:
         )
         assert create_resp.status_code == 201, create_resp.text
         strategy_id = create_resp.json()["data"]["id"]
+        rks = getattr(client.app.state.read_store, "research_knowledge_source", None)
+        if rks and hasattr(rks, "_strategy_specs"):
+            rks._strategy_specs[strategy_id] = {
+                "strategy_id": strategy_id,
+                "versions": [{"version_id": "v1", "lifecycle_state": "draft", "name": "Momentum Alpha", "persona_ids": []}],
+                "current_version_id": "v1",
+            }
 
         patch_resp = client.patch(
             f"/bff/strategies/{strategy_id}",

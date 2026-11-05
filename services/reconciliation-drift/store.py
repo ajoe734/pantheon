@@ -27,6 +27,27 @@ class ReconciliationStoreError(RuntimeError):
     """
 
 
+def evaluation_in_window(
+    record: Dict[str, Any],
+    *,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    governed_breached_only: bool = False,
+) -> bool:
+    """Shared predicate for the evaluation list filters (JSON backend)."""
+    evaluated_at = str(record.get("evaluated_at") or "")
+    if since and evaluated_at < since:
+        return False
+    if until and evaluated_at > until:
+        return False
+    if governed_breached_only:
+        return any(
+            isinstance(check, dict) and check.get("governed_threshold_breached") is True
+            for check in (record.get("drift_checks") or [])
+        )
+    return True
+
+
 class ReconciliationDriftStore:
     backend: str = "json"
 
@@ -319,11 +340,24 @@ class ReconciliationDriftStore:
             self.evaluations_path, evaluation_id, tenant_id=tenant_id
         )
 
-    def list_evaluations_for_binding(self, binding_id: str) -> List[Dict[str, Any]]:
+    def list_evaluations_for_binding(
+        self,
+        binding_id: str,
+        *,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        governed_breached_only: bool = False,
+    ) -> List[Dict[str, Any]]:
         return [
             record
             for record in self._list_records(self.evaluations_path)
             if str(record.get("binding_id") or "") == binding_id
+            and evaluation_in_window(
+                record,
+                since=since,
+                until=until,
+                governed_breached_only=governed_breached_only,
+            )
         ]
 
     def drift_report_exists(
@@ -340,8 +374,23 @@ class ReconciliationDriftStore:
             self.reconciliation_records_path, record_id, tenant_id=tenant_id
         )
 
-    def list_evaluations(self) -> List[Dict[str, Any]]:
-        return self._list_records(self.evaluations_path)
+    def list_evaluations(
+        self,
+        *,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        governed_breached_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        return [
+            record
+            for record in self._list_records(self.evaluations_path)
+            if evaluation_in_window(
+                record,
+                since=since,
+                until=until,
+                governed_breached_only=governed_breached_only,
+            )
+        ]
 
     def count_evaluations(self) -> int:
         return self._count_records(self.evaluations_path)
@@ -829,16 +878,39 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     ) -> bool:
         return self.get_evaluation(evaluation_id, tenant_id) is not None
 
-    def list_evaluations_for_binding(self, binding_id: str) -> List[Dict[str, Any]]:
+    def _query_evaluations(
+        self,
+        *,
+        binding_id: Optional[str],
+        since: Optional[str],
+        until: Optional[str],
+        governed_breached_only: bool,
+    ) -> List[Dict[str, Any]]:
         owner = self._evaluation_records
-        sql = (
-            f"SELECT payload FROM {owner.table} WHERE "
+        doc = (
             "(CASE WHEN jsonb_typeof(payload) = 'string' "
-            "THEN (payload #>> '{}')::jsonb ELSE payload END) ->> 'binding_id' = %s "
-            "ORDER BY updated_at ASC"
+            "THEN (payload #>> '{}')::jsonb ELSE payload END)"
         )
+        clauses: List[str] = []
+        params: List[Any] = []
+        if binding_id is not None:
+            clauses.append(f"{doc} ->> 'binding_id' = %s")
+            params.append(binding_id)
+        if since:
+            clauses.append(f"{doc} ->> 'evaluated_at' >= %s")
+            params.append(since)
+        if until:
+            clauses.append(f"{doc} ->> 'evaluated_at' <= %s")
+            params.append(until)
+        if governed_breached_only:
+            clauses.append(
+                f"jsonb_path_exists({doc}, "
+                "'$.drift_checks[*] ? (@.governed_threshold_breached == true)')"
+            )
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT payload FROM {owner.table}{where} ORDER BY updated_at ASC"
         with owner._use_conn(None) as conn:
-            rows = conn.execute(sql, (binding_id,)).fetchall()
+            rows = conn.execute(sql, tuple(params)).fetchall()
         records: List[Dict[str, Any]] = []
         for row in rows:
             payload = row[0] if isinstance(row, tuple) else row.get("payload")
@@ -846,6 +918,21 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
             if decoded is not None:
                 records.append(decoded)
         return records
+
+    def list_evaluations_for_binding(
+        self,
+        binding_id: str,
+        *,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        governed_breached_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        return self._query_evaluations(
+            binding_id=binding_id,
+            since=since,
+            until=until,
+            governed_breached_only=governed_breached_only,
+        )
 
     def drift_report_exists(
         self, report_id: str, tenant_id: Optional[str] = None
@@ -857,8 +944,21 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     ) -> bool:
         return self.get_reconciliation_record(record_id, tenant_id) is not None
 
-    def list_evaluations(self) -> List[Dict[str, Any]]:
-        return self._evaluation_records.list_all()
+    def list_evaluations(
+        self,
+        *,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        governed_breached_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if since is None and until is None and not governed_breached_only:
+            return self._evaluation_records.list_all()
+        return self._query_evaluations(
+            binding_id=None,
+            since=since,
+            until=until,
+            governed_breached_only=governed_breached_only,
+        )
 
     def count_evaluations(self) -> int:
         return self._evaluation_records.count()

@@ -230,6 +230,12 @@ def test_human_inbox_capacity_saturation_yields_immediate_degraded_response_and_
             return []
 
         monkeypatch.setattr(store, "list_personas", slow_list_personas)
+        # The recovery assertion below needs every other owner read to succeed.
+        # A failed owner read is now reported as degraded (never as a healthy
+        # empty queue), so this isolated app must give the incidents and
+        # governance-review owners a successful, empty read.
+        monkeypatch.setattr(store, "list_incidents", lambda **_kwargs: [])
+        monkeypatch.setattr(store, "list_governance_review_queue_items", lambda **_kwargs: [])
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             first_future = pool.submit(client.get, "/bff/management/human-inbox", headers=HEADERS)

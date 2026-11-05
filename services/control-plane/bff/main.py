@@ -2975,7 +2975,6 @@ from .governance.human_inbox import (
     _human_inbox_trusted_promotion_submission,
     _submitted_promotion_review_record_from_command,
     _submitted_promotion_review_records,
-    human_inbox_surface_timeout_seconds,
 )
 from .assistant.management_service import (
     _MGMT_NL_COMMAND_RESERVATION_CONTEXT,

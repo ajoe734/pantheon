@@ -1,0 +1,135 @@
+{
+  "task_id": "ARTIFACT-CATALOG-REGISTRY-20261104",
+  "title": "Artifact catalog omits every registry execution bundle and shows only two run outputs",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "captured_at": "2026-11-05T04:19:15Z",
+  "summary": "Exposed GET /api/registry/strategy-artifacts on the Registry owner as a tenant-scoped flat catalog projection of execution_bundle entries (with paging, total, and no full metadata payload), and wired /bff/artifacts and /bff/artifacts/{artifact_id} to merge Registry execution bundles with Research run outputs newest-first while preserving owner-only fields and keeping /api/v1/research/artifacts Research-only.",
+  "acceptance_criteria_verification": {
+    "ac1_registry_strategy_artifacts_catalog_route": {
+      "status": "passed",
+      "route": "GET /api/registry/strategy-artifacts",
+      "contract_recorded_in": [
+        "services/registry/contract.md",
+        "services/registry/first_release_contract.json"
+      ],
+      "row_fields": [
+        "registry_id",
+        "strategy_id",
+        "version",
+        "artifact_state",
+        "checksum",
+        "created_at",
+        "approver",
+        "risk_level"
+      ],
+      "full_metadata_omitted": true,
+      "tenant_scope_rule": "Same visible-tenant rule as persona_binding rows (_strategy_spec_read_scope + visible_tenants + X-Tenant-Id header narrowing)."
+    },
+    "ac2_bff_artifacts_merges_registry_and_research_newest_first": {
+      "status": "passed",
+      "route": "GET /bff/artifacts",
+      "catalog_row_fields": [
+        "id",
+        "name",
+        "kind",
+        "version",
+        "state",
+        "risk",
+        "hash",
+        "owner",
+        "updatedAt",
+        "source_kind"
+      ],
+      "research_output_null_fields_preserved": [
+        "version",
+        "state",
+        "risk"
+      ],
+      "invented_values_added": false
+    },
+    "ac3_strategy_spec_excluded_and_251_plus_2_fixture_paging": {
+      "status": "passed",
+      "seeded_execution_bundles": {
+        "total": 251,
+        "approved": 249,
+        "candidate": 1,
+        "retired": 1
+      },
+      "seeded_research_outputs": 2,
+      "seeded_strategy_specs_excluded": 3,
+      "seeded_cross_tenant_bundles_excluded": 1,
+      "catalog_total": 253,
+      "paged_unique_rows_reached": 253
+    },
+    "ac4_bff_artifact_detail_resolves_both_owners_and_enforces_tenant_scope": {
+      "status": "passed",
+      "route": "GET /bff/artifacts/{id}",
+      "registry_id_resolved": true,
+      "research_id_resolved": true,
+      "unknown_id_returns_404": true,
+      "cross_tenant_registry_id_returns_404": true,
+      "strategy_spec_id_returns_404": true
+    },
+    "ac5_partial_and_total_owner_failure_surface_semantics": {
+      "status": "passed",
+      "registry_failed_research_ok": {
+        "surface_status": "degraded",
+        "failed_source": "registry",
+        "page_info_total": null,
+        "total_complete": false,
+        "returned_rows": 2
+      },
+      "research_failed_registry_ok": {
+        "surface_status": "degraded",
+        "failed_source": "research",
+        "page_info_total": null,
+        "total_complete": false,
+        "returned_rows": 20
+      },
+      "both_owners_failed": {
+        "surface_status": "unavailable",
+        "page_info_total": null,
+        "returned_rows": 0
+      }
+    },
+    "ac6_research_v1_routes_unchanged": {
+      "status": "passed",
+      "routes": [
+        "GET /api/v1/research/artifacts",
+        "GET /api/v1/research/artifacts/{artifact_id}",
+        "GET /api/v1/research/artifacts/compare"
+      ],
+      "research_only": true
+    },
+    "ac7_fixture_benchmark_and_test_integrity": {
+      "status": "passed",
+      "fixture_population": "251 execution_bundle rows (249 approved, 1 candidate, 1 retired) + 2 research run outputs",
+      "avg_bundle_full_row_bytes": 5934.0,
+      "bff_first_page_size_20_bytes": 12170,
+      "bff_first_page_latency_ms": 18.44,
+      "registry_first_page_size_50_bytes": 14459,
+      "registry_first_page_latency_ms": 10.22,
+      "existing_tests_weakened_or_deleted": false,
+      "changed_assertions_justification": "No existing test assertions were weakened or deleted; services/registry/test_first_release_contract.py was updated to assert the new GET /api/registry/strategy-artifacts route in the frozen contract snapshot."
+    }
+  },
+  "test_execution": {
+    "registry_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_first_release_contract.py services/registry/test_strategy_artifact.py services/registry/test_service.py services/registry/test_registry_auth_wiring.py -q",
+      "passed": 186,
+      "failed": 0
+    },
+    "bff_catalog_and_architecture_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_artifact_catalog_registry.py services/control-plane/bff/tests/test_bff_test_architecture.py -q",
+      "passed": 43,
+      "failed": 0
+    },
+    "bff_regression_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py -q",
+      "passed": 206,
+      "skipped": 8,
+      "failed": 0
+    }
+  }
+}

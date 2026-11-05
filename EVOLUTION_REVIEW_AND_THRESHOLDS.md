@@ -435,3 +435,37 @@ human_correction:
 ## 16. Canonical status 建議
 
 建議本文件維持為 **canonical governance policy file**，並作為 `EVO-004` 的 L1 routing truth。
+
+---
+
+## 17. 自動產生演化方向的達標標準 (Automatic program qualification)
+
+操作者決定 2026-11-04：演化方向可以手動建立，也可以自動產生；自動產生必須有篩選標準，只有達標者才建立 program、送人工審核、再進入真正的演化。2026-11-05 取代 `EVOLUTION-PROGRAM-QUALIFY-DRAFT-20261104`，修正其中兩項在真實資料上永遠達不到的寫法。
+
+Operator decision 2026-11-04: automatically generated programs must pass this standard before human review. Decision 2026-11-05 replaces the draft wording of two criteria that real data could never reach.
+
+### 17.1 執行位置與結果
+
+- 在既有 `POST /api/evolution/daily-sweep` 結尾執行（`services/evolution/program_qualification.py`），不新增 worker 或 container。
+- 對每一筆 `proposed` 的 `EvolutionDecision` 逐項判定。六項全過才經 `ProgramService` 建立恰好一個 program：`origin=auto_qualified`、`created_by=evolution-daily-sweep`、`source_decision_ids`、`qualification`（`policy_version`、`evaluated_at`、每項的 `observed`/`threshold`/`result`）；之後系統身分只執行一次 `submit_evolution_review`，不核准、不派送。
+- 重複 sweep 對 `tenant + decision_id` 冪等。
+- 標準由 `services/evolution/config/program_qualification_policy.json` 提供（含 `policy_version`）。檔案缺失或無效時 fail closed：不建立任何 draft，並記錄原因（`GET /api/evolution/program-qualification` 的 `failure_reason`、`GET /api/evolution/sweep-status`）。
+- qualifier 失敗不使 sweep 失敗、不 rollback；失敗經 `sweep-status` 的 `qualifier_last_failure_*` 呈現。
+- 報告（`policy_version`、`evaluated_at`、`evaluated`、`qualified`、`drafted`、依第一個失敗項的計數、分頁的每筆決策與六項結果）持久化於 `EVOLUTION_DATA_DIR`，重啟後仍可讀；BFF 為 `GET /bff/management/evolution-qualification`。
+
+### 17.2 六項標準與預設值
+
+| # | 標準 | 通過條件 |
+|---|---|---|
+| 1 | `real_threshold_signal` | snapshot `breached`，`signal_type` ∈ {`performance_degradation`, `execution_drift`, `feature_drift`, `human_correction`}，`metric_name` 在 policy allowlist（目前只有 `rolling_drawdown_multiple`），`observed_value`/`threshold_value` 為數值且用 comparator 重新判定仍超標。`manual_review`、`incident_followup_required`、`severity1_incident_count` 永不通過。 |
+| 2 | `real_target` | `target_id` 經 registry owner 讀回為允許的 artifact 類型且 deployment stage 在 policy 內（預設 `paper`）；`infra-component` 目標拒絕；其 persona 的 `data_scope` 為 test/acceptance/fixture/synthetic 時拒絕（`allow_test_scope` 預設 false）；無法讀回 = `target_unverifiable`。 |
+| 3 | `persistent_breach` | 目標 binding 的 drift 評估歷史（`GET /api/reconciliation-drift/evaluations`）在 `lookback_days`（預設 30）內，同一 `threshold_metric` 的 `governed_threshold_breached=true` 涵蓋至少 `min_distinct_breach_days`（預設 3）個不同的行情日。行情日 = 該評估所引用 `drawdown_snapshot` 事件（`drift_checks[].drawdown_event_id`）的 `metadata.mark_refs[].as_of` 日期；週末或假日重複同一個 mark、同一天多次評估、未指名因果事件的評估都不加天數。IncidentCase 與 decision 不是計數來源（同一 binding 與 cluster 永遠只有一筆 IncidentCase）。 |
+| 4 | `fresh_evidence` | `GET /api/telemetry/runtime-summaries/{runtime_id}` 通過與 `threshold_sweep_worker` 相同的 stale/degraded 與逐指標年齡檢查（`metric_max_age_seconds` 預設 172800），且該 binding 的最新評估（`latest_evaluation_window_seconds` 預設 3600 內）仍為 `governed_threshold_breached=true`。IncidentCase 第一個事件的年齡不影響此項。讀不到即失敗。 |
+| 5 | `executable_action` | `action_type` 在 `_ACTION_PATHS` 對應 `execution_plane=research`（`retrain`、`revalidate`）。`freeze`、`flag_for_review` 等不建立 program，維持原決策路徑。 |
+| 6 | `no_open_duplicate` | 決策仍為 `proposed`；同 target 與 metric 沒有 `draft`/`under_review`/`active`/`paused` 的 program；`stopped` 的 program 在 `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md` §5.2 的 cooldown（research 路徑 3 天）內也擋。Program 生命週期沒有 `rejected` 狀態，`stopped` 是人為終止的 owner 狀態。 |
+
+### 17.3 讀取邊界
+
+- 需要讀其他服務的標準（2、3、4）只對已通過標準 1、5、6 的決策執行；數百筆無關提案不做任何逐筆 owner 讀取，其餘項目回報 `not_evaluated`。
+- 讀取的服務與憑證：reconciliation-drift（`RECONCILIATION_DRIFT_URL`/`RECONCILIATION_DRIFT_AUTH_TOKEN`）、telemetry（`PANTHEON_TELEMETRY_API_URL`/`PANTHEON_TELEMETRY_SERVICE_TOKEN`）、registry（`PANTHEON_REGISTRY_API_URL`/`EVOLUTION_REGISTRY_SERVICE_TOKEN[_FILE]`）、persona（`PERSONA_URL`/`EVOLUTION_PERSONA_SERVICE_TOKEN[_FILE]`）。任一缺失 fail closed。
+- 目前只有 `rolling_drawdown_multiple`（經 reconciliation-drift）能產生通過標準 1 的指標；Sharpe、slippage、reject rate、PSI、human correction 有 evaluator 但尚無 producer。

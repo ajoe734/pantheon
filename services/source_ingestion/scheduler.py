@@ -401,6 +401,40 @@ class JsonlIngestScheduleStore:
             self._reload_unlocked(recover_incomplete=False)
             return list(self._runs.values())
 
+    def list_runs_page(
+        self,
+        *,
+        statuses: frozenset[str] | None = None,
+        limit: int,
+        offset: int = 0,
+    ) -> tuple[list[IngestRun], list[IngestReceipt], int]:
+        """Bounded run listing: newest first, optional status filter, one journal replay.
+
+        Returns ``(runs_page, receipts_for_those_runs, total_matching)`` so a
+        caller never has to materialise every run and receipt.
+        """
+        with exclusive_file_lock(self._lock_path, self._lock):
+            # Read-only paging path: skip the full journal replay while the
+            # journal is byte-for-byte what the last page read replayed
+            # (same inode, size and mtime). Any append, from this or another
+            # process, changes that key and forces a fresh replay.
+            try:
+                stat = self.path.stat()
+                key: tuple[int, int, int] | None = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            except OSError:
+                key = None
+            if key is None or key != getattr(self, "_page_read_key", None):
+                self._reload_unlocked(recover_incomplete=False)
+                self._page_read_key = key
+            runs = list(self._runs.values())
+            if statuses:
+                runs = [run for run in runs if str(getattr(run.status, "value", run.status)).lower() in statuses]
+            runs.sort(key=lambda run: (str(run.started_at), run.ingest_run_id), reverse=True)
+            total = len(runs)
+            page = runs[offset : offset + limit]
+            receipts = [self._receipts[run.ingest_run_id] for run in page if run.ingest_run_id in self._receipts]
+            return page, receipts, total
+
     def upsert_receipt(self, receipt: IngestReceipt) -> IngestReceipt:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked(recover_incomplete=False)

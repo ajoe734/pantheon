@@ -29,9 +29,13 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import urllib.error
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, wait as _futures_wait
+from contextvars import copy_context
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 try:
     from services.control_plane.bff.command_adapters.base import (
@@ -83,6 +87,10 @@ class JobSourceSpec:
     get_path_template: Optional[str]  # "{native_id}" substituted
     native_id_field: str  # response field carrying the native id
     supports_list: bool = True
+    # The owner exposes a bounded list form (``status``/``page_size``/``page_token``
+    # query, ``page_info.next_page_token`` in the body). The BFF then never asks
+    # for the unbounded list.
+    bounded_list: bool = False
 
 
 # Native ID prefixes and env vars mirror downstream_health_monitor.py's
@@ -120,6 +128,7 @@ _JOB_SOURCES: Tuple[JobSourceSpec, ...] = (
         list_path="/api/source-ingest/jobs",
         get_path_template="/api/source-ingest/jobs/{native_id}",
         native_id_field="ingest_run_id",
+        bounded_list=True,
     ),
     JobSourceSpec(
         prefix="job-policy-",
@@ -156,6 +165,9 @@ def _timeout_seconds() -> float:
     except ValueError:
         return 2.0
 
+
+_OWNER_PAGE_SIZE = 250
+_OWNER_MAX_PAGES = 100
 
 HttpGetFn = Callable[[str], Tuple[bool, Any]]
 
@@ -236,17 +248,66 @@ class JobReadPort:
                 return spec
         return None
 
+    def _fetch_source_records(
+        self,
+        spec: JobSourceSpec,
+        base: str,
+        *,
+        statuses: Optional[frozenset],
+        page_size: Optional[int],
+    ) -> Tuple[bool, List[Dict[str, Any]], bool]:
+        """Read one source. Returns ``(ok, records, truncated)``."""
+        if not spec.bounded_list:
+            ok, payload = self.http_get(f"{base}{spec.list_path}")
+            return ok, (_extract_list(payload) if ok else []), False
+        # Bounded owner form: follow owner pages so the union stays complete.
+        single_page = page_size is not None
+        size = page_size or _OWNER_PAGE_SIZE
+        query: Dict[str, Any] = {"page_size": size}
+        if statuses:
+            query["status"] = ",".join(sorted(statuses))
+        records: List[Dict[str, Any]] = []
+        token: Optional[str] = None
+        for _ in range(1 if single_page else _OWNER_MAX_PAGES):
+            page_query = dict(query)
+            if token:
+                page_query["page_token"] = token
+            ok, payload = self.http_get(f"{base}{spec.list_path}?{urllib.parse.urlencode(page_query)}")
+            if not ok:
+                return False, records, False
+            records.extend(_extract_list(payload))
+            info = payload.get("page_info") if isinstance(payload, dict) else None
+            token = str(info.get("next_page_token") or "") if isinstance(info, dict) else ""
+            if not token:
+                return True, records, False
+        return True, records, bool(token)
+
     def list_jobs_bff(
         self,
         *,
         status: Optional[str] = None,
         job_type: Optional[str] = None,
         diagnostics: Optional[Dict[str, Any]] = None,
+        statuses: Optional[Iterable[str]] = None,
+        page_size: Optional[int] = None,
+        deadline_seconds: Optional[float] = None,
         **_kwargs: Any,
     ) -> List[Dict[str, Any]]:
+        """Compose jobs across sources, reading them concurrently.
+
+        ``statuses``/``page_size`` request a bounded active-job read (one owner
+        page per source); ``deadline_seconds`` caps the whole read so a stalled
+        source is reported as ``timeout`` instead of delaying the caller.
+        Availability is reported only through ``diagnostics`` (and the return of
+        this call), never inferred from shared state.
+        """
+        wanted = frozenset(_normalize_status(v) for v in statuses) if statuses else None
+        if status:
+            wanted = (wanted & {status}) if wanted else frozenset({status})
         degraded_sources: Dict[str, str] = {}
-        healthy_sources: List[str] = []
-        jobs: List[Dict[str, Any]] = []
+        outcomes: Dict[str, Tuple[bool, List[Dict[str, Any]], bool]] = {}
+        todo: List[Tuple[JobSourceSpec, str]] = []
+        configured: List[str] = []
         for spec in self.sources:
             if not spec.supports_list or spec.list_path is None:
                 continue
@@ -256,12 +317,48 @@ class JobReadPort:
             if not base:
                 degraded_sources[spec.name] = "unconfigured"
                 continue
-            ok, payload = self.http_get(f"{base}{spec.list_path}")
+            configured.append(spec.name)
+            todo.append((spec, base))
+        if todo:
+            pool = ThreadPoolExecutor(max_workers=len(todo), thread_name_prefix="job-source")
+            futures = {
+                spec.name: pool.submit(
+                    copy_context().run,
+                    lambda spec=spec, base=base: self._fetch_source_records(
+                        spec, base, statuses=wanted, page_size=page_size
+                    ),
+                )
+                for spec, base in todo
+            }
+            try:
+                _futures_wait(list(futures.values()), timeout=deadline_seconds)
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+            for spec, _base in todo:
+                future = futures[spec.name]
+                if not future.done():
+                    outcomes[spec.name] = (False, [], False)
+                    degraded_sources[spec.name] = "timeout"
+                    continue
+                try:
+                    outcomes[spec.name] = future.result()
+                except ActionUnavailableError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("job source %s read failed: %s", spec.name, exc)
+                    outcomes[spec.name] = (False, [], False)
+                if not outcomes[spec.name][0]:
+                    degraded_sources[spec.name] = "unreachable"
+                elif outcomes[spec.name][2]:
+                    degraded_sources[spec.name] = "truncated"
+        healthy_sources: List[str] = []
+        jobs: List[Dict[str, Any]] = []
+        for spec, _base in todo:
+            ok, records, _truncated = outcomes[spec.name]
             if not ok:
-                degraded_sources[spec.name] = "unreachable"
                 continue
             healthy_sources.append(spec.name)
-            for record in _extract_list(payload):
+            for record in records:
                 native_id = str(record.get(spec.native_id_field) or record.get("id") or "").strip()
                 if not native_id:
                     continue
@@ -271,8 +368,9 @@ class JobReadPort:
             diagnostics.clear()
             diagnostics["healthy_sources"] = healthy_sources
             diagnostics["degraded_sources"] = dict(degraded_sources)
-        if status:
-            jobs = [j for j in jobs if j.get("status") == status]
+            diagnostics["configured_sources"] = list(configured)
+        if wanted:
+            jobs = [j for j in jobs if j.get("status") in wanted]
         jobs.sort(key=lambda j: str(j.get("created_at") or ""), reverse=True)
         return jobs
 

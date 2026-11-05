@@ -28,6 +28,7 @@ from ports.lifecycle_telemetry_governance import (
     DomainLifecyclePort,
     DomainGovernancePort,
     DomainLineagePort,
+    InMemoryLineagePort,
     DomainTelemetryPort,
     CompositeLifecycleTelemetryGovernancePort,
     InMemoryLifecycleTelemetryGovernancePort,
@@ -657,7 +658,7 @@ def test_governance_audit_events_filtering(sample_governance_data):
 
 def test_lineage_edges_and_records(sample_lineage_data):
     """LN-01 / LN-02: Verify lineage edges and aggregate lineage records."""
-    port = DomainLineagePort(
+    port = InMemoryLineagePort(
         lineage_edges=sample_lineage_data["lineage_edges"],
         inspiration_graphs=sample_lineage_data["inspiration_graphs"],
         artifact_registry_entries=sample_lineage_data["artifact_registry_entries"],
@@ -693,7 +694,7 @@ def test_lineage_edges_and_records(sample_lineage_data):
 
 def test_lineage_inspiration_graph_projection(sample_lineage_data):
     """LN-03: Verify inspiration graph projection, weight clamping [0.0, 1.0], and metadata."""
-    port = DomainLineagePort(
+    port = InMemoryLineagePort(
         inspiration_graphs=sample_lineage_data["inspiration_graphs"]
     )
 
@@ -838,7 +839,7 @@ def test_factory_function_with_individual_ports():
     inc_port = DomainIncidentPort()
     life_port = DomainLifecyclePort()
     gov_port = DomainGovernancePort()
-    lin_port = DomainLineagePort()
+    lin_port = InMemoryLineagePort()
     tel_port = DomainTelemetryPort()
 
     composite = create_lifecycle_telemetry_governance_port(

@@ -27,9 +27,14 @@ try:
         redact_evidence_refs,
     )
     from services.control_plane.bff.ports.research_knowledge_source import (
+        ArtifactOwnerReadResult,
         EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
+        _naive_utc,
+        _parse_rfc3339,
+        normalize_registry_catalog_row,
+        normalize_research_catalog_row,
     )
     from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 except (ImportError, ValueError):
@@ -38,9 +43,14 @@ except (ImportError, ValueError):
         redact_evidence_refs,
     )
     from ..ports.research_knowledge_source import (  # type: ignore[no-redef]
+        ArtifactOwnerReadResult,
         EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
+        _naive_utc,
+        _parse_rfc3339,
+        normalize_registry_catalog_row,
+        normalize_research_catalog_row,
     )
     from ..ports.read_surface_ports import ReadSurfacePorts  # type: ignore[no-redef]
 
@@ -691,6 +701,43 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         if self._ks is not None and hasattr(self._ks, "get_research_artifact"):
             return self._ks.get_research_artifact(artifact_id)
         raise AttributeError("Research port operation 'get_research_artifact' not implemented")
+
+    def read_registry_strategy_artifacts(self) -> ArtifactOwnerReadResult:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_registry_strategy_artifacts"):
+                return owner.read_registry_strategy_artifacts()
+        return ArtifactOwnerReadResult([], "unconfigured", "missing")
+
+    def read_registry_strategy_artifact_detail(
+        self, artifact_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_registry_strategy_artifact_detail"):
+                return owner.read_registry_strategy_artifact_detail(artifact_id)
+        return None, "unconfigured"
+
+    def read_research_artifact_catalog_rows(self) -> ArtifactOwnerReadResult:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_research_artifact_catalog_rows"):
+                return owner.read_research_artifact_catalog_rows()
+        try:
+            rows = self.list_research_artifacts() or []
+        except Exception as exc:
+            return ArtifactOwnerReadResult([], "failed", "unavailable", str(exc))
+        owner = self._ks if self._ks is not None else self._read_surface
+        source_fn = getattr(owner, "dataset_source", None)
+        source = str(source_fn("research_artifacts") or "missing") if callable(source_fn) else "missing"
+        if source in ("missing", "unavailable") and not rows:
+            return ArtifactOwnerReadResult(
+                [],
+                "failed" if source == "unavailable" else "unconfigured",
+                source,
+            )
+        return ArtifactOwnerReadResult(
+            [normalize_research_catalog_row(r) for r in rows if isinstance(r, dict)],
+            "ok",
+            source if source not in ("missing", "unavailable") else "typed_store",
+        )
 
     def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
         if self._read_surface is not None and hasattr(self._read_surface, "compare_research_artifacts"):
@@ -1389,6 +1436,170 @@ class ResearchRouterService:
         }
         payload["meta"] = meta
         return payload
+
+    def list_artifact_catalog(
+        self,
+        *,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        snapshot_at = self.utc_now()
+        port = self._port()
+        if hasattr(port, "read_registry_strategy_artifacts"):
+            try:
+                reg_read = port.read_registry_strategy_artifacts()
+            except Exception as exc:
+                reg_read = ArtifactOwnerReadResult([], "failed", "unavailable", str(exc))
+        else:
+            reg_read = ArtifactOwnerReadResult([], "unconfigured", "missing")
+
+        if hasattr(port, "read_research_artifact_catalog_rows"):
+            try:
+                res_read = port.read_research_artifact_catalog_rows()
+            except Exception as exc:
+                res_read = ArtifactOwnerReadResult([], "failed", "unavailable", str(exc))
+        else:
+            try:
+                raw_res = list(port.list_research_artifacts() or [])
+                src = self._get_dataset_source("research_artifacts")
+                if src in ("missing", "unavailable") and not raw_res:
+                    res_read = ArtifactOwnerReadResult(
+                        [],
+                        "failed" if src == "unavailable" else "unconfigured",
+                        src,
+                    )
+                else:
+                    res_read = ArtifactOwnerReadResult(
+                        [normalize_research_catalog_row(r) for r in raw_res if isinstance(r, dict)],
+                        "ok",
+                        src if src not in ("missing", "unavailable") else "typed_store",
+                    )
+            except Exception as exc:
+                res_read = ArtifactOwnerReadResult([], "failed", "unavailable", str(exc))
+
+        merged: List[Dict[str, Any]] = list(reg_read.items or []) + list(res_read.items or [])
+        merged.sort(
+            key=lambda row: (
+                _naive_utc(_parse_rfc3339(row.get("updatedAt"))),
+                str(row.get("id") or ""),
+            ),
+            reverse=True,
+        )
+
+        failed_sources: List[str] = []
+        if reg_read.status == "failed":
+            failed_sources.append("registry")
+        if res_read.status == "failed":
+            failed_sources.append("research")
+
+        ok_sources: List[str] = []
+        if reg_read.status == "ok":
+            ok_sources.append("registry")
+        if res_read.status == "ok":
+            ok_sources.append("research")
+
+        meta = self.snapshot_meta(snapshot_at)
+        if failed_sources and ok_sources:
+            page_items, next_page_token = self.page_slice(merged, page_token, page_size)
+            surface: Dict[str, Any] = {
+                "status": "degraded",
+                "source": ok_sources[0],
+                "failed_source": failed_sources[0],
+                "failed_sources": list(failed_sources),
+                "degraded_sources": list(failed_sources),
+                "message": (
+                    f"Artifact catalog is degraded because {', '.join(failed_sources)} owner read failed."
+                ),
+            }
+            page_info: Dict[str, Any] = {
+                "next_page_token": next_page_token,
+                "total": None,
+                "total_complete": False,
+            }
+            meta["total_complete"] = False
+        elif not ok_sources:
+            page_items, next_page_token = [], None
+            surface = {
+                "status": "unavailable",
+                "source": "unavailable" if failed_sources else "missing",
+                "failed_sources": list(failed_sources),
+                "message": "Artifact catalog owners are unavailable.",
+            }
+            page_info = {
+                "next_page_token": None,
+                "total": None if failed_sources else 0,
+            }
+        else:
+            page_items, next_page_token = self.page_slice(merged, page_token, page_size)
+            surface = {
+                "status": "ok",
+                "source": (
+                    "service_client"
+                    if "service_client" in (reg_read.source, res_read.source)
+                    else "typed_store"
+                ),
+            }
+            page_info = {
+                "next_page_token": next_page_token,
+                "total": len(merged),
+            }
+
+        meta["surfaces"] = {"artifact_list": surface}
+        return {
+            "data": [dict(item) for item in page_items],
+            "items": [dict(item) for item in page_items],
+            "page_info": page_info,
+            "meta": meta,
+        }
+
+    def get_artifact_catalog_detail(self, artifact_id: str) -> Dict[str, Any]:
+        clean_id = str(artifact_id or "").strip()
+        if not clean_id:
+            raise ResearchNotFoundError("Artifact", clean_id)
+        snapshot_at = self.utc_now()
+        port = self._port()
+
+        reg_detail: Optional[Dict[str, Any]] = None
+        if hasattr(port, "read_registry_strategy_artifact_detail"):
+            try:
+                reg_detail, _ = port.read_registry_strategy_artifact_detail(clean_id)
+            except Exception:
+                reg_detail = None
+        if reg_detail is not None:
+            meta = self.snapshot_meta(snapshot_at)
+            meta["surfaces"] = {
+                "artifact_detail": {
+                    "status": "ok",
+                    "source": "service_client",
+                }
+            }
+            return {"data": dict(reg_detail), "meta": meta}
+
+        try:
+            with self._map_port_errors("get_research_artifact"):
+                res_record = port.get_research_artifact(clean_id)
+        except Exception:
+            res_record = None
+        if not res_record:
+            raise ResearchNotFoundError("Artifact", clean_id)
+
+        catalog_fields = normalize_research_catalog_row(res_record)
+        payload = dict(res_record)
+        for k, v in catalog_fields.items():
+            if k not in payload or payload.get(k) is None or (k == "state" and payload.get("status") == ""):
+                payload[k] = v
+        if payload.get("source_kind") == "research_run_output" or payload.get("saved_output"):
+            payload["version"] = None
+            payload["state"] = None
+            payload["risk"] = None
+
+        meta = self.snapshot_meta(snapshot_at)
+        meta["surfaces"] = {
+            "artifact_detail": self._surface(
+                "research_artifacts", snapshot_at=snapshot_at, has_data=True
+            )
+        }
+        return {"data": payload, "meta": meta}
 
     def compare_artifacts(self, artifact_ids: str) -> Dict[str, Any]:
         requested_ids = [value.strip() for value in str(artifact_ids or "").split(",") if value.strip()]

@@ -117,22 +117,27 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
         page_size: int = Query(default=20, ge=1, le=100),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        result = _list_artifacts(None, None, None, None, None, page_token, page_size, authorization)
-        return {
-            "data": result["artifacts"],
-            "items": result["artifacts"],
-            "page_info": {"next_page_token": result["next_page_token"], "total": result["total_count"]},
-            "meta": result["meta"],
-        }
+        ctx.require_read_role(ctx.extract_identity(authorization))
+        try:
+            return ctx.service.list_artifact_catalog(
+                page_token=page_token,
+                page_size=page_size,
+            )
+        except (ResearchNotFoundError, ResearchValidationError) as exc:
+            ctx.raise_service_error(exc)
+            raise AssertionError("unreachable")
 
     @router.get("/bff/artifacts/{artifact_id}")
     def bff_get_research_artifact(
         artifact_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        payload = _get_artifact(artifact_id, authorization)
-        meta = payload.pop("meta")
-        return {"data": payload, "meta": meta}
+        ctx.require_read_role(ctx.extract_identity(authorization))
+        try:
+            return ctx.service.get_artifact_catalog_detail(artifact_id)
+        except (ResearchNotFoundError, ResearchValidationError) as exc:
+            ctx.raise_service_error(exc)
+            raise AssertionError("unreachable")
 
     # Legacy inventory endpoints
     async def endpoint_compare_artifacts_api(request: Request, **_kwargs: Any) -> Dict[str, Any]:

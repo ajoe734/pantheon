@@ -144,6 +144,7 @@ class ReadSurfacePorts:
         paper_fleet_reconciler_url: Optional[str] = None,
         paper_fleet_transport: Optional[Any] = None,
         reconciliation_drift_reads: Optional[ReconciliationDriftReadsPort] = None,
+        latest_ranking_snapshot_reader: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
     ) -> None:
         self._active_delegate = None
         self.operations_consultation = operations_consultation or create_operations_consultation_port()
@@ -159,6 +160,7 @@ class ReadSurfacePorts:
         self._paper_fleet_reconciler_url = paper_fleet_reconciler_url
         self._paper_fleet_transport = paper_fleet_transport
         self.reconciliation_drift_reads = reconciliation_drift_reads or ReconciliationDriftReadsPort()
+        self._latest_ranking_snapshot_reader = latest_ranking_snapshot_reader
 
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -180,6 +182,7 @@ class ReadSurfacePorts:
             "_paper_fleet_reconciler_url",
             "_paper_fleet_transport",
             "reconciliation_drift_reads",
+            "_latest_ranking_snapshot_reader",
         ):
             super().__setattr__(name, value)
             return
@@ -209,6 +212,7 @@ class ReadSurfacePorts:
             "_paper_fleet_reconciler_url",
             "_paper_fleet_transport",
             "reconciliation_drift_reads",
+            "_latest_ranking_snapshot_reader",
         ):
             return super().__getattribute__(name)
 
@@ -387,6 +391,15 @@ class ReadSurfacePorts:
     def get_ranking(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.persona_capital_runtime.get_ranking(ranking_id)
 
+    def get_latest_ranking_snapshot(self, *, surface: str = "quarterly") -> Optional[Dict[str, Any]]:
+        if self._latest_ranking_snapshot_reader is not None:
+            return self._latest_ranking_snapshot_reader(surface=surface)
+        if hasattr(self.persona_capital_runtime, "get_latest_ranking_snapshot"):
+            return self.persona_capital_runtime.get_latest_ranking_snapshot(surface=surface)
+        from services.control_plane.bff.core.owner_reads import latest_ranking_snapshot
+
+        return latest_ranking_snapshot(None, surface=surface)
+
     def list_ranking_formulas(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_ranking_formulas(**kwargs)
 
@@ -422,6 +435,9 @@ class ReadSurfacePorts:
 
     def list_evolution_decisions(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_evolution_decisions(**kwargs)
+
+    def get_evolution_qualification(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.persona_capital_runtime.get_evolution_qualification(**kwargs)
 
     def list_evolution_program_runs(self, program_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_evolution_program_runs(program_id)
@@ -492,6 +508,9 @@ class ReadSurfacePorts:
             # consultation client/store or catalog backend surfaces as
             # unavailable rather than a false healthy default.
             return self.operations_consultation.dataset_source(dataset)
+        if dataset == "lineage_edges":
+            # Real registry-owner read outcome (service_client / unavailable), never a constant.
+            return self.lifecycle_telemetry_governance.dataset_source(dataset)
         if dataset in ("incidents", "postmortems"):
             # The incident/postmortem owners can be down while list_*() swallows
             # the outage and returns []; surface their real availability.
@@ -569,7 +588,6 @@ class ReadSurfacePorts:
             "kill_switch",
             "drift_reports",
             "telemetry_events",
-            "lineage_edges",
             "governance_audit_events",
             "approval_decisions",
             "evolution_decisions",
@@ -761,6 +779,27 @@ class ReadSurfacePorts:
     def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_research_artifact(artifact_id)
 
+    def read_registry_strategy_artifacts(self) -> Any:
+        return self.research_knowledge_source.read_registry_strategy_artifacts()
+
+    def read_registry_strategy_artifact_detail(self, artifact_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_registry_strategy_artifact_detail(artifact_id)
+
+    def read_research_artifact_catalog_rows(self) -> Any:
+        if "list_research_artifacts" in self.__dict__:
+            from .research_knowledge_source import ArtifactOwnerReadResult, normalize_research_catalog_row
+
+            try:
+                rows = self.list_research_artifacts() or []
+                return ArtifactOwnerReadResult(
+                    [normalize_research_catalog_row(r) for r in rows if isinstance(r, dict)],
+                    "ok",
+                    "typed_store",
+                )
+            except Exception as exc:
+                return ArtifactOwnerReadResult([], "failed", "unavailable", str(exc))
+        return self.research_knowledge_source.read_research_artifact_catalog_rows()
+
     def get_research_search_index(self) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_research_search_index()
 
@@ -880,6 +919,9 @@ class ReadSurfacePorts:
 
     def get_lineage_graph_nodes(self, edges: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         return self.lifecycle_telemetry_governance.get_lineage_graph_nodes(edges)
+
+    def lineage_has_more(self) -> bool:
+        return self.lifecycle_telemetry_governance.lineage_has_more()
 
     def get_loop_run(self, loop_run_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
         return self.lifecycle_telemetry_governance.get_loop_run(loop_run_id)
@@ -1489,7 +1531,12 @@ def create_read_surface_ports(
     **kwargs: Any,
 ) -> ReadSurfacePorts:
     """Factory creating a production-grade composite ReadSurfacePorts instance."""
-    from ..core.owner_reads import approval_records, create_owner_domain_ports, telemetry_summaries
+    from ..core.owner_reads import (
+        approval_records,
+        create_owner_domain_ports,
+        latest_ranking_snapshot,
+        telemetry_summaries,
+    )
     if lifecycle_telemetry_governance is None:
         lifecycle_telemetry_governance = create_lifecycle_telemetry_governance_port(
             telemetry_port=DomainTelemetryPort(telemetry_summaries_reader=telemetry_summaries),
@@ -1529,6 +1576,9 @@ def create_read_surface_ports(
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
         reconciliation_drift_reads=reconciliation_drift_reads,
+        latest_ranking_snapshot_reader=lambda surface="quarterly": latest_ranking_snapshot(
+            ranking_store, surface=surface
+        ),
     )
 
 

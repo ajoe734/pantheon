@@ -1962,11 +1962,30 @@ class HostedChainRunner:
                 "original_baseline_fleet": copy.deepcopy(self.baseline_fleet),
                 "retired_baseline_bindings": retired_baseline_records,
                 "replacement_active_bindings": replacement_active_records,
-                "active_count_restored": active_count,
+                "baseline_active_count": (self.baseline_fleet or {}).get("active_count"),
+                "active_count_after_close": active_count,
                 "chain_active_bindings": [],
             },
             None,
         )
+
+    def _chain_resource_overlap(self, state: Mapping[str, Any]) -> str:
+        diag = state.get("diagnostics") if isinstance(state.get("diagnostics"), Mapping) else {}
+        pairs = (
+            ("plan_id", diag.get("plan_id"), self.resource_ids.get("plan_id")),
+            ("capital_pool_id", diag.get("capital_pool_id"), self.resource_ids.get("capital_pool_id")),
+            (
+                "persona_capital_binding_id",
+                diag.get("persona_capital_binding_id"),
+                self.resource_ids.get("capital_binding_id"),
+            ),
+            ("persona_id", diag.get("persona_id"), self.resource_ids.get("persona_id")),
+            ("runtime_id", state.get("runtime_id"), self.resource_ids.get("runtime_id")),
+        )
+        for name, theirs, ours in pairs:
+            if str(ours or "").strip() and str(theirs or "").strip() == str(ours).strip():
+                return f"{name}={ours}"
+        return ""
 
     def _baseline_check(
         self, pre_close_fleet: Mapping[str, Any] | None = None
@@ -1995,9 +2014,15 @@ class HostedChainRunner:
         )
         if chain_active:
             return "chain_binding_still_active", f"chain binding still desired: {chain_active}", {}
-        expected_count = self.baseline_fleet.get("active_count")
-        if now["active_count"] != expected_count or len(now["binding_ids"]) != expected_count:
-            return "mismatch", f"fleet now {now} differs from baseline {self.baseline_fleet}", {}
+        # A shared dev fleet may grow or shrink outside the chain; a differing count is not a mismatch by itself.
+        # Each difference is proven external below. The snapshot must still be self-consistent.
+        if now["active_count"] != len(now["binding_ids"]):
+            return (
+                "mismatch",
+                f"runtime fleet snapshot inconsistent: active_count {now['active_count']} != "
+                f"{len(now['binding_ids'])} binding ids",
+                {},
+            )
 
         post_close_bindings = {
             bid: self._read_nonchain_binding_state(bid, fleet_items.get(bid, {}))
@@ -2020,6 +2045,15 @@ class HostedChainRunner:
 
         baseline_ids = list(self.baseline_fleet.get("binding_ids") or [])
         is_replaced = now["binding_ids"] != baseline_ids
+        # Replaces the residue detection the count comparison gave: an added binding must not reuse chain resources.
+        for bid in sorted(set(now["binding_ids"]) - set(baseline_ids)):
+            residue = self._chain_resource_overlap(post_close_bindings[bid])
+            if residue:
+                return (
+                    "mismatch",
+                    f"added binding {bid} shares chain resource ({residue}); possible chain residue",
+                    {},
+                )
         for bid in now["binding_ids"]:
             post_state = post_close_bindings[bid]
             if pre_close_fleet is not None and (

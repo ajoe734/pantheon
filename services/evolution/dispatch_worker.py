@@ -490,6 +490,28 @@ def _deliver_one(
     item["downstream_kind"] = submission.downstream_kind
     item["downstream_ref_id"] = downstream_ref_id
 
+    # Link the real run into the owning program before waiting on it, so an
+    # in-flight run is already visible.  Linking is idempotent and verified by
+    # the owner against the downstream; a failure retries the whole tick.
+    try:
+        _http_post(
+            api_url.rstrip("/") + f"/api/evolution/proposals/{decision_id}/dispatch-run",
+            {
+                "tenant_id": tenant_id,
+                "actor_id": actor_id,
+                "downstream_kind": submission.downstream_kind,
+                "downstream_ref_id": downstream_ref_id,
+            },
+            timeout_seconds,
+            tenant_id=tenant_id,
+            auth_token=auth_token,
+        )
+    except urllib.error.HTTPError as exc:
+        item["disposition"] = "retry"
+        item["detail"] = f"run link failed: HTTP {exc.code} {exc.reason}"
+        _fail(record, outbox, f"run link failed: HTTP {exc.code}", result, now=now)
+        return
+
     receipt = adapter.read_receipt(
         downstream_ref_id,
         expected_intent=payload,

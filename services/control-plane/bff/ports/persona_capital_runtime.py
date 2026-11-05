@@ -797,9 +797,11 @@ class EvolutionProjectionPort:
         *,
         evolution_programs_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         evolution_decisions_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+        evolution_qualification_reader: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> None:
         self._evolution_programs_reader = evolution_programs_reader
         self._evolution_decisions_reader = evolution_decisions_reader
+        self._evolution_qualification_reader = evolution_qualification_reader
 
     @staticmethod
     def _read(reader: Optional[Callable[[], List[Dict[str, Any]]]]) -> Tuple[str, List[Dict[str, Any]]]:
@@ -848,6 +850,25 @@ class EvolutionProjectionPort:
             key=lambda x: (_parse_rfc3339(x.get("created_at")) or datetime.min).replace(tzinfo=None),
             reverse=True,
         )
+
+    def get_evolution_qualification(
+        self, *, limit: int, offset: int, qualified: Optional[bool]
+    ) -> Dict[str, Any]:
+        """Last program-qualification report from the Evolution owner (read-only)."""
+        if self._evolution_qualification_reader is None:
+            raise ActionUnavailableError("Evolution qualification reader is unconfigured", downstream_status=503)
+        query: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if qualified is not None:
+            query["qualified"] = "true" if qualified else "false"
+        try:
+            report = self._evolution_qualification_reader(query)
+        except (ActionUnavailableError, HTTPException):
+            raise
+        except Exception as exc:
+            raise ActionUnavailableError(f"Evolution qualification reader failed: {exc}", downstream_status=503) from exc
+        if not isinstance(report, dict):
+            raise ActionUnavailableError("Evolution qualification report is malformed", downstream_status=503)
+        return _deep_copy(report)
 
     def get_evolution_program(self, program_id: Optional[str]) -> Optional[Dict[str, Any]]:
         clean_id = str(program_id or "").strip()
@@ -1017,6 +1038,10 @@ class PersonaCapitalRuntimeDomainPort:
     def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.runtime.get_runtime_binding_by_runtime_id(runtime_id)
 
+    # Evolution delegates
+    def get_evolution_qualification(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.evolution.get_evolution_qualification(**kwargs)
+
     # Ranking delegates
     def list_rankings(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.ranking.list_rankings(**kwargs)
@@ -1127,6 +1152,7 @@ def create_in_memory_persona_capital_runtime_port(
     containments: Optional[List[Dict[str, Any]]] = None,
     evolution_programs: Optional[List[Dict[str, Any]]] = None,
     evolution_decisions: Optional[List[Dict[str, Any]]] = None,
+    evolution_qualification_reader: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     **kwargs: Any,
 ) -> PersonaCapitalRuntimeDomainPort:
     """Create an in-memory PersonaCapitalRuntimeDomainPort for testing."""
@@ -1148,6 +1174,7 @@ def create_in_memory_persona_capital_runtime_port(
     evolution_p = EvolutionProjectionPort(
         evolution_programs_reader=lambda: list(evolution_programs or []),
         evolution_decisions_reader=lambda: list(evolution_decisions or []),
+        evolution_qualification_reader=evolution_qualification_reader,
     )
     return PersonaCapitalRuntimeDomainPort(
         persona_port=persona_p,

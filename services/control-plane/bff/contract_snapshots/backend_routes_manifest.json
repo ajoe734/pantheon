@@ -3223,6 +3223,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/evolution-qualification",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/management/formula-jobs",
       "family": "unknown",
       "status": "implemented"

@@ -31,7 +31,7 @@ from .models import (
     utc_now_iso,
 )
 from .pg_store import DivergentCommandReplayError
-from .storage import persona_binding_counts, RegistryConcurrentUpdateError, RegistryStore, RegistryUniqueViolationError
+from .storage import build_lineage_graph, persona_binding_counts, RegistryConcurrentUpdateError, RegistryStore, RegistryUniqueViolationError
 
 # ``register_if_absent`` is called from two kinds of places: real API routes
 # (service.py), which always pass a verified caller's ``actor`` explicitly,
@@ -357,6 +357,16 @@ class RegistryService:
         """Same rows as :meth:`list_all_entries`, reduced by the owner store to flat binding fields."""
         return self.store.list_persona_binding_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
+        )
+
+    def lineage_graph(
+        self, *, visible_tenants: Optional[frozenset] = None, root_id: Optional[str] = None,
+        depth: int = 3, limit: int = 200,
+    ) -> dict:
+        """Bounded lineage graph over the owner-projected visible lineage rows."""
+        return build_lineage_graph(
+            self.store.list_lineage_rows(visible_tenants=visible_tenants),
+            root_id=root_id, depth=depth, limit=limit,
         )
 
     def count_persona_bindings(

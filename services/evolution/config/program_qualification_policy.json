@@ -1,0 +1,48 @@
+{
+  "_schema_note": "Live config for services/evolution/program_qualification.py. A missing, unreadable or invalid file fails closed: the qualifier drafts nothing and records the reason. Edit this file to retune; no image rebuild required.",
+  "_field_notes": {
+    "policy_version": "Recorded on every qualification record and report.",
+    "allowed_signal_types": "A snapshot signal_type must be one of these. manual_review and governance_incident never qualify.",
+    "metric_allowlist": "Only metrics that an owner can currently produce through the drift path. Sharpe, slippage, reject rate, PSI and human correction have an evaluator but no producer as of 2026-11-04.",
+    "denied_metrics": "Metrics that never pass real_threshold_signal even if someone adds them to the allowlist.",
+    "allowed_artifact_types": "Registry artifact_type values the target may resolve to.",
+    "allowed_target_stages": "Registry deployment_stage values the target may be in.",
+    "allow_test_scope": "When false a target whose persona has data_scope test (or acceptance, fixture, synthetic) is refused.",
+    "min_distinct_breach_days": "Distinct market mark dates (as_of in the drawdown_snapshot telemetry event metadata.mark_refs) with a governed breach.",
+    "lookback_days": "Window the breach history is read from.",
+    "metric_max_age_seconds": "Per-metric age limit for the current runtime summary (same meaning as threshold_sweep_worker).",
+    "latest_evaluation_window_seconds": "The most recent drift evaluation of the binding must fall inside this window.",
+    "max_event_reads": "Upper bound on distinct telemetry events read per decision when dating breaches.",
+    "owner_read_timeout_seconds": "Per owner read timeout."
+  },
+  "policy_version": "2026-11-05.1",
+  "allowed_signal_types": [
+    "performance_degradation",
+    "execution_drift",
+    "feature_drift",
+    "human_correction"
+  ],
+  "metric_allowlist": [
+    "rolling_drawdown_multiple"
+  ],
+  "denied_metrics": [
+    "incident_followup_required",
+    "severity1_incident_count"
+  ],
+  "allowed_artifact_types": [
+    "strategy_spec",
+    "execution_bundle",
+    "model_artifact",
+    "behavior_policy"
+  ],
+  "allowed_target_stages": [
+    "paper"
+  ],
+  "allow_test_scope": false,
+  "min_distinct_breach_days": 3,
+  "lookback_days": 30,
+  "metric_max_age_seconds": 172800,
+  "latest_evaluation_window_seconds": 3600,
+  "max_event_reads": 200,
+  "owner_read_timeout_seconds": 10
+}

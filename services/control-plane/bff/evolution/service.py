@@ -74,6 +74,27 @@ _EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY = {
     "incident": "incident",
 }
 
+_EVOLUTION_JOURNAL_THRESHOLD_SIGNAL_TYPES = frozenset(
+    {
+        "performance_degradation",
+        "execution_drift",
+        "feature_drift",
+        "human_correction",
+    }
+)
+
+_EVOLUTION_JOURNAL_ALLOWED_VIEWS = frozenset(
+    {
+        "all",
+        "history",
+        "auto_proposals",
+    }
+)
+
+_EVOLUTION_JOURNAL_NON_DRAFT_POSTMORTEM_STATUSES = (
+    "review,approved,published,resolved,completed"
+)
+
 _MANAGEMENT_CAMEL_KEY_RE = re.compile(r"[A-Z]")
 
 
@@ -403,11 +424,67 @@ def evolution_journal_base_item(
     }
 
 
+def evolution_journal_decision_evidence_class(decision: Dict[str, Any]) -> str:
+    """Classify an EvolutionDecision (and its derived mutation_review) by evidence class."""
+    if not isinstance(decision, dict):
+        return "unclassified"
+    explicit = str(decision.get("evidence_class") or "").strip().lower()
+    if explicit in {"threshold_signal", "incident_followup", "incident_severity"}:
+        return explicit
+
+    raw_snapshots = decision.get("threshold_snapshots")
+    snapshots = (
+        [s for s in raw_snapshots if isinstance(s, dict)]
+        if isinstance(raw_snapshots, list)
+        else []
+    )
+    for snap in snapshots:
+        breached_raw = snap.get("breached")
+        is_breached = True if breached_raw is None else bool(breached_raw)
+        sig = str(snap.get("signal_type") or snap.get("signal") or "").strip().lower()
+        if is_breached and sig in _EVOLUTION_JOURNAL_THRESHOLD_SIGNAL_TYPES:
+            return "threshold_signal"
+
+    metrics: Set[str] = set()
+    for snap in snapshots:
+        metric = str(snap.get("metric_name") or snap.get("metric") or "").strip().lower()
+        if metric:
+            metrics.add(metric)
+
+    if not snapshots:
+        top_breached_raw = decision.get("breached")
+        top_breached = True if top_breached_raw is None else bool(top_breached_raw)
+        top_sig = str(decision.get("signal_type") or decision.get("signal") or "").strip().lower()
+        if top_breached and top_sig in _EVOLUTION_JOURNAL_THRESHOLD_SIGNAL_TYPES:
+            return "threshold_signal"
+        top_metric = str(decision.get("metric_name") or decision.get("metric") or "").strip().lower()
+        if top_metric:
+            metrics.add(top_metric)
+
+    if metrics == {"incident_followup_required"}:
+        return "incident_followup"
+    if metrics == {"severity1_incident_count"}:
+        return "incident_severity"
+
+    risk_assessment = decision.get("risk_assessment")
+    if isinstance(risk_assessment, dict) and not snapshots and not metrics:
+        triggers = risk_assessment.get("threshold_triggers")
+        if isinstance(triggers, list):
+            for trig in triggers:
+                if isinstance(trig, dict):
+                    trig_type = str(trig.get("trigger_type") or trig.get("signal_type") or "").strip().lower()
+                    if trig_type in _EVOLUTION_JOURNAL_THRESHOLD_SIGNAL_TYPES:
+                        return "threshold_signal"
+
+    return "unclassified"
+
+
 def evolution_journal_decision_item(decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     decision_id = _management_record_id(decision, "decision_id", "id", "evolution_decision_id")
     if not decision_id:
         return None
     status = evolution_journal_status(decision)
+    ev_class = evolution_journal_decision_evidence_class(decision)
     title = str(
         _management_first_non_empty(
             decision.get("title"),
@@ -445,7 +522,9 @@ def evolution_journal_decision_item(decision: Dict[str, Any]) -> Optional[Dict[s
         route=f"/management/evolution-journal?decision={decision_id}",
         bff_detail_path=f"/api/v1/evolution-decisions/{decision_id}",
     )
+    item["evidence_class"] = ev_class
     item["decision"] = json.loads(json.dumps(decision))
+    item["decision"]["evidence_class"] = ev_class
     item["record"] = item["decision"]
     return item
 
@@ -578,6 +657,168 @@ def evolution_journal_filter_items(
             if str(item.get("risk_level") or "").lower() in risk_levels
         ]
     return filtered
+
+
+def evolution_journal_item_is_history(item: Dict[str, Any]) -> bool:
+    """Return True if a journal item belongs in view=history (vs view=auto_proposals)."""
+    entry_type = str(item.get("entry_type") or item.get("entryType") or "").strip().lower()
+    if entry_type in {"freeze_order", "rollback"}:
+        return True
+    if entry_type == "postmortem":
+        return str(item.get("status") or "").strip().lower() != "draft"
+    if entry_type in {"evolution_decision", "mutation_review"}:
+        status = str(item.get("status") or "").strip().lower()
+        if status != "proposed":
+            return True
+        ev_class = str(item.get("evidence_class") or "").strip().lower()
+        return ev_class == "threshold_signal"
+    return True
+
+
+def evolution_journal_filter_by_view(
+    items: List[Dict[str, Any]],
+    *,
+    view: str = "all",
+    has_explicit_target_filter: bool = False,
+) -> List[Dict[str, Any]]:
+    """Filter journal items by view (all | history | auto_proposals), bypassed on explicit deep links."""
+    if has_explicit_target_filter or view == "all":
+        return items
+    if view == "history":
+        return [it for it in items if evolution_journal_item_is_history(it)]
+    if view == "auto_proposals":
+        return [it for it in items if not evolution_journal_item_is_history(it)]
+    return items
+
+
+def evolution_journal_auto_proposal_counts(
+    decisions: Sequence[Dict[str, Any]],
+    *,
+    postmortem_draft_count: int,
+) -> Dict[str, int]:
+    """Compute auto_proposal_counts per record so a decision and its mutation_review count once."""
+    incident_followup = 0
+    incident_severity = 0
+    other_proposed = 0
+    seen_ids: Set[str] = set()
+    for dec in decisions:
+        if not isinstance(dec, dict):
+            continue
+        dec_id = _management_record_id(dec, "decision_id", "id", "evolution_decision_id")
+        if not dec_id or dec_id in seen_ids:
+            continue
+        seen_ids.add(dec_id)
+        if evolution_journal_status(dec) != "proposed":
+            continue
+        ev_class = evolution_journal_decision_evidence_class(dec)
+        if ev_class == "threshold_signal":
+            continue
+        if ev_class == "incident_followup":
+            incident_followup += 1
+        elif ev_class == "incident_severity":
+            incident_severity += 1
+        else:
+            other_proposed += 1
+    draft_count = max(0, int(postmortem_draft_count))
+    total = incident_followup + incident_severity + other_proposed + draft_count
+    return {
+        "incident_followup": incident_followup,
+        "incident_severity": incident_severity,
+        "postmortem_draft": draft_count,
+        "total": total,
+    }
+
+
+def _store_supports_bounded_postmortem_page_read(read_store: Any) -> bool:
+    instance_dict = getattr(read_store, "__dict__", None)
+    if isinstance(instance_dict, dict):
+        if "list_postmortems_page" in instance_dict:
+            return True
+        if "list_postmortems" in instance_dict:
+            return False
+    cls = type(read_store)
+    if "list_postmortems_page" in cls.__dict__:
+        return True
+    if "list_postmortems" in cls.__dict__:
+        return False
+    return callable(getattr(read_store, "list_postmortems_page", None))
+
+
+def evolution_journal_read_postmortems(
+    read_store: Any,
+    *,
+    view: str = "all",
+    page_size: int = 20,
+    page_token: Optional[str] = None,
+    has_persona_filter: bool = False,
+    has_decision_or_mr_filter: bool = False,
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """Read postmortems using bounded owner page reads when supported.
+
+    Returns (postmortem_rows_for_items, postmortem_draft_total, unfetched_draft_count).
+    """
+    try:
+        start_offset = max(0, int(page_token)) if page_token and str(page_token).strip() else 0
+    except (TypeError, ValueError):
+        start_offset = 0
+    bounded_limit = min(200, max(int(page_size), start_offset + int(page_size)))
+
+    if _store_supports_bounded_postmortem_page_read(read_store):
+        list_page_fn = getattr(read_store, "list_postmortems_page")
+        if has_decision_or_mr_filter and not has_persona_filter:
+            draft_page = list_page_fn(status="draft", page_size=1) or {}
+            draft_total = int(draft_page.get("total", len(draft_page.get("items") or [])))
+            return [], draft_total, 0
+        if view == "history" and not has_persona_filter:
+            non_draft_page = (
+                list_page_fn(status=_EVOLUTION_JOURNAL_NON_DRAFT_POSTMORTEM_STATUSES, page_size=200) or {}
+            )
+            draft_page = list_page_fn(status="draft", page_size=1) or {}
+            non_draft_items = list(non_draft_page.get("items") or [])
+            draft_total = int(draft_page.get("total", len(draft_page.get("items") or [])))
+            return non_draft_items, draft_total, 0
+        if view == "auto_proposals" and not has_persona_filter:
+            draft_page = list_page_fn(status="draft", page_size=bounded_limit) or {}
+            draft_items = list(draft_page.get("items") or [])
+            draft_total = int(draft_page.get("total", len(draft_items)))
+            unfetched_draft = max(0, draft_total - len(draft_items))
+            return draft_items, draft_total, unfetched_draft
+        non_draft_page = (
+            list_page_fn(status=_EVOLUTION_JOURNAL_NON_DRAFT_POSTMORTEM_STATUSES, page_size=200) or {}
+        )
+        draft_page = list_page_fn(status="draft", page_size=bounded_limit) or {}
+        non_draft_items = list(non_draft_page.get("items") or [])
+        draft_items = list(draft_page.get("items") or [])
+        draft_total = int(draft_page.get("total", len(draft_items)))
+        unfetched_draft = 0 if has_persona_filter else max(0, draft_total - len(draft_items))
+        return non_draft_items + draft_items, draft_total, unfetched_draft
+
+    all_pms = [
+        pm
+        for pm in (getattr(read_store, "list_postmortems", lambda: [])() or [])
+        if isinstance(pm, dict)
+    ]
+    draft_pms = [pm for pm in all_pms if evolution_journal_status(pm) == "draft"]
+    non_draft_pms = [pm for pm in all_pms if evolution_journal_status(pm) != "draft"]
+    draft_total = len(draft_pms)
+    if has_decision_or_mr_filter and not has_persona_filter:
+        return [], draft_total, 0
+    if view == "history" and not has_persona_filter:
+        return non_draft_pms, draft_total, 0
+    if not has_persona_filter and len(draft_pms) > bounded_limit:
+        draft_pms_sorted = sorted(
+            draft_pms,
+            key=lambda r: (str(r.get("created_at") or ""), str(r.get("postmortem_id") or r.get("id") or "")),
+            reverse=True,
+        )
+        sliced_drafts = draft_pms_sorted[:bounded_limit]
+        unfetched_draft = draft_total - len(sliced_drafts)
+        if view == "auto_proposals":
+            return sliced_drafts, draft_total, unfetched_draft
+        return non_draft_pms + sliced_drafts, draft_total, unfetched_draft
+    if view == "auto_proposals" and not has_persona_filter:
+        return draft_pms, draft_total, 0
+    return all_pms, draft_total, 0
 
 
 def evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
@@ -817,6 +1058,7 @@ class EvolutionService:
                     if a_id and a_id not in node_map:
                         node_map[a_id] = {"id": a_id, "label": a_id}
             nodes = list(node_map.values())
+        edges = [{k: v for k, v in e.items() if k not in ("from_node", "to_node")} for e in edges]
         return nodes, edges
 
     def get_inspiration_graph(
