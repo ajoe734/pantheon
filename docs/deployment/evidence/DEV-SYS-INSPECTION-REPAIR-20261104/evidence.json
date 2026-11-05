@@ -7,6 +7,7 @@
     "loop-control writer.record_heartbeat: last_success_at/last_tick_at only for reconciled_live_proof with non-empty desired_state and downstream_actual_state.status in ready/ok/healthy; {} / unknown / degraded / failed / error / unconfigured / stale never write success; heartbeat and lease fields unchanged",
     "downstream_health_monitor.publish_loop_12_controller_truth: last_success_at/last_tick_at only when overall_ok and targets>0",
     "loop-control writer.record_heartbeat: desired_state with present=False no longer counts as reconciled; no-target monitor heartbeat persists heartbeat/lease but no last_success_at/last_tick_at (verified through real monitor->record_heartbeat->_write_status capture store)",
+    "loop-control writer.record_heartbeat: observed-probe success inference scoped to Loop12 (bff_health_monitoring) only; other loops (e.g. training-session preview_eval_worker, which heartbeats before processing jobs) stay liveness-only; regression: parametrized non-Loop12 ids and real preview_eval_worker._write_loop_heartbeat -> writer capture (13 passed/2 skipped)",
     "research_knowledge_source.list_strategy_specs: cached normalized specs returned as deep copies; caller mutation cannot poison later same-request reads; request-only reuse and tenant cache key retained"
   ],
   "commands": [
