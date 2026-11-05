@@ -1,6 +1,6 @@
 {
   "task": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
-  "recordedAt": "2026-11-05T01:20Z",
+  "recordedAt": "2026-11-05T01:25Z",
   "status": "in_progress_not_accepted",
   "hosted": {
     "profile": "read-only",
@@ -8,16 +8,26 @@
     "frontendSha": "809e1ce0a3643d3f62c99261f3fc99a513612894",
     "bffSha": "cc074638f1814beed7f7f3e33e7307134b2bf39e",
     "releaseName": "20261104T032534Z-809e1ce0a364-gate-41763319265-41765339420-1-3667520",
-    "buildMode": {"VITE_BFF_MODE": "live", "VITE_BFF_FALLBACK": "strict", "VITE_BFF_REAL_WRITES": "false", "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false", "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"},
-    "bffConfigPosture": {"auth_mode": "strict", "auth_stub": false}
+    "buildMode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    },
+    "bffConfigPosture": {
+      "auth_mode": "strict",
+      "auth_stub": false
+    }
   },
   "rootCause": "nonprod-deploy.yml frontend_profile defaults to read-only and scripts/auto_deploy_dev_pair.py preserves the accepted hosted profile, so Dev stays read-only until one operator-live deploy is dispatched.",
   "sourceChangesNeeded": false,
   "regression": "scripts/test_auto_deploy_dev_pair.py + scripts/test_cross_repo_release_controller.py: 126 passed (operator-live preserved; inconsistent posture fails closed)",
   "workflows": {
-    "41947126368": "in_progress hosted all-12 chain segment, holds Dev; not mine",
+    "41947126368": "completed failure (capture stage); lease released/expired; not mine",
     "41946522116": "failure at capture stage (DEV_ARTIFACT_OPERATION_FAILED exit 75) for backend 0bd88495e + FE b15608ce1; not mine",
-    "41758658026": "last success, current served pair"
+    "41758658026": "last success, current served pair",
+    "41947653837": "in_progress since 2026-11-05T01:18:50Z, pair BFF 0bd88495e + FE b15608ce1, holds shared Dev lease; not mine; profile input not observable until logs finalize"
   },
   "rollbackTarget": "FE 809e1ce0a3643d3f62c99261f3fc99a513612894 / BFF cc074638f1814beed7f7f3e33e7307134b2bf39e (read-only)",
   "acceptanceMatrix": {
@@ -31,7 +41,8 @@
     "testResourceDisposition": "none created"
   },
   "blockers": [
-    "Shared Dev lease/environment is occupied by hosted all-12 chain run 41947126368; deploying now would contend.",
-    "Human-login test identities for browser acceptance not confirmed available to this worker."
+    "Shared Dev lease held by in-progress run 41947653837; no second release started, lease not touched.",
+    "Operator-live dispatch deferred until that run reaches terminal state; then recheck live lease and deployment.json profile.",
+    "Human-login (admintest) confirmed available server-side via approved helper per task next; browser acceptance still not-run."
   ]
 }
