@@ -1,674 +1,170 @@
 {
- "scope": "new offline research replay using unchanged frozen artifact and exact dated Source points; research only",
- "actual_current_artifact": {
-  "lineage": {
-   "source_run_ids": [
-    "persona-provisioning-forward-artifact-8ae996980eeccb80d928"
-   ],
-   "parent_registry_ids": [
-    "artifact-persona-paper-baseline-8ae996980eeccb80d928"
-   ],
-   "source_strategy_spec_id": "reg-strategy-spec-persona-8ae996980eeccb80d928"
-  },
-  "version": "1.0.0",
-  "parameters": {
-   "market": "TW",
-   "symbols": [
-    "2317.TWSE"
-   ],
-   "data_source": "source-ingest:tw_price_daily",
-   "bar_frequency": "1d",
-   "lookback_bars": 2,
-   "quantity_type": "SHARES",
-   "order_quantity": 1,
-   "momentum_threshold": 0.0,
-   "zero_momentum_action": "SELL"
-  },
-  "artifact_id": "artifact-persona-paper-8ae996980eeccb80d928",
-  "strategy_id": "strategy-persona-8ae996980eeccb80d928",
-  "algorithm_ref": {
-   "path": "services/registry/strategy_artifact.py",
-   "commit": "d05cd59d9ae61070c47b9f385395cb5dfa9b7760",
-   "engine": "lean",
-   "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
-   "repository": "ajoe734/pantheon",
-   "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
-   "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
-   "signal_schema_version": "1.0"
-  },
-  "strategy_logic": {
-   "kind": "close_to_close_momentum",
-   "positive_action": "BUY",
-   "lookback_parameter": "lookback_bars",
-   "non_positive_action": "SELL",
-   "threshold_parameter": "momentum_threshold"
-  },
-  "provenance_refs": [
-   "task:LOOP-PROD-PER-001",
-   "persona-provisioning:8ae996980eeccb80d928",
-   "strategy-spec:reg-strategy-spec-persona-8ae996980eeccb80d928"
-  ],
-  "mutation_surface": {
-   "controls": [
-    {
-     "step": 1,
-     "value_type": "integer",
-     "allowed_range": {
-      "max": 60,
-      "min": 2
-     },
-     "current_value": 2,
-     "parameter_key": "lookback_bars"
+  "scope": "new offline research replay using unchanged frozen artifact and exact dated Source points; research only",
+  "actual_current_artifact": {
+    "lineage": {
+      "source_run_ids": [
+        "persona-provisioning-forward-artifact-8ae996980eeccb80d928"
+      ],
+      "parent_registry_ids": [
+        "artifact-persona-paper-baseline-8ae996980eeccb80d928"
+      ],
+      "source_strategy_spec_id": "reg-strategy-spec-persona-8ae996980eeccb80d928"
     },
-    {
-     "step": 0.001,
-     "value_type": "number",
-     "allowed_range": {
-      "max": 0.05,
-      "min": 0.0
-     },
-     "current_value": 0.0,
-     "parameter_key": "momentum_threshold"
-    }
-   ],
-   "immutable_parameters": [
-    "symbols",
-    "bar_frequency",
-    "data_source",
-    "order_quantity",
-    "quantity_type",
-    "zero_momentum_action",
-    "market"
-   ]
+    "version": "1.0.0",
+    "parameters": {
+      "market": "TW",
+      "symbols": [
+        "2317.TWSE"
+      ],
+      "data_source": "source-ingest:tw_price_daily",
+      "bar_frequency": "1d",
+      "lookback_bars": 2,
+      "quantity_type": "SHARES",
+      "order_quantity": 1,
+      "momentum_threshold": 0.0,
+      "zero_momentum_action": "SELL"
+    },
+    "artifact_id": "artifact-persona-paper-8ae996980eeccb80d928",
+    "strategy_id": "strategy-persona-8ae996980eeccb80d928",
+    "algorithm_ref": {
+      "path": "services/registry/strategy_artifact.py",
+      "commit": "d05cd59d9ae61070c47b9f385395cb5dfa9b7760",
+      "engine": "lean",
+      "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+      "repository": "ajoe734/pantheon",
+      "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+      "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+      "signal_schema_version": "1.0"
+    },
+    "strategy_logic": {
+      "kind": "close_to_close_momentum",
+      "positive_action": "BUY",
+      "lookback_parameter": "lookback_bars",
+      "non_positive_action": "SELL",
+      "threshold_parameter": "momentum_threshold"
+    },
+    "provenance_refs": [
+      "task:LOOP-PROD-PER-001",
+      "persona-provisioning:8ae996980eeccb80d928",
+      "strategy-spec:reg-strategy-spec-persona-8ae996980eeccb80d928"
+    ],
+    "mutation_surface": {
+      "controls": [
+        {
+          "step": 1,
+          "value_type": "integer",
+          "allowed_range": {
+            "max": 60,
+            "min": 2
+          },
+          "current_value": 2,
+          "parameter_key": "lookback_bars"
+        },
+        {
+          "step": 0.001,
+          "value_type": "number",
+          "allowed_range": {
+            "max": 0.05,
+            "min": 0.0
+          },
+          "current_value": 0.0,
+          "parameter_key": "momentum_threshold"
+        }
+      ],
+      "immutable_parameters": [
+        "symbols",
+        "bar_frequency",
+        "data_source",
+        "order_quantity",
+        "quantity_type",
+        "zero_momentum_action",
+        "market"
+      ]
+    },
+    "artifact_schema_version": "1.0"
   },
-  "artifact_schema_version": "1.0"
- },
- "simulation_assumptions": {
-  "starting_cash": 100000.0,
-  "currency": "TWD",
-  "mark_at": "05:30:00Z on each real point event date, declared historical daily close simulation assumption",
-  "rolling_window_calendar_days": 20,
-  "fill_model": "same production gross market-at-close, original order_quantity and original interpreter; no fees/tax/slippage"
- },
- "registry_entry": {
-  "approval_decision_id": "apv-persona-paper-artifact-8ae996980eeccb80d928",
-  "artifact_state": "approved",
-  "artifact_type": "execution_bundle",
-  "checksum": "sha256:2383a5084ab3110d83282accddb168e724e3174e9a8cfece3fbb8f84dada6040",
-  "created_at": "2026-11-01T23:45:59Z",
-  "registry_id": "artifact-persona-paper-8ae996980eeccb80d928",
-  "strategy_id": "strategy-persona-8ae996980eeccb80d928",
-  "updated_at": "2026-11-01T23:46:02Z",
-  "version": "1.0.0"
- },
- "market_input": {
-  "records": [
-   {
-    "date": "2026-08-12",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-12/368b5a412ccfa8fb",
-    "event_time": "2026-08-12T00:00:00Z",
-    "ingest_run_id": "ingest-e53a86463995",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:368b5a412ccfa8fb",
-    "close": 270.0
-   },
-   {
-    "date": "2026-08-13",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-13/c0e3d5303c68b371",
-    "event_time": "2026-08-13T00:00:00Z",
-    "ingest_run_id": "ingest-165e0a945a5e",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:c0e3d5303c68b371",
-    "close": 262.0
-   },
-   {
-    "date": "2026-08-14",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-14/a1af44726c5bd41a",
-    "event_time": "2026-08-14T00:00:00Z",
-    "ingest_run_id": "ingest-c416f857e4fa",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:a1af44726c5bd41a",
-    "close": 259.5
-   },
-   {
-    "date": "2026-08-17",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-17/50a59d742937a429",
-    "event_time": "2026-08-17T00:00:00Z",
-    "ingest_run_id": "ingest-67efeabf184f",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:50a59d742937a429",
-    "close": 255.0
-   },
-   {
-    "date": "2026-08-18",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-18/4aeb8ff41a7e4623",
-    "event_time": "2026-08-18T00:00:00Z",
-    "ingest_run_id": "ingest-72b7157bf39f",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:4aeb8ff41a7e4623",
-    "close": 249.0
-   },
-   {
-    "date": "2026-08-19",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-19/9f966d86073d105e",
-    "event_time": "2026-08-19T00:00:00Z",
-    "ingest_run_id": "ingest-0bd36c20aa94",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:9f966d86073d105e",
-    "close": 245.0
-   },
-   {
-    "date": "2026-08-20",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-20/8bd9ed70de0feb5f",
-    "event_time": "2026-08-20T00:00:00Z",
-    "ingest_run_id": "ingest-06e31af273c7",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:8bd9ed70de0feb5f",
-    "close": 246.5
-   },
-   {
-    "date": "2026-08-21",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-21/ac041c4fe8d40f7a",
-    "event_time": "2026-08-21T00:00:00Z",
-    "ingest_run_id": "ingest-38c8baa26a52",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:ac041c4fe8d40f7a",
-    "close": 245.5
-   },
-   {
-    "date": "2026-08-24",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-24/f18171c01412a2d6",
-    "event_time": "2026-08-24T00:00:00Z",
-    "ingest_run_id": "ingest-84555a4c38a4",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:f18171c01412a2d6",
-    "close": 243.5
-   },
-   {
-    "date": "2026-08-25",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-25/d8f63707b92797a8",
-    "event_time": "2026-08-25T00:00:00Z",
-    "ingest_run_id": "ingest-be034098f497",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:d8f63707b92797a8",
-    "close": 243.0
-   },
-   {
-    "date": "2026-08-26",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-26/be02a0b2fa822684",
-    "event_time": "2026-08-26T00:00:00Z",
-    "ingest_run_id": "ingest-207617dd7ceb",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:be02a0b2fa822684",
-    "close": 246.5
-   },
-   {
-    "date": "2026-08-27",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-27/c2a413520df5db43",
-    "event_time": "2026-08-27T00:00:00Z",
-    "ingest_run_id": "ingest-b06c376c9baf",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:c2a413520df5db43",
-    "close": 252.0
-   },
-   {
-    "date": "2026-08-28",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-28/235c1819578fc766",
-    "event_time": "2026-08-28T00:00:00Z",
-    "ingest_run_id": "ingest-26d1a941e69f",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:235c1819578fc766",
-    "close": 253.0
-   },
-   {
-    "date": "2026-08-31",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-31/721d088a68f98faa",
-    "event_time": "2026-08-31T00:00:00Z",
-    "ingest_run_id": "ingest-0e5a126668ff",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:721d088a68f98faa",
-    "close": 250.0
-   },
-   {
-    "date": "2026-09-01",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-01/e8a4a6a00ae96723",
-    "event_time": "2026-09-01T00:00:00Z",
-    "ingest_run_id": "ingest-97f26836dda3",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:e8a4a6a00ae96723",
-    "close": 256.0
-   },
-   {
-    "date": "2026-09-02",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-02/30c9b0321f9444a9",
-    "event_time": "2026-09-02T00:00:00Z",
-    "ingest_run_id": "ingest-97f26836dda3",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:30c9b0321f9444a9",
-    "close": 251.0
-   },
-   {
-    "date": "2026-09-03",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-03/bca58468cb31093d",
-    "event_time": "2026-09-03T00:00:00Z",
-    "ingest_run_id": "ingest-97f26836dda3",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:bca58468cb31093d",
-    "close": 247.5
-   },
-   {
-    "date": "2026-09-04",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-04/358722ecb2627b08",
-    "event_time": "2026-09-04T00:00:00Z",
-    "ingest_run_id": "ingest-97f26836dda3",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:358722ecb2627b08",
-    "close": 256.0
-   },
-   {
-    "date": "2026-09-07",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-07/eec3d5a8d5a6a6e5",
-    "event_time": "2026-09-07T00:00:00Z",
-    "ingest_run_id": "ingest-97f26836dda3",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:eec3d5a8d5a6a6e5",
-    "close": 256.0
-   },
-   {
-    "date": "2026-09-08",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-08/0d53d92b8d7b9298",
-    "event_time": "2026-09-08T00:00:00Z",
-    "ingest_run_id": "ingest-97f26836dda3",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:0d53d92b8d7b9298",
-    "close": 251.5
-   },
-   {
-    "date": "2026-09-09",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-09/145a57c69df3f5ef",
-    "event_time": "2026-09-09T00:00:00Z",
-    "ingest_run_id": "ingest-97f26836dda3",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:145a57c69df3f5ef",
-    "close": 252.0
-   },
-   {
-    "date": "2026-09-10",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-10/e9386edb652944b8",
-    "event_time": "2026-09-10T00:00:00Z",
-    "ingest_run_id": "ingest-3720cbd2a430",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:e9386edb652944b8",
-    "close": 251.0
-   },
-   {
-    "date": "2026-09-11",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-11/e8893659289f55a2",
-    "event_time": "2026-09-11T00:00:00Z",
-    "ingest_run_id": "ingest-70f29a22d417",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:e8893659289f55a2",
-    "close": 248.0
-   },
-   {
-    "date": "2026-09-14",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-14/03de74f777f2c67f",
-    "event_time": "2026-09-14T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:03de74f777f2c67f",
-    "close": 248.5
-   },
-   {
-    "date": "2026-09-15",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-15/c4853f653556dc10",
-    "event_time": "2026-09-15T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:c4853f653556dc10",
-    "close": 246.5
-   },
-   {
-    "date": "2026-09-16",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-16/3ac58a077de8b9e4",
-    "event_time": "2026-09-16T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:3ac58a077de8b9e4",
-    "close": 248.0
-   },
-   {
-    "date": "2026-09-17",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-17/719199be43e50e78",
-    "event_time": "2026-09-17T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:719199be43e50e78",
-    "close": 250.5
-   },
-   {
-    "date": "2026-09-18",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-18/f1f63aa701c2db24",
-    "event_time": "2026-09-18T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:f1f63aa701c2db24",
-    "close": 250.5
-   },
-   {
-    "date": "2026-09-21",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-21/a93c8d6d650562a7",
-    "event_time": "2026-09-21T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:a93c8d6d650562a7",
-    "close": 250.0
-   },
-   {
-    "date": "2026-09-22",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-22/94ea5e85617d5977",
-    "event_time": "2026-09-22T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:94ea5e85617d5977",
-    "close": 253.0
-   },
-   {
-    "date": "2026-09-23",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-23/77903965b4dea21d",
-    "event_time": "2026-09-23T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:77903965b4dea21d",
-    "close": 256.0
-   },
-   {
-    "date": "2026-09-24",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-24/efe8f29320041d0e",
-    "event_time": "2026-09-24T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:efe8f29320041d0e",
-    "close": 250.5
-   },
-   {
-    "date": "2026-09-29",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-29/538099570b4c1b14",
-    "event_time": "2026-09-29T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:538099570b4c1b14",
-    "close": 250.5
-   },
-   {
-    "date": "2026-09-30",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-30/d9647e9e98cee52e",
-    "event_time": "2026-09-30T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:d9647e9e98cee52e",
-    "close": 251.5
-   },
-   {
-    "date": "2026-10-01",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-01/eece2ba295663f74",
-    "event_time": "2026-10-01T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:eece2ba295663f74",
-    "close": 254.0
-   },
-   {
-    "date": "2026-10-02",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-02/09f0952ffaeaf975",
-    "event_time": "2026-10-02T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:09f0952ffaeaf975",
-    "close": 251.0
-   },
-   {
-    "date": "2026-10-05",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-05/64a56b84a912cae1",
-    "event_time": "2026-10-05T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:64a56b84a912cae1",
-    "close": 254.0
-   },
-   {
-    "date": "2026-10-06",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-06/049778e009e07fdc",
-    "event_time": "2026-10-06T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:049778e009e07fdc",
-    "close": 256.0
-   },
-   {
-    "date": "2026-10-07",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-07/520a0f6665f69f31",
-    "event_time": "2026-10-07T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:520a0f6665f69f31",
-    "close": 252.0
-   },
-   {
-    "date": "2026-10-08",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-08/6e4f2563b92ac270",
-    "event_time": "2026-10-08T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:6e4f2563b92ac270",
-    "close": 249.0
-   },
-   {
-    "date": "2026-10-12",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-12/518961d0a5c004e9",
-    "event_time": "2026-10-12T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:518961d0a5c004e9",
-    "close": 244.5
-   },
-   {
-    "date": "2026-10-13",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-13/560522329c31bf00",
-    "event_time": "2026-10-13T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:560522329c31bf00",
-    "close": 240.0
-   },
-   {
-    "date": "2026-10-14",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-14/a3e8c4e03b498315",
-    "event_time": "2026-10-14T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:a3e8c4e03b498315",
-    "close": 243.0
-   },
-   {
-    "date": "2026-10-15",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-15/89b89c4582374cfc",
-    "event_time": "2026-10-15T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:89b89c4582374cfc",
-    "close": 239.5
-   },
-   {
-    "date": "2026-10-16",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-16/6bc58344a2698ce5",
-    "event_time": "2026-10-16T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:6bc58344a2698ce5",
-    "close": 244.0
-   },
-   {
-    "date": "2026-10-19",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-19/48439c17bf0a9d8b",
-    "event_time": "2026-10-19T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:48439c17bf0a9d8b",
-    "close": 239.5
-   },
-   {
-    "date": "2026-10-20",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-20/0469c4238df0c1fd",
-    "event_time": "2026-10-20T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:0469c4238df0c1fd",
-    "close": 241.5
-   },
-   {
-    "date": "2026-10-21",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-21/15864f9a678cec76",
-    "event_time": "2026-10-21T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:15864f9a678cec76",
-    "close": 250.0
-   },
-   {
-    "date": "2026-10-22",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-22/7cf8b6e7c2fa4b02",
-    "event_time": "2026-10-22T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:7cf8b6e7c2fa4b02",
-    "close": 245.0
-   },
-   {
-    "date": "2026-10-27",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-27/37e17c3f239f8c12",
-    "event_time": "2026-10-27T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:37e17c3f239f8c12",
-    "close": 247.5
-   },
-   {
-    "date": "2026-10-28",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-28/cc0130f7089763d6",
-    "event_time": "2026-10-28T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:cc0130f7089763d6",
-    "close": 251.5
-   },
-   {
-    "date": "2026-10-29",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-29/4aef4129196e58fe",
-    "event_time": "2026-10-29T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:4aef4129196e58fe",
-    "close": 248.0
-   },
-   {
-    "date": "2026-10-30",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-30/1857ebde9f63f340",
-    "event_time": "2026-10-30T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:1857ebde9f63f340",
-    "close": 245.5
-   },
-   {
-    "date": "2026-11-02",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-11-02/54936fb3ae989a19",
-    "event_time": "2026-11-02T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:54936fb3ae989a19",
-    "close": 251.0
-   },
-   {
-    "date": "2026-11-03",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-11-03/3c89615fa9606039",
-    "event_time": "2026-11-03T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:3c89615fa9606039",
-    "close": 245.5
-   },
-   {
-    "date": "2026-11-04",
-    "connector_id": "tw-twse-tpex-official-market",
-    "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-11-04/f0572c5a308299bd",
-    "event_time": "2026-11-04T00:00:00Z",
-    "ingest_run_id": "ingest-63d3ae400808",
-    "market": "TW",
-    "source_id": "tw-official:tw_price_daily:TWSE:2317:f0572c5a308299bd",
-    "close": 240.0
-   }
-  ],
-  "snapshot_id": "mss-c9e5f131378603f0829a5524",
-  "snapshot_observed_at": "2026-11-04T15:06:14Z",
-  "snapshot_state_sha256": "85c711cb9bf887716787c11187d849876eb8cf0363c6982ed78eb1adcf17365b",
-  "source_store_line": 2808,
-  "source_store_sha256": "ac9739daf419be8dd33f061dc2f497e40ac3b5534dc305a966bbf787c7676b1e",
-  "symbol": "2317.TWSE"
- }
+  "simulation_assumptions": {
+    "starting_cash": 100000.0,
+    "currency": "TWD",
+    "mark_at": "05:30:00Z on each real point event date, declared historical daily close simulation assumption",
+    "rolling_window_calendar_days": 20,
+    "fill_model": "same production gross market-at-close, original order_quantity and original interpreter; no fees/tax/slippage"
+  },
+  "registry_entry": {
+    "approval_decision_id": "apv-persona-paper-artifact-8ae996980eeccb80d928",
+    "artifact_state": "approved",
+    "artifact_type": "execution_bundle",
+    "checksum": "sha256:2383a5084ab3110d83282accddb168e724e3174e9a8cfece3fbb8f84dada6040",
+    "created_at": "2026-11-01T23:45:59Z",
+    "registry_id": "artifact-persona-paper-8ae996980eeccb80d928",
+    "strategy_id": "strategy-persona-8ae996980eeccb80d928",
+    "updated_at": "2026-11-01T23:46:02Z",
+    "version": "1.0.0"
+  },
+  "market_input": {
+    "records": [
+      {"date": "2026-08-12", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-12/368b5a412ccfa8fb", "event_time": "2026-08-12T00:00:00Z", "ingest_run_id": "ingest-e53a86463995", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:368b5a412ccfa8fb", "close": 270.0},
+      {"date": "2026-08-13", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-13/c0e3d5303c68b371", "event_time": "2026-08-13T00:00:00Z", "ingest_run_id": "ingest-165e0a945a5e", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:c0e3d5303c68b371", "close": 262.0},
+      {"date": "2026-08-14", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-14/a1af44726c5bd41a", "event_time": "2026-08-14T00:00:00Z", "ingest_run_id": "ingest-c416f857e4fa", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:a1af44726c5bd41a", "close": 259.5},
+      {"date": "2026-08-17", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-17/50a59d742937a429", "event_time": "2026-08-17T00:00:00Z", "ingest_run_id": "ingest-67efeabf184f", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:50a59d742937a429", "close": 255.0},
+      {"date": "2026-08-18", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-18/4aeb8ff41a7e4623", "event_time": "2026-08-18T00:00:00Z", "ingest_run_id": "ingest-72b7157bf39f", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:4aeb8ff41a7e4623", "close": 249.0},
+      {"date": "2026-08-19", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-19/9f966d86073d105e", "event_time": "2026-08-19T00:00:00Z", "ingest_run_id": "ingest-0bd36c20aa94", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:9f966d86073d105e", "close": 245.0},
+      {"date": "2026-08-20", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-20/8bd9ed70de0feb5f", "event_time": "2026-08-20T00:00:00Z", "ingest_run_id": "ingest-06e31af273c7", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:8bd9ed70de0feb5f", "close": 246.5},
+      {"date": "2026-08-21", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-21/ac041c4fe8d40f7a", "event_time": "2026-08-21T00:00:00Z", "ingest_run_id": "ingest-38c8baa26a52", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:ac041c4fe8d40f7a", "close": 245.5},
+      {"date": "2026-08-24", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-24/f18171c01412a2d6", "event_time": "2026-08-24T00:00:00Z", "ingest_run_id": "ingest-84555a4c38a4", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:f18171c01412a2d6", "close": 243.5},
+      {"date": "2026-08-25", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-25/d8f63707b92797a8", "event_time": "2026-08-25T00:00:00Z", "ingest_run_id": "ingest-be034098f497", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:d8f63707b92797a8", "close": 243.0},
+      {"date": "2026-08-26", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-26/be02a0b2fa822684", "event_time": "2026-08-26T00:00:00Z", "ingest_run_id": "ingest-207617dd7ceb", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:be02a0b2fa822684", "close": 246.5},
+      {"date": "2026-08-27", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-27/c2a413520df5db43", "event_time": "2026-08-27T00:00:00Z", "ingest_run_id": "ingest-b06c376c9baf", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:c2a413520df5db43", "close": 252.0},
+      {"date": "2026-08-28", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-28/235c1819578fc766", "event_time": "2026-08-28T00:00:00Z", "ingest_run_id": "ingest-26d1a941e69f", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:235c1819578fc766", "close": 253.0},
+      {"date": "2026-08-31", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-08-31/721d088a68f98faa", "event_time": "2026-08-31T00:00:00Z", "ingest_run_id": "ingest-0e5a126668ff", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:721d088a68f98faa", "close": 250.0},
+      {"date": "2026-09-01", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-01/e8a4a6a00ae96723", "event_time": "2026-09-01T00:00:00Z", "ingest_run_id": "ingest-97f26836dda3", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:e8a4a6a00ae96723", "close": 256.0},
+      {"date": "2026-09-02", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-02/30c9b0321f9444a9", "event_time": "2026-09-02T00:00:00Z", "ingest_run_id": "ingest-97f26836dda3", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:30c9b0321f9444a9", "close": 251.0},
+      {"date": "2026-09-03", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-03/bca58468cb31093d", "event_time": "2026-09-03T00:00:00Z", "ingest_run_id": "ingest-97f26836dda3", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:bca58468cb31093d", "close": 247.5},
+      {"date": "2026-09-04", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-04/358722ecb2627b08", "event_time": "2026-09-04T00:00:00Z", "ingest_run_id": "ingest-97f26836dda3", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:358722ecb2627b08", "close": 256.0},
+      {"date": "2026-09-07", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-07/eec3d5a8d5a6a6e5", "event_time": "2026-09-07T00:00:00Z", "ingest_run_id": "ingest-97f26836dda3", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:eec3d5a8d5a6a6e5", "close": 256.0},
+      {"date": "2026-09-08", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-08/0d53d92b8d7b9298", "event_time": "2026-09-08T00:00:00Z", "ingest_run_id": "ingest-97f26836dda3", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:0d53d92b8d7b9298", "close": 251.5},
+      {"date": "2026-09-09", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-09/145a57c69df3f5ef", "event_time": "2026-09-09T00:00:00Z", "ingest_run_id": "ingest-97f26836dda3", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:145a57c69df3f5ef", "close": 252.0},
+      {"date": "2026-09-10", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-10/e9386edb652944b8", "event_time": "2026-09-10T00:00:00Z", "ingest_run_id": "ingest-3720cbd2a430", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:e9386edb652944b8", "close": 251.0},
+      {"date": "2026-09-11", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-11/e8893659289f55a2", "event_time": "2026-09-11T00:00:00Z", "ingest_run_id": "ingest-70f29a22d417", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:e8893659289f55a2", "close": 248.0},
+      {"date": "2026-09-14", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-14/03de74f777f2c67f", "event_time": "2026-09-14T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:03de74f777f2c67f", "close": 248.5},
+      {"date": "2026-09-15", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-15/c4853f653556dc10", "event_time": "2026-09-15T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:c4853f653556dc10", "close": 246.5},
+      {"date": "2026-09-16", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-16/3ac58a077de8b9e4", "event_time": "2026-09-16T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:3ac58a077de8b9e4", "close": 248.0},
+      {"date": "2026-09-17", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-17/719199be43e50e78", "event_time": "2026-09-17T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:719199be43e50e78", "close": 250.5},
+      {"date": "2026-09-18", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-18/f1f63aa701c2db24", "event_time": "2026-09-18T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:f1f63aa701c2db24", "close": 250.5},
+      {"date": "2026-09-21", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-21/a93c8d6d650562a7", "event_time": "2026-09-21T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:a93c8d6d650562a7", "close": 250.0},
+      {"date": "2026-09-22", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-22/94ea5e85617d5977", "event_time": "2026-09-22T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:94ea5e85617d5977", "close": 253.0},
+      {"date": "2026-09-23", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-23/77903965b4dea21d", "event_time": "2026-09-23T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:77903965b4dea21d", "close": 256.0},
+      {"date": "2026-09-24", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-24/efe8f29320041d0e", "event_time": "2026-09-24T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:efe8f29320041d0e", "close": 250.5},
+      {"date": "2026-09-29", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-29/538099570b4c1b14", "event_time": "2026-09-29T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:538099570b4c1b14", "close": 250.5},
+      {"date": "2026-09-30", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-09-30/d9647e9e98cee52e", "event_time": "2026-09-30T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:d9647e9e98cee52e", "close": 251.5},
+      {"date": "2026-10-01", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-01/eece2ba295663f74", "event_time": "2026-10-01T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:eece2ba295663f74", "close": 254.0},
+      {"date": "2026-10-02", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-02/09f0952ffaeaf975", "event_time": "2026-10-02T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:09f0952ffaeaf975", "close": 251.0},
+      {"date": "2026-10-05", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-05/64a56b84a912cae1", "event_time": "2026-10-05T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:64a56b84a912cae1", "close": 254.0},
+      {"date": "2026-10-06", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-06/049778e009e07fdc", "event_time": "2026-10-06T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:049778e009e07fdc", "close": 256.0},
+      {"date": "2026-10-07", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-07/520a0f6665f69f31", "event_time": "2026-10-07T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:520a0f6665f69f31", "close": 252.0},
+      {"date": "2026-10-08", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-08/6e4f2563b92ac270", "event_time": "2026-10-08T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:6e4f2563b92ac270", "close": 249.0},
+      {"date": "2026-10-12", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-12/518961d0a5c004e9", "event_time": "2026-10-12T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:518961d0a5c004e9", "close": 244.5},
+      {"date": "2026-10-13", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-13/560522329c31bf00", "event_time": "2026-10-13T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:560522329c31bf00", "close": 240.0},
+      {"date": "2026-10-14", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-14/a3e8c4e03b498315", "event_time": "2026-10-14T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:a3e8c4e03b498315", "close": 243.0},
+      {"date": "2026-10-15", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-15/89b89c4582374cfc", "event_time": "2026-10-15T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:89b89c4582374cfc", "close": 239.5},
+      {"date": "2026-10-16", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-16/6bc58344a2698ce5", "event_time": "2026-10-16T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:6bc58344a2698ce5", "close": 244.0},
+      {"date": "2026-10-19", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-19/48439c17bf0a9d8b", "event_time": "2026-10-19T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:48439c17bf0a9d8b", "close": 239.5},
+      {"date": "2026-10-20", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-20/0469c4238df0c1fd", "event_time": "2026-10-20T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:0469c4238df0c1fd", "close": 241.5},
+      {"date": "2026-10-21", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-21/15864f9a678cec76", "event_time": "2026-10-21T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:15864f9a678cec76", "close": 250.0},
+      {"date": "2026-10-22", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-22/7cf8b6e7c2fa4b02", "event_time": "2026-10-22T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:7cf8b6e7c2fa4b02", "close": 245.0},
+      {"date": "2026-10-27", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-27/37e17c3f239f8c12", "event_time": "2026-10-27T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:37e17c3f239f8c12", "close": 247.5},
+      {"date": "2026-10-28", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-28/cc0130f7089763d6", "event_time": "2026-10-28T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:cc0130f7089763d6", "close": 251.5},
+      {"date": "2026-10-29", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-29/4aef4129196e58fe", "event_time": "2026-10-29T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:4aef4129196e58fe", "close": 248.0},
+      {"date": "2026-10-30", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-10-30/1857ebde9f63f340", "event_time": "2026-10-30T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:1857ebde9f63f340", "close": 245.5},
+      {"date": "2026-11-02", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-11-02/54936fb3ae989a19", "event_time": "2026-11-02T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:54936fb3ae989a19", "close": 251.0},
+      {"date": "2026-11-03", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-11-03/3c89615fa9606039", "event_time": "2026-11-03T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:3c89615fa9606039", "close": 245.5},
+      {"date": "2026-11-04", "connector_id": "tw-twse-tpex-official-market", "content_ref": "tw-official://tw_price_daily/TWSE/2317/2026-11-04/f0572c5a308299bd", "event_time": "2026-11-04T00:00:00Z", "ingest_run_id": "ingest-63d3ae400808", "market": "TW", "source_id": "tw-official:tw_price_daily:TWSE:2317:f0572c5a308299bd", "close": 240.0}
+    ],
+    "snapshot_id": "mss-c9e5f131378603f0829a5524",
+    "snapshot_observed_at": "2026-11-04T15:06:14Z",
+    "snapshot_state_sha256": "85c711cb9bf887716787c11187d849876eb8cf0363c6982ed78eb1adcf17365b",
+    "source_store_line": 2808,
+    "source_store_sha256": "ac9739daf419be8dd33f061dc2f497e40ac3b5534dc305a966bbf787c7676b1e",
+    "symbol": "2317.TWSE"
+  }
 }
