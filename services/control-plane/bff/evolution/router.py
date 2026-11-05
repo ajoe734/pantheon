@@ -46,19 +46,28 @@ from services.control_plane.bff.ports.evolution_program_commands import (
 
 from .service import (
     EvolutionService,
+    _EVOLUTION_JOURNAL_ALLOWED_VIEWS,
+    _EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY,
+    _EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY,
     _management_prune_camel_aliases,
     _management_record_id,
+    evolution_journal_auto_proposal_counts,
     evolution_journal_base_item,
+    evolution_journal_csv_filter,
+    evolution_journal_decision_evidence_class,
     evolution_journal_decision_item,
+    evolution_journal_filter_by_view,
     evolution_journal_filter_items,
     evolution_journal_freeze_order_item,
     evolution_journal_is_registered_seed_id,
     evolution_journal_postmortem_item,
+    evolution_journal_read_postmortems,
     evolution_journal_rollback_item,
     evolution_journal_summary,
     evolution_journal_surfaces,
     evolution_journal_target,
     evolution_journal_timestamp,
+    evolution_journal_type_filter,
     ew04_inspiration_payload,
     ew04_inspiration_projection_from_lineage_edges,
     ooda_packet_list_payload,
@@ -66,8 +75,6 @@ from .service import (
     project_evolution_decision_contract,
     project_freeze_order_contract,
     project_rollback_contract,
-    _EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY,
-    _EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY,
 )
 
 log = logging.getLogger(__name__)
@@ -969,6 +976,7 @@ def create_evolution_router(
     # 13. Management Evolution Journal
     @router.get("/bff/management/evolution-journal")
     def bff_management_evolution_journal(
+        view: Optional[str] = None,
         source_type: Optional[str] = None,
         status: Optional[str] = None,
         action_type: Optional[str] = None,
@@ -984,22 +992,49 @@ def create_evolution_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
 
+        view_mode = str(view or "all").strip().lower() or "all"
+        if view_mode not in _EVOLUTION_JOURNAL_ALLOWED_VIEWS:
+            raise _err(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid view parameter",
+                f"Unsupported view '{view}'. Allowed values: all, history, auto_proposals",
+            )
+
+        has_persona_filter = bool(persona and persona.strip())
+        has_decision_or_mr_filter = bool(
+            (decision and decision.strip()) or (mutation_review and mutation_review.strip())
+        )
+        has_explicit_target_filter = has_persona_filter or has_decision_or_mr_filter
+
         snapshot_at = _utc_now()
         read_store = _get_store()
+
+        decisions = list(getattr(read_store, "list_evolution_decisions", lambda: [])() or [])
+        postmortems, postmortem_draft_total, unfetched_draft_count = evolution_journal_read_postmortems(
+            read_store,
+            view=view_mode,
+            page_size=page_size,
+            page_token=page_token,
+            has_persona_filter=has_persona_filter,
+            has_decision_or_mr_filter=has_decision_or_mr_filter,
+        )
+        freeze_orders = list(getattr(read_store, "list_freeze_orders", lambda: [])() or [])
+        rollbacks = list(getattr(read_store, "list_all_rollbacks", lambda: [])() or [])
         surfaces = evolution_journal_surfaces(
             snapshot_at=snapshot_at,
             dataset_surface_status_fn=_surface_status_fn,
         )
 
-        decisions = list(getattr(read_store, "list_evolution_decisions", lambda: [])() or [])
-        postmortems = list(getattr(read_store, "list_postmortems", lambda: [])() or [])
-        freeze_orders = list(getattr(read_store, "list_freeze_orders", lambda: [])() or [])
-        rollbacks = list(getattr(read_store, "list_all_rollbacks", lambda: [])() or [])
-
         items: List[Dict[str, Any]] = []
         dec_by_id: Dict[str, Dict[str, Any]] = {}
         for dec in decisions:
             dec_item = evolution_journal_decision_item(dec)
+            ev_class = (
+                dec_item.get("evidence_class")
+                if dec_item is not None
+                else evolution_journal_decision_evidence_class(dec)
+            )
             if dec_item is not None:
                 items.append(dec_item)
             # Mutation review item projection
@@ -1034,6 +1069,7 @@ def create_evolution_router(
                         "approval_decision_id": dec.get("approval_decision_id"),
                         "linked_incident_id": dec.get("linked_incident_id"),
                         "linked_postmortem_id": dec.get("linked_postmortem_id"),
+                        "evidence_class": ev_class,
                     }
                 else:
                     proj = {
@@ -1046,6 +1082,7 @@ def create_evolution_router(
                         "risk_level": dec.get("risk_level") or "low",
                         "created_at": dec.get("created_at") or snapshot_at,
                         "proposed_changes": dec.get("proposed_changes") or {},
+                        "evidence_class": ev_class,
                     }
                 for field in ("metadata", "provenance", "origin"):
                     if field in dec:
@@ -1070,6 +1107,7 @@ def create_evolution_router(
                     route=f"/management/evolution-journal?mutation_review={dec_id}",
                     bff_detail_path=f"/api/v1/operator/mutation-review/{dec_id}",
                 )
+                mr_item["evidence_class"] = ev_class
                 mr_item["mutation_review"] = proj
                 mr_item["record"] = mr_item["mutation_review"]
                 items.append(mr_item)
@@ -1147,8 +1185,13 @@ def create_evolution_router(
             reverse=True,
         )
 
-        filtered = evolution_journal_filter_items(
+        filtered = evolution_journal_filter_by_view(
             items,
+            view=view_mode,
+            has_explicit_target_filter=has_explicit_target_filter,
+        )
+        filtered = evolution_journal_filter_items(
+            filtered,
             source_type=source_type,
             status=status,
             action_type=action_type,
@@ -1299,12 +1342,35 @@ def create_evolution_router(
                     and it.get("entry_type") == "evolution_decision"
                 ]
 
-        total = len(filtered)
+        source_types_filter = evolution_journal_type_filter(source_type)
+        statuses_filter = evolution_journal_csv_filter(status)
+        action_types_filter = evolution_journal_csv_filter(action_type)
+        risk_levels_filter = evolution_journal_csv_filter(risk_level)
+        draft_pm_matches_filters = (
+            not has_explicit_target_filter
+            and view_mode in {"all", "auto_proposals"}
+            and (not source_types_filter or "postmortem" in source_types_filter)
+            and (not statuses_filter or "draft" in statuses_filter)
+            and (not action_types_filter or "postmortem" in action_types_filter)
+            and not risk_levels_filter
+        )
+        effective_unfetched_draft = unfetched_draft_count if draft_pm_matches_filters else 0
+
+        total = len(filtered) + effective_unfetched_draft
         page_items, next_page_token = _page_slice_fn(filtered, page_token, page_size)
+        if next_page_token is None and effective_unfetched_draft > 0 and len(page_items) > 0:
+            try:
+                start_idx = max(0, int(page_token)) if page_token and str(page_token).strip() else 0
+            except (TypeError, ValueError):
+                start_idx = 0
+            end_idx = start_idx + page_size
+            if end_idx < total:
+                next_page_token = str(end_idx)
         for it in page_items:
             if it.get("entry_type") == "mutation_review":
                 dec_id = str(it.get("source_id") or "")
                 raw_dec = dec_by_id.get(dec_id) or {}
+                ev_class = it.get("evidence_class") or evolution_journal_decision_evidence_class(raw_dec)
                 full_proj = None
                 if mutation_review_projection is not None:
                     full_proj = mutation_review_projection(
@@ -1317,6 +1383,8 @@ def create_evolution_router(
                 for field in ("metadata", "provenance", "origin"):
                     if field in raw_dec and field not in full_proj:
                         full_proj[field] = raw_dec[field]
+                full_proj["evidence_class"] = ev_class
+                it["evidence_class"] = ev_class
                 it["mutation_review"] = full_proj
                 it["record"] = full_proj
                 it["status"] = str(full_proj.get("decision_state") or it.get("status") or "unknown").lower()
@@ -1340,13 +1408,34 @@ def create_evolution_router(
             "rollbacks",
             "freeze_orders",
         ]
-        summary = _management_prune_camel_aliases(evolution_journal_summary(filtered, len(page_items)))
+        raw_summary = evolution_journal_summary(filtered, len(page_items))
+        if effective_unfetched_draft > 0:
+            raw_summary["total_items"] += effective_unfetched_draft
+            raw_summary["postmortem_count"] += effective_unfetched_draft
+            raw_summary["by_type"]["postmortem"] = (
+                raw_summary["by_type"].get("postmortem", 0) + effective_unfetched_draft
+            )
+            raw_summary["byType"]["postmortem"] = raw_summary["by_type"]["postmortem"]
+            raw_summary["by_status"]["draft"] = (
+                raw_summary["by_status"].get("draft", 0) + effective_unfetched_draft
+            )
+            raw_summary["byStatus"]["draft"] = raw_summary["by_status"]["draft"]
+            raw_summary["by_risk_level"]["unknown"] = (
+                raw_summary["by_risk_level"].get("unknown", 0) + effective_unfetched_draft
+            )
+            raw_summary["byRiskLevel"]["unknown"] = raw_summary["by_risk_level"]["unknown"]
+        summary = _management_prune_camel_aliases(raw_summary)
+        auto_proposal_counts = evolution_journal_auto_proposal_counts(
+            decisions,
+            postmortem_draft_count=postmortem_draft_total,
+        )
         canonical_page_items = _management_prune_camel_aliases(page_items)
         return {
             "data": {
                 "id": "management_evolution_journal",
                 "items": canonical_page_items,
                 "summary": summary,
+                "auto_proposal_counts": auto_proposal_counts,
             },
             "page_info": {
                 "next_page_token": next_page_token,
