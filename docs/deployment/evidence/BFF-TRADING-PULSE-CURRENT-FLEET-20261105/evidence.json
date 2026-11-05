@@ -1,0 +1,9 @@
+{
+  "task_id": "BFF-TRADING-PULSE-CURRENT-FLEET-20261105",
+  "fixture": "hosted-shaped: bindings active 4, paused 6, failed 3, retired 113 (112 status retired + 1 retired_at); each active runtime has ended+running monitoring sessions",
+  "before": {"runtime_status_card": 126, "retired_runtime_count": null, "row_health_degraded": 126, "row_health_status_counts": {"degraded": 126}},
+  "after": {"runtime_status_card": 13, "retired_runtime_count": 113, "row_health_degraded": 9, "row_health_status_counts": {"degraded": 9, "ok": 4}, "by_status": {"active": 4, "paused": 6, "failed": 3}},
+  "drift_read": "list_paper_live_drift_reports skipped when no live/canary row (call counter test); called once when a canary row exists",
+  "tests": "test_bff_b3_trading_pulse, test_bff_management_cockpit, test_management_read_models_router, test_bff_b6_management_nl_ask, test_owner_read_wiring, test_event_loop_owner_reads_guard: 123 passed before adding 4 new tests; b3 file 9 passed after",
+  "notes": "test_bff_management_cockpit fixture runtime changed paper->canary so its drift-backed baseline_comparison_count==1 assertion (unchanged) still exercises the drift read. Paused rows still report monitoring unavailable (unchanged). Hosted timing measured by coordinator after deploy."
+}

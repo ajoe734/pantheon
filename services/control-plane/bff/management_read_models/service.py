@@ -1548,19 +1548,60 @@ def _trading_pulse_index_by_runtime(records: List[Dict[str, Any]]) -> Dict[str, 
     return by_runtime
 
 
+def _trading_pulse_session_is_ended(session: Dict[str, Any]) -> bool:
+    return bool(
+        _runtime_state_monitoring_terminal_reason(session)
+        or session.get("active") is False
+        or session.get("ended_at") not in (None, "")
+    )
+
+
+def _trading_pulse_session_sort_key(session: Dict[str, Any]) -> str:
+    return str(
+        session.get("ended_at")
+        or session.get("updated_at")
+        or session.get("started_at")
+        or session.get("created_at")
+        or ""
+    )
+
+
+def _trading_pulse_prefer_session(
+    current: Optional[Dict[str, Any]], candidate: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Pick a non-ended session over an ended one; among ended, the latest."""
+    if current is None:
+        return candidate
+    current_ended = _trading_pulse_session_is_ended(current)
+    candidate_ended = _trading_pulse_session_is_ended(candidate)
+    if current_ended and not candidate_ended:
+        return candidate
+    if current_ended and candidate_ended:
+        if _trading_pulse_session_sort_key(candidate) > _trading_pulse_session_sort_key(current):
+            return candidate
+    return current
+
+
 def _trading_pulse_monitoring_indexes(
     sessions: List[Dict[str, Any]],
 ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     by_runtime: Dict[str, Dict[str, Any]] = {}
     by_binding: Dict[str, Dict[str, Any]] = {}
     for session in sessions:
+        if not isinstance(session, dict):
+            continue
         runtime_id = _trading_pulse_runtime_id(session)
         binding_id = _trading_pulse_binding_id(session)
-        if runtime_id and runtime_id not in by_runtime:
-            by_runtime[runtime_id] = session
-        if binding_id and binding_id not in by_binding:
-            by_binding[binding_id] = session
+        if runtime_id:
+            by_runtime[runtime_id] = _trading_pulse_prefer_session(by_runtime.get(runtime_id), session)
+        if binding_id:
+            by_binding[binding_id] = _trading_pulse_prefer_session(by_binding.get(binding_id), session)
     return by_runtime, by_binding
+
+
+def _trading_pulse_binding_is_retired(binding: Dict[str, Any]) -> bool:
+    status = str(binding.get("status") or "").strip().lower()
+    return status == "retired" or binding.get("retired_at") not in (None, "")
 
 
 def _trading_pulse_stage(row: Dict[str, Any]) -> str:
@@ -3344,15 +3385,6 @@ class ManagementService:
                         telemetry_summaries = t_res
                 except Exception:
                     telemetry_summaries = []
-            if hasattr(store, "list_paper_live_drift_reports"):
-                try:
-                    d_res = store.list_paper_live_drift_reports() or []
-                    if isinstance(d_res, dict):
-                        drift_reports = list(d_res.values())
-                    elif isinstance(d_res, list):
-                        drift_reports = d_res
-                except Exception:
-                    drift_reports = []
             if hasattr(store, "list_paper_runtime_monitoring_sessions"):
                 try:
                     m_res = store.list_paper_runtime_monitoring_sessions() or []
@@ -3363,8 +3395,17 @@ class ManagementService:
                 except Exception:
                     monitoring_sessions = []
 
+        retired_runtime_count = sum(
+            1
+            for binding in runtime_bindings
+            if isinstance(binding, dict) and _trading_pulse_binding_is_retired(binding)
+        )
+        runtime_bindings = [
+            binding
+            for binding in runtime_bindings
+            if isinstance(binding, dict) and not _trading_pulse_binding_is_retired(binding)
+        ]
         telemetry_by_runtime_id = _trading_pulse_index_by_runtime(telemetry_summaries)
-        drift_by_runtime_id = _trading_pulse_index_by_runtime(drift_reports)
         monitoring_by_runtime_id, monitoring_by_binding_id = _trading_pulse_monitoring_indexes(monitoring_sessions)
 
         runtime_rows = []
@@ -3390,6 +3431,19 @@ class ManagementService:
                     prefetched=True,
                 )
             )
+
+        if store is not None and hasattr(store, "list_paper_live_drift_reports") and any(
+            _trading_pulse_stage(row) in {"live", "canary"} for row in runtime_rows
+        ):
+            try:
+                d_res = store.list_paper_live_drift_reports() or []
+                if isinstance(d_res, dict):
+                    drift_reports = list(d_res.values())
+                elif isinstance(d_res, list):
+                    drift_reports = d_res
+            except Exception:
+                drift_reports = []
+        drift_by_runtime_id = _trading_pulse_index_by_runtime(drift_reports)
 
         all_comparisons = [
             _build_trading_pulse_baseline_comparison(
@@ -3612,6 +3666,7 @@ class ManagementService:
 
         summary = {
             "runtime_count": len(runtime_rows),
+            "retired_runtime_count": retired_runtime_count,
             "telemetry_coverage_count": len(telemetry_rows),
             "by_status": by_status,
             "by_stage": by_stage,
