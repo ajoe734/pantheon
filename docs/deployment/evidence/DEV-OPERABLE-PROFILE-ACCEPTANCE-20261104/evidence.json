@@ -1,13 +1,15 @@
 {
   "task": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
-  "recordedAt": "2026-11-05T03:00Z",
+  "recordedAt": "2026-11-05T03:07Z",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
   "status": "in_progress_not_accepted",
   "hosted": {
     "profile": "read-only",
     "deploymentState": "accepted",
     "frontendSha": "b15608ce1aad37cc80fc6bf1ef09382c17d369eb",
     "bffSha": "0bd88495e27e90f6cfaadc1991139d28a8809501",
-    "releaseName": "20261105T023205Z (run 41947653837)",
+    "releaseName": "20261105T023205Z-b15608ce1aad-gate-41952025305-41954076568-1-3625774 (run 41947653837)",
     "buildMode": {
       "VITE_BFF_MODE": "live",
       "VITE_BFF_FALLBACK": "strict",
@@ -17,21 +19,41 @@
     },
     "bffConfigPosture": {
       "auth_mode": "strict",
-      "auth_stub": false
+      "auth_stub": false,
+      "dev_login_enabled": true,
+      "mfa_required": false
     },
     "pairId": "560966946e67b01c6e188d5ff065c282a3c2d3accfe915d22130c0b3c5d4f6bf"
   },
   "rootCause": "nonprod-deploy.yml frontend_profile defaults to read-only and scripts/auto_deploy_dev_pair.py preserves the accepted hosted profile, so Dev stays read-only until one operator-live deploy is dispatched.",
   "sourceChangesNeeded": false,
-  "regression": "scripts/test_auto_deploy_dev_pair.py + scripts/test_cross_repo_release_controller.py: 126 passed (operator-live preserved; inconsistent posture fails closed)",
+  "regression": "PANTHEON_DEPENDENCY_PYTHON -m pytest -q scripts/test_auto_deploy_dev_pair.py scripts/test_cross_repo_release_controller.py -> 126 passed in 38.35s (operator-live preserved; inconsistent posture fails closed)",
+  "authIdentityPreflight": {
+    "artifact": "/tmp/pantheon-dev-operable-20261104/login-profile-availability.json",
+    "profilesConfigured": ["TEST_ADMIN", "VIEWER", "OPERATOR_A", "OPERATOR_B"],
+    "secretsDisclosed": false
+  },
+  "quietCrudTarget": {
+    "auditArtifact": "/tmp/pantheon-dev-operable-20261104/existing-private-workspace-crud-side-effect-and-remount-audit.md",
+    "surface": "User-private TradingRoomWorkspace (/agora/trading-room/{strategyId})",
+    "endpoints": [
+      "POST /bff/agora/strategies/{strategy_id}/trading-room/proposals",
+      "POST /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/accept",
+      "PATCH /bff/agora/trading-room/workspaces/{workspace_id}/layout",
+      "GET /bff/agora/trading-room/workspaces/{workspace_id}",
+      "GET /bff/agora/trading-room/workspaces/lookup",
+      "GET /bff/agora/trading-room/workspaces/{workspace_id}/versions"
+    ],
+    "sideEffects": "Pure declarative layout compiler and PostgresTradingRoomStore state only; zero provider, model, backtest, strategy mutation, broker order, or capital execution calls."
+  },
   "workflows": {
     "41947126368": "completed failure (capture stage); lease released/expired; not mine",
     "41946522116": "failure at capture stage (DEV_ARTIFACT_OPERATION_FAILED exit 75) for backend 0bd88495e + FE b15608ce1; not mine",
-    "41758658026": "last success, current served pair",
-    "41947653837": "completed success; served pair FE b15608ce1 / BFF 0bd88495e (read-only)",
+    "41758658026": "prior read-only baseline pair FE 809e1ce0a / BFF cc074638f",
+    "41947653837": "completed success; current served pair FE b15608ce1 / BFF 0bd88495e (read-only)",
     "41956583442/41956938180": "success, all-12 chain segments only; deploy jobs skipped, no release"
   },
-  "rollbackTarget": "FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb / BFF 0bd88495e27e90f6cfaadc1991139d28a8809501 (read-only, pair 560966946e67...)",
+  "rollbackTarget": "FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb / BFF 0bd88495e27e90f6cfaadc1991139d28a8809501 (read-only, pair 560966946e67b01c6e188d5ff065c282a3c2d3accfe915d22130c0b3c5d4f6bf)",
   "acceptanceMatrix": {
     "operatorLiveDeploy": "not-run",
     "loginUiOperatorCreateEditReload": "not-run",
@@ -39,16 +61,27 @@
     "missingSession401": "not-run",
     "tenantMismatch": "not-run",
     "idempotency": "not-run",
-    "realBrokerCapitalDisabledProof": "not-run",
+    "realBrokerCapitalDisabledProof": "passed-source-and-posture (post-switch re-verification pending operator-live deploy)",
     "testResourceDisposition": "none created"
   },
+  "coreFlowInventory": {
+    "publicReadManifestAndVersion": "passed (accepted read-only pair FE b15608ce1 / BFF 0bd88495e)",
+    "loginUiAdminSession": "passed (read-only baseline login verified; operator-live session acceptance pending qualified operator-live pair)",
+    "tradingRoomPrivateWorkspaceCreateAcceptEditReload": "not-run (blocked on Root092748b3 publishing operator-live pair with execute-plans c5a3156bf PR #913)",
+    "rbacViewerWriteDenied403": "not-run (pending qualified operator-live pair)",
+    "missingSessionWriteDenied401": "not-run (pending qualified operator-live pair)",
+    "crossUserWorkspaceAccessDenied403": "not-run (pending qualified operator-live pair)",
+    "tenantMismatchRejected403": "not-run (pending qualified operator-live pair)",
+    "idempotencyConflict409AndETag412_428": "not-run (pending qualified operator-live pair)",
+    "realBrokerAndCapitalExecutionDisabled": "passed (paper/isolated Dev only; live broker authority fail-closed)"
+  },
   "blockers": [
-    "Served FE b15608ce1 lacks the workspace restore fix (execute-plans dev c5a3156bf); a qualified pair must be released first.",
-    "Operator-live dispatch not started by this worker: brief keeps root as sole serial Dev publisher; OPS-DEV-LEASE-TRANSIENT-20261105 lease-controller repair (run 41957902456) in flight; no deploy currently running as of 03:00Z.",
-    "Next: root/publisher releases a pair containing c5a3156bf with frontend_profile=operator-live via Nonprod Deploy, then this task runs login-UI create/edit/reload, viewer403, 401, tenant, idempotency."
+    "Served FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb is read-only and predates the TradingRoomWorkspace reload fix (execute-plans dev c5a3156bf7fa295c60da225d8f3e76d3ec9f3df0, PR #913); a qualified operator-live pair must be published first.",
+    "Per canonical completion_tracks.hosted (external_wait) and coordinator note, Root092748b3 is the sole serial Dev publisher/hosted coordinator and OPS-DEV-LEASE-TRANSIENT-20261105 (PR #6955, review_approved at 0bfddf6fd4095fda072fda10a31848a2afee9364) is awaiting required CI/integrator merge before the next Dev release.",
+    "Next: after Root092748b3 publishes a qualified pair containing execute-plans c5a3156bf with frontend_profile=operator-live via Nonprod Deploy, reopen and run hosted login-UI private-workspace create/accept/edit/reload, viewer 403, missing-session 401, cross-user 403, tenant mismatch 403, and idempotency/ETag checks."
   ],
   "dependencies": {
-    "EVOLUTION-OWNER-WRITE-SERVICE-AUTH-20261104": "done",
-    "FE-TRADINGROOM-WORKSPACE-RESTORE-20261105": "done; execute-plans dev c5a3156bf (PR913) merged 02:51:48Z, NOT yet served"
+    "EVOLUTION-OWNER-WRITE-SERVICE-AUTH-20261104": "done (satisfied=true)",
+    "FE-TRADINGROOM-WORKSPACE-RESTORE-20261105": "done (satisfied=true; execute-plans dev c5a3156bf7fa295c60da225d8f3e76d3ec9f3df0 PR #913 merged 2026-11-05T02:51:48Z, not yet served on Dev)"
   }
 }
