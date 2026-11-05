@@ -19,6 +19,8 @@ for the Management System domain:
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 import logging
 import math
@@ -76,7 +78,12 @@ from services.control_plane.bff.core.owner_reads import (
 )
 from services.control_plane.bff.governance.human_inbox import (
     _build_persona_readiness_items,
+    _human_inbox_filter_items,
     _human_inbox_persona_blocking_reasons,
+    _human_inbox_project_items,
+    _human_inbox_summary,
+    _management_prune_camel_aliases,
+    read_open_incidents,
 )
 from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
 from services.control_plane.bff.management_read_models.models import ManagementObservation
@@ -134,6 +141,13 @@ _HUMAN_INBOX_READ_EXECUTOR = ThreadPoolExecutor(
     max_workers=_HUMAN_INBOX_READ_SLOT_COUNT,
     thread_name_prefix="bff-human-inbox-read",
 )
+# The one mechanism that bounds Human Inbox contributors: each contributor runs
+# here concurrently and ManagementService.get_human_inbox waits for them within
+# human_inbox_surface_timeout_seconds.
+_HUMAN_INBOX_CONTRIBUTOR_EXECUTOR = ThreadPoolExecutor(
+    max_workers=8,
+    thread_name_prefix="mgmt_human_inbox_contributor",
+)
 _HEALTH_OWNER_READ_EXECUTOR = ThreadPoolExecutor(
     max_workers=16,
     thread_name_prefix="bff-health-owner-read",
@@ -141,6 +155,15 @@ _HEALTH_OWNER_READ_EXECUTOR = ThreadPoolExecutor(
 _MANAGEMENT_STORE_OVERRIDE: ContextVar[Optional[Any]] = ContextVar(
     "bff_management_store_override", default=None
 )
+
+
+class _HumanInboxContributorDegraded(Exception):
+    """A contributor whose own bound tripped, carrying the real reason."""
+
+    def __init__(self, key: str, reason: str) -> None:
+        super().__init__(reason)
+        self.key = key
+        self.reason = reason
 
 
 def _is_unpatched_port_method(store: Any, name: str) -> bool:
@@ -301,6 +324,27 @@ _HUMAN_INBOX_PRIORITY_RANK: Dict[str, int] = {
     "medium": 2,
     "low": 1,
 }
+
+_SHELL_SUMMARY_ACTIVE_JOB_STATES = frozenset({"running", "in_progress", "queued"})
+_SHELL_SUMMARY_JOBS_PAGE_SIZE = 200
+
+
+def _shell_summary_jobs_budget_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_SHELL_SUMMARY_JOBS_BUDGET_SECONDS", "1.5").strip()
+    try:
+        value = max(float(raw), 0.1)
+    except ValueError:
+        value = 1.5
+    remaining = remaining_management_read_budget()
+    return value if remaining is None else max(0.1, min(value, remaining))
+
+
+def _shell_summary_caller_key() -> str:
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+
+    raw = f"{authorization.get() or ''}|{selected_tenant.get() or ''}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
 
 _SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
 _SHELL_SUMMARY_COUNT_CACHE_LOCK = threading.Lock()
@@ -2656,15 +2700,73 @@ class ManagementService:
     # -----------------------------------------------------------------------
     # 1. Shell Summary
     # -----------------------------------------------------------------------
+    def _shell_summary_jobs_read(self, store: Any, degraded_state: bool) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Bounded active-job read; the surface is decided by this read, not a dataset lookup."""
+        if store is not None and not hasattr(store, "list_jobs_bff") and hasattr(store, "list_records"):
+            # Store without the typed job port: its generic record read is the only job read there is.
+            try:
+                res = store.list_records("jobs")
+            except Exception as exc:
+                return [], {"status": "unavailable", "source": "service_store",
+                            "message": f"jobs read failed: {type(exc).__name__}"}
+            avail, items = res if isinstance(res, tuple) else (True, res)
+            if not avail:
+                return [], {"status": "unavailable", "source": "service_store"}
+            return [r for r in (items or []) if isinstance(r, dict)], {
+                "status": "degraded" if degraded_state else "ok", "source": "service_store"}
+        if store is None or not hasattr(store, "list_jobs_bff"):
+            return [], {"status": "unavailable", "source": "missing"}
+        budget = _shell_summary_jobs_budget_seconds()
+        diagnostics: Dict[str, Any] = {}
+        kwargs: Dict[str, Any] = {
+            "diagnostics": diagnostics,
+            "statuses": sorted(_SHELL_SUMMARY_ACTIVE_JOB_STATES),
+            "page_size": _SHELL_SUMMARY_JOBS_PAGE_SIZE,
+            "deadline_seconds": budget,
+        }
+        try:
+            accepted = inspect.signature(store.list_jobs_bff).parameters
+            if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in accepted.values()):
+                kwargs = {k: v for k, v in kwargs.items() if k in accepted}
+            rows_ = store.list_jobs_bff(**kwargs)
+        except Exception as exc:
+            return [], {"status": "unavailable", "source": "service_client",
+                        "message": f"jobs read failed: {type(exc).__name__}"}
+        items = [r for r in (rows_ or []) if isinstance(r, dict)]
+        if "healthy_sources" not in diagnostics:
+            # Narrow stand-in store with no per-source diagnostics: the read itself succeeded.
+            return items, {"status": "degraded" if degraded_state else "ok", "source": "service_store"}
+        healthy = list(diagnostics.get("healthy_sources") or [])
+        failed = dict(diagnostics.get("degraded_sources") or {})
+        configured = list(diagnostics.get("configured_sources") or [])
+        if not configured and not healthy:
+            return [], {"status": "unavailable", "source": "missing",
+                        "message": "no job source is configured.", "degraded_sources": failed}
+        if not healthy:
+            return [], {"status": "unavailable", "source": "service_client",
+                        "message": "every configured job source failed.", "degraded_sources": failed}
+        # A source reported "truncated" still answered; only unconfigured/failed ones degrade.
+        if failed or degraded_state:
+            surface: Dict[str, Any] = {"status": "degraded", "source": "bff_composed"}
+            if failed:
+                surface["degraded_sources"] = failed
+                surface["message"] = "Partial job source degradation (" + ", ".join(
+                    f"{k}={v}" for k, v in failed.items()) + ")."
+            return items, surface
+        return items, {"status": "ok", "source": "bff_composed"}
+
     def build_shell_summary_counts(self, ttl_seconds: float = 5.0) -> Dict[str, Any]:
         now_str = self._utc_now()
         now_mono = time.monotonic()
         store = self._resolve_store()
 
+        # The jobs read runs with the caller's authorization, so a cached result
+        # (healthy or failed) must only ever be served to that same caller.
+        caller_key = _shell_summary_caller_key()
         with _SHELL_SUMMARY_COUNT_CACHE_LOCK:
             cached = _SHELL_SUMMARY_COUNT_CACHE.get("latest")
             if cached and (now_mono - cached.get("cached_at", 0.0) < ttl_seconds):
-                if cached.get("store_id") == id(store):
+                if cached.get("store_id") == id(store) and cached.get("caller_key") == caller_key:
                     return cached["payload"]
 
         degraded_state = os.getenv("BFF_READ_SURFACE_STATE", "fresh") in {"degraded", "stale"}
@@ -2708,7 +2810,7 @@ class ManagementService:
         )
         reviews = rows("governance_review_queue_items", lambda st: st.list_governance_review_queue_items())
         incidents = rows("incidents", lambda st: st.list_incidents())
-        jobs = rows("jobs", lambda st: st.list_jobs_bff(), lambda st: st.list_records("jobs"))
+        jobs, sources["jobs"] = self._shell_summary_jobs_read(store, degraded_state)
         pending_states = {"pending", "in_review"}
         pending_approvals = count(approvals, {*pending_states, "proposed", "under_review", "reviewed"}, "decision_state", "status")
         open_alerts = (
@@ -2743,7 +2845,8 @@ class ManagementService:
                 ["incidents", "governance_review_queue_items", "approval_queue_items", "kill_switch"],
                 source="bff_cheap_count",
             ),
-            "running_jobs": group("running_jobs", ["jobs"]),
+            "running_jobs": {**sources["jobs"], "snapshot_at": now_str,
+                             "freshness": {"computed_at": now_str, "ttl_seconds": ttl_seconds, "cache": "miss"}},
         }
         shell_surface = _aggregate_group_surface("shell_summary", list(count_surfaces.values()), snapshot_at=now_str)
         shell_surface["freshness"] = count_surfaces["running_jobs"]["freshness"]
@@ -2761,6 +2864,7 @@ class ManagementService:
             _SHELL_SUMMARY_COUNT_CACHE["latest"] = {
                 "cached_at": now_mono,
                 "store_id": id(store),
+                "caller_key": caller_key,
                 "payload": payload,
             }
         return payload
@@ -3760,30 +3864,46 @@ class ManagementService:
         page_token: Optional[str] = None,
         page_size: int = 20,
         identity: Optional[Any] = None,
+        completed_contributors: Optional[Dict[str, Tuple[List[Dict[str, Any]], Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
+        """Compose the human inbox from its contributors, read concurrently.
+
+        Each contributor is bounded by ``human_inbox_surface_timeout_seconds``;
+        a slow or failed contributor degrades only its own surface. Contributors
+        that finish are also recorded in ``completed_contributors`` (when given)
+        so a caller whose own budget expires can still compose them.
+        """
         snap = self._utc_now()
         store = _MANAGEMENT_STORE_OVERRIDE.get() or self._resolve_store()
-        all_items: List[Dict[str, Any]] = []
+        completed = completed_contributors if completed_contributors is not None else {}
         failures: Dict[str, Dict[str, Any]] = {}
-        surfaces: Dict[str, Dict[str, Any]] = {}
-        warm_futures: List[Any] = []
-
         if store is None:
-            failures["store"] = {
-                "status": "unavailable",
-                "source": "missing",
-                "dataset": "human_inbox",
-                "snapshot_at": snap,
-                "message": "Store unavailable",
-            }
-            surfaces["human_inbox"] = {
-                "status": "unavailable",
-                "source": "missing",
-                "snapshot_at": snap,
-            }
-        else:
-            scope = request_read_scope()
-            scope.__enter__()
+            return self.compose_human_inbox(
+                snap,
+                completed={},
+                failures={},
+                store_missing=True,
+                source_type=source_type,
+                status=status,
+                priority=priority,
+                page_token=page_token,
+                page_size=page_size,
+            )
+
+        readers = self._human_inbox_contributor_readers(store, snap)
+        timeout_budget = human_inbox_surface_timeout_seconds()
+        outer_remaining = remaining_management_read_budget()
+        if outer_remaining is not None:
+            timeout_budget = min(timeout_budget, outer_remaining)
+        # The persona contributor carries its own bound of the same length;
+        # the grace lets it report its own reason before the shared wait does.
+        wait_budget = timeout_budget + 0.15
+
+        scope = request_read_scope()
+        scope.__enter__()
+        futures: Dict[Any, str] = {}
+        warm_futures: List[Any] = []
+        try:
             raw_store = getattr(store, "_target", store)
             if (
                 _is_unpatched_port_method(raw_store, "list_approval_queue_items")
@@ -3793,7 +3913,6 @@ class ManagementService:
                 for warm_name in (
                     "list_deployment_plans",
                     "list_evolution_decisions",
-                    "list_incidents",
                     "list_personas",
                     "list_bindings",
                     "list_capital_pools",
@@ -3803,319 +3922,185 @@ class ManagementService:
                         _warm = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, getattr(raw_store, warm_name), warm_key=warm_name)
                         if _warm is not None:
                             warm_futures.append(_warm)
-            # 1. Approvals
-            if hasattr(store, "list_approval_queue_items") or hasattr(store, "list_approval_records"):
+
+            def _run(key: str, reader: Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]) -> None:
                 try:
-                    records = (
-                        store.list_approval_queue_items()
-                        if hasattr(store, "list_approval_queue_items")
-                        else store.list_approval_records()
-                    ) or []
-                    approval_queue_source = "read_store"
-                    if hasattr(store, "dataset_source"):
-                        try:
-                            approval_queue_source = str(store.dataset_source("approval_queue_items"))
-                        except Exception:
-                            approval_queue_source = "read_store"
-                    surfaces["approval_queue"] = {
-                        "status": "ok" if records else "unavailable",
-                        "source": approval_queue_source,
-                        "snapshot_at": snap,
-                        **({"message": "Approval queue has no readable source records."} if not records else {}),
-                    }
-                    if approval_queue_source == "local_snapshot":
-                        surfaces["approval_queue"]["status"] = "degraded"
-                        surfaces["approval_queue"]["note"] = (
-                            "Served from local BFF snapshot fallback instead of a backend-owned read store."
-                        )
-                    for r in records:
-                        if isinstance(r, dict):
-                            dec_id = str(r.get("decision_id") or r.get("id") or r.get("approval_decision_id") or "")
-                            if dec_id:
-                                dec_state = str(r.get("decision_state") or r.get("status") or "pending")
-                                all_items.append({
-                                    "id": f"approval:{dec_id}",
-                                    "item_id": dec_id,
-                                    "inbox_id": f"approval:{dec_id}",
-                                    "source_id": dec_id,
-                                    "decision_id": dec_id,
-                                    "approval_decision_id": dec_id,
-                                    "source_type": "approval",
-                                    "inboxType": "approval",
-                                    "status": dec_state,
-                                    "action_state": "pending" if dec_state in ("pending", "in_review", "open") else "resolved",
-                                    "priority": str(r.get("priority") or "medium"),
-                                    "title": str(r.get("title") or "Deployment Approval"),
-                                    "summary": str(r.get("summary") or r.get("description") or "Governance action required"),
-                                    "created_at": str(r.get("submitted_at") or r.get("created_at") or snap),
-                                    "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
-                                    "details": r,
-                                })
-                except Exception as exc:
-                    failures["approval_queue"] = {
+                    completed[key] = reader()
+                except _HumanInboxContributorDegraded as exc:
+                    failures[key] = self._human_inbox_timeout_surface(key, snap, exc.reason)
+                except BaseException as exc:
+                    log.warning("bff.human_inbox contributor %s failed: %s", key, type(exc).__name__)
+                    failures[key] = {
                         "status": "degraded",
                         "source": "read_store",
                         "reason": "contributor_read_error",
-                        "message": f"approval_queue_items contributor failed: {exc}",
+                        "message": f"{key} contributor failed: {type(exc).__name__}: {exc}",
                         "snapshot_at": snap,
                     }
-                    surfaces["approval_queue"] = failures["approval_queue"]
-            else:
-                surfaces["approval_queue"] = {
-                    "status": "unavailable",
-                    "source": "missing",
-                    "snapshot_at": snap,
-                    "message": "Approval queue has no readable source records.",
-                }
 
-            # 2. Governance Reviews
-            if hasattr(store, "list_governance_review_queue_items"):
-                try:
-                    records = store.list_governance_review_queue_items() or []
-                    surfaces["governance_review_queue"] = {
-                        "status": "ok" if records else "unavailable",
-                        "source": "read_store",
-                        "snapshot_at": snap,
-                        **({"message": "Governance review queue has no readable source records."} if not records else {}),
-                    }
-                    for r in records:
-                        if isinstance(r, dict):
-                            item_id_val = str(r.get("item_id") or r.get("id") or r.get("review_item_id") or "")
-                            if item_id_val:
-                                st = str(r.get("status") or "pending")
-                                all_items.append({
-                                    "id": f"governance_review:{item_id_val}",
-                                    "item_id": item_id_val,
-                                    "inbox_id": f"governance_review:{item_id_val}",
-                                    "source_id": item_id_val,
-                                    "review_item_id": item_id_val,
-                                    "source_type": "governance_review",
-                                    "inboxType": "governance_review",
-                                    "status": st,
-                                    "action_state": "pending" if st in ("pending", "open", "in_review") else "resolved",
-                                    "priority": str(r.get("priority") or "high"),
-                                    "title": str(r.get("title") or "Governance Review"),
-                                    "summary": str(r.get("summary") or "Policy review required"),
-                                    "created_at": str(r.get("created_at") or snap),
-                                    "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
-                                    "details": r,
-                                })
-                except Exception as exc:
-                    failures["governance_review_queue"] = {
-                        "status": "degraded",
-                        "source": "read_store",
-                        "reason": "contributor_read_error",
-                        "message": f"governance_review_queue_items contributor failed: {exc}",
-                        "snapshot_at": snap,
-                    }
-                    surfaces["governance_review_queue"] = failures["governance_review_queue"]
-            else:
-                surfaces["governance_review_queue"] = {
-                    "status": "unavailable",
-                    "source": "missing",
-                    "snapshot_at": snap,
-                    "message": "Governance review queue has no readable source records.",
-                }
-
-            # 3. Incidents
-            if hasattr(store, "list_incidents"):
-                try:
-                    s_findings = store.list_incidents() or []
-                    available = True
-                    surfaces["incidents"] = {
-                        "status": "ok" if available and s_findings else "unavailable",
-                        "source": "read_store" if available else "missing",
-                        "snapshot_at": snap,
-                        **({"message": "Incidents have no readable source records."} if not (available and s_findings) else {}),
-                    }
-                    for r in (s_findings or []):
-                        if isinstance(r, dict):
-                            f_id = str(r.get("incident_id") or r.get("id") or "")
-                            if f_id:
-                                st = str(r.get("status") or "active")
-                                all_items.append({
-                                    "id": f"incident:{f_id}",
-                                    "item_id": f_id,
-                                    "inbox_id": f"incident:{f_id}",
-                                    "source_id": f_id,
-                                    "incident_id": f_id,
-                                    "source_type": "incident",
-                                    "inboxType": "incident",
-                                    "status": st,
-                                    "action_state": "pending" if st in ("active", "open", "new", "escalated", "investigating") else "resolved",
-                                    "priority": "critical" if str(r.get("severity") or "").lower() in ("critical", "sev1", "high") else "medium",
-                                    "title": str(r.get("title") or r.get("summary") or "Incident"),
-                                    "summary": str(r.get("summary") or "Incident requires review"),
-                                    "created_at": str(r.get("created_at") or snap),
-                                    "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
-                                    "details": r,
-                                })
-                except Exception as exc:
-                    failures["incidents"] = {
-                        "status": "degraded",
-                        "source": "read_store",
-                        "reason": "contributor_read_error",
-                        "message": f"incidents contributor failed: {exc}",
-                        "snapshot_at": snap,
-                    }
-                    surfaces["incidents"] = failures["incidents"]
-            else:
-                surfaces["incidents"] = {
-                    "status": "unavailable",
-                    "source": "missing",
-                    "snapshot_at": snap,
-                    "message": "Incidents have no readable source records.",
-                }
-
-            # 5. Persona Readiness
-            #
-            # BFF-MGMT-READ-DEFECT-REPAIR-001 acceptance item 7: this
-            # contributor is bounded independently (real timeout +
-            # capacity, not just a raw `store.list_personas()` call) via
-            # `_bounded_persona_readiness_rows`, so a slow/saturated
-            # persona_readiness read degrades on its own -- with a real
-            # `read_timeout` / `read_capacity_saturated` reason and
-            # `meta.partial` -- while sibling contributors (durable
-            # promotion reviews, approvals, etc.) stay populated.
-            if hasattr(store, "list_personas"):
-                try:
-                    personas, degradation_reason = self._bounded_persona_readiness_rows(snap, store)
-                    if degradation_reason is not None:
-                        failures["persona_readiness"] = {
-                            "status": "degraded",
-                            "source": "bff_composed",
-                            "reason": degradation_reason,
-                            "message": (
-                                "persona_readiness exceeded the Human Inbox surface budget; "
-                                "completed contributors are returned as a partial result."
-                                if degradation_reason == "read_timeout"
-                                else "persona_readiness read capacity is saturated; "
-                                "completed contributors are returned as a partial result."
-                            ),
-                            "snapshot_at": snap,
-                        }
-                        surfaces["persona_readiness"] = failures["persona_readiness"]
-                    else:
-                        surfaces["persona_readiness"] = {
-                            "status": "ok" if personas else "unavailable",
-                            "source": "bff_composed",
-                            "snapshot_at": snap,
-                        }
-                        for p in personas:
-                            if isinstance(p, dict) and bool(p.get("human_needed") or p.get("humanNeeded")):
-                                p_id = str(p.get("persona_id") or p.get("id") or "")
-                                if p_id:
-                                    blocking_reasons = _human_inbox_persona_blocking_reasons(p)
-                                    research_status = (
-                                        p.get("research_status")
-                                        if isinstance(p.get("research_status"), dict)
-                                        else {}
-                                    )
-                                    current_projects = (
-                                        p.get("current_research_projects")
-                                        if isinstance(p.get("current_research_projects"), list)
-                                        else []
-                                    )
-                                    all_items.append({
-                                        "id": f"readiness_blocker:persona:{p_id}",
-                                        "item_id": p_id,
-                                        "inbox_id": f"readiness_blocker:persona:{p_id}",
-                                        "source_id": p_id,
-                                        "persona_id": p_id,
-                                        "source_type": "readiness_blocker",
-                                        "inboxType": "readiness_blocker",
-                                        "status": str(p.get("state") or p.get("status") or "needs_human_approval"),
-                                        "action_state": "pending",
-                                        "priority": "high",
-                                        "title": f"Persona needs review: {p.get('name') or p_id}",
-                                        "summary": str(p.get("current_work") or "Persona readiness is blocked on human governance review."),
-                                        "created_at": str(p.get("updated_at") or snap),
-                                        "updated_at": str(p.get("updated_at") or snap),
-                                        "blocking_reasons": list(blocking_reasons),
-                                        "research_context": {
-                                            "research_status": _management_json_clone(research_status),
-                                            "current_research_projects": _management_json_clone(current_projects),
-                                            "recommendation": p.get("recommendation"),
-                                            "current_work": p.get("current_work"),
-                                            "data_source_status": _management_json_clone(p.get("data_source_status") or {}),
-                                        },
-                                        "details": p,
-                                    })
-                except Exception as exc:
-                    failures["persona_readiness"] = {
-                        "status": "degraded",
-                        "source": "bff_composed",
-                        "reason": "contributor_read_error",
-                        "message": str(exc),
-                        "snapshot_at": snap,
-                    }
-                    surfaces["persona_readiness"] = failures["persona_readiness"]
-
+            for key, reader in readers.items():
+                futures[_HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit(copy_context().run, _run, key, reader)] = key
+            _done, not_done = _futures_wait(list(futures), timeout=wait_budget)
+            for fut in not_done:
+                key = futures[fut]
+                fut.cancel()
+                fut.add_done_callback(_discard_late_management_read_result_sync)
+                failures.setdefault(key, self._human_inbox_timeout_surface(key, snap))
+        finally:
             for wf in warm_futures:
                 if not wf.done():
                     wf.cancel()
             scope.__exit__(None, None, None)
+
+        return self.compose_human_inbox(
+            snap,
+            completed=dict(completed),
+            failures=failures,
+            source_type=source_type,
+            status=status,
+            priority=priority,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    @staticmethod
+    def _human_inbox_timeout_surface(key: str, snap: str, reason: str = "read_timeout") -> Dict[str, Any]:
+        return {
+            "status": "degraded",
+            "source": "management_read_timeout",
+            "reason": reason,
+            "message": (
+                f"{key} exceeded the Human Inbox surface budget; "
+                "completed contributors are returned as a partial result."
+                if reason == "read_timeout"
+                else f"{key} was not read: {reason}; completed contributors are returned as a partial result."
+            ),
+            "snapshot_at": snap,
+            "staleness": {"served_from": "timeout_degraded", "last_known_at": snap},
+        }
+
+    def _human_inbox_contributor_readers(
+        self, store: Any, snap: str
+    ) -> Dict[str, Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]]:
+        """One reader per contributor; each returns (records, surface) or raises."""
+        readers: Dict[str, Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]] = {}
+
+        def _unavailable(message: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+            return [], {"status": "unavailable", "source": "missing", "snapshot_at": snap, "message": message}
+
+        def _approvals() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+            if not (hasattr(store, "list_approval_queue_items") or hasattr(store, "list_approval_records")):
+                return _unavailable("Approval queue has no readable source records.")
+            records = (
+                store.list_approval_queue_items()
+                if hasattr(store, "list_approval_queue_items")
+                else store.list_approval_records()
+            ) or []
+            source = "read_store"
+            if hasattr(store, "dataset_source"):
+                try:
+                    source = str(store.dataset_source("approval_queue_items"))
+                except Exception:
+                    source = "read_store"
+            surface: Dict[str, Any] = {"status": "ok", "source": source, "snapshot_at": snap}
+            if source == "local_snapshot":
+                surface["status"] = "degraded"
+                surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
+            return [r for r in records if isinstance(r, dict)], surface
+
+        def _reviews() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+            if not hasattr(store, "list_governance_review_queue_items"):
+                return _unavailable("Governance review queue has no readable source records.")
+            records = store.list_governance_review_queue_items() or []
+            return [r for r in records if isinstance(r, dict)], {
+                "status": "ok", "source": "read_store", "snapshot_at": snap,
+            }
+
+        def _incidents() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+            if not hasattr(store, "list_incidents"):
+                return _unavailable("Incidents have no readable source records.")
+            return read_open_incidents(store), {"status": "ok", "source": "read_store", "snapshot_at": snap}
+
+        def _personas() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+            rows, degradation_reason = self._bounded_persona_readiness_rows(snap, store)
+            if degradation_reason is not None:
+                raise _HumanInboxContributorDegraded("persona_readiness", degradation_reason)
+            return [r for r in rows if isinstance(r, dict)], {
+                "status": "ok", "source": "bff_composed", "snapshot_at": snap,
+            }
+
+        readers["approval_queue"] = _approvals
+        readers["governance_review_queue"] = _reviews
+        readers["incidents"] = _incidents
+        if hasattr(store, "list_personas"):
+            readers["persona_readiness"] = _personas
+        return readers
+
+    def compose_human_inbox(
+        self,
+        snap: str,
+        *,
+        completed: Mapping[str, Tuple[List[Dict[str, Any]], Dict[str, Any]]],
+        failures: Mapping[str, Dict[str, Any]],
+        store_missing: bool = False,
+        source_type: Optional[str] = None,
+        status: Optional[str] = None,
+        priority: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        """Project loaded contributors through the canonical inbox projection."""
+        surfaces: Dict[str, Dict[str, Any]] = {}
+        failure_surfaces = {k: dict(v) for k, v in failures.items() if k not in completed}
+        if store_missing:
+            surfaces["human_inbox"] = {"status": "unavailable", "source": "missing", "snapshot_at": snap}
+            failure_surfaces["store"] = {
+                "status": "unavailable",
+                "source": "missing",
+                "dataset": "human_inbox",
+                "snapshot_at": snap,
+                "message": "Store unavailable",
+            }
+
+        def _records(key: str) -> List[Dict[str, Any]]:
+            return list(completed[key][0]) if key in completed else []
+
+        for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness"):
+            if key in completed:
+                surfaces[key] = completed[key][1]
+            elif key in failure_surfaces:
+                surfaces[key] = failure_surfaces[key]
+        items = _human_inbox_project_items(
+            snapshot_at=snap,
+            review_records=_records("governance_review_queue"),
+            approval_records=_records("approval_queue"),
+            incident_records=_records("incidents"),
+            persona_rows=_records("persona_readiness"),
+        )
+        filtered = _human_inbox_filter_items(items, source_type=source_type, status=status, priority=priority)
+        page_items, next_token = _page_slice(filtered, page_token, page_size)
+        if not store_missing:
             surfaces["human_inbox"] = _aggregate_group_surface("human_inbox", list(surfaces.values()), snapshot_at=snap)
 
-        filtered = []
-        for item in all_items:
-            st = str(item.get("source_type") or item.get("inboxType") or "").lower()
-            if source_type and st != str(source_type).lower():
-                continue
-            item_status = str(item.get("status") or item.get("action_state") or "").lower()
-            if status and item_status != str(status).lower():
-                continue
-            item_priority = str(item.get("priority") or item.get("risk_level") or "").lower()
-            if priority and item_priority != str(priority).lower():
-                continue
-            filtered.append(item)
-
-        filtered.sort(
-            key=lambda x: (
-                _HUMAN_INBOX_PRIORITY_RANK.get(str(x.get("priority") or "").lower(), 0),
-                str(x.get("created_at") or ""),
-            ),
-            reverse=True,
-        )
-        page_items, next_token = _page_slice(filtered, page_token, page_size)
-
-        summary = {
-            "total": len(filtered),
-            "total_items": len(filtered),
-            "governance_review_count": sum(1 for x in filtered if x.get("source_type") == "governance_review"),
-            "approval_count": sum(1 for x in filtered if x.get("source_type") in ("approval", "governance_approval")),
-            "incident_count": sum(1 for x in filtered if x.get("source_type") == "incident"),
-            "priority_counts": {
-                "critical": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "critical"),
-                "high": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "high"),
-                "medium": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "medium"),
-                "low": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "low"),
-            },
+        summary = _human_inbox_summary(filtered, len(page_items))
+        summary["priority_counts"] = {
+            level: sum(1 for x in filtered if str(x.get("priority") or "").lower() == level)
+            for level in ("critical", "high", "medium", "low")
         }
-
-        meta = {
-            "snapshot_at": snap,
-            "version": "v1",
-            "surfaces": surfaces,
-        }
-        if failures:
+        meta: Dict[str, Any] = {"snapshot_at": snap, "version": "v1", "surfaces": surfaces}
+        if failure_surfaces:
             meta["partial"] = True
             meta["degradation"] = {
                 "reason": "one_or_more_human_inbox_contributors_incomplete",
-                "contributors": sorted(failures.keys()),
+                "contributors": sorted(failure_surfaces.keys()),
             }
-
         return {
             "data": {
                 "id": "management-human-inbox",
-                "items": page_items,
+                "items": _management_prune_camel_aliases(page_items),
                 "summary": summary,
             },
-            "page_info": {
-                "next_page_token": next_token,
-                "total": len(filtered),
-                "page_size": page_size,
-            },
+            "page_info": {"next_page_token": next_token, "total": len(filtered), "page_size": page_size},
             "meta": meta,
         }
 

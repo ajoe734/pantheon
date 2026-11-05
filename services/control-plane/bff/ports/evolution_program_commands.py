@@ -91,6 +91,15 @@ class EvolutionProgramCommandPort(Protocol):
     ) -> Dict[str, Any]:
         ...
 
+    async def list_program_runs(
+        self,
+        *,
+        caller_token: Optional[str],
+        tenant_id: Optional[str],
+        program_id: str,
+    ) -> Dict[str, Any]:
+        ...
+
 
 def _owner_detail(exc: urllib.error.HTTPError) -> str:
     try:
@@ -197,4 +206,23 @@ class EvolutionServiceProgramCommandPort:
             tenant_id=tenant_id,
             idempotency_key=idempotency_key,
             fallback="patch_program unavailable",
+        )
+
+    async def list_program_runs(
+        self,
+        *,
+        caller_token: Optional[str],
+        tenant_id: Optional[str],
+        program_id: str,
+    ) -> Dict[str, Any]:
+        """Runs linked to the program, each read back from the owning plane by
+        the Evolution owner.  The BFF projects nothing of its own."""
+        return await self._call(
+            method="GET",
+            path=f"/api/evolution/programs/{quote(program_id, safe='')}/runs",
+            payload={},
+            caller_token=caller_token,
+            tenant_id=tenant_id,
+            idempotency_key=None,
+            fallback="program runs unavailable",
         )

@@ -352,6 +352,24 @@ rejects that kind with 400, including keyed requests and otherwise valid payload
 The typed validator supplies artifact content, provenance and derived fields;
 generic reads and lawful transitions remain available for those validated entries.
 
+### Lineage read
+
+`GET /api/registry/lineage?root_id=&depth=3&limit=200` is the single registry-owned lineage read
+(REGISTRY-LINEAGE-OWNER-READ-20261104). It is read-only and tenant-scoped with the same visible-tenant
+rule as `view=persona_binding` (admin: all; others: own tenant plus builtins; `X-Tenant-Id` narrows).
+The Postgres owner projects flat lineage rows inside the store (no `RegistryEntry` rebuild).
+
+- Edges are derived only from `lineage.parent_registry_ids` (`parent`), `lineage.source_strategy_spec_id`
+  (`source_strategy_spec`), `lineage.source_dataset_refs` (`source_dataset`), `lineage.source_run_ids`
+  (`source_run`), `metadata.persona_id` (`persona`) and `metadata.capital_pool_id` (`capital_pool`).
+  An absent or JSON-null lineage field produces no edge. Edges are `{from, to, label}`.
+- Nodes are `{id, label, type, state?, risk?}`: `strategy_spec`→`Strategy`, `execution_bundle`→`Artifact`,
+  persona→`Persona`, capital pool→`CapitalPool`, source run→`Experiment`, dataset ref→`Dataset`.
+  `state` is the entry `artifact_state`; `risk` is `metadata.risk_level` only when the owner holds it.
+- `root_id` may be a registry id, a strategy id or a persona id; traversal honors `depth` (1..20).
+  Without `root_id` the graph starts from the most recent `execution_bundle` entries and is capped by
+  `limit` (1..1000); `has_more` reports truncation.
+
 ### Evolvable StrategyArtifact facade
 
 `EVOLOOP-003` defines an executable StrategyArtifact as an additive payload
@@ -364,6 +382,7 @@ type.
 | HTTP operation | Description |
 |---|---|
 | `POST /api/registry/strategy-artifacts` | validate and atomically register a `draft` or `candidate` StrategyArtifact; only the same normalized registration envelope (initial state, artifact, producer, evaluation, rollback, and supplemental metadata) is an idempotent retry, while any same-id difference fails closed |
+| `GET /api/registry/strategy-artifacts` | list tenant-scoped execution-bundle catalog rows (`registry_id`, `strategy_id`, `version`, `artifact_state`, `checksum`, `created_at`, `approver`, `risk_level` from `evaluation_summary`; no full `metadata`) with `page_size`, `page_token`, `total`, and `next_page_token` using the same visible-tenant rule as `view=persona_binding` |
 | `GET /api/registry/strategy-artifacts/{registry_id}` | read only an `execution_bundle` carrying the StrategyArtifact overlay |
 | `GET /api/registry/strategies/{strategy_id}/strategy-artifacts` | list StrategyArtifact revisions for a family, optionally filtered by `artifact_state` |
 | `POST /api/registry/strategy-artifacts/{registry_id}/mutate` | create a new `candidate` id/version by changing only declared controls and recording direct-parent plus producing-run lineage |

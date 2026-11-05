@@ -678,6 +678,9 @@ def _build_reload_owner_store(monkeypatch, per_owner_delay: float, call_counts: 
     gov_port = DomainGovernancePort()
 
     class _IncResp:
+        def __init__(self, path: str = "/api/incidents"):
+            self._path = path
+
         def __enter__(self):
             return self
 
@@ -687,14 +690,19 @@ def _build_reload_owner_store(monkeypatch, per_owner_delay: float, call_counts: 
         def read(self):
             return json.dumps(
                 _record_call(
-                    "/api/incidents",
+                    self._path,
                     [{"incident_id": "inc-1", "id": "inc-1", "status": "open", "severity": "high", "title": "Drift alert"}],
                 )
             ).encode("utf-8")
 
     inc_port = DomainIncidentPort(
         incidents_api_url="http://incidents.test",
-        opener=lambda _req, timeout=None: _IncResp(),
+        # Record the requested path including its query: the Human Inbox reads
+        # ?open_only=true while health and alerts read the unfiltered list, and
+        # each distinct owner request must still be made once per request.
+        opener=lambda req, timeout=None: _IncResp(
+            req.full_url.replace("http://incidents.test", "", 1)
+        ),
     )
     tel_port = DomainTelemetryPort(
         telemetry_summaries_reader=lambda: _fake_read_records(None, "/api/telemetry/runtime-summaries", "summaries"),

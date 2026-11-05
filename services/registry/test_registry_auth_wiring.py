@@ -567,5 +567,27 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
         ) == baseline_snapshot
 
 
+def test_strategy_artifacts_catalog_requires_verified_read_auth(strict_client):
+    """GET /api/registry/strategy-artifacts enforces strict read authentication and X-Tenant-Id match."""
+    unauth = strict_client.get("/api/registry/strategy-artifacts")
+    assert unauth.status_code in (401, 403)
+
+    token_a = _jwt(roles=["registry-reader"], tenant="tenant-a")
+    mismatch = strict_client.get(
+        "/api/registry/strategy-artifacts",
+        headers={**_bearer(token_a), "X-Tenant-Id": "tenant-b"},
+    )
+    assert mismatch.status_code == 403
+
+    ok = strict_client.get(
+        "/api/registry/strategy-artifacts",
+        headers={**_bearer(token_a), "X-Tenant-Id": "tenant-a"},
+    )
+    assert ok.status_code == 200
+    assert "items" in ok.json()
+    assert "total" in ok.json()
+
+
+
 
 

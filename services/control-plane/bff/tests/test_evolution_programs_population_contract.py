@@ -22,8 +22,8 @@ from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 AUTH = "Bearer op-dev:admin:mfa"
 HEADERS = {"Authorization": AUTH}
 
-# Real evo-vslice-1 record produced by the evolution service and projected by
-# scripts/project_evolution_to_bff_surfaces.py.
+# Real evo-vslice-1 record produced by the evolution service and seeded directly
+# into the store (the unfiltered decision-to-program projection script is removed).
 EVO_VSLICE_1 = {
     "id": "evo-vslice-1",
     "program_id": "evo-vslice-1",

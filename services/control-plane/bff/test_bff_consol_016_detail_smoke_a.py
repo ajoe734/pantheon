@@ -166,6 +166,17 @@ class DetailSmokeATestReadPorts(ReadSurfacePorts):
         ds = self._get_dataset("lineage_edges")
         return list(ds.values()) if isinstance(ds, dict) else list(ds)
 
+    def get_lineage_graph(self, root_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        # Same root match the strategy lineage route applied before the owner read: edges touching the root.
+        return [
+            edge for edge in self.list_lineage_edges()
+            if root_id in (
+                edge.get("from_artifact_id") or edge.get("source_id"),
+                edge.get("to_artifact_id") or edge.get("target_id"),
+                edge.get("strategy_id"),
+            )
+        ]
+
     def get_strategy_lineage(self, strategy_id: str | None) -> dict[str, Any] | None:
         ds = self._get_dataset("strategy_lineages")
         if isinstance(ds, dict):

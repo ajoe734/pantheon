@@ -216,3 +216,37 @@ def test_evolution_and_threshold_sweep_producer_wire_existing_telemetry_auth_and
     assert api_env["PANTHEON_TELEMETRY_SERVICE_TOKEN"] != api_env["EVOLUTION_AUTH_TOKEN"]
     assert "EVOLUTION_AUTH_TOKEN" not in producer_env
 
+
+
+def test_evolution_service_receives_owner_read_config_for_program_qualification() -> None:
+    """The qualifier reads drift, telemetry, registry and persona owners; each needs a URL
+    and a service credential in the evolution container, or its criterion fails closed."""
+    names = (
+        "RECONCILIATION_DRIFT_URL",
+        "RECONCILIATION_DRIFT_AUTH_TOKEN",
+        "PANTHEON_TELEMETRY_API_URL",
+        "PANTHEON_REGISTRY_API_URL",
+        "EVOLUTION_REGISTRY_SERVICE_TOKEN",
+        "EVOLUTION_REGISTRY_SERVICE_TOKEN_FILE",
+        "PERSONA_URL",
+        "EVOLUTION_PERSONA_SERVICE_TOKEN",
+        "EVOLUTION_PERSONA_SERVICE_TOKEN_FILE",
+    )
+    root = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    environment = root["services"]["evolution"]["environment"]
+    for name in (*names, "PANTHEON_TELEMETRY_SERVICE_TOKEN"):
+        assert name in environment, f"docker-compose.yml: evolution is missing {name}"
+
+    # docker-compose.control.yml uses compose-only tags (!override) that safe_load rejects,
+    # so read the evolution service block as text.
+    control = (ROOT / "docker-compose.control.yml").read_text(encoding="utf-8")
+    block = control.split("\n  evolution:\n", 1)[1]
+    block = block.split("\n    volumes:", 1)[0]
+    for name in (*names, "PANTHEON_TELEMETRY_SERVICE_TOKEN"):
+        assert f"      {name}:" in block, f"docker-compose.control.yml: evolution is missing {name}"
+
+
+def test_evolution_image_ships_the_qualification_policy() -> None:
+    dockerfile = (ROOT / "services/evolution/Dockerfile").read_text(encoding="utf-8")
+    assert "services/evolution" in dockerfile or "COPY . " in dockerfile
+    assert (ROOT / "services/evolution/config/program_qualification_policy.json").is_file()

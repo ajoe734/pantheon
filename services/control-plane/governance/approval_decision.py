@@ -21,11 +21,12 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -761,8 +762,70 @@ class ApprovalDecisionStore:
     def __init__(self, storage_path: Optional[str] = None):
         self._storage_path = Path(storage_path) if storage_path else None
         self._decisions: Dict[str, ApprovalDecision] = {}
+        self._receipts: Dict[str, Dict[str, Any]] = {}
         if self._storage_path and self._storage_path.exists():
             self._load()
+
+    def execute_command(
+        self,
+        *,
+        command: Dict[str, Any],
+        mutate: Any,
+        audit_store: Any = None,
+    ) -> Dict[str, Any]:
+        """Execute a CAS-guarded approval command with idempotent receipt tracking."""
+        import hashlib
+        from services.governance.pg_store import (
+            ApprovalCommandConflict,
+            ApprovalCommandNotFound,
+        )
+
+        encoded = json.dumps(command, sort_keys=True, separators=(",", ":"))
+        request_digest = hashlib.sha256(encoded.encode()).hexdigest()
+        scope = [command["tenant_id"], command["actor_id"], command["idempotency_key"]]
+        receipt_id = hashlib.sha256(json.dumps(scope).encode()).hexdigest()
+        cached = self._receipts.get(receipt_id)
+        if cached is not None:
+            if cached.get("request_digest") != request_digest:
+                raise ApprovalCommandConflict("Idempotency key has different command content")
+            return dict(cached["response"])
+
+        current = self.get(command["decision_id"])
+        base = current.to_dict() if current is not None else None
+        if (base is None and command["operation"] != "propose") or (
+            base is not None and base.get("tenant_id") != command["tenant_id"]
+        ):
+            raise ApprovalCommandNotFound("Approval decision not found")
+        if (base.get("version", 0) if base else 0) != command["expected_version"]:
+            raise ApprovalCommandConflict("Approval base version is stale")
+
+        decision = mutate(ApprovalDecision.from_dict(base) if base else None)
+        decision.version = command["expected_version"] + 1
+        decision.event_id = str(uuid.uuid4())
+        payload = decision.to_dict()
+        self.put(decision)
+        event_type = {
+            "propose": "approval_decision_created",
+            "review": "approval_decision_state_changed",
+            "decide": "approval_decision_decided",
+            "revoke": "approval_decision_revoked",
+        }.get(str(command.get("operation") or ""), "approval_decision_state_changed")
+        if audit_store is not None and hasattr(audit_store, "append_event"):
+            audit_store.append_event(
+                event_type=event_type,
+                decision_id=decision.decision_id,
+                actor_id=str(command.get("actor_id") or ""),
+                actor_role=str(command.get("actor_role") or ""),
+                target_type=str(payload.get("target_type") or ""),
+                target_id=decision.target_id,
+                detail={"tenant_id": command["tenant_id"], "version": decision.version},
+            )
+        self._receipts[receipt_id] = {
+            "request_digest": request_digest,
+            "command": command,
+            "response": dict(payload),
+        }
+        return payload
 
     def put(self, decision: ApprovalDecision) -> None:
         """Store or update a decision."""

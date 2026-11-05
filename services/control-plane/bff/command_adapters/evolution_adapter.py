@@ -10,7 +10,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from .base import (
@@ -111,6 +111,56 @@ def resolve_evolution_actor(
     raise _evolution_forbidden("Authenticated principal holds no Evolution actor role.")
 
 
+_SYSTEM_PRINCIPALS = frozenset({"evolution-daily-sweep", "evolution-dispatch-worker"})
+_HUMAN_ONLY_PROGRAM_ACTIONS = frozenset({"approve_program", "reject_program"})
+_GOVERNANCE_ROLE_ORDER = ("governance_committee", "risk_owner", "governance_reviewer")
+_PROGRAM_ROLE_ORDER = ("admin", "approver", "reviewer", "operator")
+
+
+def _program_principal(
+    params: Dict[str, Any],
+    sub_payload: Dict[str, Any],
+    auth_token: Optional[str],
+    mfa_token: Optional[str],
+) -> Tuple[str, List[str]]:
+    from services.control_plane.bff.auth.policy import extract_identity
+
+    claimed = {
+        str(value).strip()
+        for value in (params.get("actor_id"), sub_payload.get("actor_id"))
+        if str(value or "").strip()
+    }
+    claimed_id = next(iter(claimed), "") if len(claimed) == 1 else ""
+    if len(claimed) > 1:
+        raise _evolution_forbidden("Conflicting actor_id claims.")
+    raw = str(auth_token or "").strip()
+    if raw and not raw.lower().startswith("bearer "):
+        raw = f"Bearer {raw}"
+    try:
+        identity = extract_identity(raw, mfa_token=mfa_token)
+        principal = str(identity.operator_id or "").strip()
+    except Exception:
+        identity, principal = None, ""
+    if identity is None or not principal:
+        # Admission (preconditions) has already verified the caller; a token
+        # this process cannot re-verify falls back to the admitted actor claim,
+        # and the owner re-applies the system-identity bar to whatever arrives.
+        return claimed_id or "operator", []
+    if claimed_id and claimed_id != principal:
+        raise _evolution_forbidden("actor_id does not match the authenticated principal.")
+    return principal, [str(r).strip() for r in (identity.roles or []) if str(r).strip()]
+
+
+def _program_actor_role(params: Dict[str, Any], sub_payload: Dict[str, Any], held: List[str]) -> str:
+    named = str(params.get("actor_role") or sub_payload.get("actor_role") or "").strip()
+    if named and named in held:
+        return named
+    for preferred in _PROGRAM_ROLE_ORDER:
+        if preferred in held:
+            return preferred
+    return named or "operator"
+
+
 _CMD_TO_ACTION_ID = {
     "SubmitEvolutionReview": "submit_evolution_review",
     "ApproveEvolutionProgram": "approve_program",
@@ -118,6 +168,7 @@ _CMD_TO_ACTION_ID = {
     "ResumeEvolutionProgram": "resume_program",
     "CompleteEvolutionProgram": "complete_program",
     "RetireEvolutionProgram": "retire_program",
+    "RejectEvolutionProgram": "reject_program",
     "StopEvolutionProgram": "stop",
     "FreezeEvolutionGeneration": "freeze_generation",
     "PromoteEvolutionCandidatePaper": "promote_candidate_paper",
@@ -144,6 +195,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         "ResumeEvolutionProgram",
         "CompleteEvolutionProgram",
         "RetireEvolutionProgram",
+        "RejectEvolutionProgram",
         "StopEvolutionProgram",
         "FreezeEvolutionGeneration",
         "PromoteEvolutionCandidatePaper",
@@ -207,6 +259,65 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
                 entity_type="EvolutionDecision",
             )
 
+    def _ensure_program_review_request(
+        self, program_id: str, tenant_id: str, actor_id: str, auth_token: Optional[str]
+    ) -> str:
+        """Create the governance ``evolution_proposal`` request for this program.
+
+        The binding (tenant, program, revision, source-decision content digest)
+        is computed by the Evolution owner; this only files it in Governance
+        with the operator's own credential, under a deterministic id so a
+        resubmission reuses the same request in the approvals queue.
+        """
+        from services.control_plane.bff.governance import approval_owner
+
+        binding = evolution_owner_request(
+            evolution_url(f"/api/evolution/programs/{quote(program_id, safe='')}/approval-binding"),
+            caller_token=auth_token,
+            method="GET",
+            tenant_id=tenant_id,
+            headers={"X-Tenant-Id": tenant_id},
+        )
+        missing = [k for k in ("target_type", "target_id", "target_version", "proposal_id",
+                               "proposal_revision", "proposal_content_digest") if not binding.get(k)]
+        if missing:
+            raise ActionUnavailableError(
+                f"Evolution owner returned an unusable approval binding (missing {missing}).",
+                action_id="submit_evolution_review",
+                entity_type="EvolutionProgram",
+                downstream_status=502,
+                retryable=False,
+            )
+        approval_id = f"apv-program-{program_id}-r{binding['proposal_revision']}"
+        try:
+            approval_owner.propose(
+                auth_token,
+                {
+                    "decision_id": approval_id,
+                    "expected_version": 0,
+                    "tenant_id": tenant_id,
+                    "owner_user_id": actor_id,
+                    "target_type": binding["target_type"],
+                    "target_id": binding["target_id"],
+                    "target_version": binding["target_version"],
+                    "risk_level": binding.get("risk_level") or "medium",
+                    "proposal_id": binding["proposal_id"],
+                    "proposal_revision": binding["proposal_revision"],
+                    "proposal_content_digest": binding["proposal_content_digest"],
+                },
+                approval_id,
+            )
+        except urllib.error.HTTPError as exc:
+            if exc.code != 409:  # 409: the deterministic request already exists -> reuse it
+                raise ActionUnavailableError(
+                    f"Governance refused the program review request: HTTP {exc.code}",
+                    action_id="submit_evolution_review",
+                    entity_type="EvolutionProgram",
+                    retryable=exc.code in (502, 503, 504),
+                    downstream_status=exc.code,
+                ) from exc
+        return approval_id
+
     def _execute_program_action(
         self,
         command_id: str,
@@ -240,8 +351,13 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             ) from exc
 
         sub_payload = params.get("payload") if isinstance(params.get("payload"), dict) else {}
-        actor_id = params.get("actor_id") or sub_payload.get("actor_id") or "operator"
-        actor_role = params.get("actor_role") or sub_payload.get("actor_role") or "operator"
+        # The acting identity is the verified principal, never a body claim; a
+        # claimed actor_id may only equal it.  System identities are refused
+        # here as well as at the owner.
+        actor_id, held_roles = _program_principal(params, sub_payload, auth_token, mfa_token)
+        if clean_action in _HUMAN_ONLY_PROGRAM_ACTIONS and actor_id.lower() in _SYSTEM_PRINCIPALS:
+            raise _evolution_forbidden(f"System identity {actor_id!r} can never {clean_action} a program.")
+        actor_role = _program_actor_role(params, sub_payload, held_roles)
         note = params.get("note") or params.get("rationale") or sub_payload.get("note") or f"Operator {clean_action}"
 
         payload: Dict[str, Any] = {
@@ -276,6 +392,9 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             payload["artifact_digest"] = digest
 
         payload["payload"] = sub_payload
+        decision_role = next((r for r in _GOVERNANCE_ROLE_ORDER if r in held_roles), None)
+        if clean_action == "reject_program" and decision_role:
+            payload["decision_actor_role"] = decision_role
         idempotency_key = (
             params.get("idempotency_key")
             or params.get("idempotencyKey")
@@ -305,6 +424,14 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         if idempotency_key:
             dispatch_headers["Idempotency-Key"] = str(idempotency_key)
             dispatch_headers["X-Idempotency-Key"] = str(idempotency_key)
+
+        if clean_action == "submit_evolution_review":
+            # Submitting creates (or reuses) the one governance approval
+            # request this program's review is decided on; the owner never
+            # invents an approval id.
+            payload["approval_id"] = self._ensure_program_review_request(
+                target_id, tenant_id, actor_id, auth_token
+            )
 
         try:
             body = evolution_owner_request(

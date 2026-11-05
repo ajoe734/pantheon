@@ -3846,3 +3846,21 @@ def test_default_approved_baselines_path_is_the_evolution_governed_file() -> Non
                 __import__("os").environ.pop(var, None)
             assert svc._approved_baselines_path() is None  # falls to sweep DEFAULT path
     assert sweep.DEFAULT_BASELINES_PATH.endswith("services/evolution/config/threshold_sweep_baselines.json")
+
+
+def test_causal_drawdown_event_id_is_recorded_on_baseline_sourced_check_only() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        drift = _load_service_module(data_dir)
+    checks = [
+        {"metric": "drawdown", "baseline_source": {"artifact_id": "a", "baseline_key": "k"}},
+        {"metric": "drawdown"},
+        {"metric": "pnl", "baseline_source": {"artifact_id": "a", "baseline_key": "k"}},
+    ]
+    drift._record_causal_drawdown_event(checks, {"drawdown_event_id": "evt-dd-1"})
+    assert checks[0]["drawdown_event_id"] == "evt-dd-1"
+    assert "drawdown_event_id" not in checks[1]
+    assert "drawdown_event_id" not in checks[2]
+
+    untouched = [{"metric": "drawdown", "baseline_source": {"artifact_id": "a"}}]
+    drift._record_causal_drawdown_event(untouched, {})
+    assert "drawdown_event_id" not in untouched[0]

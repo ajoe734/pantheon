@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
 _SOURCE_INGEST_READ_ROLES: tuple[str, ...] = ("source_ingest_reader", "operator", "admin", "persona.admin", "viewer")
 _SOURCE_INGEST_WRITE_ROLES: tuple[str, ...] = ("operator", "admin", "persona.admin")
+_JOBS_DEFAULT_PAGE_SIZE = 100
+_JOBS_MAX_PAGE_SIZE = 250
 
 
 def _source_read_tenant(authorization: str | None, requested: str | None, *, required_roles: Sequence[str] = _SOURCE_INGEST_READ_ROLES) -> str:
@@ -317,7 +319,33 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
             )
 
     @router.get("/api/source-ingest/jobs")
-    def list_jobs() -> dict[str, Any]:
+    def list_jobs(
+        status: str | None = Query(default=None, description="Comma-separated run statuses; selects the bounded form"),
+        page_size: int | None = Query(default=None, ge=1, le=_JOBS_MAX_PAGE_SIZE),
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        if status is not None or page_size is not None or page_token is not None:
+            # Bounded form: newest first, filtered, paged; receipts only for the
+            # returned runs.  The unbounded form below is kept for existing callers.
+            try:
+                offset = int(page_token) if page_token else 0
+                if offset < 0:
+                    raise ValueError
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="page_token is invalid") from exc
+            limit = page_size or _JOBS_DEFAULT_PAGE_SIZE
+            wanted = frozenset(part.strip().lower() for part in (status or "").split(",") if part.strip()) or None
+            runs, receipts, total = runtime.store.list_runs_page(statuses=wanted, limit=limit, offset=offset)
+            next_offset = offset + len(runs)
+            return {
+                "runs": [run.to_dict() for run in runs],
+                "receipts": [receipt.to_dict() for receipt in receipts],
+                "page_info": {
+                    "total": total,
+                    "page_size": limit,
+                    "next_page_token": str(next_offset) if next_offset < total else None,
+                },
+            }
         return {
             "runs": [run.to_dict() for run in runtime.store.list_runs()],
             "receipts": [receipt.to_dict() for receipt in runtime.store.list_receipts()],

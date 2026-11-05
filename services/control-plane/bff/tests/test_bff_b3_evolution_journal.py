@@ -431,7 +431,7 @@ def test_evolution_journal_composes_required_sources() -> None:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert set(body.keys()) == {"data", "page_info", "meta"}
-            assert set(body["data"].keys()) == {"id", "items", "summary"}
+            assert set(body["data"].keys()) == {"id", "items", "summary", "auto_proposal_counts"}
             items = body["data"]["items"]
             summary = body["data"]["summary"]
             assert summary["decision_count"] >= 1
@@ -2128,3 +2128,599 @@ def test_lightweight_callback_semantic_defaults_and_summary() -> None:
     assert mr_no_cb.get("risk_level") == "low"
     assert item_no_cb["status"] == "pending"
 
+
+# --------------------------------------------------------------------------- #
+# EVOLUTION-JOURNAL-EVIDENCE-CLASS-20261104 Regression & Contract Tests
+# --------------------------------------------------------------------------- #
+
+
+def _real_hosted_incident_followup_decision(
+    decision_id: str = "evo-sweep-agent-000b205c0ef9-0000",
+    *,
+    created_at: str = "2026-11-04T01:00:00Z",
+    linked_incident_id: str = "agent-000b205c0ef9-0000",
+) -> dict[str, Any]:
+    return {
+        "decision_id": decision_id,
+        "target_type": "candidate_artifact",
+        "target_id": "infra-component-agent-finding-000b205c0ef9",
+        "risk_level": "low",
+        "linked_incident_id": linked_incident_id,
+        "action_type": "flag_for_review",
+        "decision_state": "proposed",
+        "status": "proposed",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "threshold_snapshots": [
+            {
+                "breached": True,
+                "comparator": "gte",
+                "metric_name": "incident_followup_required",
+                "observed_value": 1,
+                "threshold_value": 1,
+                "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+                "signal_type": "manual_review",
+                "window": "active-incident",
+            }
+        ],
+    }
+
+
+def _real_hosted_incident_severity_decision(
+    decision_id: str = "evo-sweep-inc-deployment-comp-deployment-saga-plan-persona-paper-1bad2eca6831457cd885",
+    *,
+    created_at: str = "2026-11-04T01:05:00Z",
+) -> dict[str, Any]:
+    return {
+        "decision_id": decision_id,
+        "target_type": "candidate_artifact",
+        "target_id": "artifact-persona-paper-1bad2eca6831457cd885",
+        "risk_level": "medium",
+        "action_type": "freeze",
+        "decision_state": "proposed",
+        "status": "proposed",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "threshold_snapshots": [
+            {
+                "breached": True,
+                "comparator": "gte",
+                "metric_name": "severity1_incident_count",
+                "observed_value": 1,
+                "threshold_value": 1,
+                "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+                "signal_type": "governance_incident",
+                "window": "active-incident",
+            }
+        ],
+    }
+
+
+def _threshold_signal_decision(
+    decision_id: str,
+    *,
+    signal_type: str = "performance_degradation",
+    decision_state: str = "proposed",
+    created_at: str = "2026-11-04T01:10:00Z",
+) -> dict[str, Any]:
+    return {
+        "decision_id": decision_id,
+        "target_type": "candidate_artifact",
+        "target_id": f"artifact-{decision_id}",
+        "risk_level": "medium",
+        "action_type": "retrain",
+        "decision_state": decision_state,
+        "status": decision_state,
+        "created_at": created_at,
+        "updated_at": created_at,
+        "threshold_snapshots": [
+            {
+                "breached": True,
+                "comparator": "gt",
+                "metric_name": "rolling_drawdown_pct",
+                "observed_value": 0.18,
+                "threshold_value": 0.12,
+                "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1",
+                "signal_type": signal_type,
+                "window": "7d",
+            }
+        ],
+    }
+
+
+def test_evidence_class_classification_on_decisions_and_mutation_reviews_real_hosted_shapes() -> None:
+    """Every journal item derived from a decision including its mutation_review item
+    carries evidence_class (threshold_signal, incident_followup, incident_severity).
+    """
+    dec_followup = _real_hosted_incident_followup_decision()
+    dec_severity = _real_hosted_incident_severity_decision()
+    signal_types = [
+        "performance_degradation",
+        "execution_drift",
+        "feature_drift",
+        "human_correction",
+    ]
+    threshold_decisions = [
+        _threshold_signal_decision(f"evo-thresh-{sig}", signal_type=sig)
+        for sig in signal_types
+    ]
+    all_decisions = [dec_followup, dec_severity, *threshold_decisions]
+    data = {
+        "evolution_decisions": {d["decision_id"]: d for d in all_decisions},
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    store = _EvolutionJournalTestStore(data)
+    app = _create_app_for_store(store)
+    client = _JournalTestClient(app, raise_server_exceptions=True)
+
+    resp = client.get(
+        "/bff/management/evolution-journal?page_size=50",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["data"]["items"]
+
+    by_id = {it["id"]: it for it in items}
+    assert by_id[f"evolution_decision:{dec_followup['decision_id']}"]["evidence_class"] == "incident_followup"
+    assert by_id[f"mutation_review:{dec_followup['decision_id']}"]["evidence_class"] == "incident_followup"
+    assert (
+        by_id[f"mutation_review:{dec_followup['decision_id']}"]["mutation_review"]["evidence_class"]
+        == "incident_followup"
+    )
+
+    assert by_id[f"evolution_decision:{dec_severity['decision_id']}"]["evidence_class"] == "incident_severity"
+    assert by_id[f"mutation_review:{dec_severity['decision_id']}"]["evidence_class"] == "incident_severity"
+    assert (
+        by_id[f"mutation_review:{dec_severity['decision_id']}"]["mutation_review"]["evidence_class"]
+        == "incident_severity"
+    )
+
+    for sig in signal_types:
+        did = f"evo-thresh-{sig}"
+        assert by_id[f"evolution_decision:{did}"]["evidence_class"] == "threshold_signal"
+        assert by_id[f"mutation_review:{did}"]["evidence_class"] == "threshold_signal"
+        assert by_id[f"mutation_review:{did}"]["mutation_review"]["evidence_class"] == "threshold_signal"
+
+
+def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> None:
+    """Verify view=all (and omitted view), view=history, view=auto_proposals, and
+    auto_proposal_counts counted per record so a decision + mutation_review count once.
+    """
+    dec_followup = _real_hosted_incident_followup_decision()
+    dec_severity = _real_hosted_incident_severity_decision()
+    dec_thresh_proposed = _threshold_signal_decision(
+        "evo-thresh-proposed-001",
+        signal_type="execution_drift",
+        decision_state="proposed",
+        created_at="2026-11-04T01:15:00Z",
+    )
+    dec_approved = {
+        **_real_hosted_incident_followup_decision(
+            "evo-decided-approved-001",
+            created_at="2026-11-04T01:20:00Z",
+        ),
+        "decision_state": "approved",
+        "status": "approved",
+    }
+    data = {
+        "evolution_decisions": {
+            dec_followup["decision_id"]: dec_followup,
+            dec_severity["decision_id"]: dec_severity,
+            dec_thresh_proposed["decision_id"]: dec_thresh_proposed,
+            dec_approved["decision_id"]: dec_approved,
+        },
+        "approval_decisions": {},
+        "postmortems": {
+            "pm-draft-001": {
+                "postmortem_id": "pm-draft-001",
+                "incident_id": "inc-draft-001",
+                "title": "Draft postmortem 1",
+                "status": "draft",
+                "created_at": "2026-11-04T01:25:00Z",
+            },
+            "pm-draft-002": {
+                "postmortem_id": "pm-draft-002",
+                "incident_id": "inc-draft-002",
+                "title": "Draft postmortem 2",
+                "status": "draft",
+                "created_at": "2026-11-04T01:26:00Z",
+            },
+            "pm-published-001": {
+                "postmortem_id": "pm-published-001",
+                "incident_id": "inc-pub-001",
+                "title": "Published postmortem",
+                "status": "published",
+                "created_at": "2026-11-04T01:27:00Z",
+            },
+        },
+        "freeze_orders": {
+            "fo-hist-001": {
+                "freeze_order_id": "fo-hist-001",
+                "status": "active",
+                "scope": "pool",
+                "target_id": "pool-alpha",
+                "created_at": "2026-11-04T01:28:00Z",
+            }
+        },
+        "all_rollbacks": {
+            "rb-hist-001": {
+                "rollback_id": "rb-hist-001",
+                "status": "completed",
+                "action_type": "rollback",
+                "runtime_id": "rt-alpha",
+                "created_at": "2026-11-04T01:29:00Z",
+            }
+        },
+    }
+    store = _EvolutionJournalTestStore(data)
+    app = _create_app_for_store(store)
+    client = _JournalTestClient(app, raise_server_exceptions=True)
+
+    expected_counts = {
+        "incident_followup": 1,
+        "incident_severity": 1,
+        "postmortem_draft": 2,
+        "total": 4,
+    }
+
+    # 1. Omitting view behaves identically to view=all
+    resp_omitted = client.get("/bff/management/evolution-journal?page_size=50", headers=OPERATOR_HEADERS)
+    resp_all = client.get("/bff/management/evolution-journal?view=all&page_size=50", headers=OPERATOR_HEADERS)
+    assert resp_omitted.status_code == 200
+    assert resp_all.status_code == 200
+    body_omitted = resp_omitted.json()
+    body_all = resp_all.json()
+    assert [it["id"] for it in body_omitted["data"]["items"]] == [
+        it["id"] for it in body_all["data"]["items"]
+    ]
+    assert body_omitted["data"]["auto_proposal_counts"] == expected_counts
+    assert body_all["data"]["auto_proposal_counts"] == expected_counts
+    assert body_all["page_info"]["total"] == 13
+
+    # 2. view=history returns freeze_order, rollback, non-draft postmortem,
+    #    non-proposed decision (+ mutation_review), and proposed threshold_signal decision (+ mutation_review)
+    resp_hist = client.get("/bff/management/evolution-journal?view=history&page_size=50", headers=OPERATOR_HEADERS)
+    assert resp_hist.status_code == 200
+    body_hist = resp_hist.json()
+    hist_ids = {it["id"] for it in body_hist["data"]["items"]}
+    assert hist_ids == {
+        "freeze_order:fo-hist-001",
+        "rollback:rb-hist-001",
+        "postmortem:pm-published-001",
+        f"evolution_decision:{dec_approved['decision_id']}",
+        f"mutation_review:{dec_approved['decision_id']}",
+        f"evolution_decision:{dec_thresh_proposed['decision_id']}",
+        f"mutation_review:{dec_thresh_proposed['decision_id']}",
+    }
+    assert body_hist["page_info"]["total"] == 7
+    assert body_hist["data"]["summary"]["total_items"] == 7
+    assert body_hist["data"]["auto_proposal_counts"] == expected_counts
+
+    # 3. view=auto_proposals returns remaining proposed decisions (+ mutation_reviews) and draft postmortems
+    resp_auto = client.get(
+        "/bff/management/evolution-journal?view=auto_proposals&page_size=50",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_auto.status_code == 200
+    body_auto = resp_auto.json()
+    auto_ids = {it["id"] for it in body_auto["data"]["items"]}
+    assert auto_ids == {
+        f"evolution_decision:{dec_followup['decision_id']}",
+        f"mutation_review:{dec_followup['decision_id']}",
+        f"evolution_decision:{dec_severity['decision_id']}",
+        f"mutation_review:{dec_severity['decision_id']}",
+        "postmortem:pm-draft-001",
+        "postmortem:pm-draft-002",
+    }
+    assert body_auto["page_info"]["total"] == 6
+    assert body_auto["data"]["summary"]["total_items"] == 6
+    assert body_auto["data"]["auto_proposal_counts"] == expected_counts
+
+    # 4. Invalid view is rejected with 400
+    resp_bad = client.get("/bff/management/evolution-journal?view=bogus", headers=OPERATOR_HEADERS)
+    assert resp_bad.status_code == 400
+
+
+def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> None:
+    """Filter runs before pagination so page_info, next_page_token, and summary
+    describe the filtered set, and a history item beyond the first raw page is returned.
+    """
+    # 15 auto-proposal decisions (30 items: decision + mutation_review) with newer timestamps
+    auto_decisions = {
+        f"evo-sweep-agent-{i:04d}": _real_hosted_incident_followup_decision(
+            f"evo-sweep-agent-{i:04d}",
+            created_at=f"2026-11-04T02:{i:02d}:00Z",
+        )
+        for i in range(15)
+    }
+    # 1 threshold_signal proposed decision (2 history items) + 1 freeze_order + 1 rollback = 4 history items
+    # All have older timestamps (00:01..00:03), placing them at raw indices 30..33 (well beyond raw page 1)
+    hist_thresh = _threshold_signal_decision(
+        "evo-thresh-old-001",
+        signal_type="performance_degradation",
+        decision_state="proposed",
+        created_at="2026-11-04T00:03:00Z",
+    )
+    all_decisions = {**auto_decisions, hist_thresh["decision_id"]: hist_thresh}
+    data = {
+        "evolution_decisions": all_decisions,
+        "approval_decisions": {},
+        "postmortems": {
+            "pm-draft-new": {
+                "postmortem_id": "pm-draft-new",
+                "incident_id": "inc-draft-new",
+                "title": "Draft PM",
+                "status": "draft",
+                "created_at": "2026-11-04T03:00:00Z",
+            }
+        },
+        "freeze_orders": {
+            "fo-old-001": {
+                "freeze_order_id": "fo-old-001",
+                "status": "active",
+                "scope": "pool",
+                "target_id": "pool-1",
+                "created_at": "2026-11-04T00:02:00Z",
+            }
+        },
+        "all_rollbacks": {
+            "rb-oldest-001": {
+                "rollback_id": "rb-oldest-001",
+                "status": "completed",
+                "action_type": "rollback",
+                "runtime_id": "rt-1",
+                "created_at": "2026-11-04T00:01:00Z",
+            }
+        },
+    }
+    store = _EvolutionJournalTestStore(data)
+    app = _create_app_for_store(store)
+    client = _JournalTestClient(app, raise_server_exceptions=True)
+
+    # Raw page 1 (view=all, page_size=2) only sees the newest auto proposals
+    raw_p1 = client.get("/bff/management/evolution-journal?page_size=2", headers=OPERATOR_HEADERS).json()
+    assert raw_p1["page_info"]["total"] == 35
+
+    # Filtered page 1 (view=history, page_size=2) sees the first 2 of 4 history items
+    hist_p1_resp = client.get(
+        "/bff/management/evolution-journal?view=history&page_size=2",
+        headers=OPERATOR_HEADERS,
+    )
+    assert hist_p1_resp.status_code == 200
+    hist_p1 = hist_p1_resp.json()
+    assert hist_p1["page_info"]["total"] == 4
+    assert hist_p1["page_info"]["page_size"] == 2
+    assert hist_p1["page_info"]["next_page_token"] == "2"
+    assert hist_p1["data"]["summary"]["total_items"] == 4
+    assert hist_p1["data"]["summary"]["returned_items"] == 2
+    assert len(hist_p1["data"]["items"]) == 2
+
+    # Filtered page 2 (view=history, page_size=2, page_token=2) returns the remaining 2 history items
+    hist_p2_resp = client.get(
+        "/bff/management/evolution-journal?view=history&page_size=2&page_token=2",
+        headers=OPERATOR_HEADERS,
+    )
+    assert hist_p2_resp.status_code == 200
+    hist_p2 = hist_p2_resp.json()
+    assert hist_p2["page_info"]["total"] == 4
+    assert hist_p2["page_info"]["next_page_token"] is None
+    assert hist_p2["data"]["summary"]["total_items"] == 4
+    assert hist_p2["data"]["summary"]["returned_items"] == 2
+    p2_ids = [it["id"] for it in hist_p2["data"]["items"]]
+    assert p2_ids == ["freeze_order:fo-old-001", "rollback:rb-oldest-001"]
+
+
+def test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_target_under_any_view() -> None:
+    """Explicit filters decision, mutation_review, and persona still return their
+    target record under any view so a deep link never lands on an empty page.
+    """
+    persona_id = "persona-paper-1bad2eca6831457cd885"
+    runtime_id = "rt-paper-1bad2eca"
+    incident_id = "agent-000b205c0ef9-0000"
+    dec_followup = _real_hosted_incident_followup_decision(linked_incident_id=incident_id)
+    dec_approved = {
+        **_real_hosted_incident_severity_decision("evo-approved-deep-link"),
+        "decision_state": "approved",
+        "status": "approved",
+    }
+    data = {
+        "personas": {
+            persona_id: {
+                "id": persona_id,
+                "persona_id": persona_id,
+                "runtime_id": runtime_id,
+            }
+        },
+        "runtime_bindings": {
+            "bind-deep-1": {
+                "id": "bind-deep-1",
+                "binding_id": "bind-deep-1",
+                "runtime_id": runtime_id,
+                "persona_id": persona_id,
+            }
+        },
+        "incidents": {
+            incident_id: {
+                "id": incident_id,
+                "incident_id": incident_id,
+                "runtime_id": runtime_id,
+            }
+        },
+        "evolution_decisions": {
+            dec_followup["decision_id"]: dec_followup,
+            dec_approved["decision_id"]: dec_approved,
+        },
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    store = _EvolutionJournalTestStore(data)
+    app = _create_app_for_store(store)
+    client = _JournalTestClient(app, raise_server_exceptions=True)
+
+    for view_val in ("all", "history", "auto_proposals"):
+        # 1. Deep link by decision (auto proposal opened under view=history, and history decision under view=auto_proposals)
+        r_dec_auto = client.get(
+            f"/bff/management/evolution-journal?view={view_val}&decision={dec_followup['decision_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert r_dec_auto.status_code == 200
+        items_dec_auto = r_dec_auto.json()["data"]["items"]
+        assert len(items_dec_auto) == 1
+        assert items_dec_auto[0]["id"] == f"evolution_decision:{dec_followup['decision_id']}"
+
+        r_dec_hist = client.get(
+            f"/bff/management/evolution-journal?view={view_val}&decision={dec_approved['decision_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert r_dec_hist.status_code == 200
+        items_dec_hist = r_dec_hist.json()["data"]["items"]
+        assert len(items_dec_hist) == 1
+        assert items_dec_hist[0]["id"] == f"evolution_decision:{dec_approved['decision_id']}"
+
+        # 2. Deep link by mutation_review
+        r_mr = client.get(
+            f"/bff/management/evolution-journal?view={view_val}&mutation_review={dec_followup['decision_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert r_mr.status_code == 200
+        items_mr = r_mr.json()["data"]["items"]
+        assert len(items_mr) == 1
+        assert items_mr[0]["id"] == f"mutation_review:{dec_followup['decision_id']}"
+        assert items_mr[0]["evidence_class"] == "incident_followup"
+
+        # 3. Deep link by persona (matches dec_followup via linked_incident_id under any view)
+        r_persona = client.get(
+            f"/bff/management/evolution-journal?view={view_val}&persona={persona_id}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert r_persona.status_code == 200
+        items_persona = r_persona.json()["data"]["items"]
+        matched_ids = {it["id"] for it in items_persona}
+        assert f"evolution_decision:{dec_followup['decision_id']}" in matched_ids
+        assert f"mutation_review:{dec_followup['decision_id']}" in matched_ids
+
+
+def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_owner_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """With 2027 draft postmortems of the real 23-key shape (~2.8KB each) in the
+    postmortems owner service, a journal request stays bounded: the owner is not
+    asked for every postmortem on each page read, body size and owner calls are
+    bounded for the default view and view=history, and no record is mutated.
+    """
+    from pathlib import Path
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
+        CompositeLifecycleTelemetryGovernancePort,
+        DomainGovernancePort,
+        DomainIncidentPort,
+        DomainLifecyclePort,
+        DomainTelemetryPort,
+        InMemoryLineagePort,
+    )
+    from services.control_plane.bff.ports.persona_capital_runtime import (
+        create_in_memory_persona_capital_runtime_port,
+    )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.tests.test_postmortem_owner_read import (
+        LivePostmortemsOwnerServer,
+        build_real_postmortem_dict,
+    )
+
+    postmortems_2027 = [build_real_postmortem_dict(i, status="draft") for i in range(2027)]
+    dec_followup = _real_hosted_incident_followup_decision()
+    dec_severity = _real_hosted_incident_severity_decision()
+    dec_history = {
+        **_threshold_signal_decision(
+            "evo-dec-real-history-001",
+            signal_type="performance_degradation",
+            decision_state="approved",
+            created_at="2026-11-04T02:00:00Z",
+        ),
+    }
+    decisions_map = {
+        dec_followup["decision_id"]: dec_followup,
+        dec_severity["decision_id"]: dec_severity,
+        dec_history["decision_id"]: dec_history,
+    }
+
+    with LivePostmortemsOwnerServer(Path(tmp_path) / "pm_owner.json", postmortems=postmortems_2027) as owner_srv:
+        monkeypatch.setenv("PANTHEON_POSTMORTEMS_API_URL", owner_srv.base_url)
+        inc_port = DomainIncidentPort(
+            incidents={},
+            evolution_decisions=decisions_map,
+            postmortems_api_url=owner_srv.base_url,
+        )
+        ltg_port = CompositeLifecycleTelemetryGovernancePort(
+            incident_port=inc_port,
+            lifecycle_port=DomainLifecyclePort(incidents={}),
+            governance_port=DomainGovernancePort(
+                evolution_decisions=decisions_map,
+                freeze_orders={},
+                all_rollbacks=[],
+            ),
+            lineage_port=InMemoryLineagePort(),
+            telemetry_port=DomainTelemetryPort(),
+        )
+        pcr_port = create_in_memory_persona_capital_runtime_port(
+            evolution_decisions=list(decisions_map.values()),
+        )
+        ports = ReadSurfacePorts(
+            persona_capital_runtime=pcr_port,
+            lifecycle_telemetry_governance=ltg_port,
+        )
+        app = _create_app_for_store(ports)
+        client = _JournalTestClient(app, raise_server_exceptions=True)
+
+        # 1. Default view (view omitted -> all, page_size=20)
+        owner_srv.requests_received.clear()
+        resp_default = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
+        assert resp_default.status_code == 200, resp_default.text
+        default_calls = list(owner_srv.requests_received)
+        # Owner is called at most twice (non-draft bounded page + draft bounded page_size=20), never 11+ pages or 2027 times
+        assert 1 <= len(default_calls) <= 2, default_calls
+        assert any("status=draft" in path and "page_size=20" in path for path in default_calls), default_calls
+        # Body size for the 20-item page stays well under 250 KB (vs ~5.7 MB for 2027 postmortems)
+        assert len(resp_default.content) < 250_000, len(resp_default.content)
+        body_default = resp_default.json()
+        assert len(body_default["data"]["items"]) == 20
+        assert body_default["data"]["auto_proposal_counts"] == {
+            "incident_followup": 1,
+            "incident_severity": 1,
+            "postmortem_draft": 2027,
+            "total": 2029,
+        }
+        assert body_default["page_info"]["total"] == 2027 + 6
+
+        # 2. History view (view=history)
+        owner_srv.requests_received.clear()
+        resp_history = client.get(
+            "/bff/management/evolution-journal?view=history",
+            headers=OPERATOR_HEADERS,
+        )
+        assert resp_history.status_code == 200, resp_history.text
+        history_calls = list(owner_srv.requests_received)
+        assert 1 <= len(history_calls) <= 2, history_calls
+        assert any("status=draft" in path and "page_size=1" in path for path in history_calls), history_calls
+        assert len(resp_history.content) < 50_000, len(resp_history.content)
+        body_history = resp_history.json()
+        assert {it["id"] for it in body_history["data"]["items"]} == {
+            f"evolution_decision:{dec_history['decision_id']}",
+            f"mutation_review:{dec_history['decision_id']}",
+        }
+        assert body_history["data"]["auto_proposal_counts"] == {
+            "incident_followup": 1,
+            "incident_severity": 1,
+            "postmortem_draft": 2027,
+            "total": 2029,
+        }
+
+        # 3. No proposal or postmortem was deleted or changed in state
+        assert len(owner_srv.store._postmortems) == 2027
+        assert dec_followup["decision_state"] == "proposed"
+        assert dec_severity["decision_state"] == "proposed"

@@ -54,33 +54,6 @@ from .service import ManagementService, _MANAGEMENT_STORE_OVERRIDE
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope
 
-_HUMAN_INBOX_CONTRIBUTOR_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4, thread_name_prefix="mgmt_human_inbox_contributor"
-)
-
-
-def _get_human_inbox_surface_timeout() -> float:
-    try:
-        import sys
-        main_mod = sys.modules.get("services.control_plane.bff.main")
-        if main_mod is not None:
-            fn = getattr(main_mod, "_human_inbox_surface_timeout_seconds", None)
-            if fn is not None:
-                return float(fn())
-    except Exception:
-        pass
-    try:
-        from ..governance.service import human_inbox_surface_timeout_seconds
-        return float(human_inbox_surface_timeout_seconds())
-    except Exception:
-        pass
-    try:
-        val = float(os.getenv("PANTHEON_BFF_HUMAN_INBOX_TIMEOUT_SECONDS", "3.0").strip())
-        return max(0.1, val)
-    except (TypeError, ValueError):
-        return 3.0
-
-
 # The cockpit composes six owner-backed sections; the 0.6s generic management
 # budget is too tight for that even after request-scoped dedupe.
 _COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS = 3.0
@@ -94,6 +67,18 @@ def _get_management_cockpit_read_timeout() -> Optional[float]:
         return max(0.05, float(raw))
     except (TypeError, ValueError):
         return _COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS
+
+
+# The route budget must outlast the contributor bound
+# (governance.service.human_inbox_surface_timeout_seconds, at most 1.0 s) so the
+# generic 0.6 s default can never discard contributors that already finished.
+_HUMAN_INBOX_ROUTE_MARGIN_SECONDS = 1.5
+
+
+def _get_human_inbox_read_timeout() -> float:
+    from ..governance.service import human_inbox_surface_timeout_seconds
+
+    return float(human_inbox_surface_timeout_seconds()) + _HUMAN_INBOX_ROUTE_MARGIN_SECONDS
 
 
 @contextlib.contextmanager
@@ -115,27 +100,6 @@ def _bounded_sync_read():
         yield
     finally:
         management_read_deadline.reset(token)
-
-
-class _StoreTimeoutProxy:
-    def __init__(self, target: Any, timeout: float):
-        self._target = target
-        self._timeout = timeout
-
-    def __getattr__(self, name: str) -> Any:
-        attr = getattr(self._target, name)
-        if name in ("list_governance_review_queue_items", "list_approval_queue_items", "list_approval_records") and callable(attr):
-            def _timed_call(*args: Any, **kwargs: Any) -> Any:
-                budget = remaining_management_read_budget(self._timeout)
-                if budget is not None and budget <= 0.0:
-                    raise concurrent.futures.TimeoutError(f"{name} exceeded the Human Inbox surface budget")
-                fut = _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit(contextvars.copy_context().run, attr, *args, **kwargs)
-                try:
-                    return fut.result(timeout=self._timeout if budget is None else budget)
-                except concurrent.futures.TimeoutError:
-                    raise concurrent.futures.TimeoutError(f"{name} exceeded the Human Inbox surface budget")
-            return _timed_call
-        return attr
 
 
 def _get_evidence_degraded_payload(
@@ -211,13 +175,57 @@ def _get_management_cockpit_degraded_payload(
     }
 
 
+_HUMAN_INBOX_DEGRADED_REASONS = {
+    "read_timeout": ("timeout_fallback", "Human inbox aggregation timed out under concurrent read fanout; degraded response returned."),
+    "read_capacity_saturated": ("capacity_fallback", "Human inbox read capacity is saturated; degraded response returned."),
+    "read_error": ("error_fallback", "Human inbox aggregation failed; degraded response returned."),
+}
+
+
 def _get_human_inbox_degraded_payload(
     self=None,
     *,
     page_size: int = 20,
     snapshot_at: Optional[str] = None,
+    reason: str = "read_timeout",
+    completed_contributors: Optional[Dict[str, Any]] = None,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    page_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     snap = snapshot_at or _utc_now_rfc3339()
+    reason = reason if reason in _HUMAN_INBOX_DEGRADED_REASONS else "read_error"
+    source, message = _HUMAN_INBOX_DEGRADED_REASONS[reason]
+    inbox_surface = {
+        "status": "degraded",
+        "reason": reason,
+        "source": source,
+        "message": message,
+        "snapshot_at": snap,
+    }
+    if completed_contributors:
+        # Keep every contributor that finished; the rest report the real reason.
+        completed = dict(completed_contributors)
+        missing = {
+            key: ManagementService._human_inbox_timeout_surface(key, snap, reason)
+            for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness")
+            if key not in completed
+        }
+        payload = self.compose_human_inbox(
+            snap,
+            completed=completed,
+            failures=missing,
+            source_type=source_type,
+            status=status,
+            priority=priority,
+            page_token=page_token,
+            page_size=page_size,
+        )
+        inbox_surface.update(source="partial_composition", message="Human inbox read did not complete; completed contributors are returned.")
+        payload["meta"]["partial"] = True
+        payload["meta"]["surfaces"]["human_inbox"] = inbox_surface
+        return payload
     return {
         "data": {
             "id": "management-human-inbox",
@@ -237,22 +245,8 @@ def _get_human_inbox_degraded_payload(
         "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
         "meta": {
             "snapshot_at": snap,
-            "surfaces": {
-                "human_inbox": {
-                    "status": "degraded",
-                    "reason": "read_timeout",
-                    "source": "timeout_fallback",
-                    "message": "Human inbox aggregation timed out under concurrent read fanout; degraded response returned.",
-                    "snapshot_at": snap,
-                },
-                "governance_review_queue": {
-                    "status": "degraded",
-                    "reason": "read_timeout",
-                    "source": "timeout_fallback",
-                    "message": "governance_review_queue exceeded the Human Inbox surface budget.",
-                    "snapshot_at": snap,
-                },
-            },
+            "partial": True,
+            "surfaces": {"human_inbox": inbox_surface},
         },
     }
 
@@ -263,41 +257,6 @@ if not hasattr(ManagementService, "get_management_cockpit_degraded_payload"):
     ManagementService.get_management_cockpit_degraded_payload = _get_management_cockpit_degraded_payload
 if not hasattr(ManagementService, "get_human_inbox_degraded_payload"):
     ManagementService.get_human_inbox_degraded_payload = _get_human_inbox_degraded_payload
-
-_orig_get_human_inbox = ManagementService.get_human_inbox
-
-
-def _bounded_get_human_inbox(self: ManagementService, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-    timeout_budget = _get_human_inbox_surface_timeout()
-    base_store = self._resolve_store()
-    token = (
-        _MANAGEMENT_STORE_OVERRIDE.set(_StoreTimeoutProxy(base_store, timeout_budget))
-        if base_store is not None
-        else None
-    )
-    try:
-        res = _orig_get_human_inbox(self, *args, **kwargs)
-    finally:
-        if token is not None:
-            _MANAGEMENT_STORE_OVERRIDE.reset(token)
-
-    if isinstance(res, dict) and "meta" in res and isinstance(res["meta"], dict):
-        surfaces = res["meta"].get("surfaces")
-        if isinstance(surfaces, dict):
-            snap = res["meta"].get("snapshot_at") or self._utc_now()
-            for key, surf in surfaces.items():
-                if isinstance(surf, dict) and surf.get("reason") == "contributor_read_error":
-                    msg = str(surf.get("message") or "")
-                    if "exceeded the Human Inbox surface budget" in msg or "TimeoutError" in msg:
-                        surf["status"] = "degraded"
-                        surf["source"] = "management_read_timeout"
-                        surf["reason"] = "read_timeout"
-                        surf["message"] = f"{key}_items exceeded the Human Inbox surface budget; completed contributors are returned as a partial result."
-                        surf["staleness"] = {"served_from": "timeout_degraded", "last_known_at": snap}
-    return res
-
-
-ManagementService.get_human_inbox = _bounded_get_human_inbox  # type: ignore[assignment]
 
 log = logging.getLogger(__name__)
 
@@ -1873,18 +1832,38 @@ def create_management_router(
         _req_read(identity)
         snap = _now()
         if run_management_read is not None:
+            completed_contributors: Dict[str, Any] = {}
             try:
                 return await run_management_read(
                     svc.get_human_inbox,
+                    timeout_seconds=_get_human_inbox_read_timeout(),
                     source_type=source_type,
                     status=status,
                     priority=priority,
                     page_token=page_token,
                     page_size=page_size,
                     identity=identity,
+                    completed_contributors=completed_contributors,
                 )
-            except Exception:
-                return svc.get_human_inbox_degraded_payload(page_size=page_size, snapshot_at=snap)
+            except Exception as exc:
+                from ..personas.routes.common import ManagementReadSaturated, ManagementReadTimeout
+                if isinstance(exc, ManagementReadTimeout):
+                    reason = "read_timeout"
+                elif isinstance(exc, ManagementReadSaturated):
+                    reason = "read_capacity_saturated"
+                else:
+                    reason = "read_error"
+                    logging.getLogger(__name__).warning("bff.management_human_inbox read failed: %s", type(exc).__name__)
+                return svc.get_human_inbox_degraded_payload(
+                    page_size=page_size,
+                    snapshot_at=snap,
+                    reason=reason,
+                    completed_contributors=dict(completed_contributors),
+                    source_type=source_type,
+                    status=status,
+                    priority=priority,
+                    page_token=page_token,
+                )
         return svc.get_human_inbox(
             source_type=source_type,
             status=status,

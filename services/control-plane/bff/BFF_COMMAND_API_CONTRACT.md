@@ -420,6 +420,7 @@ Historical route template (retired; mapping preserved for reference only): `POST
 |---|---|---|---|---|---|---|---|
 | `submit_evolution_review` | `evolution-program` | `SubmitEvolutionReview` | `evolution-program:{entityId}:submit_evolution_review:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.submit_evolution_review` | operator |
 | `approve_program` | `evolution-program` | `ApproveEvolutionProgram` | `evolution-program:{entityId}:approve_program:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.approve_program` | approver |
+| `reject_program` | `evolution-program` | `RejectEvolutionProgram` | `evolution-program:{entityId}:reject_program:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.reject_program` | approver; human only; `reason` required |
 | `stop` | `evolution-program` | `StopEvolutionProgram` | `evolution-program:{entityId}:stop:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.stop` | operator; active caller |
 | `pause_program` | `evolution-program` | `PauseEvolutionProgram` | `evolution-program:{entityId}:pause_program:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.pause_program` | operator |
 | `resume_program` | `evolution-program` | `ResumeEvolutionProgram` | `evolution-program:{entityId}:resume_program:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.resume_program` | operator |
