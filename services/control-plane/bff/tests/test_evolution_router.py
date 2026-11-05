@@ -269,6 +269,8 @@ def test_evolution_router_routes_count_and_exact_paths():
         ("GET", "/api/v1/telemetry"),
         ("GET", "/api/v1/telemetry/{runtime_id}/summary"),
         ("GET", "/api/v1/telemetry/{artifact_id}/performance"),
+        # EVOLUTION-PROGRAM-QUALIFY-R2-20261105: read-only qualification report.
+        ("GET", "/bff/management/evolution-qualification"),
     }
 
     expected_7_program_routes = {
@@ -285,7 +287,8 @@ def test_evolution_router_routes_count_and_exact_paths():
     for route in all_expected:
         assert route in routes, f"Missing route: {route}"
 
-    assert len(router.routes) == 20
+    # 20 before the qualification read route was added; one route more is the only change.
+    assert len(router.routes) == 21
 
 
 def test_list_and_get_evolution_decisions():
