@@ -37,7 +37,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
 from services.foundation import (
     EnvironmentName,
@@ -55,6 +55,7 @@ from services.foundation.reliable_delivery import (
 )
 
 from services.foundation import sha256_checksum
+from services.evolution.program_service import PROGRAM_APPROVAL_TARGET_TYPE
 from services.governance.approval_authority import ApprovalInvalid, configured_approval_reader
 
 
@@ -84,11 +85,33 @@ def immutable_decision_fingerprint(decision: Mapping[str, Any]) -> str:
     return sha256_checksum({field: decision.get(field) for field in _IMMUTABLE_PROPOSAL_FIELDS})
 
 
+# Resolves the program whose human approval covers a decision.  Installed by
+# ``services/evolution/main.py`` (the program store lives there); absent means a
+# program-level approval can never authorize execution.
+ProgramApprovalResolver = Callable[[str, str, str], Optional[Mapping[str, Any]]]
+_program_approval_resolver: Optional[ProgramApprovalResolver] = None
+
+
+def install_program_approval_resolver(resolver: Optional[ProgramApprovalResolver]) -> None:
+    global _program_approval_resolver
+    _program_approval_resolver = resolver
+
+
 def require_execution_approval(decision: Mapping[str, Any]) -> None:
-    """Require current Governance authority for exactly this stored proposal."""
+    """Require current Governance authority for exactly this stored proposal.
+
+    Two bindings are accepted, and only these: a per-decision
+    ``evolution_execute`` grant, or the human approval of an active program that
+    lists this decision in ``source_decision_ids`` and whose digest covers this
+    decision's immutable content.
+    """
     if decision.get("decision_state") != "approved" or not decision.get("approval_decision_id"):
         raise ApprovalInvalid("An approved proposal with a governance approval is required")
-    configured_approval_reader("evolution").get(decision["approval_decision_id"]).require_valid(expected={
+    evidence = configured_approval_reader("evolution").get(decision["approval_decision_id"])
+    if evidence.target_type == PROGRAM_APPROVAL_TARGET_TYPE:
+        _require_program_execution_approval(decision, evidence)
+        return
+    evidence.require_valid(expected={
         "tenant_id": decision["tenant_id"],
         "target_type": "evolution_execute",
         "target_id": decision["decision_id"],
@@ -97,6 +120,47 @@ def require_execution_approval(decision: Mapping[str, Any]) -> None:
         "subject.proposal_id": decision["decision_id"],
         "subject.proposal_content_digest": immutable_decision_fingerprint(decision),
     })
+
+
+def _require_program_execution_approval(decision: Mapping[str, Any], evidence: Any) -> None:
+    resolver = _program_approval_resolver
+    program = resolver(decision["tenant_id"], decision["decision_id"], evidence.decision_id) if resolver else None
+    if program is None:
+        raise ApprovalInvalid("No active program holds this approval for this decision")
+    if str(program.get("status") or "") != "active":
+        raise ApprovalInvalid("The approving program is not active")
+    review = program.get("review") or {}
+    from services.evolution.program_service import (
+        ProgramApprovalRefused, approval_binding, require_human_approval_evidence,
+    )
+    fingerprints = {decision["decision_id"]: immutable_decision_fingerprint(decision)}
+    for other in _program_sibling_fingerprints(program, decision):
+        fingerprints[other[0]] = other[1]
+    binding = approval_binding(program, fingerprints, revision=int(review.get("approval_revision") or 0))
+    try:
+        require_human_approval_evidence(evidence, binding)
+    except ProgramApprovalRefused as exc:
+        raise ApprovalInvalid(str(exc)) from exc
+
+
+def _program_sibling_fingerprints(program: Mapping[str, Any], decision: Mapping[str, Any]):
+    """Fingerprints of the program's other source decisions, from the owner store."""
+    resolver = _program_sibling_resolver
+    if resolver is None:
+        return []
+    return [
+        (other_id, resolver(decision["tenant_id"], other_id))
+        for other_id in program.get("source_decision_ids") or []
+        if other_id != decision["decision_id"]
+    ]
+
+
+_program_sibling_resolver: Optional[Callable[[str, str], Optional[str]]] = None
+
+
+def install_program_sibling_resolver(resolver: Optional[Callable[[str, str], Optional[str]]]) -> None:
+    global _program_sibling_resolver
+    _program_sibling_resolver = resolver
 
 
 OWNER_SERVICE = "evolution-svc"

@@ -17,12 +17,16 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.evolution.models import ProgramActionRequest
 from services.evolution.program_service import (
+    ProgramApprovalError,
     ProgramConflictError,
+    ProgramForbiddenError,
+    ProgramUnavailableError,
+    allowed_actions,
     ProgramDivergentReplayError,
     ProgramNotFoundError,
     ProgramService,
@@ -132,7 +136,11 @@ def create_program_router(
         return {"items": programs}
 
     @router.get("/api/evolution/programs/{program_id}")
-    def get_program(program_id: str) -> Dict[str, Any]:
+    def get_program(
+        program_id: str,
+        actor_role: str = Query(default="operator"),
+        actor_id: str = Query(default=""),
+    ) -> Dict[str, Any]:
         tenant_id = current_tenant()
         try:
             program = service.get_program(tenant_id=tenant_id, program_id=program_id)
@@ -142,7 +150,26 @@ def create_program_router(
             raise _unavailable(exc) from exc
         if program is None:
             raise HTTPException(status_code=404, detail=f"Evolution program not found: {program_id}")
-        return program
+        return {
+            **program,
+            "allowed_actions": allowed_actions(program, actor_role, actor_id),
+        }
+
+    @router.get("/api/evolution/programs/{program_id}/approval-binding")
+    def get_approval_binding(program_id: str) -> Dict[str, Any]:
+        """The exact tenant/program/revision/content binding a governance
+        approval request for this program's next review must carry."""
+        tenant_id = current_tenant()
+        try:
+            return service.approval_binding_for(tenant_id=tenant_id, program_id=program_id)
+        except ProgramNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ProgramConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise _unavailable(exc) from exc
 
     @router.patch("/api/evolution/programs/{program_id}")
     def patch_program(
@@ -204,14 +231,18 @@ def create_program_router(
                 idempotency_key=key,
                 payload=payload,
             )
+        except ProgramForbiddenError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ProgramValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ProgramNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ProgramDivergentReplayError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ProgramConflictError as exc:
+        except (ProgramConflictError, ProgramApprovalError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ProgramUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except HTTPException:
             raise
         except Exception as exc:

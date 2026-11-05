@@ -1333,7 +1333,15 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     store.put_run(run)
     for event in events:
         store.append_event(event)
-    if not rejected and "decision_id" in body.parameters and "target_artifact_id" in body.parameters:
+    if (
+        not rejected
+        and "decision_id" in body.parameters
+        and "target_artifact_id" in body.parameters
+        # Only a retrain decision runs the retrain executor.  Any other action
+        # type stays queued: a stub-labelled run is never reported completed
+        # for work this service did not perform.
+        and str(body.parameters.get("action_type") or "retrain").strip().lower() == "retrain"
+    ):
         _trigger_retrain_execution(run["run_id"], body.parameters)
     if not rejected and is_stage_backend and (body.parameters.get("stage") or (body.parameters.get("plan") and body.parameters["plan"].get("stages"))):
         _progress_plan_stages(body.parameters.get("plan") or {}, run, body.actor_id, store, timestamp)

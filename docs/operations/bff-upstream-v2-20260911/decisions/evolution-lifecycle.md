@@ -120,8 +120,9 @@ No valid policy/approval evidence means unavailable or rejected, never success.
 
 | Canonical action | Legal program transition | Minimum role, artifact and readback |
 |---|---|---|
-| `submit_evolution_review` | draft → under_review | operator; immutable program revision/config snapshot and durable `program_activate` review request; read the exact review ID and program revision. Submission is not approval. |
-| `approve_program` | under_review → active | approver plus applicable domain review owners; approved `program_activate` request must bind the same tenant/program/config revision. Read approval + active revision; no implicit research job/deploy. |
+| `submit_evolution_review` | draft → under_review | operator; the BFF files one Governance `evolution_proposal` approval request (the existing target; no new approval store) bound to tenant, `program_id`, the post-submit program revision and a content digest over `source_decision_ids` and each linked decision's immutable content. The request id is deterministic (`apv-program-{program_id}-r{revision}`), so a resubmission reuses it, and it appears in the existing approvals queue. The owner never generates an approval id. Submission is not approval. |
+| `approve_program` | under_review → active | approver; refused unless Governance holds that request in state `approved`, decided by a human principal (never `evolution-daily-sweep` or `evolution-dispatch-worker`), unexpired, with the same tenant/program/revision/content digest. Each refusal (missing, pending, rejected, expired, other tenant, other program, stale revision, system decider) has its own code. Linked decisions then move through the existing review and approve paths on that same approval evidence and each gets exactly one existing dispatch outbox record; if any decision cannot advance (state changed, cooldown or single-active rule) the program stays `under_review` and the response names the decision and reason. A manual program with no source decisions becomes `active` with no run and a receipt stating that no work started. |
+| `reject_program` | under_review → retired | approver, human only; `reason` required. Linked decisions are rejected (a `proposed` decision is first reviewed, then rejected) so the existing cooldown applies. Operator decision 2026-11-04: the review gate is the explicit product decision that this edge needed. |
 | `pause_program` | active → paused | operator; record program control outcome. Active-run drain semantics follow D1: pause halts new generation admission while current runs drain; never mark an individual run paused without its owner acknowledgement. |
 | `resume_program` | paused → active | operator; valid current approval/config and no unresolved freeze/policy restriction. Continuation semantics follow D1: resume schedules eligible new attempts and never revives cancelled runs. Resume cannot undo cancellation or grant promotion. |
 | `complete_program` | active → completed | operator; actual run outcomes and completion evidence. Require no unresolved active work; failures remain failures, not relabelled successful. Read program revision and linked terminal outcomes. |
@@ -134,10 +135,11 @@ No valid policy/approval evidence means unavailable or rejected, never success.
 
 Other lifecycle edges remain invalid (409), including draft→active by PATCH,
 paused→completed, active→retired and retired→active. A rejected or
-changes-requested activation approval is shown as such; a new program transition
-out of under_review is not invented by this task. Any requested new edge needs
-an explicit product decision; the existing review feature remains usable to
-inspect the outcome. Owner `allowedActions` must prevent unsupported retries.
+changes-requested activation approval is shown as such. The only transition out
+of under_review other than `approve_program` is `reject_program`, recorded as the
+operator decision of 2026-11-04; any further new edge needs an explicit product
+decision. Program `allowed_actions` come from one owner policy (status and caller
+role) that the owner also enforces, so unsupported retries are prevented.
 
 Remove old FE `pause` for program targets in favor of `pause_program`, and
 `promote_paper/live` in favor of `promote_candidate_paper/live`; do not remove

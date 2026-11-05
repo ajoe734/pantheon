@@ -1,0 +1,56 @@
+{
+  "task_id": "EVOLUTION-PROGRAM-APPROVE-DISPATCH-20261104",
+  "kind": "functional",
+  "hosted_verification": "not performed; belongs to EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104. No VM/SSH access, no operator keys read.",
+  "design": {
+    "approval_target": "existing governance target evolution_proposal; no new target, no second approval store",
+    "binding": "tenant_id + target_id/proposal_id=program_id + target_version/proposal_revision=post-submit program revision + proposal_content_digest over source_decision_ids and each linked decision's immutable content fingerprint",
+    "who_files_the_request": "the BFF, with the operator's own credential, under deterministic id apv-program-{program_id}-r{revision} (resubmission reuses it; it is in the approvals queue read by GET /bff/approvals). Binding is computed by the Evolution owner (GET /api/evolution/programs/{id}/approval-binding).",
+    "who_verifies": "the Evolution owner, through ApprovalReader via EVOLUTION_GOVERNANCE_BASE_URL; unset means HTTP 503 (fail closed), never skipped",
+    "execution_gate": "dispatch_outbox.require_execution_approval additionally accepts the human approval of an ACTIVE program that lists the decision and whose digest covers its immutable content; per-decision evolution_execute grants still work unchanged",
+    "run_linking": "dispatch_worker POSTs /api/evolution/proposals/{id}/dispatch-run after submit; the owner reads the run back from its plane and checks tenant/decision before linking. GET /api/evolution/programs/{id}/runs re-reads each run; success only from a terminal receipt, failed/rejected stay failed, unreadable is unknown",
+    "bff_approve_program_catalog": "requires_approval changed True -> False: the owner is the single gate and reads the program's own governance approval; keeping True would require a second, separate approval id for the same human decision"
+  },
+  "acceptance_status": {
+    "1": "met: submit files one governance request bound as above; test_evolution_program_approval_dispatch (bff) asserts one filed request with tenant/program/target_type, verifies it appears in the approvals queue read by approval_owner.list_decisions (backing GET /bff/approvals), and proves a resubmission with the same Idempotency-Key reuses the existing request.",
+    "2": "met: owner tests missing/pending/rejected/expired/other_tenant/other_program/stale_revision each have their own code; the local app- id is removed (payload approval id is only cross-checked against the stored one).",
+    "3": "met: system identities refused at BFF admission (preconditions), BFF adapter, and owner route (403); tests on both the BFF command route and the owner route. A system identity as the Governance decider is also refused (approval_not_human).",
+    "4": "met: linked decisions go through the existing review_proposal/approve_proposal handlers and existing outbox prepare/activate; exactly one outbox record per decision asserted. No new dispatcher, poller or approval store.",
+    "5": "met: a cancelled linked decision, a decision blocked by the rejection/execution cooldown (enforce_proposal_cooldown), or a decision blocked by the single-active rule keeps the program under_review and the 409 names the decision and reason; same Idempotency-Key retry replays without duplicating outbox records.",
+    "6": "met: real run id linked from the dispatch step and verified against the plane; runs read back; failed run stays failed (test_a_failed_run_stays_failed_and_is_shown_as_failed).",
+    "7": "met: BFF command route (real admission + executor + adapter, JWT) -> real services/governance/main.py (strict JWT admission + ApprovalDecisionStore) -> real services/evolution/main.py in EVOLUTION_AUTH_MODE=token (real ApprovalReader + ProgramApprovalVerifier) -> real dispatch_worker.run_poll -> real services/research/main.py -> real _trigger_retrain_execution. Only the training-session (training.test) and registry (registry.test) HTTP boundary is faked.",
+    "8": "see stub_finding",
+    "9": "met: reject_program under_review -> retired, reason required, proposed decisions reviewed then rejected so the rejection cooldown applies; lifecycle doc records the edge as the operator decision of 2026-11-04; every other edge unchanged.",
+    "10": "met: manual program approved through the same evidence becomes active, details.work_started=false, decisions=[], run_ids=[].",
+    "11": "met: one policy table (ACTION_STATUSES/APPROVER_ONLY_ACTIONS/HUMAN_ONLY_ACTIONS) feeds allowed_actions on GET /api/evolution/programs/{id}, allowedActions on GET /bff/evolution-programs/{id} (tested across draft/under_review and operator/approver/system roles), and owner enforcement.",
+    "12": "met at owner level: test patches urllib urlopen to fail on any call during approve and asserts promotions empty; approve touches only program/decision stores and the outbox. No runtime binding, broker order or capital write exists on this path; promote_candidate_paper/live remain separate approver actions.",
+    "13": "see tests_run"
+  },
+  "stub_finding": {
+    "what_a_dispatched_run_executes": "ResearchPlaneAdapter._ensure_run omits adapter, so research DispatchRunBody defaults adapter/requested_mode/dispatch_mode to 'stub' and the run is created with status 'queued' and summary 'Stub research orchestration run queued...'. The stub label itself performs nothing. The only real work is the side effect services/research/main.py:dispatch_run triggers when parameters carry decision_id and target_artifact_id: _trigger_retrain_execution, which creates a training session, reads the artifact from the registry, mutates it to a new candidate version and only then sets the run 'completed' (any exception sets 'failed'). A run is therefore 'completed' only after that real sequence, and the dispatch receipt maps completed->succeeded only from the orchestrator's own readback.",
+    "gap_fixed": "_trigger_retrain_execution fired for ANY action_type carrying those two parameters, i.e. a revalidate/freeze/revive decision would have been run as a retrain mutation. It is now gated to action_type == 'retrain' (absent action_type keeps legacy behaviour). Other action types stay 'queued' and so never converge to executed: they are not reported complete for work that was not done.",
+    "not_reported_as_evolution": "a stub-labelled queued run is never presented as a completed evolution; BFF/owner runs read reports it as running/unknown"
+  },
+  "conflict_resolved": {
+    "qualify_r2_sweep_submit": "EVOLUTION-PROGRAM-QUALIFY-R2 has the daily-sweep identity submit its program for review. It has no human credential and cannot file the Governance request. Resolution: the owner lets ONLY evolution-daily-sweep on an auto_qualified draft submit without an approval id (review.approval_id=null, program under_review, nothing approvable); a human submit then files and attaches the request (system identities can never attach). Approve is refused with approval_missing until then. No R2 test assertion was changed."
+  },
+  "existing_tests_changed": [
+    {
+      "file": "services/evolution/test_program_owner.py",
+      "change": "ProgramService fixtures replaced by GovernedProgramService (real service + real verification; scripted human files and decides the Governance request around submit/approve). Assertions untouched.",
+      "why": "the old tests drove the defect: submit with no governance request and approve with a locally generated approval id."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_evolution_program_action_receipts.py",
+      "change": "owner double now answers the approval-binding read (_owner_with_binding) and the governance filing is recorded (autouse fixture); the e2e router test uses GovernedProgramService. Assertions untouched.",
+      "why": "submit now reads the owner binding and files a Governance request before calling the owner action."
+    }
+  ],
+  "tests_run": {
+    "command": "pytest services/evolution/test_program_approval_dispatch.py services/evolution/test_program_owner.py services/evolution/test_dispatch_worker.py services/evolution/test_program_qualification.py services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py services/control-plane/bff/tests/test_evolution_decision_approval_binding.py services/control-plane/bff/tests/test_evolution_program_action_receipts.py services/control-plane/bff/tests/test_evolution_program_owner_contract.py services/control-plane/bff/tests/test_evolution_owner_write_service_auth.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "result": "248 passed, 3 skipped (postgres-only)"
+  },
+  "limits": [
+    "BFF runs route falls back to the read-store projection when no program_commands port is injected (kept so existing router tests stay valid); the production wiring injects the port."
+  ]
+}

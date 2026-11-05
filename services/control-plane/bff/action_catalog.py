@@ -486,13 +486,33 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         entity_type="EvolutionProgram",
         endpoint=_FINAL_COMMAND_ENDPOINT,
         risk_level=RiskLevel.HIGH,
-        requires_approval=True,
+        requires_approval=False,  # the Evolution owner is the single gate: it reads the program's governance approval itself
         requires_confirm_token=False,
         requires_two_man=False,
         cooldown_seconds=30,
         idempotency_required=True,
         required_roles=["approver", "admin"],
-        description="Approve reviewed evolution program to active status (under_review -> active).",
+        description=(
+            "Activate an evolution program under review (under_review -> active). The Evolution owner "
+            "refuses unless the governance request filed at submission was approved by a human principal "
+            "for this tenant, program and revision."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="RejectEvolutionProgram",
+        entity_type="EvolutionProgram",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=30,
+        idempotency_required=True,
+        required_roles=["approver", "admin"],
+        description=(
+            "Reject an evolution program under review (under_review -> retired) with a required "
+            "reason; linked proposed decisions are rejected so the existing cooldown applies."
+        ),
     ),
     BffActionCatalogEntry(
         action_id="PauseEvolutionProgram",

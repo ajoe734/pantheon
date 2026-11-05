@@ -15,9 +15,11 @@ Those are U8B's obligation; this service exposes no method for them.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
 
 from services.evolution.models import EvolutionProgram, ProgramStatus
 from services.evolution.program_store import (
@@ -25,6 +27,185 @@ from services.evolution.program_store import (
     ProgramStoreConflictError,
     ProgramStoreDivergentReplayError,
 )
+from services.governance.approval_authority import (
+    ApprovalEvidence,
+    ApprovalInvalid,
+    ApprovalUnavailable,
+)
+
+PROGRAM_APPROVAL_TARGET_TYPE = "evolution_proposal"
+
+# Automated identities. They may propose and dispatch; they can never approve
+# or reject a program, on any route.
+SYSTEM_PRINCIPALS = frozenset({"evolution-daily-sweep", "evolution-dispatch-worker"})
+
+
+class ProgramApprovalRefused(ValueError):
+    """The governance evidence does not authorize this program transition.
+
+    ``code`` is a stable machine-readable reason; each refusal path has its own.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+
+
+class ProgramApprovalUnavailable(RuntimeError):
+    """Governance could not be reached; the transition fails closed."""
+
+
+def is_system_principal(actor_id: Optional[str]) -> bool:
+    return str(actor_id or "").strip().lower() in SYSTEM_PRINCIPALS
+
+
+def program_content_digest(
+    program: Mapping[str, Any],
+    decision_fingerprints: Mapping[str, str],
+) -> str:
+    """Digest of what the human is being asked to approve.
+
+    Excludes the revision (carried separately) so the digest changes only when
+    the program's tenant, identity or linked decisions' immutable content do.
+    """
+    source_ids = sorted(str(item) for item in (program.get("source_decision_ids") or []))
+    body = {
+        "tenant_id": str(program.get("tenant_id") or ""),
+        "program_id": str(program.get("program_id") or ""),
+        "source_decisions": [
+            {"decision_id": decision_id, "fingerprint": decision_fingerprints.get(decision_id)}
+            for decision_id in source_ids
+        ],
+    }
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def review_revision(program: Mapping[str, Any]) -> int:
+    """Revision the program will hold while ``under_review``.
+
+    Submitting for review is itself a revision bump, so the approval binds the
+    post-submit revision and any later mutation makes the approval stale.
+    """
+    return int(program.get("revision") or 0) + 1
+
+
+def approval_binding(
+    program: Mapping[str, Any],
+    decision_fingerprints: Mapping[str, str],
+    *,
+    revision: int,
+) -> Dict[str, Any]:
+    """The exact fields a governance request must carry for this program."""
+    program_id = str(program.get("program_id") or "")
+    return {
+        "tenant_id": str(program.get("tenant_id") or ""),
+        "target_type": PROGRAM_APPROVAL_TARGET_TYPE,
+        "target_id": program_id,
+        "target_version": str(revision),
+        "proposal_id": program_id,
+        "proposal_revision": revision,
+        "proposal_content_digest": program_content_digest(program, decision_fingerprints),
+    }
+
+
+class ApprovalReaderLike(Protocol):
+    def get(self, decision_id: str) -> ApprovalEvidence:
+        ...
+
+
+def _field(evidence: ApprovalEvidence, name: str) -> Any:
+    return getattr(evidence, name, None)
+
+
+def _check_binding(evidence: ApprovalEvidence, binding: Mapping[str, Any]) -> None:
+    if evidence.tenant_id != binding["tenant_id"]:
+        raise ProgramApprovalRefused("approval_tenant_mismatch", "approval belongs to another tenant")
+    if evidence.target_type != binding["target_type"]:
+        raise ProgramApprovalRefused(
+            "approval_target_type_mismatch",
+            f"approval target_type must be {binding['target_type']}",
+        )
+    if evidence.target_id != binding["target_id"] or _field(evidence, "proposal_id") not in (
+        None,
+        binding["proposal_id"],
+    ):
+        raise ProgramApprovalRefused("approval_program_mismatch", "approval is bound to another program")
+    if evidence.target_version != binding["target_version"] or _field(
+        evidence, "proposal_revision"
+    ) != binding["proposal_revision"]:
+        raise ProgramApprovalRefused(
+            "approval_revision_stale",
+            "approval is bound to a different program revision",
+        )
+    if _field(evidence, "proposal_content_digest") != binding["proposal_content_digest"]:
+        raise ProgramApprovalRefused(
+            "approval_content_mismatch",
+            "approval does not cover the program's current source decisions",
+        )
+
+
+class ProgramApprovalVerifier:
+    """Reads governance evidence by exact id and checks it against a binding."""
+
+    def __init__(self, reader_factory: Callable[[], ApprovalReaderLike]) -> None:
+        self._reader_factory = reader_factory
+
+    def _read(self, approval_id: str) -> ApprovalEvidence:
+        if not str(approval_id or "").strip():
+            raise ProgramApprovalRefused("approval_missing", "a governance approval id is required")
+        try:
+            return self._reader_factory().get(approval_id)
+        except ApprovalUnavailable as exc:
+            raise ProgramApprovalUnavailable(str(exc)) from exc
+        except ApprovalInvalid as exc:
+            raise ProgramApprovalRefused(
+                "approval_missing", f"governance has no readable approval {approval_id!r}"
+            ) from exc
+
+    def require_pending_request(self, approval_id: str, binding: Mapping[str, Any]) -> ApprovalEvidence:
+        """Used at submit: the request exists, is bound correctly and is undecided."""
+        evidence = self._read(approval_id)
+        _check_binding(evidence, binding)
+        if evidence.decision_state == "decided":
+            raise ProgramApprovalRefused(
+                "approval_already_decided", "the governance request was already decided"
+            )
+        return evidence
+
+    def require_human_approval(self, approval_id: str, binding: Mapping[str, Any]) -> ApprovalEvidence:
+        """Used at approve: a current, unconditional, human-decided approval."""
+        return require_human_approval_evidence(self._read(approval_id), binding)
+
+
+def require_human_approval_evidence(
+    evidence: ApprovalEvidence, binding: Mapping[str, Any]
+) -> ApprovalEvidence:
+    """The one check for "a human approved exactly this program"."""
+    _check_binding(evidence, binding)
+    if evidence.decision_state != "decided":
+        raise ProgramApprovalRefused("approval_pending", "the governance request is not decided yet")
+    if evidence.decision == "rejected":
+        raise ProgramApprovalRefused("approval_rejected", "the governance request was rejected")
+    if evidence.decision != "approved":
+        raise ProgramApprovalRefused("approval_not_approved", "the governance request is not approved")
+    if is_system_principal(evidence.actor_id):
+        raise ProgramApprovalRefused(
+            "approval_not_human", "a system identity cannot approve a program"
+        )
+    try:
+        evidence.require_valid()
+    except ApprovalInvalid as exc:
+        message = str(exc)
+        code = "approval_expired" if "expir" in message.lower() else "approval_invalid"
+        raise ProgramApprovalRefused(code, message) from exc
+    return evidence
+
+
+def decision_fingerprints_for(
+    decision_ids: Iterable[str], fingerprint_of: Callable[[str], Optional[str]]
+) -> Dict[str, str]:
+    return {decision_id: fingerprint_of(decision_id) for decision_id in decision_ids}
 
 
 def utc_now_iso() -> str:
@@ -60,6 +241,99 @@ class ProgramConflictError(ValueError):
         self.program_id = message_or_program_id
 
 
+class ProgramForbiddenError(PermissionError):
+    """The caller may never perform this action (maps to HTTP 403)."""
+
+
+class ProgramApprovalError(ValueError):
+    """Governance evidence refused the transition (maps to HTTP 409).
+
+    ``code`` is the stable refusal reason (``approval_missing``,
+    ``approval_rejected``, ``approval_expired``, ``approval_tenant_mismatch``,
+    ``approval_program_mismatch``, ``approval_revision_stale`` ...)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+
+
+class ProgramUnavailableError(RuntimeError):
+    """A dependency the transition needs fails closed (maps to HTTP 503)."""
+
+
+class DecisionAdvanceRefused(Exception):
+    """A linked EvolutionDecision could not take the requested step."""
+
+    def __init__(self, decision_id: str, reason: str) -> None:
+        super().__init__(f"decision {decision_id} cannot advance: {reason}")
+        self.decision_id = decision_id
+        self.reason = reason
+
+
+class DecisionGateway(Protocol):
+    """The program owner's only door to EvolutionDecisions.
+
+    Implemented by ``services/evolution/main.py`` on top of the *existing*
+    review / approve / reject paths and the existing dispatch outbox -- there is
+    no second dispatcher.
+    """
+
+    def fingerprint(self, decision_id: str, tenant_id: str) -> Optional[str]:
+        ...
+
+    def risk_level(self, decision_id: str, tenant_id: str) -> Optional[str]:
+        ...
+
+    def advance(self, decision_id: str, *, tenant_id: str, actor_id: str, actor_role: str,
+                approval_id: str) -> Dict[str, Any]:
+        ...
+
+    def reject(self, decision_id: str, *, tenant_id: str, actor_id: str, actor_role: str,
+               reason: str) -> Dict[str, Any]:
+        ...
+
+
+# One lifecycle policy: which statuses admit an action and which roles may run
+# it.  ``allowed_actions`` (read projection) and ``execute_action`` (owner
+# enforcement) both read this table.
+APPROVER_ROLES = frozenset({"approver", "admin", "live_owner_approver"})
+APPROVER_ONLY_ACTIONS = frozenset({
+    "approve_program", "reject_program", "retire_program", "freeze_generation",
+    "unfreeze_generation", "promote_candidate_paper", "promote_candidate_live",
+    "approve_mutation", "reject_mutation",
+})
+HUMAN_ONLY_ACTIONS = frozenset({"approve_program", "reject_program"})
+ACTION_STATUSES: Dict[str, frozenset] = {
+    "submit_evolution_review": frozenset({"draft"}),
+    "approve_program": frozenset({"under_review"}),
+    "reject_program": frozenset({"under_review"}),
+    "pause_program": frozenset({"active"}),
+    "resume_program": frozenset({"paused"}),
+    "complete_program": frozenset({"active"}),
+    "retire_program": frozenset({"completed", "stopped"}),
+    "stop": frozenset({"active", "paused"}),
+}
+
+
+def allowed_actions(program: Dict[str, Any], actor_role: str, actor_id: str = "") -> List[str]:
+    """Lifecycle actions the caller may attempt on this program right now."""
+    status = str(program.get("status") or "").lower()
+    role = str(actor_role or "").strip().lower()
+    result = []
+    awaiting_request = status == "under_review" and not (program.get("review") or {}).get("approval_id")
+    for action, statuses in ACTION_STATUSES.items():
+        if status not in statuses and not (action == "submit_evolution_review" and awaiting_request):
+            continue
+        if action == "submit_evolution_review" and is_system_principal(actor_id) and awaiting_request:
+            continue
+        if action in APPROVER_ONLY_ACTIONS and role not in APPROVER_ROLES:
+            continue
+        if action in HUMAN_ONLY_ACTIONS and is_system_principal(actor_id):
+            continue
+        result.append(action)
+    return result
+
+
 class ProgramDivergentReplayError(ValueError):
     """The same idempotency key was reused with a different request (maps to
     HTTP 409 — a divergent replay, not a silently accepted second version)."""
@@ -74,8 +348,62 @@ class ProgramDivergentReplayError(ValueError):
 class ProgramService:
     """Owner service for the Program aggregate. See module docstring."""
 
-    def __init__(self, store: ProgramStore) -> None:
+    def __init__(
+        self,
+        store: ProgramStore,
+        *,
+        approval_verifier: Optional[ProgramApprovalVerifier] = None,
+        decisions: Optional[DecisionGateway] = None,
+    ) -> None:
         self._store = store
+        self._verifier = approval_verifier
+        self._decisions = decisions
+
+    def _binding(self, program: Dict[str, Any], *, revision: int) -> Dict[str, Any]:
+        fingerprints: Dict[str, Any] = {}
+        for decision_id in program.get("source_decision_ids") or []:
+            fingerprints[decision_id] = (
+                self._decisions.fingerprint(decision_id, str(program.get("tenant_id") or ""))
+                if self._decisions is not None
+                else None
+            )
+        return approval_binding(program, fingerprints, revision=revision)
+
+    def approval_binding_for(self, *, tenant_id: str, program_id: str) -> Dict[str, Any]:
+        """What a governance request for this program's next review must carry."""
+        program = self.get_program(tenant_id=tenant_id, program_id=program_id)
+        if program is None:
+            raise ProgramNotFoundError(program_id)
+        for decision_id in program.get("source_decision_ids") or []:
+            if self._decisions is None or self._decisions.fingerprint(
+                decision_id, str(program.get("tenant_id") or "")
+            ) is None:
+                raise ProgramConflictError(
+                    f"source decision {decision_id} is not readable; cannot bind an approval"
+                )
+        binding = self._binding(program, revision=review_revision(program))
+        # The governance request is decided at the highest risk of any linked
+        # decision (a manual program with no decisions is medium).
+        order = ["low", "medium", "high", "critical"]
+        risks = [self._decisions.risk_level(d, binding["tenant_id"])
+                 for d in program.get("source_decision_ids") or []] if self._decisions else []
+        binding["risk_level"] = max([r for r in risks if r in order] or ["medium"], key=order.index)
+        return binding
+
+    def _require_verifier(self) -> ProgramApprovalVerifier:
+        if self._verifier is None:
+            raise ProgramUnavailableError(
+                "governance approval verification is not configured "
+                "(EVOLUTION_GOVERNANCE_BASE_URL); program approval fails closed"
+            )
+        return self._verifier
+
+    @staticmethod
+    def _is_replay(program: Dict[str, Any], action: str, key: Optional[str]) -> bool:
+        return bool(key) and any(
+            r.get("idempotency_key") == key and r.get("action_id") == action
+            for r in program.get("action_receipts") or []
+        )
 
     # -- Create --------------------------------------------------------
 
@@ -294,6 +622,204 @@ class ProgramService:
             raise ProgramConflictError(clean_id) from exc
         return committed, replayed
 
+    # -- Run linkage -----------------------------------------------------
+
+    def link_run(
+        self,
+        *,
+        tenant_id: str,
+        decision_id: str,
+        run_id: str,
+        downstream_kind: str,
+        actor_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Link the real downstream run id from a dispatch receipt into every
+        active program that lists the decision.  Idempotent: a run already
+        linked is not linked twice."""
+        clean_tenant = str(tenant_id or "").strip()
+        clean_run = str(run_id or "").strip()
+        if not clean_run:
+            raise ProgramValidationError("run_id is required")
+        linked: List[Dict[str, Any]] = []
+        for program in self.list_programs(tenant_id=clean_tenant):
+            if decision_id not in (program.get("source_decision_ids") or []):
+                continue
+            if any(link.get("run_id") == clean_run for link in program.get("run_links") or []):
+                continue
+
+            def mutate(base: Dict[str, Any]) -> Dict[str, Any]:
+                updated = dict(base)
+                links = list(updated.get("run_links") or [])
+                if any(link.get("run_id") == clean_run for link in links):
+                    return updated
+                links.append({
+                    "run_id": clean_run,
+                    "decision_id": decision_id,
+                    "downstream_kind": downstream_kind,
+                    "linked_at": utc_now_iso(),
+                })
+                updated["run_links"] = links
+                updated["run_ids"] = list(dict.fromkeys([*(updated.get("run_ids") or []), clean_run]))
+                updated["revision"] = int(base.get("revision") or 0) + 1
+                updated["updated_at"] = utc_now_iso()
+                updated["updated_by"] = actor_id
+                return updated
+
+            try:
+                committed, _ = self._store.patch_metadata_cas(
+                    tenant_id=clean_tenant,
+                    actor_id=actor_id,
+                    program_id=program["program_id"],
+                    idempotency_key=f"link-run:{clean_run}",
+                    request_fingerprint={"operation": "link_run", "run_id": clean_run,
+                                         "program_id": program["program_id"]},
+                    base_snapshot=program,
+                    mutate=mutate,
+                    namespace="link_program_run",
+                )
+            except ProgramStoreConflictError as exc:
+                raise ProgramConflictError(program["program_id"]) from exc
+            linked.append(committed)
+        return linked
+
+    def _prepare_transition(
+        self,
+        program: Dict[str, Any],
+        *,
+        action: str,
+        actor_id: str,
+        actor_role: str,
+        payload: Dict[str, Any],
+        note: Optional[str],
+    ) -> Dict[str, Any]:
+        """Governance and decision side effects that must hold *before* the
+        program transition commits.  Any refusal leaves the program unchanged."""
+        status = str(program.get("status") or "").lower()
+        program_id = str(program.get("program_id") or "")
+        tenant_id = str(program.get("tenant_id") or "")
+        if action == "submit_evolution_review":
+            awaiting = status == ProgramStatus.UNDER_REVIEW.value and not (program.get("review") or {}).get("approval_id")
+            if status != ProgramStatus.DRAFT.value and not awaiting:
+                raise ProgramConflictError(
+                    f"Cannot submit review for program in status {status!r}; must be 'draft'"
+                )
+            approval_id = str(payload.get("approval_id") or "").strip()
+            if not approval_id:
+                if (is_system_principal(actor_id) and program.get("origin") == AUTO_QUALIFIED_ORIGIN
+                        and status == ProgramStatus.DRAFT.value):
+                    # The qualifier has no human credential, so it cannot file the
+                    # Governance request.  It surfaces the program for review; a
+                    # human submit then files and attaches the request.
+                    return {"approval_id": None, "content_digest": None}
+                raise ProgramApprovalError(
+                    "approval_missing",
+                    "submit_evolution_review requires the governance approval request id; "
+                    "the owner does not generate one",
+                )
+            if is_system_principal(actor_id):
+                raise ProgramForbiddenError(
+                    f"System identity {actor_id!r} cannot attach a governance approval request"
+                )
+            binding = self.approval_binding_for(tenant_id=tenant_id, program_id=program_id)
+            try:
+                self._require_verifier().require_pending_request(approval_id, binding)
+            except ProgramApprovalRefused as exc:
+                raise ProgramApprovalError(exc.code, str(exc)) from exc
+            except ProgramApprovalUnavailable as exc:
+                raise ProgramUnavailableError(str(exc)) from exc
+            return {"approval_id": approval_id, "content_digest": binding["proposal_content_digest"]}
+
+        if action == "approve_program":
+            if status != ProgramStatus.UNDER_REVIEW.value:
+                raise ProgramConflictError(
+                    f"Cannot approve program in status {status!r}; must be 'under_review'"
+                )
+            review = program.get("review") or {}
+            approval_id = str(review.get("approval_id") or "").strip()
+            supplied = str(payload.get("approval_id") or "").strip()
+            if supplied and approval_id and supplied != approval_id:
+                raise ProgramApprovalError(
+                    "approval_program_mismatch",
+                    "approval id is not the request this program was submitted with",
+                )
+            binding = self._binding(program, revision=int(program.get("revision") or 0))
+            try:
+                evidence = self._require_verifier().require_human_approval(approval_id, binding)
+            except ProgramApprovalRefused as exc:
+                raise ProgramApprovalError(exc.code, str(exc)) from exc
+            except ProgramApprovalUnavailable as exc:
+                raise ProgramUnavailableError(str(exc)) from exc
+            return {
+                "approval_id": approval_id,
+                "approved_by": evidence.actor_id,
+                # The decisions advance as the human governance decider, on the
+                # same approval evidence -- not as the activating caller.
+                "decisions": self._advance_decisions(
+                    program,
+                    actor_id=str(evidence.actor_id),
+                    actor_role=str(evidence.actor_role),
+                    approval_id=approval_id,
+                ),
+            }
+
+        if action == "reject_program":
+            if status != ProgramStatus.UNDER_REVIEW.value:
+                raise ProgramConflictError(
+                    f"Cannot reject program in status {status!r}; must be 'under_review'"
+                )
+            reason = str(payload.get("reason") or note or "").strip()
+            if not reason:
+                raise ProgramValidationError("reason is required to reject a program")
+            return {
+                "reason": reason,
+                "decisions": self._reject_decisions(
+                    program,
+                    actor_id=actor_id,
+                    actor_role=str(payload.get("decision_actor_role") or actor_role),
+                    reason=reason,
+                ),
+            }
+        return {}
+
+    def _gateway(self) -> DecisionGateway:
+        if self._decisions is None:
+            raise ProgramUnavailableError("decision gateway is not configured")
+        return self._decisions
+
+    def _advance_decisions(self, program, *, actor_id, actor_role, approval_id) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for decision_id in program.get("source_decision_ids") or []:
+            try:
+                results.append(self._gateway().advance(
+                    decision_id,
+                    tenant_id=str(program.get("tenant_id") or ""),
+                    actor_id=actor_id,
+                    actor_role=actor_role,
+                    approval_id=approval_id,
+                ))
+            except DecisionAdvanceRefused as exc:
+                raise ProgramConflictError(
+                    f"Program stays under_review: decision {exc.decision_id} cannot advance: {exc.reason}"
+                ) from exc
+        return results
+
+    def _reject_decisions(self, program, *, actor_id, actor_role, reason) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for decision_id in program.get("source_decision_ids") or []:
+            try:
+                results.append(self._gateway().reject(
+                    decision_id,
+                    tenant_id=str(program.get("tenant_id") or ""),
+                    actor_id=actor_id,
+                    actor_role=actor_role,
+                    reason=reason,
+                ))
+            except DecisionAdvanceRefused as exc:
+                raise ProgramConflictError(
+                    f"Program stays under_review: decision {exc.decision_id} cannot be rejected: {exc.reason}"
+                ) from exc
+        return results
+
     # -- Real Lifecycle Action Execution (U8B) ----------------------------
 
     def execute_action(
@@ -335,24 +861,18 @@ class ProgramService:
                 f"Stale revision precondition for {clean_id}: expected {expected_revision}, current {current_rev}"
             )
 
-        # Role checks
-        approver_roles = {"approver", "admin", "live_owner_approver"}
-        approver_actions = {
-            "approve_program",
-            "retire_program",
-            "freeze_generation",
-            "unfreeze_generation",
-            "promote_candidate_paper",
-            "promote_candidate_live",
-            "approve_mutation",
-            "reject_mutation",
-        }
-        if clean_action in approver_actions and clean_role not in approver_roles:
+        # Role and identity checks (one policy: APPROVER_ONLY_ACTIONS /
+        # HUMAN_ONLY_ACTIONS, shared with ``allowed_actions``).
+        if clean_action in HUMAN_ONLY_ACTIONS and is_system_principal(clean_actor):
+            raise ProgramForbiddenError(
+                f"System identity {clean_actor!r} can never {clean_action} a program"
+            )
+        if clean_action in APPROVER_ONLY_ACTIONS and clean_role not in APPROVER_ROLES:
             raise ProgramValidationError(
                 f"Action {action_id!r} requires approver role; actor holds {clean_role!r}"
             )
 
-        known_actions = approver_actions.union({
+        known_actions = APPROVER_ONLY_ACTIONS.union({
             "submit_evolution_review",
             "pause_program",
             "resume_program",
@@ -364,6 +884,17 @@ class ProgramService:
         })
         if clean_action not in known_actions:
             raise ProgramValidationError(f"Unsupported program action: {action_id!r}")
+
+        effects: Dict[str, Any] = {}
+        if not self._is_replay(current, clean_action, idempotency_key):
+            effects = self._prepare_transition(
+                current,
+                action=clean_action,
+                actor_id=clean_actor,
+                actor_role=clean_role,
+                payload=payload,
+                note=note,
+            )
 
         now = utc_now_iso()
         receipt_id = f"rcpt-{uuid.uuid4().hex[:12]}"
@@ -398,15 +929,22 @@ class ProgramService:
 
             # Map canonical action semantics
             if clean_action == "submit_evolution_review":
-                if base_status != ProgramStatus.DRAFT.value:
+                attach = (
+                    base_status == ProgramStatus.UNDER_REVIEW.value
+                    and not (base.get("review") or {}).get("approval_id")
+                )
+                if base_status != ProgramStatus.DRAFT.value and not attach:
                     raise ProgramConflictError(
                         f"Cannot submit review for program in status {base_status!r}; must be 'draft'"
                     )
                 target_status = ProgramStatus.UNDER_REVIEW.value
                 details = {
-                    "review_id": f"rev-{uuid.uuid4().hex[:12]}",
+                    "approval_id": effects.get("approval_id"),
+                    "approval_revision": base_rev + 1,
+                    "approval_content_digest": effects.get("content_digest"),
+                    "source_decision_ids": list(base.get("source_decision_ids") or []),
                     "config_snapshot_revision": base_rev,
-                    "note": note or "Submitted for evolution review",
+                    "note": note or "Submitted for evolution review; awaiting a human governance decision",
                 }
 
             elif clean_action == "approve_program":
@@ -415,10 +953,33 @@ class ProgramService:
                         f"Cannot approve program in status {base_status!r}; must be 'under_review'"
                     )
                 target_status = ProgramStatus.ACTIVE.value
+                linked = effects.get("decisions") or []
                 details = {
-                    "approval_id": payload.get("approval_id") or f"app-{uuid.uuid4().hex[:12]}",
+                    "approval_id": effects.get("approval_id"),
+                    "approval_decided_by": effects.get("approved_by"),
                     "activated_revision": base_rev + 1,
-                    "note": note or "Program approved and activated; no implicit job or deployment",
+                    "decisions": linked,
+                    "work_started": bool(linked),
+                    "note": note or (
+                        "Program approved by a human governance decision; linked decisions "
+                        "prepared for the existing dispatch outbox"
+                        if linked
+                        else "Program approved and activated; no source decisions, so no work "
+                        "started and no run was created"
+                    ),
+                }
+
+            elif clean_action == "reject_program":
+                if base_status != ProgramStatus.UNDER_REVIEW.value:
+                    raise ProgramConflictError(
+                        f"Cannot reject program in status {base_status!r}; must be 'under_review'"
+                    )
+                target_status = ProgramStatus.RETIRED.value
+                details = {
+                    "reason": effects.get("reason"),
+                    "rejected_decisions": effects.get("decisions") or [],
+                    "terminal": True,
+                    "note": note or "Program review rejected by the operator; retired without activation",
                 }
 
             elif clean_action == "pause_program":
@@ -677,6 +1238,28 @@ class ProgramService:
             if target_status != base_status:
                 updated["status"] = target_status
 
+            if clean_action == "submit_evolution_review":
+                updated["review"] = {
+                    "approval_id": details["approval_id"],
+                    "approval_revision": details["approval_revision"],
+                    "submitted_by": clean_actor,
+                    "submitted_at": now,
+                }
+            elif clean_action == "approve_program":
+                updated["approval"] = {
+                    "approval_id": details["approval_id"],
+                    "approved_by": details["approval_decided_by"],
+                    "activated_by": clean_actor,
+                    "activated_at": now,
+                    "decisions": details["decisions"],
+                }
+            elif clean_action == "reject_program":
+                updated["rejection"] = {
+                    "reason": details["reason"],
+                    "rejected_by": clean_actor,
+                    "rejected_at": now,
+                    "decisions": details["rejected_decisions"],
+                }
             if clean_action == "freeze_generation":
                 updated["is_frozen"] = True
                 frz_list = list(updated.get("freeze_records") or [])
