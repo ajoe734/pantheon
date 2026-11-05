@@ -200,13 +200,16 @@ unreachable by construction: the paper context is required by the owners, and th
 > **2026-11-05 amendment (counts restored, or every difference proven external).** The operator-approved
 > "counts restored" clause now reads "counts restored or every difference proven external by owner
 > readback". A differing active count is no longer a mismatch by itself: each removed baseline binding must be
-> proven retired by the Runtime owner between baseline `recorded_at` and `E_close` start, each added binding must
-> pass the owner/Registry non-chain checks with `effective_at` at or before `E_close` start, and an added binding
-> that reuses this chain's plan, pool, capital binding, persona or runtime is a mismatch as possible chain
-> residue (this replaces the protection the count comparison gave). The phase record states
-> `baseline_active_count` and `active_count_after_close` instead of claiming restoration. The release
-> coordinator decided this under the operator's standing test-run pre-authorization of 2026-10-24; the operator
-> did not individually choose this wording and may reverse it.
+> proven retired by the Runtime owner between baseline `recorded_at` and `E_close` start and unlabelled (owner
+> readback proves that a removed baseline binding is retired before `E_close` and unlabelled, but not who retired
+> it), each added binding must pass the owner/Registry non-chain checks with `effective_at` at or before `E_close`
+> start, and an added binding that reuses this chain's plan, pool, capital binding, persona or runtime is a
+> mismatch as possible chain residue (this replaces the protection the count comparison gave). The phase record
+> states `baseline_active_count` and `active_count_after_close` instead of claiming restoration. The release
+> coordinator proposed this amendment first (PR #6958) and the operator then accepted it on 2026-11-05 after #6958
+> merged with the verbatim answer 「接受（建議）」. Limit: chain 4923 `E_close` run `41956938180` stays
+> `all12_passed` `false` and has no non-chain before and after proof; run `41962827263` is a no-op that verified
+> the fleet check under the amended clause and is not proof for the first write round.
 
 ## 5. Cases excluded or replaced on hosted (acceptance 3)
 

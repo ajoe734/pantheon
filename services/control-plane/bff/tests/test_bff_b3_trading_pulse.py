@@ -440,3 +440,133 @@ def test_trading_pulse_routes_require_read_authentication() -> None:
 
             assert resp.status_code == 401, resp.text
             assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
+
+
+# --- BFF-TRADING-PULSE-CURRENT-FLEET-20261105 -------------------------------
+from services.control_plane.bff.management_read_models.service import (  # noqa: E402
+    ManagementService,
+)
+
+
+class _FleetStore:
+    def __init__(self, bindings, sessions, telemetry=(), drift=()):
+        self.bindings = bindings
+        self.sessions = sessions
+        self.telemetry = list(telemetry)
+        self.drift = list(drift)
+        self.drift_calls = 0
+
+    def list_runtime_bindings(self):
+        return list(self.bindings)
+
+    def list_telemetry_summaries(self):
+        return list(self.telemetry)
+
+    def list_paper_live_drift_reports(self):
+        self.drift_calls += 1
+        return list(self.drift)
+
+    def list_paper_runtime_monitoring_sessions(self):
+        return list(self.sessions)
+
+
+def _binding(n, status, stage="paper", **extra):
+    return {
+        "id": f"b-{n}",
+        "binding_id": f"b-{n}",
+        "runtime_id": f"r-{n}",
+        "deployment_stage": stage,
+        "status": status,
+        **extra,
+    }
+
+
+def _telemetry(n):
+    return {
+        "runtime_id": f"r-{n}",
+        "window": "1h",
+        "collected_at": "2026-11-05T00:00:00Z",
+        "pnl": 1.0,
+        "drawdown": 0.1,
+        "fill_rate": 0.9,
+        "avg_slippage_bps": 2.0,
+        "total_trades": 3,
+    }
+
+
+def _hosted_shaped_store(sessions_order="ended_first"):
+    bindings = (
+        [_binding(i, "active") for i in range(4)]
+        + [_binding(10 + i, "paused") for i in range(6)]
+        + [_binding(20 + i, "failed") for i in range(3)]
+        + [_binding(100 + i, "retired") for i in range(112)]
+        + [_binding(300, "active", retired_at="2026-10-01T00:00:00Z")]
+    )
+    sessions = []
+    for i in range(4):
+        ended = {
+            "session_id": f"e{i}", "runtime_id": f"r-{i}", "binding_id": f"b-{i}",
+            "status": "ended", "active": False,
+            "ended_at": "2026-11-04T00:00:00Z", "ended_reason": "market_input_missing",
+        }
+        running = {
+            "session_id": f"s{i}", "runtime_id": f"r-{i}", "binding_id": f"b-{i}",
+            "status": "running", "active": True, "started_at": "2026-11-05T00:00:00Z",
+        }
+        sessions += [ended, running] if sessions_order == "ended_first" else [running, ended]
+    return _FleetStore(bindings, sessions, telemetry=[_telemetry(i) for i in range(4)])
+
+
+def test_trading_pulse_excludes_retired_and_counts_them() -> None:
+    store = _hosted_shaped_store()
+    data = ManagementService(read_store=store).get_trading_pulse()["data"]
+    summary = data["summary"]
+    assert summary["runtime_count"] == 13
+    assert summary["retired_runtime_count"] == 113
+    assert len(data["runtime_rows"]) == 13
+    assert len(data["rankings"]) == 13
+    assert data["cards"][0]["value"] == 13
+    assert summary["by_status"] == {"active": 4, "paused": 6, "failed": 3}
+    ids = {r["runtime_id"] for r in data["runtime_rows"]}
+    assert not any(i in ids for i in ("r-100", "r-300"))
+
+
+def test_trading_pulse_prefers_non_ended_monitoring_session_in_either_order() -> None:
+    for order in ("ended_first", "running_first"):
+        store = _hosted_shaped_store(order)
+        rows = {
+            r["runtime_id"]: r
+            for r in ManagementService(read_store=store).get_trading_pulse()["data"]["runtime_rows"]
+        }
+        for i in range(4):
+            health = rows[f"r-{i}"]["row_health"]
+            assert "paper_runtime_monitoring" not in (health.get("degraded_checks") or []), (order, health)
+            assert health["status"] == "ok", (order, health)
+
+
+def test_trading_pulse_all_ended_sessions_still_degraded_using_latest() -> None:
+    store = _FleetStore(
+        [_binding(1, "active")],
+        [
+            {"runtime_id": "r-1", "binding_id": "b-1", "status": "ended", "ended_at": "2026-11-03T00:00:00Z"},
+            {"runtime_id": "r-1", "binding_id": "b-1", "status": "ended", "ended_at": "2026-11-04T00:00:00Z"},
+        ],
+        telemetry=[_telemetry(1)],
+    )
+    row = ManagementService(read_store=store).get_trading_pulse()["data"]["runtime_rows"][0]
+    assert row["row_health"]["status"] != "ok"
+    assert row["paper_runtime_monitoring"]["ended_at"] == "2026-11-04T00:00:00Z"
+
+
+def test_trading_pulse_drift_read_only_when_live_or_canary_row_exists() -> None:
+    paper_only = _hosted_shaped_store()
+    body = ManagementService(read_store=paper_only).get_trading_pulse()
+    assert paper_only.drift_calls == 0
+    assert (
+        body["meta"]["surfaces"]["paper_live_drift"]["message"]
+        == "No live runtimes require paper/live baseline comparison."
+    )
+
+    with_canary = _FleetStore([_binding(1, "active", stage="canary")], [], telemetry=[_telemetry(1)])
+    ManagementService(read_store=with_canary).get_trading_pulse()
+    assert with_canary.drift_calls == 1

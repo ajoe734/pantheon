@@ -204,6 +204,7 @@ def fresh_summary() -> dict:
     return {
         "runtime_id": RUNTIME,
         "binding_id": BINDING,
+        "artifact_id": TARGET,
         "deployment_stage": "paper",
         "state": "active",
         "last_heartbeat_at": stamp,
@@ -218,10 +219,22 @@ class FakeOwners:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        # Hosted shape: the registry carries no stage (deployment_summary null);
+        # the stage comes from the runtime summary.
         self.entry = {
-            "entry": {"registry_id": TARGET, "artifact_type": "strategy_spec", "metadata": {}},
-            "deployment_stage": "paper",
+            "entry": {
+                "registry_id": TARGET,
+                "artifact_type": "execution_bundle",
+                "artifact_state": "approved",
+                "owner_tenant": "tenant-dev",
+                "metadata": {},
+                "deployment_summary": None,
+            },
+            "deployment_stage": "none",
         }
+        # Optional override for the fresh_evidence read (the second summary read
+        # of a decision), so it can fail independently of the real_target read.
+        self.evidence_summary: dict | Exception | None = None
         self.persona: dict | Exception = {"persona_id": "p-1", "data_scope": "regular"}
         self.summary: dict | Exception = fresh_summary()
         self.history: list[dict] | Exception = []
@@ -241,9 +254,13 @@ class FakeOwners:
 
     def get_runtime_summary(self, runtime_id, *, tenant_id, timeout):
         self.calls.append("summary")
-        if isinstance(self.summary, Exception):
-            raise self.summary
-        return self.summary
+        since_registry = self.calls[len(self.calls) - 1 - self.calls[::-1].index("registry"):] if "registry" in self.calls else self.calls
+        reading = self.summary
+        if self.evidence_summary is not None and since_registry.count("summary") > 1:
+            reading = self.evidence_summary
+        if isinstance(reading, Exception):
+            raise reading
+        return reading
 
     def list_evaluations(self, binding_id, *, tenant_id, timeout, since, governed_breached_only):
         self.calls.append("evaluations_breached" if governed_breached_only else "evaluations_latest")
@@ -520,17 +537,34 @@ def test_target_criterion_variants(rig):
     ok = row(rig.qualifier.run(tenant_id=TENANT), decision.decision_id)
     assert criterion(ok, "real_target")["result"] == "passed"
 
+    good_entry = rig.owners.entry
     rig.owners.entry = OwnerNotFoundError("registry owner has no entry")
     item = row(rig.qualifier.run(tenant_id=TENANT), decision.decision_id)
     assert criterion(item, "real_target")["result"] == "failed"
     assert "target_unverifiable" in criterion(item, "real_target")["reason"]
     assert criterion(item, "persistent_breach")["result"] == "not_evaluated"
 
-    rig.owners.entry = {"entry": {"registry_id": TARGET, "artifact_type": "strategy_spec"}, "deployment_stage": "live"}
+    rig.owners.entry = good_entry
+    good_summary = rig.owners.summary
+    rig.owners.summary = {**good_summary, "deployment_stage": "live"}
     item = row(rig.qualifier.run(tenant_id=TENANT), decision.decision_id)
     assert "deployment_stage live" in criterion(item, "real_target")["reason"]
 
-    rig.owners.entry = {"entry": {"registry_id": TARGET, "artifact_type": "evaluation_result"}, "deployment_stage": "paper"}
+    rig.owners.summary = {**good_summary, "artifact_id": "another-artifact"}
+    item = row(rig.qualifier.run(tenant_id=TENANT), decision.decision_id)
+    assert "target_unverifiable" in criterion(item, "real_target")["reason"]
+
+    rig.owners.summary = OwnerReadError("telemetry owner read returned HTTP 503")
+    item = row(rig.qualifier.run(tenant_id=TENANT), decision.decision_id)
+    assert "target_unverifiable" in criterion(item, "real_target")["reason"]
+
+    rig.owners.summary = good_summary
+    no_runtime = replace(decision, decision_id="d-no-runtime", target_id="artifact-no-runtime", metadata={"runtime_binding_id": BINDING})
+    rig.decisions.put(no_runtime)
+    item = row(rig.qualifier.run(tenant_id=TENANT), no_runtime.decision_id)
+    assert "decision names no runtime" in criterion(item, "real_target")["reason"]
+
+    rig.owners.entry = {"entry": {**good_entry["entry"], "artifact_type": "evaluation_result"}}
     item = row(rig.qualifier.run(tenant_id=TENANT), decision.decision_id)
     assert "artifact_type evaluation_result" in criterion(item, "real_target")["reason"]
 
@@ -585,8 +619,10 @@ def test_fresh_evidence_variants(rig):
     item = row(rig.qualifier.run(tenant_id=TENANT), decision.decision_id)
     assert "no fresh as-of time" in criterion(item, "fresh_evidence")["reason"]
 
-    rig.owners.summary = OwnerReadError("telemetry owner read returned HTTP 503")
+    rig.owners.summary = good_summary
+    rig.owners.evidence_summary = OwnerReadError("telemetry owner read returned HTTP 503")
     item = row(rig.qualifier.run(tenant_id=TENANT), decision.decision_id)
+    rig.owners.evidence_summary = None
     assert "evidence_unreadable" in criterion(item, "fresh_evidence")["reason"]
 
     rig.owners.summary = good_summary
@@ -890,3 +926,204 @@ def test_owner_reader_fails_closed_when_an_owner_is_not_configured():
         reader.get_registry_entry("x", tenant_id=TENANT, timeout=1)
     with pytest.raises(OwnerReadError, match="PANTHEON_TELEMETRY_SERVICE_TOKEN"):
         reader.get_runtime_summary("rt", tenant_id=TENANT, timeout=1)
+
+
+# -- Rotating file-backed credentials ------------------------------------------
+
+class _RecordingHttp:
+    def __init__(self) -> None:
+        self.authorizations: list[str] = []
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        self.authorizations.append((headers or {}).get("Authorization", ""))
+
+        class _Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"runtime_id": RUNTIME}
+
+        return _Response()
+
+
+def _write_credential(path: Path, value: str) -> None:
+    path.write_text(value)
+    path.chmod(0o600)
+
+
+def test_owner_reader_resolves_file_backed_tokens_at_read_time(tmp_path, monkeypatch):
+    credential = tmp_path / "EVOLUTION_REGISTRY_SERVICE_TOKEN"
+    _write_credential(credential, "token-before-renewal")
+    monkeypatch.setenv("EVOLUTION_REGISTRY_SERVICE_TOKEN_FILE", str(credential))
+    monkeypatch.setenv("EVOLUTION_REGISTRY_SERVICE_TOKEN", "stale-env-must-not-win")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-token")
+    monkeypatch.delenv("PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE", raising=False)
+    http = _RecordingHttp()
+    reader = QualificationOwnerReader.from_env(http=http)  # built once, like the process-wide instance
+
+    reader._get("telemetry", "/x", tenant_id=TENANT, timeout=1)
+    assert http.authorizations == ["Bearer telemetry-token"]
+
+    reader._targets["registry"] = ("http://registry", reader._targets["registry"][1], reader._targets["registry"][2])
+    reader._get("registry", "/x", tenant_id=TENANT, timeout=1)
+    _write_credential(credential, "token-after-renewal")  # renewal rewrites the file on disk
+    reader._get("registry", "/x", tenant_id=TENANT, timeout=1)
+    assert http.authorizations[1:] == ["Bearer token-before-renewal", "Bearer token-after-renewal"]
+
+    credential.unlink()  # unreadable file: this read fails closed, nothing is sent
+    with pytest.raises(OwnerReadError, match="unreadable"):
+        reader._get("registry", "/x", tenant_id=TENANT, timeout=1)
+    assert len(http.authorizations) == 3
+
+
+# -- real_target through the real registry and persona apps --------------------
+
+TOKEN_CLOCK = int(__import__("time").time())
+
+
+class _OwnerRouter:
+    """Dispatch owner URLs to in-process real apps; the headers sent are the caller's own."""
+
+    def __init__(self, routes: dict, summary: dict) -> None:
+        self.routes = routes
+        self.summary = summary
+        self.seen: list[tuple[str, dict]] = []
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(url)
+        base = f"{parts.scheme}://{parts.netloc}"
+        self.seen.append((url, dict(headers or {})))
+        if base == "http://telemetry":
+            return type("R", (), {"status_code": 200, "json": lambda self_: self.summary})()
+        return self.routes[base].get(parts.path, headers=headers, params=params)
+
+
+@pytest.fixture
+def real_owners(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from scripts.issue_dev_paper_principals import issue_environment
+    from services.persona.write_owner import (
+        CreatePersonaRequest,
+        PersistentCapabilitySnapshotOwner,
+        PersistentPersonaOwner,
+        create_app,
+    )
+    from services.registry import service as registry_service
+    from services.registry.models import (
+        ArtifactState, ArtifactType, Lineage, RegistryEntry, StorageBackend, StorageRef,
+    )
+    from services.registry.storage import get_store, reset_store
+
+    secret = "synthetic-dev-principal-unit-key-" * 2
+    issued = issue_environment(
+        {
+            "PANTHEON_ENV": "dev",
+            "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+            "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+            "PANTHEON_DEV_BFF_JWT_SECRET": secret,
+            "PANTHEON_DEV_BFF_JWT_ISSUER": "isolated-issuer",
+            "PANTHEON_DEV_BFF_JWT_AUDIENCE": "isolated-audience",
+        },
+        now=TOKEN_CLOCK,
+    )
+    for prefix in ("PANTHEON_REGISTRY", "PERSONA"):
+        monkeypatch.setenv(f"{prefix}_AUTH_MODE", "strict")
+        monkeypatch.setenv(f"{prefix}_JWT_SECRET", secret)
+        monkeypatch.setenv(f"{prefix}_JWT_ISSUER", "isolated-issuer")
+        monkeypatch.setenv(f"{prefix}_JWT_AUDIENCE", "isolated-audience")
+    monkeypatch.delenv("PANTHEON_PERSONA_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("PERSONA_SERVICE_TOKEN", raising=False)
+
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
+    reset_store()
+    store = get_store()
+
+    def entry(registry_id: str) -> RegistryEntry:
+        # Hosted record shape: approved execution_bundle, owner_tenant tenant-dev,
+        # deployment_summary null (the stage is not stored in the registry).
+        return RegistryEntry(
+            registry_id=registry_id,
+            artifact_type=ArtifactType.EXECUTION_BUNDLE,
+            strategy_id="strategy-x",
+            version="1.0.0",
+            artifact_state=ArtifactState.APPROVED,
+            lineage=Lineage(source_run_ids=["run-1"]),
+            storage_ref=StorageRef(backend=StorageBackend.DB, path="registry/x"),
+            checksum="0" * 64,
+            deployment_summary=None,
+            owner_tenant="tenant-dev",
+            metadata={"persona_id": "persona-real", "execution_context": "paper"},
+        )
+
+    store.put(entry(TARGET))
+
+    personas = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    for persona_id, metadata in (("persona-real", {}), ("persona-test", {"data_scope": "test"})):
+        personas.create(
+            CreatePersonaRequest(
+                actor_id="seed", persona_id=persona_id, name=persona_id, mandate="m",
+                strategy_family="f", tenant_id="tenant-dev", metadata=metadata,
+            )
+        )
+    persona_app = create_app(personas, capability_owner=PersistentCapabilitySnapshotOwner.from_json_path(tmp_path / "caps.json"))
+
+    summary = {**fresh_summary(), "artifact_id": TARGET}
+    router = _OwnerRouter(
+        {"http://registry": TestClient(registry_service.app), "http://persona": TestClient(persona_app)},
+        summary,
+    )
+    credentials = tmp_path / "principals"
+    credentials.mkdir()
+    for name in ("EVOLUTION_REGISTRY_SERVICE_TOKEN", "EVOLUTION_PERSONA_SERVICE_TOKEN"):
+        _write_credential(credentials / name, issued[name])
+        monkeypatch.setenv(name + "_FILE", str(credentials / name))
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry")
+    monkeypatch.setenv("PERSONA_URL", "http://persona")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-token")
+    yield router, QualificationOwnerReader.from_env(http=router)
+    reset_store()
+
+
+def _real_target_result(reader, persona_id, *, allow_test_scope, runtime=RUNTIME, tmp_path=None):
+    policy = load_policy()
+    policy = replace(policy, allow_test_scope=allow_test_scope)
+    qualifier = ProgramQualifier.__new__(ProgramQualifier)
+    qualifier._reader = reader
+    decision = replace(retrain_decision(persona_id=persona_id), metadata={"runtime_binding_id": BINDING, "runtime_id": runtime} if runtime else {})
+    return ProgramQualifier._real_target(qualifier, decision, policy, TENANT_DEV)
+
+
+TENANT_DEV = "tenant-dev"
+
+
+def test_real_target_passes_through_real_registry_and_persona_with_issued_tokens(real_owners):
+    router, reader = real_owners
+    ok = _real_target_result(reader, "persona-real", allow_test_scope=False)
+    assert ok["result"] == "passed", ok
+    assert ok["observed"]["deployment_stage"] == "paper"
+    assert ok["observed"]["artifact_type"] == "execution_bundle"
+    # Every owner call carried the bearer token and tenant header the caller emits.
+    assert all(h["Authorization"].startswith("Bearer ") and h["X-Tenant-Id"] == TENANT_DEV for _, h in router.seen)
+
+
+def test_real_target_refuses_test_scope_persona_unless_allowed(real_owners):
+    _router, reader = real_owners
+    refused = _real_target_result(reader, "persona-test", allow_test_scope=False)
+    assert refused["result"] == "failed" and "data_scope test" in refused["reason"]
+    allowed = _real_target_result(reader, "persona-test", allow_test_scope=True)
+    assert allowed["result"] == "passed", allowed
+
+
+def test_real_target_without_issued_principals_is_unverifiable(real_owners, monkeypatch):
+    _router, reader = real_owners
+    for name in ("EVOLUTION_REGISTRY_SERVICE_TOKEN", "EVOLUTION_PERSONA_SERVICE_TOKEN"):
+        monkeypatch.delenv(name + "_FILE")
+    result = _real_target_result(reader, "persona-real", allow_test_scope=False)
+    assert result["result"] == "failed" and "target_unverifiable" in result["reason"]
