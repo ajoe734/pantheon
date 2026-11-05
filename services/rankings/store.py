@@ -476,6 +476,59 @@ class RankingReadStore:
             payload = self._records_table.get(_SNAPSHOT_ID_PREFIX + ranking_snapshot_id)
             return _decode_ranking_snapshot(payload) if payload is not None else None
 
+    def get_latest_ranking_snapshot(
+        self, surface: Optional[str] = "quarterly"
+    ) -> Optional[RankingSnapshotRecord]:
+        with self._thread_lock:
+            clean_surface = str(surface or "").strip() if surface is not None else ""
+            if (
+                isinstance(self._records_table, PostgresJsonOwnerStore)
+                and "list_all" not in self._records_table.__dict__
+            ):
+                table_sql = self._records_table.table
+                with self._records_table._connect() as conn:
+                    if clean_surface:
+                        cursor = conn.execute(
+                            f"""
+                            SELECT payload FROM {table_sql}
+                            WHERE jsonb_typeof(payload) = 'object'
+                              AND payload ->> 'record_type' = %s
+                              AND COALESCE(payload ->> 'surface', '') = %s
+                            ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC
+                            LIMIT 1
+                            """,
+                            (_SNAPSHOT_RECORD_TYPE, clean_surface),
+                        )
+                    else:
+                        cursor = conn.execute(
+                            f"""
+                            SELECT payload FROM {table_sql}
+                            WHERE jsonb_typeof(payload) = 'object'
+                              AND payload ->> 'record_type' = %s
+                            ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC
+                            LIMIT 1
+                            """,
+                            (_SNAPSHOT_RECORD_TYPE,),
+                        )
+                    row = self._records_table._fetch_one(cursor)
+                if row is None:
+                    return None
+                raw = row[0] if isinstance(row, tuple) else row.get("payload")
+                payload = self._records_table._decode_payload(raw)
+                return _decode_ranking_snapshot(payload) if payload is not None else None
+
+            candidates: List[Tuple[str, int, Mapping[str, Any]]] = []
+            for idx, payload in enumerate(self._records_table.list_all()):
+                if not isinstance(payload, AbcMapping) or payload.get("record_type") != _SNAPSHOT_RECORD_TYPE:
+                    continue
+                if clean_surface and str(payload.get("surface") or "") != clean_surface:
+                    continue
+                candidates.append((str(payload.get("created_at") or ""), idx, payload))
+            if not candidates:
+                return None
+            latest_payload = max(candidates, key=lambda item: (item[0], item[1]))[2]
+            return _decode_ranking_snapshot(latest_payload)
+
     def get_allocation_evaluation(
         self, allocation_evaluation_id: str
     ) -> Optional[AllocationEvaluationRecord]:
