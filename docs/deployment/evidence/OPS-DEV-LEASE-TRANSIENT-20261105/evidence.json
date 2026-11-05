@@ -4,22 +4,25 @@
   "reviewer": "Claude",
   "incident_reference": {
     "contract_file": "/tmp/pantheon-dev-operable-20261104/lease41812400967-exact-incident-and-minimal-followup-contract-20261105.json",
+    "counterexamples_file": "/tmp/pantheon-dev-operable-20261104/lease-be340-independent-deadline-counterexamples-20261105.json",
     "run_id": 41812400967,
     "job_id": 126514630352,
     "prior_task_id": "OPS-DEV-LEASE-TRANSIENT-20261008",
     "prior_pr": 6333,
     "prior_controller_sha": "aee1243573e29d289dac00be13641bb16be7f6bf",
-    "prior_helper_sha256": "da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae"
+    "prior_helper_sha256": "da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae",
+    "superseded_intermediate_controller_sha": "be340742990b1317d0edd2370062575d6d05ec3f",
+    "superseded_intermediate_helper_sha256": "53e0de9dc67216a7a2623bbc70186bb7e04bba67dd676c01bd93cb0053f1b917"
   },
   "activated_controller": {
-    "controller_commit_sha": "be340742990b1317d0edd2370062575d6d05ec3f",
+    "controller_commit_sha": "3fd9536ca9f5e0cfb275429a05fefa36bc7ec870",
     "helper_script_path": "scripts/dev_environment_lease.py",
-    "helper_script_sha256": "53e0de9dc67216a7a2623bbc70186bb7e04bba67dd676c01bd93cb0053f1b917",
+    "helper_script_sha256": "89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4",
     "wrapper_script_path": "scripts/run_with_dev_environment_lease.sh",
     "wrapper_script_sha256": "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2",
     "wrapper_bytes_unchanged": true
   },
-  "summary": "Replaced the count-only second transient renewal failure stop in scripts/dev_environment_lease.py with bounded recovery requiring a successful authoritative same-owner GET and fresh CAS SHA on every renewal attempt. Bounded retry sleeps and HTTP request timeouts by min(remote expiresAt, remote heartbeatAt + effective_freshness<=120s) anchored to GitHub Date server time and local monotonic elapsed time (never extending validity from failed or un-renewed GETs, never replaying ambiguous PUTs with an old SHA, and never using the 219s TTL alone when remaining freshness is 39s). Committed the helper/test behavior first (be340742990b1317d0edd2370062575d6d05ec3f) and mechanically pinned the immutable controller SHA and helper SHA-256 across all four existing workflows, scripts/compensate_cross_repo_release.sh, and contract/fixture assertions.",
+  "summary": "Replaced the count-only second transient renewal failure stop in scripts/dev_environment_lease.py with bounded recovery requiring a successful authoritative same-owner GET and fresh CAS SHA on every renewal attempt. Anchored the GitHub Date validity budget to monotonic time before the GET request starts, deducted full GET response/body elapsed time before computing remaining deadline or dispatching PUT, and enforced the absolute monotonic validity fence after both GET and PUT response/body completion (resolving both delayed-GET-body-overcredits-validity and late-successful-PUT-passes-expired-deadline counterexamples while never extending validity from failed or un-renewed GETs, never replaying ambiguous PUTs with an old SHA, and never using the 219s TTL alone when remaining freshness is 39s). Committed the helper/test behavior first (3fd9536ca9f5e0cfb275429a05fefa36bc7ec870) and mechanically pinned the immutable controller SHA and helper SHA-256 across all four existing workflows, scripts/compensate_cross_repo_release.sh, and contract/fixture assertions.",
   "scope": [
     "scripts/dev_environment_lease.py",
     "scripts/test_dev_environment_lease.py",
@@ -35,17 +38,17 @@
     "docs/deployment/evidence/OPS-DEV-LEASE-TRANSIENT-20261105/evidence.json"
   ],
   "verification": {
-    "lease_and_guard_unit_tests": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py",
-      "result": "45 passed, 43 subtests passed"
+    "lease_guard_artifact_and_diagnostics_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_paper_diagnostics_failure_path.py",
+      "result": "255 passed, 43 subtests passed"
     },
-    "deploy_contract_and_artifact_workflow_tests": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checkout_is_an_exact_immutable_separate_trust_root scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checksums_match_pinned_controller_files scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_and_other_lease_callers_use_the_repaired_controller scripts/test_nonprod_dev_artifact_workflow.py",
-      "result": "182 passed"
+    "deploy_contract_lease_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checkout_is_an_exact_immutable_separate_trust_root scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checksums_match_pinned_controller_files scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_and_other_lease_callers_use_the_repaired_controller scripts/test_dev_environment_lease_deploy_contract.py::test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret scripts/test_dev_environment_lease_deploy_contract.py::test_payloads_must_come_from_their_protected_delivery_branches scripts/test_dev_environment_lease_deploy_contract.py::test_lease_coordinates_the_fixed_cross_repository_resource scripts/test_dev_environment_lease_deploy_contract.py::test_heartbeat_and_guard_paths_are_bound_to_acquire_step_outputs scripts/test_dev_environment_lease_deploy_contract.py::test_initial_visibility_retry_is_only_on_immediate_post_acquire_verify scripts/test_dev_environment_lease_deploy_contract.py::test_broad_initial_verify_retry_loop_is_absent scripts/test_dev_environment_lease_deploy_contract.py::test_all_dev_mutations_and_public_proofs_use_pinned_wrapper scripts/test_dev_environment_lease_deploy_contract.py::test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_rejects_lease_backend_sha_mismatch_before_mutation scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_rejects_guard_lease_id_mismatch_before_mutation scripts/test_dev_environment_lease_deploy_contract.py::test_staging_dry_run_does_not_require_dev_lease scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_job_has_explicit_timeout_and_command_deadline scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_guarded_ssh_terminates_transport_on_deadline scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_quarantined_lease_contention_and_ttl_takeover",
+      "result": "17 passed"
     },
-    "paper_diagnostics_failure_path_tests": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py",
-      "result": "28 passed"
+    "independent_counterexample_checker": {
+      "command": "python3 -B /tmp/pantheon-dev-operable-20261104/lease-be340-independent-deadline-counterexamples-20261105.py (plus exact-commit replay against 3fd9536ca9f5e0cfb275429a05fefa36bc7ec870)",
+      "result": "both counterexamples fail closed with LeaseLost, PUT_dispatched_after_fence=false, claimed_budget_deadline_monotonic=null"
     }
   },
   "hosted_operations": "none; source and review only. No SSH, VM, cloud, secret, or operator-key reads; no workflow dispatch; no remote lease edit; no interference with Root 41947653837."
