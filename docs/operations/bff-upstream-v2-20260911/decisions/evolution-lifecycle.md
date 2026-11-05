@@ -216,6 +216,18 @@ adopted; the alternatives in section 8 are **NOT approved**.
 | D2 | Generation freeze has no durable owner record or scope/release semantics. | **ADOPT THE PROPOSED CHOICE**: `freeze` seals current generation membership and artifact versions, prevents additions, mutations and promotion, allows in-flight runs to finish, and release requires the same Governance review. | Alternative NOT approved: also stop current generation runs, requiring D1 owner receipts. Neither choice freezes a live runtime. | U8A control record shape; U8B freeze/release and U8B-FE readback. |
 | D3 | Formula/rule scope and approval/application timing are not specified by display-only FE records. | **ADOPT THE PROPOSED CHOICE**: program-scoped versioned steering; Governance-approved changes affect future runs only and existing attempts pin their original config; preserve all legacy params for migration and add no global competing registry. | Alternative NOT approved: a separate explicit protocol for editing active runs, including owner checkpoint and approval semantics. | U8A typed configuration and U8B constraints/formulas/rules; FE edits remain undelivered until true effects/readback exist. |
 
+**D4 (operator decision 2026-11-04, replaced wording 2026-11-05).** An Evolution
+program may be created manually or automatically, but an automatically created
+program must first pass the qualification standard in
+`EVOLUTION_REVIEW_AND_THRESHOLDS.md` section 17 before it reaches human review.
+Only a decision that passes all six criteria gets a program (`origin=auto_qualified`,
+created by `evolution-daily-sweep`); the system identity submits it for review once
+and goes no further, so approval, dispatch and execution remain human and
+Governance decisions. The create API still accepts only `name` and cannot set
+`origin`, `source_decision_ids` or `qualification`. The earlier one-to-one
+projection of every decision into a program (`scripts/project_evolution_to_bff_surfaces.py`)
+is removed. Owner: `EVOLUTION-PROGRAM-QUALIFY-R2-20261105`.
+
 The six existing program edges, entity separation, metadata safety, tenant and
 replay boundaries, approved-decision engine and feature inventory are already
 source-backed. Operator decisions D1–D3 settle the missing product semantics for

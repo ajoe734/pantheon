@@ -11,7 +11,7 @@ earns exactly one program (``origin=auto_qualified``) through
 ``ProgramService`` and is submitted for human review once; nothing here
 approves, dispatches or executes.
 
-Design rules (see EVOLUTION_REVIEW_AND_THRESHOLDS.md section 15):
+Design rules (see EVOLUTION_REVIEW_AND_THRESHOLDS.md section 17):
 
 * Criteria that read another service run only for decisions that already
   passed ``real_threshold_signal`` and the local criteria, so a sweep over
