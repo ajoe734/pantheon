@@ -150,6 +150,15 @@ class LoopControllerWriter:
         lease_duration_seconds: Optional[int] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
+        now = datetime.now(timezone.utc)
+        reconciled_probe_ok = (
+            truth_level == "reconciled_live_proof"
+            and isinstance(desired_state, dict)
+            and isinstance(downstream_actual_state, dict)
+            and bool(desired_state)
+            and str(downstream_actual_state.get("status") or "").lower()
+            in ("ready", "ok", "healthy")
+        )
         await self._write_status(
             loop_id,
             truth_level,
@@ -157,7 +166,9 @@ class LoopControllerWriter:
             actual_state_query=actual_state_query,
             desired_state=desired_state,
             downstream_actual_state=downstream_actual_state,
-            last_heartbeat_at=datetime.now(timezone.utc),
+            last_heartbeat_at=now,
+            last_tick_at=now if reconciled_probe_ok else None,
+            last_success_at=now if reconciled_probe_ok else None,
             backlog=backlog,
             lag=lag,
             dlq_count=dlq_count,

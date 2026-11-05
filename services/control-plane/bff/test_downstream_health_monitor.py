@@ -1050,3 +1050,22 @@ class TestReplayAdmissionByEnvironment:
             "dev", claims, False, {"approval_ref": "a", "reason": "x", "channel": "bogus"}
         )
         self._assert_denied(monitor, err, 422, "channel")
+
+
+class TestLoop12SuccessTruthfulness:
+    def _record(self, tmp_path, state):
+        monitor = _safety_monitor(tmp_path)
+        return monitor.publish_loop_12_controller_truth(state=state)
+
+    def test_all_healthy_targets_record_success(self, tmp_path):
+        rec = self._record(tmp_path, {"overall_ok": True, "targets": {"a": {"ok": True}}})
+        assert rec["last_success_at"] and rec["last_tick_at"]
+
+    def test_failing_target_never_records_success(self, tmp_path):
+        rec = self._record(tmp_path, {"overall_ok": False, "targets": {"a": {"ok": False}}})
+        assert rec["last_success_at"] is None and rec["last_tick_at"] is None
+        assert rec["last_heartbeat_at"]
+
+    def test_no_targets_never_records_success(self, tmp_path):
+        rec = self._record(tmp_path, {"overall_ok": True, "targets": {}})
+        assert rec["last_success_at"] is None

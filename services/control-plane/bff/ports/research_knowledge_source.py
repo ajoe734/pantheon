@@ -1871,9 +1871,64 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         include_retired: bool = False,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
+        use_injected = self._has_injected_strategy_specs and not (
+            os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")
+        )
+        if (
+            not use_injected
+            and not include_retired
+            and not include_fixture_pack
+            and lifecycle_state not in {"retired", "all"}
+        ):
+            from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+
+            base_items = cached_owner_call(
+                ("rks_normalized_strategy_specs", id(self), selected_tenant.get()),
+                lambda: self._list_strategy_specs_uncached(
+                    use_injected=False,
+                    lifecycle_state=None,
+                    source_kind=None,
+                    persona_id=None,
+                    include_retired=False,
+                    include_fixture_pack=False,
+                ),
+            )
+            if lifecycle_state is None and source_kind is None and persona_id is None:
+                return list(base_items)
+            target_pid = str(persona_id) if persona_id else None
+            filtered: List[Dict[str, Any]] = []
+            for item in base_items:
+                if lifecycle_state and item.get("lifecycle_state") != lifecycle_state:
+                    continue
+                if source_kind and item.get("source_kind") != source_kind:
+                    continue
+                if target_pid and target_pid not in set(item.get("persona_ids") or ()):
+                    continue
+                filtered.append(item)
+            return filtered
+
+        return self._list_strategy_specs_uncached(
+            use_injected=use_injected,
+            lifecycle_state=lifecycle_state,
+            source_kind=source_kind,
+            persona_id=persona_id,
+            include_retired=include_retired,
+            include_fixture_pack=include_fixture_pack,
+        )
+
+    def _list_strategy_specs_uncached(
+        self,
+        *,
+        use_injected: bool,
+        lifecycle_state: Optional[str] = None,
+        source_kind: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        include_retired: bool = False,
+        include_fixture_pack: bool = False,
+    ) -> List[Dict[str, Any]]:
         source_specs = (
             list(self._strategy_specs.values())
-            if self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+            if use_injected
             else self._fetch_canonical_strategy_specs()
         )
         items: List[Dict[str, Any]] = []
@@ -2045,6 +2100,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
 
     def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
         sid = str(strategy_id).strip() if strategy_id is not None else ""
+        from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+
+        if not sid:
+            return cached_owner_call(
+                ("rks_canonical_strategy_specs", id(self), selected_tenant.get()),
+                lambda: self._fetch_canonical_strategy_specs_uncached(""),
+            )
+        return self._fetch_canonical_strategy_specs_uncached(sid)
+
+    def _fetch_canonical_strategy_specs_uncached(self, sid: str) -> List[Dict[str, Any]]:
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
         from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
