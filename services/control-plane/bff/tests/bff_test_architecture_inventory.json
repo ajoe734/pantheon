@@ -2243,6 +2243,13 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_evolution_qualification_read.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "EVOLUTION-PROGRAM-QUALIFY-R2-20261105: exercises create_evolution_router and owner_reads.read_evolution_object directly with injected readers; never imports main"
+    },
+    {
       "file": "tests/test_control_loops_evidence_redaction_sweep.py",
       "layer": "router",
       "imports_main": false,

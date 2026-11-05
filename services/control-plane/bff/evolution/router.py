@@ -38,6 +38,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
+from services.control_plane.bff.command_adapters.base import ActionUnavailableError
 from services.control_plane.bff.models import ErrorCode, ObjectType
 from services.control_plane.bff.ports.evolution_program_commands import (
     EvolutionProgramCommandError,
@@ -972,6 +973,37 @@ def create_evolution_router(
             "data": performance,
             "meta": meta,
         }
+
+    # 14. Management Evolution Qualification (read-only view of the Evolution owner report)
+    @router.get("/bff/management/evolution-qualification")
+    def bff_management_evolution_qualification(
+        qualified: Optional[bool] = None,
+        offset: int = Query(default=0, ge=0),
+        page_size: int = Query(default=50, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: why each proposed decision did or did not qualify for an automatic program."""
+        identity = _extract_ident(authorization)
+        _require_read(identity)
+        store = _get_store()
+        reader = getattr(store, "get_evolution_qualification", None)
+        if reader is None:
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Evolution qualification unavailable",
+                "The read surface has no evolution qualification reader",
+            )
+        try:
+            report = reader(limit=page_size, offset=offset, qualified=qualified)
+        except ActionUnavailableError as exc:
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Evolution qualification unavailable",
+                str(exc),
+            ) from exc
+        return {"data": report, "meta": _snap_meta(_utc_now())}
 
     # 13. Management Evolution Journal
     @router.get("/bff/management/evolution-journal")
