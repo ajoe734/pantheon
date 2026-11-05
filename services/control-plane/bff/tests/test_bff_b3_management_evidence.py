@@ -65,6 +65,31 @@ class _EvidenceRefsTestStore:
     def list_evidence_refs(self, **kwargs: Any) -> list[dict[str, Any]]:
         return list(self._load_evidence().values())
 
+    def read_evidence_refs(self, **kwargs: Any) -> Any:
+        # The store delegates unknown attributes to the default ports, whose
+        # per-read result would bypass this fixture's file-backed evidence.
+        # Mirror the new per-read contract on top of the fixture data.
+        from services.control_plane.bff.ports.research_knowledge_source import EvidenceReadResult
+
+        items = self.list_evidence_refs()
+        if not os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"):
+            return EvidenceReadResult([], None, "unavailable", "missing")
+        return EvidenceReadResult(items, len(items), "ok", "service_backend")
+
+    def read_evidence_ref_item(self, ref_id: Optional[str]) -> Any:
+        # Same reason as read_evidence_refs: keep single-item reads on the
+        # fixture's file-backed data instead of the delegated default ports.
+        from services.control_plane.bff.ports.research_knowledge_source import EvidenceReadResult
+
+        if not os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"):
+            return EvidenceReadResult([], None, "unavailable", "missing")
+        item = self.get_evidence_ref(ref_id)
+        return EvidenceReadResult([item] if item else [], 1 if item else 0, "ok", "service_backend")
+
+    def read_evidence_ref_detail(self, ref_id: Optional[str]) -> Any:
+        result = self.read_evidence_ref_item(ref_id)
+        return (result.items[0] if result.items else None), result
+
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[dict[str, Any]]:
         if not ref_id:
             return None

@@ -941,6 +941,22 @@ def mount_bff_routers(
         create_management_read_models_router,
         create_management_router,
     )
+
+    def _postmortems_reader_for_management() -> tuple[bool, list[dict[str, Any]]]:
+        import sys
+        main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        surface = getattr(main_mod, "read_store", None) if main_mod is not None else None
+        if surface is None:
+            surface = app_deps.read_surface
+        if hasattr(surface, "_service") and hasattr(surface._service, "list_records"):
+            return surface._service.list_records("postmortems", include_snapshot_fallback=False)
+        if hasattr(surface, "list_records"):
+            return surface.list_records("postmortems")
+        rows = list(surface.list_postmortems() or []) if hasattr(surface, "list_postmortems") else []
+        ds_fn = getattr(surface, "dataset_source", None)
+        src = ds_fn("postmortems") if callable(ds_fn) else "store"
+        return (src not in ("missing", "unavailable"), rows)
+
     app.include_router(
         create_management_read_models_router(
             read_surface=app_deps.read_surface,
@@ -948,6 +964,7 @@ def mount_bff_routers(
             require_read_role=_dep("_require_read_role"),
             snapshot_meta=_dep("_snapshot_meta"),
             utc_now=_dep("utc_now"),
+            postmortems_reader=_postmortems_reader_for_management,
         )
     )
 
@@ -1021,7 +1038,6 @@ def mount_bff_routers(
     from ..console_gap.alpha_factory import create_alpha_factory_router
     app.include_router(
         create_alpha_factory_router(
-            read_surface=app_deps.read_surface,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             utc_now=_dep("utc_now"),

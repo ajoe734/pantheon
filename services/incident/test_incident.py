@@ -914,11 +914,23 @@ class TestMonitorAgentFindingDedupeAndResolve(unittest.TestCase):
             store.create_incident(stale_runtime)
 
             now = datetime(2026, 11, 1, 12, 30, 0, tzinfo=timezone.utc)
+            self.assertTrue(
+                store.has_stale_monitor_agent_findings(
+                    resolve_after_seconds=7200,
+                    now=now,
+                )
+            )
             resolved = store.resolve_stale_monitor_agent_findings(
                 resolve_after_seconds=7200,
                 now=now,
             )
             self.assertEqual([inc.incident_id for inc in resolved], ["agent-stale000000000001"])
+            self.assertFalse(
+                store.has_stale_monitor_agent_findings(
+                    resolve_after_seconds=7200,
+                    now=now,
+                )
+            )
 
             reloaded_stale = store.require_incident("agent-stale000000000001")
             self.assertEqual(reloaded_stale.status, IncidentStatus.RESOLVED.value)
@@ -1085,12 +1097,24 @@ class TestInfrastructureIncidentOrphanResolve(unittest.TestCase):
             store.create_incident(agent_inc)
             store.create_incident(runtime_inc)
 
+            self.assertTrue(
+                store.has_orphaned_infrastructure_incidents(
+                    healthy_components=["governance", "capital"],
+                    referenced_incident_ids=["infra-bff-cap-active"],
+                )
+            )
             resolved = store.resolve_orphaned_infrastructure_incidents(
                 healthy_components=["governance", "capital"],
                 referenced_incident_ids=["infra-bff-cap-active"],
                 resolved_at="2026-11-03T02:00:00Z",
             )
             self.assertEqual([i.incident_id for i in resolved], ["infra-bff-0847594c513bbe71b6aedcd3"])
+            self.assertFalse(
+                store.has_orphaned_infrastructure_incidents(
+                    healthy_components=["governance", "capital"],
+                    referenced_incident_ids=["infra-bff-cap-active"],
+                )
+            )
             reloaded = store.require_incident("infra-bff-0847594c513bbe71b6aedcd3")
             self.assertEqual(reloaded.status, IncidentStatus.RESOLVED.value)
             self.assertEqual(

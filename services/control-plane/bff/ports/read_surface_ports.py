@@ -282,9 +282,6 @@ class ReadSurfacePorts:
     def list_route_policies(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.operations_consultation.list_route_policies(**kwargs)
 
-    def list_alpha_factory_cards(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.operations_consultation.list_alpha_factory_cards(**kwargs)
-
     def list_skills(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.operations_consultation.list_skills(**kwargs)
 
@@ -491,7 +488,6 @@ class ReadSurfacePorts:
             "hook_registry",
             "governance_permissions",
             "memory_governance_rules",
-            "alpha_factory_cards",
             "skills",
             "tools",
             "mcp_servers",
@@ -509,10 +505,10 @@ class ReadSurfacePorts:
             # consultation client/store or catalog backend surfaces as
             # unavailable rather than a false healthy default.
             return self.operations_consultation.dataset_source(dataset)
-        if dataset == "incidents":
-            # The incident owner can be down while list_incidents() swallows
-            # the outage and returns []; surface its real availability.
-            return self.lifecycle_telemetry_governance.dataset_source("incidents")
+        if dataset in ("incidents", "postmortems"):
+            # The incident/postmortem owners can be down while list_*() swallows
+            # the outage and returns []; surface their real availability.
+            return self.lifecycle_telemetry_governance.dataset_source(dataset)
         if dataset == "paper_runtime_monitoring_sessions":
             provider = self._paper_runtime_monitoring_sessions_provider
             base_url = self._paper_fleet_reconciler_url or os.getenv(
@@ -613,6 +609,15 @@ class ReadSurfacePorts:
 
     def list_evidence_refs(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_evidence_refs(**kwargs)
+
+    def read_evidence_refs(self, **kwargs: Any) -> Any:
+        return self.research_knowledge_source.read_evidence_refs(**kwargs)
+
+    def read_evidence_ref_item(self, ref_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_evidence_ref_item(ref_id)
+
+    def read_evidence_ref_detail(self, ref_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_evidence_ref_detail(ref_id)
 
     def get_evidence_ref(self, evidence_id: str) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_evidence_ref(evidence_id)
@@ -813,6 +818,9 @@ class ReadSurfacePorts:
 
     def list_postmortems(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.list_postmortems(**kwargs)
+
+    def list_postmortems_page(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.lifecycle_telemetry_governance.list_postmortems_page(**kwargs)
 
     def get_postmortem(self, report_id: str) -> Optional[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.get_postmortem(report_id)

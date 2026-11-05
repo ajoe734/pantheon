@@ -476,28 +476,117 @@ def consume_resolved_incident(
 # Routes — list / lookup
 # ---------------------------------------------------------------------------
 
+def _postmortem_attr(pm: Any, field: str, default: Any = None) -> Any:
+    if isinstance(pm, dict):
+        return pm.get(field, default)
+    return getattr(pm, field, default)
+
+
+def _postmortem_matches_query(pm: Any, needle: str) -> bool:
+    for field in (
+        "postmortem_id",
+        "incident_id",
+        "title",
+        "root_cause",
+        "incident_evidence_summary",
+        "status",
+        "binding_id",
+        "persona_capital_binding_id",
+        "capital_pool_id",
+        "artifact_id",
+        "runtime_id",
+        "deployment_plan_id",
+        "incident_cluster_id",
+        "trace_id",
+    ):
+        val = _postmortem_attr(pm, field)
+        if val and needle in str(val).lower():
+            return True
+    for list_field in ("contributing_factors", "action_items", "author_ids"):
+        items = _postmortem_attr(pm, list_field) or []
+        for item in items:
+            if item and needle in str(item).lower():
+                return True
+    return False
+
+
 @app.get(
     "/api/postmortems",
-    response_model=List[PostmortemResponse],
     summary="List postmortems",
 )
 def list_postmortems(
+    response: Response,
     incident_id: Optional[str] = Query(None, description="Filter by IncidentCase ID"),
     binding_id: Optional[str] = Query(None, description="Filter by RuntimeBinding ID"),
     status: Optional[str] = Query(None, description="Filter by status"),
-) -> List[PostmortemResponse]:
-    """List Postmortems with optional filters.  Most-recent first."""
+    q: Optional[str] = Query(None, description="Case-insensitive text search across postmortem fields"),
+    page_size: Optional[int] = Query(None, ge=1, le=200, description="Bounded page size (1..200)"),
+    page_token: Optional[str] = Query(None, description="Pagination offset token"),
+) -> Any:
+    """List Postmortems with optional filters and bounded paging.  Most-recent first."""
     postmortems = store.list_postmortems()
 
     if incident_id:
-        postmortems = [p for p in postmortems if p.incident_id == incident_id]
+        postmortems = [p for p in postmortems if _postmortem_attr(p, "incident_id") == incident_id]
     if binding_id:
-        postmortems = [p for p in postmortems if p.binding_id == binding_id]
+        postmortems = [p for p in postmortems if _postmortem_attr(p, "binding_id") == binding_id]
     if status:
-        postmortems = [p for p in postmortems if p.status == status]
+        requested_statuses = {s.strip().lower() for s in status.split(",") if s.strip()}
+        if requested_statuses:
+            postmortems = [
+                p
+                for p in postmortems
+                if str(_postmortem_attr(p, "status") or "").strip().lower() in requested_statuses
+            ]
+    if q is not None and q.strip():
+        needle = q.strip().lower()
+        postmortems = [p for p in postmortems if _postmortem_matches_query(p, needle)]
 
-    postmortems.sort(key=lambda p: p.created_at, reverse=True)
-    return [_to_response(p) for p in postmortems]
+    postmortems.sort(
+        key=lambda p: (
+            str(_postmortem_attr(p, "created_at") or ""),
+            str(_postmortem_attr(p, "postmortem_id") or ""),
+        ),
+        reverse=True,
+    )
+    total = len(postmortems)
+    response.headers["X-Total-Count"] = str(total)
+
+    if page_size is not None or page_token is not None:
+        start = 0
+        if page_token is not None and str(page_token).strip() != "":
+            raw_token = str(page_token).strip()
+            if raw_token.startswith("offset:"):
+                raw_token = raw_token.split(":", 1)[1].strip()
+            try:
+                start = int(raw_token)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid page_token: {page_token!r}") from exc
+            if start < 0:
+                raise HTTPException(status_code=400, detail="page_token must be non-negative")
+        effective_page_size = page_size if page_size is not None else 50
+        page_slice = postmortems[start : start + effective_page_size]
+        next_page_token = str(start + effective_page_size) if (start + effective_page_size) < total else None
+        if next_page_token is not None:
+            response.headers["X-Next-Page-Token"] = next_page_token
+        items = [
+            (_to_response(p).model_dump() if isinstance(p, Postmortem) else PostmortemResponse(**p).model_dump())
+            for p in page_slice
+        ]
+        return {
+            "items": items,
+            "data": items,
+            "total": total,
+            "page_size": effective_page_size,
+            "next_page_token": next_page_token,
+            "page_info": {
+                "total": total,
+                "page_size": effective_page_size,
+                "next_page_token": next_page_token,
+            },
+        }
+
+    return [_to_response(p) if isinstance(p, Postmortem) else PostmortemResponse(**p) for p in postmortems]
 
 
 @app.get(

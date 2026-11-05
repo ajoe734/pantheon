@@ -423,3 +423,168 @@ def test_get_postmortem_for_incident_none():
     r = client.get("/api/incidents/inc-no-postmortem/postmortem")
     assert r.status_code == 200
     assert r.json() is None
+
+
+def test_list_postmortems_bounded_paging_status_search_newest_first_and_total():
+    from services.incident.incident import Postmortem
+
+    for idx in range(1, 6):
+        _seed_incident(f"inc-page-{idx:03d}")
+
+    for idx in range(1, 6):
+        inc_id = f"inc-page-{idx:03d}"
+        st = "published" if idx in (2, 4) else "draft"
+        pub_at = f"2026-11-0{idx}T12:05:00Z" if st == "published" else None
+        pm = Postmortem(
+            postmortem_id=f"pm-page-{idx:03d}",
+            title=f"Postmortem draft: BFF downstream degradation #{idx}",
+            status=st,
+            created_at=f"2026-11-0{idx}T12:00:00Z",
+            incident_id=inc_id,
+            binding_id=_BINDING_ID,
+            deployment_stage="live",
+            deployment_plan_id="plan-001",
+            capital_pool_id="pool-001",
+            persona_capital_binding_id="pcb-001",
+            artifact_id="artifact-001",
+            artifact_version="1.0.0",
+            runtime_id="runtime-001",
+            trace_id="trace-001",
+            root_cause=f"Root cause needle-{idx} for downstream degradation",
+            contributing_factors=["factor-a", f"factor-{idx}"],
+            timeline=[{"ts": f"2026-11-0{idx}T12:00:00Z", "event": "detected"}],
+            action_items=[f"action-{idx}"],
+            author_ids=["system:postmortem-draft-worker"],
+            telemetry_event_ids=[f"evt-{idx}"],
+            incident_cluster_id=f"cluster-{idx}",
+            incident_evidence_summary=f"summary token-{idx}",
+            lineage_ref="artifact-001@1.0.0",
+            published_at=pub_at,
+        )
+        store._postmortems[pm.postmortem_id] = pm
+
+    # First page (size 2) -> newest first (idx 5, 4), total=5
+    r1 = client.get("/api/postmortems?page_size=2")
+    assert r1.status_code == 200
+    body1 = r1.json()
+    assert body1["total"] == 5
+    assert body1["page_info"]["total"] == 5
+    assert body1["page_info"]["page_size"] == 2
+    assert body1["page_info"]["next_page_token"] == "2"
+    assert r1.headers.get("X-Total-Count") == "5"
+    assert [item["postmortem_id"] for item in body1["items"]] == [
+        "pm-page-005",
+        "pm-page-004",
+    ]
+
+    # Second page via page_token=2 -> idx 3, 2
+    r2 = client.get("/api/postmortems?page_size=2&page_token=2")
+    assert r2.status_code == 200
+    body2 = r2.json()
+    assert body2["total"] == 5
+    assert body2["page_info"]["next_page_token"] == "4"
+    assert [item["postmortem_id"] for item in body2["items"]] == [
+        "pm-page-003",
+        "pm-page-002",
+    ]
+
+    # Status + text search + paging
+    r_search = client.get("/api/postmortems?page_size=10&status=draft&q=needle-3")
+    assert r_search.status_code == 200
+    body_search = r_search.json()
+    assert body_search["total"] == 1
+    assert body_search["page_info"]["total"] == 1
+    assert body_search["page_info"]["next_page_token"] is None
+    assert [item["postmortem_id"] for item in body_search["items"]] == ["pm-page-003"]
+
+
+def test_unpaged_published_caller_learning_feedback_bridge_unchanged(monkeypatch):
+    import io
+    import json
+    import urllib.request
+    from services.incident.incident import Postmortem
+    from services.persona.learning_feedback_bridge import run_learning_feedback_bridge
+
+    _seed_incident("inc-pub-1")
+    _seed_incident("inc-draft-2")
+    store._postmortems["pm-pub-1"] = Postmortem(
+        postmortem_id="pm-pub-1",
+        title="Published postmortem for learning feedback bridge",
+        status="published",
+        created_at="2026-11-03T10:00:00Z",
+        published_at="2026-11-03T11:00:00Z",
+        incident_id="inc-pub-1",
+        binding_id=_BINDING_ID,
+        deployment_stage="live",
+        deployment_plan_id="plan-001",
+        capital_pool_id="pool-001",
+        persona_capital_binding_id="pcb-persona-alpha-paper",
+        artifact_id="artifact-001",
+        artifact_version="1.0.0",
+        runtime_id="runtime-001",
+        trace_id="trace-001",
+        root_cause="Slippage spike during volatility window",
+        contributing_factors=["liquidity drop"],
+        timeline=[{"ts": "2026-11-03T10:00:00Z", "event": "breach"}],
+        action_items=["tighten threshold"],
+        author_ids=["op-1"],
+        telemetry_event_ids=["evt-1"],
+        incident_cluster_id="cluster-1",
+        incident_evidence_summary="evidence-1",
+        lineage_ref="artifact-001@1.0.0",
+    )
+    store._postmortems["pm-draft-2"] = Postmortem(
+        postmortem_id="pm-draft-2",
+        title="Draft postmortem",
+        status="draft",
+        created_at="2026-11-03T12:00:00Z",
+        incident_id="inc-draft-2",
+        binding_id=_BINDING_ID,
+        deployment_stage="live",
+        deployment_plan_id="plan-001",
+        capital_pool_id="pool-001",
+        persona_capital_binding_id="pcb-persona-alpha-paper",
+        artifact_id="artifact-001",
+        artifact_version="1.0.0",
+        runtime_id="runtime-001",
+        trace_id="trace-002",
+        root_cause="Draft root cause",
+    )
+
+    class _Resp:
+        def __init__(self, status: int, body: bytes):
+            self.status = status
+            self._buf = io.BytesIO(body)
+
+        def read(self) -> bytes:
+            return self._buf.read()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _urlopen(req, timeout=5.0):
+        full_url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "postmortems.local" in full_url:
+            path = full_url.split("http://postmortems.local", 1)[-1]
+            res = client.get(path)
+            return _Resp(res.status_code, json.dumps(res.json()).encode("utf-8"))
+        if "evolution.local" in full_url:
+            return _Resp(200, b"[]")
+        if "memory.local" in full_url:
+            return _Resp(200, json.dumps({"created": True}).encode("utf-8"))
+        raise AssertionError(f"Unexpected URL: {full_url}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    report = run_learning_feedback_bridge(
+        evolution_api_url="http://evolution.local",
+        postmortems_api_url="http://postmortems.local",
+        memory_api_url="http://memory.local",
+        skip_openclaw_sync=True,
+    )
+    assert report["processed_postmortems"] == 1
+    assert report["written_postmortems"] == ["pm-pub-1"]
+    assert report["errors"] == []
+

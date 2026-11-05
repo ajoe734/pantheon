@@ -1386,46 +1386,14 @@ WITH candidates AS (
 SELECT target_status, COUNT(*)::BIGINT FROM updated GROUP BY target_status
 """
 
-# Loop runs left 'active' beside an already-terminal journey (e.g. by the earlier
-# journeys-only reclassification). Status and activePeriod.end follow the journey,
-# exactly as IncrementalLifecycleMaterializer._loop_record writes them.
-REPAIR_ACTIVE_LOOP_RUNS_SQL = """
-WITH stale AS (
-    SELECT l.tenant_id, l.environment, l.loop_run_id, j.status AS journey_status,
-           j.last_occurred_at
-    FROM trade_journey_projection.loop_runs l
-    JOIN trade_journey_projection.journeys j
-      ON j.tenant_id = l.tenant_id AND j.environment = l.environment
-     AND j.journey_id = l.journey_id
-    WHERE l.status = 'active'
-      AND j.is_terminal
-    ORDER BY l.tenant_id, l.environment, l.loop_run_id
-    LIMIT %(batch_size)s
-    FOR UPDATE OF l SKIP LOCKED
-)
-UPDATE trade_journey_projection.loop_runs l
-SET status = s.journey_status,
-    lifecycle_summary = l.lifecycle_summary || jsonb_build_object('status', s.journey_status, 'activePeriod', COALESCE(l.lifecycle_summary -> 'activePeriod', '{}'::jsonb) || jsonb_build_object('end', to_char(s.last_occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))),
-    contract_payload = l.contract_payload || jsonb_build_object('status', s.journey_status, 'activePeriod', COALESCE(l.contract_payload -> 'activePeriod', '{}'::jsonb) || jsonb_build_object('end', to_char(s.last_occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))),
-    projection_revision = l.projection_revision + 1,
-    updated_at = clock_timestamp()
-FROM stale s
-WHERE l.tenant_id = s.tenant_id AND l.environment = s.environment
-  AND l.loop_run_id = s.loop_run_id
-"""
-
 
 def sql_reclassify_batch_runner(connect: Callable[[], Any]) -> Callable[[datetime, int, int], Mapping[str, int]]:
-    """Build a ``run_batch`` running short transactions per call.
+    """Build a ``run_batch`` running one short transaction per call.
 
-    Transaction 1 reclassifies stale open journeys together with their linked
-    loop_runs and commits. Only when that batch moved zero rows does a second,
-    separate transaction repair loop_runs still ``active`` beside terminal
-    journeys (the repair scan is expensive, so it costs nothing while draining,
-    and its failure can never roll back a committed reclassify batch). Repairs
-    are reported under ``loop_run_repaired`` and count toward "moved". A repair
-    failure propagates to the caller (the sweeper logs it and retries later).
-    ``connect()`` returns a psycopg connection usable as a context manager.
+    The transaction reclassifies stale open journeys together with their linked
+    loop_runs (one statement, one commit). An empty sweep issues exactly that one
+    bounded statement. ``connect()`` returns a psycopg connection usable as a
+    context manager.
     """
 
     def run_batch(as_of: datetime, deadline_seconds: int, batch_size: int) -> Mapping[str, int]:
@@ -1433,14 +1401,7 @@ def sql_reclassify_batch_runner(connect: Callable[[], Any]) -> Callable[[datetim
         params = {"as_of": as_of, "deadline_seconds": int(deadline_seconds), "batch_size": size}
         with connect() as conn, conn.cursor() as cur:
             cur.execute(RECLASSIFY_STALE_OPEN_SQL, params)
-            counts = {status: int(count) for status, count in cur.fetchall()}
-        if sum(counts.values()) > 0:
-            return counts
-        with connect() as conn, conn.cursor() as cur:
-            cur.execute(REPAIR_ACTIVE_LOOP_RUNS_SQL, {"batch_size": size})
-            if cur.rowcount and cur.rowcount > 0:
-                counts["loop_run_repaired"] = int(cur.rowcount)
-        return counts
+            return {status: int(count) for status, count in cur.fetchall()}
 
     return run_batch
 

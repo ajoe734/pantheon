@@ -3,7 +3,9 @@
 The access JWT stays short-lived; this store keeps an opaque, rotating refresh
 credential per login ("chain"). Only SHA-256 hashes are persisted. The absolute
 expiry is fixed at login and carried over unchanged on every rotation.
-Presenting an already-rotated credential revokes the whole chain.
+Presenting an already-rotated credential revokes the whole chain, except the
+immediately previous credential within REUSE_GRACE_SECONDS of its rotation
+(shared cookie jar across browser tabs): that returns a grant with token=None.
 """
 from __future__ import annotations
 
@@ -22,6 +24,9 @@ from typing import Any, Dict, Optional
 REFRESH_TOKEN_PREFIX = "pdr1."
 DEFAULT_REFRESH_TTL_SECONDS = 2592000  # 30 days
 _MAX_REVOKED_RETAINED = 200
+# Multi-tab tolerance: the credential replaced by the latest rotation is still
+# accepted (without rotating) for this long; anything else reused revokes the chain.
+REUSE_GRACE_SECONDS = 60
 
 
 def refresh_ttl_seconds() -> int:
@@ -54,7 +59,7 @@ class RefreshRejected(Exception):
 
 @dataclass(frozen=True)
 class RefreshGrant:
-    token: str
+    token: Optional[str]  # None on the reuse-grace path (no rotation happened)
     chain_id: str
     identity: str
     client_id: str
@@ -64,9 +69,10 @@ class RefreshGrant:
 
 
 class RefreshSessionStore:
-    def __init__(self, path: str, *, clock=time.time) -> None:
+    def __init__(self, path: str, *, clock=None) -> None:
         self._path = path
-        self._clock = clock
+        # Late-bound so tests can patch time.time in this module.
+        self._clock = clock or (lambda: time.time())
         self._lock = threading.Lock()
         parent = os.path.dirname(path)
         if parent:
@@ -142,6 +148,14 @@ class RefreshSessionStore:
                 raise RefreshRejected("revoked")
             if record.get("expires_at", 0) <= now:
                 raise RefreshRejected("expired")
+            if (
+                record.get("current_hash") != digest
+                and record.get("previous_hash") == digest
+                and 0 <= now - int(record.get("rotated_at", 0)) <= REUSE_GRACE_SECONDS
+            ):
+                if validate is not None:
+                    validate(copy.deepcopy(record))
+                return RefreshGrant(None, chain_id, record["identity"], record["client_id"], tuple(record["roles"]), record["tenant_id"], int(record["expires_at"]))
             if record.get("current_hash") != digest:
                 record["revoked"] = True
                 record["revoked_at"] = now
@@ -151,6 +165,7 @@ class RefreshSessionStore:
             if validate is not None:
                 validate(copy.deepcopy(record))
             new_token = _new_token()
+            record["previous_hash"] = digest
             record["current_hash"] = _hash(new_token)
             record["rotated_at"] = now
             payload["hashes"][record["current_hash"]] = chain_id

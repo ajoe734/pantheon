@@ -78,7 +78,15 @@ class IncidentReaderPort(Protocol):
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]: ...
 
-    def list_postmortems(self, time_range: Optional[str] = None) -> List[Dict[str, Any]]: ...
+    def list_postmortems(
+        self,
+        time_range: Optional[str] = None,
+        *,
+        status: Optional[str] = None,
+        q: Optional[str] = None,
+        page_size: Optional[int] = None,
+        page_token: Optional[str] = None,
+    ) -> List[Dict[str, Any]]: ...
 
     def get_postmortem(self, report_id: str) -> Optional[Dict[str, Any]]: ...
 
@@ -232,20 +240,19 @@ class LifecycleTelemetryGovernancePort(
 # =====================================================================
 
 class DomainIncidentPort:
-    """Incident owner reads/writes and Postmortem domain reads."""
+    """Incident owner reads/writes and Postmortem owner reads."""
 
     def __init__(
         self,
         *,
         incidents: Optional[Dict[str, Dict[str, Any]]] = None,
-        postmortems: Optional[Dict[str, Dict[str, Any]]] = None,
         evolution_decisions: Optional[Dict[str, Dict[str, Any]]] = None,
         rollbacks_by_incident: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         incidents_api_url: Optional[str] = None,
+        postmortems_api_url: Optional[str] = None,
         opener: Optional[Any] = None,
     ) -> None:
         self._incidents = dict(incidents) if incidents is not None else None
-        self._postmortems = dict(postmortems or {})
         self._evolution_decisions = dict(evolution_decisions or {})
         self._rollbacks_by_incident = dict(rollbacks_by_incident or {})
         self._incidents_api_url = (
@@ -255,14 +262,189 @@ class DomainIncidentPort:
         )
         if self._incidents_api_url:
             self._incidents_api_url = self._incidents_api_url.strip().rstrip("/")
+        self._postmortems_api_url = (
+            postmortems_api_url.strip().rstrip("/")
+            if postmortems_api_url and postmortems_api_url.strip()
+            else None
+        )
         self._opener = opener or urllib.request.urlopen
         self._last_error = False
+        self._last_postmortems_error = False
 
-    def dataset_source(self) -> str:
+    def _get_postmortems_api_url(self) -> Optional[str]:
+        if self._postmortems_api_url is not None:
+            return self._postmortems_api_url or None
+        env_url = (
+            os.getenv("PANTHEON_POSTMORTEMS_API_URL")
+            or os.getenv("PANTHEON_POSTMORTEMS_URL")
+        )
+        if env_url and env_url.strip():
+            return env_url.strip().rstrip("/")
+        return None
+
+    def dataset_source(self, dataset: str = "incidents") -> str:
+        if dataset == "postmortems":
+            url = self._get_postmortems_api_url()
+            return "unavailable" if not url or self._last_postmortems_error else "service_client"
         return "typed_store" if self._incidents is not None else ("unavailable" if not self._incidents_api_url or self._last_error else "service_client")
 
-    def is_available(self) -> bool:
-        return self.dataset_source() != "unavailable"
+    def is_available(self, dataset: str = "incidents") -> bool:
+        return self.dataset_source(dataset) != "unavailable"
+
+    def _postmortems_http_json(
+        self,
+        path: str,
+        method: str = "GET",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        base_url = self._get_postmortems_api_url()
+        if not base_url:
+            self._last_postmortems_error = True
+            raise RuntimeError("PANTHEON_POSTMORTEMS_API_URL is unconfigured")
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {"Accept": "application/json", **({"Content-Type": "application/json"} if data else {})}
+        req = urllib.request.Request(f"{base_url}{path}", data=data, headers=headers, method=method)
+        try:
+            with self._opener(req, timeout=5.0) as resp:
+                self._last_postmortems_error = False
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                self._last_postmortems_error = False
+                raise
+            self._last_postmortems_error = True
+            raise
+        except Exception:
+            self._last_postmortems_error = True
+            raise
+
+    @staticmethod
+    def _normalize_owner_postmortem(
+        raw: Dict[str, Any],
+        *,
+        requested_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        item = dict(raw)
+        canonical_id = str(
+            requested_id
+            or item.get("postmortem_id")
+            or item.get("id")
+            or item.get("report_id")
+            or ""
+        ).strip()
+        if canonical_id:
+            item["postmortem_id"] = canonical_id
+            if "id" in item:
+                item["id"] = canonical_id
+            if "report_id" in item:
+                item["report_id"] = canonical_id
+        return item
+
+    @classmethod
+    def _filter_and_sort_postmortems(
+        cls,
+        rows: List[Dict[str, Any]],
+        *,
+        time_range: Optional[str] = None,
+        status: Optional[str] = None,
+        q: Optional[str] = None,
+        incident_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+        **_: Any,
+    ) -> List[Dict[str, Any]]:
+        items = [cls._normalize_owner_postmortem(r) for r in rows if isinstance(r, dict)]
+        if incident_id:
+            cid = incident_id.strip()
+            items = [r for r in items if str(r.get("incident_id") or "").strip() == cid]
+        if binding_id:
+            bid = binding_id.strip()
+            items = [r for r in items if str(r.get("binding_id") or "").strip() == bid]
+        if status:
+            requested_statuses = {token.strip().lower() for token in status.split(",") if token.strip()}
+            if requested_statuses:
+                items = [r for r in items if str(r.get("status") or "").strip().lower() in requested_statuses]
+        if q and q.strip():
+            needle = q.strip().lower()
+            matched: List[Dict[str, Any]] = []
+            for r in items:
+                found = False
+                for key in (
+                    "postmortem_id",
+                    "incident_id",
+                    "binding_id",
+                    "title",
+                    "root_cause",
+                    "incident_evidence_summary",
+                    "status",
+                    "runtime_id",
+                    "artifact_id",
+                    "capital_pool_id",
+                    "deployment_plan_id",
+                    "trace_id",
+                    "lineage_ref",
+                ):
+                    val = r.get(key)
+                    if val is not None and needle in str(val).lower():
+                        found = True
+                        break
+                if not found:
+                    for list_key in ("contributing_factors", "action_items"):
+                        seq = r.get(list_key)
+                        if isinstance(seq, list) and any(needle in str(entry).lower() for entry in seq):
+                            found = True
+                            break
+                if found:
+                    matched.append(r)
+            items = matched
+        items.sort(
+            key=lambda r: (str(r.get("created_at") or ""), str(r.get("postmortem_id") or "")),
+            reverse=True,
+        )
+        return items
+
+    @classmethod
+    def _paginate_postmortem_rows(
+        cls,
+        rows: List[Dict[str, Any]],
+        *,
+        time_range: Optional[str] = None,
+        status: Optional[str] = None,
+        q: Optional[str] = None,
+        page_size: Optional[int] = None,
+        page_token: Optional[str] = None,
+        incident_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        filtered = cls._filter_and_sort_postmortems(
+            rows,
+            time_range=time_range,
+            status=status,
+            q=q,
+            incident_id=incident_id,
+            binding_id=binding_id,
+        )
+        total = len(filtered)
+        effective_page_size = max(1, min(int(page_size), 200)) if page_size is not None else 50
+        start = 0
+        if page_token is not None and str(page_token).strip() != "":
+            try:
+                start = max(0, int(str(page_token).strip()))
+            except (TypeError, ValueError):
+                start = 0
+        end = start + effective_page_size
+        page_items = filtered[start:end]
+        next_page_token = str(end) if end < total else None
+        return {
+            "items": page_items,
+            "total": total,
+            "page_size": effective_page_size,
+            "next_page_token": next_page_token,
+            "page_info": {
+                "total": total,
+                "page_size": effective_page_size,
+                "next_page_token": next_page_token,
+            },
+        }
 
     def _http_json(
         self, path: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None,
@@ -392,16 +574,166 @@ class DomainIncidentPort:
         except Exception as exc:
             self._err(exc, f"Incident {cid!r} does not exist")
 
-    def list_postmortems(self, time_range: Optional[str] = None) -> List[Dict[str, Any]]:
-        return list(self._postmortems.values())
+    def list_postmortems_page(
+        self,
+        time_range: Optional[str] = None,
+        *,
+        status: Optional[str] = None,
+        q: Optional[str] = None,
+        page_size: Optional[int] = None,
+        page_token: Optional[str] = None,
+        incident_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        effective_page_size = max(1, min(int(page_size), 200)) if page_size is not None else 50
+        base_url = self._get_postmortems_api_url()
+        if not base_url:
+            self._last_postmortems_error = True
+            return {
+                "items": [],
+                "total": 0,
+                "page_size": effective_page_size,
+                "next_page_token": None,
+                "page_info": {
+                    "total": 0,
+                    "page_size": effective_page_size,
+                    "next_page_token": None,
+                },
+            }
+
+        params: List[Tuple[str, str]] = []
+        if incident_id and incident_id.strip():
+            params.append(("incident_id", incident_id.strip()))
+        if binding_id and binding_id.strip():
+            params.append(("binding_id", binding_id.strip()))
+        if status and status.strip():
+            params.append(("status", status.strip()))
+        if q and q.strip():
+            params.append(("q", q.strip()))
+        params.append(("page_size", str(effective_page_size)))
+        if page_token is not None and str(page_token).strip() != "":
+            params.append(("page_token", str(page_token).strip()))
+
+        path = f"/api/postmortems?{urllib.parse.urlencode(params)}"
+        try:
+            fetched = cached_owner_call(
+                ("postmortems_list", id(self), base_url, path, selected_tenant.get()),
+                lambda: self._postmortems_http_json(path),
+            )
+        except Exception:
+            self._last_postmortems_error = True
+            return {
+                "items": [],
+                "total": 0,
+                "page_size": effective_page_size,
+                "next_page_token": None,
+                "page_info": {
+                    "total": 0,
+                    "page_size": effective_page_size,
+                    "next_page_token": None,
+                },
+            }
+
+        if isinstance(fetched, dict):
+            raw_items = (
+                fetched.get("items")
+                if isinstance(fetched.get("items"), list)
+                else (fetched.get("data") if isinstance(fetched.get("data"), list) else [])
+            )
+            items = [self._normalize_owner_postmortem(r) for r in raw_items if isinstance(r, dict)]
+            page_info = fetched.get("page_info") if isinstance(fetched.get("page_info"), dict) else {}
+            total = int(fetched.get("total", page_info.get("total", len(items))))
+            next_page_token = fetched.get("next_page_token", page_info.get("next_page_token"))
+            returned_page_size = int(fetched.get("page_size", page_info.get("page_size", effective_page_size)))
+            return {
+                "items": items,
+                "total": total,
+                "page_size": returned_page_size,
+                "next_page_token": next_page_token,
+                "page_info": {
+                    "total": total,
+                    "page_size": returned_page_size,
+                    "next_page_token": next_page_token,
+                },
+            }
+
+        if isinstance(fetched, list):
+            return self._paginate_postmortem_rows(
+                [r for r in fetched if isinstance(r, dict)],
+                time_range=time_range,
+                status=status,
+                q=q,
+                page_size=effective_page_size,
+                page_token=page_token,
+                incident_id=incident_id,
+                binding_id=binding_id,
+            )
+
+        return {
+            "items": [],
+            "total": 0,
+            "page_size": effective_page_size,
+            "next_page_token": None,
+            "page_info": {
+                "total": 0,
+                "page_size": effective_page_size,
+                "next_page_token": None,
+            },
+        }
+
+    def list_postmortems(
+        self,
+        time_range: Optional[str] = None,
+        *,
+        status: Optional[str] = None,
+        q: Optional[str] = None,
+        page_size: Optional[int] = None,
+        page_token: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        page = self.list_postmortems_page(
+            time_range=time_range,
+            status=status,
+            q=q,
+            page_size=page_size if page_size is not None else 200,
+            page_token=page_token,
+        )
+        return list(page.get("items") or [])
 
     def get_postmortem(self, report_id: str) -> Optional[Dict[str, Any]]:
-        return self._postmortems.get(report_id)
+        cid = str(report_id or "").strip()
+        if not cid:
+            return None
+        base_url = self._get_postmortems_api_url()
+        if not base_url:
+            self._last_postmortems_error = True
+            return None
+        path = f"/api/postmortems/{urllib.parse.quote(cid, safe='')}"
+        try:
+            fetched = cached_owner_call(
+                ("postmortem_detail", id(self), base_url, path, selected_tenant.get()),
+                lambda: self._postmortems_http_json(path),
+            )
+            if isinstance(fetched, dict):
+                return self._normalize_owner_postmortem(fetched, requested_id=cid)
+            return None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                self._last_postmortems_error = False
+                return None
+            self._last_postmortems_error = True
+            return None
+        except Exception:
+            self._last_postmortems_error = True
+            return None
 
     def get_postmortem_by_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
-        for pm in self._postmortems.values():
-            if pm.get("incident_id") == incident_id:
-                return pm
+        cid = str(incident_id or "").strip()
+        if not cid:
+            return None
+        page = self.list_postmortems_page(incident_id=cid, page_size=1)
+        for pm in page.get("items") or []:
+            if isinstance(pm, dict) and str(pm.get("incident_id") or "").strip() == cid:
+                return self._normalize_owner_postmortem(pm)
         return None
 
     def get_evolution_decisions_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
@@ -1245,8 +1577,14 @@ class CompositeLifecycleTelemetryGovernancePort:
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
         return self.incidents.get_incident(incident_id)
 
-    def list_postmortems(self, time_range: Optional[str] = None) -> List[Dict[str, Any]]:
-        return self.incidents.list_postmortems(time_range=time_range)
+    def list_postmortems(self, time_range: Optional[str] = None, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.incidents.list_postmortems(time_range=time_range, **kwargs)
+
+    def list_postmortems_page(self, time_range: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
+        if hasattr(self.incidents, "list_postmortems_page"):
+            return getattr(self.incidents, "list_postmortems_page")(time_range=time_range, **kwargs)
+        rows = self.incidents.list_postmortems(time_range=time_range)
+        return DomainIncidentPort._paginate_postmortem_rows(rows, time_range=time_range, **kwargs)
 
     def get_postmortem(self, report_id: str) -> Optional[Dict[str, Any]]:
         return self.incidents.get_postmortem(report_id)
@@ -1267,7 +1605,15 @@ class CompositeLifecycleTelemetryGovernancePort:
         return getattr(self.incidents, "update_incident_status")(incident_id, status=status, resolved_at=resolved_at)
 
     def dataset_source(self, dataset: str = "incidents") -> str:
-        return getattr(self.incidents, "dataset_source", lambda: "typed_store")() if dataset == "incidents" else "typed_store"
+        if dataset in ("incidents", "postmortems"):
+            ds_fn = getattr(self.incidents, "dataset_source", None)
+            if callable(ds_fn):
+                try:
+                    return ds_fn(dataset)
+                except TypeError:
+                    if dataset == "incidents":
+                        return ds_fn()
+        return "typed_store"
 
     # LifecycleReaderPort
     def list_loop_runs(self) -> Tuple[bool, List[Dict[str, Any]]]:
@@ -1454,9 +1800,9 @@ class InMemoryLifecycleTelemetryGovernancePort(CompositeLifecycleTelemetryGovern
         telemetry_events_source: str = "telemetry_events",
         projection_reader_override: Any = None,
     ) -> None:
+        self._test_postmortems = dict(postmortems) if postmortems is not None else None
         inc_port = DomainIncidentPort(
             incidents=incidents,
-            postmortems=postmortems,
             evolution_decisions=evolution_decisions,
             rollbacks_by_incident=rollbacks_by_incident,
         )
@@ -1494,6 +1840,58 @@ class InMemoryLifecycleTelemetryGovernancePort(CompositeLifecycleTelemetryGovern
             lineage_port=lin_port,
             telemetry_port=tel_port,
         )
+
+    def _use_test_postmortems(self) -> bool:
+        if self._test_postmortems is not None:
+            return True
+        get_url = getattr(self.incidents, "_get_postmortems_api_url", None)
+        return not (callable(get_url) and get_url())
+
+    def dataset_source(self, dataset: str = "incidents") -> str:
+        if dataset == "postmortems" and self._use_test_postmortems():
+            return "typed_store"
+        return super().dataset_source(dataset)
+
+    def list_postmortems(self, time_range: Optional[str] = None, **kwargs: Any) -> List[Dict[str, Any]]:
+        if self._use_test_postmortems():
+            rows = list((self._test_postmortems or {}).values())
+            return DomainIncidentPort._filter_and_sort_postmortems(rows, time_range=time_range, **kwargs)
+        return super().list_postmortems(time_range=time_range, **kwargs)
+
+    def list_postmortems_page(self, time_range: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
+        if self._use_test_postmortems():
+            rows = list((self._test_postmortems or {}).values())
+            return DomainIncidentPort._paginate_postmortem_rows(rows, time_range=time_range, **kwargs)
+        return super().list_postmortems_page(time_range=time_range, **kwargs)
+
+    def get_postmortem(self, report_id: str) -> Optional[Dict[str, Any]]:
+        if self._use_test_postmortems():
+            clean_id = str(report_id or "").strip()
+            store = self._test_postmortems or {}
+            raw = store.get(clean_id)
+            if raw is None:
+                for candidate in store.values():
+                    if (
+                        isinstance(candidate, dict)
+                        and str(candidate.get("postmortem_id") or candidate.get("report_id") or candidate.get("id") or "").strip()
+                        == clean_id
+                    ):
+                        raw = candidate
+                        break
+            return (
+                DomainIncidentPort._normalize_owner_postmortem(raw, requested_id=clean_id)
+                if isinstance(raw, dict)
+                else None
+            )
+        return super().get_postmortem(report_id)
+
+    def get_postmortem_by_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
+        if self._use_test_postmortems():
+            for pm in (self._test_postmortems or {}).values():
+                if isinstance(pm, dict) and pm.get("incident_id") == incident_id:
+                    return DomainIncidentPort._normalize_owner_postmortem(pm)
+            return None
+        return super().get_postmortem_by_incident(incident_id)
 
 
 def create_lifecycle_telemetry_governance_port(

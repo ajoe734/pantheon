@@ -1,0 +1,21 @@
+{
+  "task": "TRADE-JOURNEY-SWEEP-DROP-REPAIR-20261104",
+  "change": "Removed REPAIR_ACTIVE_LOOP_RUNS_SQL, its separate transaction and the loop_run_repaired count from sql_reclassify_batch_runner; an empty sweep now issues only the bounded RECLASSIFY_STALE_OPEN_SQL statement in one transaction.",
+  "hosted_measurements": {
+    "source": "dev VM 2026-11-04 03:30Z, BFF cc074638f, after the drain finished",
+    "journeys": {"unreconciled": 111025, "no_order": 36124, "completed_with_variance": 6936, "completed": 3734, "failed": 193},
+    "loop_runs": "identical to journeys",
+    "terminal_journey_with_active_or_different_loop_run_rows": 0,
+    "empty_sweep_cost_before": {
+      "reclassify_candidate_select_ms": 7,
+      "reclassify_index": "idx_journeys_open_last_occurred",
+      "repair_select_ms": 1340,
+      "repair_plan": "parallel index scan of loop_runs_pkey filtering status='active', every 10 s interval",
+      "vm_load": "about 11"
+    },
+    "sweep_failures_logged": 0
+  },
+  "why_safe": "The repair existed for a journeys-only reclassification that never ran on hosted; IncrementalLifecycleMaterializer writes journey and loop status from the same projection.",
+  "not_changed": ["StaleOpenSweeper", "sweep configuration", "indexes", "schedules"],
+  "hosted_verification_after_deploy": "not performed by this change"
+}

@@ -1211,7 +1211,6 @@
       "source_owner": "services/control-plane/bff/read_store.py::ReadSurfaceStore",
       "production_callers": [
         "services/control-plane/bff/read_store.py (internal)",
-        "services/control-plane/bff/console_gap/alpha_factory.py",
         "services/control-plane/bff/console_gap/consult_rules.py",
         "services/control-plane/bff/console_gap/lineage.py",
         "services/control-plane/bff/console_gap/memory_governance.py",
@@ -1220,7 +1219,7 @@
         "services/control-plane/bff/main.py",
         "services/control-plane/persona/integration_smoke.py"
       ],
-      "production_caller_count": 9,
+      "production_caller_count": 8,
       "internal_call_site_count": 12,
       "test_callers": [
         "services/control-plane/bff/test_read_store_bootstrap_snapshot.py",
@@ -7953,16 +7952,14 @@
       "line": 20440,
       "end_line": 20447,
       "source_owner": "services/control-plane/bff/read_store.py::ReadSurfaceStore",
-      "production_callers": [
-        "services/control-plane/bff/console_gap/alpha_factory.py"
-      ],
-      "production_caller_count": 1,
+      "production_callers": [],
+      "production_caller_count": 0,
       "internal_call_site_count": 0,
       "test_callers": [],
       "test_caller_count": 0,
       "matrix_item": "ACG-02-001",
-      "target_disposition": "KEEP",
-      "target_owner": "ReadSurfaceStore temporary migration seam"
+      "target_disposition": "REMOVE",
+      "target_owner": "GET /api/research-orchestrator/alpha-replication/entries via console_gap/alpha_factory.py (ALPHA-FACTORY-REPLICATION-READ-20261104)"
     },
     {
       "method": "list_skills",
