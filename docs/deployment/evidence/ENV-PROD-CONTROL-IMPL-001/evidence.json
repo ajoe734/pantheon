@@ -86,12 +86,12 @@
   "hosted_acceptance": {
     "status": "external_wait",
     "missing": [
+      "Stage release 102 staging_verified summaries are published (see published_staging_verification); real 3-account hosted QA, distinct release 103 and full Prod acceptance remain pending",
       "production project, billing, domain, IdP",
       "production WIF/SA/IAM/secrets",
       "GitHub production Environment approval is configured (reviewer ajoe734, prevent_self_review=false); a genuine run approval remains a hosted prerequisite",
-      "production control VM provisioning, PROD_VM_NAME/PROD_ROOT/ports Environment variables, secrets env/postgres password files, GATE token identity, manifest backend.images owner closure and image labels (contracts in runbook)",
+      "production control VM provisioning, secrets env/postgres password files, GATE token identity, manifest backend.images owner closure and image labels (contracts in runbook)",
       "approved RPO/RTO/retention/on-call/rollback owner",
-      "genuine hosted staging_verified evidence for the exact manifest",
       "two production-shaped deploy/rollback drills (<120s rollback)",
       "30-minute observation window"
     ]
@@ -110,5 +110,48 @@
       "p2": "Prod bootstrap resolves/validates/pulls effective PANTHEON_SIGNAL_STORE_IMAGE from shell or compose.env; test_bootstrap_pulls_effective_signal_store_image_from_existing_compose_env",
       "validation": "test_production_release 82 OK; StagingControllerLifecycleTests 30/30 OK run serially per shard (parallel shards contend and fail spuriously); Manifest/Workflow classes OK; sanitize 8/9 with 1 env error (flask missing, not a pass); bash -n and git diff --check clean"
     }
+  },
+  "published_staging_verification": {
+    "purpose": "Public-safe allowlisted summaries consumable as production-release staging_evidence_path; prod_preflight.check_staging_evidence passes natively for the exact manifest.",
+    "release_id": "pantheon-20261028-102",
+    "manifest_sha256": "sha256:617e2936f3534a1f425e8c71726750826979c5b1d98cf767fec2fdb0c728bcf3",
+    "control_source_commit": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
+    "runs": [
+      {
+        "workflow_run_id": "41579314601",
+        "artifact": "staging-release102-run41579314601.json",
+        "sha256": "78e115d257210065875143f75709c45f9dbe1777ccd57ecd049e9275e6fe3c74",
+        "rollback_duration_seconds": 107.727,
+        "cleanup_deleted_resources": 4,
+        "post_delete_readback_verified": true
+      },
+      {
+        "workflow_run_id": "41581135775",
+        "artifact": "staging-release102-run41581135775.json",
+        "sha256": "fdc0f7ec3312caa92451473fb3bed79128c0d985db662e74ee1170ff0719c3b2",
+        "rollback_duration_seconds": 108.599,
+        "cleanup_deleted_resources": 4,
+        "post_delete_readback_verified": true
+      }
+    ],
+    "omitted": "owner timestamps, per-table row counts, schema names, resource identities, secrets",
+    "scope_limits": {
+      "hosted_QA_step": "skipped (QA 0, step 9 skipped in both runs)",
+      "complete_original_acceptance": false,
+      "production_acceptance_verified": false,
+      "release_complete_claimed": false
+    },
+    "still_pending": [
+      "3 real hosted QA accounts",
+      "distinct release 103",
+      "Prod release 102 baseline",
+      "backup/restore DR with measured RPO/RTO",
+      "VM replacement drill",
+      "two Prod deploy/rollback drills (<120s)",
+      "1800s observation window"
+    ]
+  },
+  "production_environment_config": {
+    "scope": "PROD_* values are GitHub Environment-scoped in 'production' (not repository-only); read-only readback 2026-11-05: 20 required names present, none missing, safe defaults accepted; metadata only, not live VM proof. The earlier 'missing 21 PROD vars' claim is disproved."
   }
 }
