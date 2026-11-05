@@ -1395,3 +1395,23 @@ def test_cached_strategy_specs_are_isolated_from_caller_mutation_and_tenant(monk
         assert len(calls) == 2  # tenant isolated cache key
     port.list_strategy_specs()
     assert len(calls) == 3  # no cross-request reuse
+
+
+def test_research_notes_dataset_source_reflects_owner_not_dict():
+    from types import SimpleNamespace
+
+    owner = SimpleNamespace(list_research_notes=lambda: [])
+    assert DefaultResearchKnowledgeSourcePort(research_write_owner=owner).dataset_source("research_notes") == "service_client"
+    assert DefaultResearchKnowledgeSourcePort().dataset_source("research_notes") in ("missing", "typed_store")
+
+
+def test_research_client_failed_note_read_raises_instead_of_empty():
+    import pytest
+    from services.control_plane.bff.research.client import ResearchCommandError, ResearchServiceClient
+
+    ok = ResearchServiceClient(base_url="http://x", http_request=lambda *a: (200, []))
+    assert ok.list_research_notes() == []
+    for code, body in ((404, None), (500, {"detail": "boom"}), (503, {"detail": "down"}), (200, {"not": "list"})):
+        c = ResearchServiceClient(base_url="http://x", http_request=lambda *a, code=code, body=body: (code, body))
+        with pytest.raises(Exception):
+            c.list_research_notes()

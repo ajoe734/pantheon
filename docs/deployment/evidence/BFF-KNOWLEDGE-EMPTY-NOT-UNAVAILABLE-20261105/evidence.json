@@ -1,0 +1,24 @@
+{
+  "task": "BFF-KNOWLEDGE-EMPTY-NOT-UNAVAILABLE-20261105",
+  "before_hosted_recorded": {
+    "build": "2a2411124",
+    "measured_at": "2026-11-05T17:42Z",
+    "GET /bff/knowledge": {"page_info.total": 0, "meta.status": "unavailable", "meta.source": "missing", "message": "Knowledge inbox has no readable knowledge source records", "composition.itemCounts": {"research_note": 0, "insight": 0, "memory_entry": 0}},
+    "owner_log": "GET /api/research/notes 200 same second"
+  },
+  "after_functional": {
+    "owner_returns_zero_notes": {"meta.status": "ok", "knowledge_inbox_notes": {"status": "ok", "source": "service_client"}, "page_info.total": 0, "itemCounts.research_note": 0},
+    "owner_read_fails": {"knowledge_inbox_notes": {"status": "unavailable", "source": "unavailable"}, "meta.status": "unavailable"},
+    "unconfigured_insight_dataset": "reported source=missing on its own sub-surface; inbox stays ok when notes were read"
+  },
+  "changes": [
+    "ports/research_knowledge_source.py: dataset_source('research_notes') returns service_client when the owner is configured, else typed_store if in-process notes else missing",
+    "research/client.py: list_research_notes no longer maps 404/non-list to []; raises ResearchCommandError so failed read != empty",
+    "console_gap/knowledge.py: raising reader => source 'unavailable' (has_data False); unusable = missing|unavailable; only non-missing non-ok surfaces degrade; insight_cards left without an owner (no owner invented)"
+  ],
+  "changed_assertions": [
+    {"file": "tests/test_read_surface_port_cutover.py", "was": "dataset_source('research_notes') == 'typed_store'", "now": "'service_client'", "why": "that port is built with a configured research owner that serves notes; AC4 requires the label to reflect the owner, not the in-process dict. Not weakened: stricter and more specific."}
+  ],
+  "tests": "civenv pytest: knowledge_inbox, research_knowledge_source_ports, console_research_projection, management_gap_003_contract_schema, read_surface_port_cutover all passing (plus 5 new tests); hosted verification deferred to operator acceptance",
+  "frontend_change": false
+}
