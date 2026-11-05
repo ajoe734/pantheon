@@ -33,13 +33,23 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy list payload", "strategy_store_unavailable")
         if persona_id:
             summaries = [s for s in summaries if isinstance(s, dict) and persona_id in (s.get("persona_ids") or [])]
+        ranking_snapshot, ranking_read_failed = (
+            ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
+        )
         items = []
         for summary in summaries:
             strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
             if not strategy_id:
                 raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy summary entry", "strategy_store_unavailable")
             detail = summary if "current_spec_version_id" in summary else (ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None)
-            items.append(ctx.project_strategy_dto(summary, detail=detail))
+            items.append(
+                ctx.project_strategy_dto(
+                    summary,
+                    detail=detail,
+                    ranking_snapshot=ranking_snapshot,
+                    ranking_read_failed=ranking_read_failed,
+                )
+            )
         if state:
             items = [s for s in items if s.get("state") == state]
         total = len(items)
