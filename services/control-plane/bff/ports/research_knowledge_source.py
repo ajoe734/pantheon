@@ -735,7 +735,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if self._has_injected_strategy_specs:
                 return "typed_store"
             return "service_client" if (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")) else "missing"
-        if dataset in ("research_notes", "insight_cards", "research_tickets", "research_analyses", "research_artifacts"):
+        if dataset == "research_notes":
+            # Configuration only, like research_artifacts: whether a read succeeded
+            # is the outcome of that read, and the in-process dict is not the owner.
+            owner = self._get_research_write_owner()
+            if owner is not None and hasattr(owner, "list_research_notes"):
+                return "service_client"
+            return "typed_store" if self._notes else "missing"
+        if dataset in ("insight_cards", "research_tickets", "research_analyses", "research_artifacts"):
             store_map = {
                 "research_notes": self._notes,
                 "insight_cards": self._insights,
