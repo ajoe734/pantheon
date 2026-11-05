@@ -26,6 +26,7 @@ import pytest
 from services.rankings.store import (
     AllocationEvaluationRecord,
     RankingConflictError,
+    RankingReadStore,
     RankingRecord,
     RankingSnapshotRecord,
     RankingWriteOwnerError,
@@ -102,6 +103,24 @@ class _FakeConnection:
                 if record != expected:
                     record = None
             return _FakeCursor([(record,)] if record is not None else [])
+        if (
+            normalized.startswith("SELECT PAYLOAD")
+            and "RECORD_TYPE" in normalized
+            and "LIMIT 1" in normalized
+        ):
+            record_type = str(params[0])
+            surface = str(params[1]) if len(params) > 1 else None
+            candidates = []
+            for idx, payload in enumerate(self.rows.get(table, {}).values()):
+                if not isinstance(payload, Mapping) or payload.get("record_type") != record_type:
+                    continue
+                if surface is not None and str(payload.get("surface") or "") != surface:
+                    continue
+                candidates.append((str(payload.get("created_at") or ""), idx, payload))
+            if not candidates:
+                return _FakeCursor([])
+            winner = max(candidates, key=lambda item: (item[0], item[1]))[2]
+            return _FakeCursor([(winner,)])
         if normalized.startswith("SELECT PAYLOAD"):
             return _FakeCursor([(payload,) for payload in self.rows.get(table, {}).values()])
         return _FakeCursor([])
@@ -691,3 +710,107 @@ def test_legacy_list_rankings_raises_on_null_record_type_without_ranking_id(stor
 
     with pytest.raises(RankingWriteOwnerError):
         store.list_rankings()
+
+
+def test_get_latest_ranking_snapshot_selects_latest_by_surface_and_tie_breaks(store) -> None:
+    reader = RankingReadStore(dsn="postgresql://reader@example/db")
+    assert reader.get_latest_ranking_snapshot(surface="quarterly") is None
+
+    store.create_ranking(
+        RankingRecord(ranking_id="legacy-001", title="Legacy", criteria="sharpe")
+    )
+    store.create_allocation_evaluation(_evaluation(allocation_evaluation_id="eval-latest-test"))
+    store.create_ranking_snapshot(
+        _snapshot(
+            ranking_snapshot_id="snap-q-older",
+            surface="quarterly",
+            created_at="2026-11-01T00:00:00Z",
+            items=[{"persona_id": "persona-a", "rank": 1, "score": 1.0}],
+        )
+    )
+    store.create_ranking_snapshot(
+        _snapshot(
+            ranking_snapshot_id="snap-q-tie-first",
+            surface="quarterly",
+            created_at="2026-11-05T17:40:00Z",
+            items=[{"persona_id": "persona-a", "rank": 1, "score": 2.0}],
+        )
+    )
+    store.create_ranking_snapshot(
+        _snapshot(
+            ranking_snapshot_id="snap-q-tie-second",
+            surface="quarterly",
+            created_at="2026-11-05T17:40:00Z",
+            items=[{"persona_id": "persona-a", "rank": 1, "score": 3.0}],
+        )
+    )
+    store.create_ranking_snapshot(
+        _snapshot(
+            ranking_snapshot_id="snap-monthly-newer",
+            surface="monthly",
+            created_at="2026-11-06T00:00:00Z",
+            items=[{"persona_id": "persona-a", "rank": 1, "score": 9.0}],
+        )
+    )
+
+    _FakeConnection.statements.clear()
+    fresh_quarterly = reader.get_latest_ranking_snapshot(surface="quarterly")
+    assert fresh_quarterly is not None
+    assert fresh_quarterly.ranking_snapshot_id == "snap-q-tie-second"
+    assert fresh_quarterly.items == ({"persona_id": "persona-a", "rank": 1, "score": 3.0},)
+    assert len(_FakeConnection.statements) == 1
+    sql = " ".join(_FakeConnection.statements[0].split())
+    assert 'SELECT payload FROM "rankings"."rankings"' in sql
+    assert "ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC LIMIT 1" in sql
+
+    fresh_any = reader.get_latest_ranking_snapshot(surface=None)
+    assert fresh_any is not None
+    assert fresh_any.ranking_snapshot_id == "snap-monthly-newer"
+    assert reader.get_latest_ranking_snapshot(surface="nonexistent") is None
+
+
+def test_get_latest_ranking_snapshot_decodes_only_single_winner_and_fails_closed_on_corrupt(
+    store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import services.rankings.store as store_mod
+
+    for idx in range(1, 21):
+        store.create_ranking_snapshot(
+            _snapshot(
+                ranking_snapshot_id=f"snap-batch-{idx:03d}",
+                surface="quarterly",
+                created_at=f"2026-11-05T00:{idx:02d}:00Z",
+            )
+        )
+
+    decoded_ids: list[str] = []
+    real_decode = store_mod._decode_ranking_snapshot
+
+    def _counting_decode(payload):
+        decoded_ids.append(str(payload.get("ranking_snapshot_id") or ""))
+        return real_decode(payload)
+
+    monkeypatch.setattr(store_mod, "_decode_ranking_snapshot", _counting_decode)
+    reader = RankingReadStore(dsn="postgresql://reader@example/db")
+    latest = reader.get_latest_ranking_snapshot(surface="quarterly")
+    assert latest is not None
+    assert latest.ranking_snapshot_id == "snap-batch-020"
+    assert decoded_ids == ["snap-batch-020"]
+
+    store._records_table.put(
+        "ranking-snapshot::corrupt-latest",
+        {
+            "record_type": "ranking_snapshot",
+            "ranking_snapshot_id": "corrupt-latest",
+            "surface": "quarterly",
+            "period": "2026-W36",
+            "formula_version": "v3",
+            "content_digest": "sha256:corrupt",
+            "items": "not-a-list",
+            "evidence_assertion_digests": {"persona-a": ["sha256:e1"]},
+            "created_at": "2026-11-05T23:59:59Z",
+        },
+    )
+    with pytest.raises(RankingWriteOwnerError):
+        reader.get_latest_ranking_snapshot(surface="quarterly")
+
