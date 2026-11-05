@@ -289,6 +289,10 @@ jobs:
         run: |
           python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py
 
+      - name: BFF tenant fallback audit gate
+        run: |
+          python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py
+
       - name: Verify workflow contract
         run: |
           python3 -m unittest scripts.test_branch_ci_gate_selection
