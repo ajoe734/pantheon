@@ -1050,3 +1050,66 @@ class TestReplayAdmissionByEnvironment:
             "dev", claims, False, {"approval_ref": "a", "reason": "x", "channel": "bogus"}
         )
         self._assert_denied(monitor, err, 422, "channel")
+
+
+class TestLoop12SuccessTruthfulness:
+    def _record(self, tmp_path, state):
+        monitor = _safety_monitor(tmp_path)
+        return monitor.publish_loop_12_controller_truth(state=state)
+
+    def test_all_healthy_targets_record_success(self, tmp_path):
+        rec = self._record(tmp_path, {"overall_ok": True, "targets": {"a": {"ok": True}}})
+        assert rec["last_success_at"] and rec["last_tick_at"]
+
+    def test_failing_target_never_records_success(self, tmp_path):
+        rec = self._record(tmp_path, {"overall_ok": False, "targets": {"a": {"ok": False}}})
+        assert rec["last_success_at"] is None and rec["last_tick_at"] is None
+        assert rec["last_heartbeat_at"]
+
+    def test_no_targets_never_records_success(self, tmp_path):
+        rec = self._record(tmp_path, {"overall_ok": True, "targets": {}})
+        assert rec["last_success_at"] is None
+
+
+class TestLoop12RealWriterCapture:
+    """Monitor -> real LoopControllerWriter.record_heartbeat -> _write_status with a capture store."""
+
+    @staticmethod
+    def _persist(targets):
+        Writer = importlib.import_module("services.loop-control.writer").LoopControllerWriter
+
+        class CaptureStore:
+            record = None
+
+            async def upsert_record(self, record):
+                self.record = record
+
+        sink = CaptureStore()
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql://capture-only.invalid/never"}):
+            writer = Writer("postgresql://capture-only.invalid/never")
+            writer.store = sink
+            monitor = object.__new__(DownstreamHealthMonitor)
+            monitor._tenant_id = "t"
+            monitor._instance_id = "i"
+            monitor._loop_12_truth = {}
+            monitor._loop_12_truth_task = None
+            monitor._loop_12_writer_for = lambda dsn: writer
+            monitor.publish_loop_12_controller_truth(
+                state={"overall_ok": all(t["ok"] for t in targets.values()), "targets": targets}
+            )
+        return sink.record
+
+    def test_healthy_persists_success_and_tick(self):
+        rec = self._persist({"a": {"ok": True}})
+        assert rec["last_success_at"] and rec["last_tick_at"] and rec["lease_token"]
+
+    def test_failing_target_persists_no_success(self):
+        rec = self._persist({"a": {"ok": False}})
+        assert "last_success_at" not in rec and "last_tick_at" not in rec
+        assert rec["last_heartbeat_at"] and rec["lease_token"]
+
+    def test_no_targets_persists_no_success(self):
+        rec = self._persist({})
+        assert rec["desired_state"]["present"] is False
+        assert "last_success_at" not in rec and "last_tick_at" not in rec
+        assert rec["last_heartbeat_at"] and rec["lease_token"]

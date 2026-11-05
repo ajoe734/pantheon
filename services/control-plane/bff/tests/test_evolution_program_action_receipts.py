@@ -73,6 +73,34 @@ def _authenticated_caller(monkeypatch):
 
 
 
+_BINDING = {
+    "tenant_id": "tenant-e2e", "target_type": "evolution_proposal", "target_id": "evp",
+    "target_version": "2", "proposal_id": "evp", "proposal_revision": 2,
+    "proposal_content_digest": "d" * 64, "risk_level": "medium",
+}
+
+
+def _owner_with_binding(receipt):
+    """Owner double: the approval-binding read answers with a binding, every
+    other call answers with ``receipt``.  Submit really does read the binding
+    and file a governance request first, so the double must serve both."""
+    def request(url, **kwargs):
+        if url.endswith("/approval-binding"):
+            return dict(_BINDING)
+        return receipt
+    return request
+
+
+@pytest.fixture(autouse=True)
+def _governance_request_filed(monkeypatch):
+    """Governance is a separate service; record what the BFF files with it."""
+    from services.control_plane.bff.governance import approval_owner
+    filed = []
+    monkeypatch.setattr(approval_owner, "propose",
+                        lambda authorization, payload, key: filed.append(dict(payload)) or {"id": key})
+    return filed
+
+
 class _FakeIdentity:
     def __init__(self, operator_id: str = "op-1", roles: Optional[list] = None, tenant_id: str = "tenant-a") -> None:
         self.operator_id = operator_id
@@ -128,7 +156,7 @@ def test_adapter_dispatches_all_canonical_actions(action_id: str) -> None:
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000"}):
         with patch(
             "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
-            return_value=expected_backend_receipt,
+            side_effect=_owner_with_binding(expected_backend_receipt),
         ) as mock_http:
             receipt = adapter.execute(
                 command_id=command_id,
@@ -219,7 +247,7 @@ def test_adapter_propagates_idempotency_and_tenant_headers() -> None:
     }):
         with patch(
             "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
-            return_value={"receipt_id": "rcpt-hdr", "program_id": program_id, "status": "active"},
+            side_effect=_owner_with_binding({"receipt_id": "rcpt-hdr", "program_id": program_id, "status": "active"}),
         ) as mock_http:
             adapter.execute(
                 command_id="cmd-hdr-1",
@@ -370,7 +398,10 @@ def test_router_allows_approver_role_for_approver_actions(action_id: str) -> Non
             "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
             return_value=backend_receipt,
         ):
-            resp = client.post(f"/bff/evolution-programs/evp-role-2/actions/{action_id}", json={})
+            resp = client.post(
+                f"/bff/evolution-programs/evp-role-2/actions/{action_id}",
+                json={"reason": "Role test"} if action_id == "reject_program" else {},
+            )
             assert resp.status_code == 202
             data = resp.json()
             assert data["entity_id"] == "evp-role-2"
@@ -398,7 +429,7 @@ def test_router_allows_operator_for_non_approver_actions() -> None:
     with patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://mock-evolution:8000"}):
         with patch(
             "services.control_plane.bff.command_adapters.evolution_adapter.evolution_owner_request",
-            return_value=backend_receipt,
+            side_effect=_owner_with_binding(backend_receipt),
         ):
             resp = client.post(
                 "/bff/evolution-programs/evp-op-1/actions/submit_evolution_review",
@@ -426,8 +457,10 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
     from services.evolution.program_service import ProgramService
     from services.evolution.program_router import create_program_router
 
+    from services.evolution.test_program_owner import GovernedProgramService
+
     store = JsonProgramStore(tmp_path / "programs.json")
-    service = ProgramService(store)
+    service = GovernedProgramService(store)
     backend_app = FastAPI()
     backend_app.include_router(
         create_program_router(

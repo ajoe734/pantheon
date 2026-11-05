@@ -25,6 +25,64 @@ def default_utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+_UNSET = object()
+
+
+def _project_strategy_ranking_metrics(
+    strategy_id: str,
+    ranking_snapshot: Optional[Dict[str, Any]],
+    *,
+    ranking_read_failed: bool = False,
+) -> Dict[str, Any]:
+    base_metrics: Dict[str, Any] = {
+        "pnl": None,
+        "pnl30d": None,
+        "sharpe": None,
+        "drawdown": None,
+        "totalTrades": None,
+        "metricsAsOf": None,
+        "metricsResolution": "unavailable" if ranking_read_failed else "missing",
+        "metricsPersonaId": None,
+    }
+    if ranking_read_failed or not strategy_id or not isinstance(ranking_snapshot, dict):
+        return base_metrics
+    items = ranking_snapshot.get("items")
+    if not isinstance(items, (list, tuple)):
+        return base_metrics
+    matched_rows: List[Dict[str, Any]] = []
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        raw_strategy_ids = row.get("strategy_ids")
+        if not isinstance(raw_strategy_ids, (list, tuple)):
+            continue
+        row_strategy_ids = [str(sid).strip() for sid in raw_strategy_ids if str(sid or "").strip()]
+        if strategy_id in row_strategy_ids:
+            matched_rows.append(row)
+    if not matched_rows:
+        return base_metrics
+    if len(matched_rows) > 1:
+        base_metrics["metricsResolution"] = "ambiguous"
+        return base_metrics
+    row = matched_rows[0]
+    metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+    resolution = metrics.get("telemetry_resolution")
+    if resolution is None:
+        resolution = row.get("telemetry_resolution")
+    resolution_str = str(resolution).strip() if resolution is not None else ""
+    persona_id = row.get("persona_id")
+    base_metrics["metricsPersonaId"] = persona_id if persona_id is not None else None
+    if not resolution_str or resolution_str == "missing":
+        base_metrics["metricsResolution"] = resolution_str or "missing"
+        return base_metrics
+    base_metrics["pnl"] = metrics.get("pnl")
+    base_metrics["drawdown"] = metrics.get("drawdown")
+    base_metrics["totalTrades"] = metrics.get("total_trades")
+    base_metrics["metricsAsOf"] = metrics.get("latest_telemetry_at")
+    base_metrics["metricsResolution"] = resolution_str
+    return base_metrics
+
+
 def default_bff_error(
     status_code: int,
     code: str,
@@ -226,7 +284,11 @@ class StrategyRouteContext:
         *,
         detail: Optional[Dict[str, Any]] = None,
         overlay: Optional[Dict[str, Any]] = None,
+        ranking_snapshot: Any = _UNSET,
+        ranking_read_failed: bool = False,
     ) -> Dict[str, Any]:
+        if overlay is not None:
+            raise AttributeError("strategy overlay is retired; process-local state overlays are deleted")
         strategy_id = str(summary.get("strategy_id") or summary.get("id") or "")
         title = summary.get("title") or summary.get("name")
         if not title and isinstance(summary.get("versions"), list):
@@ -246,12 +308,29 @@ class StrategyRouteContext:
         persona_ids: List[str] = []
         if detail and isinstance(detail.get("persona_ids"), list):
             persona_ids = [str(p) for p in detail.get("persona_ids") or [] if str(p).strip()]
+        detail_metadata = (
+            detail.get("metadata")
+            if detail and isinstance(detail.get("metadata"), dict)
+            else {}
+        )
+        summary_metadata = (
+            summary.get("metadata")
+            if isinstance(summary.get("metadata"), dict)
+            else {}
+        )
         capital_pool_id = str(
             execution_profile.get("capital_pool_id")
             or governance.get("capital_pool_id")
             or summary.get("capital_pool_id")
+            or summary.get("capitalPoolId")
+            or detail_metadata.get("capital_pool_id")
+            or detail_metadata.get("capitalPoolId")
+            or summary_metadata.get("capital_pool_id")
+            or summary_metadata.get("capitalPoolId")
+            or (detail or {}).get("capital_pool_id")
+            or (detail or {}).get("capitalPoolId")
             or ""
-        )
+        ).strip()
         alpha = str(
             market_scope.get("alpha")
             or summary.get("source_kind")
@@ -263,6 +342,16 @@ class StrategyRouteContext:
         if isinstance(allowed, dict):
             available_actions = sorted([k for k, v in allowed.items() if v])
         risk_raw = governance.get("risk_level") or summary.get("risk") or (detail or {}).get("risk")
+        if ranking_snapshot is _UNSET:
+            if self.service is not None:
+                ranking_snapshot, ranking_read_failed = self.service.get_latest_ranking_snapshot()
+            else:
+                ranking_snapshot, ranking_read_failed = None, False
+        metrics_fields = _project_strategy_ranking_metrics(
+            strategy_id,
+            ranking_snapshot if isinstance(ranking_snapshot, dict) else None,
+            ranking_read_failed=bool(ranking_read_failed),
+        )
         dto: Dict[str, Any] = {
             "id": strategy_id,
             "name": title,
@@ -276,13 +365,9 @@ class StrategyRouteContext:
             "alpha": alpha,
             "capitalPoolId": capital_pool_id,
             "personaIds": persona_ids,
-            "pnl30d": 0.0,
-            "sharpe": 0.0,
-            "drawdown": 0.0,
+            **metrics_fields,
             "availableActions": available_actions,
             "labelKey": f"strategy.{strategy_id}" if strategy_id else None,
             "lifecycleStatus": str(lifecycle_raw or ""),
         }
-        if overlay is not None:
-            raise AttributeError("strategy overlay is retired; process-local state overlays are deleted")
         return dto

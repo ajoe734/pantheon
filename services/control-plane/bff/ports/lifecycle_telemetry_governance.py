@@ -13,6 +13,7 @@ identity and freshness semantics.
 """
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import json
 import os
@@ -74,6 +75,8 @@ class IncidentReaderPort(Protocol):
         status: Optional[str] = None,
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
+        open_only: bool = False,
+        raise_on_error: bool = False,
     ) -> List[Dict[str, Any]]: ...
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]: ...
@@ -478,16 +481,32 @@ class DomainIncidentPort:
         status: Optional[str] = None,
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
+        open_only: bool = False,
+        raise_on_error: bool = False,
     ) -> List[Dict[str, Any]]:
+        """List incidents.
+
+        ``open_only`` asks the incidents owner for its own open definition
+        (status open or investigating) via ``?open_only=true``.
+        ``raise_on_error`` lets a caller that must tell a failed read from an
+        empty queue see the failure; the default keeps the historical
+        swallow-to-empty behavior for every other caller.
+        """
         if self._incidents is not None:
             incidents = list(self._incidents.values())
+            if open_only:
+                incidents = [i for i in incidents if str(i.get("status") or "").lower() in ("open", "investigating")]
         elif not self._incidents_api_url:
             self._last_error = True
+            if raise_on_error:
+                raise RuntimeError("PANTHEON_INCIDENTS_API_URL is unconfigured")
             return []
         else:
             q = [("severity", severity)] if severity else []
             if affected_pool_id:
                 q.append(("capital_pool_id", affected_pool_id))
+            if open_only:
+                q.append(("open_only", "true"))
             st_parts = [s.strip() for s in status.split(",") if s.strip()] if status else []
             if len(st_parts) == 1:
                 q.append(("status", st_parts[0].lower()))
@@ -501,6 +520,8 @@ class DomainIncidentPort:
                 )
                 incidents = [r for r in fetched if isinstance(r, dict)]
             except Exception:
+                if raise_on_error:
+                    raise
                 return []
         if status:
             requested = {s.strip().lower() for s in status.split(",") if s.strip()}
@@ -1057,8 +1078,11 @@ class DomainGovernancePort:
         return json.loads(json.dumps(events))
 
 
-class DomainLineagePort:
-    """Lineage and Inspiration graph domain reader adapter."""
+class InMemoryLineagePort:
+    """Test double: lineage edges / inspiration graphs injected by fixtures.
+
+    Never constructed on the production path; ``DomainLineagePort`` reads the registry owner.
+    """
 
     def __init__(
         self,
@@ -1213,7 +1237,10 @@ class DomainLineagePort:
         if root_id:
             edges = [
                 e for e in edges
-                if e.get("from_artifact_id") == root_id or e.get("to_artifact_id") == root_id
+                if root_id in (
+                    e.get("from_artifact_id"), e.get("to_artifact_id"),
+                    e.get("source_id"), e.get("target_id"), e.get("strategy_id"),
+                )
             ]
         return sorted(edges, key=self._lineage_edge_sort_key, reverse=True)
 
@@ -1541,6 +1568,152 @@ class DomainTelemetryPort:
         return [json.loads(json.dumps(r)) for r in self._paper_live_drift_reports]
 
 
+_LINEAGE_OUTCOME: "ContextVar[Optional[str]]" = ContextVar("registry_lineage_outcome", default=None)
+_LINEAGE_HAS_MORE: "ContextVar[bool]" = ContextVar("registry_lineage_has_more", default=False)
+
+
+class DomainLineagePort:
+    """Lineage reads from the registry owner (``GET /api/registry/lineage``).
+
+    The registry derives a bounded, tenant-scoped graph from entry lineage; this
+    port keeps no edge store. The outcome of the latest owner read in the current
+    request is what ``dataset_source`` reports (``service_client`` or ``unavailable``).
+    """
+
+    def __init__(self, *, default_limit: int = 200) -> None:
+        self._default_limit = default_limit
+
+    # -- owner access ---------------------------------------------------
+    def _fetch_graph(self, root_id: Optional[str], depth: int, limit: Optional[int] = None) -> Dict[str, Any]:
+        from services.control_plane.bff.command_adapters.base import http_request_json, registry_url
+        from services.control_plane.bff.core.owner_reads import authorization, verified_caller_tenant
+
+        params = {"depth": max(1, min(int(depth or 3), 20)), "limit": limit or self._default_limit}
+        if root_id:
+            params["root_id"] = root_id
+        path = f"/api/registry/lineage?{urllib.parse.urlencode(params)}"
+        try:
+            auth = authorization.get()
+            if not auth:
+                raise RuntimeError("Registry lineage read requires caller authorization")
+            token = auth.removeprefix("Bearer ").strip()
+            tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+            url = registry_url(path)
+            body = cached_owner_call(
+                ("registry_lineage", url, token, tenant),
+                lambda: http_request_json(url, auth_token=token, tenant_id=tenant),
+            )
+            if (
+                not isinstance(body, dict)
+                or not isinstance(body.get("nodes"), list)
+                or not isinstance(body.get("edges"), list)
+            ):
+                raise RuntimeError("Invalid registry lineage payload")
+        except Exception:
+            _LINEAGE_OUTCOME.set("unavailable")
+            _LINEAGE_HAS_MORE.set(False)
+            return {"nodes": [], "edges": [], "has_more": False}
+        _LINEAGE_OUTCOME.set("service_client")
+        _LINEAGE_HAS_MORE.set(bool(body.get("has_more")))
+        return body
+
+    @staticmethod
+    def _legacy_edge(edge: Dict[str, Any], nodes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        frm, to, label = str(edge.get("from") or ""), str(edge.get("to") or ""), str(edge.get("label") or "")
+        out = {
+            "id": f"{frm}|{label}|{to}",
+            "from": frm,
+            "to": to,
+            "label": label,
+            "edge_type": label,
+            "from_artifact_id": frm,
+            "to_artifact_id": to,
+        }
+        for side, nid in (("from", frm), ("to", to)):
+            node = nodes.get(nid)
+            if node:
+                out[f"{side}_node"] = node
+                if node.get("type"):
+                    out[f"{side}_artifact_type"] = node["type"]
+        return out
+
+    def _graph_edges(self, root_id: Optional[str], depth: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        body = self._fetch_graph(root_id, depth, limit)
+        nodes = {str(n.get("id")): n for n in body["nodes"] if isinstance(n, dict) and n.get("id")}
+        return [self._legacy_edge(e, nodes) for e in body["edges"] if isinstance(e, dict)]
+
+    # -- LineageReaderPort ---------------------------------------------
+    def dataset_source(self, dataset: str = "lineage_edges") -> str:
+        from services.control_plane.bff.command_adapters.base import get_base_url
+
+        try:
+            get_base_url("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_URL")
+        except RuntimeError:
+            return "unavailable"
+        return _LINEAGE_OUTCOME.get() or "service_client"
+
+    def lineage_has_more(self) -> bool:
+        """Whether the latest owner read in this request was truncated by ``limit``."""
+        return _LINEAGE_HAS_MORE.get()
+
+    def list_lineage_edges(
+        self,
+        artifact_id: Optional[str] = None,
+        include_fixture_pack: bool = True,
+    ) -> List[Dict[str, Any]]:
+        return self._graph_edges(artifact_id, 1 if artifact_id else 3)
+
+    def list_lineage_records(
+        self,
+        artifact_id: Optional[str] = None,
+        include_fixture_pack: bool = True,
+    ) -> List[Dict[str, Any]]:
+        edges = self._graph_edges(artifact_id, 1 if artifact_id else 3)
+        counts: Dict[str, int] = {}
+        for edge in edges:
+            for key in {edge["from_artifact_id"], edge["to_artifact_id"]}:
+                if key and (artifact_id is None or key == artifact_id):
+                    counts[key] = counts.get(key, 0) + 1
+        return [{"artifact_id": k, "edge_count": counts[k], "last_edge_at": ""} for k in sorted(counts)]
+
+    def get_lineage_edge(self, edge_id: str) -> Optional[Dict[str, Any]]:
+        parts = str(edge_id or "").split("|")
+        if len(parts) != 3 or not parts[0] or not parts[2]:
+            return None
+        for edge in self._graph_edges(parts[2], 1):
+            if edge["id"] == edge_id:
+                return edge
+        return None
+
+    def get_lineage_graph(
+        self,
+        root_type: Optional[str] = None,
+        root_id: Optional[str] = None,
+        depth: int = 3,
+    ) -> List[Dict[str, Any]]:
+        return self._graph_edges(root_id, depth)
+
+    def get_lineage_graph_nodes(self, edges: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        nodes: Dict[str, Dict[str, Any]] = {}
+        for edge in edges:
+            for side in ("from", "to"):
+                node = edge.get(f"{side}_node")
+                nid = str(edge.get(f"{side}_artifact_id") or "")
+                if nid and nid not in nodes:
+                    base = dict(node) if isinstance(node, dict) else {"id": nid, "label": nid}
+                    base["artifact_id"] = nid
+                    base["artifact_type"] = str(base.get("type") or "")
+                    nodes[nid] = base
+        return [nodes[k] for k in sorted(nodes)]
+
+    def artifact_exists(self, artifact_id: str) -> bool:
+        key = str(artifact_id or "").strip()
+        return bool(key) and bool(self._fetch_graph(key, 1, 1).get("nodes"))
+
+    def get_inspiration_graph(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        return None  # no inspiration store exists; ew04 projects from lineage edges
+
+
 # =====================================================================
 # Composite Port Implementation
 # =====================================================================
@@ -1569,9 +1742,16 @@ class CompositeLifecycleTelemetryGovernancePort:
         status: Optional[str] = None,
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
+        open_only: bool = False,
+        raise_on_error: bool = False,
     ) -> List[Dict[str, Any]]:
+        extra: Dict[str, Any] = {}
+        if open_only:
+            extra["open_only"] = True
+        if raise_on_error:
+            extra["raise_on_error"] = True
         return self.incidents.list_incidents(
-            status=status, severity=severity, affected_pool_id=affected_pool_id
+            status=status, severity=severity, affected_pool_id=affected_pool_id, **extra
         )
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
@@ -1613,6 +1793,10 @@ class CompositeLifecycleTelemetryGovernancePort:
                 except TypeError:
                     if dataset == "incidents":
                         return ds_fn()
+        if dataset == "lineage_edges":
+            ds_fn = getattr(self.lineage, "dataset_source", None)
+            if callable(ds_fn):
+                return ds_fn(dataset)
         return "typed_store"
 
     # LifecycleReaderPort
@@ -1729,6 +1913,10 @@ class CompositeLifecycleTelemetryGovernancePort:
     ) -> List[Dict[str, str]]:
         return self.lineage.get_lineage_graph_nodes(edges)
 
+    def lineage_has_more(self) -> bool:
+        fn = getattr(self.lineage, "lineage_has_more", None)
+        return bool(fn()) if callable(fn) else False
+
     def artifact_exists(self, artifact_id: str) -> bool:
         return self.lineage.artifact_exists(artifact_id)
 
@@ -1821,7 +2009,7 @@ class InMemoryLifecycleTelemetryGovernancePort(CompositeLifecycleTelemetryGovern
             rollback_reviews=rollback_reviews,
             governance_audit_events=governance_audit_events,
         )
-        lin_port = DomainLineagePort(
+        lin_port = InMemoryLineagePort(
             lineage_edges=lineage_edges,
             inspiration_graphs=inspiration_graphs,
             artifact_registry_entries=artifact_registry_entries,

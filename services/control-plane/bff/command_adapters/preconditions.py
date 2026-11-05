@@ -787,6 +787,8 @@ def _catalog_entry_for_command(cmd: OperatorCommand) -> Optional[Any]:
             return get_catalog_entry("PauseEvolutionProgram")
         if norm in {"approveprogram", "approveevolutionprogram"}:
             return get_catalog_entry("ApproveEvolutionProgram")
+        if norm in {"rejectprogram", "rejectevolutionprogram"}:
+            return get_catalog_entry("RejectEvolutionProgram")
         if norm in {"submitevolutionreview"}:
             return get_catalog_entry("SubmitEvolutionReview")
         if norm in {"stop", "stopevolutionprogram"}:
@@ -2507,7 +2509,20 @@ def _validate_evolution_program_action(
         "completeevolutionprogram",
         "approveprogram",
         "approveevolutionprogram",
+        "rejectprogram",
+        "rejectevolutionprogram",
     }
+    if norm in {"approveprogram", "approveevolutionprogram", "rejectprogram", "rejectevolutionprogram"} and str(
+        getattr(identity, "operator_id", "") or ""
+    ).strip().lower() in {"evolution-daily-sweep", "evolution-dispatch-worker"}:
+        raise _err(
+            403,
+            ErrorCode.FORBIDDEN,
+            "System identities can never approve or reject an evolution program",
+            "The authenticated principal is an automated Evolution identity",
+            precondition_failed="human_principal_required",
+            suggestion="A human approver must decide the program",
+        )
     if norm in approver_actions:
         if not {"approver", "admin"}.intersection(identity.roles):
             raise _err(

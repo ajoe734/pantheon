@@ -31,10 +31,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
@@ -50,6 +51,9 @@ MAX_STDIN_TOKEN_CHARACTERS = 8192
 TRANSIENT_HTTP_STATUSES = frozenset({500, 502, 503, 504})
 HTTP_TIMEOUT_SECONDS = 5
 READ_ATTEMPTS = 3
+DEFAULT_MAX_HEARTBEAT_AGE_SECONDS = 120
+HEARTBEAT_RETRY_SLEEP_SECONDS = 5.0
+MIN_RENEWAL_BUDGET_SECONDS = 1.0
 ACQUISITION_IMMUTABLE_FIELDS = (
     "schemaVersion",
     "repository",
@@ -107,6 +111,8 @@ class ApiResponse:
     status: int
     headers: Mapping[str, str]
     payload: Any
+    request_started_monotonic: float | None = None
+    completed_monotonic: float | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,18 @@ class RemoteContent:
     state: dict[str, Any]
     content_sha: str
     server_now: datetime
+    request_started_monotonic: float | None = None
+    completed_monotonic: float | None = None
+
+
+@dataclass(frozen=True)
+class VerifiedRenewalBudget:
+    validity_deadline_utc: datetime
+    deadline_monotonic: float
+    server_now: datetime
+    content_sha: str
+    heartbeat_at: datetime
+    expires_at: datetime
 
 
 def utc_iso(value: datetime) -> str:
@@ -401,6 +419,26 @@ class GitHubClient:
     def __init__(self, token: str, api_url: str = DEFAULT_API_URL) -> None:
         self.token = _require_text(token, TOKEN_ENV)
         self.api_url = api_url.rstrip("/")
+        self._deadline_monotonic: float | None = None
+        self._sleep_offset: float = 0.0
+        self._logical_monotonic: float | None = None
+
+    def now_monotonic(self) -> float:
+        current = time.monotonic() + self._sleep_offset
+        if self._logical_monotonic is None or current > self._logical_monotonic:
+            self._logical_monotonic = current
+        return self._logical_monotonic
+
+    def sleep(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        raw_before = time.monotonic()
+        time.sleep(seconds)
+        raw_after = time.monotonic()
+        actual_advance = max(0.0, raw_after - raw_before)
+        if seconds > actual_advance:
+            self._sleep_offset += seconds - actual_advance
+        self.now_monotonic()
 
     def _request(
         self,
@@ -409,17 +447,72 @@ class GitHubClient:
         *,
         body: Mapping[str, Any] | None = None,
         allowed: Sequence[int] = (200,),
+        deadline_monotonic: float | None = None,
     ) -> ApiResponse:
         # Only replay reads here. A failed write may already have committed;
         # heartbeat recovery must re-read ownership and obtain a fresh CAS SHA.
+        effective_deadline = (
+            deadline_monotonic
+            if deadline_monotonic is not None
+            else self._deadline_monotonic
+        )
         attempts = READ_ATTEMPTS if method == "GET" else 1
+        last_error: Exception | None = None
         for attempt in range(attempts):
+            attempt_started = self.now_monotonic()
+            timeout: float | int = HTTP_TIMEOUT_SECONDS
+            if effective_deadline is not None:
+                remaining = effective_deadline - attempt_started
+                if remaining <= 0:
+                    if last_error is not None:
+                        raise last_error
+                    raise GitHubTransportError(
+                        f"GitHub API request deadline exhausted: {method} {route}"
+                    )
+                if remaining < HTTP_TIMEOUT_SECONDS:
+                    timeout = remaining
             try:
-                return self._request_once(method, route, body=body, allowed=allowed)
+                if timeout == HTTP_TIMEOUT_SECONDS:
+                    response = self._request_once(
+                        method, route, body=body, allowed=allowed
+                    )
+                else:
+                    response = self._request_once(
+                        method,
+                        route,
+                        body=body,
+                        allowed=allowed,
+                        timeout=timeout,
+                    )
+                completed_monotonic = self.now_monotonic()
+                if (
+                    effective_deadline is not None
+                    and completed_monotonic >= effective_deadline
+                ):
+                    raise GitHubTransportError(
+                        f"GitHub API request deadline exhausted after response: {method} {route}"
+                    )
+                return ApiResponse(
+                    response.status,
+                    response.headers,
+                    response.payload,
+                    request_started_monotonic=attempt_started,
+                    completed_monotonic=completed_monotonic,
+                )
             except (GitHubApiError, GitHubTransportError) as exc:
+                last_error = exc
                 if not is_transient_error(exc) or attempt + 1 == attempts:
                     raise
-                time.sleep(attempt + 1)
+                retry_delay: float | int = attempt + 1
+                if effective_deadline is not None:
+                    remaining = effective_deadline - self.now_monotonic()
+                    if remaining <= 0:
+                        raise
+                    if remaining <= retry_delay:
+                        if remaining <= MIN_RENEWAL_BUDGET_SECONDS:
+                            raise
+                        retry_delay = min(1.0, remaining / 2.0)
+                self.sleep(retry_delay)
         raise AssertionError("unreachable")
 
     def _request_once(
@@ -429,6 +522,7 @@ class GitHubClient:
         *,
         body: Mapping[str, Any] | None,
         allowed: Sequence[int],
+        timeout: float | int = HTTP_TIMEOUT_SECONDS,
     ) -> ApiResponse:
         data = None
         if body is not None:
@@ -446,7 +540,7 @@ class GitHubClient:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read().decode("utf-8")
                 payload = json.loads(raw) if raw else None
                 headers = {key.lower(): value for key, value in response.headers.items()}
@@ -527,7 +621,13 @@ class GitHubClient:
             raise LeaseError("GitHub lease content is malformed") from exc
         if not content_sha:
             raise LeaseError("GitHub lease content sha is missing")
-        return RemoteContent(state=state, content_sha=content_sha, server_now=now)
+        return RemoteContent(
+            state=state,
+            content_sha=content_sha,
+            server_now=now,
+            request_started_monotonic=response.request_started_monotonic,
+            completed_monotonic=response.completed_monotonic,
+        )
 
     def put_content(
         self,
@@ -603,6 +703,48 @@ class LeaseManager:
         self.branch = branch
         self.path = path
         self.resource = resource
+        self.max_heartbeat_age_seconds = DEFAULT_MAX_HEARTBEAT_AGE_SECONDS
+        self._sleep_offset: float = 0.0
+        self._logical_monotonic: float | None = None
+        self._active_deadline_monotonic: float | None = None
+        self._recovery_anchor: VerifiedRenewalBudget | None = None
+
+    def _now_monotonic(self) -> float:
+        client_now = getattr(self.client, "now_monotonic", None)
+        if callable(client_now):
+            current = float(client_now())
+        else:
+            current = time.monotonic() + self._sleep_offset
+        if self._logical_monotonic is None or current > self._logical_monotonic:
+            self._logical_monotonic = current
+        if hasattr(self.client, "_logical_monotonic"):
+            setattr(self.client, "_logical_monotonic", self._logical_monotonic)
+        return self._logical_monotonic
+
+    def _sleep(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        client_sleep = getattr(self.client, "sleep", None)
+        if callable(client_sleep):
+            client_sleep(seconds)
+            self._now_monotonic()
+            return
+        raw_before = time.monotonic()
+        time.sleep(seconds)
+        raw_after = time.monotonic()
+        actual_advance = max(0.0, raw_after - raw_before)
+        if seconds > actual_advance:
+            self._sleep_offset += seconds - actual_advance
+        self._now_monotonic()
+
+    @contextmanager
+    def _client_deadline(self, deadline_monotonic: float | None) -> Iterator[None]:
+        previous = getattr(self.client, "_deadline_monotonic", None)
+        setattr(self.client, "_deadline_monotonic", deadline_monotonic)
+        try:
+            yield
+        finally:
+            setattr(self.client, "_deadline_monotonic", previous)
 
     def _validated(self, remote: RemoteContent) -> dict[str, Any]:
         return validate_state(
@@ -860,23 +1002,128 @@ class LeaseManager:
         return result
 
     def heartbeat(
-        self, local_state: Mapping[str, Any], *, ttl_seconds: int
+        self,
+        local_state: Mapping[str, Any],
+        *,
+        ttl_seconds: int,
+        max_heartbeat_age_seconds: int | None = None,
     ) -> tuple[dict[str, Any], str, datetime]:
         if ttl_seconds < 30 or ttl_seconds > 3600:
             raise LeaseError("ttl-seconds must be between 30 and 3600")
-        state, remote = self._matching_remote(local_state, require_active=True)
+        configured_freshness = (
+            self.max_heartbeat_age_seconds
+            if max_heartbeat_age_seconds is None
+            else max_heartbeat_age_seconds
+        )
+        if configured_freshness <= 0:
+            raise LeaseError("max-heartbeat-age-seconds must be positive")
+        effective_freshness_seconds = min(
+            int(configured_freshness), DEFAULT_MAX_HEARTBEAT_AGE_SECONDS
+        )
+        if (
+            self._active_deadline_monotonic is not None
+            and self._now_monotonic() >= self._active_deadline_monotonic
+        ):
+            raise LeaseLost(
+                "dev environment lease validity budget exhausted before renewal read"
+            )
+        read_started_monotonic = self._now_monotonic()
+        with self._client_deadline(self._active_deadline_monotonic):
+            state, remote = self._matching_remote(local_state, require_active=True)
+        observed_monotonic = self._now_monotonic()
+        if (
+            self._active_deadline_monotonic is not None
+            and observed_monotonic >= self._active_deadline_monotonic
+        ):
+            raise LeaseLost(
+                "dev environment lease validity budget exhausted during renewal read"
+            )
+        request_started_monotonic = getattr(
+            remote, "request_started_monotonic", None
+        )
+        anchor_monotonic = (
+            min(read_started_monotonic, float(request_started_monotonic))
+            if request_started_monotonic is not None
+            else read_started_monotonic
+        )
         now = remote.server_now
+        heartbeat_at = parse_utc_iso(state["heartbeatAt"], "heartbeatAt")
+        expires_at = parse_utc_iso(state["expiresAt"], "expiresAt")
+        age = (now - heartbeat_at).total_seconds()
+        freshness_deadline = heartbeat_at + timedelta(
+            seconds=effective_freshness_seconds
+        )
+        if freshness_deadline <= now:
+            raise LeaseLost(
+                f"dev environment lease heartbeat is stale: {age:.0f}s >= "
+                f"{effective_freshness_seconds}s"
+            )
+        validity_deadline_utc = min(expires_at, freshness_deadline)
+        remaining_validity_seconds = (validity_deadline_utc - now).total_seconds()
+        if remaining_validity_seconds <= 0:
+            raise LeaseLost(
+                f"dev environment lease validity budget exhausted at {utc_iso(now)}"
+            )
+        get_elapsed_seconds = max(0.0, observed_monotonic - anchor_monotonic)
+        remaining_after_get_seconds = (
+            remaining_validity_seconds - get_elapsed_seconds
+        )
+        candidate_deadline_monotonic = (
+            anchor_monotonic + remaining_validity_seconds
+        )
+        prior = self._recovery_anchor
+        if (
+            prior is not None
+            and remote.content_sha == prior.content_sha
+            and validity_deadline_utc <= prior.validity_deadline_utc
+        ):
+            deadline_monotonic = min(
+                prior.deadline_monotonic, candidate_deadline_monotonic
+            )
+        else:
+            deadline_monotonic = candidate_deadline_monotonic
+        if remaining_after_get_seconds <= 0 or deadline_monotonic <= observed_monotonic:
+            self._active_deadline_monotonic = deadline_monotonic
+            raise LeaseLost(
+                "dev environment lease validity budget exhausted before renewal write"
+            )
+        budget = VerifiedRenewalBudget(
+            validity_deadline_utc=validity_deadline_utc,
+            deadline_monotonic=deadline_monotonic,
+            server_now=now,
+            content_sha=remote.content_sha,
+            heartbeat_at=heartbeat_at,
+            expires_at=expires_at,
+        )
+        self._recovery_anchor = budget
+        self._active_deadline_monotonic = deadline_monotonic
         renewed = dict(state)
         renewed["heartbeatAt"] = utc_iso(now)
         renewed["expiresAt"] = utc_iso(now + timedelta(seconds=ttl_seconds))
-        content_sha, written_at = self.client.put_content(
-            self.repository,
-            self.branch,
-            self.path,
-            renewed,
-            expected_sha=remote.content_sha,
-            message=f"lease: heartbeat {self.resource} for {state['owner']}",
-        )
+        try:
+            with self._client_deadline(deadline_monotonic):
+                content_sha, written_at = self.client.put_content(
+                    self.repository,
+                    self.branch,
+                    self.path,
+                    renewed,
+                    expected_sha=remote.content_sha,
+                    message=f"lease: heartbeat {self.resource} for {state['owner']}",
+                )
+        except (GitHubApiError, GitHubTransportError) as exc:
+            if is_transient_error(exc):
+                if self._now_monotonic() >= deadline_monotonic:
+                    raise LeaseLost(
+                        "dev environment lease validity budget exhausted during renewal write"
+                    ) from exc
+                setattr(exc, "_verified_renewal_budget", budget)
+            raise
+        if self._now_monotonic() >= deadline_monotonic:
+            raise LeaseLost(
+                "dev environment lease validity budget exhausted after renewal write"
+            )
+        self._recovery_anchor = None
+        self._active_deadline_monotonic = None
         return renewed, content_sha, written_at
 
     def release(self, local_state: Mapping[str, Any]) -> dict[str, Any]:
@@ -944,6 +1191,11 @@ def build_parser() -> argparse.ArgumentParser:
     heartbeat.add_argument("--state-file", required=True)
     heartbeat.add_argument("--ttl-seconds", type=int, default=300)
     heartbeat.add_argument("--interval-seconds", type=float, default=60.0)
+    heartbeat.add_argument(
+        "--max-heartbeat-age-seconds",
+        type=int,
+        default=DEFAULT_MAX_HEARTBEAT_AGE_SECONDS,
+    )
     heartbeat.add_argument("--failure-json-out", default="")
     heartbeat.add_argument("--shutdown-json-out", default="")
     heartbeat.add_argument("--identity-json-out", default="")
@@ -997,11 +1249,29 @@ def emit(payload: Mapping[str, Any], json_out: str = "") -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
+def _retry_sleep_seconds(
+    interval_seconds: float, remaining_seconds: float
+) -> float | None:
+    if remaining_seconds <= MIN_RENEWAL_BUDGET_SECONDS:
+        return None
+    if remaining_seconds > HEARTBEAT_RETRY_SLEEP_SECONDS + MIN_RENEWAL_BUDGET_SECONDS:
+        return min(HEARTBEAT_RETRY_SLEEP_SECONDS, interval_seconds)
+    return min(interval_seconds, 1.0, remaining_seconds / 2.0)
+
+
 def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
     if args.interval_seconds <= 0 or args.interval_seconds >= args.ttl_seconds:
         raise LeaseError("interval-seconds must be positive and less than ttl-seconds")
     if args.parent_pid < 0:
         raise LeaseError("parent-pid must be non-negative")
+    max_heartbeat_age_seconds = getattr(
+        args, "max_heartbeat_age_seconds", DEFAULT_MAX_HEARTBEAT_AGE_SECONDS
+    )
+    if max_heartbeat_age_seconds <= 0:
+        raise LeaseError("max-heartbeat-age-seconds must be positive")
+    manager.max_heartbeat_age_seconds = min(
+        int(max_heartbeat_age_seconds), DEFAULT_MAX_HEARTBEAT_AGE_SECONDS
+    )
     stop = False
 
     def handle_signal(_signum: int, _frame: Any) -> None:
@@ -1023,12 +1293,11 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
             0o644,
         )
     sleep_seconds = args.interval_seconds
-    transient_failures = 0
     while not stop:
         slept = 0.0
         while not stop and slept < sleep_seconds:
             interval = min(0.5, sleep_seconds - slept)
-            time.sleep(interval)
+            manager._sleep(interval)
             slept += interval
         if stop:
             break
@@ -1040,18 +1309,19 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
             atomic_write_json(
                 args.state_file, public_state(state, content_sha=content_sha), 0o600
             )
-            transient_failures = 0
             sleep_seconds = args.interval_seconds
         except Exception as exc:
-            # A 5xx or ambiguous write is not proof of ownership loss. Retry
-            # one complete renewal promptly, including a fresh authoritative
-            # read/CAS. Never extend local expiry or trust the runner clock.
-            # Reads have their own bounded retry; two renewal attempts keep
-            # this recovery below the normal 120s heartbeat freshness limit.
-            if is_transient_error(exc):
-                transient_failures += 1
-                if transient_failures < 2:
-                    sleep_seconds = min(5.0, args.interval_seconds)
+            # A transient PUT failure after a verified fresh authoritative
+            # same-owner GET may recover while conservative validity remains
+            # within min(remote expiresAt, remote heartbeatAt + freshness<=120s).
+            # Every retry re-reads remote state and obtains a fresh CAS SHA.
+            budget = getattr(exc, "_verified_renewal_budget", None)
+            if is_transient_error(exc) and isinstance(budget, VerifiedRenewalBudget):
+                remaining = budget.deadline_monotonic - manager._now_monotonic()
+                retry_sleep = _retry_sleep_seconds(args.interval_seconds, remaining)
+                if retry_sleep is not None:
+                    manager._active_deadline_monotonic = budget.deadline_monotonic
+                    sleep_seconds = retry_sleep
                     print(
                         json.dumps(
                             {

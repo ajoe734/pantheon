@@ -1190,15 +1190,25 @@ def register_entry(
 
 
 @app.get("/api/registry/entries/{registry_id}", response_model=RegistryEntryView)
-def get_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+def get_entry(
+    registry_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
     """Read one registry entry with derived deployment_stage (tenant-scoped)."""
-    ctx = _authenticate_registry_read(authorization)
+    ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
     registry_service = get_registry_service()
     try:
         view = registry_service.get(registry_id)
     except RegistryError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    return _authorize_read(ctx, view)
+    _authorize_read(ctx, view)
+    if header_tenant is not None and view.entry.owner_tenant not in (header_tenant, BUILTIN_TENANT):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Registry entry {view.entry.registry_id!r} is not visible to this caller's tenant.",
+        )
+    return view
 
 
 @app.get(
@@ -1551,6 +1561,26 @@ def _persona_binding_rows(
     return [{"entry": row} for row in rows if wanted_state is None or row.get("artifact_state") == wanted_state]
 
 
+@app.get("/api/registry/lineage")
+def read_lineage_graph(
+    root_id: Optional[str] = None,
+    depth: int = Query(default=3, ge=1, le=20),
+    limit: int = Query(default=200, ge=1, le=1000),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
+    """Tenant-scoped, bounded lineage graph (nodes/edges/has_more) derived from entry lineage.
+
+    Same visible-tenant rule as the persona-binding view; without ``root_id`` it
+    starts from the most recent execution bundles and is capped by ``limit``.
+    """
+    ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+    return JSONResponse(get_registry_service().lineage_graph(
+        visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+        root_id=root_id, depth=depth, limit=limit,
+    ))
+
+
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
@@ -1645,13 +1675,94 @@ def register_strategy_artifact(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _strategy_artifact_catalog_rows(
+    authorization: Optional[str],
+    x_tenant_id: Optional[str],
+    artifact_state: Optional[ArtifactState] = None,
+    strategy_id: Optional[str] = None,
+) -> list[dict]:
+    """Flat execution-bundle catalog rows with the same visible-tenant rule as persona_binding."""
+    ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+    visible_tenants = _persona_binding_visible_tenants(ctx, header_tenant)
+    svc = get_registry_service()
+    if hasattr(svc, "list_strategy_artifact_rows"):
+        rows = svc.list_strategy_artifact_rows(visible_tenants=visible_tenants)
+    else:
+        rows = svc.store.list_strategy_artifact_rows(visible_tenants=visible_tenants)
+    wanted_state = artifact_state.value if artifact_state is not None else None
+    wanted_strategy = strategy_id.strip() if isinstance(strategy_id, str) and strategy_id.strip() else None
+    filtered = [
+        dict(row)
+        for row in rows
+        if (wanted_state is None or row.get("artifact_state") == wanted_state)
+        and (wanted_strategy is None or row.get("strategy_id") == wanted_strategy)
+    ]
+    filtered.sort(
+        key=lambda r: (str(r.get("created_at") or ""), str(r.get("registry_id") or "")),
+        reverse=True,
+    )
+    return filtered
+
+
+@app.get("/api/registry/strategy-artifacts")
+def list_all_strategy_artifact_entries(
+    artifact_state: Optional[ArtifactState] = None,
+    strategy_id: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=500),
+    page_token: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1, le=500),
+    offset: Optional[int] = Query(default=None, ge=0),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
+    """List execution_bundle catalog rows (tenant-scoped flat projection with paging and total)."""
+    effective_page_size = limit if limit is not None else page_size
+    start = 0
+    if page_token is not None and str(page_token).strip() != "":
+        try:
+            start = int(str(page_token).strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid page_token") from exc
+        if start < 0:
+            raise HTTPException(status_code=400, detail="Invalid page_token")
+    elif offset is not None:
+        start = offset
+    rows = _strategy_artifact_catalog_rows(
+        authorization,
+        x_tenant_id,
+        artifact_state=artifact_state,
+        strategy_id=strategy_id,
+    )
+    total = len(rows)
+    items = rows[start : start + effective_page_size]
+    next_offset = start + len(items)
+    next_page_token = str(next_offset) if (next_offset < total and items) else None
+    return JSONResponse(
+        {
+            "items": items,
+            "total": total,
+            "page_size": effective_page_size,
+            "next_page_token": next_page_token,
+            "page_info": {
+                "total": total,
+                "page_size": effective_page_size,
+                "next_page_token": next_page_token,
+            },
+        }
+    )
+
+
 @app.get(
     "/api/registry/strategy-artifacts/{registry_id}",
     response_model=RegistryEntryView,
 )
-def get_strategy_artifact_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+def get_strategy_artifact_entry(
+    registry_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
     """Read one execution_bundle carrying a StrategyArtifact overlay (tenant-scoped; builtins are public)."""
-    ctx = _authenticate_registry_read(authorization)
+    ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
     registry_service = get_registry_service()
     try:
         view = _ensure_strategy_artifact_view(
@@ -1659,7 +1770,13 @@ def get_strategy_artifact_entry(registry_id: str, authorization: Optional[str] =
         )
     except RegistryError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    return _authorize_read(ctx, view)
+    _authorize_read(ctx, view)
+    if header_tenant is not None and view.entry.owner_tenant not in (header_tenant, BUILTIN_TENANT):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Registry entry {view.entry.registry_id!r} is not visible to this caller's tenant.",
+        )
+    return view
 
 
 @app.get(

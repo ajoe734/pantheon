@@ -79,6 +79,109 @@ class EvidenceReadResult:
         return self.status == "ok"
 
 
+@dataclass
+class ArtifactOwnerReadResult:
+    """Outcome of a single artifact owner read (registry execution bundles or research run outputs)."""
+
+    items: List[Dict[str, Any]]
+    status: str  # "ok" | "failed" | "unconfigured"
+    source: str  # "typed_store" | "service_client" | "unavailable" | "missing"
+    error: Optional[str] = None
+
+
+def normalize_registry_catalog_row(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project a Registry strategy-artifact execution bundle row into the /bff/artifacts catalog shape."""
+    entry = row.get("entry") if isinstance(row.get("entry"), Mapping) else row
+    eval_summary = entry.get("evaluation_summary") if isinstance(entry.get("evaluation_summary"), Mapping) else {}
+    reg_id = entry.get("registry_id") if entry.get("registry_id") is not None else entry.get("id")
+    strat_id = entry.get("strategy_id") if entry.get("strategy_id") is not None else entry.get("name")
+    version = entry.get("version")
+    state = entry.get("artifact_state") if "artifact_state" in entry else entry.get("state")
+    risk = entry.get("risk_level") if "risk_level" in entry else eval_summary.get("risk_level")
+    checksum = entry.get("checksum") if "checksum" in entry else entry.get("hash")
+    approver = entry.get("approver") if "approver" in entry else entry.get("owner")
+    created_at = entry.get("created_at") if "created_at" in entry else entry.get("updatedAt")
+    return {
+        "id": reg_id,
+        "name": strat_id,
+        "kind": "execution_bundle",
+        "version": version,
+        "state": state,
+        "risk": risk,
+        "hash": checksum,
+        "owner": approver,
+        "updatedAt": created_at,
+        "source_kind": "registry",
+    }
+
+
+def project_registry_catalog_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project a Registry strategy-artifact execution bundle into the /bff/artifacts/{id} detail shape."""
+    entry = row.get("entry") if isinstance(row.get("entry"), Mapping) else row
+    catalog_row = normalize_registry_catalog_row(entry)
+    detail = dict(entry)
+    detail.update(catalog_row)
+    if "registry_id" not in detail and catalog_row.get("id") is not None:
+        detail["registry_id"] = catalog_row["id"]
+    if "artifact_id" not in detail and catalog_row.get("id") is not None:
+        detail["artifact_id"] = catalog_row["id"]
+    return detail
+
+
+def normalize_research_catalog_row(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project a Research artifact / run output row into the /bff/artifacts catalog shape.
+
+    Research run outputs have no owner-backed version, state, or risk; keep them None.
+    """
+    saved = row.get("saved_output") if isinstance(row.get("saved_output"), Mapping) else {}
+    run = row.get("run") if isinstance(row.get("run"), Mapping) else {}
+    item_id = row.get("artifact_id") if row.get("artifact_id") is not None else row.get("id")
+    name = row.get("name") if row.get("name") is not None else row.get("title")
+    kind = row.get("artifact_type") if row.get("artifact_type") is not None else row.get("kind")
+    checksum = (
+        row.get("hash")
+        if row.get("hash") is not None
+        else (
+            row.get("checksum")
+            if row.get("checksum") is not None
+            else (saved.get("checksum") if saved.get("checksum") is not None else run.get("artifact_digest"))
+        )
+    )
+    owner = (
+        row.get("owner")
+        if row.get("owner") is not None
+        else (row.get("author") if row.get("author") is not None else row.get("created_by"))
+    )
+    updated_at = (
+        row.get("updatedAt")
+        if row.get("updatedAt") is not None
+        else (row.get("created_at") if row.get("created_at") is not None else row.get("updated_at"))
+    )
+    is_run_output = bool(
+        saved
+        or run
+        or row.get("source_kind") == "research_run_output"
+        or "created_by" in row
+        or "title" in row
+        or row.get("status") in (None, "")
+    )
+    version = None if is_run_output else row.get("version")
+    state = None if is_run_output else (row.get("state") if row.get("state") is not None else row.get("status"))
+    risk = None if is_run_output else (row.get("risk") if row.get("risk") is not None else row.get("risk_level"))
+    return {
+        "id": item_id,
+        "name": name,
+        "kind": kind,
+        "version": version,
+        "state": state,
+        "risk": risk,
+        "hash": checksum,
+        "owner": owner,
+        "updatedAt": updated_at,
+        "source_kind": str(row.get("source_kind") or "research_run_output"),
+    }
+
+
 def normalize_source_ingest_evidence_item(item: Mapping[str, Any]) -> Dict[str, Any]:
     """The one mapping from a source-ingest evidence item to a BFF evidence ref.
 
@@ -388,6 +491,17 @@ class ResearchKnowledgeSourcePort:
     def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
+    def read_registry_strategy_artifacts(self) -> ArtifactOwnerReadResult:
+        raise NotImplementedError
+
+    def read_registry_strategy_artifact_detail(
+        self, artifact_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        raise NotImplementedError
+
+    def read_research_artifact_catalog_rows(self) -> ArtifactOwnerReadResult:
+        raise NotImplementedError
+
     def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -492,6 +606,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         research_experiments_store: Optional[Dict[str, Any]] = None,
         research_write_owner: Optional[Any] = None,
         research_artifacts_store: Optional[Dict[str, Any]] = None,
+        registry_service_url: Optional[str] = None,
+        registry_strategy_artifacts_store: Optional[Dict[str, Any]] = None,
         evidence_refs_store: Optional[Dict[str, Any]] = None,
         search_documents_store: Optional[List[Dict[str, Any]]] = None,
         http_get_fn: Optional[Callable[[str, str], Tuple[bool, Any]]] = None,
@@ -534,9 +650,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         self._research_write_owner: Optional[Any] = research_write_owner
         self._research_write_owner_resolved: bool = research_write_owner is not None
         self._artifacts: Dict[str, Any] = dict(research_artifacts_store or {})
+        self._registry_service_url: Optional[str] = registry_service_url
+        self._registry_strategy_artifacts: Dict[str, Any] = dict(registry_strategy_artifacts_store or {})
+        self._has_injected_registry_strategy_artifacts: bool = registry_strategy_artifacts_store is not None
         self._evidence_refs: Dict[str, Any] = dict(evidence_refs_store or {})
         self._search_documents: List[Dict[str, Any]] = list(search_documents_store or [])
         self._last_governed_search_refs: Dict[str, Dict[str, Any]] = {}
+        self._has_custom_http_get: bool = http_get_fn is not None
         self._http_get = http_get_fn or self._default_http_get
         self._http_post = http_post_fn or self._default_http_post
 
@@ -1686,6 +1806,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             extra_val = raw_version.get(extra_key) or strategy_spec.get(extra_key)
             if extra_val:
                 version[extra_key] = str(extra_val)
+        raw_meta = raw_version.get("metadata") if isinstance(raw_version.get("metadata"), dict) else {}
+        spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
+        merged_meta = {**spec_meta, **raw_meta}
+        if merged_meta:
+            version["metadata"] = copy.deepcopy(merged_meta)
+        top_cap_pool_id = (
+            raw_version.get("capital_pool_id")
+            or raw_version.get("capitalPoolId")
+            or strategy_spec.get("capital_pool_id")
+            or strategy_spec.get("capitalPoolId")
+        )
+        if top_cap_pool_id:
+            version["capital_pool_id"] = str(top_cap_pool_id).strip()
         version["allowedActions"] = cls._kw05_allowed_actions(version)
         return version
 
@@ -1858,9 +1991,64 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         include_retired: bool = False,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
+        use_injected = self._has_injected_strategy_specs and not (
+            os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")
+        )
+        if (
+            not use_injected
+            and not include_retired
+            and not include_fixture_pack
+            and lifecycle_state not in {"retired", "all"}
+        ):
+            from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+
+            base_items = cached_owner_call(
+                ("rks_normalized_strategy_specs", id(self), selected_tenant.get()),
+                lambda: self._list_strategy_specs_uncached(
+                    use_injected=False,
+                    lifecycle_state=None,
+                    source_kind=None,
+                    persona_id=None,
+                    include_retired=False,
+                    include_fixture_pack=False,
+                ),
+            )
+            if lifecycle_state is None and source_kind is None and persona_id is None:
+                return copy.deepcopy(list(base_items))
+            target_pid = str(persona_id) if persona_id else None
+            filtered: List[Dict[str, Any]] = []
+            for item in base_items:
+                if lifecycle_state and item.get("lifecycle_state") != lifecycle_state:
+                    continue
+                if source_kind and item.get("source_kind") != source_kind:
+                    continue
+                if target_pid and target_pid not in set(item.get("persona_ids") or ()):
+                    continue
+                filtered.append(item)
+            return copy.deepcopy(filtered)
+
+        return self._list_strategy_specs_uncached(
+            use_injected=use_injected,
+            lifecycle_state=lifecycle_state,
+            source_kind=source_kind,
+            persona_id=persona_id,
+            include_retired=include_retired,
+            include_fixture_pack=include_fixture_pack,
+        )
+
+    def _list_strategy_specs_uncached(
+        self,
+        *,
+        use_injected: bool,
+        lifecycle_state: Optional[str] = None,
+        source_kind: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        include_retired: bool = False,
+        include_fixture_pack: bool = False,
+    ) -> List[Dict[str, Any]]:
         source_specs = (
             list(self._strategy_specs.values())
-            if self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+            if use_injected
             else self._fetch_canonical_strategy_specs()
         )
         items: List[Dict[str, Any]] = []
@@ -1912,30 +2100,33 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 candidate_count=candidate_count,
                 include_detail_bundles=False,
             )
-            items.append(
-                {
-                    "object_ref": dict(current_version.get("object_ref") or {}),
-                    "strategy_id": strategy_id,
-                    "current_spec_version_id": current_version.get("spec_version_id"),
-                    "current_spec_version": current_version.get("spec_version"),
-                    "title": current_version.get("title"),
-                    "lifecycle_state": current_lifecycle_state,
-                    "source_kind": current_source_kind,
-                    "hypothesis_excerpt": self._kw05_hypothesis_excerpt(current_version.get("hypothesis")),
-                    "version_count": version_count,
-                    "last_modified_at": current_version.get("last_modified_at"),
-                    "route_href": self._kw05_strategy_route_href(strategy_id),
-                    "persona_ids": persona_list,
-                    "governance": current_version.get("governance"),
-                    "market_scope": current_version.get("market_scope"),
-                    "execution_profile": current_version.get("execution_profile"),
-                    "allowedActions": current_version.get("allowedActions"),
-                    "risk": current_version.get("risk"),
-                    "created_at": current_version.get("created_at"),
-                    "tenant_id": current_version.get("tenant_id"),
-                    "strategy_spec_registry_id": current_version.get("strategy_spec_registry_id"),
-                }
-            )
+            item_dict: Dict[str, Any] = {
+                "object_ref": dict(current_version.get("object_ref") or {}),
+                "strategy_id": strategy_id,
+                "current_spec_version_id": current_version.get("spec_version_id"),
+                "current_spec_version": current_version.get("spec_version"),
+                "title": current_version.get("title"),
+                "lifecycle_state": current_lifecycle_state,
+                "source_kind": current_source_kind,
+                "hypothesis_excerpt": self._kw05_hypothesis_excerpt(current_version.get("hypothesis")),
+                "version_count": version_count,
+                "last_modified_at": current_version.get("last_modified_at"),
+                "route_href": self._kw05_strategy_route_href(strategy_id),
+                "persona_ids": persona_list,
+                "governance": current_version.get("governance"),
+                "market_scope": current_version.get("market_scope"),
+                "execution_profile": current_version.get("execution_profile"),
+                "allowedActions": current_version.get("allowedActions"),
+                "risk": current_version.get("risk"),
+                "created_at": current_version.get("created_at"),
+                "tenant_id": current_version.get("tenant_id"),
+                "strategy_spec_registry_id": current_version.get("strategy_spec_registry_id"),
+            }
+            if current_version.get("capital_pool_id"):
+                item_dict["capital_pool_id"] = current_version.get("capital_pool_id")
+            if current_version.get("metadata"):
+                item_dict["metadata"] = current_version.get("metadata")
+            items.append(item_dict)
 
         items.sort(
             key=lambda item: (
@@ -1980,7 +2171,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
         if not d:
             return None
-        return {
+        spec: Dict[str, Any] = {
             "strategy_id": d.get("strategy_id"), "tenant_id": d.get("tenant_id"),
             "title": d.get("title"), "name": d.get("title"),
             "spec_version_id": d.get("spec_version_id"),
@@ -1988,6 +2179,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "spec_version": d.get("spec_version"), "lifecycle_state": d.get("lifecycle_state"),
             "risk": d.get("risk"), "last_modified_at": d.get("last_modified_at"),
         }
+        if d.get("capital_pool_id"):
+            spec["capital_pool_id"] = d.get("capital_pool_id")
+        if d.get("metadata"):
+            spec["metadata"] = d.get("metadata")
+        return spec
 
     @staticmethod
     def _strategy_owner_error(status: int, code: str, message: str, reason: str) -> Any:
@@ -2024,6 +2220,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
 
     def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
         sid = str(strategy_id).strip() if strategy_id is not None else ""
+        from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+
+        if not sid:
+            return cached_owner_call(
+                ("rks_canonical_strategy_specs", id(self), selected_tenant.get()),
+                lambda: self._fetch_canonical_strategy_specs_uncached(""),
+            )
+        return self._fetch_canonical_strategy_specs_uncached(sid)
+
+    def _fetch_canonical_strategy_specs_uncached(self, sid: str) -> List[Dict[str, Any]]:
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
         from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
@@ -2075,6 +2281,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             state = entry.get("artifact_state") or inner.get("lifecycle_state") or meta.get("lifecycle_state") or meta.get("state") or meta.get("status") or "draft"
             title = inner.get("title") or meta.get("title") or meta.get("name") or entry_sid
             risk = meta.get("risk") or inner.get("risk") or eval_summary.get("risk_level") or (inner.get("governance") or {}).get("risk_level") or (meta.get("governance") or {}).get("risk_level")
+            merged_meta = {**inner_meta, **meta}
             ver_dict: Dict[str, Any] = {
                 **inner, "strategy_id": entry_sid, "tenant_id": entry_tenant or caller_tenant,
                 "strategy_spec_registry_id": reg_id, "spec_version_id": reg_id,
@@ -2085,6 +2292,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "updated_at": entry.get("updated_at") or entry.get("created_at"),
                 "created_by": prov.get("created_by") or meta.get("requested_by") or (entry.get("last_actor") or {}).get("actor_id"),
             }
+            if merged_meta:
+                ver_dict["metadata"] = merged_meta
             if risk:
                 ver_dict["risk"] = risk
             grouped.setdefault(entry_sid, []).append(ver_dict)
@@ -2093,13 +2302,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         for entry_sid, versions in grouped.items():
             ordered = self._kw05_sort_versions(versions)
             latest = ordered[0]
-            specs.append({
+            spec_entry: Dict[str, Any] = {
                 "strategy_id": entry_sid, "tenant_id": latest.get("tenant_id"),
                 "title": latest.get("title"), "name": latest.get("name"),
                 "lifecycle_state": latest.get("lifecycle_state"), "risk": latest.get("risk"),
                 "current_spec_version_id": latest.get("spec_version_id"),
                 "current_spec_version": latest.get("spec_version"), "versions": ordered,
-            })
+            }
+            if latest.get("metadata"):
+                spec_entry["metadata"] = latest.get("metadata")
+            specs.append(spec_entry)
         return specs
 
     def _resolve_canonical_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -2784,6 +2996,158 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 row = owner.get_research_artifact(str(artifact_id))
                 artifact = self._saved_output_artifact(row) if isinstance(row, dict) else None
         return self._project_research_artifact_detail(artifact) if isinstance(artifact, dict) else None
+
+    def _resolve_registry_base_url(self) -> str:
+        return (
+            self._registry_service_url
+            or os.getenv("PANTHEON_REGISTRY_API_URL")
+            or os.getenv("PANTHEON_REGISTRY_URL")
+            or ""
+        ).strip().rstrip("/")
+
+    def _registry_http_get(self, base_url: str, path: str) -> Tuple[int, Any]:
+        if self._has_custom_http_get:
+            ok, payload = self._http_get(base_url, path)
+            return (200 if ok else 503), payload
+        if not base_url:
+            return 0, None
+        import urllib.error
+        import urllib.request
+        from ..core.owner_reads import authorization, selected_tenant
+
+        auth_val = authorization.get()
+        if not auth_val:
+            svc_tok = (
+                os.getenv("PANTHEON_REGISTRY_SERVICE_TOKEN")
+                or os.getenv("PANTHEON_SERVICE_TOKEN")
+                or ""
+            ).strip()
+            if svc_tok:
+                auth_val = svc_tok if svc_tok.lower().startswith("bearer ") else f"Bearer {svc_tok}"
+        headers = {
+            k: v
+            for k, v in (
+                ("Authorization", auth_val),
+                ("X-Tenant-Id", selected_tenant.get()),
+            )
+            if v
+        }
+        url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=5.0) as resp:
+                raw = resp.read()
+                payload = json.loads(raw.decode("utf-8")) if raw else None
+                return int(getattr(resp, "status", 200) or 200), payload
+        except urllib.error.HTTPError as exc:
+            return int(exc.code or 500), None
+        except Exception:
+            return 0, None
+
+    def read_registry_strategy_artifacts(self) -> ArtifactOwnerReadResult:
+        base_url = self._resolve_registry_base_url()
+        if self._has_injected_registry_strategy_artifacts and not base_url:
+            items = [
+                normalize_registry_catalog_row(row)
+                for row in self._registry_strategy_artifacts.values()
+                if isinstance(row, Mapping)
+                and str(
+                    (row.get("entry") if isinstance(row.get("entry"), Mapping) else row).get("artifact_type")
+                    or "execution_bundle"
+                )
+                == "execution_bundle"
+            ]
+            return ArtifactOwnerReadResult(items, "ok", "typed_store")
+        if not base_url:
+            return ArtifactOwnerReadResult([], "unconfigured", "missing")
+        items: List[Dict[str, Any]] = []
+        page_token: Optional[str] = None
+        seen_tokens: set[str] = set()
+        from urllib.parse import quote
+
+        while True:
+            path = "/api/registry/strategy-artifacts?page_size=500"
+            if page_token is not None:
+                path = f"{path}&page_token={quote(str(page_token), safe='')}"
+            status_code, payload = self._registry_http_get(base_url, path)
+            if status_code != 200 or not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+                return ArtifactOwnerReadResult(
+                    [],
+                    "failed",
+                    "unavailable",
+                    f"Registry strategy-artifacts read failed (status={status_code})",
+                )
+            for raw_item in payload["items"]:
+                if not isinstance(raw_item, Mapping):
+                    continue
+                entry = raw_item.get("entry") if isinstance(raw_item.get("entry"), Mapping) else raw_item
+                if entry.get("artifact_type") not in (None, "execution_bundle"):
+                    continue
+                items.append(normalize_registry_catalog_row(entry))
+            next_token = payload.get("next_page_token")
+            if next_token is None and isinstance(payload.get("page_info"), Mapping):
+                next_token = payload["page_info"].get("next_page_token")
+            if not next_token or str(next_token) in seen_tokens:
+                break
+            seen_tokens.add(str(next_token))
+            page_token = str(next_token)
+        return ArtifactOwnerReadResult(items, "ok", "service_client")
+
+    def read_registry_strategy_artifact_detail(
+        self, artifact_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        clean_id = str(artifact_id or "").strip()
+        if not clean_id:
+            return None, "ok"
+        base_url = self._resolve_registry_base_url()
+        if self._has_injected_registry_strategy_artifacts and not base_url:
+            row = self._registry_strategy_artifacts.get(clean_id)
+            if not isinstance(row, Mapping):
+                return None, "ok"
+            entry = row.get("entry") if isinstance(row.get("entry"), Mapping) else row
+            if entry.get("artifact_type") not in (None, "execution_bundle"):
+                return None, "ok"
+            return project_registry_catalog_detail(entry), "ok"
+        if not base_url:
+            return None, "unconfigured"
+        from urllib.parse import quote
+
+        status_code, payload = self._registry_http_get(
+            base_url,
+            f"/api/registry/entries/{quote(clean_id, safe='')}",
+        )
+        if status_code in (404, 403):
+            return None, "ok"
+        if status_code != 200 or not isinstance(payload, dict):
+            return None, "failed"
+        entry = payload.get("entry") if isinstance(payload.get("entry"), Mapping) else payload
+        if not isinstance(entry, Mapping) or entry.get("artifact_type") not in (None, "execution_bundle"):
+            return None, "ok"
+        return project_registry_catalog_detail(entry), "ok"
+
+    def read_research_artifact_catalog_rows(self) -> ArtifactOwnerReadResult:
+        if self._artifacts:
+            return ArtifactOwnerReadResult(
+                [normalize_research_catalog_row(a) for a in self._artifacts.values() if isinstance(a, Mapping)],
+                "ok",
+                "typed_store",
+            )
+        owner = self._get_research_write_owner()
+        if owner is None or not hasattr(owner, "list_research_artifacts"):
+            return ArtifactOwnerReadResult([], "unconfigured", "missing")
+        try:
+            raw_rows = owner.list_research_artifacts()
+        except Exception as exc:
+            return ArtifactOwnerReadResult([], "failed", "unavailable", str(exc))
+        if not isinstance(raw_rows, list):
+            return ArtifactOwnerReadResult([], "failed", "unavailable", "invalid research artifact list")
+        items = [
+            normalize_research_catalog_row(
+                self._saved_output_artifact(r) if ("title" in r or "run" in r or "created_by" in r) else r
+            )
+            for r in raw_rows
+            if isinstance(r, Mapping)
+        ]
+        return ArtifactOwnerReadResult(items, "ok", "service_client")
 
     @staticmethod
     def _rw05_field_value(artifact: Dict[str, Any], field_key: str) -> Any:

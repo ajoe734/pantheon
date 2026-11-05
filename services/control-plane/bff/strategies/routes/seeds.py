@@ -243,21 +243,18 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 suggestions.append(item)
         return suggestions
 
-    def _strategy_seed_persona_suggestions(
-        seed: Any,
-        *,
-        snapshot_at: str,
+    def _load_persona_strategy_profiles(
         tenant_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        suggestions: List[Dict[str, Any]] = []
+    ) -> List[Tuple[str, Any]]:
         if ctx.list_persona_records is None:
-            return suggestions
+            return []
         try:
             personas = ctx.list_persona_records(tenant_id)
         except Exception as exc:  # pragma: no cover
             log.warning("Persona read surface unavailable for seed inbox suggestions: %s", exc)
-            return suggestions
+            return []
 
+        profiles: List[Tuple[str, Any]] = []
         for persona in personas:
             persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
             if not persona_id:
@@ -270,7 +267,29 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                     route_policy=route_policy,
                     capability_snapshot=capability_snapshot,
                 )
-                matches = PersonaStrategyDiscoveryService().match_candidates(
+                profiles.append((persona_id, profile))
+            except Exception as exc:  # pragma: no cover
+                log.warning("Persona strategy suggestion failed for %s: %s", persona_id, exc)
+                continue
+        return profiles
+
+    def _strategy_seed_persona_suggestions(
+        seed: Any,
+        *,
+        snapshot_at: str,
+        tenant_id: Optional[str] = None,
+        persona_profiles: Optional[List[Tuple[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        suggestions: List[Dict[str, Any]] = []
+        profiles = (
+            persona_profiles
+            if persona_profiles is not None
+            else _load_persona_strategy_profiles(tenant_id)
+        )
+        discovery_service = PersonaStrategyDiscoveryService()
+        for persona_id, profile in profiles:
+            try:
+                matches = discovery_service.match_candidates(
                     profile,
                     strategy_seeds=[seed],
                     strategy_specs=[],
@@ -308,6 +327,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         *,
         snapshot_at: str,
         tenant_id: Optional[str] = None,
+        persona_profiles: Optional[List[Tuple[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         seen: Set[Tuple[str, str, str]] = set()
         suggestions: List[Dict[str, Any]] = []
@@ -317,6 +337,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 seed,
                 snapshot_at=snapshot_at,
                 tenant_id=tenant_id,
+                persona_profiles=persona_profiles,
             ),
         ]:
             key = (
@@ -330,7 +351,11 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             suggestions.append(item)
         return suggestions
 
-    def _strategy_seed_similar_existing_strategies(seed: Any) -> List[Dict[str, Any]]:
+    def _strategy_seed_similar_existing_strategies(
+        seed: Any,
+        *,
+        strategy_candidates: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
         metadata = dict(getattr(seed, "metadata", {}) or {})
         raw = metadata.get("similar_existing_strategies") or []
         if isinstance(raw, str):
@@ -344,10 +369,13 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         family = _strategy_seed_strategy_family(seed)
         if not family:
             return []
-        try:
-            candidates = ctx.list_strategy_summaries_records()
-        except Exception:  # pragma: no cover
-            return []
+        if strategy_candidates is not None:
+            candidates = strategy_candidates
+        else:
+            try:
+                candidates = ctx.list_strategy_summaries_records()
+            except Exception:  # pragma: no cover
+                return []
         similar: List[Dict[str, Any]] = []
         for item in candidates:
             strategy_family = str(
@@ -414,12 +442,15 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         snapshot_at: str,
         include_audit: bool = False,
         tenant_id: Optional[str] = None,
+        persona_profiles: Optional[List[Tuple[str, Any]]] = None,
+        strategy_candidates: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         status = _strategy_seed_status_value(seed)
         suggestions = _strategy_seed_suggestions(
             seed,
             snapshot_at=snapshot_at,
             tenant_id=tenant_id,
+            persona_profiles=persona_profiles,
         )
         lineage = dict(getattr(seed, "lineage", {}) or {})
         metadata = dict(getattr(seed, "metadata", {}) or {})
@@ -450,7 +481,10 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             "evidence_count": len(set([*evidence_refs, *citation_refs])),
             "confidence": getattr(seed, "confidence", None),
             "negative_memory_warning": _strategy_seed_negative_memory_warning(seed),
-            "similar_existing_strategies": _strategy_seed_similar_existing_strategies(seed),
+            "similar_existing_strategies": _strategy_seed_similar_existing_strategies(
+                seed,
+                strategy_candidates=strategy_candidates,
+            ),
             "recommended_action": _strategy_seed_recommended_action(
                 status=status,
                 seed_kind=seed_kind,
@@ -528,18 +562,30 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 min_confidence=min_confidence,
             )
         ]
-        cards = [
-            _strategy_seed_card(seed, snapshot_at=snapshot_at, tenant_id=tenant_id)
-            for seed in seeds
+        total_items = len(seeds)
+        page_seeds, next_page_token = ctx.page_slice(seeds, page_token, page_size)
+        persona_profiles = _load_persona_strategy_profiles(tenant_id) if page_seeds else []
+        try:
+            strategy_candidates = ctx.list_strategy_summaries_records() if page_seeds else []
+        except Exception:  # pragma: no cover
+            strategy_candidates = []
+        page_items = [
+            _strategy_seed_card(
+                seed,
+                snapshot_at=snapshot_at,
+                tenant_id=tenant_id,
+                persona_profiles=persona_profiles,
+                strategy_candidates=strategy_candidates,
+            )
+            for seed in page_seeds
         ]
-        page_items, next_page_token = ctx.page_slice(cards, page_token, page_size)
         store_path = ctx.service.get_seed_store_path() if ctx.service else ""
         return {
             "data": {
                 "id": "management_strategy_seeds",
                 "items": page_items,
                 "summary": {
-                    "total_items": len(cards),
+                    "total_items": total_items,
                     "returned_items": len(page_items),
                     "research_only": True,
                     "execution_route": "none",
@@ -547,13 +593,13 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
             },
             "page_info": {
                 "next_page_token": next_page_token,
-                "total": len(cards),
+                "total": total_items,
                 "page_size": page_size,
             },
             "meta": {
                 "snapshot_at": snapshot_at,
                 "store_path": store_path,
-                "count": len(cards),
+                "count": total_items,
                 "filters": {
                     "status": status,
                     "source_kind": source_kind,

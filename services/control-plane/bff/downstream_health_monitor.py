@@ -2334,6 +2334,8 @@ class DownstreamHealthMonitor:
             "controller_name": LOOP_12_CONTROLLER_NAME,
             "deployment_sha": os.environ.get("GIT_SHA", "unknown"),
             "last_heartbeat_at": now_iso,
+            "last_tick_at": now_iso if (total_targets > 0 and overall_ok) else None,
+            "last_success_at": now_iso if (total_targets > 0 and overall_ok) else None,
             "truth_level": "reconciled_live_proof",
             "ready": overall_ok,
             "status": status,

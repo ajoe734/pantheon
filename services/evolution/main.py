@@ -52,7 +52,7 @@ except ImportError:  # pragma: no cover
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from services.foundation import (
     EventEnvelope,
     FoundationValidationError,
@@ -63,7 +63,7 @@ from services.foundation import (
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.governance.approval_authority import (
-    ApprovalInvalid, ApprovalUnavailable,
+    ApprovalInvalid, ApprovalUnavailable, configured_approval_reader,
 )
 
 # ---------------------------------------------------------------------------
@@ -84,6 +84,9 @@ from deployment_plan import DeploymentStage  # type: ignore
 from evolution_decision import (  # type: ignore
     DEFAULT_TENANT_ID,
     EvolutionActionType,
+    APPROVAL_OWNER_MATRIX,
+    REVIEW_OWNER_MATRIX,
+    RiskLevel,
     EvolutionActorRole,
     EvolutionDecision,
     EvolutionDecisionError,
@@ -145,6 +148,8 @@ from services.evolution.dispatch_outbox import (
     EvolutionDispatchError,
     EvolutionDispatchOutbox,
     build_dispatch_outbox_store,
+    install_program_approval_resolver,
+    install_program_sibling_resolver,
 )
 from services.evolution.dispatch_receipts import (
     DispatchReceiptError,
@@ -159,6 +164,9 @@ from services.evolution.threshold_sweep_worker import (
     default_fetch_summaries,
     load_baselines,
     load_thresholds,
+    metric_is_stale,
+    summary_field_for_metric,
+    summary_is_stale_or_degraded,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -482,12 +490,196 @@ evaluator = ThresholdEvaluator()
 # /api/evolution path above; real lifecycle actions remain U8B's obligation
 # and are not exposed by this router.
 # ---------------------------------------------------------------------------
+from services.evolution.program_qualification import (
+    ProgramQualifier,
+    QualificationOwnerReader,
+    QualificationReportStore,
+)
+from services.evolution.cooldown_enforcement import (
+    EmittedProposalRecord,
+    enforce_proposal_cooldown,
+    record_emitted_proposal,
+)
 from services.evolution.program_router import create_program_router
-from services.evolution.program_service import ProgramService
+from services.evolution.program_service import (
+    DecisionAdvanceRefused,
+    ProgramApprovalVerifier,
+    ProgramService,
+    ProgramValidationError,
+)
 from services.evolution.program_store import build_program_store
 
 program_store = build_program_store(Path(EVOLUTION_DATA_DIR) / "programs.json")
-program_service = ProgramService(program_store)
+class _EvolutionDecisionGateway:
+    """Program owner -> EvolutionDecision, through the *existing* review /
+    approve / reject endpoints and the existing dispatch outbox only."""
+
+    @staticmethod
+    def _refuse(decision_id: str, exc: HTTPException) -> DecisionAdvanceRefused:
+        return DecisionAdvanceRefused(decision_id, str(exc.detail))
+
+    @staticmethod
+    def _summary(decision: EvolutionDecision) -> Dict[str, Any]:
+        record = dispatch_outbox.get(decision.tenant_id, decision.decision_id)
+        return {
+            "decision_id": decision.decision_id,
+            "decision_state": _enum_value(decision.decision_state),
+            "approval_decision_id": decision.approval_decision_id,
+            "outbox_id": record.outbox_id if record is not None else None,
+        }
+
+    # A governance decider's role covers these EvolutionDecision roles, most
+    # specific first.  Seniority only widens downward; it never invents a role
+    # the decider does not hold (a governance_reviewer cannot act as risk_owner).
+    _COVERS = {
+        "governance_reviewer": ("reviewer_on_duty",),
+        "risk_owner": ("risk_owner", "reviewer", "reviewer_on_duty"),
+        "governance_committee": ("governance_committee", "risk_owner", "reviewer", "reviewer_on_duty"),
+    }
+
+    @classmethod
+    def _decision_role(cls, decision: EvolutionDecision, governance_role: str, matrix) -> str:
+        allowed = {role.value for role in matrix[RiskLevel(_enum_value(decision.risk_level))]}
+        for candidate in cls._COVERS.get(governance_role, (governance_role,)):
+            if candidate in allowed:
+                return candidate
+        return governance_role  # refused by the decision's own matrix, naming the decision
+
+    def fingerprint(self, decision_id: str, tenant_id: str) -> Optional[str]:
+        decision = store.get(decision_id)
+        if decision is None or decision.tenant_id != tenant_id:
+            return None
+        return _immutable_decision_fingerprint(decision)
+
+    def risk_level(self, decision_id: str, tenant_id: str) -> Optional[str]:
+        decision = store.get(decision_id)
+        if decision is None or decision.tenant_id != tenant_id:
+            return None
+        return str(_enum_value(decision.risk_level))
+
+    @staticmethod
+    def _cooldown_history(decision: EvolutionDecision, *, tenant_id: str) -> List[EmittedProposalRecord]:
+        history: List[EmittedProposalRecord] = []
+        siblings = store.find_by_target(
+            _enum_value(decision.target_type),
+            decision.target_id,
+            tenant_id=tenant_id,
+        )
+        for other in siblings:
+            if other.decision_id == decision.decision_id:
+                continue
+            other_state = _enum_value(other.decision_state)
+            other_payload = {**other.to_dict(), "target_version": None}
+            if other_state == "rejected":
+                rejected_at = next(
+                    (
+                        step.timestamp
+                        for step in reversed(other.review_chain)
+                        if _enum_value(step.step_type) in {"reject", "rejected"}
+                    ),
+                    other.created_at,
+                )
+                history.append(record_emitted_proposal(other_payload, emitted_at=rejected_at))
+            elif other_state == "executed" and other.cooldown_ends_at:
+                history.append(
+                    EmittedProposalRecord.from_mapping(
+                        {
+                            **other_payload,
+                            "emitted_at": other.cooldown_started_at or other.created_at,
+                            "cooldown_window_hours": 24,
+                            "cooldown_ends_at": other.cooldown_ends_at,
+                        }
+                    )
+                )
+        return history
+
+    def advance(self, decision_id, *, tenant_id, actor_id, actor_role, approval_id):
+        decision = store.get(decision_id)
+        if decision is None or decision.tenant_id != tenant_id:
+            raise DecisionAdvanceRefused(decision_id, "decision not found for this tenant")
+        cooldown_check = enforce_proposal_cooldown(
+            decision.to_dict(),
+            self._cooldown_history(decision, tenant_id=tenant_id),
+        )
+        if not cooldown_check.accepted and cooldown_check.rejection is not None:
+            raise DecisionAdvanceRefused(decision_id, cooldown_check.rejection.reason)
+        try:
+            if _enum_value(decision.decision_state) == "proposed":
+                review_proposal(decision_id, ReviewRequest(
+                    actor_role=self._decision_role(decision, actor_role, REVIEW_OWNER_MATRIX),
+                    actor_id=actor_id,
+                    approval_decision_id=approval_id, tenant_id=tenant_id,
+                    note="reviewed through approved program activation",
+                ))
+            if _enum_value(store.get(decision_id).decision_state) == "reviewed":
+                approve_proposal(decision_id, ApproveRequest(
+                    actor_role=self._decision_role(
+                        store.get(decision_id), actor_role, APPROVAL_OWNER_MATRIX),
+                    actor_id=actor_id,
+                    approval_decision_id=approval_id, tenant_id=tenant_id,
+                    note="approved through approved program activation",
+                ))
+        except HTTPException as exc:
+            raise self._refuse(decision_id, exc) from exc
+        decision = store.get(decision_id)
+        state = _enum_value(decision.decision_state)
+        if state not in {"approved", "executing", "executed"} or decision.approval_decision_id != approval_id:
+            raise DecisionAdvanceRefused(
+                decision_id, f"decision is {state} under approval {decision.approval_decision_id}"
+            )
+        return self._summary(decision)
+
+    def reject(self, decision_id, *, tenant_id, actor_id, actor_role, reason):
+        decision = store.get(decision_id)
+        if decision is None or decision.tenant_id != tenant_id:
+            raise DecisionAdvanceRefused(decision_id, "decision not found for this tenant")
+        state = _enum_value(decision.decision_state)
+        if state not in {"proposed", "reviewed"}:
+            raise DecisionAdvanceRefused(decision_id, f"decision is {state}; only proposed or reviewed can be rejected")
+        try:
+            if state == "proposed":
+                review_proposal(decision_id, ReviewRequest(
+                    actor_role=self._decision_role(decision, actor_role, REVIEW_OWNER_MATRIX),
+                    actor_id=actor_id,
+                    approval_decision_id=f"program-reject:{decision_id}", tenant_id=tenant_id,
+                    note="reviewed to record a program rejection",
+                ))
+            reject_proposal(decision_id, RejectRequest(
+                actor_role=self._decision_role(decision, actor_role, REVIEW_OWNER_MATRIX),
+                actor_id=actor_id, note=reason, tenant_id=tenant_id,
+            ))
+        except HTTPException as exc:
+            raise self._refuse(decision_id, exc) from exc
+        return self._summary(store.get(decision_id))
+
+
+def _program_approval_reader():
+    # Late-bound so an unset EVOLUTION_GOVERNANCE_BASE_URL fails closed
+    # (ApprovalUnavailable -> HTTP 503) instead of silently skipping approval.
+    return configured_approval_reader("evolution")
+
+
+def _resolve_program_for_decision(tenant_id: str, decision_id: str, approval_id: str):
+    """The program whose recorded approval is ``approval_id`` and which lists the
+    decision -- the only way a program approval can authorize execution."""
+    for program in program_service.list_programs(tenant_id=tenant_id):
+        if (decision_id in (program.get("source_decision_ids") or [])
+                and (program.get("review") or {}).get("approval_id") == approval_id):
+            return program
+    return None
+
+
+def _resolve_decision_fingerprint(tenant_id: str, decision_id: str):
+    return _EvolutionDecisionGateway().fingerprint(decision_id, tenant_id)
+
+
+program_service = ProgramService(
+    program_store,
+    approval_verifier=ProgramApprovalVerifier(_program_approval_reader),
+    decisions=_EvolutionDecisionGateway(),
+)
+install_program_approval_resolver(_resolve_program_for_decision)
+install_program_sibling_resolver(_resolve_decision_fingerprint)
 app.include_router(
     create_program_router(
         service=program_service,
@@ -549,6 +741,12 @@ _sweep_state: Dict[str, Any] = {
     "total_sweeps_run": 0,
     "total_proposals_created": 0,
 }
+
+_sweep_state.update({
+    "qualifier_last_success_at": None,
+    "qualifier_last_failure_at": None,
+    "qualifier_last_failure_reason": None,
+})
 
 register_fastapi_health_routes(
     app,
@@ -1576,6 +1774,7 @@ def daily_sweep(body: DailySweepRequest):
     persistent store.
     """
     now_str = _format_rfc3339(datetime.now(timezone.utc))
+    tenant_id = _authorized_request_tenant(None)
     try:
         result = run_daily_sweep(
             incident_store=incident_store,
@@ -1585,7 +1784,7 @@ def daily_sweep(body: DailySweepRequest):
             max_incidents=body.max_incidents,
             sweep_id=body.sweep_id,
             evaluator=evaluator,
-            tenant_id=_authorized_request_tenant(None),
+            tenant_id=tenant_id,
         )
     except ValueError as exc:
         _sweep_state["last_failure_at"] = now_str
@@ -1604,7 +1803,76 @@ def daily_sweep(body: DailySweepRequest):
         result.cooldown_blocked,
         result.scanned_incidents,
     )
+    _run_program_qualification(tenant_id, body.sweep_id)
     return result.to_dict()
+
+
+def _run_program_qualification(tenant_id: str, sweep_id: str) -> None:
+    """Qualify proposed decisions after the sweep.
+
+    A qualifier failure never fails or rolls back the sweep response; it is
+    recorded and exposed through ``GET /api/evolution/sweep-status``.
+    """
+    moment = _format_rfc3339(datetime.now(timezone.utc))
+    try:
+        report = program_qualifier.run(tenant_id=tenant_id, sweep_id=sweep_id)
+    except Exception as exc:
+        log.exception("evolution.program_qualification failed sweep_id=%s", sweep_id)
+        _sweep_state["qualifier_last_failure_at"] = moment
+        _sweep_state["qualifier_last_failure_reason"] = f"{exc.__class__.__name__}: {exc}"
+        return
+    if report.get("failure_reason"):
+        _sweep_state["qualifier_last_failure_at"] = moment
+        _sweep_state["qualifier_last_failure_reason"] = report["failure_reason"]
+        return
+    _sweep_state["qualifier_last_success_at"] = moment
+    log.info(
+        "evolution.program_qualification sweep_id=%s evaluated=%d qualified=%d drafted=%d",
+        sweep_id,
+        report["evaluated"],
+        report["qualified"],
+        report["drafted"],
+    )
+
+
+@app.get("/api/evolution/program-qualification")
+def program_qualification_report(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    qualified: Optional[bool] = Query(default=None),
+):
+    """Last qualification report with a paged per-decision list.
+
+    Every decision shows every criterion result so an unqualified decision says
+    why. The report is persisted, so it survives an Evolution restart.
+    """
+    tenant_id = _authorized_request_tenant(None)
+    try:
+        report = program_qualifier.report(tenant_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if report is None:
+        return {
+            "tenant_id": tenant_id,
+            "policy_version": None,
+            "evaluated_at": None,
+            "evaluated": 0,
+            "qualified": 0,
+            "drafted": 0,
+            "counts_by_first_failing_criterion": {},
+            "failure_reason": "no qualification has run",
+            "items": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+        }
+    rows = [
+        row for row in report.get("decisions", [])
+        if qualified is None or bool(row.get("qualified")) is qualified
+    ]
+    page = {key: value for key, value in report.items() if key != "decisions"}
+    page.update({"items": rows[offset:offset + limit], "total": len(rows), "limit": limit, "offset": offset})
+    return page
 
 
 @app.get("/api/evolution/sweep-status")
@@ -1624,6 +1892,9 @@ def sweep_status():
         "last_failure_reason": _sweep_state["last_failure_reason"],
         "total_sweeps_run": _sweep_state["total_sweeps_run"],
         "total_proposals_created": _sweep_state["total_proposals_created"],
+        "qualifier_last_success_at": _sweep_state["qualifier_last_success_at"],
+        "qualifier_last_failure_at": _sweep_state["qualifier_last_failure_at"],
+        "qualifier_last_failure_reason": _sweep_state["qualifier_last_failure_reason"],
         "scheduler_attach": {
             "route": "POST /api/evolution/daily-sweep",
             "worker_module": "services.evolution.scheduler_worker",
@@ -2513,6 +2784,114 @@ _ACTION_PATHS = [
         "notes": "Redeploy is not an independent EvolutionDecision. It must occur within the parent executed decision's observation window and still pass the stage deployment gate.",
     },
 ]
+
+
+# ---------------------------------------------------------------------------
+# Program qualification (EVOLUTION-PROGRAM-QUALIFY-R2-20261105): runs at the end
+# of POST /api/evolution/daily-sweep; see services/evolution/program_qualification.py.
+# ---------------------------------------------------------------------------
+program_qualifier = ProgramQualifier(
+    decision_store=store,
+    program_service=program_service,
+    owner_reader=QualificationOwnerReader.from_env(),
+    report_store=QualificationReportStore(Path(EVOLUTION_DATA_DIR) / "program_qualification_report.json"),
+    action_paths=_ACTION_PATHS,
+    summary_field_for_metric=summary_field_for_metric,
+    summary_is_stale_or_degraded=summary_is_stale_or_degraded,
+    metric_is_stale=metric_is_stale,
+)
+
+
+# --- Program <-> real downstream run ----------------------------------------
+
+class DispatchRunLinkRequest(BaseModel):
+    tenant_id: Optional[str] = None
+    actor_id: str
+    downstream_kind: str
+    downstream_ref_id: str
+
+
+def _adapter_for_kind(kind: str):
+    return next((a for a in receipt_registry.values() if getattr(a, "kind", None) == kind), None)
+
+
+def _dispatch_payload_for(decision_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    record = dispatch_outbox.get(tenant_id, decision_id)
+    return dict(record.event.payload) if record is not None and isinstance(record.event.payload, dict) else None
+
+
+@app.post("/api/evolution/proposals/{decision_id}/dispatch-run")
+def link_dispatch_run(decision_id: str, body: DispatchRunLinkRequest) -> Dict[str, Any]:
+    """Link the dispatch receipt's run id into the program(s) that own the decision.
+
+    The run is read back from its owning plane first: it must exist and belong to
+    this tenant and decision.  A run id the downstream does not confirm is never linked.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
+    if not any(decision_id in (p.get("source_decision_ids") or [])
+               for p in program_service.list_programs(tenant_id=tenant)):
+        # A decision no program owns (e.g. a directly proposed one) has no run to link.
+        return {"decision_id": decision_id, "run_id": body.downstream_ref_id, "linked_programs": []}
+    adapter = _adapter_for_kind(body.downstream_kind)
+    payload = _dispatch_payload_for(decision_id, tenant)
+    if adapter is None or payload is None:
+        raise HTTPException(status_code=409, detail="no dispatch intent or downstream adapter for this decision")
+    receipt = adapter.read_receipt(body.downstream_ref_id, expected_intent=payload)
+    if receipt.outcome in {"terminal_error", "unsupported"}:
+        raise HTTPException(status_code=409, detail=f"downstream run not confirmed: {receipt.detail}")
+    if receipt.outcome == "retryable_error":
+        raise HTTPException(status_code=503, detail=f"downstream run not readable: {receipt.detail}")
+    try:
+        linked = program_service.link_run(
+            tenant_id=tenant, decision_id=decision_id, run_id=body.downstream_ref_id,
+            downstream_kind=body.downstream_kind, actor_id=body.actor_id,
+        )
+    except ProgramValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"decision_id": decision_id, "run_id": body.downstream_ref_id,
+            "linked_programs": [p["program_id"] for p in linked]}
+
+
+_RUN_STATUS_BY_OUTCOME = {
+    "succeeded": "success", "failed": "failed", "pending": "running",
+    "terminal_error": "failed", "retryable_error": "unknown", "unsupported": "unknown",
+}
+
+
+@app.get("/api/evolution/programs/{program_id}/runs")
+def program_runs(program_id: str) -> Dict[str, Any]:
+    """Runs linked to this program, each read back from the owning plane now.
+
+    ``success`` is reported only from a terminal receipt the plane itself
+    returns; a failed or rejected run is ``failed``; an unreadable run is
+    ``unknown``, never assumed successful.
+    """
+    tenant = _current_tenant()
+    program = program_service.get_program(tenant_id=tenant, program_id=program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail=f"Evolution program not found: {program_id}")
+    items = []
+    for link in program.get("run_links") or []:
+        adapter = _adapter_for_kind(link.get("downstream_kind"))
+        receipt = None
+        if adapter is not None:
+            receipt = adapter.read_receipt(
+                link["run_id"], expected_intent=_dispatch_payload_for(link["decision_id"], tenant))
+        outcome = receipt.outcome if receipt is not None else "unsupported"
+        items.append({
+            "run_id": link["run_id"],
+            "decision_id": link["decision_id"],
+            "program_id": program_id,
+            "status": _RUN_STATUS_BY_OUTCOME.get(outcome, "unknown"),
+            "downstream_status": receipt.downstream_status if receipt is not None else None,
+            "detail": receipt.detail if receipt is not None else "no adapter for this run",
+            "source": "orchestrator_readback",
+            "linked_at": link.get("linked_at"),
+        })
+    return {"items": items}
 
 
 # --- Durable dispatch outbox -------------------------------------------------

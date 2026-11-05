@@ -1,0 +1,114 @@
+{
+  "task_id": "BFF-HUMAN-INBOX-TRUTH-20261104",
+  "title": "Human inbox reports nothing to review while critical incidents are open",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "recorded_at": "2026-11-05T02:30:00Z",
+  "verification_scope": "functional_local_only_hosted_deferred_to_HUMAN-INBOX-HOSTED-ACCEPTANCE-20261104",
+  "summary": {
+    "route": "management_read_models/router.py passes timeout_seconds = human_inbox_surface_timeout_seconds() + 1.5 s and a completed_contributors dict; on exception it maps ManagementReadTimeout->read_timeout, ManagementReadSaturated->read_capacity_saturated, other->read_error (warning log naming exception type) and composes completed contributors into a partial payload (_get_human_inbox_degraded_payload).",
+    "service": "ManagementService.get_human_inbox runs approval_queue, governance_review_queue, incidents and persona_readiness concurrently on _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR and composes through compose_human_inbox -> _human_inbox_project_items (canonical projection). Inline item builders deleted. Warm-up loop no longer includes list_incidents.",
+    "port": "DomainIncidentPort/Composite list_incidents gained open_only (owner ?open_only=true) and raise_on_error (default False keeps swallow-to-[]). Extra kwargs are forwarded only when set, so every other caller's call is unchanged.",
+    "projection": "governance/human_inbox.py: incident title from title, summary from evidence_summary, priority from severity, no approve/reject actions; proposed approval -> pending; EvolutionDecision review with neither canApprove nor canReject omitted; review/approval deduped (review-<decision_id>); created_at never filled with request time (details.submitted_at honoured); zero-row success is ok; NL path records per-contributor failures instead of raising."
+  },
+  "mechanism_remaining": {
+    "timeout_definition": "services/control-plane/bff/governance/service.py human_inbox_surface_timeout_seconds (only one; the 3.0 s copy in governance/human_inbox.py and PANTHEON_BFF_HUMAN_INBOX_TIMEOUT_SECONDS are deleted)",
+    "deleted": [
+      "_StoreTimeoutProxy",
+      "ManagementService.get_human_inbox class patch (_bounded_get_human_inbox)",
+      "router _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR",
+      "router _get_human_inbox_surface_timeout"
+    ],
+    "kept": "_HUMAN_INBOX_CONTRIBUTOR_EXECUTOR now lives in management_read_models/service.py and is the one contributor mechanism; _HUMAN_INBOX_READ_SLOTS/_EXECUTOR still bound persona_readiness (existing capacity test unchanged)."
+  },
+  "list_incidents_callers": [
+    {
+      "caller": "management_read_models/service.py get_human_inbox (inbox, detail, hiq-backlog, cockpit section)",
+      "call": "list_incidents(open_only=True, raise_on_error=True)",
+      "checked": "test_open_incidents_and_proposed_approvals_are_listed_with_one_filtered_owner_read, test_a_failed_owner_read_is_never_a_healthy_empty_queue[incidents]"
+    },
+    {
+      "caller": "governance/human_inbox.py _human_inbox_incident_contributor (NL-ask path)",
+      "call": "same via read_open_incidents",
+      "checked": "test_inbox_projection_is_shared_by_the_nl_path_and_the_management_route (owner saw only open_only paths)"
+    },
+    {
+      "caller": "service.py get_operator_alerts, health, trading pulse, persona detail, runtime router, main.py, personas/service.py, incidents/service.py, incidents/router.py",
+      "call": "unchanged arguments, still swallow to []",
+      "checked": "test_other_incident_port_callers_keep_swallowing_failures; test_bff_management_cockpit and incident tests pass"
+    }
+  ],
+  "get_human_inbox_callers": [
+    {
+      "caller": "/bff/management/human-inbox",
+      "checked": "test_human_inbox_truth.py"
+    },
+    {
+      "caller": "/bff/management/human-inbox/{id} detail",
+      "checked": "200 for open incident, 404 for resolved incident (test_detail_hiq_and_cockpit_callers_agree_on_open_items); 503 on partial kept (test_human_inbox_fail_closed_on_contributor_failure_and_partial_503)"
+    },
+    {
+      "caller": "get_hiq_backlog",
+      "checked": "same open items (summary.total equals inbox total); /bff/management/hiq-backlog has no frontend caller; resolved rows were never needed"
+    },
+    {
+      "caller": "cockpit human_inbox section",
+      "checked": "summary incident_count 7, approval_count 3"
+    }
+  ],
+  "field_diff_per_item_type": {
+    "incident": "added item_id, incident_id, details; summary falls back to evidence_summary; created_at from created_at (no request-time fallback); dropped inline-only fields: none read by consumers",
+    "approval": "added item_id, decision_id, details; status falls back to status when decision_state absent; created_at from submitted_at|created_at|recorded_at",
+    "governance_review": "added item_id, details; title/summary from review_summary; created_at only from real times (null otherwise)",
+    "readiness_blocker": "added item_id, details; otherwise identical to previous canonical projection"
+  },
+  "local_measurements": {
+    "setup": "real app, real local HTTP incidents owner serving 2600 real-shape incidents (7 open, 2583 resolved, 2 closed), 3 proposed approvals, 40 EvolutionDecision reviews",
+    "inbox_response_ms": [
+      15,
+      13,
+      13,
+      14,
+      33,
+      24,
+      14,
+      14,
+      12,
+      12
+    ],
+    "owner_request_paths_per_cold_request": [
+      "/api/incidents?open_only=true"
+    ],
+    "owner_ms": {
+      "open_only": 3,
+      "unfiltered_for_comparison": 32
+    },
+    "per_contributor_ms": {
+      "approval_queue": 0.3,
+      "governance_review_queue": 1.3,
+      "incidents": 44.4,
+      "persona_readiness": 1.0
+    },
+    "items": "7 incidents + 3 approvals = 10; no governance_review rows",
+    "hosted_numbers": "not measured here (no VM access); owned by HUMAN-INBOX-HOSTED-ACCEPTANCE-20261104"
+  },
+  "tests": {
+    "new": "services/control-plane/bff/tests/test_human_inbox_truth.py (16 tests)",
+    "results": "test_human_inbox_truth.py 16 passed; test_management_read_timeout_and_capacity.py 6 passed; test_bff_management_cockpit.py 30 passed; test_management_read_models_router.py passed. Every other failure in the 56 human-inbox/incident related test files also fails identically on the untouched base e3bea033a (promotion_review_governance 3, v5_loop_sentinel 3, execute_plans_final 1, mgmt_load_005 1, p0_tw_paper_activate 1, pm12_persona_league 10, control_loops_router 1, seam_extraction_002/005 2, overlay_retirement 1, persona_health_single_owner 2, read_surface_caller_migration 1)."
+  },
+  "changed_assertions": [
+    {
+      "test": "test_human_inbox_capacity_saturation_yields_immediate_degraded_response_and_recovers",
+      "change": "every assertion kept; fixture now gives list_incidents and list_governance_review_queue_items a successful empty read. On the base the test already failed in this environment because unconfigured owners were reported as degraded; a failed read is now (by acceptance 9) never a healthy empty queue, so the recovery assertion needs successful owner reads."
+    },
+    {
+      "test": "test_management_read_models_router.py::test_human_inbox_and_details_and_hiq_backlog",
+      "change": "items 5->4, total 5->4, incident_count 2->1, hiq 5->4: the mock's resolved incident inc-2 must not appear (acceptance 2)."
+    },
+    {
+      "test": "test_bff_management_cockpit.py reload owner fake",
+      "change": "the fake incidents owner now records the requested path including query; assertion count==1 per distinct owner request is kept. The inbox reads ?open_only=true while health/alerts read the unfiltered list, so the single shared '/api/incidents' counter became two distinct requests."
+    }
+  ],
+  "decision_item_c": "EvolutionDecision reviews without approve/reject actions are not listed (coordinator decision 2026-11-05); governance review queue route, evolution journal and decisions untouched."
+}

@@ -59,6 +59,12 @@ def test_every_capability_route_is_actually_mounted():
             f"first_release_contract.json capability {capability['capability']!r} "
             f"names route {capability['route']!r} which is not mounted on the app"
         )
+    for route_spec in contract.get("tenant_scoped_aggregate_reads", {}).get("routes", []):
+        method, path = route_spec.split(" ", 1)
+        assert (method, path) in mounted, (
+            f"first_release_contract.json tenant_scoped_aggregate_reads route {route_spec!r} "
+            "is not mounted on the app"
+        )
 
 
 def test_every_registry_capability_constant_matches_a_contract_capability():

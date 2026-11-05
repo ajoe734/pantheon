@@ -1,0 +1,14 @@
+{
+  "task_id": "HOSTED-E-BASELINE-GROWTH-20261105",
+  "evidence_type": "source_and_unit_regression",
+  "hosted_acceptance": false,
+  "statement": "Source and unit regression evidence only; not hosted acceptance. No hosted run, workflow dispatch, or product runtime/deployment change was made by the owner. The coordinator runs hosted E_close after merge.",
+  "date": "2026-11-05",
+  "changes": [
+    "_baseline_check: count-vs-baseline mismatch removed; fleet snapshot active_count != len(binding_ids) still mismatch",
+    "added bindings sharing chain plan/pool/capital binding/persona/runtime are mismatch (possible chain residue)",
+    "E_close replacement record: active_count_restored replaced by baseline_active_count and active_count_after_close",
+    "design doc section 4 amended with 2026-11-05 note"
+  ],
+  "tests": {"command": "pytest tests/unit/l12 -q", "result": "176 passed"}
+}

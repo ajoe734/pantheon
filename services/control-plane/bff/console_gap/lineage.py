@@ -37,8 +37,9 @@ def create_lineage_router(
         """BFF BFFGAP-LINEAGE: Data/artifact lineage graph (nodes/edges).
 
         Returns the canonical list envelope (data / items / page_info / meta).
-        When the lineage store is missing or unreachable the response carries
-        an explicit degraded envelope instead of a bare [].
+        Reads the registry lineage owner. When the owner is unconfigured or
+        unreachable the response is status "unavailable"; a reachable owner with
+        no lineage is "ok" with zero nodes.
         """
         identity = extract_identity(authorization)
         require_read_role(identity)
@@ -55,13 +56,16 @@ def create_lineage_router(
             depth=depth,
         )
         nodes: List[Dict[str, Any]] = store.get_lineage_graph_nodes(edges)
+        edges = [{k: v for k, v in e.items() if k not in ("from_node", "to_node")} for e in edges]
 
         source: str = str(store.dataset_source("lineage_edges") or "missing")
 
         if source in ("missing", "unavailable"):
             surface_state = "unavailable"
         else:
-            surface_state = "ok" if (edges or nodes) else "degraded"
+            # A real empty graph from a reachable owner is ok with zero nodes.
+            surface_state = "ok"
+        has_more = bool(getattr(store, "lineage_has_more", lambda: False)()) and source not in ("missing", "unavailable")
 
         meta: Dict[str, Any] = {
             **snapshot_meta(snapshot_at),
@@ -109,7 +113,7 @@ def create_lineage_router(
                 "total": len(edges),
                 "page_size": len(edges),
                 "returned": len(edges),
-                "has_more": False,
+                "has_more": has_more,
             },
             "meta": meta,
         }

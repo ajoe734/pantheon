@@ -120,8 +120,9 @@ No valid policy/approval evidence means unavailable or rejected, never success.
 
 | Canonical action | Legal program transition | Minimum role, artifact and readback |
 |---|---|---|
-| `submit_evolution_review` | draft → under_review | operator; immutable program revision/config snapshot and durable `program_activate` review request; read the exact review ID and program revision. Submission is not approval. |
-| `approve_program` | under_review → active | approver plus applicable domain review owners; approved `program_activate` request must bind the same tenant/program/config revision. Read approval + active revision; no implicit research job/deploy. |
+| `submit_evolution_review` | draft → under_review | operator; the BFF files one Governance `evolution_proposal` approval request (the existing target; no new approval store) bound to tenant, `program_id`, the post-submit program revision and a content digest over `source_decision_ids` and each linked decision's immutable content. The request id is deterministic (`apv-program-{program_id}-r{revision}`), so a resubmission reuses it, and it appears in the existing approvals queue. The owner never generates an approval id. Submission is not approval. |
+| `approve_program` | under_review → active | approver; refused unless Governance holds that request in state `approved`, decided by a human principal (never `evolution-daily-sweep` or `evolution-dispatch-worker`), unexpired, with the same tenant/program/revision/content digest. Each refusal (missing, pending, rejected, expired, other tenant, other program, stale revision, system decider) has its own code. Linked decisions then move through the existing review and approve paths on that same approval evidence and each gets exactly one existing dispatch outbox record; if any decision cannot advance (state changed, cooldown or single-active rule) the program stays `under_review` and the response names the decision and reason. A manual program with no source decisions becomes `active` with no run and a receipt stating that no work started. |
+| `reject_program` | under_review → retired | approver, human only; `reason` required. Linked decisions are rejected (a `proposed` decision is first reviewed, then rejected) so the existing cooldown applies. Operator decision 2026-11-04: the review gate is the explicit product decision that this edge needed. |
 | `pause_program` | active → paused | operator; record program control outcome. Active-run drain semantics follow D1: pause halts new generation admission while current runs drain; never mark an individual run paused without its owner acknowledgement. |
 | `resume_program` | paused → active | operator; valid current approval/config and no unresolved freeze/policy restriction. Continuation semantics follow D1: resume schedules eligible new attempts and never revives cancelled runs. Resume cannot undo cancellation or grant promotion. |
 | `complete_program` | active → completed | operator; actual run outcomes and completion evidence. Require no unresolved active work; failures remain failures, not relabelled successful. Read program revision and linked terminal outcomes. |
@@ -134,10 +135,11 @@ No valid policy/approval evidence means unavailable or rejected, never success.
 
 Other lifecycle edges remain invalid (409), including draft→active by PATCH,
 paused→completed, active→retired and retired→active. A rejected or
-changes-requested activation approval is shown as such; a new program transition
-out of under_review is not invented by this task. Any requested new edge needs
-an explicit product decision; the existing review feature remains usable to
-inspect the outcome. Owner `allowedActions` must prevent unsupported retries.
+changes-requested activation approval is shown as such. The only transition out
+of under_review other than `approve_program` is `reject_program`, recorded as the
+operator decision of 2026-11-04; any further new edge needs an explicit product
+decision. Program `allowed_actions` come from one owner policy (status and caller
+role) that the owner also enforces, so unsupported retries are prevented.
 
 Remove old FE `pause` for program targets in favor of `pause_program`, and
 `promote_paper/live` in favor of `promote_candidate_paper/live`; do not remove
@@ -215,6 +217,18 @@ adopted; the alternatives in section 8 are **NOT approved**.
 | D1 | Stop, program pause/resume and effects on active/paused runs are not defined by §8.6 names or FE buttons. | **ADOPT THE PROPOSED CHOICE**: `pause` halts new generation admission while current runs drain; `stop` additionally cancels all nonterminal runs including paused ones and reaches program paused only after owner stop receipts; `resume` schedules eligible new attempts and never revives cancelled runs. | Alternative NOT approved: Stop is only the same drain behavior as Pause (requires explicit acceptance of alias removal and UI wording). | U8B control state/fencing and U8B-FE Stop/Resume; no implementation may invent which runs are killed or resumed. |
 | D2 | Generation freeze has no durable owner record or scope/release semantics. | **ADOPT THE PROPOSED CHOICE**: `freeze` seals current generation membership and artifact versions, prevents additions, mutations and promotion, allows in-flight runs to finish, and release requires the same Governance review. | Alternative NOT approved: also stop current generation runs, requiring D1 owner receipts. Neither choice freezes a live runtime. | U8A control record shape; U8B freeze/release and U8B-FE readback. |
 | D3 | Formula/rule scope and approval/application timing are not specified by display-only FE records. | **ADOPT THE PROPOSED CHOICE**: program-scoped versioned steering; Governance-approved changes affect future runs only and existing attempts pin their original config; preserve all legacy params for migration and add no global competing registry. | Alternative NOT approved: a separate explicit protocol for editing active runs, including owner checkpoint and approval semantics. | U8A typed configuration and U8B constraints/formulas/rules; FE edits remain undelivered until true effects/readback exist. |
+
+**D4 (operator decision 2026-11-04, replaced wording 2026-11-05).** An Evolution
+program may be created manually or automatically, but an automatically created
+program must first pass the qualification standard in
+`EVOLUTION_REVIEW_AND_THRESHOLDS.md` section 17 before it reaches human review.
+Only a decision that passes all six criteria gets a program (`origin=auto_qualified`,
+created by `evolution-daily-sweep`); the system identity submits it for review once
+and goes no further, so approval, dispatch and execution remain human and
+Governance decisions. The create API still accepts only `name` and cannot set
+`origin`, `source_decision_ids` or `qualification`. The earlier one-to-one
+projection of every decision into a program (`scripts/project_evolution_to_bff_surfaces.py`)
+is removed. Owner: `EVOLUTION-PROGRAM-QUALIFY-R2-20261105`.
 
 The six existing program edges, entity separation, metadata safety, tenant and
 replay boundaries, approved-decision engine and feature inventory are already
