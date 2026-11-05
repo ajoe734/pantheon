@@ -32,6 +32,10 @@ from .models import (
     utc_now_iso,
 )
 from .storage import (
+    LINEAGE_LIST_FIELDS,
+    LINEAGE_META_FIELDS,
+    LINEAGE_ROW_KEYS,
+    LINEAGE_SCALAR_FIELDS,
     PERSONA_BINDING_INNER_META_KEYS,
     PERSONA_BINDING_META_KEYS,
     PERSONA_BINDING_ROW_KEYS,
@@ -829,6 +833,19 @@ class PostgresRegistryStore:
             )
         )
 
+    def list_lineage_rows(self, *, visible_tenants: Optional[frozenset] = None) -> list[dict]:
+        """Flat lineage rows projected inside Postgres (no RegistryEntry rebuild).
+
+        The verified visible owner population is the only filter; the JSON
+        leaves read are constant paths, request values travel as parameters.
+        """
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(visible_tenants, None)
+        return lineage_rows_from_columns(
+            self._entries.list_all_selected(
+                lineage_select_sql(), visible_sql=visible_sql, keep_params=params,
+            )
+        )
+
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         entries = self.list_by_strategy(strategy_id)
         approved = [e for e in entries if e.artifact_state.value == "approved"]
@@ -953,6 +970,28 @@ def persona_binding_rows_from_columns(rows) -> list[dict]:
         row["metadata"] = meta
         out.append(row)
     return out
+
+
+def _lineage_leaf_paths() -> list[tuple[str, ...]]:
+    return (
+        [(k,) for k in LINEAGE_ROW_KEYS]
+        + [("lineage", k) for k in LINEAGE_LIST_FIELDS + LINEAGE_SCALAR_FIELDS]
+        + [("metadata", k) for k in LINEAGE_META_FIELDS]
+    )
+
+
+def lineage_select_sql() -> str:
+    """One jsonb leaf (as text) per lineage-row field; missing leaf = SQL NULL, JSON null = ``null``."""
+    return ", ".join(f"({_sql_node(p)})::text" for p in _lineage_leaf_paths())
+
+
+def lineage_rows_from_columns(rows) -> list[dict]:
+    """Assemble ``storage.lineage_row``-shaped dicts from the select columns."""
+    names = list(LINEAGE_ROW_KEYS) + list(LINEAGE_LIST_FIELDS + LINEAGE_SCALAR_FIELDS) + list(LINEAGE_META_FIELDS)
+    return [
+        {name: (json.loads(col) if col is not None else None) for name, col in zip(names, r)}
+        for r in rows
+    ]
 
 
 def _registry_backend() -> str:
