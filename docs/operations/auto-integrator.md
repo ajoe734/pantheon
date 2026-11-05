@@ -129,21 +129,29 @@ and independently verify the runtime paths, receipts, ancestry, and lock log.
 An approved (review-before-merge), green PR whose fresh `mergeStateStatus` is
 `BEHIND` and whose disposable trial merge of the target branch is clean
 (`exact_head_verified_clean`) used to stay `waiting` forever. It is now routed
-through the existing unblock request path (reason `final-merge-state-not-direct`;
-no new dispatcher, inbox, or status mutation):
+through the existing content-addressed unblock inbox with dedicated reason
+`exact-head-behind-base` (`requires_source_reopen` is `True`;
+`requires_repair_task` is `False`):
 
-- At most one BEHIND candidate per repository/target branch is routed per pass:
-  the oldest by approval time (task id breaks ties; never dict or row order).
-  Other BEHIND candidates stay `waiting` and say they are queued behind it.
-- The routed result is `blocked` and carries the unblock task id. Repeated passes
-  for the same PR head and task generation reuse the content-addressed request.
+- At most one BEHIND return per repository and target branch may be outstanding
+  at a time: the oldest eligible candidate by approval time (task id breaks
+  ties; never dict or row order) is returned, and no further BEHIND candidate in
+  that repository/target branch is returned until the returned source task has
+  merged or is no longer open (derived from canonical state and unblock
+  receipts/inbox, with no new store). Other BEHIND candidates stay `waiting` and
+  report which task they are queued behind.
+- Under the canonical task-state lock, the supervisor's
+  `materialize_auto_integrator_unblock_requests` revalidates that the source task
+  is still `review_approved` with the same `generation` and `delivery_binding`
+  PR/head as the request. If stale, it records a rejected receipt and changes
+  nothing. If valid, it runs the canonical `reopen` transition as the task's
+  reviewer—without creating a child repair task—with a fixed message telling the
+  owner to merge `origin/<target>` into the task branch with no other change and
+  resubmit, and telling the reviewer to confirm `git diff origin/<target>...HEAD`
+  equals the previously approved change. Replays are idempotent.
 - Only `BEHIND` routes. Other non-direct merge states keep waiting; a real
   conflict keeps the `exact-head-merge-conflict` path.
-- The integrator never pushes or rewrites the approved head. The owner merges the
-  target branch into the task branch (no force-push); the source task then needs
-  the normal reviewer `reopen` and owner re-handoff at the new head for a new
-  exact-head review. The repair task cannot mutate the source task, so that
-  reopen/re-handoff is a manual canonical step the repair detail states.
+- The integrator never pushes or rewrites the approved head.
 - The one-level repair rule still applies: a repair task that is itself BEHIND is
   excluded from routing and reported as waiting for an operator.
 - Branch protection and the strict requirement are unchanged. Takes effect only
