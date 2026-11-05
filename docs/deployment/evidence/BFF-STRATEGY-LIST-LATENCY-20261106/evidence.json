@@ -30,9 +30,9 @@
     },
     "deterministic_bottlenecks_identified": [
       {
-        "component": "services/control-plane/bff/strategies/service.py",
+        "component": "services/rankings/store.py and services/control-plane/bff/ports/rankings.py",
         "issue": "Unbounded full-history ranking table scan and per-row freeze/thaw/SHA-256 recomputation",
-        "detail": "Candidate 2a2411124c77ddce6c6963d927d99654c7e5f6fe wired GET /bff/strategies to StrategiesService.get_latest_ranking_snapshot() -> RankingSnapshotReadPort.get_latest_ranking_snapshot(), which called records_table.list_all() (SELECT payload FROM \"rankings\".\"rankings\" ORDER BY updated_at ASC) across all 140 historical snapshot rows (each containing 544 persona items) and ran _decode_ranking_snapshot(payload) on every historical row (deep-freezing, deep-thawing, canonical JSON serializing, and SHA-256 digesting ~76,160 persona items per uncached read) before discarding 139 of the 140 rows."
+        "detail": "Candidate 2a2411124c77ddce6c6963d927d99654c7e5f6fe wired GET /bff/strategies to StrategiesService.get_latest_ranking_snapshot() -> RankingSnapshotReadPort.get_latest_ranking_snapshot(). Because RankingReadStore lacked get_latest_ranking_snapshot, RankingSnapshotReadPort fell back to records_table.list_all() (SELECT payload FROM \"rankings\".\"rankings\" ORDER BY updated_at ASC) across all 140 historical snapshot rows (each containing 544 persona items) and ran _decode_ranking_snapshot(payload) on every historical row (deep-freezing, deep-thawing, canonical JSON serializing, and SHA-256 digesting ~76,160 persona items per uncached read) before discarding 139 of the 140 rows."
       },
       {
         "component": "services/control-plane/bff/strategies/routes/collection.py",
@@ -48,15 +48,21 @@
     "unknown_historical_factors_preserved": "Exact host CPU scheduling jitter and concurrent post-switch container warm-up contention at 2026-11-05T17:43:06Z were not separately captured by an in-process profiler; they determined whether the ~17-20s unindexed full-history scan + full-population projection crossed the 20,000ms probe abort boundary on a given request."
   },
   "bounded_remediation": {
-    "services/control-plane/bff/strategies/service.py": "Added _read_latest_ranking_snapshot_from_store and _bounded_latest_ranking_snapshot so Postgres-backed ranking stores execute a bounded SELECT payload ... ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC LIMIT 1 query and decode only the single winning row, while list_all()/list_ranking_snapshots stores select the winning latest candidate by (created_at, idx) before decoding/converting only that single snapshot.",
+    "services/rankings/store.py": "Added RankingReadStore.get_latest_ranking_snapshot(surface='quarterly') so PostgresJsonOwnerStore-backed ranking stores execute a bounded SELECT payload ... WHERE jsonb_typeof(payload) = 'object' AND payload ->> 'record_type' = 'ranking_snapshot' [AND COALESCE(payload ->> 'surface', '') = surface] ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC LIMIT 1 query via _records_table._connect() with zero GET-path DDL (no ensure_schema) and decode only the single winning row, while list_all()-backed stores select the winning latest candidate by (created_at, idx) before decoding only that single snapshot.",
+    "services/control-plane/bff/ports/rankings.py": "Updated RankingSnapshotReadPort.get_latest_ranking_snapshot to delegate to RankingReadStore.get_latest_ranking_snapshot(surface=surface) via normal port wiring and, for injected list_all()/list_ranking_snapshots stores without get_latest_ranking_snapshot, select the winning latest candidate by (created_at, idx) before decoding or converting only that single winning snapshot.",
+    "services/control-plane/bff/strategies/service.py": "Kept StrategiesService.get_latest_ranking_snapshot on clean public read_surface / owner_reads.latest_ranking_snapshot wiring with zero closure reflection, zero private BFF SQL, and zero GET-path schema DDL.",
     "services/control-plane/bff/strategies/routes/common.py": "Added _build_ranking_strategy_index(ranking_snapshot) for O(M) one-pass indexing and O(1) per-strategy lookup in _project_strategy_ranking_metrics while preserving fresh/missing/ambiguous/unavailable and real 0.0 semantics, and updated default_page_slice to honor page_token and emit next_page_token.",
     "services/control-plane/bff/strategies/routes/collection.py": "Validated all summary entries up front (never silently dropping malformed records), applied persona_id and state filtering before pagination, computed exact total across the full matching population, sliced to page_size via ctx.page_slice, pre-built ranking_index once per request, and bounded get_strategy_spec_detail enrichment and DTO projection strictly to the sliced page."
   },
   "regression_verification": {
     "test_files": [
+      "services/rankings/test_store.py",
+      "tests/ranking_write_owner/test_rankings_write_owner.py",
       "services/control-plane/bff/tests/test_strategy_list_latency.py",
       "services/control-plane/bff/tests/test_strategy_metrics_truth.py",
       "services/control-plane/bff/tests/test_strategy_ranking_router.py",
+      "services/control-plane/bff/tests/test_ranking_snapshot_write_port.py",
+      "services/control-plane/bff/tests/test_ranking_snapshot_owner_postgres.py",
       "services/control-plane/bff/tests/test_bff_test_architecture.py"
     ],
     "scale_covered": {

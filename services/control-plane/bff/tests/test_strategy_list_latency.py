@@ -22,7 +22,10 @@ Covers production-scale (>500 strategies, 140 historical ranking snapshots with
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
+import os
 from typing import Any, Dict, List, Optional, Tuple
+import uuid
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -30,6 +33,7 @@ import pytest
 
 from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+from services.control_plane.bff.ports import rankings as rankings_port_mod
 from services.control_plane.bff.ports.read_surface_ports import (
     ReadSurfacePorts,
     create_read_surface_ports,
@@ -43,8 +47,10 @@ from services.control_plane.bff.strategies.routes.common import (
     default_page_slice,
     default_read_surface_meta,
 )
+from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 import services.rankings.store as rankings_store_mod
-from services.rankings.store import RankingSnapshotRecord
+from services.rankings.store import RankingSnapshotRecord, RankingWriteStore
+from services.rankings.test_store import _FakeConnection
 
 HEADERS = {"Authorization": "Bearer op-latency:operator:tenant-dev", "X-Tenant-Id": "tenant-dev"}
 
@@ -342,6 +348,7 @@ def test_strategy_list_production_scale_555_plus_inventory_pagination_filters_an
         return real_decode(payload)
 
     monkeypatch.setattr(rankings_store_mod, "_decode_ranking_snapshot", _counting_decode)
+    monkeypatch.setattr(rankings_port_mod, "_decode_ranking_snapshot", _counting_decode)
 
     app = FastAPI()
     app.include_router(
@@ -550,67 +557,56 @@ def test_strategy_list_thin_summaries_bounds_detail_enrichment_to_requested_page
     assert rks_port.detail_calls == [f"strat-scale-{idx:04d}" for idx in range(401, 416)]
 
 
-class _FakePostgresCursor:
-    def __init__(self, latest_payload: Dict[str, Any], queries: List[Tuple[str, Any]]) -> None:
-        self._latest_payload = latest_payload
-        self._queries = queries
+def test_postgres_ranking_store_reads_single_latest_row_with_limit_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    specs = _build_600_strategy_specs()
+    snapshots = _build_140_historical_snapshots()
+    _FakeConnection.rows.clear()
+    _FakeConnection.statements.clear()
+    conn = _FakeConnection()
+    bucket = _FakeConnection.rows.setdefault('"rankings"."rankings"', {})
+    for payload in snapshots:
+        snap_id = str(payload["ranking_snapshot_id"])
+        bucket[f"ranking_snapshot:{snap_id}"] = dict(payload)
+    # Seed a newer monthly snapshot to prove default surface="quarterly" filtering at SQL level
+    newer_monthly = dict(snapshots[-1])
+    newer_monthly["ranking_snapshot_id"] = "snap-monthly-999"
+    newer_monthly["surface"] = "monthly"
+    newer_monthly["created_at"] = "2026-11-05T18:00:00Z"
+    bucket["ranking_snapshot:snap-monthly-999"] = newer_monthly
 
-    def __enter__(self) -> "_FakePostgresCursor":
-        return self
+    executed_queries: List[Tuple[str, Any]] = []
+    real_execute = conn.execute
 
-    def __exit__(self, *exc: Any) -> None:
-        return None
+    def _recording_execute(query: str, params: Tuple[Any, ...] = ()):
+        executed_queries.append((" ".join(query.split()), params))
+        return real_execute(query, params)
 
-    def execute(self, sql: str, params: Any = None) -> None:
-        self._queries.append((" ".join(sql.split()), params))
-
-    def fetchone(self) -> Tuple[Dict[str, Any]]:
-        return (self._latest_payload,)
-
-
-class _FakePostgresConnection:
-    def __init__(self, latest_payload: Dict[str, Any], queries: List[Tuple[str, Any]]) -> None:
-        self._latest_payload = latest_payload
-        self._queries = queries
-
-    def cursor(self) -> _FakePostgresCursor:
-        return _FakePostgresCursor(self._latest_payload, self._queries)
-
-
-class _FakePostgresRecordsTable:
-    table = '"rankings"."rankings"'
-
-    def __init__(self, latest_payload: Dict[str, Any]) -> None:
-        self._latest_payload = latest_payload
-        self.queries: List[Tuple[str, Any]] = []
-        self.ensure_schema_calls = 0
-
-    def ensure_schema(self) -> None:
-        self.ensure_schema_calls += 1
+    monkeypatch.setattr(conn, "execute", _recording_execute)
 
     @contextmanager
-    def _use_conn(self):
-        yield _FakePostgresConnection(self._latest_payload, self.queries)
+    def _fake_connect(self: PostgresJsonOwnerStore):
+        yield conn
 
-    def list_all(self) -> List[Dict[str, Any]]:
-        raise AssertionError("Unbounded list_all() must not be called on Postgres ranking store")
+    monkeypatch.setattr(PostgresJsonOwnerStore, "_connect", _fake_connect)
+    monkeypatch.setenv("RANKING_STORE_DSN", "postgresql://test/rankings")
+    monkeypatch.setenv("RANKING_STORE_TABLE", "rankings.rankings")
 
+    decode_calls: List[str] = []
+    real_decode = rankings_store_mod._decode_ranking_snapshot
 
-class _FakePostgresRankingStore:
-    def __init__(self, latest_payload: Dict[str, Any]) -> None:
-        self._records_table = _FakePostgresRecordsTable(latest_payload)
+    def _counting_decode(payload: Dict[str, Any]):
+        decode_calls.append(str(payload.get("ranking_snapshot_id") or ""))
+        return real_decode(payload)
 
-
-def test_postgres_ranking_store_reads_single_latest_row_with_limit_1() -> None:
-    specs = _build_600_strategy_specs()
-    latest_snapshot = _build_140_historical_snapshots()[-1]
-    pg_ranking_store = _FakePostgresRankingStore(latest_snapshot)
+    monkeypatch.setattr(rankings_store_mod, "_decode_ranking_snapshot", _counting_decode)
+    monkeypatch.setattr(rankings_port_mod, "_decode_ranking_snapshot", _counting_decode)
 
     rks_port = _CountingResearchKnowledgeSourcePort(strategy_specs_store=specs)
     rks_port._has_injected_strategy_specs = True
     read_ports = create_read_surface_ports(
         research_knowledge_source=rks_port,
-        ranking_store=pg_ranking_store,
     )
 
     app = FastAPI()
@@ -636,16 +632,60 @@ def test_postgres_ranking_store_reads_single_latest_row_with_limit_1() -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["page_info"]["total"] == 600
-    assert len(pg_ranking_store._records_table.queries) == 1
-    executed_sql, executed_params = pg_ranking_store._records_table.queries[0]
+    assert len(executed_queries) == 1
+    executed_sql, executed_params = executed_queries[0]
+    assert "CREATE SCHEMA" not in executed_sql
+    assert "CREATE TABLE" not in executed_sql
     assert 'SELECT payload FROM "rankings"."rankings"' in executed_sql
     assert "ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC LIMIT 1" in executed_sql
     assert executed_params == ("ranking_snapshot", "quarterly")
+    assert decode_calls == ["snap-hist-140"]
 
     by_id = {item["id"]: item for item in body["data"]}
     assert by_id["strat-scale-0001"]["pnl"] == 110.0
     assert by_id["strat-scale-0003"]["pnl"] == 0.0
     assert by_id["strat-scale-0003"]["drawdown"] == 0.0
+    assert by_id["strat-scale-0005"]["pnl"] is None
+    assert by_id["strat-scale-0005"]["metricsResolution"] == "ambiguous"
+
+
+def test_live_postgres_ranking_read_store_strategy_list_when_dsn_set() -> None:
+    dsn = os.getenv("RANKING_TEST_DSN")
+    if not dsn:
+        pytest.skip("RANKING_TEST_DSN is not set; skipping live PostgreSQL strategy-list latency test.")
+    psycopg = pytest.importorskip("psycopg")
+    schema = f"rankings_latency_{uuid.uuid4().hex[:12]}"
+    table = f"{schema}.rankings"
+    try:
+        write_store = RankingWriteStore(dsn=dsn, table=table, bootstrap=True)
+        older = RankingSnapshotRecord(
+            ranking_snapshot_id="snap-pg-001",
+            surface="quarterly",
+            period="2026-Q4",
+            formula_version="pm12-v1",
+            content_digest="sha256:snap-pg-001",
+            items=_build_544_persona_ranking_items(latest=False),
+            evidence_assertion_digests={"persona-scale-0001": ["digest-0001"]},
+            created_at="2026-11-01T00:01:00Z",
+        )
+        latest = RankingSnapshotRecord(
+            ranking_snapshot_id="snap-pg-002",
+            surface="quarterly",
+            period="2026-Q4",
+            formula_version="pm12-v1",
+            content_digest="sha256:snap-pg-002",
+            items=_build_544_persona_ranking_items(latest=True),
+            evidence_assertion_digests={"persona-scale-0001": ["digest-0002"]},
+            created_at="2026-11-05T17:40:00Z",
+        )
+        write_store.create_ranking_snapshot(older)
+        write_store.create_ranking_snapshot(latest)
+        read_store = rankings_store_mod.RankingReadStore(dsn=dsn, table=table, bootstrap=False)
+        resolved = read_store.get_latest_ranking_snapshot(surface="quarterly")
+        assert resolved == latest
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as cleanup_conn:
+            cleanup_conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
 def test_strategy_list_never_silently_drops_malformed_summary_even_off_page() -> None:
