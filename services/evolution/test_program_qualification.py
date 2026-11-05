@@ -750,7 +750,13 @@ def evo_client(tmp_path, monkeypatch):
 
     from services.evolution import main as evo_main
 
+    def wipe_decisions():
+        evo_main.store._decisions.clear()
+        if evo_main.store._storage_path and evo_main.store._storage_path.exists():
+            evo_main.store._storage_path.unlink()
+
     saved = dict(evo_main._sweep_state)
+    wipe_decisions()
     reports = QualificationReportStore(tmp_path / "http-report.json")
     qualifier = ProgramQualifier(
         decision_store=evo_main.store,
@@ -764,6 +770,7 @@ def evo_client(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(evo_main, "program_qualifier", qualifier)
     yield TestClient(evo_main.app), evo_main, qualifier
+    wipe_decisions()
     evo_main._sweep_state.clear()
     evo_main._sweep_state.update(saved)
 
@@ -771,7 +778,6 @@ def evo_client(tmp_path, monkeypatch):
 def test_sweep_runs_the_qualifier_and_report_endpoint_pages_every_decision(evo_client):
     client, evo_main, _ = evo_client
     tenant = evo_main._current_tenant()
-    decisions = []
     for index in range(3):
         decision = replace(
             infra_flag_decision(),
@@ -780,22 +786,17 @@ def test_sweep_runs_the_qualifier_and_report_endpoint_pages_every_decision(evo_c
             tenant_id=tenant,
         )
         evo_main.store.put(decision)
-        decisions.append(decision.decision_id)
-    try:
-        response = client.post("/api/evolution/daily-sweep", json={"sweep_id": "qualify-http"})
-        assert response.status_code == 200, response.text
-        report = client.get("/api/evolution/program-qualification", params={"limit": 2}).json()
-        assert report["policy_version"] == load_policy().policy_version
-        assert (report["evaluated"], report["qualified"], report["drafted"]) == (3, 0, 0)
-        assert report["counts_by_first_failing_criterion"] == {"real_threshold_signal": 3}
-        assert report["total"] == 3 and len(report["items"]) == 2
-        assert {c["criterion"] for c in report["items"][0]["criteria"]} == set(CRITERIA)
-        assert client.get("/api/evolution/program-qualification", params={"qualified": "true"}).json()["total"] == 0
-        status = client.get("/api/evolution/sweep-status").json()
-        assert status["qualifier_last_success_at"] and status["qualifier_last_failure_reason"] is None
-    finally:
-        for decision_id in decisions:
-            evo_main.store._decisions.pop(decision_id, None)
+    response = client.post("/api/evolution/daily-sweep", json={"sweep_id": "qualify-http"})
+    assert response.status_code == 200, response.text
+    report = client.get("/api/evolution/program-qualification", params={"limit": 2}).json()
+    assert report["policy_version"] == load_policy().policy_version
+    assert (report["evaluated"], report["qualified"], report["drafted"]) == (3, 0, 0)
+    assert report["counts_by_first_failing_criterion"] == {"real_threshold_signal": 3}
+    assert report["total"] == 3 and len(report["items"]) == 2
+    assert {c["criterion"] for c in report["items"][0]["criteria"]} == set(CRITERIA)
+    assert client.get("/api/evolution/program-qualification", params={"qualified": "true"}).json()["total"] == 0
+    status = client.get("/api/evolution/sweep-status").json()
+    assert status["qualifier_last_success_at"] and status["qualifier_last_failure_reason"] is None
 
 
 def test_qualifier_failure_never_fails_the_sweep_and_is_exposed_in_status(evo_client, monkeypatch):

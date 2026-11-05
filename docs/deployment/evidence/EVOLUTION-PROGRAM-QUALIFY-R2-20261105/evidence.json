@@ -1,0 +1,77 @@
+{
+  "task_id": "EVOLUTION-PROGRAM-QUALIFY-R2-20261105",
+  "kind": "functional",
+  "hosted_verification": "not performed; belongs to EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104",
+  "policy_version": "2026-11-05.1",
+  "producers_that_can_currently_pass_real_threshold_signal": [
+    {
+      "metric": "rolling_drawdown_multiple",
+      "producer": "services/reconciliation-drift (baseline-sourced drift check, governed threshold from threshold_sweep_thresholds.json)",
+      "passes_policy_allowlist": true
+    }
+  ],
+  "producers_without_a_current_emitter": [
+    "sharpe_pct_of_baseline",
+    "slippage",
+    "reject_rate",
+    "psi",
+    "human_correction"
+  ],
+  "never_pass": {
+    "signal_types": [
+      "manual_review",
+      "governance_incident"
+    ],
+    "metrics": [
+      "incident_followup_required",
+      "severity1_incident_count"
+    ]
+  },
+  "expected_result_on_current_hosted_data": "0 qualified of 649 decisions (measured shapes: manual_review flag_for_review, governance_incident freeze)",
+  "criteria_implementation": {
+    "persistent_breach": "counts distinct market mark dates from metadata.mark_refs[].as_of of the drawdown_snapshot cited by drift_checks[].drawdown_event_id; not IncidentCase",
+    "fresh_evidence": "threshold_sweep_worker stale/degraded + per-metric age (public wrappers summary_is_stale_or_degraded, metric_is_stale) plus latest drift evaluation still breached"
+  },
+  "drift_service_changes": [
+    "drawdown_event_id recorded on baseline-sourced drawdown check from summary.drawdown_event_id",
+    "GET /api/reconciliation-drift/evaluations gains since, until, governed_breached_only applied inside store queries (JSON predicate; Postgres jsonb_path_exists); binding queries use list_evaluations_for_binding"
+  ],
+  "design_decisions": [
+    "Owner-read criteria run only for decisions that passed real_threshold_signal, executable_action and no_open_duplicate (stricter than the minimum in acceptance 2).",
+    "Program lifecycle has no rejected state; stopped programs start the rejection cooldown (research path cooldown_days=3).",
+    "first_failing_criterion is the first criterion with result failed, in canonical order; not_evaluated never counts as the first failure.",
+    "Report persisted as JSON in EVOLUTION_DATA_DIR/program_qualification_report.json (atomic replace)."
+  ],
+  "changed_existing_assertions": [
+    {
+      "file": "services/control-plane/bff/tests/test_evolution_router.py",
+      "test": "test_evolution_router_routes_count_and_exact_paths",
+      "change": "route count 20 -> 21 and the new GET /bff/management/evolution-qualification added to the expected set",
+      "justification": "the task adds exactly one BFF route; no other expectation changed"
+    }
+  ],
+  "removed": [
+    "scripts/project_evolution_to_bff_surfaces.py"
+  ],
+  "historical_references_left_unedited": [
+    "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/checks.json (archived hash list of a past task)",
+    "docs/operations/development-tooling-four-gap-2026-08-30/MONOLITH_SYMBOL_DISPOSITION.json (archived inventory snapshot); neither is read by code"
+  ],
+  "tests": {
+    "services/evolution/test_program_qualification.py": "35 passed",
+    "services/evolution/test_program_owner.py": "6 passed, 3 skipped (postgres)",
+    "services/evolution/test_compose_activation.py": "7 passed",
+    "services/evolution/test_evolution_service.py": "125 passed, 2 errors: ModuleNotFoundError flask in this sandbox (pre-existing, unrelated)",
+    "services/evolution/test_threshold_sweep_worker.py": "86 passed, 1 error: flask missing (pre-existing)",
+    "services/control-plane/bff/tests/test_evolution_qualification_read.py": "5 passed",
+    "services/control-plane/bff/tests/test_evolution_programs_population_contract.py": "4 passed",
+    "services/control-plane/bff/tests/test_evolution_router.py": "10 passed",
+    "services/control-plane/bff/test_normalized_route_uniqueness.py": "15 passed",
+    "services/control-plane/bff/tests/test_bff_test_architecture.py": "39 passed",
+    "services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py + test_reconciliation_drift_store.py + test_reconciliation_drift_scheduler.py": "all passed except 4 scheduler tests that import services/loop-control which needs asyncpg (not installed in this sandbox; failure reproduces on the unmodified tree)"
+  },
+  "route_snapshots": [
+    "backend_routes_manifest.json (bff_route_manifest_backend.py --check: match)",
+    "route-diff-baseline.json regenerated with bff_route_diff.py --write-baseline; --check-baseline passes (485 grandfathered)"
+  ]
+}
