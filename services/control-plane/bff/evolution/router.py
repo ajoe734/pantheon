@@ -44,6 +44,10 @@ from services.control_plane.bff.ports.evolution_program_commands import (
     EvolutionProgramCommandError,
     EvolutionProgramCommandPort,
 )
+from services.evolution.program_service import (
+    APPROVER_ROLES as _CANONICAL_APPROVER_ROLES,
+    allowed_actions as compute_program_allowed_actions,
+)
 
 from .service import (
     EvolutionService,
@@ -198,6 +202,7 @@ def _identity_tenant(identity: Any) -> Optional[str]:
 _PROGRAM_PATCH_ALLOWED_FIELDS = {"name"}
 _APPROVER_PROGRAM_ACTIONS = {
     "approve_program",
+    "reject_program",
     "retire_program",
     "freeze_generation",
     "promote_candidate_paper",
@@ -205,6 +210,27 @@ _APPROVER_PROGRAM_ACTIONS = {
     "approve_mutation",
     "reject_mutation",
 }
+
+
+def _resolve_caller_program_role(identity: Any) -> str:
+    raw_roles = getattr(identity, "roles", set()) or set()
+    normalized = {str(r).strip().lower() for r in raw_roles if r}
+    if normalized & _CANONICAL_APPROVER_ROLES:
+        return "approver"
+    if "operator" in normalized:
+        return "operator"
+    return "viewer"
+
+
+def _attach_program_allowed_actions(program: Dict[str, Any], identity: Any) -> Dict[str, Any]:
+    actor_role = _resolve_caller_program_role(identity)
+    actor_id = str(getattr(identity, "operator_id", "") or "")
+    actions = compute_program_allowed_actions(program, actor_role, actor_id)
+    return {
+        **program,
+        "allowed_actions": actions,
+        "allowedActions": actions,
+    }
 
 
 def _program_command_error_code(status_code: int) -> ErrorCode:
@@ -296,6 +322,12 @@ def _register_evolution_programs_routes(
             page_items, next_page_token = [], None
         else:
             page_items, next_page_token = page_slice(programs, page_token, page_size)
+            page_items = [
+                _attach_program_allowed_actions(item, identity)
+                if isinstance(item, dict)
+                else item
+                for item in page_items
+            ]
         meta = snapshot_meta(snapshot_at)
         meta["surfaces"] = {"evolution_programs": surface}
         return {"items": page_items, "page_info": {"next_page_token": next_page_token}, "meta": meta}
@@ -368,6 +400,7 @@ def _register_evolution_programs_routes(
         require_read_role(identity)
         read_store = _resolve_read_store()
         program = _require_program(read_store, program_id.strip())
+        program = _attach_program_allowed_actions(program, identity)
         snapshot_at = utc_now()
         return {"data": program, "meta": snapshot_meta(snapshot_at)}
 
@@ -449,7 +482,7 @@ def _register_evolution_programs_routes(
         return {"data": updated, "meta": snapshot_meta(snapshot_at)}
 
     @router.get("/bff/evolution-programs/{program_id}/runs")
-    def list_evolution_program_runs(
+    async def list_evolution_program_runs(
         program_id: str,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -461,7 +494,21 @@ def _register_evolution_programs_routes(
         clean_id = program_id.strip()
         _require_program(read_store, clean_id)
         snapshot_at = utc_now()
-        runs = getattr(read_store, "list_evolution_program_runs", lambda pid: [])(clean_id) or []
+        resolved_commands = _resolve_program_commands()
+        lister = getattr(resolved_commands, "list_program_runs", None)
+        if lister is not None:
+            # Real runs, read back from the owning plane by the Evolution owner.
+            try:
+                owner_runs = await lister(
+                    caller_token=authorization,
+                    tenant_id=_identity_tenant(identity),
+                    program_id=clean_id,
+                )
+            except EvolutionProgramCommandError as exc:
+                _raise_program_command_error(bff_error, exc)
+            runs = list(owner_runs.get("items") or [])
+        else:
+            runs = getattr(read_store, "list_evolution_program_runs", lambda pid: [])(clean_id) or []
         page_items, next_page_token = page_slice(runs, page_token, page_size)
         meta = snapshot_meta(snapshot_at)
         return {"items": page_items, "page_info": {"next_page_token": next_page_token}, "meta": meta}

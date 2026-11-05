@@ -44,6 +44,36 @@ from services.evolution.program_service import (
 from services.evolution.program_store import JsonProgramStore, ProgramStore
 
 
+class GovernedProgramService(ProgramService):
+    """The real service with real approval verification, driven by a scripted
+    human: before submit it files the governance request the BFF would file, and
+    before approve it records a human approval of exactly that request.  Every
+    check in ``execute_action`` still runs against governance evidence."""
+
+    def __init__(self, store) -> None:
+        from services.evolution.test_program_approval_dispatch import FakeGovernance
+        self.governance = FakeGovernance()
+        super().__init__(store, approval_verifier=self.governance.verifier())
+
+    def execute_action(self, **kwargs):
+        action = str(kwargs.get("action_id") or "").lower()
+        tenant, pid = kwargs["tenant_id"], kwargs["program_id"]
+        approval_id = f"apv-{pid}"
+        current = self.get_program(tenant_id=tenant, program_id=pid)
+        if action == "submit_evolution_review" and current:
+            if approval_id not in self.governance.records and current["status"] == "draft":
+                self.governance.request(approval_id, self.approval_binding_for(tenant_id=tenant, program_id=pid))
+            payload = dict(kwargs.get("payload") or {})
+            if not kwargs.get("payload", {}).get("different"):
+                payload.setdefault("approval_id", approval_id)
+            kwargs["payload"] = payload
+        if action == "approve_program" and current and current["status"] == "under_review":
+            record = self.governance.records.get(approval_id)
+            if record and record["decision_state"] == "pending":
+                self.governance.decide(approval_id)
+        return super().execute_action(**kwargs)
+
+
 def _run_scenarios(make_store) -> None:
     """Run the full scenario matrix against a fresh store from ``make_store()``."""
 
@@ -188,7 +218,7 @@ def _run_action_scenarios(make_store) -> None:
     """Validate all lifecycle transitions, D1 active run handling, D2 freeze,
     D3 steering, and receipt/idempotency invariants."""
     store: ProgramStore = make_store()
-    service = ProgramService(store)
+    service = GovernedProgramService(store)
 
     program, _ = service.create_program(
         tenant_id="tenant-act", actor_id="actor-act", name="Action Test Program"
@@ -421,7 +451,7 @@ def _run_action_scenarios(make_store) -> None:
 
 def _run_router_actions(make_store) -> None:
     store: ProgramStore = make_store()
-    service = ProgramService(store)
+    service = GovernedProgramService(store)
     router = create_program_router(
         service=service,
         current_tenant=lambda: "tenant-r",
