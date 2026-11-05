@@ -19,9 +19,9 @@ if str(SCRIPTS) not in sys.path:
 import dev_environment_lease as lease
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
-CONTROLLER_SHA = "aee1243573e29d289dac00be13641bb16be7f6bf"
+CONTROLLER_SHA = "be340742990b1317d0edd2370062575d6d05ec3f"
 CONTROLLER_SCRIPT_SHA256 = (
-    "da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae"
+    "53e0de9dc67216a7a2623bbc70186bb7e04bba67dd676c01bd93cb0053f1b917"
 )
 CONTROLLER_WRAPPER_SHA256 = (
     "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2"

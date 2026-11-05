@@ -1,0 +1,52 @@
+{
+  "task_id": "OPS-DEV-LEASE-TRANSIENT-20261105",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "incident_reference": {
+    "contract_file": "/tmp/pantheon-dev-operable-20261104/lease41812400967-exact-incident-and-minimal-followup-contract-20261105.json",
+    "run_id": 41812400967,
+    "job_id": 126514630352,
+    "prior_task_id": "OPS-DEV-LEASE-TRANSIENT-20261008",
+    "prior_pr": 6333,
+    "prior_controller_sha": "aee1243573e29d289dac00be13641bb16be7f6bf",
+    "prior_helper_sha256": "da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae"
+  },
+  "activated_controller": {
+    "controller_commit_sha": "be340742990b1317d0edd2370062575d6d05ec3f",
+    "helper_script_path": "scripts/dev_environment_lease.py",
+    "helper_script_sha256": "53e0de9dc67216a7a2623bbc70186bb7e04bba67dd676c01bd93cb0053f1b917",
+    "wrapper_script_path": "scripts/run_with_dev_environment_lease.sh",
+    "wrapper_script_sha256": "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2",
+    "wrapper_bytes_unchanged": true
+  },
+  "summary": "Replaced the count-only second transient renewal failure stop in scripts/dev_environment_lease.py with bounded recovery requiring a successful authoritative same-owner GET and fresh CAS SHA on every renewal attempt. Bounded retry sleeps and HTTP request timeouts by min(remote expiresAt, remote heartbeatAt + effective_freshness<=120s) anchored to GitHub Date server time and local monotonic elapsed time (never extending validity from failed or un-renewed GETs, never replaying ambiguous PUTs with an old SHA, and never using the 219s TTL alone when remaining freshness is 39s). Committed the helper/test behavior first (be340742990b1317d0edd2370062575d6d05ec3f) and mechanically pinned the immutable controller SHA and helper SHA-256 across all four existing workflows, scripts/compensate_cross_repo_release.sh, and contract/fixture assertions.",
+  "scope": [
+    "scripts/dev_environment_lease.py",
+    "scripts/test_dev_environment_lease.py",
+    "scripts/test_dev_environment_lease_guard.py",
+    "scripts/test_dev_environment_lease_deploy_contract.py",
+    ".github/workflows/nonprod-deploy.yml",
+    ".github/workflows/dev-tw-market-refresh.yml",
+    ".github/workflows/agora-hosted-acceptance.yml",
+    ".github/workflows/persona-owner-contract.yml",
+    "scripts/compensate_cross_repo_release.sh",
+    "scripts/test_dev_paper_diagnostics_failure_path.py",
+    "scripts/test_nonprod_dev_artifact_workflow.py",
+    "docs/deployment/evidence/OPS-DEV-LEASE-TRANSIENT-20261105/evidence.json"
+  ],
+  "verification": {
+    "lease_and_guard_unit_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py",
+      "result": "45 passed, 43 subtests passed"
+    },
+    "deploy_contract_and_artifact_workflow_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checkout_is_an_exact_immutable_separate_trust_root scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checksums_match_pinned_controller_files scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_and_other_lease_callers_use_the_repaired_controller scripts/test_nonprod_dev_artifact_workflow.py",
+      "result": "182 passed"
+    },
+    "paper_diagnostics_failure_path_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py",
+      "result": "28 passed"
+    }
+  },
+  "hosted_operations": "none; source and review only. No SSH, VM, cloud, secret, or operator-key reads; no workflow dispatch; no remote lease edit; no interference with Root 41947653837."
+}

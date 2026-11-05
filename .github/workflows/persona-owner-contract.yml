@@ -73,8 +73,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Fetch immutable lease controller for compensation fixtures
         run: |
-          git fetch --no-tags --depth=1 origin aee1243573e29d289dac00be13641bb16be7f6bf
-          git cat-file -e aee1243573e29d289dac00be13641bb16be7f6bf^{commit}
+          git fetch --no-tags --depth=1 origin be340742990b1317d0edd2370062575d6d05ec3f
+          git cat-file -e be340742990b1317d0edd2370062575d6d05ec3f^{commit}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
