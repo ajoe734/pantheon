@@ -72,6 +72,7 @@ Every accepted command must persist:
 | Control | Contract |
 |---|---|
 | Actor | `actor_ref` from authenticated operator identity; anonymous commands are rejected. |
+| Tenant | Verified caller tenant from `_trusted_tenant_for_identity(identity)` is compared against `params` keys (`tenant_id`, `tenant`, `tenantId`) and nested `params.payload` keys (`tenant_id`, `tenant`, `tenantId`, when `payload` is an object) before any store write or downstream owner call; any differing tenant claim is refused with HTTP 403 `TENANT_MISMATCH` and one server audit log line (without tokens). |
 | Trace | non-empty `trace_id` and `correlation_id`; `X-Trace-Id` may be supplied by caller, otherwise BFF generates one. |
 | Idempotency | non-empty idempotency key from header; duplicate key with same request returns the original receipt; same key with different request returns conflict. On final routes, `Idempotency-Key` is canonical and `X-Idempotency-Key` is a temporary compatibility alias; body-level `idempotencyKey` is rejected. |
 | RBAC / policy | command-specific validator must produce a policy decision (`allow` or `deny`) tied to actor, target, action, environment, and trace. |
@@ -177,6 +178,7 @@ codes include:
 | `CONFIRM_TOKEN_REQUIRED` | Operator confirmation token is missing or expired. |
 | `APPROVAL_REQUIRED` | Required approval evidence is absent. |
 | `TWO_MAN_REQUIRED` | A second authorized operator decision/signature is required. |
+| `TENANT_MISMATCH` | Claimed tenant in `params` or `params.payload` (`tenant_id`, `tenant`, `tenantId`) differs from the verified caller tenant; refused at command admission with HTTP 403 before any store write or downstream owner call. |
 | `IDEMPOTENCY_CONFLICT` | Same idempotency key was reused with a different payload. |
 | `ACTION_RETIRED` | Command or action has been retired; returned with HTTP 410 through the existing retired-command mechanism. This is the client-visible code for all such retirements, not `VALIDATION_FAILED`. |
 | `SSE_REPLAY_UNAVAILABLE` | Requested SSE replay window is no longer available. |

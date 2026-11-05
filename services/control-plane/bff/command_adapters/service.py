@@ -1389,6 +1389,28 @@ class CommandAdapterService:
             if extra_precondition is not None:
                 extra_precondition(identity, cmd)
             validate_audit_context(cmd)
+            trusted_tenant = self._trusted_tenant_for_identity(identity)
+            if trusted_tenant:
+                nested_payload = cmd.params.get("payload") if isinstance(cmd.params.get("payload"), dict) else {}
+                for container in (cmd.params, nested_payload):
+                    for tenant_key in ("tenant_id", "tenant", "tenantId"):
+                        raw_claimed = container.get(tenant_key)
+                        claimed_tenant = str(raw_claimed or "").strip() if raw_claimed is not None else ""
+                        if claimed_tenant and claimed_tenant != trusted_tenant:
+                            log.warning(
+                                "Command tenant mismatch refused: operator_id=%s verified_tenant=%s claimed_tenant=%s command=%s",
+                                identity.operator_id,
+                                trusted_tenant,
+                                claimed_tenant,
+                                cmd.command.value,
+                            )
+                            raise self._raise_error(
+                                403,
+                                ErrorCode.TENANT_MISMATCH,
+                                "Command tenant does not match verified caller tenant",
+                                f"Claimed tenant {claimed_tenant!r} does not match verified tenant {trusted_tenant!r}",
+                                precondition_failed="tenant_mismatch",
+                            )
             validate_capital_authority_target_binding(cmd)
             validate_paper_runtime_authority_target_binding(cmd)
             ensure_live_broker_scope_allowed(cmd, payload)

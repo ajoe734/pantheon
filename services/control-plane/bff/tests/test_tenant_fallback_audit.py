@@ -2195,3 +2195,273 @@ def test_operations_read_model_multi_tenant_lists_fail_closed_without_selector(m
     headers_single = {"Authorization": f"Bearer {tok_single}"}
     assert client.get("/bff/management/operations-read-model/p-a", headers=headers_single).status_code == 200
     assert client.get("/bff/management/operations-read-model/p-b", headers=headers_single).status_code == 404
+
+
+def _build_admission_entries_app(tmp_path, ports):
+    from types import SimpleNamespace
+    from services.control_plane.bff.assistant.routes import create_assistant_router
+    from services.control_plane.bff.auth.policy import bff_error, require_operator_role, require_read_role
+    from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+    from services.control_plane.bff.command_adapters.service import CommandAdapterService
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.deployment.adapters import DeploymentReadSurfaceAdapter
+    from services.control_plane.bff.deployment.router import create_deployment_router
+    from services.control_plane.bff.evolution.router import create_evolution_programs_router
+    from services.control_plane.bff.models import CommandType, ObjectType, utc_now
+    from services.control_plane.bff.personas import PersonaService, create_personas_router
+    from test_receipt_owner_routes import identity
+
+    class _ZeroHttpProgramReadSurface:
+        def __getattr__(self, name):
+            return getattr(ports, name)
+
+        def get_evolution_program(self, program_id):
+            if program_id == "program-a":
+                return {"program_id": "program-a", "status": "active", "tenant_id": "tenant-a"}
+            return None
+
+    program_read_surface = _ZeroHttpProgramReadSurface()
+    store = CommandStore(str(tmp_path / "admission-entries-commands.jsonl"))
+    svc = CommandAdapterService(
+        command_store=store,
+        read_surface=ports,
+        extract_identity=identity,
+        bff_error=bff_error,
+    )
+    app = FastAPI()
+    register_error_handlers(app)
+    app.add_middleware(OwnerReadContextMiddleware)
+    app.state.command_adapter_service = svc
+
+    common = dict(
+        extract_identity=identity,
+        require_read_role=require_read_role,
+        require_operator_role=require_operator_role,
+        bff_error=bff_error,
+        utc_now=utc_now,
+    )
+    app.include_router(create_command_adapters_router(
+        service=svc,
+        submit_command_admission=svc.submit_command_admission,
+    ))
+    app.include_router(create_deployment_router(
+        queries=DeploymentReadSurfaceAdapter(read_surface=ports),
+        **common,
+        page_slice=lambda rows, token, size: (rows[:size], None),
+        snapshot_meta=lambda at: {"snapshot_at": at},
+        dataset_surface_status=lambda *args, **kwargs: {"status": "ok"},
+        composed_surface_status=lambda **kwargs: {},
+        read_surface_meta=lambda *args, **kwargs: {},
+        raise_if_read_surface_unavailable=lambda *args, **kwargs: None,
+        aggregate_group_surface=lambda *args, **kwargs: {},
+        split_csv_query=lambda value: [],
+        meta_staleness=lambda: None,
+        stable_json_hash=lambda body: "unused",
+        resolve_final_idempotency_key=lambda key, other: key or other,
+        reject_body_idempotency_key=lambda payload: None,
+        request_dry_run_requested=lambda *args: False,
+        publish_event=lambda *args: None,
+        sse_buffers={},
+        sse_subscribers={},
+        gov_bff_action_command=svc.submit_resource_action,
+        deprecated_bff_path_response=lambda **kwargs: (_ for _ in ()).throw(HTTPException(410)),
+        sem_command_response=svc.sem_command_response,
+        stream_generic_events=lambda *args: None,
+        surface_degradation_reason=lambda *args: None,
+    ))
+    app.include_router(create_evolution_programs_router(
+        read_surface=program_read_surface,
+        **common,
+        submit_program_action=lambda entity_type, entity_id, action_id, key, ident, payload, **ctx:
+            svc.submit_resource_action(
+                ObjectType.EVOLUTION_PROGRAM,
+                entity_id,
+                action_id,
+                key,
+                ident,
+                payload,
+                CommandType.EVOLUTION_PROGRAM_ACTION,
+                **ctx,
+            ),
+    ))
+    persona_svc = PersonaService(
+        read_store=SimpleNamespace(),
+        write_owner=SimpleNamespace(),
+        ranking_write_owner=SimpleNamespace(),
+        command_store=store,
+    )
+    app.include_router(create_personas_router(service=persona_svc, extract_identity_fn=identity))
+    app.include_router(create_assistant_router(
+        build_context_pack=lambda *args, **kwargs: None,
+        extract_identity=identity,
+        require_read_role=require_read_role,
+        bff_error=bff_error,
+        submit_command_admission=svc.submit_command_admission,
+    ))
+    return TestClient(app, raise_server_exceptions=False), store, svc
+
+
+@pytest.mark.parametrize("claim_params", [
+    {"tenant_id": "tenant-b"},
+    {"tenant": "tenant-b"},
+    {"tenantId": "tenant-b"},
+    {"payload": {"tenant_id": "tenant-b"}},
+    {"payload": {"tenant": "tenant-b"}},
+    {"payload": {"tenantId": "tenant-b"}},
+])
+def test_command_admission_refuses_foreign_tenant_claims_and_logs_without_token(
+    mounted, owner, monkeypatch, caplog, tmp_path, claim_params,
+):
+    import logging
+
+    _, _, ports = mounted
+    client, store, _ = _build_admission_entries_app(tmp_path, ports)
+    requests = _owner_requests(monkeypatch)
+    auth_header = _tok("tenant-a")
+    raw_jwt = auth_header.removeprefix("Bearer ").strip()
+
+    with caplog.at_level(logging.WARNING, logger="services.control_plane.bff.command_adapters.service"):
+        response = client.post(
+            "/bff/v1/commands",
+            headers={"Authorization": auth_header, "Idempotency-Key": f"mismatch-{hash(json.dumps(claim_params, sort_keys=True))}"},
+            json={
+                "command": "EvolutionProgramAction",
+                "target": {"type": "EvolutionProgram", "id": "program-a"},
+                "params": {"action_id": "pause_program", "program_id": "program-a", **claim_params},
+                "audit_context": {"reason": "tenant mismatch refusal audit"},
+            },
+        )
+
+    assert response.status_code == 403, response.text
+    body = response.json()
+    assert "detail" not in body, body
+    assert body["error"]["code"] == "TENANT_MISMATCH", body
+    assert requests == [] and _owner_writes(owner) == 0
+    assert store._get_all_commands() == []
+
+    mismatch_logs = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.name == "services.control_plane.bff.command_adapters.service"
+        and "tenant mismatch" in rec.getMessage().lower()
+    ]
+    assert len(mismatch_logs) == 1, mismatch_logs
+    log_line = mismatch_logs[0]
+    assert "operator_id=tenant-a" in log_line
+    assert "verified_tenant=tenant-a" in log_line
+    assert "claimed_tenant=tenant-b" in log_line
+    assert "command=EvolutionProgramAction" in log_line
+    assert raw_jwt not in log_line
+    assert "Bearer " not in log_line
+
+
+@pytest.mark.parametrize("entry,expected_command", [
+    ("v1_commands", "EvolutionProgramAction"),
+    ("resource_action_deployment", "PatchDeployment"),
+    ("resource_action_program", "EvolutionProgramAction"),
+    ("persona_lifecycle", "AdvanceLifecycle"),
+    ("assistant_command", "EscalateDiff"),
+])
+@pytest.mark.parametrize("nested", [False, True])
+def test_command_admission_entries_refuse_foreign_tenant_with_signed_jwt(
+    mounted, owner, monkeypatch, caplog, tmp_path, entry, expected_command, nested,
+):
+    import logging
+    from fastapi import BackgroundTasks
+    from services.control_plane.bff.assistant.tool_contracts import ToolValidationError, execute_governed_tool
+
+    _, _, ports = mounted
+    client, store, svc = _build_admission_entries_app(tmp_path, ports)
+    requests = _owner_requests(monkeypatch)
+    auth_header = _tok("tenant-a")
+    raw_jwt = auth_header.removeprefix("Bearer ").strip()
+    foreign_claim = {"payload": {"tenant_id": "tenant-b"}} if nested else {"tenant_id": "tenant-b"}
+    idem_key = f"entry-{entry}-{'nested' if nested else 'top'}"
+
+    with caplog.at_level(logging.WARNING, logger="services.control_plane.bff.command_adapters.service"):
+        if entry == "v1_commands":
+            response = client.post(
+                "/bff/v1/commands",
+                headers={"Authorization": auth_header, "Idempotency-Key": idem_key},
+                json={
+                    "command": "EvolutionProgramAction",
+                    "target": {"type": "EvolutionProgram", "id": "program-a"},
+                    "params": {"action_id": "pause_program", "program_id": "program-a", **foreign_claim},
+                    "audit_context": {"reason": "entry tenant mismatch test"},
+                },
+            )
+        elif entry == "resource_action_deployment":
+            response = client.patch(
+                "/bff/deployments/plan-a",
+                headers={"Authorization": auth_header, "Idempotency-Key": idem_key},
+                json={"status": "approved", "reason": "entry tenant mismatch test", **foreign_claim},
+            )
+        elif entry == "resource_action_program":
+            response = client.post(
+                "/bff/evolution-programs/program-a/actions/pause_program",
+                headers={"Authorization": auth_header, "Idempotency-Key": idem_key},
+                json={"reason": "entry tenant mismatch test", **foreign_claim},
+            )
+        elif entry == "persona_lifecycle":
+            response = client.post(
+                "/bff/personas/persona-a/actions/AdvanceLifecycle",
+                headers={
+                    "Authorization": auth_header,
+                    "Idempotency-Key": idem_key,
+                    "X-Confirm-Token": "secret-confirm-token-do-not-log",
+                },
+                json={
+                    "target_state": "paper_owner",
+                    "governance_decision_id": "decision-paper",
+                    "reason": "entry tenant mismatch test",
+                    **foreign_claim,
+                },
+            )
+        elif entry == "assistant_command":
+            with pytest.raises(ToolValidationError) as exc_info:
+                execute_governed_tool(
+                    action_id="EscalateDiff",
+                    entity_type="EvolutionDecision",
+                    entity_id="plan-a",
+                    params={"plan_id": "plan-a", "escalation_reason": "probe", **foreign_claim},
+                    actor_id="tenant-a",
+                    actor_roles=["operator"],
+                    reason="entry tenant mismatch test",
+                    submit_command=lambda body, command_id, token: svc.submit_command_admission(
+                        background_tasks=BackgroundTasks(),
+                        payload=body,
+                        authorization=auth_header,
+                        x_confirm_token=token,
+                        idempotency_key=command_id,
+                        source_route="POST /bff/assistant/tools/execute",
+                    ),
+                )
+            cause = exc_info.value.__cause__
+            assert isinstance(cause, HTTPException)
+            response = JSONResponse(status_code=cause.status_code, content=cause.detail)
+
+    assert response.status_code == 403
+    body = json.loads(response.body.decode("utf-8")) if isinstance(response, JSONResponse) else response.json()
+    assert "detail" not in body, body
+    assert body["error"]["code"] == "TENANT_MISMATCH", body
+    assert requests == [] and _owner_writes(owner) == 0
+    assert store._get_all_commands() == []
+
+    mismatch_logs = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.name == "services.control_plane.bff.command_adapters.service"
+        and "tenant mismatch" in rec.getMessage().lower()
+    ]
+    assert len(mismatch_logs) == 1, mismatch_logs
+    log_line = mismatch_logs[0]
+    assert "operator_id=tenant-a" in log_line
+    assert "verified_tenant=tenant-a" in log_line
+    assert "claimed_tenant=tenant-b" in log_line
+    assert f"command={expected_command}" in log_line
+    assert raw_jwt not in log_line
+    assert "Bearer " not in log_line
+    assert "secret-confirm-token-do-not-log" not in log_line
+

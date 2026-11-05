@@ -2407,7 +2407,13 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             "target_repo": "pantheon",
             "delivery_binding": {"pr": 44, "head_sha": "a" * 40},
         }
-        self.status = {"tasks": [self.source], "blockers": [], "handoffs": []}
+        self.status = {
+            "sprint": "test",
+            "objective": "test",
+            "tasks": [self.source],
+            "blockers": [],
+            "handoffs": [],
+        }
         supervisor.rewrite_task_state_store.append_state_commit(
             self.config["task_state_store"]["event_log"], self.status, source="test-seed"
         )
@@ -2807,6 +2813,214 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             (inbox / f"{index:064x}.json").write_text("{}\n", encoding="utf-8")
         self.assertFalse(self._materialize())
         self.assertEqual(len(list(inbox.glob("*.json"))), 1)
+
+    def _run_real_reopen_subprocess(
+        self, recorded_calls: list[tuple[list[str], dict[str, str], str]]
+    ):
+        real_run = subprocess.run
+        real_run(["git", "init", "-q", str(self.status_root)], check=True)
+
+        def side_effect(cmd, *args, **kwargs):
+            argv = [str(part) for part in cmd]
+            if len(argv) >= 3 and argv[1].endswith("scripts/ai_status.py") and argv[2] == "reopen":
+                env = dict(kwargs.get("env") or {})
+                cwd = str(kwargs.get("cwd") or "")
+                recorded_calls.append((argv, env, cwd))
+                child_env = {
+                    k: v
+                    for k, v in env.items()
+                    if k not in {"PANTHEON_COMMAND_ROOT", "PANTHEON_COMMAND_RUNTIME_SHA"}
+                }
+                child_env.update(common.task_state_store_runtime_env(self.config))
+                return real_run(
+                    [sys.executable, str(ai_status.ROOT / "scripts" / "ai_status.py"), *argv[2:]],
+                    *args,
+                    **(kwargs | {"env": child_env}),
+                )
+            return real_run(cmd, *args, **kwargs)
+
+        return side_effect
+
+    def test_exact_head_behind_base_reopens_source_without_creating_repair_task(self) -> None:
+        reason = "exact-head-behind-base"
+        self.assertFalse(supervisor.unblock_contract.requires_repair_task(reason))
+        self.assertTrue(supervisor.unblock_contract.requires_source_reopen(reason))
+        request = self._publish(
+            reason=reason,
+            detail="PR #44 is BEHIND origin/dev with clean trial merge.",
+            unblock_task_id=self._task_id(reason),
+        )
+        calls: list[tuple[list[str], dict[str, str], str]] = []
+
+        with mock.patch.object(
+            supervisor.subprocess,
+            "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self.assertTrue(self._materialize())
+        self.assertFalse(request.exists())
+        self.assertEqual(len(calls), 1)
+        argv, env, cwd = calls[0]
+        self.assertEqual(
+            argv,
+            [
+                sys.executable,
+                str(Path("/runtime/" + "b" * 40) / "scripts" / "ai_status.py"),
+                "reopen",
+                "ABC-001",
+                supervisor._behind_reopen_message("dev"),
+            ],
+        )
+        self.assertEqual(cwd, str(self.status_root))
+        self.assertEqual(env.get("AI_NAME"), "Human/Ops")
+        self.assertEqual(env.get("PANTHEON_LOCAL_HUMAN_OPS"), "1")
+        self.assertIn(request.stem, str(env.get("HUMAN_OPS_REASON") or ""))
+        self.assertNotIn("ORCH_RUN_ID", env)
+
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        tasks = snapshot["state"]["tasks"]
+        self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+        reopened = tasks[0]
+        self.assertEqual(reopened["status"], "in_progress")
+        self.assertNotIn("delivery_binding", reopened)
+        self.assertNotIn("review_binding", reopened)
+        self.assertIn(
+            "merge origin/dev into the task branch with no other change and resubmit",
+            reopened["next"],
+        )
+        self.assertIn(
+            "git diff origin/dev...HEAD equals the previously approved change",
+            reopened["next"],
+        )
+        intent = supervisor.task_review_requeue_intent(reopened)
+        self.assertIsNotNone(intent)
+        assert intent is not None
+        self.assertEqual(intent["reopened_by"], "Human/Ops")
+        self.assertEqual(intent["owner"], "Codex")
+        self.assertEqual(intent["reviewer"], "Claude")
+        task_map = supervisor.task_index_from_status(self.config, snapshot["state"])
+        decision = supervisor.task_execution_dispatch_candidate(
+            self.config,
+            task_map["ABC-001"],
+            "Codex",
+            supervisor.task_resolver_for_config(self.config, task_map),
+        )
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision[0], supervisor.REASON_OWNED_IN_PROGRESS)
+        receipt_path = (
+            self.status_root
+            / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+            / "processed"
+            / request.name
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["outcome"], "processed")
+        self.assertEqual(receipt["reason"], reason)
+        self.assertEqual(receipt["source_task_id"], "ABC-001")
+
+    def test_exact_head_behind_base_reopen_failure_keeps_request_retryable(self) -> None:
+        reason = "exact-head-behind-base"
+        request = self._publish(
+            reason=reason,
+            detail="PR #44 is BEHIND origin/dev with clean trial merge.",
+            unblock_task_id=self._task_id(reason),
+        )
+        failed_proc = subprocess.CompletedProcess(
+            [sys.executable, "ai_status.py", "reopen"],
+            1,
+            stdout="",
+            stderr="reopen failed: transient lock contention",
+        )
+        with mock.patch.object(supervisor.subprocess, "run", return_value=failed_proc):
+            self.assertFalse(self._materialize())
+
+        self.assertTrue(request.is_file())
+        for bucket in ("processed", "rejected", "error"):
+            receipt_dir = (
+                self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / bucket
+            )
+            self.assertFalse((receipt_dir / request.name).exists())
+        self.assertEqual(
+            supervisor.load_status(self.config)["tasks"][0]["status"],
+            "review_approved",
+        )
+        activity_text = Path(self.config["paths"]["activity_log"]).read_text(encoding="utf-8")
+        self.assertIn("auto_integrator_unblock_reopen_failed", activity_text)
+        self.assertIn("transient lock contention", activity_text)
+
+    def test_exact_head_behind_base_stale_head_or_generation_changes_nothing(self) -> None:
+        reason = "exact-head-behind-base"
+        for mutation in (
+            {"head_sha": "c" * 40, "unblock_task_id": self._task_id(reason, head_sha="c" * 40)},
+            {
+                "source_task_generation": 2,
+                "unblock_task_id": self._task_id(reason, source_task_generation=2),
+            },
+        ):
+            with self.subTest(mutation=mutation):
+                before = supervisor.load_status(self.config)
+                request = self._publish(reason=reason, **mutation)
+                self.assertFalse(self._materialize())
+                self.assertEqual(supervisor.load_status(self.config), before)
+                rejected = (
+                    self.status_root
+                    / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+                    / "rejected"
+                    / request.name
+                )
+                self.assertTrue(rejected.is_file())
+
+    def test_exact_head_behind_base_replay_is_idempotent(self) -> None:
+        reason = "exact-head-behind-base"
+        unblock_id = self._task_id(reason)
+        self._publish(reason=reason, unblock_task_id=unblock_id)
+        calls: list[tuple[list[str], dict[str, str], str]] = []
+        with mock.patch.object(
+            supervisor.subprocess,
+            "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self.assertTrue(self._materialize())
+            after_first = supervisor.load_status(self.config)
+            self.assertEqual(len(calls), 1)
+
+            # Re-publishing the identical inbox file after the source is already in_progress
+            # revalidates that the source is no longer review_approved at the request head
+            # and does not invoke reopen again.
+            replayed = self._publish(reason=reason, unblock_task_id=unblock_id)
+            self.assertFalse(self._materialize())
+            self.assertEqual(len(calls), 1)
+        self.assertFalse(replayed.exists())
+        self.assertEqual(supervisor.load_status(self.config), after_first)
+        self.assertEqual(len(after_first["tasks"]), 1)
+        processed = (
+            self.status_root
+            / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+            / "processed"
+            / replayed.name
+        )
+        self.assertTrue(processed.is_file())
+
+    def test_forged_behind_reason_is_refused(self) -> None:
+        before = supervisor.load_status(self.config)
+        for bad_reason in ("exact-head-behind-forged", "final-review-gate-changed"):
+            with self.subTest(reason=bad_reason):
+                request = self._publish(
+                    reason=bad_reason,
+                    unblock_task_id=f"INTEGRATION-UNBLOCK-ABC-001-{bad_reason.upper()}",
+                )
+                self.assertFalse(self._materialize())
+                self.assertEqual(supervisor.load_status(self.config), before)
+                rejected = (
+                    self.status_root
+                    / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+                    / "rejected"
+                    / request.name
+                )
+                self.assertTrue(rejected.is_file())
 
 
 class SharedPlannerContractTests(unittest.TestCase):
