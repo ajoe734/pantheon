@@ -151,6 +151,12 @@ def create_jobs_router(
         jobs = sort_jobs_newest_first(jobs)
         total = len(jobs)
         page_items, next_page_token = page_slice(jobs, page_token, page_size)
+        # Compact rows: the heavy ``detail`` payload is served only by
+        # GET /bff/jobs/{job_id}. Sorting above still used detail timestamps.
+        page_items = [
+            {k: v for k, v in j.items() if k != "detail"} if isinstance(j, dict) else j
+            for j in page_items
+        ]
         return {
             "items": page_items,
             "data": page_items,
