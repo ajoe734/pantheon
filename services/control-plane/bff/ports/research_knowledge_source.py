@@ -2483,17 +2483,44 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 counts[persona_id] = counts.get(persona_id, 0) + 1
         return counts
 
+    def _labels_from_persona_binding_rows(self, raw: Any) -> Dict[str, Dict[str, str]]:
+        """Current-version title/name per family from flat registry ``persona_binding`` rows.
+
+        Same current-version rule as the full list (highest semver, created_at,
+        registry id) and the canonical title path (``strategy_spec.title`` then
+        metadata ``title`` then ``name`` then the strategy id).
+        """
+        def invalid() -> Any:
+            return self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry label payload", "strategy_store_unavailable")
+
+        if not isinstance(raw, list):
+            raise invalid()
+        best: Dict[str, Tuple[Any, str]] = {}
+        for item in raw:
+            entry = item.get("entry") if isinstance(item, dict) and isinstance(item.get("entry"), dict) else item
+            if not isinstance(entry, dict) or entry.get("artifact_type") not in (None, "strategy_spec"):
+                raise invalid()
+            meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            inner = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
+            sid = str(entry.get("strategy_id") or inner.get("strategy_id") or "").strip()
+            reg_id = str(entry.get("registry_id") or meta.get("spec_version_id") or "").strip()
+            semver = str(entry.get("version") or inner.get("spec_version") or meta.get("spec_version") or meta.get("version") or "").strip()
+            if not sid or not reg_id or not semver:
+                raise invalid()
+            prov = inner.get("provenance") if isinstance(inner.get("provenance"), dict) else (meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {})
+            key = self._kw05_version_sort_key(
+                spec_version=semver,
+                created_at=entry.get("created_at") or prov.get("created_at"),
+                spec_version_id=reg_id,
+            )
+            if sid not in best or key > best[sid][0]:
+                best[sid] = (key, str(inner.get("title") or meta.get("title") or meta.get("name") or sid))
+        return {sid: {"title": title, "name": title} for sid, (_key, title) in best.items()}
+
     def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
         # Bounded label read: no per-version normalization and no deepcopy of spec bodies.
         if not (self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))):
-            raw = self._fetch_canonical_persona_binding_view("persona_binding_labels")
-            labels: Dict[str, Dict[str, str]] = {}
-            for sid, label in raw.items():
-                if not isinstance(label, dict):
-                    raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry label payload", "strategy_store_unavailable")
-                title = str(label.get("title") or label.get("name") or sid)
-                labels[str(sid)] = {"title": title, "name": str(label.get("name") or title)}
-            return labels
+            return self._labels_from_persona_binding_rows(self._fetch_canonical_persona_binding_view("persona_binding"))
         labels = {}
         for strategy_spec in list(self._strategy_specs.values()):
             if not isinstance(strategy_spec, dict):
@@ -2536,11 +2563,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     def _fetch_canonical_persona_binding_counts(self) -> Dict[str, int]:
         """Registry-owned per-persona counts; the Registry applies tenant scope and current-version selection."""
         raw = self._fetch_canonical_persona_binding_view("persona_binding_counts")
+        if not isinstance(raw, dict):
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry count payload", "strategy_store_unavailable")
         if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in raw.values()):
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry count payload", "strategy_store_unavailable")
         return {str(k): int(v) for k, v in raw.items()}
 
-    def _fetch_canonical_persona_binding_view(self, view: str) -> Dict[str, Any]:
+    def _fetch_canonical_persona_binding_view(self, view: str) -> Any:
         """Registry flat owner view (counts / labels): caller authorization and selected tenant forwarded as-is."""
         import urllib.error
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
@@ -2562,8 +2591,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", str(exc.detail), "strategy_store_unavailable") from exc
         except Exception as exc:
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback is unavailable", str(exc) or "strategy_store_unavailable") from exc
-        if not isinstance(raw, dict):
-            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry count payload" if view == "persona_binding_counts" else "Invalid strategy registry label payload", "strategy_store_unavailable")
         return raw
 
     def _fetch_canonical_strategy_specs_page(

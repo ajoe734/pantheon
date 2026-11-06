@@ -149,12 +149,28 @@ def _port_with(monkeypatch, fake) -> DefaultResearchKnowledgeSourcePort:
     return DefaultResearchKnowledgeSourcePort()
 
 
+def _row(sid, reg, version, created, spec_title=None, meta=None):
+    metadata = {"persona_ids": ["p1"], **(meta or {})}
+    if spec_title:
+        metadata["strategy_spec"] = {"title": spec_title}
+    return {"entry": {"registry_id": reg, "artifact_type": "strategy_spec", "strategy_id": sid,
+                      "version": version, "owner_tenant": "tenant-dev", "created_at": created,
+                      "metadata": metadata}}
+
+
 def test_label_read_forwards_authorization_and_selected_tenant(monkeypatch) -> None:
     calls: list = []
+    rows = [
+        _row("s1", "s1-v1", "1.0.0", "2026-01-01T00:00:00Z", "Old"),
+        _row("s1", "s1-v10", "1.10.0", "2026-02-01T00:00:00Z", "Current"),
+        _row("s1", "s1-v2", "1.2.0", "2026-03-01T00:00:00Z", "Mid"),
+        _row("s2", "s2-v1", "1.0.0", "2026-01-01T00:00:00Z", None, {"name": "Meta name"}),
+        _row("s3", "s3-v1", "1.0.0", "2026-01-01T00:00:00Z"),
+    ]
 
     def fake(url, **kwargs):
         calls.append((url, kwargs.get("auth_token"), kwargs.get("tenant_id")))
-        return {"s1": {"title": "Tenant A title", "name": "Tenant A title"}}
+        return rows
 
     port = _port_with(monkeypatch, fake)
     t1 = owner_reads.authorization.set("Bearer workshop-user:operator:tenant-dev")
@@ -164,9 +180,13 @@ def test_label_read_forwards_authorization_and_selected_tenant(monkeypatch) -> N
     finally:
         owner_reads.selected_tenant.reset(t2)
         owner_reads.authorization.reset(t1)
-    assert labels == {"s1": {"title": "Tenant A title", "name": "Tenant A title"}}
+    assert labels == {
+        "s1": {"title": "Current", "name": "Current"},
+        "s2": {"title": "Meta name", "name": "Meta name"},
+        "s3": {"title": "s3", "name": "s3"},
+    }
     assert calls == [(
-        "http://registry.internal/api/registry/strategy-specs?view=persona_binding_labels",
+        "http://registry.internal/api/registry/strategy-specs?view=persona_binding",
         "workshop-user:operator:tenant-dev", "tenant-dev",
     )]
 
@@ -175,7 +195,8 @@ def test_label_read_without_authorization_or_with_forbidden_never_returns_labels
     import urllib.error
     from fastapi import HTTPException
 
-    port = _port_with(monkeypatch, lambda *a, **k: {"leak": {"title": "other tenant"}})
+    leak = [_row("leak", "leak-v1", "1.0.0", "2026-01-01T00:00:00Z", "other tenant")]
+    port = _port_with(monkeypatch, lambda *a, **k: leak)
     with pytest.raises(HTTPException) as no_auth:
         port.get_strategy_labels()
     assert no_auth.value.status_code == 503
@@ -198,7 +219,7 @@ def test_label_read_rejects_invalid_payload(monkeypatch) -> None:
 
     t1 = owner_reads.authorization.set("Bearer workshop-user:operator:tenant-dev")
     try:
-        for bad in ([], {"s1": "title"}):
+        for bad in ({}, ["x"], [{"entry": {"strategy_id": "s1"}}]):
             port = _port_with(monkeypatch, lambda *a, _b=bad, **k: _b)
             with pytest.raises(HTTPException) as exc:
                 port.get_strategy_labels()
