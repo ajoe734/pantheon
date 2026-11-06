@@ -1,0 +1,19 @@
+{
+  "task_id": "BFF-PERSONA-LIST-COMPACT-ROWS-20261106",
+  "change": "personas.service._project_persona_list_records strips sourceHealthBindings/source_health_bindings and dataSourceStatus.required_source_health/requiredSourceHealth from list rows via _strip_persona_list_source_health_detail; shared _project_persona_dto unchanged.",
+  "functional_evidence": {
+    "test": "tests/test_bff_persona_list_compact_rows.py",
+    "rows": 142,
+    "row_shape": "overlay patched to emit two bindings (connector_freshness+connectorFreshness ~104 KB, source_health+sourceHealth ~29 KB) so that one detail DTO exceeds 500 KB, matching the hosted measurement",
+    "result": "142 rows serialized in data+items envelope <= 1,000,000 bytes; detail DTO still carries sourceHealthBindings and requiredSourceHealth; raw records not mutated; scalar status, dataSources, requiredDataSources retained",
+    "regression_run": "test_bff_b3_persona_fleet.py, test_bff_persona_create_paper_bundle.py, test_pathreon_market_persona_fleet_contract.py: 82 passed, 8 skipped, 0 failed (with the new test: 83 passed)"
+  },
+  "acceptance_notes": {
+    "1": "covered by the new test (synthetic-from-measured shape; real hosted rows not accessible per hard rules)",
+    "2": "detail DTO and fleet path untouched; existing fleet/detail tests pass unmodified",
+    "3": "FRONTEND CALLERS NOT VERIFIED IN THIS REPO: the frontend (PersonasList, RiskCenter, PersonaTradeJournalTab, SkillDetail, ConsultRulesPage, MemoryGovernancePage, systemDataSources.ts, bff-v1/management.ts) is not in this checkout (no .ts/.tsx references to the removed keys exist here). The brief states the FE reads dataSourceStatus only from persona-fleet rows; reviewer/operator should confirm against the FE repo. Only the removed keys are affected; all other list fields are retained.",
+    "4": "paging/filter/tenant code in routes/collection.py untouched",
+    "5": "no existing test modified or deleted; only an inventory entry added for the new test file"
+  },
+  "concurrent_read_timing": "not measured locally; no claim made"
+}
