@@ -1,0 +1,61 @@
+{
+  "task_id": "BFF-EVO-DRAFT-ACTION-CARRIER-20261106",
+  "title": "Fix Evolution draft metadata command carrier rejection",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "generated_at": "2026-11-06T00:50:30Z",
+  "summary": "Repaired BFF EvolutionProgramAction command carrier normalization and adapter payload forwarding for already-supported draft metadata actions (create_constraint, create_fitness_formula, create_mutation_rule) while enforcing fail-closed validation on unknown or conflicting action carriers and preserving principal role/tenant isolation.",
+  "root_cause": {
+    "observed_evidence": "/tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793924539414.json",
+    "observed_program_id": "evp-c0ce26091e8b443495bfa61e3dac34ff",
+    "observed_error": "HTTP 422 VALIDATION_FAILED: Unknown evolution program action: createconstraint",
+    "cause": "services/control-plane/bff/command_adapters/contracts.py (_EVOLUTION_ACTION_ALIASES) omitted the already-implemented Evolution program draft metadata actions (create_constraint, create_fitness_formula, create_mutation_rule) supported by services/evolution/program_service.py, causing canonicalize_wrapped_payload to strip underscores and reject createconstraint with 422 before reaching EvolutionCommandAdapter."
+  },
+  "scoped_changes": [
+    {
+      "path": "services/control-plane/bff/command_adapters/contracts.py",
+      "description": "Added create_constraint, create_fitness_formula, and create_mutation_rule (and normalized aliases) to _EVOLUTION_ACTION_ALIASES; updated canonicalize_wrapped_payload and normalize_b5_command_payload to validate all present action carriers (command, action, params, and params.payload), fail closed with 422 on unknown or conflicting action carriers, and normalize consistent carriers."
+    },
+    {
+      "path": "services/control-plane/bff/command_adapters/evolution_adapter.py",
+      "description": "Added _DRAFT_METADATA_PROGRAM_ACTIONS support in EvolutionCommandAdapter, rejected conflicting action carriers across action_id/params/payload with 422, forwarded draft metadata fields for create_constraint/create_fitness_formula/create_mutation_rule, and enforced verified principal role checks in _program_actor_role (rejecting viewer-only principals and conflicting actor_role claims with 403)."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_evolution_program_action_receipts.py",
+      "description": "Added E2E regression tests reproducing the exact observed UI create_constraint payload (plus create_fitness_formula and create_mutation_rule) through BFF /bff/v1/commands admission and real ProgramService/create_program_router, verifying single persistence on draft program, non-duplicate same-key replay, 409 divergent replay, 422 unknown/conflicting carrier rejection, 401 noauth, 403 viewer role, and 403/404 tenant mismatch isolation."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
+      "description": "Added contract tests verifying create_constraint, create_fitness_formula, and create_mutation_rule alias normalization, unconfigured owner fail-closed 422 behavior, and conflicting carrier rejection."
+    },
+    {
+      "path": "services/evolution/test_program_owner.py",
+      "description": "Added owner router test proving create_constraint, create_fitness_formula, and create_mutation_rule persist once on a draft program without altering draft lifecycle status, replay idempotently without duplication, and reject divergent same-key replay with 409."
+    }
+  ],
+  "acceptance_verification": {
+    "observed_ui_create_constraint_payload_passes_normalization_and_dispatch": true,
+    "minimal_repair_for_supported_draft_metadata_actions_only": true,
+    "unknown_and_conflicting_action_carriers_rejected_422": true,
+    "viewer_403_noauth_401_tenant_mismatch_403_preserved": true,
+    "metadata_persists_once_same_key_replays_divergent_key_409": true,
+    "no_research_provider_runtime_capital_execution_or_hosted_deploy": true
+  },
+  "validation_commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_evolution_program_action_receipts.py services/control-plane/bff/tests/test_evolution_program_owner_contract.py -q",
+      "exit_code": 0,
+      "summary": "65 passed in 22.82s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/evolution/test_program_owner.py -k \"not postgres\" -q",
+      "exit_code": 0,
+      "summary": "7 passed, 3 deselected in 3.68s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_receipt_owner_routes.py -k \"evolution or live_review or tenant_boundary\" -q",
+      "exit_code": 0,
+      "summary": "10 passed"
+    }
+  ]
+}
