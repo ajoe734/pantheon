@@ -2511,6 +2511,37 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertEqual(len(list(receipts.glob("*.json"))), 1)
         self.assertEqual(len(list(archives.glob("*.json"))), 1)
 
+    def _assert_own_branch_wording(self, task_id: str) -> None:
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        task = next(t for t in snapshot["state"]["tasks"] if t["id"] == task_id)
+        acceptance = " ".join(task["acceptance"])
+        self.assertNotIn("Original PR is updated", acceptance)
+        self.assertIn("own branch and PR", acceptance)
+        self.assertIn("superseded or no longer stranded", acceptance)
+        self.assertIn(task_id, acceptance)
+        self.assertIn("Do NOT push to the source task's branch", task["next"])
+        self.assertIn("trailer check", task["next"])
+        self.assertIn("naming that file", task["next"])
+        self.assertIn("required CI is red", task["next"])
+
+    def test_repair_task_states_own_branch_delivery_rule_pantheon_source(self) -> None:
+        self._publish()
+        self.assertTrue(self._materialize())
+        self._assert_own_branch_wording(self._task_id())
+
+    def test_repair_task_states_own_branch_delivery_rule_execute_plans_source(self) -> None:
+        fe = self._make_execute_plans_source()
+        reason = "ci-red"
+        unblock_id = self._fe_task_id(reason)
+        self._publish(
+            reason=reason, detail="required CI is red",
+            unblock_task_id=unblock_id, **fe,
+        )
+        self.assertTrue(self._materialize())
+        self._assert_own_branch_wording(unblock_id)
+
     def test_queued_child_repair_is_rejected_without_mutating_source(self) -> None:
         for provenance in (
             {"unblock_request": {"source_task_id": "parent"}},
