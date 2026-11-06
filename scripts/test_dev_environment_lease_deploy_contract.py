@@ -3212,3 +3212,84 @@ def test_workflow_has_no_hard_coded_ssh_host_fallback() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "35.194.154.62" not in text
     assert "vars.DEV_DEPLOY_SSH_HOST ||" not in text
+
+
+MARKET_REFRESH_STEP = "Refresh Taiwan market session under lease before stack mutation"
+
+
+def _dev_steps() -> list[dict]:
+    import yaml
+
+    return yaml.safe_load(_workflow())["jobs"]["deploy-dev"]["steps"]
+
+
+def _step_index(steps: list[dict], name: str) -> int:
+    return [step.get("name") for step in steps].index(name)
+
+
+def test_market_refresh_runs_under_held_lease_before_any_stack_mutation() -> None:
+    steps = _dev_steps()
+    refresh = _step_index(steps, MARKET_REFRESH_STEP)
+    # After the heartbeat, before bootstrap predecessor, artifact capture, and deploy.
+    assert _step_index(steps, "Start identity-bound lease heartbeat") < refresh
+    for later in (
+        "Deploy bootstrap predecessor pair in strict live read-only mode under lease",
+        "Capture actual prior artifacts under pinned dev lease",
+        "Upload sealed prior artifact metadata before candidate mutation",
+        "Deploy dev VM stack under lease",
+        "Ensure governed dev paper baseline under lease",
+    ):
+        assert refresh < _step_index(steps, later), later
+    assert steps[refresh]["id"] == "market_refresh"
+
+    text = steps[refresh]["run"]
+    # Existing refresh-only path under the pinned wrapper; no second lease or implementation.
+    assert text.count('"${controller}/scripts/run_with_dev_environment_lease.sh"') == 2
+    assert text.count('bash "${deploy_script}"') == 2
+    assert '--refresh-only --output "${outcome_dir}/refresh.json"' in text
+    assert '--refresh-only --preflight-only --output "${outcome_dir}/preflight.json"' in text
+    assert text.index("refresh.json") < text.index("preflight.json")
+    assert CONTROLLER_SCRIPT_SHA256 in text and CONTROLLER_WRAPPER_SHA256 in text
+    assert "dev_environment_lease.py acquire" not in text and " acquire " not in text
+    assert "--force" not in text
+    # Passing outcomes are exactly the proven-session ones; every other outcome fails by name.
+    for allowed in ('("noop", "already_fresh")', '("skipped", "weekend")',
+                    '("skipped", "holiday")', '("skipped", "session_not_closed")'):
+        assert allowed in text
+    assert "no_active_taiwan_symbols" not in text.split("ALLOWED = {", 1)[1].split("}", 1)[0]
+    assert "status={status!r} reason={reason!r}" in text
+
+
+def test_market_refresh_failure_stops_before_baseline_so_compensation_cannot_run() -> None:
+    steps = _dev_steps()
+    names = [step.get("name") for step in steps]
+    baseline_pos = names.index("Capture actual prior artifacts under pinned dev lease")
+    assert names.index(MARKET_REFRESH_STEP) < baseline_pos
+    # Later mutating steps are not `always()` steps, so they never run after this failure.
+    for later in ("Capture actual prior artifacts under pinned dev lease", "Deploy dev VM stack under lease"):
+        assert "always()" not in str(steps[names.index(later)].get("if", ""))
+    # Compensation requires a successful artifact baseline.
+    compensation = next(step for step in steps if step.get("id") == "deploy_compensation")
+    assert "steps.artifact_baseline.outcome == 'success'" in compensation["if"]
+
+
+def test_market_refresh_skips_for_refresh_bootstrap_and_non_paper_modes() -> None:
+    steps = _dev_steps()
+    condition = steps[_step_index(steps, MARKET_REFRESH_STEP)]["if"]
+    assert "env.PAPER_BOOTSTRAP_REQUESTED == 'true'" in condition
+    assert "env.BOUNDED_SOURCE_REFRESH_ENABLED != 'true'" in condition
+    assert "env.BOOTSTRAP_EMPTY_HOST != 'true'" in condition
+
+    workflow = _workflow()
+    paper_line = next(line for line in workflow.splitlines() if line.strip().startswith("PAPER_BOOTSTRAP_REQUESTED:"))
+    assert "(inputs.component == 'auto' || inputs.component == 'root')" in paper_line
+
+    def evaluate(paper: bool, refresh: bool, bootstrap: bool) -> bool:
+        return paper and not refresh and not bootstrap
+
+    assert evaluate(True, False, False)
+    assert not evaluate(True, True, False)   # run_bounded_source_refresh
+    assert not evaluate(True, False, True)   # empty bootstrap host
+    assert not evaluate(False, False, False)  # modes that do not run the paper baseline
+    # run_bounded_source_refresh input and its profile wiring are unchanged.
+    assert "BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}" in workflow
