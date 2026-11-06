@@ -24,7 +24,11 @@ from typing import Any, Mapping, Sequence
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
 from services.service_token_file import configured_service_token
-from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
+from services.source_ingestion.connectors.base import (
+    SourceRecord,
+    SourceRecordStatus,
+    SourceType,
+)
 from services.source_ingestion.controller_state import (
     ControllerState,
     ControllerStateError,
@@ -35,6 +39,7 @@ from services.source_ingestion.controller_state import (
 from services.source_ingestion.distillation_worker import (
     DistillationJob,
     DistillationJobQueue,
+    MARKET_SOURCE_SKIP_REASON,
     RegistrySyncRequest,
     RegistrySyncResult,
     make_distillation_worker,
@@ -342,6 +347,12 @@ def _make_registry_sync(
 
     def sync(request: RegistrySyncRequest) -> RegistrySyncResult:
         source = request.source
+        if source.source_type == SourceType.MARKET:
+            return RegistrySyncResult(
+                registry_id="",
+                status="skipped",
+                reason=MARKET_SOURCE_SKIP_REASON,
+            )
         job = request.job
         registry_id = _versioned_registry_id(source, job)
         payload = _build_registry_payload(
@@ -536,7 +547,9 @@ def run_controller_tick(
                 "status": job.status.value if hasattr(job.status, "value") else str(job.status),
             }
             for job in queue.list_all()
-            if (job.status.value if hasattr(job.status, "value") else str(job.status)) in ("done", "skipped") and job.registry_id
+            if (job.status.value if hasattr(job.status, "value") else str(job.status)) in ("done", "skipped")
+            and job.registry_id
+            and job.skip_reason != MARKET_SOURCE_SKIP_REASON
         ]
         actual_meta = {
             "synced_count": run_result.registry_synced,
