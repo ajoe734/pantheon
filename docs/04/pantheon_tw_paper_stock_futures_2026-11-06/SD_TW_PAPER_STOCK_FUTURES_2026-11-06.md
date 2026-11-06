@@ -105,7 +105,7 @@ State per underlying per contract month: `q`, `A`, plus account `cash`, `realize
 
 ### 5.2 Order quantity
 
-The existing `order_quantity=1`, `quantity_type=SHARES` means 1 *contract* when the artifact says `instrument_type=stock_future` (§8). SELL while already short and BUY while already long are a no-op (event `paper_order_noop`, `reason=already_at_direction`) so one signal never pyramids; this keeps exposure per signal fixed at one contract.
+Units are literal and never reinterpreted: existing immutable equity artifacts keep `quantity_type=SHARES` meaning shares and are unchanged; new futures artifact revisions explicitly carry `instrument_type=stock_future`, `quantity_type=CONTRACTS`, `order_quantity=1` (§8), and the runtime rejects `SHARES` on a `stock_future` artifact (no SHARES-to-contract compatibility mapping). **Proposed per-order policy:** SELL while already short and BUY while already long are a no-op (event `paper_order_noop`, `reason=already_at_direction`) so one signal never pyramids; this keeps exposure per signal fixed at one contract. §9 replays a *labelled alternate* cumulative-sizing scenario only to compare capacity; it is not this policy.
 
 ### 5.3 Margin definitions
 
@@ -113,7 +113,7 @@ The existing `order_quantity=1`, `quantity_type=SHARES` means 1 *contract* when 
 
 ### 5.4 Pre-trade check and rejection event
 
-Before any open/add/flip leg: require `equity − margin_reserved_after ≥ 0` where `margin_reserved_after` includes the new contracts at the fill price. Otherwise, **before any fill**: event `paper_order_rejected`, `reason=insufficient_initial_margin`, with `required`, `available`, `contract`, `price`, `price_date`. No cash/position change. This replaces the post-fill label at paper_runtime ~L3443.
+Before any open/add/flip leg: require `equity ≥ margin_reserved_after`, where `equity` is marked at the current `P_ref` (equity before the new order's costs) and `margin_reserved_after` re-marks **all** contracts, existing and new, at that same current `P_ref` (§5.3), not entry-time margins. Fees only reduce equity further and can only cause earlier rejection. Otherwise, **before any fill**: event `paper_order_rejected`, `reason=insufficient_initial_margin`, with `required`, `available`, `contract`, `price`, `price_date`. No cash/position change. This replaces the post-fill label at paper_runtime ~L3443.
 
 ### 5.5 Maintenance breach
 
@@ -161,26 +161,47 @@ For `.TW`/`.TWSE` (and other Taiwan market) symbols:
 
 ## 9. Long side: same contract versus odd-lot shares
 
-Real price sequences from the task (hosted paper fills, week ending 2026-11-06, in fill order): 2330: 2370, 2330, 2295, 2260, 2240, 2135; 0050: 104.95, 104.1, 100.6, 99.85, 97.15, 92.5; 2317: 245.5, 251, 245.5, 240, 235, 224.5. **These are stock prices used as a labelled stand-in** (`stand_in=stock_close`) because daily futures history is not in the repository. Replay: one BUY per price, 1 unit per signal, no exits, mark at the last price, capital 100,000, pre-trade margin rejection per §5.4 with I = 13.5% × price × multiplier (SRF fixed 8,700). Fees/tax per §6 on entries only.
+Real price sequences from the task (hosted paper fills, week ending 2026-11-06, in fill order): 2330: 2370, 2330, 2295, 2260, 2240, 2135; 0050: 104.95, 104.1, 100.6, 99.85, 97.15, 92.5; 2317: 245.5, 251, 245.5, 240, 235, 224.5. **These are stock prices used as a labelled stand-in** (`stand_in=stock_close`) because daily futures history is not in the repository.
 
-| Underlying | Instrument | Exposure of 1st signal | Fills / rejected | Margin or cash used | Gross PnL at last mark | Entry fees + tax |
-| --- | --- | --- | --- | --- | --- | --- |
-| 2330 | odd-lot shares (1 share) | 2,370 | 6 / 0 | cash 13,630 | −820 | — (securities costs not modelled here) |
-| 2330 | QFF (100) | 237,000 | 3 / 3 | margin 94,432.5 | −59,000 | 15.00 + 13.99 |
-| 2330 | CDF (2,000) | 4,740,000 | 0 / 6 | would need 639,900 | 0 | — |
-| 2317 | odd-lot shares | 245.5 | 6 / 0 | cash 1,441.5 | −94.5 | — |
-| 2317 | DHF (2,000) | 491,000 | 1 / 5 | margin 66,285 | −42,000 | 5.00 + 9.82 |
-| 0050 | odd-lot shares | 104.95 | 6 / 0 | cash 599.15 | −44.15 | — |
-| 0050 | SRF (1,000) | 104,950 | 6 / 0 | margin 52,200 | −44,150 | 48.00 + 11.98 |
+**Two scenarios, kept distinct.** (A) *Proposed per-order policy (§5.2):* same-direction BUY while long is a no-op, so six consecutive BUYs open exactly one contract (QFF, DHF or SRF), five no-ops, and exposure is that of the first signal. (B) *Alternate cumulative-sizing scenario (labelled, not proposed):* every BUY adds one unit, to measure capacity and loss under a rejection stream. The §5.2 policy and the operator's still-open long-side choice are not decided by (B).
+
+Scenario B replay rules: capital 100,000, no exits; before each BUY apply §5.4 literally: `equity = 100,000 + Σ m·(P − A_i)` over existing fills at the current price `P` (less costs already paid), `required = (n+1)·I(P)` with `I(P) = 13.5%·P·m` re-marked at the current `P` for all contracts (SRF fixed 8,700 each); reject if `equity < required`. Costs per §6 on fills (QFF/DHF 5.0 + 0.00002·P·m; SRF 8.0 + tax).
+
+Trade-by-trade, 2330 QFF (m=100):
+
+| BUY at | Equity before costs | Required for n+1 contracts at P | Result |
+| --- | --- | --- | --- |
+| 2,370 | 100,000 | 1×31,995 = 31,995 | fill (1) |
+| 2,330 | 100,000 + 100×(2,330−2,370) = 96,000 | 2×31,455 = 62,910 | fill (2) |
+| 2,295 | 100,000 + 100×((2,295−2,370)+(2,295−2,330)) = **89,000** | 3×30,982.5 = **92,947.5** | **reject** (insufficient_initial_margin) |
+| 2,260 | 82,000 | 3×30,510 = 91,530 | reject |
+| 2,240 | 78,000 | 3×30,240 = 90,720 | reject |
+| 2,135 | 57,000 | 3×28,822.5 = 86,467.5 | reject |
+
+Costs paid on the two fills total 19.40 (10.00 fees + 9.40 tax) and only lower equity. The earlier "3 fills / −59,000 / 94,432.5" figures were wrong: they used a static maximum of 3 at initial equity and summed entry-time margins.
+
+2317 DHF (m=2,000): the 2nd BUY at 251 needs 2×251×2,000×13.5% = 135,540 versus equity ≈ 110,985 → reject; later BUYs stay rejected (equity falls to ≈ 57,985 at 224.5). 0050 SRF: equity (≥ 55,790 at the end) always exceeds n×8,700 (≤ 52,200), so all six fill.
+
+| Underlying | Instrument | Exposure of 1st signal | A: per-order policy (fills / no-ops, gross PnL at last mark) | B: cumulative alternate (fills / rejected) | B margin at last mark (all contracts at last P) | B gross PnL at last mark | B entry fees + tax |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2330 | odd-lot shares (1 share) | 2,370 | 1 / 5, −235 (same as B only if shares pyramid; shares are not subject to this policy) | 6 / 0 (cash 13,630) | — | −820 | — (securities costs not modelled) |
+| 2330 | QFF (100) | 237,000 | 1 / 5, −23,500 (100×(2,135−2,370)) | 2 / 4 | 2×2,135×100×13.5% = 57,645 | −43,000 | 10.00 + 9.40 |
+| 2330 | CDF (2,000) | 4,740,000 | 0 / rejected on the first BUY, 0 | 0 / 6 (first needs 639,900) | — | 0 | — |
+| 2317 | odd-lot shares | 245.5 | 1 / 5, −21 | 6 / 0 (cash 1,441.5) | — | −94.5 | — |
+| 2317 | DHF (2,000) | 491,000 | 1 / 5, −42,000 | 1 / 5 | 60,615 | −42,000 | 5.00 + 9.82 |
+| 0050 | odd-lot shares | 104.95 | 1 / 5, −12.45 | 6 / 0 (cash 599.15) | — | −44.15 | — |
+| 0050 | SRF (1,000) | 104,950 | 1 / 5, −12,450 (1,000×(92.5−104.95)) | 6 / 0 | 52,200 | −44,150 | 48.00 + 11.98 |
+
+For the share rows scenario A means one share only because the same no-op rule is applied for symmetry; the operator may instead keep per-signal share accumulation (the share ledger today fills every BUY).
 
 Findings:
 
-* One futures signal carries 100× (QFF), 2,000× (DHF) or 1,000× (SRF) the exposure of one odd-lot signal; the same sequence loses 59,000 on QFF (59% of capital) against 820 as shares.
-* On 2330 and 2317 the account supports 3 and 1 contracts; further BUYs are rejected, so the long ledger would be *capacity-bound* (a rejection stream) instead of the current always-fill.
+* One futures signal carries 100× (QFF), 2,000× (DHF) or 1,000× (SRF) the exposure of one odd-lot signal. Under the proposed policy the same 2330 sequence loses 23,500 on one QFF (23.5% of capital) against 235 on one share; under the cumulative alternate it loses 43,000 on two QFF against 820 for six shares.
+* On 2330 and 2317 the account supports at most 3 and 1 contracts at initial equity, and fewer as price falls against the position (2 on 2330 in this path), so cumulative long sizing would be a *capacity-bound rejection stream* instead of the current always-fill.
 * With **mixed** instruments the signal stream is asymmetric: BUY adds 1 share, SELL opens 100 shares of short exposure (QFF). A long position of N shares cannot be offset by a contract, so a flip becomes "close shares, then open contract" — two ledgers per underlying and a path where long→short changes both instrument and size by 100×.
 * Both options trip the drawdown baselines (§11), because the short side is futures in either case.
 
-**Recommendation (not a decision):** long and short through the **same contract**. Reasons: one ledger per underlying, one margin account, symmetric flips, and no 100× jump at a flip; the cost is that long-side PnL scales too and that capacity is 1–3 contracts on 2330/2317. If the operator prefers to keep shares for the long side, the share ledger remains valid for BUY/exit only (§7) and the tasks marked ◇ in §13 change. The coordinator's prior ("both directions same contract") is **supported by the comparison**, but the 59,000 / 42,000 loss figures show it needs the re-baselining in §11 first; nothing here assumes it is chosen.
+**Recommendation (not a decision):** long and short through the **same contract**. Reasons: one ledger per underlying, one margin account, symmetric flips, and no 100× jump at a flip; the cost is that long-side PnL scales too and that capacity is 1–3 contracts on 2330/2317. If the operator prefers to keep shares for the long side, the share ledger remains valid for BUY/exit only (§7) and the tasks marked ◇ in §13 change. The coordinator's prior ("both directions same contract") is **supported by the comparison**, but the 23,500 (one QFF) / 42,000 (one DHF) loss figures show it needs the re-baselining in §11 first; nothing here assumes it is chosen.
 
 ## 10. Data path
 
@@ -212,7 +233,7 @@ Method: `git grep` for `paper_fill_simulated`, `fill_quantity`, `position_quanti
 | `services/capital/risk_policy.py` (`drawdown_pct`) and `services/evolution/config/threshold_sweep_baselines.json` | drawdown thresholds | **Yes** — see below |
 | Frontend | no direct reader of these fields was found by `git grep` in `*.ts`/`*.tsx` (only BFF output); consumes BFF holdings | Follows the BFF change; **not verified in a browser** |
 
-**Drawdown policies.** `PAPER-PERSONA-BASELINES-20261105` approved `expected_drawdown` 0.0027 (2330), 0.0002 (0050), 0.0011 (2317) with 1.25× breach triggers 0.003375 / 0.00025 / 0.001375 (`evidence.json`), and `H12-4923-DRAWDOWN-POLICY-CONFIG-20261101` proposes 0.0325 for another chain. They were calibrated on 1-share paper PnL. Per signal the PnL grows ×100 (QFF), ×2,000 (DHF), ×1,000 (SRF); the §9 replay gives 59,000 / 42,000 / 44,150 loss on 100,000 against triggers of 0.34% / 0.14% / 0.025% of capital. **They will trip on the first adverse move and must be re-derived** before cutover; the policies are `approved_by`-governed evidence, so the re-baseline is a governed review task (§13), not a config edit here.
+**Drawdown policies.** `PAPER-PERSONA-BASELINES-20261105` approved `expected_drawdown` 0.0027 (2330), 0.0002 (0050), 0.0011 (2317) with 1.25× breach triggers 0.003375 / 0.00025 / 0.001375 (`evidence.json`), and `H12-4923-DRAWDOWN-POLICY-CONFIG-20261101` proposes 0.0325 for another chain. They were calibrated on 1-share paper PnL. Per signal the PnL grows ×100 (QFF), ×2,000 (DHF), ×1,000 (SRF); the §9 replay gives (per-order policy, one contract) 23,500 / 42,000 / 12,450 loss on 100,000 (cumulative alternate: 43,000 / 42,000 / 44,150) against triggers of 0.34% / 0.14% / 0.025% of capital. **They will trip on the first adverse move and must be re-derived** before cutover; the policies are `approved_by`-governed evidence, so the re-baseline is a governed review task (§13), not a config edit here.
 
 ## 12. Cutover
 

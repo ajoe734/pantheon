@@ -26,9 +26,10 @@
   },
   "long_side_replay": {
     "stand_in": "stock close used in place of futures price, labelled",
-    "gross_pnl": {"2330_shares": -820, "2330_QFF": -59000, "2330_CDF": 0, "2317_shares": -94.5, "2317_DHF": -42000, "0050_shares": -44.15, "0050_SRF": -44150},
-    "fills_rejected": {"QFF": [3, 3], "CDF": [0, 6], "DHF": [1, 5], "SRF": [6, 0]},
-    "method": "one BUY per price, 1 unit, no exits, mark at last price, 100000 capital, rejection when cumulative initial margin exceeds capital"
+    "gross_pnl_cumulative_alternate_B": {"2330_shares": -820, "2330_QFF": -43000, "2330_CDF": 0, "2317_shares": -94.5, "2317_DHF": -42000, "0050_shares": -44.15, "0050_SRF": -44150},
+    "gross_pnl_per_order_policy_A_one_unit": {"2330_QFF": -23500, "2317_DHF": -42000, "0050_SRF": -12450},
+    "fills_rejected": {"QFF": [2, 4], "CDF": [0, 6], "DHF": [1, 5], "SRF": [6, 0]},
+    "method": "scenario B labelled alternate (not proposed policy): one BUY per price, +1 unit, no exits, capital 100000; before each BUY equity=100000+sum m*(P-A_i)-costs, required=(n+1)*13.5%*P*m re-marked at current P (SRF fixed 8700); reject if equity<required. QFF 2330: 3rd BUY at 2295 equity 89000 < 92947.5 rejected. Scenario A: per-order no-op policy gives one contract"
   },
   "repository_commands": [
     "git grep -l <paper_fill_simulated|fill_quantity|position_quantity|ledger_cash|order_quantity|quantity_type> -- . ':!docs' ':!tests' ':!*test*'",
