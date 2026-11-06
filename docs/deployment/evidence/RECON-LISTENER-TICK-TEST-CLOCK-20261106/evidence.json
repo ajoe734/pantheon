@@ -1,0 +1,21 @@
+{
+  "task_id": "RECON-LISTENER-TICK-TEST-CLOCK-20261106",
+  "change": "test_tick_budget_bounds_slow_downstream_and_progress_is_reported now patches only the listener module's `time` (monotonic/sleep) with a controlled clock; _slow_post advances it 0.5s per call, budget 2.0s, no real sleeping, wall-clock assertion removed. Asserts post_incident_trigger call_count == 4, backlog == 6, plus unchanged health payload and healthcheck assertions. Production code unchanged.",
+  "red_proof": {
+    "local_uncommitted_change": "services/reconciliation-drift/incident_listener.py: replaced `if time.monotonic() >= tick_deadline:` with `if False:` at line 482 (backlog loop) and line 578 (incident loop); line 556 left as is",
+    "command": "python -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py -k tick_budget",
+    "result": "1 failed: AssertionError: assert 10 == 4 (post_incident_trigger.call_count)",
+    "reverted": "git checkout of incident_listener.py; not committed"
+  },
+  "cpu_load_30_runs": {
+    "load": "8 background busy-loop processes (python -c 'while True: pass') on a 12-core machine",
+    "command": "30 sequential invocations of: python -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py -k tick_budget",
+    "result": "30 passed, 0 failed",
+    "load_cleanup": "busy-loop processes killed afterwards"
+  },
+  "suite": {
+    "command": "python -m pytest -q services/reconciliation-drift (same as branch-ci.yml step)",
+    "result": "244 passed, 1 skipped, 3 warnings in 135.55s",
+    "note": "venv with pytest fastapi httpx pydantic uvicorn jsonschema pyyaml requests flask asyncpg; an earlier run without asyncpg had 4 scheduler failures from ModuleNotFoundError only"
+  }
+}
