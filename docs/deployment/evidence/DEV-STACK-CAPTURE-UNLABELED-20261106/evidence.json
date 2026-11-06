@@ -1,0 +1,17 @@
+{
+  "task": "DEV-STACK-CAPTURE-UNLABELED-20261106",
+  "change": "scripts/dev_release_artifacts.py IMAGE_FORMAT: revision = {{with index .Config \"Labels\"}}{{json (index . \"org.opencontainers.image.revision\")}}{{else}}null{{end}}; STACK_FORMAT/STACK_ENV_FORMAT untouched; other _image callers untouched (same format, same valid_revisions/load/restore code)",
+  "real_docker": {
+    "ran": true,
+    "server_version": "29.7.2",
+    "test": "test_image_format_against_real_docker_for_all_label_shapes",
+    "shapes": "docker import of empty tar (no Labels key) -> revision null; import --change LABEL some.other -> null; import --change LABEL org.opencontainers.image.revision -> label value. Images removed afterwards.",
+    "note": "docker build was unavailable in the worker sandbox (read-only buildx dir), so labeled images use docker import --change LABEL",
+    "ci": "test is skipif no reachable daemon; the persona-owner-contract.yml job (ubuntu-latest, already runs docker build) has a Docker daemon, so it should run there; not observed from this worker"
+  },
+  "capture_and_compensation_checked": "test_unlabeled_third_party_services_are_recorded_and_restored_without_invented_env: capture records env {TENANT: null, GIT_SHA: null} for unlabeled/one-shot services, validate_stack accepts it, pinned() emits no environment override for them (no invented values), services restored on recorded image, env readback equal. Absent image still reported by service name (test_missing_image_at_capture_is_named, passing). FakeDocker does not execute templates; the format is proven only by the real-docker test.",
+  "commands": [
+    "python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py -q -rs"
+  ],
+  "result": "367 passed, 1 skipped (FE digest helper/Node not present), exit 0"
+}
