@@ -3345,6 +3345,57 @@ def test_strategy_spec_persona_binding_counts_view_is_scoped_and_matches_rows(st
     assert strict_client.get(f"{path}?view=persona_binding_counts").status_code in (401, 403)
 
 
+def test_persona_binding_labels_use_current_version_title_and_fallbacks():
+    from .storage import RegistryStore, persona_binding_labels
+
+    store = RegistryStore()
+
+    def make(rid, sid, version, metadata, tenant="tenant-a"):
+        store.create(
+            RegistryEntryCreate(
+                artifact_type="strategy_spec", strategy_id=sid, version=version,
+                storage_ref={"backend": "object_store", "path": "spec.json"},
+                checksum="sha256:cafef00d", metadata=metadata,
+            ),
+            rid, actor={"tenant": tenant},
+        )
+
+    make("l1-v1", "l1", "1.0.0", {"persona_ids": ["p1"], "strategy_spec": {"title": "Old"}})
+    make("l1-v10", "l1", "1.10.0", {"persona_ids": ["p1"], "strategy_spec": {"title": "New"}})
+    make("l1-v2", "l1", "1.2.0", {"persona_ids": ["p1"], "strategy_spec": {"title": "Mid"}})
+    make("l2-v1", "l2", "1.0.0", {"persona_ids": ["p2"], "name": "Meta name"})
+    make("l3-v1", "l3", "1.0.0", {"persona_ids": ["p3"]})
+    make("l4-v1", "l4", "1.0.0", {"persona_ids": [], "strategy_spec": {"title": "Unbound"}})
+    rows = store.list_persona_binding_rows(artifact_type="strategy_spec")
+    assert persona_binding_labels(rows) == {
+        "l1": {"title": "New", "name": "New"},
+        "l2": {"title": "Meta name", "name": "Meta name"},
+        "l3": {"title": "l3", "name": "l3"},
+    }
+    assert all("evaluation_summary" not in r and "lineage" not in r for r in rows)
+
+
+def test_strategy_spec_persona_binding_labels_view_is_scoped(strict_client):
+    token_a = _jwt(subject="pbl-a", tenant="tenant-a")
+    token_b = _jwt(subject="pbl-b", tenant="tenant-b")
+    for token, sid, title in ((token_a, "pbl-a1", "Title A"), (token_b, "pbl-b1", "Other tenant secret")):
+        spec = _valid_spec(sid, rev="1.0.0")
+        spec["title"] = title
+        resp = strict_client.post(
+            "/api/registry/strategy-specs",
+            json={"strategy_id": sid, "version": "1.0.0", "lineage": {"source_run_ids": ["run-1"]},
+                  "strategy_spec": spec, "metadata": {"persona_ids": ["p1"]}},
+            headers=_bearer(token),
+        )
+        assert resp.status_code == 200, resp.text
+    path = "/api/registry/strategy-specs"
+    resp = strict_client.get(f"{path}?view=persona_binding_labels", headers=_bearer(token_a))
+    assert resp.status_code == 200
+    assert resp.json()["pbl-a1"]["title"] == "Title A"
+    assert "pbl-b1" not in resp.json() and "Other tenant secret" not in resp.text
+    assert strict_client.get(f"{path}?view=persona_binding_labels").status_code in (401, 403)
+
+
 def test_strategy_artifacts_list_and_detail_tenant_scope_and_x_tenant_id(strict_client):
     """GET /api/registry/strategy-artifacts uses the same visible-tenant rule as persona_binding,
     and GET /api/registry/strategy-artifacts/{id} never exposes another tenant's entry."""

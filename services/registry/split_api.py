@@ -34,6 +34,7 @@ from .pg_store import DivergentCommandReplayError
 from .storage import (
     build_lineage_graph,
     persona_binding_counts,
+    persona_binding_labels,
     project_strategy_spec_summary_page,
     RegistryConcurrentUpdateError,
     RegistryStore,
@@ -381,6 +382,14 @@ class RegistryService:
     ) -> dict[str, int]:
         """Per-persona active strategy counts over the same rows as :meth:`list_persona_binding_rows`."""
         return persona_binding_counts(self.list_persona_binding_rows(
+            visible_tenants=visible_tenants, artifact_type=artifact_type,
+        ))
+
+    def label_persona_bindings(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
+    ) -> dict[str, dict[str, str]]:
+        """Current-version title/name per bound strategy family over :meth:`list_persona_binding_rows`."""
+        return persona_binding_labels(self.list_persona_binding_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
         ))
 

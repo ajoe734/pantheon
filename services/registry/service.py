@@ -1584,7 +1584,7 @@ def read_lineage_graph(
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
-    view: Optional[Literal["persona_binding", "persona_binding_counts", "strategy_summary_page"]] = None,
+    view: Optional[Literal["persona_binding", "persona_binding_counts", "persona_binding_labels", "strategy_summary_page"]] = None,
     state: Optional[str] = None,
     persona_id: Optional[str] = None,
     page_token: Optional[str] = None,
@@ -1606,6 +1606,17 @@ def list_all_strategy_spec_entries(
         except ValueError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return JSONResponse(counts)
+    if view == "persona_binding_labels":
+        # {strategy_id: {title, name}} of each bound family's current version; same scope.
+        ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+        try:
+            labels = get_registry_service().label_persona_bindings(
+                visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+                artifact_type=ArtifactType.STRATEGY_SPEC.value,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return JSONResponse(labels)
     if view == "strategy_summary_page":
         ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
         wanted_artifact_state = artifact_state.value if artifact_state is not None else None

@@ -31,9 +31,11 @@ from .models import (
 PERSONA_BINDING_META_KEYS = (
     "spec_version_id", "tenant_id", "spec_version", "version", "personaIds",
     "persona_ids", "persona_id", "lifecycle_state", "state", "status",
+    "title", "name",
 )
 PERSONA_BINDING_SPEC_KEYS = (
     "persona_ids", "spec_version", "lifecycle_state", "strategy_id", "created_at",
+    "title",
 )
 PERSONA_BINDING_INNER_META_KEYS = ("tenant_id", "persona_id")
 # Top-level identity/version/tenant/state fields the count path needs; no
@@ -406,6 +408,31 @@ def persona_binding_counts(rows: list[dict]) -> dict[str, int]:
         for persona_id in {str(v).strip() for v in persona_ids if str(v).strip()}:
             counts[persona_id] = counts.get(persona_id, 0) + 1
     return counts
+
+
+def persona_binding_labels(rows: list[dict]) -> dict[str, dict[str, str]]:
+    """``{strategy_id: {"title", "name"}}`` of each family's current version.
+
+    Same rows and current-version selection as :func:`persona_binding_counts`
+    (highest ``(semver, created_at, registry_id)``); a retired current version
+    is still labelled. The title follows the BFF canonical read path
+    (``strategy_spec.title`` then metadata ``title`` then ``name`` then the
+    strategy id) and ``name`` equals it.
+    """
+    current: dict[str, tuple] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("artifact_type") not in (None, "strategy_spec"):
+            raise ValueError("Invalid strategy registry entry")
+        meta = _binding_dict(row.get("metadata"))
+        inner = _binding_dict(meta.get("strategy_spec"))
+        sid = str(row.get("strategy_id") or inner.get("strategy_id") or "").strip()
+        version = _binding_version(row)
+        if not sid or version is None:
+            raise ValueError("Invalid strategy registry entry")
+        if sid not in current or version[0] > current[sid][0][0]:
+            title = inner.get("title") or meta.get("title") or meta.get("name") or sid
+            current[sid] = (version, str(title))
+    return {sid: {"title": title, "name": title} for sid, (_v, title) in current.items()}
 
 
 # ---------------------------------------------------------------------------
