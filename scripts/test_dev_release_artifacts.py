@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -870,8 +871,23 @@ def _docker_daemon():
     return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
 
 
-@pytest.mark.skipif(_docker_daemon() is None, reason="no reachable Docker daemon")
+def test_importing_module_makes_no_docker_call(tmp_path):
+    stub = tmp_path / "bin" / "docker"
+    stub.parent.mkdir()
+    log = tmp_path / "calls.log"
+    stub.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 1\n')
+    stub.chmod(0o755)
+    env = dict(os.environ, PATH=f"{stub.parent}:{os.environ['PATH']}")
+    root = Path(__file__).resolve().parent.parent
+    out = subprocess.run([sys.executable, "-c", "import scripts.test_dev_release_artifacts"],
+                         cwd=root, env=env, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert not log.exists()
+
+
 def test_image_format_against_real_docker_for_all_label_shapes(tmp_path):
+    if _docker_daemon() is None:
+        pytest.skip("no reachable Docker daemon")
     tag = "pantheon-imgfmt-test-" + os.urandom(4).hex()
     names = {"nolabels": f"{tag}:nolabels", "other": f"{tag}:other", "rev": f"{tag}:rev"}
     revision = "b" * 40
