@@ -311,8 +311,22 @@ def test_tick_budget_bounds_slow_downstream_and_progress_is_reported(tmp_path: P
         }
     state_file.write_text(json.dumps({"version": 1, "backlog": backlog}), encoding="utf-8")
 
+    # Controlled clock: only the listener module's view of time is replaced, and
+    # every slow downstream call advances it without real sleeping.
+    clock = {"now": 100.0}
+    step = 0.5
+
+    class _FakeTime:
+        @staticmethod
+        def monotonic() -> float:
+            return clock["now"]
+
+        @staticmethod
+        def sleep(seconds: float) -> None:
+            clock["now"] += seconds
+
     def _slow_post(**kwargs):
-        time.sleep(0.15)
+        clock["now"] += step
         return {"status": "ok", "created": True, "evaluation_id": "eval-1"}
 
     env = {
@@ -320,23 +334,22 @@ def test_tick_budget_bounds_slow_downstream_and_progress_is_reported(tmp_path: P
         "RECONCILIATION_DRIFT_INCIDENT_LISTENER_STATE_PATH": str(state_file),
         "RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS": "1",
         "RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_TICKS": "1",
-        "RECONCILIATION_DRIFT_INCIDENT_LISTENER_TICK_BUDGET_SECONDS": "0.3",
+        "RECONCILIATION_DRIFT_INCIDENT_LISTENER_TICK_BUDGET_SECONDS": "2.0",
     }
 
-    started = time.monotonic()
     with mock.patch.dict("os.environ", env), mock.patch.object(
         listener, "fetch_open_incidents", return_value=[]
     ), mock.patch.object(
         listener, "post_incident_trigger", side_effect=_slow_post
-    ):
+    ) as post_mock, mock.patch.object(listener, "time", _FakeTime):
         exit_code = listener.main()
 
-    elapsed = time.monotonic() - started
     assert exit_code == 0
-    assert elapsed < 0.3 + 0.25
+    # Budget 2.0s / 0.5s per call: exactly 4 calls fit before the deadline stops processing.
+    assert post_mock.call_count == 4
 
     state = listener.IncidentListenerState(state_file)
-    assert 0 < len(state.backlog) < 10
+    assert len(state.backlog) == 6
 
     health_payload = json.loads(health_file.read_text(encoding="utf-8"))
     assert health_payload["status"] == "ok"
