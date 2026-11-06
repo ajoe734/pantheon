@@ -612,3 +612,49 @@ def test_baseline_restore_without_qualified_seal_exports_only_sealed_baseline_to
     assert evidence["fe_seal"] is None
     assert e.ENV_PREFIX + "SEALED_FROM_JSON" not in exports
     assert json.loads(exports[e.ENV_PREFIX + "SEALED_TO_JSON"]) == evidence["baseline"]["frontend"]
+
+
+# --- Whole-stack readback evidence ----------------------------------------
+
+def _stack_pair():
+    ids = {"operator-bff": "sha256:" + "1" * 64, "svc-a": "sha256:" + "2" * 64}
+    baseline = {"stack_baseline": {"services": {name: {"image_id": image} for name, image in ids.items()}}}
+    stack = {"scope": "stack", "candidate_only_stopped": ["gone"],
+             "services": {name: {"baseline_image_id": image, "observed_image_id": image} for name, image in ids.items()}}
+    return baseline, stack
+
+
+def test_stack_readback_lists_baseline_and_observed_image_for_every_service():
+    baseline, stack = _stack_pair()
+    e.validate_stack_readback(stack, baseline)
+
+
+@pytest.mark.parametrize("change", ["missing_service", "observed_differs", "extra_key", "candidate_only_is_baseline", "unsorted"])
+def test_stack_readback_rejects_mixed_or_partial_proof(change):
+    baseline, stack = _stack_pair()
+    if change == "missing_service":
+        del stack["services"]["svc-a"]
+    elif change == "observed_differs":
+        stack["services"]["svc-a"]["observed_image_id"] = "sha256:" + "9" * 64
+    elif change == "extra_key":
+        stack["services"]["svc-a"]["note"] = "x"
+    elif change == "candidate_only_is_baseline":
+        stack["candidate_only_stopped"] = ["svc-a"]
+    else:
+        stack["candidate_only_stopped"] = ["b", "a"]
+    with pytest.raises(e.capture.CaptureError):
+        e.validate_stack_readback(stack, baseline)
+
+
+def test_mixed_summary_names_services_and_ignores_forged_lines(tmp_path):
+    log = tmp_path / "transport.log"
+    summary = tmp_path / "summary.md"
+    log.write_bytes(b"noise\n" + e.MIXED_PREFIX + b'{"kind":"mixed","services":["svc-03","svc-17"]}\n')
+    log.chmod(0o600)
+    text = e.mixed_summary(log, summary)
+    assert "stack is mixed" in text and "svc-03, svc-17" in text
+    assert "svc-03, svc-17" in summary.read_text()
+    forged = tmp_path / "forged.log"
+    forged.write_bytes(e.MIXED_PREFIX + b'{"kind":"mixed","services":["bad name; rm"]}\n')
+    forged.chmod(0o600)
+    assert e.mixed_summary(forged, summary) is None

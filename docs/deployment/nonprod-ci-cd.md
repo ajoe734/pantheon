@@ -429,6 +429,14 @@ An immutable `publish/v*` snapshot is a promotion input and historical source
 identity; it is not a dev deployment. Dev delivery is the explicit exact-pair
 controller run described above. There is no staging-live promotion lane since the staging-live job was retired on 2026-10-08.
 
+### Whole-stack dev compensation
+
+Dev compensation restores every Compose service recorded in the pre-mutation
+baseline, not only the three sealed BFF images, and proves it with a bounded
+readback (900 s inside the 60 minute step). The roundtrip steps keep their
+three-image scope. Design, scope flag, prune safety and evidence:
+`docs/deployment/dev-exact-artifact-rollback.md` ("Whole-stack compensation").
+
 ## Rollback
 
 The deploy script writes a pre-deploy snapshot on each VM under:

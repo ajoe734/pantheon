@@ -1578,3 +1578,64 @@ def test_main_reports_actual_restore_public_timeout_without_secret_leak(case, mo
 
 
 
+
+
+# --- Whole-stack compensation plumbing ------------------------------------
+
+def _drifted_candidate(case):
+    for service, row in case.docker.containers.items():
+        row["image_id"] = case.docker.built[service]["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+
+
+def test_capture_seals_a_versioned_stack_baseline_beside_the_unchanged_three_image_bundle(case):
+    captured = seal(case)["manifest"]
+    assert captured["schema_version"] == d.OUTER_SCHEMA_V2
+    assert captured["image_bundle"]["schema_version"] == d.a.SCHEMA
+    assert set(captured["image_bundle"]["services"]) == set(d.a.SERVICES)
+    stack = captured["stack_baseline"]
+    assert stack["schema_version"] == d.a.STACK_SCHEMA and set(stack["services"]) == set(d.a.SERVICES)
+    assert {s: r["image_id"] for s, r in stack["services"].items()} == dict(zip(d.a.SERVICES, IDS))
+
+
+def test_baseline_restore_defaults_to_whole_stack_and_images_scope_keeps_three(case):
+    seal(case)
+    _drifted_candidate(case)
+    result = execute(case, "restore")
+    assert set(result["stack"]["services"]) == set(d.a.SERVICES)
+    assert all(row["baseline_image_id"] == row["observed_image_id"] for row in result["stack"]["services"].values())
+    _drifted_candidate(case)
+    case.args.scope = "images"
+    assert "stack" not in execute(case, "restore")
+
+
+def test_restore_final_and_verify_never_use_whole_stack_scope(case):
+    outer = {"schema_version": d.OUTER_SCHEMA_V2}
+    assert d.resolve_scope("auto", "restore", False, outer) == "stack"
+    assert d.resolve_scope("auto", "restore", True, outer) == "images"
+    assert d.resolve_scope("auto", "restore-final", True, outer) == "images"
+    assert d.resolve_scope("auto", "verify", False, outer) == "images"
+    assert d.resolve_scope("auto", "restore", False, {"schema_version": d.OUTER_SCHEMA}) == "images"
+    for command, final, schema in (("restore-final", True, d.OUTER_SCHEMA_V2), ("verify", False, d.OUTER_SCHEMA_V2),
+                                   ("restore", True, d.OUTER_SCHEMA_V2), ("restore", False, d.OUTER_SCHEMA)):
+        with pytest.raises(d.a.ArtifactError):
+            d.resolve_scope("stack", command, final, {"schema_version": schema})
+    with pytest.raises(d.a.ArtifactError):
+        d.resolve_scope("everything", "restore", False, outer)
+
+
+def test_whole_stack_failure_prints_only_validated_service_names(case, monkeypatch, capsys):
+    def mixed(*_args, **_kwargs):
+        raise d.a.StackMixedError("stack is mixed: private-detail", ["svc-17", "svc-03"])
+    case.args.guard_channel_fd = 9
+    case.args.guard_max_silence_seconds = 10
+    monkeypatch.setattr(d, "parse_args", lambda _argv: case.args)
+    monkeypatch.setattr(d, "CancellationBarrier", lambda *_args, **_kwargs: case.barrier)
+    monkeypatch.setattr(d, "GuardedDocker", lambda _barrier: case.docker)
+    monkeypatch.setattr(d, "HTTP", lambda: case.http)
+    monkeypatch.setattr(d, "run", mixed)
+    case.args.command = "restore"
+    assert d.main([]) == 75
+    output = capsys.readouterr()
+    assert output.out == d.MIXED_MARKER + '{"kind": "mixed", "services": ["svc-03", "svc-17"]}\n'
+    assert "private-detail" not in output.out + output.err
