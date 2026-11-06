@@ -769,9 +769,13 @@ class ProgramQualifier:
             )
         except OwnerReadError as exc:
             return _result("fresh_evidence", FAILED, threshold=threshold, reason=f"evidence_unreadable: {exc}")
-        if self._summary_is_stale_or_degraded(summary, now=now):
+        # Heartbeats arrive every 1-3s, so a summary read now is normally newer
+        # than the sweep start; judge freshness against a clock read after the
+        # fetch, not the run-start ``now`` (which stays the report evaluated_at).
+        read_at = self._clock()
+        if self._summary_is_stale_or_degraded(summary, now=read_at):
             return _result("fresh_evidence", FAILED, observed={"runtime_id": runtime_id}, threshold=threshold, reason="runtime summary is stale or degraded")
-        if self._metric_is_stale(summary, field, now=now, max_age_seconds=policy.metric_max_age_seconds):
+        if self._metric_is_stale(summary, field, now=read_at, max_age_seconds=policy.metric_max_age_seconds):
             return _result("fresh_evidence", FAILED, observed={"runtime_id": runtime_id, "summary_field": field}, threshold=threshold, reason=f"metric field {field} has no fresh as-of time")
         if not recent:
             return _result("fresh_evidence", FAILED, observed={"runtime_id": runtime_id}, threshold=threshold, reason="binding has no drift evaluation inside the latest-evaluation window")

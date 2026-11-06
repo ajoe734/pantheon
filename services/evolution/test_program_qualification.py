@@ -1127,3 +1127,52 @@ def test_real_target_without_issued_principals_is_unverifiable(real_owners, monk
         monkeypatch.delenv(name + "_FILE")
     result = _real_target_result(reader, "persona-real", allow_test_scope=False)
     assert result["result"] == "failed" and "target_unverifiable" in result["reason"]
+
+
+def _advancing_clock(read_offset_seconds: int):
+    """First call is the sweep start (NOW); every later call is read time."""
+    calls = []
+
+    def clock():
+        calls.append(1)
+        return NOW if len(calls) == 1 else NOW + timedelta(seconds=read_offset_seconds)
+
+    return clock
+
+
+def _fresh_evidence_item(rig, clock, summary):
+    decision = retrain_decision()
+    rig.decisions.put(decision)
+    rig.owners.three_marks()
+    rig.owners.summary = summary
+    report = rig.make(clock=clock).run(tenant_id=TENANT)
+    return report, row(report, decision.decision_id)
+
+
+def test_heartbeat_newer_than_sweep_start_passes_fresh_evidence_with_advancing_clock(rig):
+    later = _iso(NOW + timedelta(seconds=4))
+    summary = {**fresh_summary(), "last_heartbeat_at": later, "drawdown_at": later}
+    # Guard: against the run start this exact summary is a future heartbeat.
+    assert summary_is_stale_or_degraded(summary, now=NOW) is True
+    report, item = _fresh_evidence_item(rig, _advancing_clock(6), summary)
+    assert criterion(item, "fresh_evidence")["result"] == "passed"
+    assert item["qualified"] is True
+    assert report["evaluated_at"] == _iso(NOW)
+
+
+@pytest.mark.parametrize(
+    "mutation, reason",
+    [
+        ({"last_heartbeat_at": None}, "stale or degraded"),
+        ({"last_heartbeat_at": _iso(NOW + timedelta(seconds=30))}, "stale or degraded"),
+        ({"staleness": "stale"}, "stale or degraded"),
+        ({"state": "degraded"}, "stale or degraded"),
+        ({"connectivity_status": "degraded"}, "stale or degraded"),
+        ({"drawdown_at": _iso(NOW - timedelta(days=5))}, "no fresh as-of time"),
+    ],
+)
+def test_fresh_evidence_still_fails_with_advancing_clock(rig, mutation, reason):
+    summary = {**fresh_summary(), **mutation}
+    _, item = _fresh_evidence_item(rig, _advancing_clock(6), summary)
+    assert item["first_failing_criterion"] == "fresh_evidence"
+    assert reason in criterion(item, "fresh_evidence")["reason"]
