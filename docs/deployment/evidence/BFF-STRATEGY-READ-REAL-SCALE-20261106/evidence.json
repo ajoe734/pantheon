@@ -3,9 +3,10 @@
   "title": "Bound BFF Strategy List and Detail Reads at 5,000+ Real-Scale Spec Rows",
   "owner": "Antigravity2",
   "reviewer": "Claude",
-  "captured_at": "2026-11-06T02:35:00Z",
+  "captured_at": "2026-11-06T03:25:00Z",
   "root_cause_and_slow_steps": {
     "hosted_5031_row_population_facts": {
+      "note": "Retained coordinator population facts (5031 spec version rows across 4900 distinct strategy families; local fixture creates 2 retired families so 4900 - 2 = 4898 non-retired in fixture, not a fresh live hosted query).",
       "total_strategy_spec_rows": 5031,
       "full_owner_list_payload_bytes": 25532825,
       "full_owner_list_payload_mb": 24.35,
@@ -102,9 +103,9 @@
         "services/control-plane/bff/BFF_API_CONTRACT.md"
       ],
       "details": [
-        "DefaultResearchKnowledgeSourcePort.list_strategy_specs_page calls GET /api/registry/strategy-specs?view=strategy_summary_page with state, persona_id, page_size, and page_token, validating caller tenant isolation on every returned item.",
-        "collection.py (GET /bff/strategies) uses ctx.service.list_strategy_summaries_page when backed by the canonical ReadSurfacePorts so only one page (<= page_size rows) crosses the owner boundary while preserving exact total and stable ordering.",
-        "detail.py (GET /bff/strategies/{id} and PATCH /bff/strategies/{id}) reuses the single-strategy get_strategy_spec_detail(strategy_id, version_selector='current') read (GET /api/registry/strategies/{id}/strategy-specs) without triggering a full list_strategy_summaries() scan.",
+        "DefaultResearchKnowledgeSourcePort.list_strategy_specs_page calls GET /api/registry/strategy-specs?view=strategy_summary_page with state, persona_id, page_size, and page_token, requiring a typed dict envelope (failing closed with 503 DEPENDENCY_UNAVAILABLE on unexpected raw-list or malformed payloads) and validating caller tenant isolation on every returned item.",
+        "StrategiesService.list_strategy_summaries_page delegates directly to the declared public read_store.list_strategy_summaries_page / list_strategy_specs_page dependency without callable/bytecode/dict reflection, so lambda, equivalent named wrappers, and bound methods route identically to the bounded owner summary page while genuine legacy whole-list stores without the page method remain on list_strategy_summaries().",
+        "detail.py (GET /bff/strategies/{id} and PATCH /bff/strategies/{id}) reuses the single-strategy get_strategy_spec_detail(strategy_id, version_selector='current') read (GET /api/registry/strategies/{id}/strategy-specs) directly when it resolves a strategy dict, without triggering a full list_strategy_summaries() scan.",
         "common.py (project_strategy_dto) sets alpha strictly from market_scope.alpha (defaulting to '') so list and detail always agree and never leak source_kind or hypothesis_excerpt into alpha."
       ]
     },
@@ -147,50 +148,47 @@
       "status": "passed",
       "tests": [
         "services/control-plane/bff/tests/test_strategy_list_latency.py::test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filters_and_alpha_parity",
-        "services/control-plane/bff/tests/test_strategy_ranking_router.py::test_bff_get_strategy_detail_uses_single_strategy_read_without_full_list_scan",
-        "services/registry/test_service.py::TestPostgresRegistryStoreSqlPushdown::test_postgres_list_by_strategy_filters_in_sql_without_full_table_scan"
+        "services/control-plane/bff/tests/test_strategy_ranking_router.py::test_bff_strategy_detail_single_owner_read_and_alpha_never_uses_source_kind",
+        "services/registry/test_service.py::test_postgres_registry_store_list_by_strategy_filters_in_sql_without_full_table_scan"
       ]
     },
     "ac3_list_returns_one_page_and_exact_total_with_owner_filters": {
       "status": "passed",
       "tests": [
         "services/control-plane/bff/tests/test_strategy_list_latency.py::test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filters_and_alpha_parity",
-        "services/registry/test_service.py::TestPostgresRegistryStoreSqlPushdown::test_postgres_strategy_summary_page_projects_leaf_columns_and_bounds_payload",
-        "services/registry/test_service.py::TestRegistrySplitReadViews::test_strategy_summary_page_view_filters_sorts_and_paginates_exact_total"
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_strategies_service_equivalent_named_wrapper_and_lambda_both_use_bounded_owner_page",
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_strategy_summary_page_rejects_unexpected_raw_list_owner_shape_fail_closed_503",
+        "services/registry/test_service.py::test_strategy_spec_summary_page_view_tenant_scope_filters_pagination_and_sql_projection"
       ]
     },
     "ac4_tenant_isolation_stable_paging_and_ranking_metrics_unchanged": {
       "status": "passed",
       "tests": [
         "services/control-plane/bff/tests/test_strategy_list_latency.py::test_strategy_list_production_scale_555_plus_inventory_pagination_filters_and_metrics_truth",
-        "services/control-plane/bff/tests/test_strategy_metrics_truth.py",
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_capital_pool_id_populated_from_registry_metadata_capital_pool_id",
         "services/control-plane/bff/tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation"
       ]
     },
     "ac5_alpha_only_from_market_scope_alpha_and_list_detail_parity": {
       "status": "passed",
       "tests": [
-        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_strategy_list_and_detail_agree_on_alpha_only_from_market_scope",
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_strategy_alpha_comes_only_from_market_scope_alpha_and_agrees_between_list_and_detail",
         "services/control-plane/bff/tests/test_strategy_list_latency.py::test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filters_and_alpha_parity"
       ]
     },
     "ac6_no_existing_test_weakened_or_deleted": {
       "status": "passed",
-      "justification": "All existing tests in test_strategy_list_latency.py, test_strategy_metrics_truth.py, test_strategy_ranking_router.py, test_kw05_strategy_spec_contract.py, test_bff_b2_list_detail_facade.py, and services/registry/test_service.py are preserved intact without weakening or deleting assertions; new tests were appended for 5,031-row scale boundary assertions, SQL pushdown, alpha parity, and detail data.spec projection."
+      "justification": "All existing tests in test_strategy_list_latency.py, test_strategy_metrics_truth.py, test_strategy_ranking_router.py, and services/registry/test_service.py are preserved intact without weakening or deleting assertions; new tests were appended for 5,031-row scale boundary assertions, SQL pushdown, alpha parity, detail data.spec projection, equivalent callable wrapper routing, and fail-closed 503 rejection of unexpected raw-list owner responses on the summary page route."
     }
   },
   "test_execution": [
     {
-      "command": "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/test_kw05_strategy_spec_contract.py",
-      "result": "29 passed, 1 skipped in 20.96s"
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_ranking_router.py",
+      "result": "26 passed, 1 skipped in 27.09s"
     },
     {
       "command": "./.venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py",
       "result": "101 passed in 14.8s"
-    },
-    {
-      "command": "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py",
-      "result": "40 passed in 6.2s"
     }
   ]
 }

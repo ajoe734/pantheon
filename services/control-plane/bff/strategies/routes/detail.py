@@ -28,10 +28,11 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         ctx.require_read_role(identity)
         snapshot_at = ctx.utc_now()
         detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
-        if detail and ctx.service and not ctx.service.has_separate_strategy_summary_getter():
-            summary = detail
-        else:
-            summary = ctx.service.get_strategy(strategy_id) if ctx.service else None
+        summary = (
+            detail
+            if isinstance(detail, dict) and (detail.get("strategy_id") or detail.get("id"))
+            else (ctx.service.get_strategy(strategy_id) if ctx.service else None)
+        )
         if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -68,10 +69,11 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         if cached is not None:
             return cached
         detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
-        if detail and ctx.service and not ctx.service.has_separate_strategy_summary_getter():
-            summary = detail
-        else:
-            summary = ctx.service.get_strategy(strategy_id) if ctx.service else None
+        summary = (
+            detail
+            if isinstance(detail, dict) and (detail.get("strategy_id") or detail.get("id"))
+            else (ctx.service.get_strategy(strategy_id) if ctx.service else None)
+        )
         if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,

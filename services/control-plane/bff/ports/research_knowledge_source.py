@@ -2387,7 +2387,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         use_injected = self._has_injected_strategy_specs and not (
             os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")
         )
@@ -2411,6 +2411,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 raise self._strategy_owner_error(
                     400, "VALIDATION_ERROR", "Invalid page_token", "invalid_page_token",
                 )
+        if not self._strategy_specs:
+            return None
         items = self.list_strategy_specs(persona_id=persona_id)
         if state and str(state).strip():
             wanted_state = str(state).strip().lower()
@@ -2639,52 +2641,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "Canonical strategy registry readback is unavailable",
                 str(exc) or "strategy_store_unavailable",
             ) from exc
-
-        if isinstance(raw, list):
-            from services.registry.storage import project_strategy_spec_summary_page
-
-            unwrapped_rows: List[Dict[str, Any]] = []
-            for item in raw:
-                if not isinstance(item, dict) or ("entry" in item and not isinstance(item.get("entry"), dict)):
-                    raise self._strategy_owner_error(
-                        503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry entry", "strategy_store_unavailable",
-                    )
-                entry = item["entry"] if isinstance(item.get("entry"), dict) else item
-                if entry.get("artifact_type") not in (None, "strategy_spec"):
-                    raise self._strategy_owner_error(
-                        503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry entry", "strategy_store_unavailable",
-                    )
-                meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
-                inner = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
-                inner_meta = inner.get("metadata") if isinstance(inner.get("metadata"), dict) else {}
-                entry_tenant = str(
-                    entry.get("owner_tenant") or meta.get("tenant_id") or inner_meta.get("tenant_id") or ""
-                ).strip()
-                if entry_tenant and entry_tenant not in {caller_tenant, "*", "__builtin__"}:
-                    raise self._strategy_owner_error(
-                        403,
-                        "FORBIDDEN",
-                        "Strategy reference is outside the caller tenant audience",
-                        "strategy_audience_mismatch",
-                    )
-                unwrapped_rows.append(entry)
-            try:
-                raw = project_strategy_spec_summary_page(
-                    unwrapped_rows,
-                    state=state,
-                    persona_id=persona_id,
-                    page_token=page_token,
-                    page_size=page_size,
-                )
-            except ValueError as exc:
-                msg = str(exc)
-                if msg.startswith("Invalid page_token"):
-                    raise self._strategy_owner_error(
-                        400, "VALIDATION_ERROR", msg, "invalid_page_token",
-                    ) from exc
-                raise self._strategy_owner_error(
-                    503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry entry", "strategy_store_unavailable",
-                ) from exc
 
         if not isinstance(raw, dict):
             raise self._strategy_owner_error(

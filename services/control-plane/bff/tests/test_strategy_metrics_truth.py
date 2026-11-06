@@ -561,6 +561,17 @@ def test_capital_pool_id_populated_from_registry_metadata_capital_pool_id(monkey
 
     def _fake_http_request_json(url: str, **kwargs: Any) -> Any:
         parsed = urllib.parse.urlparse(url)
+        query = dict(urllib.parse.parse_qsl(parsed.query))
+        if query.get("view") == "strategy_summary_page":
+            from services.registry.storage import project_strategy_spec_summary_page
+
+            return project_strategy_spec_summary_page(
+                list(registry_entries),
+                state=query.get("state"),
+                persona_id=query.get("persona_id"),
+                page_token=query.get("page_token"),
+                page_size=int(query.get("page_size") or 20),
+            )
         if parsed.path.endswith("/strat-registry-pool/strategy-specs"):
             return [registry_entries[0]]
         if parsed.path.endswith("/strat-registry-no-pool/strategy-specs"):

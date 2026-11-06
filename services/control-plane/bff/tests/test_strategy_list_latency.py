@@ -517,10 +517,17 @@ def test_strategy_list_thin_summaries_bounds_detail_enrichment_to_requested_page
             for idx in range(1, 601)
         ]
 
+    class _LegacyWholeListDetailReadSurface:
+        def get_strategy_spec_detail(self, strategy_id: str, version_selector: str = "current") -> Optional[Dict[str, Any]]:
+            return read_ports.get_strategy_spec_detail(strategy_id, version_selector=version_selector)
+
+        def get_latest_ranking_snapshot(self) -> Optional[Dict[str, Any]]:
+            return read_ports.get_latest_ranking_snapshot()
+
     app = FastAPI()
     app.include_router(
         create_strategies_router(
-            read_surface=read_ports,
+            read_surface=_LegacyWholeListDetailReadSurface(),
             list_strategy_summaries=_thin_summaries,
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,
@@ -699,10 +706,14 @@ def test_strategy_list_never_silently_drops_malformed_summary_even_off_page() ->
         rows[520] = {"title": "Corrupt Off-Page Entry Without ID"}
         return rows
 
+    class _LegacyWholeListReadSurface:
+        def list_strategy_specs(self) -> List[Dict[str, Any]]:
+            return read_ports.list_strategy_specs()
+
     app = FastAPI()
     app.include_router(
         create_strategies_router(
-            read_surface=read_ports,
+            read_surface=_LegacyWholeListReadSurface(),
             list_strategy_summaries=_summaries_with_off_page_corrupt_entry,
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,
@@ -1070,4 +1081,146 @@ def test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filter
     assert len(owner_http_calls) == 1
     assert owner_http_calls[0][0] == "/api/registry/strategies/strat-approved-extra-0133/strategy-specs"
     assert owner_http_calls[0][1] == 1
+
+
+def test_strategies_service_equivalent_named_wrapper_and_lambda_both_use_bounded_owner_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Equivalent callables (lambda vs named def vs bound method) passed as
+    list_strategy_summaries must all route GET /bff/strategies to the bounded
+    owner summary page when read_surface exposes list_strategy_summaries_page.
+    """
+    import urllib.parse
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.control_plane.bff.strategies.service import list_strategy_summaries
+
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.scale.internal")
+    owner_http_paths: List[str] = []
+
+    def _http_stub(url: str, **kwargs: Any) -> Any:
+        parsed = urllib.parse.urlparse(url)
+        path_with_query = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        owner_http_paths.append(path_with_query)
+        query = dict(urllib.parse.parse_qsl(parsed.query))
+        if parsed.path == "/api/registry/strategy-specs" and query.get("view") == "strategy_summary_page":
+            return {
+                "items": [
+                    {
+                        "strategy_id": "strat-equiv-0001",
+                        "tenant_id": "tenant-dev",
+                        "title": "Equivalent Callable Strategy",
+                        "name": "Equivalent Callable Strategy",
+                        "lifecycle_state": "approved",
+                        "risk": "medium",
+                        "persona_ids": ["persona-scale-0001"],
+                        "current_spec_version_id": "reg-strat-equiv-0001-v1",
+                        "strategy_spec_registry_id": "reg-strat-equiv-0001-v1",
+                        "current_spec_version": "1.0.0",
+                        "version_count": 1,
+                        "last_modified_at": "2026-11-05T17:00:00Z",
+                    }
+                ],
+                "total": 1,
+                "next_page_token": None,
+            }
+        raise AssertionError(f"Full-list endpoint must not be called when owner summary page is available: {path_with_query}")
+
+    monkeypatch.setattr(adapter_base, "http_request_json", _http_stub)
+
+    rks_port = DefaultResearchKnowledgeSourcePort()
+    read_ports = create_read_surface_ports(
+        research_knowledge_source=rks_port,
+        ranking_store=_CountingRankingStore([]),
+    )
+
+    def named_wrapper() -> List[Dict[str, Any]]:
+        return list_strategy_summaries(read_ports)
+
+    for label, summary_callable in (
+        ("lambda", lambda: list_strategy_summaries(read_ports)),
+        ("named_wrapper", named_wrapper),
+        ("bound_rks_method", rks_port.list_strategy_specs),
+        ("none", None),
+    ):
+        owner_http_paths.clear()
+        app = FastAPI()
+        app.include_router(
+            create_strategies_router(
+                read_surface=read_ports,
+                list_strategy_summaries=summary_callable,
+                extract_identity=auth_policy.extract_identity,
+                require_read_role=auth_policy.require_read_role,
+                require_operator_role=auth_policy.require_operator_role,
+                bff_error=auth_policy.bff_error,
+                utc_now=lambda: "2026-11-05T17:45:00Z",
+                page_slice=default_page_slice,
+                read_surface_meta=default_read_surface_meta,
+                normalize_lifecycle_state=_normalize_lifecycle_state,
+                normalize_risk_level=_normalize_risk_level,
+            )
+        )
+        app.add_middleware(OwnerReadContextMiddleware)
+        client = TestClient(app)
+        resp = client.get("/bff/strategies?page_size=20", headers=HEADERS)
+        assert resp.status_code == 200, f"{label} failed: {resp.text}"
+        body = resp.json()
+        assert body["page_info"]["total"] == 1, label
+        assert [item["id"] for item in body["data"]] == ["strat-equiv-0001"], label
+        assert owner_http_paths == ["/api/registry/strategy-specs?view=strategy_summary_page&page_size=20"], label
+
+
+def test_strategy_summary_page_rejects_unexpected_raw_list_owner_shape_fail_closed_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When GET /api/registry/strategy-specs?view=strategy_summary_page returns an
+    unexpected raw list instead of its typed page-envelope dict, BFF must fail
+    closed with 503 DEPENDENCY_UNAVAILABLE rather than importing Registry storage
+    projection or reprocessing a full list in BFF.
+    """
+    import services.control_plane.bff.command_adapters.base as adapter_base
+
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.scale.internal")
+    monkeypatch.setattr(
+        adapter_base,
+        "http_request_json",
+        lambda *a, **k: [
+            {
+                "registry_id": "reg-raw-list-1",
+                "artifact_type": "strategy_spec",
+                "strategy_id": "strat-raw-list-1",
+                "version": "1.0.0",
+                "artifact_state": "approved",
+                "owner_tenant": "tenant-dev",
+                "metadata": {"tenant_id": "tenant-dev", "title": "Raw List Entry"},
+            }
+        ],
+    )
+
+    rks_port = DefaultResearchKnowledgeSourcePort()
+    read_ports = create_read_surface_ports(
+        research_knowledge_source=rks_port,
+        ranking_store=_CountingRankingStore([]),
+    )
+    app = FastAPI()
+    app.include_router(
+        create_strategies_router(
+            read_surface=read_ports,
+            list_strategy_summaries=read_ports.list_strategy_specs,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-11-05T17:45:00Z",
+            page_slice=default_page_slice,
+            read_surface_meta=default_read_surface_meta,
+            normalize_lifecycle_state=_normalize_lifecycle_state,
+            normalize_risk_level=_normalize_risk_level,
+        )
+    )
+    app.add_middleware(OwnerReadContextMiddleware)
+    client = TestClient(app)
+
+    resp = client.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 503, resp.text
+
 
