@@ -109,3 +109,19 @@ The control compose packages the same existing product owners and Agora request 
 Published staging evidence: public-safe allowlisted `staging_verified` summaries for release `pantheon-20261028-102` (manifest `sha256:617e2936…bcf3`, runs 41579314601 and 41581135775 on control commit `9df41340`, rollback 107.727 s / 108.599 s, 4-resource cleanup with readback each) are the top-level fields of `docs/deployment/evidence/ENV-PROD-CONTROL-IMPL-001/evidence.json` (latest run 41581135775; both runs under `staging_verification_runs`) and pass `prod_preflight.check_staging_evidence`; usable as `staging_evidence_path`. Both runs skipped hosted QA (QA 0, step 9), so this is NOT complete acceptance: still pending are 3 real hosted QA accounts, a distinct release 103, the Prod 102 baseline, backup/restore DR with measured RPO/RTO, VM replacement, two Prod rollbacks and the 1800 s observation. `PROD_*` values are GitHub Environment-scoped in `production` (read-only readback: 20 required names present), not repository-only.
 
 Production project/billing/domain/IdP, WIF/SA/IAM, `production` GitHub Environment with required reviewers (ajoe734; prevent_self_review=false), `PRODUCTION_RELEASE_ENABLED`, ops adapter and artifact transport on the control VM, approved RPO/RTO/retention/on-call/rollback owner, and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 / all12 chain `h12-01a11-20261023-9aeb` (not rerun or relabeled here).
+
+## Public runtime write posture (`VITE_BFF_REAL_WRITES`) — source wiring
+
+Staging (`staging-ephemeral-deploy.yml`) and production (`production-release.yml`) each take an explicit
+per-dispatch input named `VITE_BFF_REAL_WRITES` (string `true`/`false`, default `false`). It never inherits a shared
+Dev setting.
+
+- Default / `false` / empty: the key is **absent** from `/runtime-config.js`, so canonical bytes and `configSha256`
+  are identical to the legacy payload.
+- Explicit `true`: rendered only into the **candidate** runtime config and included in its new digest. Any other value
+  is rejected (`PUBLIC_REAL_WRITES_INVALID`; the production preflight job rejects it before any Environment access).
+- Baseline renders (staging baseline template, production synthesized journal baseline) never carry the flag. Rollback
+  restores the journaled runtime-config bytes unchanged. `deploy/production/bootstrap.sh` placeholder stays legacy.
+- Backend `PANTHEON_REAL_WRITES_ENABLED`, `PANTHEON_PROVIDER_ENABLED`, `PANTHEON_LIVE_BROKER_ENABLED` remain `false`.
+
+This is source-only; no Stage/Prod was dispatched. Hosted acceptance stays `external_wait`.
