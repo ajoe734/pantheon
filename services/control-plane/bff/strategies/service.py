@@ -144,6 +144,77 @@ class StrategiesService:
             return list(getter() or [])
         return list_strategy_summaries(read_store)
 
+    def _can_use_owner_summary_page(self, read_store: Any) -> bool:
+        if not callable(getattr(read_store, "list_strategy_summaries_page", None)):
+            return False
+        if (
+            "list_strategy_specs" in getattr(read_store, "__dict__", {})
+            or "list_strategy_summaries" in getattr(read_store, "__dict__", {})
+        ):
+            return False
+        rks = getattr(read_store, "research_knowledge_source", None)
+        if rks is not None and "list_strategy_specs" in getattr(rks, "__dict__", {}):
+            return False
+        fn = self._list_strategy_summaries
+        if fn is None:
+            return True
+        if getattr(fn, "__self__", None) is read_store and getattr(fn, "__name__", "") in (
+            "list_strategy_specs",
+            "list_strategy_summaries",
+            "list_strategies",
+        ):
+            return True
+        code = getattr(fn, "__code__", None)
+        if getattr(code, "co_names", ()) == ("list_strategy_summaries", "read_surface"):
+            return True
+        return False
+
+    def list_strategy_summaries_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            read_store = self._get_read_store_port()
+        except Exception:
+            return None
+        if not self._can_use_owner_summary_page(read_store):
+            return None
+        try:
+            return read_store.list_strategy_summaries_page(
+                state=state,
+                persona_id=persona_id,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 400 and self._bff_error:
+                raise self._bff_error(
+                    400,
+                    ErrorCode.VALIDATION_FAILED,
+                    "Invalid page_token",
+                    "page_token must be a non-negative integer offset",
+                ) from exc
+            return self._invoke_read_owner(lambda: (_ for _ in ()).throw(exc))
+        except Exception as exc:
+            return self._invoke_read_owner(lambda: (_ for _ in ()).throw(exc))
+
+    def has_separate_strategy_summary_getter(self) -> bool:
+        try:
+            read_store = self._get_read_store_port()
+        except Exception:
+            return False
+        if callable(getattr(read_store, "get_strategy", None)):
+            return True
+        if isinstance(read_store, ReadSurfacePorts) and "get_strategy_spec" not in getattr(read_store, "__dict__", {}):
+            rks = getattr(read_store, "research_knowledge_source", None)
+            if "get_strategy_spec" not in getattr(rks, "__dict__", {}):
+                return False
+        return True
+
     def _invoke_read_owner(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)

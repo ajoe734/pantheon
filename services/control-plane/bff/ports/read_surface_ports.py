@@ -641,6 +641,12 @@ class ReadSurfacePorts:
             )
         return self.research_knowledge_source.list_strategy_specs(**kwargs)
 
+    def list_strategy_specs_page(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.research_knowledge_source.list_strategy_specs_page(**kwargs)
+
+    def list_strategy_summaries_page(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.list_strategy_specs_page(**kwargs)
+
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
         def _read() -> Dict[str, int]:
             counts = self.research_knowledge_source.count_strategy_persona_bindings()

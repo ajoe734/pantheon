@@ -335,16 +335,23 @@ class StrategyRouteContext:
                     break
         title = title or strategy_id
         lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
-        governance = (detail or {}).get("governance") if detail else {}
-        governance = governance if isinstance(governance, dict) else (summary.get("governance") or {})
-        governance = governance if isinstance(governance, dict) else {}
-        market_scope = (detail or {}).get("market_scope") if detail else {}
-        market_scope = market_scope if isinstance(market_scope, dict) else {}
-        execution_profile = (detail or {}).get("execution_profile") if detail else {}
-        execution_profile = execution_profile if isinstance(execution_profile, dict) else {}
+        governance = (detail or {}).get("governance") if detail else summary.get("governance")
+        if not isinstance(governance, dict):
+            governance = summary.get("governance") if isinstance(summary.get("governance"), dict) else {}
+        market_scope = (detail or {}).get("market_scope") if detail else summary.get("market_scope")
+        if not isinstance(market_scope, dict):
+            market_scope = summary.get("market_scope") if isinstance(summary.get("market_scope"), dict) else {}
+        execution_profile = (detail or {}).get("execution_profile") if detail else summary.get("execution_profile")
+        if not isinstance(execution_profile, dict):
+            execution_profile = summary.get("execution_profile") if isinstance(summary.get("execution_profile"), dict) else {}
         persona_ids: List[str] = []
-        if detail and isinstance(detail.get("persona_ids"), list):
-            persona_ids = [str(p) for p in detail.get("persona_ids") or [] if str(p).strip()]
+        raw_persona_ids = (
+            detail.get("persona_ids")
+            if (detail and isinstance(detail.get("persona_ids"), list))
+            else (summary.get("persona_ids") or summary.get("personaIds"))
+        )
+        if isinstance(raw_persona_ids, list):
+            persona_ids = [str(p) for p in raw_persona_ids if str(p).strip()]
         detail_metadata = (
             detail.get("metadata")
             if detail and isinstance(detail.get("metadata"), dict)
@@ -368,13 +375,8 @@ class StrategyRouteContext:
             or (detail or {}).get("capitalPoolId")
             or ""
         ).strip()
-        alpha = str(
-            market_scope.get("alpha")
-            or summary.get("source_kind")
-            or summary.get("hypothesis_excerpt")
-            or ""
-        )
-        allowed = (detail or {}).get("allowedActions") or {}
+        alpha = str(market_scope.get("alpha") or "")
+        allowed = (detail or {}).get("allowedActions") or summary.get("allowedActions") or {}
         available_actions: List[str] = []
         if isinstance(allowed, dict):
             available_actions = sorted([k for k, v in allowed.items() if v])
