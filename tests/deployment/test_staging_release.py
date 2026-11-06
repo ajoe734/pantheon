@@ -2513,6 +2513,55 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         canonical = json.dumps(digest_src, sort_keys=True, separators=(",", ":"))
         self.assertEqual(cfg["configSha256"], "sha256:" + hashlib.sha256(canonical.encode()).hexdigest())
 
+    def _staging_cfg(self, name: str) -> dict:
+        text = (self.staging_root / "config" / name).read_text(encoding="utf-8")
+        prefix = "window.__PANTHEON_DEPLOYMENT_CONFIG__ = "
+        line = next(l for l in text.splitlines() if l.startswith(prefix))
+        return json.loads(line[len(prefix):].rstrip(";"))
+
+    @staticmethod
+    def _cfg_digest(cfg: dict) -> str:
+        body = {k: v for k, v in cfg.items() if k != "configSha256"}
+        return "sha256:" + hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def test_public_real_writes_default_and_false_keep_legacy_key_absent(self) -> None:
+        digests = []
+        for extra in ({}, {"VITE_BFF_REAL_WRITES": "false"}):
+            self.setUp()
+            env = self._base_env(RELEASE_ID="pantheon-20261024-001", **extra)
+            subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+            for name in ("runtime-config.js", "runtime-config.candidate.js", "runtime-config.baseline.js"):
+                cfg = self._staging_cfg(name)
+                self.assertNotIn("VITE_BFF_REAL_WRITES", cfg)
+                self.assertEqual(cfg["configSha256"], self._cfg_digest(cfg))
+            digests.append(self._staging_cfg("runtime-config.js")["configSha256"])
+        self.assertEqual(len(set(digests)), 1)
+
+    def test_public_real_writes_true_is_candidate_only_and_baseline_noninheriting(self) -> None:
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001")
+        subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+        legacy_digest = self._staging_cfg("runtime-config.js")["configSha256"]
+        self.setUp()
+        env = self._base_env(RELEASE_ID="pantheon-20261024-001", VITE_BFF_REAL_WRITES="true")
+        subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+        for name in ("runtime-config.js", "runtime-config.candidate.js"):
+            cfg = self._staging_cfg(name)
+            self.assertEqual(cfg["VITE_BFF_REAL_WRITES"], "true")
+            self.assertEqual(cfg["configSha256"], self._cfg_digest(cfg))
+            self.assertNotEqual(cfg["configSha256"], legacy_digest)
+        base = self._staging_cfg("runtime-config.baseline.js")
+        self.assertNotIn("VITE_BFF_REAL_WRITES", base)
+        self.assertEqual(base["configSha256"], self._cfg_digest(base))
+
+    def test_public_real_writes_malformed_value_rejected(self) -> None:
+        for bad in ("TRUE", "1", "yes", "on"):
+            with self.subTest(bad=bad):
+                self.setUp()
+                env = self._base_env(RELEASE_ID="pantheon-20261024-001", VITE_BFF_REAL_WRITES=bad)
+                res = subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True)
+                self.assertNotEqual(res.returncode, 0)
+                self.assertIn("PUBLIC_REAL_WRITES_INVALID", res.stderr + res.stdout)
+
     def test_runtime_config_requires_public_identity_inputs(self) -> None:
         env = self._base_env(RELEASE_ID="pantheon-20261024-001", STAGING_PUBLIC_GCP_IDENTITY_API_KEY="")
         res = subprocess.run([str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True)
