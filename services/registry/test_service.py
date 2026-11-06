@@ -3745,4 +3745,170 @@ def test_strategy_spec_summary_page_exclude_state_state_counts_retired_and_unkno
     assert b_body["state_counts"]["retired"] == 0
 
 
+@pytest.mark.parametrize("read_role", ["viewer", "view_only"])
+def test_strict_viewer_and_view_only_read_scoped_strategy_spec_views_and_preserve_builtin_policy(
+    strict_client, read_role
+):
+    """BFF-VIEWER-REGISTRY-READ-20261106:
+    A genuine strict-mode same-tenant ``viewer`` or ``view_only`` principal can
+    read ``persona_binding``, ``persona_binding_counts``, and
+    ``strategy_summary_page`` views on ``GET /api/registry/strategy-specs`` with
+    actual owner data (including public ``__builtin__`` entries), while
+    cross-tenant entries and cross-tenant ``X-Tenant-Id`` selectors remain
+    denied and builtin mutations remain forbidden.
+    """
+    from .models import BUILTIN_TENANT
+    from .storage import get_store
+
+    op_token_a = _jwt(subject="op-seed-a", tenant="tenant-a", roles=["operator"])
+    op_token_b = _jwt(subject="op-seed-b", tenant="tenant-b", roles=["operator"])
+    viewer_token_a = _jwt(subject=f"{read_role}-a", tenant="tenant-a", roles=[read_role])
+
+    store = get_store()
+
+    # Seed a public __builtin__ strategy_spec bound to persona-builtin-shared
+    builtin_spec = _valid_spec("strat-builtin-shared", rev="1.0.0")
+    builtin_spec["title"] = "Builtin Shared Strategy"
+    store.create(
+        RegistryEntryCreate(
+            artifact_type=ArtifactType.STRATEGY_SPEC,
+            strategy_id="strat-builtin-shared",
+            version="1.0.0",
+            artifact_state=ArtifactState.APPROVED,
+            lineage=Lineage(source_run_ids=["run-builtin-1"]),
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+            checksum="sha256:strat-builtin-shared-v1",
+            metadata={"strategy_spec": builtin_spec, "persona_ids": ["persona-builtin-shared"]},
+        ),
+        "reg-spec-builtin-shared",
+        actor={"tenant": BUILTIN_TENANT},
+    )
+
+    # Seed tenant-a strategy_spec v1.0.0 and v1.1.0 via POST /api/registry/strategy-specs
+    r_a1 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-vw-a-v1",
+            "strategy_id": "strat-vw-a",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-vw-1"]},
+            "metadata": {"persona_ids": ["persona-tw-equity"], "title": "Tenant A Viewer Strategy v1"},
+            "strategy_spec": _valid_spec("strat-vw-a", rev="1.0.0"),
+        },
+        headers=_bearer(op_token_a),
+    )
+    assert r_a1.status_code == 200, r_a1.text
+
+    spec_a2 = _valid_spec("strat-vw-a", rev="1.1.0")
+    spec_a2["title"] = "Tenant A Viewer Strategy v2"
+    r_a2 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-vw-a-v2",
+            "strategy_id": "strat-vw-a",
+            "version": "1.1.0",
+            "artifact_state": "candidate",
+            "lineage": {"source_run_ids": ["run-vw-2"], "parent_registry_ids": ["reg-spec-vw-a-v1"]},
+            "metadata": {
+                "persona_ids": ["persona-tw-equity", "persona-us-equity"],
+                "title": "Tenant A Viewer Strategy v2",
+            },
+            "strategy_spec": spec_a2,
+        },
+        headers=_bearer(op_token_a),
+    )
+    assert r_a2.status_code == 200, r_a2.text
+
+    # Seed tenant-b strategy_spec
+    r_b1 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-vw-b-v1",
+            "strategy_id": "strat-vw-b",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-vw-b1"]},
+            "metadata": {"persona_ids": ["persona-foreign-b"], "title": "Tenant B Secret Strategy"},
+            "strategy_spec": _valid_spec("strat-vw-b", rev="1.0.0"),
+        },
+        headers=_bearer(op_token_b),
+    )
+    assert r_b1.status_code == 200, r_b1.text
+
+    viewer_headers = {**_bearer(viewer_token_a), "X-Tenant-Id": "tenant-a"}
+
+    # 1. persona_binding view returns tenant-a versions + builtin, excludes tenant-b
+    resp_pb = strict_client.get(
+        "/api/registry/strategy-specs?view=persona_binding",
+        headers=viewer_headers,
+    )
+    assert resp_pb.status_code == 200, resp_pb.text
+    pb_ids = {item["entry"]["registry_id"] for item in resp_pb.json()}
+    assert pb_ids == {"reg-spec-builtin-shared", "reg-spec-vw-a-v1", "reg-spec-vw-a-v2"}
+    assert "reg-spec-vw-b-v1" not in pb_ids
+    assert "Tenant B Secret Strategy" not in resp_pb.text
+
+    # 2. persona_binding_counts view returns exact counts for current versions of tenant-a + builtin
+    resp_pbc = strict_client.get(
+        "/api/registry/strategy-specs?view=persona_binding_counts",
+        headers=viewer_headers,
+    )
+    assert resp_pbc.status_code == 200, resp_pbc.text
+    assert resp_pbc.json() == {
+        "persona-builtin-shared": 1,
+        "persona-tw-equity": 1,
+        "persona-us-equity": 1,
+    }
+    assert "persona-foreign-b" not in resp_pbc.json()
+
+    # 3. strategy_summary_page view returns tenant-a + builtin summaries with actual owner data
+    resp_ssp = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+        headers=viewer_headers,
+    )
+    assert resp_ssp.status_code == 200, resp_ssp.text
+    ssp_payload = resp_ssp.json()
+    assert ssp_payload["total"] == 2
+    ssp_by_id = {item["strategy_id"]: item for item in ssp_payload["items"]}
+    assert set(ssp_by_id) == {"strat-builtin-shared", "strat-vw-a"}
+    assert ssp_by_id["strat-vw-a"]["current_spec_version_id"] == "reg-spec-vw-a-v2"
+    assert ssp_by_id["strat-vw-a"]["current_spec_version"] == "1.1.0"
+    assert ssp_by_id["strat-vw-a"]["version_count"] == 2
+    assert ssp_by_id["strat-vw-a"]["lifecycle_state"] == "candidate"
+    assert ssp_by_id["strat-vw-a"]["persona_ids"] == ["persona-tw-equity", "persona-us-equity"]
+
+    # 4. Builtin public direct read succeeds for viewer/view_only, while builtin mutation remains 403
+    resp_builtin_get = strict_client.get(
+        "/api/registry/strategy-specs/reg-spec-builtin-shared",
+        headers=viewer_headers,
+    )
+    assert resp_builtin_get.status_code == 200, resp_builtin_get.text
+    assert resp_builtin_get.json()["entry"]["owner_tenant"] == BUILTIN_TENANT
+
+    for mut_headers in (viewer_headers, _bearer(op_token_a)):
+        resp_builtin_patch = strict_client.patch(
+            "/api/registry/entries/reg-spec-builtin-shared/metadata",
+            json={"expected_metadata": None, "metadata": {"note": "tamper"}},
+            headers=mut_headers,
+        )
+        assert resp_builtin_patch.status_code == 403, resp_builtin_patch.text
+        resp_builtin_adv = strict_client.post(
+            "/api/registry/strategy-specs/reg-spec-builtin-shared/advance",
+            json={"target_state": "retired", "expected_artifact_state": "approved"},
+            headers=mut_headers,
+        )
+        assert resp_builtin_adv.status_code == 403, resp_builtin_adv.text
+
+    # 5. Cross-tenant X-Tenant-Id selector and cross-tenant entry read remain 403
+    for view_name in ("persona_binding", "persona_binding_counts", "strategy_summary_page"):
+        resp_mismatch = strict_client.get(
+            f"/api/registry/strategy-specs?view={view_name}",
+            headers={**_bearer(viewer_token_a), "X-Tenant-Id": "tenant-b"},
+        )
+        assert resp_mismatch.status_code == 403, (view_name, resp_mismatch.text)
+
+    resp_cross_detail = strict_client.get(
+        "/api/registry/strategy-specs/reg-spec-vw-b-v1",
+        headers=viewer_headers,
+    )
+    assert resp_cross_detail.status_code == 403, resp_cross_detail.text
 
