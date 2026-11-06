@@ -9,23 +9,23 @@
     "repository": "ajoe734/pantheon",
     "branch": "task/EVOLUTION-RETRAIN-TEACHING-EVAL-20261106",
     "base_sha": "3f403a7f691a886c1cfc91700150f6f6270b1ec7",
-    "implementation_commit": "79e075108c389e0ec7cb3005963391a3c9880f62",
+    "implementation_commit": "dae25e7f97c4673acccca73d890865f4372b9e5e",
     "files_sha256": {
       "docker-compose.yml": "acf55b8f9e9f3a3b7e007d51b8c59ba096fa31422cf266cb44e6f7ac98aa4184",
       "docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md": "eb86e54e4598250dae96a9e4df63e0a6f39c0fcab4fe6f73e5ddfc5c9d32620e",
       "scripts/issue_dev_paper_principals.py": "e362100b100e7950990fba179807e1be5ef3dc5820f742fcba63d3b9ea12701a",
       "scripts/test_issue_dev_paper_principals.py": "37c002c6dd76c166444bb382cde2e933f78c541c475da1c46271119108081702",
-      "services/control-plane/bff/BFF_API_CONTRACT.md": "2c62e90e36b62be57b498f807ed391d52929a382d88a1749696b9b33281e8929",
-      "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py": "0da30fd6000412c0d86b411b31f5357eece73161d0871d512aae8f2c4e1fe260",
-      "services/evolution/dispatch_receipts.py": "3d4b1eb6d403c5e8760a756632efde387bce55710b8f3809e32a1ce309e8d2e4",
-      "services/evolution/main.py": "63e57798c75ec8b871a9314627e9faf54ccfffbb7808fb085ad93af4c010e04f",
+      "services/control-plane/bff/BFF_API_CONTRACT.md": "b2de502fd57944039a39409ddd435bd6229271aad94c65c241f8182aeefb93c4",
+      "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py": "0240e3a28556f80d82ac6d503851018f012fe1df0ff1776d0ec21c598448f13e",
+      "services/evolution/dispatch_receipts.py": "416153a1ce8e4534c25a9d4144b377cbba254961173cb7266879bee4a440c860",
+      "services/evolution/main.py": "fae0dc972907c58504bf2e66bcb6ca40503399644e9463686f0337873352b849",
       "services/research/main.py": "70dc45b55cd7db87fc950516a07eb567d1e235436a9d0384877dbfe11ab8f824",
       "services/research/tests/test_research_orchestrator_http_service.py": "f15981db29f28336f6e856f05a99d1b326220367b33141b80f92148408e2ac25",
       "services/research/tests/test_retrain_executor_real_auth.py": "2b98f2af0d0fb7cab00457ae6685ea8ec4f6fcc93e321c67159c704db96665bd",
       "services/training-session/README.md": "7b78d78800777e45f4bacfa424e608882b8ab5ffbcee4e549495d10fb449f490",
       "services/training-session/inbound_authority.py": "ba31a95f94377b9363c24b2ca8b107a3419b01c8e4a14c31fc071c44fc09a098",
-      "services/training-session/main.py": "0fe5899524e4958138406b050c620191ad7a2b36b67e880e8fb044cb91421e75",
-      "services/training-session/persona_target.py": "ee8189653d127af476ac4b699af3ae3b742574002e88edef1affc02950a1a721",
+      "services/training-session/main.py": "957e52c4d5a9331ffa4cd593e8f47d8a7a808dd8b64c816e6746d18418d2d72e",
+      "services/training-session/persona_target.py": "10438ed0c4186f953554e6cd39d4e6f39b3c6af8ecf7e1ad30cd296e90ac124a",
       "services/training-session/tests/test_http_service.py": "dc8a53200c527ec07d6889c7a66bf8a09fd472833a455e1f0fbe25f68134a896"
     },
     "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
@@ -58,7 +58,7 @@
   },
   "fixes_found_while_testing": [
     "Model-bound baseline evaluation failed ('parameter_updates must contain at least one mutation'): services/training-session/main.py::_model_backtest_config now evaluates the original artifact when no control differs from its baseline.",
-    "Persona owner 404 was reported as a transport failure: persona_target._request_json_object now preserves sanitized owner verdicts and session creation returns 404 persona not found.",
+    "Persona owner 404 was reported as a transport failure: training-session main now reads the Persona owner through a status-preserving transport, so session creation returns 404 'persona not found'.",
     "A dataset not covering the artifact symbols was retried as a dependency outage: it is now a non-retryable evaluation_admission_rejected."
   ],
   "verification": [
@@ -92,5 +92,6 @@
   "not_verified": [
     "No hosted/deployed run: the compose wiring is verified by static tests only; the dev-paper-principals profile has not been re-deployed with the new research-orchestrator-svc volume.",
     "The deselected QuantLib test could not run here."
-  ]
+  ],
+  "known_limitation": "services/evolution/main.py is outside this task's artifact contract, so the Evolution program-runs listing (and the BFF route over it) carries the retrain outcome in the receipt 'detail' text ('; retrain outcome=... candidate_artifact_id=... session_id=...') rather than as new structured keys. The structured fields (session_id, job/eval ids, baseline_metrics, candidate_metrics, outcome, outcome_reason, candidate_artifact_id) are on GET /api/research-orchestrator/runs/{run_id} and in the receipt evidence. Exposing them as top-level keys on the Evolution items needs a contract amendment (Human/Ops) to touch services/evolution/main.py."
 }
