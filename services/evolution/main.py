@@ -156,6 +156,7 @@ from services.evolution.dispatch_outbox import (
     unsupported_freeze_reason,
 )
 from services.evolution.dispatch_receipts import (
+    RETRAIN_RUN_FIELDS,
     DispatchReceiptError,
     OUTCOME_FAILED,
     OUTCOME_SUCCEEDED,
@@ -2966,6 +2967,11 @@ def program_runs(program_id: str) -> Dict[str, Any]:
             "detail": receipt.detail if receipt is not None else "no adapter for this run",
             "source": "orchestrator_readback",
             "linked_at": link.get("linked_at"),
+            **{
+                key: (receipt.evidence or {})[key]
+                for key in RETRAIN_RUN_FIELDS
+                if receipt is not None and key in (receipt.evidence or {})
+            },
         })
     return {"items": items}
 

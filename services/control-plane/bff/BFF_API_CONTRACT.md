@@ -956,3 +956,13 @@ double-counted in the additive total.
 - `meta.state_counts` reports the count for each normalized DTO `state` value (`draft`, `review`, `approved`, `paper_running`, `canary_running`, `live_running`, `deployed`, `paused`, `retired`) for the caller tenant from the same single bounded Registry owner read (`GET /api/registry/strategy-specs?view=strategy_summary_page`). When the `state_counts` read fails or is unavailable, `meta.state_counts` is `null` (never fabricated zeros) while the strategy list still returns HTTP 200.
 - `GET /bff/strategies?state=retired` returns the caller tenant's retired strategies (which remain excluded from the default list and from `exclude_state=draft`), and `GET /bff/strategies?state=review` returns `candidate` / `review` strategies.
 - A strategy whose stored lifecycle value is not a known state remains visible under `GET /bff/strategies?exclude_state=draft` (with its raw value preserved in `lifecycleStatus`) and is never hidden by the DTO display fallback to `draft`.
+
+
+### `GET /bff/evolution-programs/{program_id}/runs` — retrain run fields
+
+Each item is read back from the owning plane. For a retrain run it additionally
+carries, as the research orchestrator recorded them and only once known:
+`session_id`, `baseline_job_id`, `candidate_job_id`, `baseline_eval_id`,
+`candidate_eval_id`, `baseline_metrics`, `candidate_metrics`, `outcome`
+(`candidate_created` | `no_candidate` | `evaluation_rejected`), `outcome_reason`
+and `candidate_artifact_id`. Existing fields are unchanged.

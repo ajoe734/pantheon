@@ -48,6 +48,19 @@ _RETRYABLE_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 # Research-orchestrator run statuses, split into the three classes the outbox
 # needs.  Anything outside these sets is treated as still-running: a status we
 # do not recognise must never be read as a terminal success.
+# Fields the research retrain executor records on its run as they become known.
+RETRAIN_RUN_FIELDS = (
+    "session_id",
+    "baseline_job_id",
+    "candidate_job_id",
+    "baseline_eval_id",
+    "candidate_eval_id",
+    "baseline_metrics",
+    "candidate_metrics",
+    "outcome",
+    "outcome_reason",
+    "candidate_artifact_id",
+)
 _RESEARCH_SUCCESS_STATUSES = frozenset({"completed", "succeeded"})
 _RESEARCH_FAILURE_STATUSES = frozenset({"failed", "rejected", "canceled", "cancelled", "error"})
 
@@ -336,6 +349,12 @@ class ResearchPlaneAdapter:
                 "artifact_refs": list(body.get("artifact_refs") or []),
                 "parameters": parameters,
                 "updated_at": body.get("updated_at"),
+                # Retrain executor progress, passed through as the orchestrator recorded it.
+                **{
+                    key: body[key]
+                    for key in RETRAIN_RUN_FIELDS
+                    if body.get(key) not in (None, "", {}, [])
+                },
             },
         )
 
