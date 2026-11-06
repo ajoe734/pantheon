@@ -1,0 +1,45 @@
+{
+  "task_id": "SD-TW-PAPER-STOCK-FUTURES-20261106",
+  "kind": "design_document_evidence",
+  "read_date": "2026-11-06",
+  "document": "docs/04/pantheon_tw_paper_stock_futures_2026-11-06/SD_TW_PAPER_STOCK_FUTURES_2026-11-06.md",
+  "hosted_behavior_claimed": false,
+  "scope_statement": "design only; no source/test/workflow/config change; no VM, SSH, broker, broker sandbox, futures smoke or hosted workflow used",
+  "official_sources_read": [
+    {"url": "https://www.taifex.com.tw/cht/2/stockLists", "used_for": "underlying to contract family and unit (CD 2000, QF 100, DH 2000, NY 10000, SR 1000)"},
+    {"url": "https://www.taifex.com.tw/cht/2/sTF", "used_for": "contract spec: third Wednesday last trading day, holiday shift footnote, cash settlement, daily settlement definition, hours"},
+    {"url": "https://www.taifex.com.tw/cht/5/formulaStock?menuid1=12", "used_for": "final settlement price formula"},
+    {"url": "https://www.taifex.com.tw/cht/4/feeSchedules", "used_for": "exchange fees and futures transaction tax 0.00002; resolves openapi STF/STO swap"},
+    {"url": "https://www.taifex.com.tw/cht/5/stockMargining", "used_for": "margin page (fetched; numbers taken from openapi datasets)"},
+    {"url": "https://openapi.taifex.com.tw/v1/SingleStockFuturesMargining", "date": "20261105", "http": 200},
+    {"url": "https://openapi.taifex.com.tw/v1/SingleStockFuturesETFMargining", "date": "20261105", "http": 200, "note": "CSV with BOM"},
+    {"url": "https://openapi.taifex.com.tw/v1/FuturesAndOptionsFeeSchedule", "http": 200, "note": "CSV with BOM; STF/STO tax values swapped versus the web page"},
+    {"url": "https://openapi.taifex.com.tw/v1/FinalSettlementPriceSSF", "http": 200, "note": "only TheFinalSettlementDay 20261021 present"},
+    {"url": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut", "date": "20261105", "http": 200, "read_at": "2026-11-06T11:42Z", "note": "spread rows contain '/' in ContractMonth(Week); adjusted codes such as CM1; DHF has no after-hours rows"}
+  ],
+  "key_values": {
+    "QFF_202611_settlement": 2247, "DHF_202611_settlement": 237, "SRF_202611_settlement": 97.35,
+    "QFF_initial_margin": 30334.5, "DHF_initial_margin": 63990, "SRF_initial_margin": 8700,
+    "max_contracts_100000": {"QFF": 3, "DHF": 1, "SRF": 11},
+    "final_settlement_day_202610": "20261021",
+    "third_wednesday_2026_11": "2026-11-18"
+  },
+  "long_side_replay": {
+    "stand_in": "stock close used in place of futures price, labelled",
+    "gross_pnl": {"2330_shares": -820, "2330_QFF": -59000, "2330_CDF": 0, "2317_shares": -94.5, "2317_DHF": -42000, "0050_shares": -44.15, "0050_SRF": -44150},
+    "fills_rejected": {"QFF": [3, 3], "CDF": [0, 6], "DHF": [1, 5], "SRF": [6, 0]},
+    "method": "one BUY per price, 1 unit, no exits, mark at last price, 100000 capital, rejection when cumulative initial margin exceeds capital"
+  },
+  "repository_commands": [
+    "git grep -l <paper_fill_simulated|fill_quantity|position_quantity|ledger_cash|order_quantity|quantity_type> -- . ':!docs' ':!tests' ':!*test*'",
+    "git grep -nE <paper_fill_simulated|position_quantity|ledger_cash|fill_quantity> -- <bff, telemetry, trade_journey, persona, reconciliation-drift, probe paths>",
+    "git grep -nE 'tw-twse-tpex-official-market|tw-taifex-futures-options-chip' -- scripts .github services/source_ingestion",
+    "git grep -nE 'drawdown' -- docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105 docs/deployment/evidence/H12-4923-DRAWDOWN-POLICY-CONFIG-20261101",
+    "git grep -lE 'position_quantity|fill_quantity|avg_cost|average_cost|cost_basis' -- apps frontend web '*.ts' '*.tsx'  (no frontend hit)",
+    "python3 -c load services/evolution/config/threshold_sweep_baselines.json (7 baselines)"
+  ],
+  "unverified": [
+    "openapi publication time", "holiday shift against exchange calendar and trading rules text", "settlement fee on cash settlement",
+    "broker commission", "broker margin-call timing", "adjusted contract units", "openapi dataset for contract units", "frontend in browser"
+  ]
+}
