@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "task_id": "EVOLUTION-RETRAIN-TEACHING-EVAL-20261106",
+  "scope": "approved retrain executor: bounded parameter change evaluated against the original through Persona Teaching, at most one candidate artifact, no deployment",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "review_status": "pending_independent_exact_head_review",
+  "source": {
+    "repository": "ajoe734/pantheon",
+    "branch": "task/EVOLUTION-RETRAIN-TEACHING-EVAL-20261106",
+    "base_sha": "ff354b4c36b47564b671ed2c7c3eace63187ea74",
+    "implementation_commit": "dae25e7f97c4673acccca73d890865f4372b9e5e",
+    "files_sha256": {
+      "docker-compose.yml": "acf55b8f9e9f3a3b7e007d51b8c59ba096fa31422cf266cb44e6f7ac98aa4184",
+      "docs/operations/bff-upstream-v2-20260911/decisions/evolution-lifecycle.md": "eb86e54e4598250dae96a9e4df63e0a6f39c0fcab4fe6f73e5ddfc5c9d32620e",
+      "scripts/issue_dev_paper_principals.py": "e362100b100e7950990fba179807e1be5ef3dc5820f742fcba63d3b9ea12701a",
+      "scripts/test_issue_dev_paper_principals.py": "37c002c6dd76c166444bb382cde2e933f78c541c475da1c46271119108081702",
+      "services/control-plane/bff/BFF_API_CONTRACT.md": "b2de502fd57944039a39409ddd435bd6229271aad94c65c241f8182aeefb93c4",
+      "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py": "0240e3a28556f80d82ac6d503851018f012fe1df0ff1776d0ec21c598448f13e",
+      "services/evolution/dispatch_receipts.py": "416153a1ce8e4534c25a9d4144b377cbba254961173cb7266879bee4a440c860",
+      "services/research/main.py": "70dc45b55cd7db87fc950516a07eb567d1e235436a9d0384877dbfe11ab8f824",
+      "services/research/tests/test_research_orchestrator_http_service.py": "f15981db29f28336f6e856f05a99d1b326220367b33141b80f92148408e2ac25",
+      "services/research/tests/test_retrain_executor_real_auth.py": "2b98f2af0d0fb7cab00457ae6685ea8ec4f6fcc93e321c67159c704db96665bd",
+      "services/training-session/README.md": "7b78d78800777e45f4bacfa424e608882b8ab5ffbcee4e549495d10fb449f490",
+      "services/training-session/inbound_authority.py": "ba31a95f94377b9363c24b2ca8b107a3419b01c8e4a14c31fc071c44fc09a098",
+      "services/training-session/main.py": "957e52c4d5a9331ffa4cd593e8f47d8a7a808dd8b64c816e6746d18418d2d72e",
+      "services/training-session/tests/test_http_service.py": "dc8a53200c527ec07d6889c7a66bf8a09fd472833a455e1f0fbe25f68134a896"
+    },
+    "delivery_head_binding": "The governed handoff freezes the PR head containing this manifest; implementation_commit is its source ancestor."
+  },
+  "behavior": {
+    "executor": "services/research/main.py::_execute_retrain",
+    "persona_source": "target registry entry metadata.persona_id; missing -> completed/evaluation_rejected(target_has_no_persona), no session, no mutation",
+    "calls": "Registry read -> Training session -> baseline preview job (queue+run+wait) -> existing controls route (one bounded change) -> candidate preview job -> Registry mutate only if proof+gate passed and candidate Sharpe > baseline Sharpe",
+    "never_called": [
+      "session complete",
+      "replay commit",
+      "replay discard",
+      "runtime binding",
+      "deployment plan",
+      "capital",
+      "artifact advance"
+    ],
+    "outcomes": {
+      "candidate_created": "child stays candidate; source_run_ids = decision, session, evaluation proof",
+      "no_candidate": [
+        "evaluation_gate_failed",
+        "not_better_than_baseline",
+        "baseline_unavailable"
+      ],
+      "evaluation_rejected": "owner reason recorded",
+      "failed": "transport/auth/bounded wait; failing step named"
+    },
+    "credentials": "RESEARCH_REGISTRY_SERVICE_TOKEN (registry-writer, owner-write) and RESEARCH_TRAINING_SERVICE_TOKEN (training-service) issued by scripts/issue_dev_paper_principals.py, mounted read-only via dev-paper-research-tokens, read at call time; research-orchestrator added to TRAINING_SESSION_ALLOWED_CALLER_SERVICES",
+    "training_health": "purpose=retrain jobs record under functional operation retrain_evaluation: /readyz stays 200 and the failure stays visible (retrain_evaluation_failures); ordinary refresh rejection still 503"
+  },
+  "fixes_found_while_testing": [
+    "Model-bound baseline evaluation failed ('parameter_updates must contain at least one mutation'): services/training-session/main.py::_model_backtest_config now evaluates the original artifact when no control differs from its baseline.",
+    "Persona owner 404 was reported as a transport failure: training-session main now reads the Persona owner through a status-preserving transport, so session creation returns 404 'persona not found'.",
+    "A dataset not covering the artifact symbols was retried as a dependency outage: it is now a non-retryable evaluation_admission_rejected."
+  ],
+  "verification": [
+    {
+      "command": "pytest services/research/tests/test_retrain_executor_real_auth.py",
+      "result": "9 passed",
+      "note": "real Registry + Training apps over HTTP, strict JWT, issuer tokens, real vectorbt (vbt-real-*), deterministic local dataset; no urlopen/_trigger_retrain_execution patch. Persona owner read API is the only stand-in."
+    },
+    {
+      "command": "pytest services/research/tests/test_research_orchestrator_http_service.py (deselect test_execute_research_stage_derivatives_pricing_risk_provenance)",
+      "result": "31 passed, 2 deselected",
+      "note": "The deselected test fails on the base too: QuantLib is not installed in this environment (503 'QuantLib numerical library is required'); unrelated to this change."
+    },
+    {
+      "command": "pytest services/research/alpha_replication/test_revalidation_worker.py",
+      "result": "38 passed"
+    },
+    {
+      "command": "pytest services/training-session/tests/test_http_service.py",
+      "result": "27 passed"
+    },
+    {
+      "command": "pytest services/evolution/test_dispatch_worker.py services/evolution/test_l12_evo_001_downstream_integration.py services/evolution/test_program_approval_dispatch.py services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py",
+      "result": "98 passed"
+    },
+    {
+      "command": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py scripts/test_current_l12_compose_wiring.py",
+      "result": "78 passed"
+    }
+  ],
+  "not_verified": [
+    "No hosted/deployed run: the compose wiring is verified by static tests only; the dev-paper-principals profile has not been re-deployed with the new research-orchestrator-svc volume.",
+    "The deselected QuantLib test could not run here."
+  ],
+  "known_limitation": "services/evolution/main.py is outside this task's artifact contract, so the Evolution program-runs listing (and the BFF route over it) carries the retrain outcome in the receipt 'detail' text ('; retrain outcome=... candidate_artifact_id=... session_id=...') rather than as new structured keys. The structured fields (session_id, job/eval ids, baseline_metrics, candidate_metrics, outcome, outcome_reason, candidate_artifact_id) are on GET /api/research-orchestrator/runs/{run_id} and in the receipt evidence. Exposing them as top-level keys on the Evolution items needs a contract amendment (Human/Ops) to touch services/evolution/main.py."
+}

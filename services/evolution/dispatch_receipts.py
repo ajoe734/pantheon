@@ -48,8 +48,37 @@ _RETRYABLE_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 # Research-orchestrator run statuses, split into the three classes the outbox
 # needs.  Anything outside these sets is treated as still-running: a status we
 # do not recognise must never be read as a terminal success.
+# Fields the research retrain executor records on its run as they become known.
+RETRAIN_RUN_FIELDS = (
+    "session_id",
+    "baseline_job_id",
+    "candidate_job_id",
+    "baseline_eval_id",
+    "candidate_eval_id",
+    "baseline_metrics",
+    "candidate_metrics",
+    "outcome",
+    "outcome_reason",
+    "candidate_artifact_id",
+)
 _RESEARCH_SUCCESS_STATUSES = frozenset({"completed", "succeeded"})
 _RESEARCH_FAILURE_STATUSES = frozenset({"failed", "rejected", "canceled", "cancelled", "error"})
+
+
+def _retrain_detail_suffix(run: Mapping[str, Any]) -> str:
+    """Readable retrain outcome for a run that recorded one (empty for any other run).
+
+    The Evolution program-runs listing exposes the receipt ``detail``; the full
+    structured fields stay on the research run and in the receipt evidence.
+    """
+    outcome = run.get("outcome")
+    if not outcome:
+        return ""
+    parts = [f"outcome={outcome}"]
+    for key in ("outcome_reason", "candidate_artifact_id", "session_id"):
+        if run.get(key):
+            parts.append(f"{key}={run[key]}")
+    return "; retrain " + " ".join(parts)
 
 
 class DispatchReceiptError(RuntimeError):
@@ -328,7 +357,10 @@ class ResearchPlaneAdapter:
             downstream_kind=self.kind,
             downstream_ref_id=downstream_ref_id,
             downstream_status=run_status or None,
-            detail=f"research run {downstream_ref_id} reported status={run_status or 'unknown'}",
+            detail=(
+                f"research run {downstream_ref_id} reported status={run_status or 'unknown'}"
+                + _retrain_detail_suffix(body)
+            ),
             evidence={
                 "run_id": body.get("run_id"),
                 "task_id": body.get("task_id"),
@@ -336,6 +368,12 @@ class ResearchPlaneAdapter:
                 "artifact_refs": list(body.get("artifact_refs") or []),
                 "parameters": parameters,
                 "updated_at": body.get("updated_at"),
+                # Retrain executor progress, passed through as the orchestrator recorded it.
+                **{
+                    key: body[key]
+                    for key in RETRAIN_RUN_FIELDS
+                    if body.get(key) not in (None, "", {}, [])
+                },
             },
         )
 

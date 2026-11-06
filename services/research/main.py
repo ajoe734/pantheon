@@ -9,6 +9,8 @@ import re
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -1335,12 +1337,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         store.append_event(event)
     if (
         not rejected
-        and "decision_id" in body.parameters
-        and "target_artifact_id" in body.parameters
-        # Only a retrain decision runs the retrain executor.  Any other action
-        # type stays queued: a stub-labelled run is never reported completed
-        # for work this service did not perform.
-        and str(body.parameters.get("action_type") or "retrain").strip().lower() == "retrain"
+        and _is_retrain_action(body.parameters)
     ):
         _trigger_retrain_execution(run["run_id"], body.parameters)
     if not rejected and is_stage_backend and (body.parameters.get("stage") or (body.parameters.get("plan") and body.parameters["plan"].get("stages"))):
@@ -1559,138 +1556,515 @@ def _execute_plan_stage(
             _progress_plan_stages_locked(plan, completed, actor_id, store, str(completed.get("updated_at") or utc_now()))
 
 
+# ---------------------------------------------------------------------------
+# Approved retrain executor
+# ---------------------------------------------------------------------------
+#
+# An approved retrain decision becomes one bounded parameter change that is
+# evaluated against the original through Persona Teaching (the real preview job
+# route and real vectorbt evaluation).  At most one candidate artifact is
+# registered, and only when the candidate passes the Teaching gate and is
+# strictly better than the original.  The executor never completes the Teaching
+# session, never commits or discards a replay, never fabricates a proof or an
+# MFA claim, and writes no runtime binding, deployment plan or capital record.
+
+_RETRAIN_ACTION_TYPE = "retrain"
+_RETRAIN_SOURCE_SERVICE = "research-orchestrator"
+_RETRAIN_OUTCOMES = frozenset({"candidate_created", "no_candidate", "evaluation_rejected"})
+
+
+def _is_retrain_action(params: Dict[str, Any]) -> bool:
+    """Only a retrain decision runs the retrain executor.
+
+    Any other action type stays queued: a stub-labelled run is never reported
+    completed for work this service did not perform.
+    """
+    return (
+        "decision_id" in params
+        and "target_artifact_id" in params
+        and str(params.get("action_type") or "retrain").strip().lower() == _RETRAIN_ACTION_TYPE
+    )
+
+
+class _RetrainFailure(Exception):
+    """Transport/auth/timeout failure: the run ends failed and names the step."""
+
+    def __init__(self, step: str, detail: str) -> None:
+        super().__init__(f"{step}: {detail}")
+        self.step = step
+        self.detail = detail
+
+
+class _RetrainFinished(Exception):
+    """The run reached a stated terminal outcome and ends completed."""
+
+    def __init__(self, outcome: str, reason: str) -> None:
+        super().__init__(f"{outcome}: {reason}")
+        self.outcome = outcome
+        self.reason = reason
+
+
+class _OwnerRejection(Exception):
+    """An owner API refused the request with a business (4xx) response."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(f"HTTP {status}: {detail}")
+        self.status = status
+        self.detail = detail
+
+
+def _retrain_env_float(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _retrain_call(
+    *,
+    step: str,
+    service: str,
+    method: str,
+    url: str,
+    tenant_id: str,
+    token_variable: str,
+    body: Optional[Dict[str, Any]] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+    timeout: float = 15.0,
+) -> Any:
+    """One authenticated owner call.
+
+    The service credential is read at call time from its mounted file, so a
+    rotated token is picked up without a restart.  A missing credential, a
+    transport error, a 401/403 or a 5xx fails the run at ``step``; any other
+    4xx is the owner's rejection and is returned to the caller as such.
+    """
+    from services.service_token_file import configured_service_token
+
+    try:
+        token = configured_service_token(token_variable)
+    except RuntimeError as exc:
+        raise _RetrainFailure(step, f"{service} service credential unavailable ({token_variable}): {exc}") from None
+    if not token:
+        raise _RetrainFailure(step, f"{service} service credential is not configured ({token_variable})")
+    headers = {
+        "Accept": "application/json",
+        "Authorization": token if token.startswith("Bearer ") else f"Bearer {token}",
+        "X-Tenant-Id": tenant_id,
+        "X-Pantheon-Service": _RETRAIN_SOURCE_SERVICE,
+    }
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    headers.update(extra_headers or {})
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw.strip() else {}
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            parsed = json.loads(exc.read().decode("utf-8"))
+            raw_detail = parsed.get("detail") if isinstance(parsed, dict) else None
+            if raw_detail is None and isinstance(parsed, dict):
+                raw_detail = parsed.get("error")
+            detail = raw_detail if isinstance(raw_detail, str) else json.dumps(raw_detail, sort_keys=True)
+        except Exception:  # noqa: BLE001 - the status line is enough.
+            detail = str(exc.reason or "")
+        detail = (detail or f"HTTP {exc.code}")[:500]
+        if exc.code in (401, 403) or exc.code >= 500 or exc.code in (408, 429):
+            raise _RetrainFailure(step, f"{service} returned HTTP {exc.code}: {detail}") from None
+        raise _OwnerRejection(exc.code, detail) from None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise _RetrainFailure(step, f"{service} request failed: {type(exc).__name__}: {exc}") from None
+
+
+def _retrain_record(run_id: str, **fields: Any) -> Dict[str, Any]:
+    """Persist retrain progress on the research run as it becomes known."""
+    rstore = get_store()
+    run = rstore.get_run(run_id) or {}
+    run.update(fields)
+    run["updated_at"] = utc_now()
+    rstore.put_run(run)
+    return run
+
+
+def _retrain_prior_state(run_id: str, params: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
+    """Progress already recorded for this decision by this or an earlier attempt.
+
+    A retry is a new run for the same decision; it resumes from the recorded
+    session and job ids and never opens a second session or registers a second
+    child.
+    """
+    decision_id = str(params.get("decision_id") or "")
+    keys = (
+        "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
+        "baseline_metrics", "candidate_metrics", "persona_id", "parameter_updates",
+        "candidate_artifact_id", "candidate_proof_ref", "outcome", "outcome_reason",
+    )
+    related = []
+    for other in get_store().list_runs():
+        other_params = other.get("parameters") or {}
+        if str(other_params.get("decision_id") or "") != decision_id:
+            continue
+        if str(other.get("tenant_id") or other_params.get("tenant_id") or "") != tenant_id:
+            continue
+        if other.get("run_id") == run_id or not other.get("session_id"):
+            continue
+        related.append(other)
+    related.sort(key=lambda item: str(item.get("created_at") or ""))
+    state: Dict[str, Any] = {}
+    for other in related:  # later attempts override earlier ones
+        for key in keys:
+            if other.get(key) not in (None, "", {}, []):
+                state[key] = other[key]
+    return state
+
+
+def _retrain_finite(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
+def _retrain_parameter_update(parent_artifact: Dict[str, Any]) -> Dict[str, Any]:
+    """The existing bounded rule: change exactly one declared parameter."""
+    current_params = parent_artifact.get("parameters") or {}
+    if "lookback_bars" in current_params:
+        current_lookback = int(current_params["lookback_bars"])
+        return {"lookback_bars": 3 if current_lookback == 2 else 2}
+    if "momentum_threshold" in current_params:
+        current_threshold = float(current_params["momentum_threshold"])
+        return {"momentum_threshold": 0.01 if current_threshold == 0.0 else 0.0}
+    return {"momentum_threshold": 0.01}
+
+
+def _retrain_evaluate(
+    *,
+    run_id: str,
+    step: str,
+    training_url: str,
+    tenant_id: str,
+    session_id: str,
+    decision_id: str,
+    kind: str,
+    recorded_job_id: Optional[str],
+) -> Dict[str, Any]:
+    """Queue (or resume) one evaluation job, run it, and wait for its terminal state.
+
+    Returns the completed preview job.  A job the Training owner rejects ends the
+    run ``evaluation_rejected``; transport, auth and wait-timeout failures raise
+    ``_RetrainFailure`` naming ``step``.
+    """
+    mode = "baseline" if kind == "baseline" else "refresh"
+    job_id = recorded_job_id
+    job: Dict[str, Any] = {}
+    if not job_id:
+        try:
+            job = _retrain_call(
+                step=f"queue_{kind}_evaluation", service="training", method="POST", token_variable="RESEARCH_TRAINING_SERVICE_TOKEN",
+                url=f"{training_url}/api/training/sessions/{urllib.parse.quote(session_id, safe='')}/preview-jobs",
+                tenant_id=tenant_id,
+                body={"mode": mode, "requested_by": _RETRAIN_SOURCE_SERVICE, "terminalize_session": False, "purpose": "retrain"},
+                extra_headers={"Idempotency-Key": f"retrain-{kind}:{decision_id}"},
+            )
+        except _OwnerRejection as exc:
+            raise _RetrainFinished("evaluation_rejected", f"{kind} evaluation queue rejected: {exc.detail}") from None
+        job_id = str(job.get("job_id") or "")
+        if not job_id:
+            raise _RetrainFailure(f"queue_{kind}_evaluation", "Training returned no job_id")
+        _retrain_record(run_id, **{f"{kind}_job_id": job_id, f"{kind}_eval_id": job.get("eval_id")})
+    job_url = f"{training_url}/api/training/preview-jobs/{urllib.parse.quote(job_id, safe='')}"
+    run_url = job_url + "/run"
+    deadline = time.monotonic() + _retrain_env_float("RESEARCH_RETRAIN_EVAL_WAIT_SECONDS", 300.0)
+    run_timeout = _retrain_env_float("RESEARCH_RETRAIN_EVAL_RUN_TIMEOUT_SECONDS", 120.0)
+    poll = _retrain_env_float("RESEARCH_RETRAIN_EVAL_POLL_SECONDS", 1.0)
+    while True:
+        try:
+            job = _retrain_call(
+                step=f"wait_{kind}_evaluation", service="training", method="GET", url=job_url,
+                tenant_id=tenant_id, token_variable="RESEARCH_TRAINING_SERVICE_TOKEN",
+            )
+        except _OwnerRejection as exc:
+            raise _RetrainFinished("evaluation_rejected", f"{kind} evaluation job unreadable: {exc.detail}") from None
+        status = str(job.get("status") or "").lower()
+        if status == "completed":
+            _retrain_record(run_id, **{f"{kind}_eval_id": job.get("eval_id")})
+            return job
+        if status == "failed":
+            code = str(job.get("error_code") or "")
+            reason = str(job.get("failure_reason") or code or "evaluation failed")
+            attempts = int(job.get("attempt_count") or 0)
+            if job.get("retryable") is True and attempts < int(job.get("max_attempts") or 1):
+                pass  # the run route re-claims a retryable failed job below
+            elif code in {"evaluation_admission_rejected", "training_session_not_found"}:
+                raise _RetrainFinished("evaluation_rejected", f"{kind} evaluation rejected: {reason}")
+            else:
+                raise _RetrainFailure(f"{kind}_evaluation", f"Training evaluation failed ({code or 'unknown'}): {reason}")
+        if time.monotonic() >= deadline:
+            raise _RetrainFailure(f"wait_{kind}_evaluation", "bounded wait for the evaluation timed out")
+        # queued / retryable-failed / running with an expired lease: drive it through the real run route.
+        try:
+            _retrain_call(
+                step=f"run_{kind}_evaluation", service="training", method="POST", url=run_url,
+                tenant_id=tenant_id, token_variable="RESEARCH_TRAINING_SERVICE_TOKEN", body={}, timeout=run_timeout,
+            )
+        except _OwnerRejection as exc:
+            if exc.status != 409:  # 409: another worker holds the lease; keep waiting
+                raise _RetrainFinished("evaluation_rejected", f"{kind} evaluation run rejected: {exc.detail}") from None
+            time.sleep(poll)
+        except _RetrainFailure as exc:
+            # A timed-out run call may still be running at the owner: read its state back.
+            if "request failed" not in exc.detail:
+                raise
+            time.sleep(poll)
+
+
+def _retrain_proof(job: Dict[str, Any]) -> Dict[str, Any]:
+    preview = job.get("preview") if isinstance(job.get("preview"), dict) else {}
+    proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), dict) else {}
+    return proof
+
+
+def _retrain_metrics(proof: Dict[str, Any]) -> Dict[str, Any]:
+    metrics = dict(proof.get("metrics") or {})
+    metrics["sharpe_defined"] = not any(
+        str(error).startswith("sharpe_undefined_") for error in (proof.get("validation_errors") or [])
+    ) and _retrain_finite(metrics.get("sharpe_ratio")) is not None
+    return metrics
+
+
+def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
+    decision_id = str(params["decision_id"])
+    target_artifact_id = str(params["target_artifact_id"])
+    work_item_id = str(params.get("work_item_id") or "")
+    tenant_id = str(params.get("tenant_id") or "").strip()
+    training_url = os.getenv("TRAINING_SESSION_URL", "http://training-session-svc:8099").rstrip("/")
+    registry_url = os.getenv("REGISTRY_URL", "http://registry:8087").rstrip("/")
+
+    _retrain_record(run_id, status="running")
+    if not tenant_id:
+        raise _RetrainFailure("resolve_tenant", "run parameters carry no decision tenant_id")
+    state = _retrain_prior_state(run_id, params, tenant_id)
+    if state.get("candidate_artifact_id") or state.get("outcome") in _RETRAIN_OUTCOMES:
+        # The decision already reached its outcome: adopt it, change nothing.
+        carried = {k: v for k, v in state.items() if k in {
+            "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
+            "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id"}}
+        _retrain_record(run_id, **carried)
+        raise _RetrainFinished(
+            str(state.get("outcome") or "candidate_created"),
+            str(state.get("outcome_reason") or "resumed_from_recorded_outcome"),
+        )
+    if state:
+        _retrain_record(run_id, **{k: v for k, v in state.items() if k not in {"outcome", "outcome_reason"}})
+
+    # 1. The target registry entry names its persona; nothing is assumed.
+    try:
+        artifact_view = _retrain_call(
+            step="read_target_artifact", service="registry", method="GET", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+            url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}",
+            tenant_id=tenant_id,
+        )
+    except _OwnerRejection as exc:
+        raise _RetrainFinished("evaluation_rejected", f"target artifact rejected by Registry: {exc.detail}") from None
+    entry = artifact_view.get("entry") if isinstance(artifact_view, dict) else None
+    metadata = (entry or {}).get("metadata") if isinstance(entry, dict) else None
+    metadata = metadata if isinstance(metadata, dict) else {}
+    parent_artifact = metadata.get("strategy_artifact")
+    if not isinstance(parent_artifact, dict):
+        raise _RetrainFailure("read_target_artifact", "Registry entry carries no strategy_artifact")
+    persona_id = str(metadata.get("persona_id") or "").strip()
+    if not persona_id:
+        raise _RetrainFinished("evaluation_rejected", "target_has_no_persona")
+
+    # 2. One Teaching session for this decision (resumed, never duplicated).
+    session_id = str(state.get("session_id") or "")
+    session: Dict[str, Any] = {}
+    if not session_id:
+        try:
+            session = _retrain_call(
+                step="open_session", service="training", method="POST", token_variable="RESEARCH_TRAINING_SERVICE_TOKEN",
+                url=f"{training_url}/api/training/sessions", tenant_id=tenant_id,
+                body={
+                    "persona_id": persona_id,
+                    "objective": f"Retrain evaluation for EvolutionDecision {decision_id} on {target_artifact_id}",
+                    "mode": "coaching",
+                    "context_refs": [
+                        {"type": "evolution_decision", "id": decision_id},
+                        {"type": "research_run", "id": run_id},
+                    ],
+                    "actor_id": _RETRAIN_SOURCE_SERVICE,
+                },
+            )
+        except _OwnerRejection as exc:
+            raise _RetrainFinished("evaluation_rejected", f"session rejected by Training: {exc.detail}") from None
+        session_id = str(session.get("session_id") or "")
+        if not session_id:
+            raise _RetrainFailure("open_session", "Training returned no session_id")
+        _retrain_record(run_id, session_id=session_id, persona_id=persona_id)
+    else:
+        try:
+            session = _retrain_call(
+                step="resume_session", service="training", method="GET", token_variable="RESEARCH_TRAINING_SERVICE_TOKEN",
+                url=f"{training_url}/api/training/sessions/{urllib.parse.quote(session_id, safe='')}", tenant_id=tenant_id,
+            )
+        except _OwnerRejection as exc:
+            raise _RetrainFinished("evaluation_rejected", f"recorded session unavailable: {exc.detail}") from None
+        if str(session.get("status") or "").lower() != "active":
+            raise _RetrainFinished("evaluation_rejected", f"recorded session {session_id} is no longer active")
+    model_authority = (session.get("metadata") or {}).get("model_authority")
+    if isinstance(model_authority, dict) and str(model_authority.get("artifact_id") or "") not in ("", target_artifact_id):
+        raise _RetrainFinished("evaluation_rejected", "persona_model_is_not_target_artifact")
+
+    # 3. Baseline of the original, before any control change.
+    controls_url = f"{training_url}/api/training/sessions/{urllib.parse.quote(session_id, safe='')}/controls"
+    proposed = state.get("parameter_updates") or _retrain_parameter_update(parent_artifact)
+    if not state.get("baseline_metrics"):
+        baseline_job = _retrain_evaluate(
+            run_id=run_id, step="baseline", training_url=training_url, tenant_id=tenant_id, session_id=session_id,
+            decision_id=decision_id, kind="baseline", recorded_job_id=state.get("baseline_job_id"),
+        )
+        baseline_proof = _retrain_proof(baseline_job)
+        _retrain_record(run_id, baseline_metrics=_retrain_metrics(baseline_proof), baseline_job_id=baseline_job.get("job_id"),
+                        baseline_eval_id=baseline_job.get("eval_id"))
+    baseline_metrics = (get_store().get_run(run_id) or {}).get("baseline_metrics") or state.get("baseline_metrics") or {}
+    baseline_sharpe = _retrain_finite(baseline_metrics.get("sharpe_ratio"))
+    if not baseline_metrics.get("sharpe_defined") or baseline_sharpe is None:
+        raise _RetrainFinished("no_candidate", "baseline_unavailable")
+
+    # 4. One bounded control change through the existing controls route.
+    _retrain_record(run_id, parameter_updates=proposed)
+    patches = [{"parameter_key": key, "proposed_value": value} for key, value in proposed.items()]
+    try:
+        current = _retrain_call(
+            step="read_controls", service="training", method="GET", token_variable="RESEARCH_TRAINING_SERVICE_TOKEN",
+            url=f"{training_url}/api/training/controls/{urllib.parse.quote(session_id, safe='')}", tenant_id=tenant_id,
+        )
+        current_values = {c.get("parameter_key"): c.get("current_value") for c in (current.get("controls") or [])}
+        if any(current_values.get(p["parameter_key"]) != p["proposed_value"] for p in patches):
+            patched = _retrain_call(
+                step="apply_control_change", service="training", method="POST", token_variable="RESEARCH_TRAINING_SERVICE_TOKEN",
+                url=controls_url, tenant_id=tenant_id, body={"patches": patches},
+            )
+            if str(patched.get("status") or "").lower() != "accepted":
+                raise _RetrainFinished(
+                    "evaluation_rejected",
+                    "control change rejected by Training: " + json.dumps(patched.get("field_errors") or [], sort_keys=True),
+                )
+    except _OwnerRejection as exc:
+        raise _RetrainFinished("evaluation_rejected", f"control change rejected by Training: {exc.detail}") from None
+
+    # 5. Candidate evaluation.
+    candidate_job = _retrain_evaluate(
+        run_id=run_id, step="candidate", training_url=training_url, tenant_id=tenant_id, session_id=session_id,
+        decision_id=decision_id, kind="candidate", recorded_job_id=state.get("candidate_job_id"),
+    )
+    candidate_proof = _retrain_proof(candidate_job)
+    candidate_metrics = _retrain_metrics(candidate_proof)
+    proof_ref = str(candidate_proof.get("proof_ref") or candidate_job.get("evaluation_proof_ref") or "")
+    _retrain_record(run_id, candidate_metrics=candidate_metrics, candidate_job_id=candidate_job.get("job_id"),
+                    candidate_eval_id=candidate_job.get("eval_id"), candidate_proof_ref=proof_ref)
+
+    # 6. Decide.  A child exists only for a passed, strictly better candidate.
+    gate_passed = (
+        str(candidate_proof.get("status") or "").lower() == "passed"
+        and str(candidate_proof.get("governance_gate_state") or "").lower() == "passed"
+        and bool(proof_ref)
+    )
+    if not gate_passed:
+        raise _RetrainFinished("no_candidate", "evaluation_gate_failed")
+    candidate_sharpe = _retrain_finite(candidate_metrics.get("sharpe_ratio"))
+    if not candidate_metrics.get("sharpe_defined") or candidate_sharpe is None or not candidate_sharpe > baseline_sharpe:
+        raise _RetrainFinished("no_candidate", "not_better_than_baseline")
+
+    # 7. Register the candidate child through the existing Registry mutate route.
+    suffix = hashlib.sha256(decision_id.encode("utf-8")).hexdigest()[:10]
+    new_artifact_id = f"{target_artifact_id}-retrain-{suffix}"
+    child_url = f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(new_artifact_id, safe='')}"
+
+    def read_child() -> Optional[Dict[str, Any]]:
+        try:
+            return _retrain_call(
+                step="register_candidate", service="registry", method="GET",
+                token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", url=child_url, tenant_id=tenant_id,
+            )
+        except _OwnerRejection:
+            return None
+
+    child_view = read_child()  # an earlier attempt of this decision already registered it: adopt, never duplicate
+    if child_view is None:
+        def semver(value: Any) -> tuple:
+            try:
+                parts = tuple(int(part) for part in str(value).split("."))
+            except ValueError:
+                return (0, 0, 0)
+            return parts if len(parts) == 3 else (0, 0, 0)
+
+        highest = semver(parent_artifact.get("version") or "1.0.0")
+        try:
+            family = _retrain_call(
+                step="register_candidate", service="registry", method="GET",
+                token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
+                url=f"{registry_url}/api/registry/strategies/{urllib.parse.quote(str(parent_artifact.get('strategy_id') or ''), safe='')}/strategy-artifacts",
+            )
+        except _OwnerRejection:
+            family = []
+        for view in family if isinstance(family, list) else []:
+            highest = max(highest, semver(((view or {}).get("entry") or {}).get("version")))
+        new_version = f"{highest[0]}.{highest[1] + 1}.0"
+        try:
+            child_view = _retrain_call(
+                step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+                url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
+                tenant_id=tenant_id,
+                body={
+                    "new_artifact_id": new_artifact_id,
+                    "new_version": new_version,
+                    "parameter_updates": proposed,
+                    "source_run_ids": [decision_id, session_id, proof_ref],
+                },
+            )
+        except _OwnerRejection as exc:
+            child_view = read_child() if exc.status == 409 else None
+            if child_view is None:
+                raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+    child_entry = child_view.get("entry") if isinstance(child_view, dict) else {}
+    child_id = str((child_entry or {}).get("registry_id") or new_artifact_id)
+    if str((child_entry or {}).get("artifact_state") or "") != "candidate":
+        raise _RetrainFailure("register_candidate", "Registry did not report the child as a candidate")
+    run = get_store().get_run(run_id) or {}
+    writebacks = list(run.get("registry_writebacks") or [])
+    writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
+    _retrain_record(run_id, candidate_artifact_id=child_id, registry_writebacks=writebacks)
+    raise _RetrainFinished("candidate_created", "candidate_passed_gate_and_beat_baseline")
+
+
 def _trigger_retrain_execution(run_id: str, params: dict) -> None:
     def run_worker():
+        rstore = get_store()
         try:
-            import urllib.request
-            import json
-            import os
-            
-            decision_id = params["decision_id"]
-            target_artifact_id = params["target_artifact_id"]
-            work_item_id = params["work_item_id"]
-            
-            training_session_url = os.getenv("TRAINING_SESSION_URL", "http://training-session-svc:8099")
-            registry_url = os.getenv("REGISTRY_URL", "http://registry:8087")
-            research_url = os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://research-orchestrator-svc:8101")
-
-            # Update research run status to running
-            from services.research.main import get_store as get_research_store
-            rstore = get_research_store()
-            r_run = rstore.get_run(run_id)
-            if r_run:
-                r_run["status"] = "running"
-                rstore.put_run(r_run)
-
-            # 1. Create a training session in training-session-svc
-            session_body = {
-                "persona_id": "persona-tw-equity",
-                "objective": f"Evolutionary parameter mutation for {target_artifact_id}",
-                "mode": "coaching",
-                "context_refs": [
-                    {"type": "evolution_decision", "id": decision_id},
-                    {"type": "research_run", "id": run_id}
-                ],
-                "actor_id": "research-orchestrator"
-            }
-            session_req = urllib.request.Request(
-                f"{training_session_url}/api/training/sessions",
-                data=json.dumps(session_body).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST"
+            _execute_retrain(run_id, params)
+        except _RetrainFinished as done:
+            _retrain_record(run_id, status="completed", outcome=done.outcome, outcome_reason=done.reason)
+        except _RetrainFailure as failure:
+            _retrain_record(
+                run_id, status="failed", failed_step=failure.step,
+                rejection={"reason": "retrain_failed", "step": failure.step, "detail": failure.detail},
             )
-            with urllib.request.urlopen(session_req, timeout=10) as resp:
-                session_data = json.loads(resp.read().decode("utf-8"))
-            
-            session_id = session_data["session_id"]
-            
-            # 2. Fetch the current artifact (v1) from the registry to see its parameters
-            get_req = urllib.request.Request(
-                f"{registry_url}/api/registry/strategy-artifacts/{target_artifact_id}",
-                method="GET"
-            )
-            with urllib.request.urlopen(get_req, timeout=10) as resp:
-                artifact_view = json.loads(resp.read().decode("utf-8"))
-            
-            parent_artifact = artifact_view["entry"]["metadata"]["strategy_artifact"]
-            
-            # 3. Determine the parameter update.
-            parameter_updates = {}
-            current_params = parent_artifact.get("parameters") or {}
-            
-            if "lookback_bars" in current_params:
-                current_lookback = int(current_params["lookback_bars"])
-                new_lookback = 3 if current_lookback == 2 else 2
-                parameter_updates["lookback_bars"] = new_lookback
-            elif "momentum_threshold" in current_params:
-                current_threshold = float(current_params["momentum_threshold"])
-                new_threshold = 0.01 if current_threshold == 0.0 else 0.0
-                parameter_updates["momentum_threshold"] = new_threshold
-            else:
-                parameter_updates["momentum_threshold"] = 0.01
+        except Exception as exc:  # noqa: BLE001 - every attempt must reach a terminal state.
+            logger.exception("retrain executor crashed for %s", run_id)
+            run = rstore.get_run(run_id)
+            if run:
+                run["status"] = "failed"
+                run["failed_step"] = "executor"
+                run["rejection"] = {"reason": "retrain_failed", "step": "executor", "detail": f"{type(exc).__name__}: {exc}"}
+                rstore.put_run(run)
 
-            # 4. Mutate the artifact v1 to produce v2 using registry /mutate endpoint!
-            new_artifact_id = target_artifact_id
-            if "-v1" in target_artifact_id:
-                new_artifact_id = target_artifact_id.replace("-v1", "-v2")
-            else:
-                new_artifact_id = target_artifact_id + "-v2"
-                
-            new_version = "1.1.0"
-            if parent_artifact.get("version") == "1.1.0":
-                new_version = "1.2.0"
-                
-            mutate_body = {
-                "new_artifact_id": new_artifact_id,
-                "new_version": new_version,
-                "parameter_updates": parameter_updates,
-                "source_run_ids": [
-                    decision_id,
-                    work_item_id,
-                    session_id
-                ]
-            }
-            
-            mutate_req = urllib.request.Request(
-                f"{registry_url}/api/registry/strategy-artifacts/{target_artifact_id}/mutate",
-                data=json.dumps(mutate_body).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(mutate_req, timeout=10) as resp:
-                mutate_data = json.loads(resp.read().decode("utf-8"))
-            
-            # 5. Complete the training session
-            complete_req = urllib.request.Request(
-                f"{training_session_url}/api/training/sessions/{session_id}/complete",
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(complete_req, timeout=10) as resp:
-                json.loads(resp.read().decode("utf-8"))
-                
-            # 6. Complete the research run in research-orchestrator!
-            r_run = rstore.get_run(run_id)
-            if r_run:
-                r_run["status"] = "completed"
-                r_run["registry_writebacks"] = r_run.get("registry_writebacks") or []
-                r_run["registry_writebacks"].append({
-                    "registry_id": new_artifact_id,
-                    "artifact_state": "candidate",
-                    "created_at": utc_now()
-                })
-                rstore.put_run(r_run)
-                
-        except Exception as e:
-            from services.research.main import get_store as get_research_store
-            rstore = get_research_store()
-            r_run = rstore.get_run(run_id)
-            if r_run:
-                r_run["status"] = "failed"
-                r_run["rejection"] = {"reason": "retrain_failed", "detail": str(e)}
-                rstore.put_run(r_run)
-
-    import threading
     threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
 
 
@@ -1845,7 +2219,7 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
     adapter = new_run.get("adapter", "stub")
     supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
     is_stage_backend = adapter in supported_stage_backends or params.get("stage") is not None
-    if "decision_id" in params and "target_artifact_id" in params:
+    if _is_retrain_action(params):
         _trigger_retrain_execution(new_run["run_id"], params)
     elif is_stage_backend and (params.get("stage") or (params.get("plan") and params["plan"].get("stages"))):
         _progress_plan_stages(params.get("plan") or {}, new_run, b.actor_id, store, timestamp)

@@ -958,6 +958,18 @@ double-counted in the additive total.
 - `GET /bff/strategies?state=retired` returns the caller tenant's retired strategies (which remain excluded from the default list and from `exclude_state=draft`), and `GET /bff/strategies?state=review` returns `candidate` / `review` strategies.
 - A strategy whose stored lifecycle value is not a known state remains visible under `GET /bff/strategies?exclude_state=draft` (with its raw value preserved in `lifecycleStatus`) and is never hidden by the DTO display fallback to `draft`.
 
+
+### `GET /bff/evolution-programs/{program_id}/runs` — retrain run outcome
+
+Each item is read back from the owning plane. For a retrain run the item's
+`detail` additionally ends with `; retrain outcome=<candidate_created |
+no_candidate | evaluation_rejected> outcome_reason=… candidate_artifact_id=…
+session_id=…` once the run recorded an outcome. Existing fields are unchanged.
+The structured record (`session_id`, `baseline_job_id`, `candidate_job_id`,
+`baseline_eval_id`, `candidate_eval_id`, `baseline_metrics`, `candidate_metrics`,
+`outcome`, `outcome_reason`, `candidate_artifact_id`) is returned by
+`GET /api/research-orchestrator/runs/{run_id}`.
+
 ## Cross-source newest-first job list ordering and pagination (BFF-JOBS-LIST-NEWEST-FIRST-20261106)
 
 - `GET /bff/jobs` orders composed jobs across all qualified sources newest first by `started_at` falling back to `created_at` (normalized to UTC ISO-8601 when parseable), with a deterministic tie break by `id` (`job_id`) and any job with neither `started_at` nor `created_at` sorted last.
