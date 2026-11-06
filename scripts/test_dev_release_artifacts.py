@@ -870,8 +870,11 @@ def _docker_daemon():
     return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
 
 
-@pytest.mark.skipif(_docker_daemon() is None, reason="no reachable Docker daemon")
 def test_image_format_against_real_docker_for_all_label_shapes(tmp_path):
+    # Probe lazily: a module-level skipif would run `docker` at import time, and
+    # other suites (restore chain) import this module with a stub docker on PATH.
+    if _docker_daemon() is None:
+        pytest.skip("no reachable Docker daemon")
     tag = "pantheon-imgfmt-test-" + os.urandom(4).hex()
     names = {"nolabels": f"{tag}:nolabels", "other": f"{tag}:other", "rev": f"{tag}:rev"}
     revision = "b" * 40
