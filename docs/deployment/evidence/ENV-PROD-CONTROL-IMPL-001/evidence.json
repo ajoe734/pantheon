@@ -129,7 +129,16 @@
     "default": "false (key absent, legacy bytes/digest preserved)",
     "flag": "VITE_BFF_REAL_WRITES",
     "hosted_acceptance": "external_wait",
-    "malformed": "rejected PUBLIC_REAL_WRITES_INVALID",
+    "malformed": "rejected PUBLIC_REAL_WRITES_INVALID on RAW value (no strip): ' true ', 'true\\n', ' false ', 'false\\n', TRUE, 1, yes, on",
+    "raw_input_correction": {
+      "files": [
+        "deploy/staging/bootstrap.sh",
+        "scripts/deploy/prod_atomic_switch.sh",
+        "tests/deployment/test_staging_release.py",
+        "tests/deployment/test_production_release.py"
+      ],
+      "tests": "unittest -k real_writes/REAL_WRITES on both modules: 6 tests OK (local script behavior only)"
+    },
     "scope": "source_only",
     "stage_prod_dispatched": false,
     "tests": "tests/deployment/test_production_release.py (95 OK); tests/deployment/test_staging_release.py -k public_real_writes/runtime_config OK"
