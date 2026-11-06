@@ -1,0 +1,12 @@
+{
+  "task": "BFF-JOBS-LIST-NEWEST-FIRST-20261106",
+  "root_cause": "JobReadPort.list_jobs_bff sorted only by created_at (string compare); source_ingestion IngestRun rows carry started_at and no created_at, so they sorted as empty strings and landed last. GET /bff/jobs did not re-sort before page_slice.",
+  "fix": "ports/job_read.py: added job_sort_key/sort_jobs_newest_first (started_at -> created_at, UTC-normalized, id tie-break, no-time last). Applied in JobReadPort.list_jobs_bff, ReadSurfacePorts.list_jobs_bff and in the GET /bff/jobs handler after filtering and before page_slice. BFF_API_CONTRACT.md documents the ordering.",
+  "tests": {
+    "added": "services/control-plane/bff/tests/test_bff_jobs_newest_first.py (4 tests; real local HTTP owner servers with real row shapes from worker gateway, orchestrator, training, IngestRun.to_dict(), policy learning; ordering, tie-break, no-time last, full page walk once each with stable total, status/job_type filters and meta.surfaces.job_list diagnostics). Registered in bff_test_architecture_inventory.json (counts 394->395, router 120->121, DECOUPLED 330->331).",
+    "run": "test_bff_jobs_newest_first.py 4 passed; test_bff_consol_010_fixture_pack_c.py, test_bff_evolution_experiment_jobs_events_contract.py, tests/test_bff_test_architecture.py passed (82 passed, 1 skipped in the combined batch).",
+    "known_unrelated_failure": "test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos fails on /bff/alerts (empty). It fails identically with the three jobs source changes reverted, so it is pre-existing and not caused by this task.",
+    "weakened_or_changed_assertions": "none in existing tests"
+  },
+  "hosted_verification": "not performed here; left to operator acceptance task"
+}

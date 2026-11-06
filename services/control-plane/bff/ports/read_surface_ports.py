@@ -93,6 +93,7 @@ from services.control_plane.bff.ports.job_read import (
     JobReadPort,
     JobSourceUnavailableError,
     create_job_read_port,
+    sort_jobs_newest_first,
 )
 from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
     CompositeLifecycleTelemetryGovernancePort,
@@ -1410,8 +1411,10 @@ class ReadSurfacePorts:
         ``ResearchTicket`` records are never returned here; see
         ``get_job_bff`` docstring.
         """
-        return self.job_read.list_jobs_bff(
-            status=status, job_type=job_type, diagnostics=diagnostics, **kwargs
+        return sort_jobs_newest_first(
+            self.job_read.list_jobs_bff(
+                status=status, job_type=job_type, diagnostics=diagnostics, **kwargs
+            )
         )
 
     def get_job_logs_bff(self, job_id: str) -> List[Dict[str, Any]]:

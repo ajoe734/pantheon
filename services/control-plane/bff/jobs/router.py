@@ -26,7 +26,7 @@ from fastapi import APIRouter, Body, Header, Query
 
 from ..auth.policy import require_operator_role as _policy_operator_role
 from ..models import ErrorCode
-from ..ports.job_read import JobSourceUnavailableError
+from ..ports.job_read import JobSourceUnavailableError, sort_jobs_newest_first
 
 JobOverlay = Callable[[], Dict[str, Dict[str, Any]]]
 SubmitJobAction = Callable[[str, str, str, Any, Dict[str, Any]], Dict[str, Any]]
@@ -148,6 +148,7 @@ def create_jobs_router(
             jobs = [j for j in jobs if j.get("status") == status]
         if job_type:
             jobs = [j for j in jobs if j.get("job_type") == job_type]
+        jobs = sort_jobs_newest_first(jobs)
         total = len(jobs)
         page_items, next_page_token = page_slice(jobs, page_token, page_size)
         return {

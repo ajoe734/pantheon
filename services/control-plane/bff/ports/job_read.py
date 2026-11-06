@@ -35,7 +35,8 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, wait as _futures_wait
 from contextvars import copy_context
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 try:
     from services.control_plane.bff.command_adapters.base import (
@@ -228,6 +229,53 @@ def _project_job(spec: JobSourceSpec, native_id: str, record: Dict[str, Any]) ->
     return _project_job_canonical(spec, native_id, record)
 
 
+def _normalize_job_timestamp(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def job_sort_key(job: Mapping[str, Any]) -> Tuple[int, str, str]:
+    """Return a descending-order sort key ``(has_time, timestamp, id)`` for a Job.
+
+    When sorted with ``reverse=True``:
+    - Jobs with a timestamp (``started_at`` falling back to ``created_at``) sort
+      before jobs with no timestamp (``has_time=1`` vs ``has_time=0``, so jobs
+      with no time sort last).
+    - Among timestamped jobs, newer timestamps sort first.
+    - Equal timestamps (or jobs both missing timestamps) tie-break
+      deterministically by ``id`` (falling back to ``job_id``).
+    """
+    raw_ts = job.get("started_at")
+    if raw_ts is None or str(raw_ts).strip() == "":
+        raw_ts = job.get("created_at")
+    if (raw_ts is None or str(raw_ts).strip() == "") and isinstance(job.get("detail"), Mapping):
+        detail = job["detail"]
+        raw_ts = detail.get("started_at")
+        if raw_ts is None or str(raw_ts).strip() == "":
+            raw_ts = detail.get("created_at")
+    norm_ts = _normalize_job_timestamp(raw_ts)
+    has_time = 1 if norm_ts else 0
+    job_id = str(job.get("id") or job.get("job_id") or "").strip()
+    return (has_time, norm_ts, job_id)
+
+
+def sort_jobs_newest_first(jobs: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return ``jobs`` ordered newest first by ``started_at`` -> ``created_at``, tie-broken by ``id``."""
+    items = list(jobs)
+    items.sort(key=job_sort_key, reverse=True)
+    return items
+
+
 @dataclass
 class JobReadPort:
     """Composes job reads across the six qualified sources by ID prefix."""
@@ -371,8 +419,7 @@ class JobReadPort:
             diagnostics["configured_sources"] = list(configured)
         if wanted:
             jobs = [j for j in jobs if j.get("status") in wanted]
-        jobs.sort(key=lambda j: str(j.get("created_at") or ""), reverse=True)
-        return jobs
+        return sort_jobs_newest_first(jobs)
 
     def get_job_bff(self, job_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not job_id:
