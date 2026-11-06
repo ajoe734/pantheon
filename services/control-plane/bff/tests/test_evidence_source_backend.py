@@ -489,3 +489,18 @@ def test_evidence_route_timeout_budget_outlasts_owner_read_bound(monkeypatch: py
     monkeypatch.delenv("PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", raising=False)
     assert _get_management_evidence_read_timeout() == pytest.approx(2.5)
+
+
+def test_human_inbox_read_timeout_helper_preserved_under_generic_management_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure the Human Inbox route timeout helper remains untouched by Evidence-local
+    changes and continues to return owner-bound + 1.5s margin even when generic
+    PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS=0.6 is set."""
+    from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
+    from services.control_plane.bff.management_read_models.router import _get_human_inbox_read_timeout
+
+    monkeypatch.delenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.6")
+    assert _get_human_inbox_read_timeout() == pytest.approx(human_inbox_surface_timeout_seconds() + 1.5)
+

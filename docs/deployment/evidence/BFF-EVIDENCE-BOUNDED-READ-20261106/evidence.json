@@ -47,6 +47,13 @@
       "path": "/tmp/pantheon-dev-operable-20261104/actual-evidence-timeout-service-logs-0030.json",
       "sha256": "9c7dc0a97668c1280d825ad11679fc03189981bdf99d0f18c326967063c00d36"
     },
+    "served_timeout_config": {
+      "path": "/tmp/pantheon-dev-operable-20261104/actual-served-evidence-timeout-config.json",
+      "values": {
+        "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": null,
+        "PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS": null
+      }
+    },
     "readonly_audit_scripts": [
       {
         "path": "/tmp/pantheon-dev-operable-20261104/management-hosted-readonly-ui.cjs",
@@ -82,8 +89,12 @@
     }
   ],
   "validation": {
-    "pytest_command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_evidence_source_backend.py services/control-plane/bff/tests/test_evidence_owner_list_bounded.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py services/control-plane/bff/tests/test_bff_management_cockpit.py -q",
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_evidence_source_backend.py services/control-plane/bff/tests/test_evidence_owner_list_bounded.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py services/control-plane/bff/tests/test_bff_management_cockpit.py -q && .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_mgmt_load_005_read_concurrency.py -k evidence -q && .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_human_inbox_truth.py -k test_route_budget_outlasts_the_contributor_bound -q",
     "status": "passed",
-    "passed_count": 81
+    "passed_count": 72,
+    "preserved_invariants": {
+      "human_inbox_timeout_helper": "services/control-plane/bff/management_read_models/router.py::_get_human_inbox_read_timeout preserved identically to 0cd59ab286b7ad4d7c742993215cb39919cce580 (human_inbox_surface_timeout_seconds() + 1.5s margin, unaffected by generic PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS).",
+      "reproduced_baseline_limitation_on_0cd59ab28": "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_human_inbox_timeout_returns_degraded_envelope_without_hanging fails on accepted baseline 0cd59ab286b7ad4d7c742993215cb39919cce580 because commit 04780601f1b38e5d914bb6132645bc40be677524 (BFF-HUMAN-INBOX-TRUTH-20261104) deliberately decoupled _get_human_inbox_read_timeout() from PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS while that older test only patches PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS=0.05."
+    }
   }
 }

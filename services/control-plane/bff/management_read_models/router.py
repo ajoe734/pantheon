@@ -79,13 +79,6 @@ _EVIDENCE_ROUTE_MARGIN_SECONDS = 0.5
 def _get_human_inbox_read_timeout() -> float:
     from ..governance.service import human_inbox_surface_timeout_seconds
 
-    if not os.getenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "").strip():
-        raw_mgmt = os.getenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "").strip()
-        if raw_mgmt:
-            try:
-                return max(0.05, float(raw_mgmt))
-            except ValueError:
-                pass
     return float(human_inbox_surface_timeout_seconds()) + _HUMAN_INBOX_ROUTE_MARGIN_SECONDS
 
 
