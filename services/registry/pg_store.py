@@ -42,6 +42,14 @@ from .storage import (
     PERSONA_BINDING_SPEC_KEYS,
     STRATEGY_ARTIFACT_EVAL_KEYS,
     STRATEGY_ARTIFACT_ROW_KEYS,
+    STRATEGY_SUMMARY_EXEC_KEYS,
+    STRATEGY_SUMMARY_GOV_KEYS,
+    STRATEGY_SUMMARY_INNER_META_KEYS,
+    STRATEGY_SUMMARY_MARKET_KEYS,
+    STRATEGY_SUMMARY_META_KEYS,
+    STRATEGY_SUMMARY_PROV_KEYS,
+    STRATEGY_SUMMARY_ROW_KEYS,
+    STRATEGY_SUMMARY_SPEC_KEYS,
     RegistryConcurrentUpdateError,
 )
 
@@ -677,11 +685,9 @@ class PostgresRegistryStore:
             # Re-read existing entries under the advisory and table locks to
             # serialize revision creation and validate lineage against true latest committed state.
             if validate_lineage is not None and target_strategy_id:
-                existing_raw = self._entries.list_all(conn=conn)
                 existing_entries = [
                     RegistryEntry.from_dict(raw)
-                    for raw in existing_raw
-                    if raw.get("strategy_id") == target_strategy_id
+                    for raw in self._list_by_strategy_raw(target_strategy_id, conn=conn)
                 ]
                 validate_lineage(existing_entries)
 
@@ -751,11 +757,9 @@ class PostgresRegistryStore:
         """
         with self._entries.transaction() as conn:
             self._entries.advisory_xact_lock(strategy_id, conn=conn)
-            existing_raw = self._entries.list_all(conn=conn)
             existing_entries = [
                 RegistryEntry.from_dict(raw)
-                for raw in existing_raw
-                if raw.get("strategy_id") == strategy_id
+                for raw in self._list_by_strategy_raw(strategy_id, conn=conn)
             ]
             validate_lineage(existing_entries)
             entry = _new_entry(payload, registry_id, actor=actor)
@@ -802,11 +806,22 @@ class PostgresRegistryStore:
         raw = self._entries.get(registry_id)
         return RegistryEntry.from_dict(raw) if raw is not None else None
 
+    def _list_by_strategy_raw(
+        self, strategy_id: str, *, conn: Optional[Any] = None,
+    ) -> list[dict[str, Any]]:
+        """Read only rows for ``strategy_id`` in SQL without scanning all payloads into Python."""
+        rows = self._entries.list_all_selected(
+            "(payload)::text",
+            visible_sql="payload ->> 'strategy_id' = %s",
+            keep_params=(strategy_id,),
+            conn=conn,
+        )
+        return [json.loads(r[0]) for r in rows if r and r[0] is not None]
+
     def list_by_strategy(self, strategy_id: str) -> list[RegistryEntry]:
         return [
             RegistryEntry.from_dict(raw)
-            for raw in self._entries.list_all()
-            if raw.get("strategy_id") == strategy_id
+            for raw in self._list_by_strategy_raw(strategy_id)
         ]
 
     def list_all_entries(self) -> list[RegistryEntry]:
@@ -858,6 +873,19 @@ class PostgresRegistryStore:
         return strategy_artifact_rows_from_columns(
             self._entries.list_all_selected(
                 strategy_artifact_select_sql(), visible_sql=visible_sql, keep_params=params,
+            )
+        )
+
+    def list_strategy_spec_summary_rows(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",
+    ) -> list[dict]:
+        """Strategy-spec summary rows projected inside Postgres (no RegistryEntry rebuild)."""
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(
+            visible_tenants, artifact_type,
+        )
+        return strategy_spec_summary_rows_from_columns(
+            self._entries.list_all_selected(
+                strategy_spec_summary_select_sql(), visible_sql=visible_sql, keep_params=params,
             )
         )
 
@@ -1028,6 +1056,106 @@ def strategy_artifact_rows_from_columns(rows) -> list[dict]:
         {name: (json.loads(col) if col is not None else None) for name, col in zip(names, r)}
         for r in rows
     ]
+
+
+_STRATEGY_SUMMARY_CONTAINER_PATHS: tuple[tuple[str, ...], ...] = (
+    ("metadata", "provenance"),
+    ("metadata", "governance"),
+    ("metadata", "market_scope"),
+    ("metadata", "execution_profile"),
+    ("metadata", "strategy_spec"),
+    ("metadata", "strategy_spec", "provenance"),
+    ("metadata", "strategy_spec", "governance"),
+    ("metadata", "strategy_spec", "market_scope"),
+    ("metadata", "strategy_spec", "execution_profile"),
+    ("metadata", "strategy_spec", "metadata"),
+)
+
+
+def _strategy_summary_leaf_paths() -> list[tuple[str, ...]]:
+    """Leaf paths read for a strategy-spec summary row, in assembly order."""
+    meta = ("metadata",)
+    spec = ("metadata", "strategy_spec")
+    spec_meta = spec + ("metadata",)
+    return (
+        [(k,) for k in STRATEGY_SUMMARY_ROW_KEYS]
+        + [meta + (k,) for k in STRATEGY_SUMMARY_META_KEYS]
+        + [meta + ("provenance", k) for k in STRATEGY_SUMMARY_PROV_KEYS]
+        + [meta + ("governance", k) for k in STRATEGY_SUMMARY_GOV_KEYS]
+        + [meta + ("market_scope", k) for k in STRATEGY_SUMMARY_MARKET_KEYS]
+        + [meta + ("execution_profile", k) for k in STRATEGY_SUMMARY_EXEC_KEYS]
+        + [spec + (k,) for k in STRATEGY_SUMMARY_SPEC_KEYS]
+        + [spec + ("provenance", k) for k in STRATEGY_SUMMARY_PROV_KEYS]
+        + [spec + ("governance", k) for k in STRATEGY_SUMMARY_GOV_KEYS]
+        + [spec + ("market_scope", k) for k in STRATEGY_SUMMARY_MARKET_KEYS]
+        + [spec + ("execution_profile", k) for k in STRATEGY_SUMMARY_EXEC_KEYS]
+        + [spec_meta + (k,) for k in STRATEGY_SUMMARY_INNER_META_KEYS]
+        + [("evaluation_summary", k) for k in STRATEGY_ARTIFACT_EVAL_KEYS]
+    )
+
+
+def strategy_spec_summary_select_sql() -> str:
+    """Plain column list over ``payload``: one jsonb leaf (as text) per summary field."""
+    cols = ", ".join(f"({_sql_node(p)})::text" for p in _strategy_summary_leaf_paths())
+    shapes = ", ".join(
+        f"jsonb_typeof({_sql_node(p)})"
+        for p in _STRATEGY_SUMMARY_CONTAINER_PATHS
+    )
+    return f"{cols}, {shapes}"
+
+
+def strategy_spec_summary_rows_from_columns(rows) -> list[dict]:
+    """Assemble ``strategy_spec_summary_row``-shaped dicts from the select columns."""
+    n = len(_strategy_summary_leaf_paths())
+    i_meta = len(STRATEGY_SUMMARY_ROW_KEYS)
+    i_meta_prov = i_meta + len(STRATEGY_SUMMARY_META_KEYS)
+    i_meta_gov = i_meta_prov + len(STRATEGY_SUMMARY_PROV_KEYS)
+    i_meta_mkt = i_meta_gov + len(STRATEGY_SUMMARY_GOV_KEYS)
+    i_meta_exec = i_meta_mkt + len(STRATEGY_SUMMARY_MARKET_KEYS)
+    i_spec = i_meta_exec + len(STRATEGY_SUMMARY_EXEC_KEYS)
+    i_spec_prov = i_spec + len(STRATEGY_SUMMARY_SPEC_KEYS)
+    i_spec_gov = i_spec_prov + len(STRATEGY_SUMMARY_PROV_KEYS)
+    i_spec_mkt = i_spec_gov + len(STRATEGY_SUMMARY_GOV_KEYS)
+    i_spec_exec = i_spec_mkt + len(STRATEGY_SUMMARY_MARKET_KEYS)
+    i_inner = i_spec_exec + len(STRATEGY_SUMMARY_EXEC_KEYS)
+    i_eval = i_inner + len(STRATEGY_SUMMARY_INNER_META_KEYS)
+    out: list[dict] = []
+    for r in rows:
+        def val(i):
+            return json.loads(r[i])
+
+        def pick(keys, start):
+            return {k: val(start + j) for j, k in enumerate(keys) if r[start + j] is not None}
+
+        row = pick(STRATEGY_SUMMARY_ROW_KEYS, 0)
+        meta = pick(STRATEGY_SUMMARY_META_KEYS, i_meta)
+        if r[n + 0] == "object":
+            meta["provenance"] = pick(STRATEGY_SUMMARY_PROV_KEYS, i_meta_prov)
+        if r[n + 1] == "object":
+            meta["governance"] = pick(STRATEGY_SUMMARY_GOV_KEYS, i_meta_gov)
+        if r[n + 2] == "object":
+            meta["market_scope"] = pick(STRATEGY_SUMMARY_MARKET_KEYS, i_meta_mkt)
+        if r[n + 3] == "object":
+            meta["execution_profile"] = pick(STRATEGY_SUMMARY_EXEC_KEYS, i_meta_exec)
+        if r[n + 4] == "object":
+            spec = pick(STRATEGY_SUMMARY_SPEC_KEYS, i_spec)
+            if r[n + 5] == "object":
+                spec["provenance"] = pick(STRATEGY_SUMMARY_PROV_KEYS, i_spec_prov)
+            if r[n + 6] == "object":
+                spec["governance"] = pick(STRATEGY_SUMMARY_GOV_KEYS, i_spec_gov)
+            if r[n + 7] == "object":
+                spec["market_scope"] = pick(STRATEGY_SUMMARY_MARKET_KEYS, i_spec_mkt)
+            if r[n + 8] == "object":
+                spec["execution_profile"] = pick(STRATEGY_SUMMARY_EXEC_KEYS, i_spec_exec)
+            if r[n + 9] == "object":
+                spec["metadata"] = pick(STRATEGY_SUMMARY_INNER_META_KEYS, i_inner)
+            meta["strategy_spec"] = spec
+        eval_summary = pick(STRATEGY_ARTIFACT_EVAL_KEYS, i_eval)
+        if eval_summary:
+            row["evaluation_summary"] = eval_summary
+        row["metadata"] = meta
+        out.append(row)
+    return out
 
 
 def _registry_backend() -> str:

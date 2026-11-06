@@ -87,12 +87,26 @@ def cached_owner_call(key: Any, fn: Any) -> Any:
     if cache is None:
         return fn()
     if key not in cache:
-        with _key_lock(cache, key):
+        lock = _key_lock(cache, key)
+        remaining = remaining_management_read_budget()
+        if remaining is not None:
+            if remaining <= 0.0:
+                raise TimeoutError("owner read budget exhausted")
+            if not lock.acquire(timeout=remaining):
+                raise TimeoutError("owner read timed out waiting for in-flight read")
+        else:
+            lock.acquire()
+        try:
             if key not in cache:
+                rem_inner = remaining_management_read_budget()
+                if rem_inner is not None and rem_inner <= 0.0:
+                    raise TimeoutError("owner read budget exhausted")
                 try:
                     cache[key] = (True, fn())
                 except Exception as exc:
                     cache[key] = (False, exc)
+        finally:
+            lock.release()
     ok, val = cache[key]
     if not ok:
         raise val
@@ -215,7 +229,13 @@ def read_records(url_builder, path, key=None):
     url = url_builder(path)
 
     def _fetch():
-        body = http_request_json(url, auth_token=token, tenant_id=tenant)
+        rem = remaining_management_read_budget()
+        body = http_request_json(
+            url,
+            auth_token=token,
+            tenant_id=tenant,
+            **({"timeout": rem} if rem is not None else {}),
+        )
         records = body.get(key) if key and isinstance(body, dict) else body
         if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
             raise RuntimeError(f"Invalid owner collection for {path}")
@@ -225,8 +245,14 @@ def read_records(url_builder, path, key=None):
 
 
 def _evolution_http_get(url: str, caller_token: str, tenant_id: str) -> Any:
+    rem = remaining_management_read_budget()
     try:
-        return evolution_owner_request(url, caller_token=caller_token, tenant_id=tenant_id)
+        return evolution_owner_request(
+            url,
+            caller_token=caller_token,
+            tenant_id=tenant_id,
+            **({"timeout": rem} if rem is not None else {}),
+        )
     except urllib.error.HTTPError as exc:
         if exc.code == 403:
             raise ActionUnavailableError(

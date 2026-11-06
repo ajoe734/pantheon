@@ -1498,3 +1498,42 @@ def test_run_retry_overlapping_same_scope_requests_create_one_child(monkeypatch:
     assert reloaded_dispatch_spy.call_count == 0
     assert reloaded_module.store.get_task(parent["task_id"])["generation"] == 2
     assert len([r for r in reloaded_module.store.list_runs() if r.get("parent_run_id") == parent["run_id"]]) == 1
+
+
+def test_retrain_executor_has_no_hardcoded_persona() -> None:
+    import inspect
+
+    module = _load_service_module()
+    for function in (module._trigger_retrain_execution, module._execute_retrain):
+        assert "persona-tw-equity" not in inspect.getsource(function)
+
+
+@pytest.mark.parametrize("action_type", ["freeze", "rollback", "promote"])
+def test_retry_applies_the_same_retrain_action_gate_as_run_creation(
+    monkeypatch: pytest.MonkeyPatch, action_type: str
+) -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    spy = mock.MagicMock()
+    monkeypatch.setattr(module, "_trigger_retrain_execution", spy)
+    parameters = {
+        "decision_id": "dec-gate", "target_artifact_id": "art-gate", "work_item_id": "wi-gate",
+        "action_type": action_type,
+    }
+    # Run creation: a non-retrain decision never starts the retrain executor.
+    parent = _canceled_run(client, "gate-parent", "G", parameters=parameters)
+    assert spy.call_count == 0
+    # Retry: the second caller of the executor applies the same gate.
+    retried = client.post(
+        f"/api/research-orchestrator/runs/{parent['run_id']}/retry", json={"idempotency_key": "gate-retry"}
+    )
+    assert retried.status_code == 201, retried.text
+    assert spy.call_count == 0
+    assert retried.json()["status"] == "queued"
+
+    # A retrain decision (explicit or default action type) does start it, from both callers.
+    retrain = dict(parameters, action_type="retrain")
+    parent2 = _canceled_run(client, "gate-parent-2", "H", parameters=retrain)
+    assert spy.call_count == 1
+    client.post(f"/api/research-orchestrator/runs/{parent2['run_id']}/retry", json={"idempotency_key": "gate-retry-2"})
+    assert spy.call_count == 2

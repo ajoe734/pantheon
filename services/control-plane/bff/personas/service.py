@@ -2535,6 +2535,28 @@ def _fleet_telemetry_summaries(read_store: Optional[Any] = None) -> List[Dict[st
     )
 
 
+def _fleet_persona_league_with_defaults() -> List[Dict[str, Any]]:
+    """Fleet league-with-market-defaults read, shared per request (value or failure)."""
+    store = _get_active_read_store()
+    return list(
+        cached_owner_call(
+            ("persona_fleet_league_defaults", id(store), selected_tenant.get()),
+            lambda: list(store.list_persona_league(include_market_persona_defaults=True)),
+        )
+    )
+
+
+def _fleet_capital_pools_with_defaults() -> List[Dict[str, Any]]:
+    """Fleet capital-pool-with-market-defaults read, shared per request (value or failure)."""
+    store = _get_active_read_store()
+    return list(
+        cached_owner_call(
+            ("persona_fleet_capital_pools_defaults", id(store), selected_tenant.get()),
+            lambda: list(store.list_capital_pools(include_market_persona_defaults=True)),
+        )
+    )
+
+
 def _fleet_incidents() -> List[Dict[str, Any]]:
     """Fleet incident read, shared per request (value or failure) with its prefetch."""
     store = _get_active_read_store()
@@ -6792,8 +6814,6 @@ def _pm12_persona_league_rows(
     on_records_read: Optional[Callable[[], None]] = None,
 ) -> List[Dict[str, Any]]:
     raw_records = _list_persona_records(tenant_id, reuse_request_read=reuse_request_read)
-    if on_records_read is not None:
-        on_records_read()
     if not include_advisory:
         # Classify from canonical raw metadata before projection drops it, so
         # every league consumer shares one trading-only cohort.
@@ -6846,6 +6866,10 @@ def _pm12_persona_league_rows(
             all_league_entries = [record for record in (active_store.list_persona_league() or []) if isinstance(record, dict)]
         except Exception:
             all_league_entries = []
+    # Fire only after the rank-snapshot league read so post-rank reads (which
+    # include a league read) can never race ahead of it.
+    if on_records_read is not None:
+        on_records_read()
 
     sessions_by_persona: Optional[Dict[str, List[Dict[str, Any]]]] = None
     clean_tenant = str(tenant_id or "").strip()
@@ -8962,6 +8986,35 @@ def _persona_fleet_record_visible_to(record: Dict[str, Any], viewer_user_id: Opt
     return bool(owner) and owner == str(viewer_user_id or "").strip()
 
 
+# --- _persona_fleet_submit_post_rank_reads ---
+def _persona_fleet_submit_post_rank_reads(
+    futures: List[Any], tenant_id: Optional[str], snapshot_at: str
+) -> None:
+    """Start the reads that must follow the Paper rank snapshot, together.
+
+    Called once the league's rank-snapshot reads (records and league) are done. The directory snapshot,
+    the league-with-market-defaults read and the capital-pool read are
+    independent owner reads that previously ran back to back on the request
+    thread after the directory; they now overlap and the sequential code finds
+    the value (or cached failure) in the request cache.
+    """
+    futures.append(
+        submit_owner_read(
+            _PERSONA_FLEET_READ_EXECUTOR,
+            lambda: _get_persona_directory_snapshot(
+                tenant_id, snapshot_at=snapshot_at, reuse_request_read=True
+            ),
+        )
+    )
+    for read, key in (
+        (_fleet_persona_league_with_defaults, "persona_fleet_league_defaults"),
+        (_fleet_capital_pools_with_defaults, "persona_fleet_capital_pools_defaults"),
+    ):
+        future = submit_owner_read(_PERSONA_FLEET_READ_EXECUTOR, read, warm_key=key)
+        if future is not None:
+            futures.append(future)
+
+
 # --- _persona_fleet_slim_list_payload ---
 @request_read_scope()
 def _persona_fleet_slim_list_payload(
@@ -9002,13 +9055,8 @@ def _persona_fleet_slim_list_payload(
             include_health=False,
             include_allowed_actions=False,
             reuse_request_read=True,
-            on_records_read=lambda: directory_future.append(
-                submit_owner_read(
-                    _PERSONA_FLEET_READ_EXECUTOR,
-                    lambda: _get_persona_directory_snapshot(
-                        tenant_id, snapshot_at=snapshot_at, reuse_request_read=True
-                    ),
-                )
+            on_records_read=lambda: _persona_fleet_submit_post_rank_reads(
+                directory_future, tenant_id, snapshot_at
             ),
         )
         directory = directory_future[0].result()
@@ -9088,10 +9136,10 @@ def _persona_fleet_slim_list_payload(
     personas = scoped_personas
     try:
         routed_strategy_counts = {str(r.get("persona_id") or r.get("id") or "").strip(): int(r.get("routed_strategy_count") or 0) for r in league_rows if str(r.get("persona_id") or r.get("id") or "").strip()} if league_rows else (_routed_strategy_counts_by_persona() if personas else {})
-        league = _get_active_read_store().list_persona_league(include_market_persona_defaults=True)
+        league = _fleet_persona_league_with_defaults()
         bindings = _fleet_capital_bindings(include_market_persona_defaults=True)
         runtimes = _fleet_runtime_bindings(include_market_persona_defaults=True)
-        pools = _get_active_read_store().list_capital_pools(include_market_persona_defaults=True)
+        pools = _fleet_capital_pools_with_defaults()
         incidents = _fleet_incidents()
         evolution_decisions = _fleet_evolution_decisions()
         context_defaults = _persona_fleet_context_defaults_by_market(all_personas)

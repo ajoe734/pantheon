@@ -1,0 +1,26 @@
+{
+  "task_id": "DEV-DEPLOY-MARKET-REFRESH-BEFORE-MUTATION-20261106",
+  "kind": "functional-contract-evidence",
+  "hosted_verification": "not run; coordinator verifies hosted behavior later",
+  "no_vm_or_ssh_access": true,
+  "changes": {
+    ".github/workflows/nonprod-deploy.yml": "new step 'Refresh Taiwan market session under lease before stack mutation' (id market_refresh) between 'Start identity-bound lease heartbeat' and the bootstrap predecessor/artifact baseline/deploy steps; runs deploy_nonprod_vm.sh --refresh-only --output then --refresh-only --preflight-only --output under run_with_dev_environment_lease.sh; passes only for noop already_fresh or skipped weekend|holiday|session_not_closed; condition PAPER_BOOTSTRAP_REQUESTED && !run_bounded_source_refresh && !bootstrap_empty_host; lease controller pins and digests unchanged",
+    "scripts/deploy_nonprod_vm.sh": "--preflight-only entry (with --refresh-only) writes the check_taiwan_refresh_preflight outcome, reports no_active_taiwan_symbols as error, never refreshes or touches containers",
+    "scripts/auto_deploy_dev_pair.py": "MARKET_REFRESH_STEP failure treated like lease acquisition failure in lost_lease_race; later-step failures still failed_pair_not_retried",
+    "docs/deployment/nonprod-ci-cd.md": "step and retry rule documented"
+  },
+  "acceptance_tests": {
+    "1_2_3_4": "scripts/test_dev_environment_lease_deploy_contract.py::test_market_refresh_*",
+    "5": "scripts/test_auto_deploy_dev_pair.py::test_market_session_refresh_failure_keeps_the_same_pair_eligible",
+    "6": "scripts/test_deploy_nonprod_vm.py::test_taiwan_preflight_dev_root_deploy_between_close_and_delayed_refresh_2026_11_05 (08:04:21Z pre-close snapshot -> proceed; 15:13:00Z snapshot -> noop)",
+    "preflight_only_wiring": "scripts/test_deploy_nonprod_vm.py::test_preflight_only_entry_point_never_refreshes_and_reports_no_active_taiwan_symbols"
+  },
+  "verification": {
+    "scripts/test_auto_deploy_dev_pair.py": "52 passed",
+    "scripts/test_deploy_nonprod_vm.py": "all passed except test_paper_signal_producer_binding_recovery_and_health_lifecycle (missing jsonschema in local venv)",
+    "scripts/test_dev_environment_lease_deploy_contract.py": "3 new tests pass; 7 failures identical on base commit 56bc44618 (pre-existing)",
+    "bootstrap/strict-auth/worktree-isolation/loop-prod-tel-002 contract tests": "pass",
+    "scripts/test_dev_tw_market_refresh.py": "one failure, missing fastapi in local venv (environmental)"
+  },
+  "changed_assertions": "none weakened or deleted; no existing assertion modified"
+}

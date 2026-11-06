@@ -1,0 +1,106 @@
+{
+  "task_id": "BFF-STRATEGY-LIST-DEFAULT-VIEW-20261106",
+  "title": "Strategy list needs an exclude draft filter with per state counts",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "captured_at": "2026-11-06T05:28:00Z",
+  "summary": "Added exclude_state=draft filtering, state=retired and state=review support, unknown lifecycle preservation under exclude_state=draft, and single-read tenant-scoped meta.state_counts across Registry and BFF strategy list surfaces.",
+  "changes_implemented": {
+    "registry_summary_page_and_state_counts": {
+      "files": [
+        "services/registry/storage.py",
+        "services/registry/split_api.py",
+        "services/registry/service.py",
+        "services/registry/contract.md",
+        "services/registry/test_service.py"
+      ],
+      "details": [
+        "Extended GET /api/registry/strategy-specs?view=strategy_summary_page and project_strategy_spec_summary_page to accept exclude_state (e.g. exclude_state=draft), reject state + exclude_state combined with HTTP 400, support state=retired (while default and exclude_state=draft continue to exclude retired strategies), and support state=review / candidate.",
+        "Added _extract_strategy_summary_raw_lifecycle so strategies whose stored lifecycle value is not a known state (or whose non-draft lifecycle state is stored in strategy_spec/metadata while artifact_state is draft) retain their raw lifecycle value instead of being collapsed to 'draft' and hidden by exclude_state=draft.",
+        "Added compute_strategy_spec_state_counts to compute per-DTO-state counts (draft, review, approved, paper_running, canary_running, live_running, deployed, paused, retired) across the caller tenant's current strategy families in the same single bounded SQL leaf-projection pass, returning state_counts=None if count computation fails."
+      ]
+    },
+    "bff_strategy_list_exclude_state_and_meta_state_counts": {
+      "files": [
+        "services/control-plane/bff/ports/research_knowledge_source.py",
+        "services/control-plane/bff/strategies/service.py",
+        "services/control-plane/bff/strategies/routes/common.py",
+        "services/control-plane/bff/strategies/routes/collection.py",
+        "services/control-plane/bff/BFF_API_CONTRACT.md",
+        "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py",
+        "services/control-plane/bff/tests/test_strategy_list_latency.py"
+      ],
+      "details": [
+        "Updated GET /bff/strategies to accept exclude_state, reject non-empty state + exclude_state together with HTTP 400 VALIDATION_FAILED, and forward exclude_state to StrategiesService.list_strategy_summaries_page and DefaultResearchKnowledgeSourcePort.list_strategy_specs_page.",
+        "Attached meta.state_counts from the single bounded owner summary-page read (or in-memory summary fallback when owner_page is None). When state_counts is absent, null, malformed, or raises an error, meta.state_counts is null (None) and never zeros while GET /bff/strategies still returns HTTP 200.",
+        "Preserved exact existing items and page_info.total behavior when exclude_state is omitted.",
+        "Supported state=retired and state=review across owner-backed, injected-spec, and fallback paths, and ensured unknown stored lifecycle values remain visible under exclude_state=draft."
+      ]
+    }
+  },
+  "acceptance_criteria_verification": {
+    "ac1_exclude_state_draft_exact_total_stable_paging_and_conflict_error": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py::test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_reconciliation",
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py::test_strategy_list_conflicting_state_and_exclude_state_is_validation_error",
+        "services/registry/test_service.py::test_strategy_spec_summary_page_exclude_state_state_counts_retired_and_unknown_lifecycle"
+      ]
+    },
+    "ac2_without_exclude_state_items_and_total_unchanged": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py::test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_reconciliation",
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filters_and_alpha_parity",
+        "services/control-plane/bff/test_kw05_strategy_spec_contract.py::test_bff_strategies_and_kw05_list_against_real_registry_app"
+      ]
+    },
+    "ac3_meta_state_counts_single_bounded_owner_read_5000_rows_reconciles_and_null_on_failure": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py::test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_reconciliation",
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py::test_strategy_list_state_counts_failure_returns_null_never_zeros_while_list_succeeds"
+      ]
+    },
+    "ac4_state_retired_and_state_review_work": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py::test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_reconciliation",
+        "services/registry/test_service.py::test_strategy_spec_summary_page_exclude_state_state_counts_retired_and_unknown_lifecycle"
+      ]
+    },
+    "ac5_unknown_stored_lifecycle_stays_visible_with_exclude_state_draft": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py::test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_reconciliation",
+        "services/registry/test_service.py::test_strategy_spec_summary_page_exclude_state_state_counts_retired_and_unknown_lifecycle"
+      ]
+    },
+    "ac6_tenant_isolation_for_list_and_state_counts": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_default_view.py::test_strategy_list_tenant_isolation_for_items_and_state_counts",
+        "services/registry/test_service.py::test_strategy_spec_summary_page_exclude_state_state_counts_retired_and_unknown_lifecycle"
+      ]
+    },
+    "ac7_no_existing_test_weakened_or_deleted": {
+      "status": "passed",
+      "justification": "No existing test assertion was weakened or deleted. In services/control-plane/bff/tests/test_strategy_list_latency.py, _owner_http_stub was extended by one keyword argument (exclude_state=qs['exclude_state'][0] if 'exclude_state' in qs else None) so the test stub forwards exclude_state to reg_service.strategy_spec_summary_page; all existing assertions in test_strategy_list_latency.py are unchanged."
+    }
+  },
+  "test_execution": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_service.py services/registry/test_first_release_contract.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py -q",
+      "result": "182 passed, 1 skipped in 79.93s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/test_kw05_strategy_spec_contract.py -q",
+      "result": "35 passed, 1 skipped in 25.48s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_bff_test_architecture.py -k \"strategy_list or five_domain_routers or inventory\" -v",
+      "result": "7 passed in 10.68s"
+    }
+  ]
+}

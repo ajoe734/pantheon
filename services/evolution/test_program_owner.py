@@ -759,3 +759,105 @@ async def test_evolution_client_execute_program_action():
     assert req["json"]["expected_revision"] == 3
     assert req["json"]["note"] == "Approval note"
 
+
+def test_draft_metadata_actions_persist_once_replay_and_reject_divergent_replay(tmp_path):
+    """Draft metadata actions (create_constraint, create_fitness_formula,
+    create_mutation_rule) work on draft programs without lifecycle transition,
+    replay idempotently without duplication, and reject divergent same-key replay."""
+    store = JsonProgramStore(str(tmp_path / "draft_metadata_programs.json"))
+    service = GovernedProgramService(store)
+    router = create_program_router(
+        service=service,
+        current_tenant=lambda: "t1",
+        authorize_request_tenant=lambda t: t or "t1",
+    )
+    app = FastAPI()
+    app.include_router(router)
+    c = TestClient(app)
+    resp = c.post(
+        "/api/evolution/programs",
+        json={"name": "Draft Metadata Program", "actor_id": "op-1"},
+        headers={"X-Tenant-Id": "t1"},
+    )
+    assert resp.status_code == 201
+    pid = resp.json()["program_id"]
+    assert resp.json()["status"] == "draft"
+
+    # 1. create_constraint on draft program
+    constraint_body = {
+        "actor_id": "op-1",
+        "actor_role": "operator",
+        "name": "max_drawdown <= 0.10",
+        "operator": "<=",
+        "value": "max_drawdown <= 0.10",
+        "scope": "global",
+        "payload": {
+            "name": "max_drawdown <= 0.10",
+            "operator": "<=",
+            "value": "max_drawdown <= 0.10",
+            "scope": "global",
+        },
+    }
+    r1 = c.post(
+        f"/api/evolution/programs/{pid}/actions/create_constraint",
+        json=constraint_body,
+        headers={"X-Tenant-Id": "t1", "Idempotency-Key": "draft-cstr-key-1"},
+    )
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["idempotent_replay"] is False
+    assert r1.json()["program_status"] == "draft"
+
+    # Same-key replay does not duplicate constraint
+    r1_replay = c.post(
+        f"/api/evolution/programs/{pid}/actions/create_constraint",
+        json=constraint_body,
+        headers={"X-Tenant-Id": "t1", "Idempotency-Key": "draft-cstr-key-1"},
+    )
+    assert r1_replay.status_code == 200, r1_replay.text
+    assert r1_replay.json()["idempotent_replay"] is True
+    assert r1_replay.json()["receipt_id"] == r1.json()["receipt_id"]
+
+    # Divergent payload on same key fails with 409
+    r1_div = c.post(
+        f"/api/evolution/programs/{pid}/actions/create_constraint",
+        json={**constraint_body, "value": "max_drawdown <= 0.05", "payload": {**constraint_body["payload"], "value": "max_drawdown <= 0.05"}},
+        headers={"X-Tenant-Id": "t1", "Idempotency-Key": "draft-cstr-key-1"},
+    )
+    assert r1_div.status_code == 409, r1_div.text
+
+    # 2. create_fitness_formula and create_mutation_rule on draft program
+    r_ff = c.post(
+        f"/api/evolution/programs/{pid}/actions/create_fitness_formula",
+        json={
+            "actor_id": "op-1",
+            "actor_role": "operator",
+            "name": "Sharpe Formula",
+            "expression": "sharpe - 0.5 * dd",
+        },
+        headers={"X-Tenant-Id": "t1", "Idempotency-Key": "draft-ff-key-1"},
+    )
+    assert r_ff.status_code == 200, r_ff.text
+    assert r_ff.json()["program_status"] == "draft"
+
+    r_mr = c.post(
+        f"/api/evolution/programs/{pid}/actions/create_mutation_rule",
+        json={
+            "actor_id": "op-1",
+            "actor_role": "operator",
+            "name": "Lookback Jitter",
+            "applied_scope": "feature_window",
+            "rate": "0.10",
+            "risk": "low",
+        },
+        headers={"X-Tenant-Id": "t1", "Idempotency-Key": "draft-mr-key-1"},
+    )
+    assert r_mr.status_code == 200, r_mr.text
+    assert r_mr.json()["program_status"] == "draft"
+
+    prog = c.get(f"/api/evolution/programs/{pid}", headers={"X-Tenant-Id": "t1"}).json()
+    assert prog["status"] == "draft"
+    assert len(prog["constraints"]) == 1
+    assert len(prog["fitness_formulas"]) == 1
+    assert len(prog["mutation_rules"]) == 1
+
+

@@ -246,7 +246,7 @@ def authority_configuration_health(*, persistence_enforced: bool) -> dict[str, A
         "allowed_services": _csv(
             os.getenv(
                 "TRAINING_SESSION_ALLOWED_CALLER_SERVICES",
-                "control-plane-bff,training-session-preview-worker",
+                "control-plane-bff,training-session-preview-worker,research-orchestrator",
             )
         ),
     }
@@ -316,7 +316,7 @@ def authenticate_training_request(
         _csv(
             os.getenv(
                 "TRAINING_SESSION_ALLOWED_CALLER_SERVICES",
-                "control-plane-bff,training-session-preview-worker",
+                "control-plane-bff,training-session-preview-worker,research-orchestrator",
             )
         )
     )

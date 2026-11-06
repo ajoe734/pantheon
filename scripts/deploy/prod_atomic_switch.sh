@@ -96,9 +96,10 @@ render_runtime_config() {
   # render_runtime_config <rel_id> <fe_commit> <fe_sha> <bff_commit> <bff_img> <cfg_ver> <out_path>
   # Emits ONLY the accepted FE `pantheon.fe.public-runtime-config.v1` fields; deployment identity
   # metadata stays in deployment.json. Public Identity values come from PROD_PUBLIC_GCP_IDENTITY_*.
-  python3 - "$1" "https://${PROD_BFF_HOST}" "$7" <<'PY'
+  # Optional 8th arg role: candidate (default) may carry VITE_BFF_REAL_WRITES=true; baseline never inherits it.
+  python3 - "$1" "https://${PROD_BFF_HOST}" "$7" "${8:-candidate}" <<'PY'
 import hashlib, json, os, sys
-config_ref, bff_base_url, out_path = sys.argv[1:4]
+config_ref, bff_base_url, out_path, role = sys.argv[1:5]
 
 def need(name):
     val = os.environ.get(name, "").strip()
@@ -124,6 +125,14 @@ cfg = {
         "audience": os.environ.get("PROD_PUBLIC_GCP_IDENTITY_AUDIENCE", "").strip() or project_id,
     },
 }
+# Absent/empty/"false" keeps the legacy key ABSENT (old canonical bytes/digest); explicit "true" only on candidate.
+rw = os.environ.get("VITE_BFF_REAL_WRITES", "")
+if rw not in ("", "true", "false"):
+    print(json.dumps({"status": "error", "error_code": "PUBLIC_REAL_WRITES_INVALID",
+                      "message": "VITE_BFF_REAL_WRITES must be exactly true or false"}), file=sys.stderr)
+    sys.exit(1)
+if rw == "true" and role == "candidate":
+    cfg["VITE_BFF_REAL_WRITES"] = "true"
 canonical = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
 cfg["configSha256"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 with open(out_path, "w", encoding="utf-8") as fh:
@@ -229,7 +238,7 @@ PY
   if [[ -s "$RUNTIME_CONFIG_FILE" ]]; then
     cp "$RUNTIME_CONFIG_FILE" "${JOURNAL}/prev_runtime_config.js" || die_json "JOURNAL_RC_FAILED" "cannot journal runtime-config.js"
   else
-    render_runtime_config "$BASE_REL_ID" "$BASE_FE_COMMIT" "$BASE_FE_SHA" "$BASE_BFF_COMMIT" "$BASE_BFF_IMG" "$BASE_CFG_VER" "${JOURNAL}/prev_runtime_config.js" \
+    render_runtime_config "$BASE_REL_ID" "$BASE_FE_COMMIT" "$BASE_FE_SHA" "$BASE_BFF_COMMIT" "$BASE_BFF_IMG" "$BASE_CFG_VER" "${JOURNAL}/prev_runtime_config.js" baseline \
       || die_json "JOURNAL_RC_FAILED" "cannot synthesize baseline runtime-config.js"
     cp "${JOURNAL}/prev_runtime_config.js" "$RUNTIME_CONFIG_FILE"
   fi

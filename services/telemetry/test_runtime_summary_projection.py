@@ -2893,3 +2893,765 @@ class TestRealStateColdStartUnchangedHeartbeat(unittest.TestCase):
         self.assertEqual(summary["binding_id"], "rb-causal-002")
         self.assertNotIn("drawdown_event_id", summary)
         self.assertNotIn("pnl_event_id", summary)
+
+
+class TestPositionCostCurrencyBrokerProjection(unittest.TestCase):
+    """Tests for TELEMETRY-POSITION-COST-CURRENCY-20261106 (AC 1 - AC 7)."""
+
+    @staticmethod
+    def _ledger_fill(
+        *,
+        runtime_id: str = "rt-cost-001",
+        binding_id: str = "rb-cost-001",
+        tenant_id: str = "tenant-dev",
+        symbol: str = "2330.TWSE",
+        quantity: float = -1.0,
+        price: Any = 2370.0,
+        ledger_fill_count: Any = 1,
+        currency: Optional[str] = "TWD",
+        broker: Optional[str] = "tw-paper-sim",
+        created_at: str = "2026-11-05T01:00:00Z",
+        event_id: Optional[str] = None,
+        extra_metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        meta: dict[str, Any] = {"symbol": symbol}
+        if ledger_fill_count is not None:
+            meta["ledger_fill_count"] = ledger_fill_count
+        if currency is not None:
+            meta["currency"] = currency
+        if broker is not None:
+            meta["broker"] = broker
+        if extra_metadata:
+            meta.update(extra_metadata)
+        return {
+            "event_id": event_id or f"evt-fill-{runtime_id}-{binding_id}-{ledger_fill_count}",
+            "event_type": "paper_fill_simulated",
+            "created_at": created_at,
+            "tenant_id": tenant_id,
+            "environment": "paper",
+            "deployment_stage": "paper",
+            "runtime_id": runtime_id,
+            "binding_id": binding_id,
+            "capital_pool_id": "pool-tw-001",
+            "artifact_id": "artifact-tw-001",
+            "artifact_version": "1.0.0",
+            "plan_id": "plan-tw-001",
+            "persona_capital_binding_id": "pcb-tw-001",
+            "metrics": {
+                "fill_quantity": quantity,
+                "fill_price": price,
+                "action": "BUY" if quantity > 0 else "SELL",
+                "submitted_to_broker": True,
+            },
+            "metadata": meta,
+        }
+
+    @staticmethod
+    def _mark_snapshot(
+        *,
+        runtime_id: str = "rt-cost-001",
+        binding_id: str = "rb-cost-001",
+        tenant_id: str = "tenant-dev",
+        symbol: str = "2330.TWSE",
+        price: float = 2240.0,
+        as_of: str = "2026-11-04T00:00:00Z",
+        created_at: str = "2026-11-05T02:00:00Z",
+        pnl: float = 0.0,
+        fill_count: Optional[int] = None,
+        quote_currency: Optional[str] = None,
+        source_ref: str = "source-ingest://snapshots/mss-cost-001",
+    ) -> dict[str, Any]:
+        base_symbol = str(symbol or "").split(".", 1)[0]
+        mark_ref: dict[str, Any] = {
+            "symbol": symbol,
+            "price": price,
+            "as_of": as_of,
+            "source_ref": source_ref,
+        }
+        if str(symbol or "").upper().endswith((".TW", ".TWO", ".TWSE", ".TPEX")):
+            mark_ref["observed_at"] = _default_tw_observed_at(as_of)
+            mark_ref["lineage"] = {
+                "source_ids": [f"tw-official:tw_price_daily:TWSE:{base_symbol}:test"],
+                "connector_ids": ["tw-twse-tpex-official-market"],
+            }
+        if quote_currency is not None:
+            mark_ref["quote_currency"] = quote_currency
+        metrics: dict[str, Any] = {"pnl": pnl}
+        if fill_count is not None:
+            metrics["fill_count"] = fill_count
+        return {
+            "event_id": f"evt-pnl-{runtime_id}-{created_at}",
+            "event_type": "pnl_snapshot",
+            "created_at": created_at,
+            "pnl_as_of": as_of,
+            "tenant_id": tenant_id,
+            "environment": "paper",
+            "deployment_stage": "paper",
+            "runtime_id": runtime_id,
+            "binding_id": binding_id,
+            "capital_pool_id": "pool-tw-001",
+            "artifact_id": "artifact-tw-001",
+            "artifact_version": "1.0.0",
+            "plan_id": "plan-tw-001",
+            "persona_capital_binding_id": "pcb-tw-001",
+            "metrics": metrics,
+            "metadata": {"mark_refs": [mark_ref]},
+        }
+
+    def test_moving_average_cost_fold_long_short_reduce_flat_and_flip(self) -> None:
+        import math
+
+        store = RuntimeSummaryProjectionStore()
+        # 1. Open long 2 @ 100, add 2 @ 110 -> avg 105.0, realized 0.0
+        store.project_event(
+            self._ledger_fill(symbol="AAPL.US", quantity=2.0, price=100.0, ledger_fill_count=1, currency="USD", broker="us-paper-sim")
+        )
+        summary = store.project_event(
+            self._ledger_fill(symbol="AAPL.US", quantity=2.0, price=110.0, ledger_fill_count=2, currency="USD", broker="us-paper-sim")
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["quantity"], 4.0)
+        self.assertEqual(row["average_price"], 105.0)
+        self.assertEqual(row["realized_pnl"], 0.0)
+        self.assertEqual(math.copysign(1.0, row["realized_pnl"]), 1.0)
+        self.assertNotIn("unrealized_pnl", row)
+
+        # 2. Partial reduce: sell -1 @ 115 -> closes 1 * (115 - 105) * (+1) = +10.0, keeps avg 105.0
+        summary = store.project_event(
+            self._ledger_fill(symbol="AAPL.US", quantity=-1.0, price=115.0, ledger_fill_count=3, currency="USD", broker="us-paper-sim")
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["quantity"], 3.0)
+        self.assertEqual(row["average_price"], 105.0)
+        self.assertEqual(row["realized_pnl"], 10.0)
+
+        # 3. Fill to flat: sell -3 @ 101 -> closes 3 * (101 - 105) * (+1) = -12.0 -> cumulative realized -2.0, avg None
+        summary = store.project_event(
+            self._ledger_fill(symbol="AAPL.US", quantity=-3.0, price=101.0, ledger_fill_count=4, currency="USD", broker="us-paper-sim")
+        )
+        self.assertEqual(summary["positions"], [])
+        self.assertIsNone(summary["_cost_by_symbol"]["AAPL.US"]["average_price"])
+        self.assertEqual(summary["_cost_by_symbol"]["AAPL.US"]["realized_pnl"], -2.0)
+
+        # 4. Reopen short -2 @ 120 -> avg 120.0, cumulative realized stays -2.0
+        summary = store.project_event(
+            self._ledger_fill(symbol="AAPL.US", quantity=-2.0, price=120.0, ledger_fill_count=5, currency="USD", broker="us-paper-sim")
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["quantity"], -2.0)
+        self.assertEqual(row["average_price"], 120.0)
+        self.assertEqual(row["realized_pnl"], -2.0)
+
+        # 5. Flip from short -2 @ 120 to long +3 via buy +5 @ 114:
+        # closes 2 * (114 - 120) * (-1) = +12.0 -> realized = -2.0 + 12.0 = +10.0; opens +3 @ 114.0
+        summary = store.project_event(
+            self._ledger_fill(symbol="AAPL.US", quantity=5.0, price=114.0, ledger_fill_count=6, currency="USD", broker="us-paper-sim")
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["quantity"], 3.0)
+        self.assertEqual(row["average_price"], 114.0)
+        self.assertEqual(row["realized_pnl"], 10.0)
+
+        # 6. Accepted non-stale mark at 114.0 -> unrealized_pnl is +0.0 (never -0.0)
+        summary = store.project_event(
+            self._mark_snapshot(symbol="AAPL.US", price=114.0, fill_count=6)
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["unrealized_pnl"], 0.0)
+        self.assertEqual(math.copysign(1.0, row["unrealized_pnl"]), 1.0)
+
+        # 7. Stale mark keeps average_price and realized_pnl and drops unrealized_pnl
+        stale_view = store.get(
+            "rt-cost-001",
+            tenant_id="tenant-dev",
+            now=datetime(2026, 11, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        stale_row = stale_view["positions"][0]
+        self.assertTrue(stale_row["mark_stale"])
+        self.assertEqual(stale_row["average_price"], 114.0)
+        self.assertEqual(stale_row["realized_pnl"], 10.0)
+        self.assertEqual(stale_row["currency"], "USD")
+        self.assertEqual(stale_row["broker_id"], "us-paper-sim")
+        self.assertNotIn("unrealized_pnl", stale_row)
+
+        # 8. Failed valuation attempt keeps average_price and realized_pnl and drops unrealized_pnl
+        failed_summary = store.project_event(
+            {
+                "event_id": "evt-hb-fail-001",
+                "event_type": "heartbeat",
+                "created_at": "2026-11-05T05:32:00Z",
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "deployment_stage": "paper",
+                "runtime_id": "rt-cost-001",
+                "binding_id": "rb-cost-001",
+                "metrics": {"heartbeat": 1},
+                "metadata": {
+                    "performance_telemetry": {
+                        "status": "marks_unavailable",
+                        "code": "stale_or_future_market_marks",
+                        "attempted_at": "2026-11-05T05:32:00Z",
+                        "missing_symbols": ["AAPL.US"],
+                    }
+                },
+            }
+        )
+        failed_row = failed_summary["positions"][0]
+        self.assertEqual(failed_row["mark_unavailable_reason"], "stale_or_future_market_marks")
+        self.assertEqual(failed_row["average_price"], 114.0)
+        self.assertEqual(failed_row["realized_pnl"], 10.0)
+        self.assertEqual(failed_row["currency"], "USD")
+        self.assertEqual(failed_row["broker_id"], "us-paper-sim")
+        self.assertNotIn("unrealized_pnl", failed_row)
+
+    def test_four_real_hosted_fill_sequences_match_hosted_pnl(self) -> None:
+        import math
+
+        cases = [
+            {
+                "runtime_id": "rt-535a82a3",
+                "binding_id": "rb-a1c3ada3d5894d57bc2e012f337753be",
+                "symbol": "2330.TWSE",
+                "fills": [
+                    (1, -1.0, 2370.0),
+                    (2, -1.0, 2330.0),
+                    (3, -1.0, 2295.0),
+                    (4, -1.0, 2260.0),
+                    (5, -1.0, 2240.0),
+                ],
+                "mark": 2240.0,
+                "hosted_pnl": 295.0,
+                "expected_qty": -5.0,
+                "expected_avg": 2299.0,
+                "expected_unrealized": 295.0,
+                "expected_realized": 0.0,
+            },
+            {
+                "runtime_id": "rt-8b0d8649",
+                "binding_id": "rb-fd733d7c192f45898bbe0e90c8555878",
+                "symbol": "0050.TWSE",
+                "fills": [
+                    (1, -1.0, 104.95),
+                    (2, -1.0, 104.1),
+                    (3, -1.0, 100.6),
+                    (4, -1.0, 99.85),
+                    (5, -1.0, 97.15),
+                ],
+                "mark": 97.15,
+                "hosted_pnl": 20.90000000000873,
+                "expected_qty": -5.0,
+                "expected_avg": 101.33,
+                "expected_unrealized": 20.9,
+                "expected_realized": 0.0,
+            },
+            {
+                "runtime_id": "rt-c98e4223",
+                "binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+                "symbol": "2317.TWSE",
+                "fills": [
+                    (1, -1.0, 245.5),
+                    (2, 1.0, 251.0),
+                    (3, -1.0, 245.5),
+                    (4, -1.0, 240.0),
+                    (5, -1.0, 235.0),
+                ],
+                "mark": 235.0,
+                "hosted_pnl": 10.0,
+                "expected_qty": -3.0,
+                "expected_avg": 240.166667,
+                "expected_unrealized": 15.5,
+                "expected_realized": -5.5,
+            },
+            {
+                "runtime_id": "rt-342d76ff",
+                "binding_id": "rb-73cafebb37064f039751a7a64d0cf04c",
+                "symbol": "2330.TW",
+                "fills": [
+                    (1, -1.0, 2240.0),
+                ],
+                "mark": 2240.0,
+                "hosted_pnl": 0.0,
+                "expected_qty": -1.0,
+                "expected_avg": 2240.0,
+                "expected_unrealized": 0.0,
+                "expected_realized": 0.0,
+            },
+        ]
+
+        store = RuntimeSummaryProjectionStore()
+        for case in cases:
+            with self.subTest(runtime_id=case["runtime_id"]):
+                for lfc, qty, price in case["fills"]:
+                    store.project_event(
+                        self._ledger_fill(
+                            runtime_id=case["runtime_id"],
+                            binding_id=case["binding_id"],
+                            symbol=case["symbol"],
+                            quantity=qty,
+                            price=price,
+                            ledger_fill_count=lfc,
+                            currency="TWD",
+                            broker="tw-paper-sim",
+                            created_at=f"2026-11-05T01:00:0{lfc}Z",
+                        )
+                    )
+                summary = store.project_event(
+                    self._mark_snapshot(
+                        runtime_id=case["runtime_id"],
+                        binding_id=case["binding_id"],
+                        symbol=case["symbol"],
+                        price=case["mark"],
+                        pnl=case["hosted_pnl"],
+                        fill_count=len(case["fills"]),
+                    )
+                )
+                self.assertEqual(len(summary["positions"]), 1)
+                row = summary["positions"][0]
+                self.assertEqual(row["symbol"], case["symbol"])
+                self.assertEqual(row["quantity"], case["expected_qty"])
+                self.assertEqual(row["average_price"], case["expected_avg"])
+                self.assertEqual(row["unrealized_pnl"], case["expected_unrealized"])
+                self.assertEqual(row["realized_pnl"], case["expected_realized"])
+                self.assertEqual(row["currency"], "TWD")
+                self.assertEqual(row["broker_id"], "tw-paper-sim")
+                if row["unrealized_pnl"] == 0.0:
+                    self.assertEqual(math.copysign(1.0, row["unrealized_pnl"]), 1.0)
+                if row["realized_pnl"] == 0.0:
+                    self.assertEqual(math.copysign(1.0, row["realized_pnl"]), 1.0)
+                self.assertLessEqual(
+                    abs((row["unrealized_pnl"] + row["realized_pnl"]) - case["hosted_pnl"]),
+                    1e-6,
+                )
+
+    def test_delivery_order_duplicate_out_of_order_reload_and_withholding(self) -> None:
+        fill1 = self._ledger_fill(
+            runtime_id="rt-order-001",
+            binding_id="rb-order-001",
+            symbol="2317.TWSE",
+            quantity=-1.0,
+            price=245.5,
+            ledger_fill_count=1,
+            created_at="2026-11-05T01:00:01Z",
+        )
+        fill2 = self._ledger_fill(
+            runtime_id="rt-order-001",
+            binding_id="rb-order-001",
+            symbol="2317.TWSE",
+            quantity=1.0,
+            price=251.0,
+            ledger_fill_count=2,
+            created_at="2026-11-05T01:00:02Z",
+        )
+        fill3 = self._ledger_fill(
+            runtime_id="rt-order-001",
+            binding_id="rb-order-001",
+            symbol="2317.TWSE",
+            quantity=-1.0,
+            price=240.0,
+            ledger_fill_count=3,
+            created_at="2026-11-05T01:00:03Z",
+        )
+        mark_ev = self._mark_snapshot(
+            runtime_id="rt-order-001",
+            binding_id="rb-order-001",
+            symbol="2317.TWSE",
+            price=235.0,
+            fill_count=3,
+        )
+
+        # In-order 1 -> 2 -> 3 with duplicate ledger_fill_count ignored
+        store_in_order = RuntimeSummaryProjectionStore()
+        store_in_order.project_event(fill1)
+        # Duplicate ledger_fill_count=1 with different event_id and bogus price is ignored
+        dup_fill1 = dict(fill1, event_id="evt-dup-fill-1", metrics={**fill1["metrics"], "fill_price": 9999.0})
+        store_in_order.project_event(dup_fill1)
+        store_in_order.project_event(fill2)
+        store_in_order.project_event(fill3)
+        expected_summary = store_in_order.project_event(mark_ev)
+
+        # Out-of-order 1 -> 3 -> (reload) -> 2
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store_path = Path(tmp_dir) / "runtime_summaries.json"
+            store_ooo = RuntimeSummaryProjectionStore(path=store_path)
+            store_ooo.project_event(fill1)
+            after_3 = store_ooo.project_event(fill3)
+            after_3_marked = store_ooo.project_event(
+                self._mark_snapshot(
+                    runtime_id="rt-order-001",
+                    binding_id="rb-order-001",
+                    symbol="2317.TWSE",
+                    price=235.0,
+                )
+            )
+            withheld_row = after_3_marked["positions"][0]
+            self.assertNotIn("average_price", withheld_row)
+            self.assertNotIn("realized_pnl", withheld_row)
+            self.assertNotIn("unrealized_pnl", withheld_row)
+
+            # Survives store reload while withheld
+            reloaded_store = RuntimeSummaryProjectionStore(path=store_path)
+            reloaded_while_withheld = reloaded_store.get("rt-order-001", tenant_id="tenant-dev")
+            reloaded_row = reloaded_while_withheld["positions"][0]
+            self.assertNotIn("average_price", reloaded_row)
+            self.assertNotIn("realized_pnl", reloaded_row)
+            self.assertNotIn("unrealized_pnl", reloaded_row)
+
+            # Arrival of fill 2 closes the gap and produces exact same state as 1 -> 2 -> 3
+            reloaded_store.project_event(fill2)
+            final_ooo = reloaded_store.project_event(mark_ev)
+            self.assertEqual(final_ooo["positions"], expected_summary["positions"])
+            self.assertEqual(final_ooo["_cost_by_symbol"], expected_summary["_cost_by_symbol"])
+            self.assertEqual(
+                final_ooo["_cost_applied_fill_count"],
+                expected_summary["_cost_applied_fill_count"],
+            )
+            self.assertNotIn("_cost_pending_fills", final_ooo)
+            self.assertEqual(final_ooo["last_fill"], expected_summary["last_fill"])
+
+        # Invalid fills permanently withhold cost for that binding (key absent, never zero)
+        invalid_cases = [
+            ("missing_lfc", self._ledger_fill(runtime_id="rt-bad-1", binding_id="rb-bad-1", ledger_fill_count=None)),
+            ("bool_lfc", self._ledger_fill(runtime_id="rt-bad-2", binding_id="rb-bad-2", ledger_fill_count=True)),
+            ("zero_lfc", self._ledger_fill(runtime_id="rt-bad-3", binding_id="rb-bad-3", ledger_fill_count=0)),
+            ("zero_price", self._ledger_fill(runtime_id="rt-bad-4", binding_id="rb-bad-4", price=0.0)),
+            ("neg_price", self._ledger_fill(runtime_id="rt-bad-5", binding_id="rb-bad-5", price=-10.0)),
+            ("nan_price", self._ledger_fill(runtime_id="rt-bad-6", binding_id="rb-bad-6", price=float("nan"))),
+            ("inf_price", self._ledger_fill(runtime_id="rt-bad-7", binding_id="rb-bad-7", price=float("inf"))),
+            ("gap_at_1", self._ledger_fill(runtime_id="rt-bad-8", binding_id="rb-bad-8", ledger_fill_count=2)),
+        ]
+        for label, bad_fill in invalid_cases:
+            with self.subTest(case=label):
+                bad_store = RuntimeSummaryProjectionStore()
+                bad_store.project_event(bad_fill)
+                marked = bad_store.project_event(
+                    self._mark_snapshot(
+                        runtime_id=bad_fill["runtime_id"],
+                        binding_id=bad_fill["binding_id"],
+                        symbol=bad_fill["metadata"]["symbol"],
+                        price=2240.0,
+                    )
+                )
+                row = marked["positions"][0]
+                self.assertNotIn("average_price", row)
+                self.assertNotIn("realized_pnl", row)
+                self.assertNotIn("unrealized_pnl", row)
+
+    def test_currency_precedence_and_broker_id_across_all_row_branches(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        # Unmarked row carries fill metadata.currency and metadata.broker
+        s1 = store.project_event(
+            self._ledger_fill(
+                runtime_id="rt-curr-1",
+                binding_id="rb-curr-1",
+                symbol="2330.TWSE",
+                quantity=-1.0,
+                price=2300.0,
+                ledger_fill_count=1,
+                currency="TWD",
+                broker="tw-paper-sim",
+            )
+        )
+        r1 = s1["positions"][0]
+        self.assertEqual(r1["currency"], "TWD")
+        self.assertEqual(r1["broker_id"], "tw-paper-sim")
+
+        # Mark with quote_currency overrides fill metadata.currency
+        s2 = store.project_event(
+            self._mark_snapshot(
+                runtime_id="rt-curr-1",
+                binding_id="rb-curr-1",
+                symbol="2330.TWSE",
+                price=2250.0,
+                quote_currency="USD",
+            )
+        )
+        r2 = s2["positions"][0]
+        self.assertEqual(r2["currency"], "USD")
+        self.assertEqual(r2["broker_id"], "tw-paper-sim")
+
+        # Mark without quote_currency preserves fill metadata.currency across fresh, stale, and failed mark branches
+        store2 = RuntimeSummaryProjectionStore()
+        store2.project_event(
+            self._ledger_fill(
+                runtime_id="rt-curr-2",
+                binding_id="rb-curr-2",
+                symbol="0050.TWSE",
+                quantity=-2.0,
+                price=100.0,
+                ledger_fill_count=1,
+                currency="TWD",
+                broker="tw-paper-sim",
+            )
+        )
+        fresh = store2.project_event(
+            self._mark_snapshot(
+                runtime_id="rt-curr-2",
+                binding_id="rb-curr-2",
+                symbol="0050.TWSE",
+                price=98.0,
+                quote_currency=None,
+            )
+        )
+        self.assertEqual(fresh["positions"][0]["currency"], "TWD")
+        self.assertEqual(fresh["positions"][0]["broker_id"], "tw-paper-sim")
+
+        stale = store2.get(
+            "rt-curr-2",
+            tenant_id="tenant-dev",
+            now=datetime(2026, 11, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        self.assertTrue(stale["positions"][0]["mark_stale"])
+        self.assertEqual(stale["positions"][0]["currency"], "TWD")
+        self.assertEqual(stale["positions"][0]["broker_id"], "tw-paper-sim")
+
+        # Fill without currency or broker leaves keys absent (nothing inferred from symbol/market/pool)
+        store3 = RuntimeSummaryProjectionStore()
+        no_meta = store3.project_event(
+            self._ledger_fill(
+                runtime_id="rt-curr-3",
+                binding_id="rb-curr-3",
+                symbol="2330.TWSE",
+                quantity=-1.0,
+                price=2300.0,
+                ledger_fill_count=1,
+                currency=None,
+                broker=None,
+            )
+        )
+        self.assertNotIn("currency", no_meta["positions"][0])
+        self.assertNotIn("broker_id", no_meta["positions"][0])
+
+    def test_binding_rollover_clears_cost_currency_and_broker_state(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        store.project_event(
+            self._ledger_fill(
+                runtime_id="rt-roll-001",
+                binding_id="rb-gen-1",
+                symbol="2330.TWSE",
+                quantity=-2.0,
+                price=2300.0,
+                ledger_fill_count=1,
+                currency="TWD",
+                broker="tw-paper-sim",
+                created_at="2026-11-05T01:00:00Z",
+            )
+        )
+        gen1 = store.project_event(
+            self._mark_snapshot(
+                runtime_id="rt-roll-001",
+                binding_id="rb-gen-1",
+                symbol="2330.TWSE",
+                price=2250.0,
+                created_at="2026-11-05T01:01:00Z",
+            )
+        )
+        self.assertEqual(gen1["positions"][0]["average_price"], 2300.0)
+        self.assertEqual(gen1["positions"][0]["currency"], "TWD")
+        self.assertEqual(gen1["positions"][0]["broker_id"], "tw-paper-sim")
+
+        # Rollover to rb-gen-2 via heartbeat clears all cost, currency, and broker state
+        rolled = store.project_event(
+            {
+                "event_id": "evt-roll-hb",
+                "event_type": "heartbeat",
+                "created_at": "2026-11-05T02:00:00Z",
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "deployment_stage": "paper",
+                "runtime_id": "rt-roll-001",
+                "binding_id": "rb-gen-2",
+                "metrics": {"heartbeat": 1},
+                "metadata": {"binding_effective_at": "2026-11-05T02:00:00Z"},
+            }
+        )
+        for cleared_key in (
+            "_cost_by_symbol",
+            "_cost_applied_fill_count",
+            "_cost_pending_fills",
+            "_cost_withheld",
+            "_currency_by_symbol",
+            "_broker_by_symbol",
+            "positions",
+            "_positions_by_symbol",
+        ):
+            self.assertNotIn(cleared_key, rolled)
+
+        # New generation starts empty at ledger_fill_count=1 without currency/broker unless supplied
+        gen2 = store.project_event(
+            self._ledger_fill(
+                runtime_id="rt-roll-001",
+                binding_id="rb-gen-2",
+                symbol="2330.TWSE",
+                quantity=1.0,
+                price=2100.0,
+                ledger_fill_count=1,
+                currency=None,
+                broker=None,
+                created_at="2026-11-05T02:01:00Z",
+            )
+        )
+        row2 = gen2["positions"][0]
+        self.assertEqual(row2["quantity"], 1.0)
+        self.assertEqual(row2["average_price"], 2100.0)
+        self.assertEqual(row2["realized_pnl"], 0.0)
+        self.assertNotIn("currency", row2)
+        self.assertNotIn("broker_id", row2)
+
+    def test_startup_backfill_rebuilds_once_and_withholds_on_gap_or_quantity_mismatch(self) -> None:
+        import uuid
+        from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            summary_path = Path(tmp_dir) / "runtime_summaries.json"
+            ep_proj_path = Path(tmp_dir) / "trade_episode_projections.json"
+            ep_events_path = Path(tmp_dir) / "trade_episode_events.json"
+
+            ep_store = TradeEpisodeProjectionStore(ep_proj_path, ep_events_path)
+            # Populate retained fills for rt-c98e4223 (including reversal fill stored under 2 episodes)
+            ep1, ep2, ep3 = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+            fills_c98 = [
+                (1, -1.0, 245.5, ep1, None),
+                (2, 1.0, 251.0, ep1, None),
+                (3, -1.0, 245.5, ep2, {"closed_episode_id": ep1, "close_quantity": 0.0, "opened_episode_id": ep2, "open_quantity": -1.0}),
+                (4, -1.0, 240.0, ep2, None),
+                (5, -1.0, 235.0, ep2, None),
+            ]
+            for lfc, qty, price, ep_id, rev in fills_c98:
+                extra = {"reversal": rev} if rev else None
+                ev = self._ledger_fill(
+                    runtime_id="rt-c98e4223",
+                    binding_id="rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+                    symbol="2317.TWSE",
+                    quantity=qty,
+                    price=price,
+                    ledger_fill_count=lfc,
+                    currency="TWD",
+                    broker="tw-paper-sim",
+                    created_at=f"2026-11-05T01:00:0{lfc}Z",
+                    extra_metadata=extra,
+                )
+                ev["trade_episode_id"] = ep_id
+                ev["persona_id"] = "persona-tw"
+                ev["instrument_id"] = "2317.TWSE"
+                ep_store.project_event(ev)
+
+            # Populate incomplete fills (1 and 3, missing 2) for rt-gap
+            for lfc in (1, 3):
+                ev = self._ledger_fill(
+                    runtime_id="rt-gap",
+                    binding_id="rb-gap",
+                    symbol="2330.TWSE",
+                    quantity=-1.0,
+                    price=2300.0,
+                    ledger_fill_count=lfc,
+                    currency="TWD",
+                    broker="tw-paper-sim",
+                    created_at=f"2026-11-05T01:00:0{lfc}Z",
+                )
+                ev["trade_episode_id"] = ep3
+                ev["persona_id"] = "persona-tw"
+                ev["instrument_id"] = "2330.TWSE"
+                ep_store.project_event(ev)
+
+            # Write pre-existing runtime_summaries.json without _cost_by_symbol
+            saved_summaries = {
+                '["tenant-dev","rt-c98e4223"]': {
+                    "id": "rt-c98e4223",
+                    "runtime_id": "rt-c98e4223",
+                    "tenant_id": "tenant-dev",
+                    "binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+                    "runtime_binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+                    "deployment_stage": "paper",
+                    "environment": "paper",
+                    "state": "active",
+                    "last_event_at": "2026-11-05T02:00:00Z",
+                    "_binding_latest_event_at": "2026-11-05T02:00:00Z",
+                    "ledger_fill_count": 5,
+                    "executed_trade_count": 5,
+                    "_positions_by_symbol": {"2317.TWSE": -3.0},
+                    "_marks_by_symbol": {
+                        "2317.TWSE": {
+                            "as_of": "2026-11-04T00:00:00Z",
+                            "observed_at": "2026-11-04T06:00:00Z",
+                            "lineage": {
+                                "source_ids": ["tw-official:tw_price_daily:TWSE:2317:test"],
+                                "connector_ids": ["tw-twse-tpex-official-market"],
+                            },
+                            "binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+                            "price": 235.0,
+                            "source_ref": "source-ingest://snapshots/mss-2317",
+                        }
+                    },
+                    "positions": [
+                        {
+                            "symbol": "2317.TWSE",
+                            "quantity": -3.0,
+                            "mark_price": 235.0,
+                            "mark_as_of": "2026-11-04T00:00:00Z",
+                            "mark_source_ref": "source-ingest://snapshots/mss-2317",
+                            "market_value": -705.0,
+                        }
+                    ],
+                    "position_count": 1,
+                },
+                '["tenant-dev","rt-gap"]': {
+                    "id": "rt-gap",
+                    "runtime_id": "rt-gap",
+                    "tenant_id": "tenant-dev",
+                    "binding_id": "rb-gap",
+                    "runtime_binding_id": "rb-gap",
+                    "deployment_stage": "paper",
+                    "environment": "paper",
+                    "state": "active",
+                    "last_event_at": "2026-11-05T02:00:00Z",
+                    "_binding_latest_event_at": "2026-11-05T02:00:00Z",
+                    "ledger_fill_count": 3,
+                    "executed_trade_count": 3,
+                    "_positions_by_symbol": {"2330.TWSE": -2.0},
+                    "_marks_by_symbol": {
+                        "2330.TWSE": {
+                            "as_of": "2026-11-04T00:00:00Z",
+                            "observed_at": "2026-11-04T06:00:00Z",
+                            "lineage": {
+                                "source_ids": ["tw-official:tw_price_daily:TWSE:2330:test"],
+                                "connector_ids": ["tw-twse-tpex-official-market"],
+                            },
+                            "binding_id": "rb-gap",
+                            "price": 2240.0,
+                            "source_ref": "source-ingest://snapshots/mss-2330",
+                        }
+                    },
+                    "positions": [{"symbol": "2330.TWSE", "quantity": -2.0}],
+                    "position_count": 1,
+                },
+            }
+            summary_path.write_text(json.dumps(saved_summaries), encoding="utf-8")
+
+            summary_store = RuntimeSummaryProjectionStore(path=summary_path)
+            with self.assertLogs("services.telemetry.runtime_summary", level="WARNING") as cm:
+                updated = summary_store.backfill_open_position_costs(ep_store)
+            self.assertEqual(updated, 2)
+            self.assertTrue(any("rt-gap" in msg for msg in cm.output))
+
+            rebuilt_c98 = summary_store.get("rt-c98e4223", tenant_id="tenant-dev")
+            row_c98 = rebuilt_c98["positions"][0]
+            self.assertEqual(row_c98["average_price"], 240.166667)
+            self.assertEqual(row_c98["unrealized_pnl"], 15.5)
+            self.assertEqual(row_c98["realized_pnl"], -5.5)
+            self.assertEqual(row_c98["currency"], "TWD")
+            self.assertEqual(row_c98["broker_id"], "tw-paper-sim")
+
+            rebuilt_gap = summary_store.get("rt-gap", tenant_id="tenant-dev")
+            row_gap = rebuilt_gap["positions"][0]
+            self.assertNotIn("average_price", row_gap)
+            self.assertNotIn("realized_pnl", row_gap)
+            self.assertNotIn("unrealized_pnl", row_gap)
+            self.assertEqual(row_gap["currency"], "TWD")
+            self.assertEqual(row_gap["broker_id"], "tw-paper-sim")
+
+            # Second start changes nothing
+            before_bytes = summary_path.read_text(encoding="utf-8")
+            second_store = RuntimeSummaryProjectionStore(path=summary_path)
+            second_updated = second_store.backfill_open_position_costs(ep_store)
+            self.assertEqual(second_updated, 0)
+            self.assertEqual(summary_path.read_text(encoding="utf-8"), before_bytes)

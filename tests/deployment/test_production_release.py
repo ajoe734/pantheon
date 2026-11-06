@@ -1448,6 +1448,60 @@ class SwitchTests(SwitchHarness):
         self.assertEqual(r.returncode, 2, r.stderr)
         self._assert_baseline_restored()
 
+    def _rc_cfg(self, path=None):
+        text = (path or (self.root / "config" / "runtime-config.js")).read_text()
+        prefix = "window.__PANTHEON_DEPLOYMENT_CONFIG__ = "
+        line = next(l for l in text.splitlines() if l.startswith(prefix))
+        return json.loads(line[len(prefix):].rstrip(";"))
+
+    @staticmethod
+    def _digest(cfg):
+        body = {k: v for k, v in cfg.items() if k != "configSha256"}
+        return "sha256:" + hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def test_public_real_writes_default_and_false_keep_legacy_key_absent_and_bytes_identical(self):
+        outputs = []
+        for extra in ({}, {"VITE_BFF_REAL_WRITES": ""}, {"VITE_BFF_REAL_WRITES": "false"}):
+            self.setUp()
+            self._prepare()
+            self.assertEqual(self._run(extra_env=extra).returncode, 0)
+            cfg = self._rc_cfg()
+            self.assertNotIn("VITE_BFF_REAL_WRITES", cfg)
+            self.assertEqual(cfg["configSha256"], self._digest(cfg))
+            outputs.append((self.root / "config" / "runtime-config.js").read_bytes())
+        self.assertEqual(len(set(outputs)), 1)
+
+    def test_public_real_writes_explicit_true_is_candidate_only_with_new_digest(self):
+        self._prepare()
+        self.assertEqual(self._run(extra_env={"VITE_BFF_REAL_WRITES": "false"}).returncode, 0)
+        legacy_cfg = self._rc_cfg()
+        self.setUp()
+        self._prepare()
+        self.assertEqual(self._run(extra_env={"VITE_BFF_REAL_WRITES": "true"}).returncode, 0)
+        cfg = self._rc_cfg()
+        self.assertEqual(cfg["VITE_BFF_REAL_WRITES"], "true")
+        self.assertEqual(cfg["configSha256"], self._digest(cfg))
+        self.assertNotEqual(cfg["configSha256"], legacy_cfg["configSha256"])
+        # Baseline is never rendered with the candidate flag: synthesized journal baseline stays key-absent.
+        self.setUp()
+        self._prepare()
+        r = self._run(extra_env={"VITE_BFF_REAL_WRITES": "true", "FAIL_STEP": "verify_runtime_config"})
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self._assert_baseline_restored()
+        restored = self._rc_cfg()
+        self.assertNotIn("VITE_BFF_REAL_WRITES", restored)
+        self.assertEqual(restored["configSha256"], self._digest(restored))
+
+    def test_public_real_writes_malformed_value_rejected_before_traffic(self):
+        for bad in ("TRUE", "1", "yes", "True ", "on", " true ", "true\n", " false ", "false\n"):
+            with self.subTest(bad=bad):
+                self.setUp()
+                self._prepare()
+                r = self._run(extra_env={"VITE_BFF_REAL_WRITES": bad})
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("PUBLIC_REAL_WRITES_INVALID", r.stderr)
+                self._assert_baseline_restored()
+
     def test_colors_alternate_between_releases(self):
         self._prepare()
         self.assertEqual(self._run().returncode, 0)

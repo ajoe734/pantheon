@@ -39,6 +39,11 @@ on:
         required: false
         default: "true"
         type: string
+      VITE_BFF_REAL_WRITES:
+        description: "Per-dispatch public runtime write posture for the candidate FE only (true/false; default false keeps the legacy key absent)"
+        required: false
+        default: "false"
+        type: string
       hosted_qa_window_seconds:
         description: "Optional bounded hold after successful live verify and before destroy (0 or 300)"
         required: false
@@ -91,6 +96,7 @@ jobs:
       STAGING_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN: ${{ vars.STAGING_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN || '' }}
       STAGING_PUBLIC_GCP_IDENTITY_ISSUER: ${{ vars.STAGING_PUBLIC_GCP_IDENTITY_ISSUER || '' }}
       STAGING_PUBLIC_GCP_IDENTITY_AUDIENCE: ${{ vars.STAGING_PUBLIC_GCP_IDENTITY_AUDIENCE || '' }}
+      VITE_BFF_REAL_WRITES: ${{ inputs.VITE_BFF_REAL_WRITES || 'false' }}
       GCLOUD_BIN: gcloud
       PANTHEON_PROVIDER_ENABLED: "false"
       PANTHEON_LIVE_BROKER_ENABLED: "false"

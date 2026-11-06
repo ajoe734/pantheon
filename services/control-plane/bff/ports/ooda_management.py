@@ -14,6 +14,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple, Union
 
+from services.control_plane.bff.core.owner_reads import (
+    authorization,
+    cached_owner_call,
+    selected_tenant,
+)
+
 
 def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -431,10 +437,72 @@ class ManagementReviewQueuePort:
         evolution_decisions_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         deployment_diffs_reader: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
     ) -> None:
-        self._deployment_plans_reader = deployment_plans_reader
-        self._approval_decisions_reader = approval_decisions_reader
-        self._evolution_decisions_reader = evolution_decisions_reader
+        self._deployment_plans_reader = self._wrap_request_scoped_reader(
+            "deployment_plans", deployment_plans_reader
+        )
+        self._approval_decisions_reader = self._wrap_request_scoped_reader(
+            "approval_decisions", approval_decisions_reader
+        )
+        self._evolution_decisions_reader = self._wrap_request_scoped_reader(
+            "evolution_decisions", evolution_decisions_reader
+        )
         self._deployment_diffs_reader = deployment_diffs_reader
+
+    def _wrap_request_scoped_reader(
+        self,
+        name: str,
+        reader: Optional[Callable[..., List[Dict[str, Any]]]],
+    ) -> Optional[Callable[[], List[Dict[str, Any]]]]:
+        if reader is None or getattr(reader, "_is_request_scoped_review_reader", False):
+            return reader
+        bound_self = getattr(reader, "__self__", None)
+        deploy_port = (
+            bound_self
+            if hasattr(bound_self, "_get_raw_plans_with_error")
+            else getattr(bound_self, "deployment", None)
+        )
+        supports_raise_on_error = name == "deployment_plans" and hasattr(deploy_port, "_get_raw_plans_with_error")
+
+        def _call_reader() -> List[Dict[str, Any]]:
+            if supports_raise_on_error:
+                provider = getattr(deploy_port, "_plans_provider", None)
+                if (
+                    authorization.get() is not None
+                    or getattr(deploy_port, "_store", None) is not None
+                    or (provider is not None and getattr(provider, "__module__", "") != "services.control_plane.bff.core.owner_reads")
+                ):
+                    return reader(raise_on_error=True)
+            return reader()
+
+        def _read() -> List[Dict[str, Any]]:
+            return (
+                cached_owner_call(
+                    (
+                        "management_review_queue_reader",
+                        name,
+                        id(self),
+                        id(reader),
+                        authorization.get(),
+                        selected_tenant.get(),
+                    ),
+                    _call_reader,
+                )
+                or []
+            )
+
+        setattr(_read, "_raw_reader", reader)
+        setattr(_read, "_is_request_scoped_review_reader", True)
+        return _read
+
+    def _read_source(
+        self,
+        name: str,
+        reader: Optional[Callable[[], List[Dict[str, Any]]]],
+    ) -> List[Dict[str, Any]]:
+        if reader is None:
+            return []
+        wrapped = self._wrap_request_scoped_reader(name, reader)
+        return (wrapped() if wrapped else []) or []
 
     @classmethod
     def derive_can_review_deployment_plan(
@@ -515,7 +583,7 @@ class ManagementReviewQueuePort:
         items: List[Dict[str, Any]] = []
         linked_approval_decision_ids: Set[str] = set()
 
-        decisions = self._approval_decisions_reader() if self._approval_decisions_reader else []
+        decisions = self._read_source("approval_decisions", self._approval_decisions_reader)
         decisions_by_id: Dict[str, Dict[str, Any]] = {}
         for d in decisions:
             d_id = str(d.get("decision_id") or d.get("id") or "").strip()
@@ -523,7 +591,7 @@ class ManagementReviewQueuePort:
                 decisions_by_id[d_id] = d
 
         # 1. Deployment Plans
-        plans = self._deployment_plans_reader() if self._deployment_plans_reader else []
+        plans = self._read_source("deployment_plans", self._deployment_plans_reader)
         for plan in plans:
             status = str(plan.get("status") or "").strip().lower()
             if status and status not in self.REVIEWABLE_STATUSES:
@@ -551,7 +619,7 @@ class ManagementReviewQueuePort:
             )
 
         # 2. Evolution Decisions
-        evo_decisions = self._evolution_decisions_reader() if self._evolution_decisions_reader else []
+        evo_decisions = self._read_source("evolution_decisions", self._evolution_decisions_reader)
         for decision in evo_decisions:
             status = str(decision.get("decision_state") or decision.get("status") or "").strip().lower()
             if status and status not in self.REVIEWABLE_STATUSES:
@@ -641,7 +709,7 @@ class ManagementReviewQueuePort:
         decision_states: Optional[List[str]] = None,
         states: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        raw_decisions = self._approval_decisions_reader() if self._approval_decisions_reader else []
+        raw_decisions = self._read_source("approval_decisions", self._approval_decisions_reader)
         items: List[Dict[str, Any]] = []
 
         for raw in raw_decisions:

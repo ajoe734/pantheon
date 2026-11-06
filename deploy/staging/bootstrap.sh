@@ -667,12 +667,13 @@ PY
 render_runtime_config() {
   local dep_json_path="$1"
   local dest_cfg_path="$2"
+  local role="${3:-candidate}"  # candidate may carry VITE_BFF_REAL_WRITES=true; baseline never inherits it
   local tmp_rt="${LOCAL_WORK_DIR}/$(basename "${dest_cfg_path}")"
   # Emits ONLY the accepted FE `pantheon.fe.public-runtime-config.v1` fields. Deployment identity
   # metadata stays in deployment.json; public Identity values come from direct environment wiring.
-  python3 - "$tmp_rt" "$dep_json_path" <<'PY'
+  python3 - "$tmp_rt" "$dep_json_path" "$role" <<'PY'
 import hashlib, json, os, re, sys
-out_path, dep_path = sys.argv[1], sys.argv[2]
+out_path, dep_path, role = sys.argv[1], sys.argv[2], sys.argv[3]
 dep = json.loads(open(dep_path, encoding="utf-8").read())
 
 def need(name):
@@ -701,6 +702,15 @@ cfg = {
         "audience": audience,
     },
 }
+# Optional public write posture. Absent/empty/"false" keeps the legacy key ABSENT (old canonical bytes/digest);
+# only an explicit "true" on the candidate renders it. Baseline never inherits it. Anything else is rejected.
+rw = os.environ.get("VITE_BFF_REAL_WRITES", "")
+if rw not in ("", "true", "false"):
+    print(json.dumps({"status": "error", "step": "bootstrap", "error_code": "PUBLIC_REAL_WRITES_INVALID",
+                      "message": "VITE_BFF_REAL_WRITES must be exactly true or false"}), file=sys.stderr)
+    sys.exit(1)
+if rw == "true" and role == "candidate":
+    cfg["VITE_BFF_REAL_WRITES"] = "true"
 canonical = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
 cfg["configSha256"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 body = (
@@ -733,9 +743,9 @@ run_priv ln -sfn "${RELEASE_FE_DIR}" "${STAGING_FE_ROOT}/current"
 
 # Render external /runtime-config.js (and candidate/baseline templates) outside the sealed FE release directory.
 RUNTIME_CFG_PATH="${STAGING_ROOT}/config/runtime-config.js"
-render_runtime_config "${RELEASE_FE_DIR}/deployment.json" "${STAGING_ROOT}/config/runtime-config.candidate.js"
-render_runtime_config "${BASELINE_FE_DIR}/deployment.json" "${STAGING_ROOT}/config/runtime-config.baseline.js"
-render_runtime_config "${RELEASE_FE_DIR}/deployment.json" "${RUNTIME_CFG_PATH}"
+render_runtime_config "${RELEASE_FE_DIR}/deployment.json" "${STAGING_ROOT}/config/runtime-config.candidate.js" candidate
+render_runtime_config "${BASELINE_FE_DIR}/deployment.json" "${STAGING_ROOT}/config/runtime-config.baseline.js" baseline
+render_runtime_config "${RELEASE_FE_DIR}/deployment.json" "${RUNTIME_CFG_PATH}" candidate
 
 if [[ "$(readlink -f "${RUNTIME_CFG_PATH}")" == "$(readlink -f "${STAGING_FE_ROOT}/current")"/* ]]; then
   fail "RUNTIME_CONFIG_SEALED" "runtime-config.js must live outside the sealed FE release directory"

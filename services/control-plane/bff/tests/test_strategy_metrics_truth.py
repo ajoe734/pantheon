@@ -561,6 +561,17 @@ def test_capital_pool_id_populated_from_registry_metadata_capital_pool_id(monkey
 
     def _fake_http_request_json(url: str, **kwargs: Any) -> Any:
         parsed = urllib.parse.urlparse(url)
+        query = dict(urllib.parse.parse_qsl(parsed.query))
+        if query.get("view") == "strategy_summary_page":
+            from services.registry.storage import project_strategy_spec_summary_page
+
+            return project_strategy_spec_summary_page(
+                list(registry_entries),
+                state=query.get("state"),
+                persona_id=query.get("persona_id"),
+                page_token=query.get("page_token"),
+                page_size=int(query.get("page_size") or 20),
+            )
         if parsed.path.endswith("/strat-registry-pool/strategy-specs"):
             return [registry_entries[0]]
         if parsed.path.endswith("/strat-registry-no-pool/strategy-specs"):
@@ -610,3 +621,40 @@ def test_ranking_snapshot_read_port_selects_latest_snapshot_by_surface() -> None
     assert latest is not None
     assert latest["ranking_snapshot_id"] == "snap-q4"
     assert len(latest["items"]) == len(REAL_SNAPSHOT_ITEMS)
+
+
+def test_strategy_alpha_comes_only_from_market_scope_alpha_and_agrees_between_list_and_detail() -> None:
+    specs = _build_strategy_specs()
+    # Add source_kind and hypothesis without market_scope.alpha -> alpha must be ""
+    specs["strat-paper-running-01"]["versions"][0]["source_kind"] = "workflow"
+    specs["strat-paper-running-01"]["versions"][0]["hypothesis"] = "Intraday momentum persists."
+    specs["strat-paper-running-01"]["versions"][0]["market_scope"] = {"markets": ["TWSE"]}
+    # Add explicit market_scope.alpha -> alpha must equal market_scope.alpha on both list and detail
+    specs["strat-zero-pnl-03"]["versions"][0]["source_kind"] = "workflow"
+    specs["strat-zero-pnl-03"]["versions"][0]["hypothesis"] = "Cross-sectional value."
+    specs["strat-zero-pnl-03"]["versions"][0]["market_scope"] = {"markets": ["TWSE"], "alpha": "value-factor-tw"}
+
+    latest_snapshot = _make_snapshot_payload(
+        "snap-2026-q4-alpha",
+        "2026-11-04T01:16:27Z",
+        REAL_SNAPSHOT_ITEMS,
+    )
+    client, _, _ = _build_test_client(specs=specs, ranking_store=_FakeRankingStore([latest_snapshot]))
+
+    list_resp = client.get("/bff/strategies", headers=HEADERS)
+    assert list_resp.status_code == 200, list_resp.text
+    by_id = {item["id"]: item for item in list_resp.json()["data"]}
+
+    detail_01 = client.get("/bff/strategies/strat-paper-running-01", headers=HEADERS)
+    assert detail_01.status_code == 200, detail_01.text
+    assert by_id["strat-paper-running-01"]["alpha"] == ""
+    assert detail_01.json()["data"]["alpha"] == ""
+    assert by_id["strat-paper-running-01"]["pnl"] == 110.0
+
+    detail_03 = client.get("/bff/strategies/strat-zero-pnl-03", headers=HEADERS)
+    assert detail_03.status_code == 200, detail_03.text
+    assert by_id["strat-zero-pnl-03"]["alpha"] == "value-factor-tw"
+    assert detail_03.json()["data"]["alpha"] == "value-factor-tw"
+    assert by_id["strat-zero-pnl-03"]["pnl"] == 0.0
+    assert detail_03.json()["data"]["pnl"] == 0.0
+

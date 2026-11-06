@@ -61,6 +61,17 @@ except ImportError:  # pragma: no cover
 
 
 EVIDENCE_OWNER_PAGE_SIZE = 200
+EVIDENCE_OWNER_READ_TIMEOUT_SECONDS = 4.0
+
+
+def evidence_owner_read_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            pass
+    return EVIDENCE_OWNER_READ_TIMEOUT_SECONDS
 
 
 @dataclass
@@ -385,6 +396,21 @@ class ResearchKnowledgeSourcePort:
         include_retired: bool = False,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def list_strategy_specs_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
+        """``{strategy_id: {"title", "name"}}`` of bound strategies' current versions, without spec bodies."""
         raise NotImplementedError
 
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
@@ -713,9 +739,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return False, None
         try:
             import urllib.request
-            from ..core.owner_reads import authorization, selected_tenant
+            from ..core.owner_reads import authorization, remaining_management_read_budget, selected_tenant
+
+            timeout = evidence_owner_read_timeout_seconds()
+            budget = remaining_management_read_budget(timeout)
+            if budget is not None:
+                if budget <= 0.0:
+                    return False, None
+                timeout = max(0.05, float(budget))
             h = {k: v for k, v in (("Authorization", authorization.get()), ("X-Tenant-Id", selected_tenant.get())) if v}
-            with urllib.request.urlopen(urllib.request.Request(f"{base_url.rstrip('/')}/{path.lstrip('/')}", headers=h), timeout=2.0) as resp:
+            with urllib.request.urlopen(
+                urllib.request.Request(f"{base_url.rstrip('/')}/{path.lstrip('/')}", headers=h),
+                timeout=timeout,
+            ) as resp:
                 return True, json.loads(raw.decode("utf-8")) if (raw := resp.read()) else None
         except Exception:
             return False, None
@@ -1254,6 +1290,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     ) -> Tuple[List[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
         """Read one bounded page and its tenant summary from the owner service."""
         try:
+            from ..core.owner_reads import remaining_management_read_budget
+
+            budget = remaining_management_read_budget()
+            if budget is not None and budget <= 0.0:
+                raise _EvidenceOwnerReadError("source-ingest evidence owner read budget exhausted")
+        except _EvidenceOwnerReadError:
+            raise
+        except Exception:
+            pass
+        try:
             avail, payload = self._http_get(
                 self._source_ingest_service_url,
                 f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}",
@@ -1367,16 +1413,33 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 start = int(page_token) if page_token else 0
             except ValueError:
                 start = 0
+            tenant_tok = None
+            if effective_tenant is not None:
+                try:
+                    from ..core.owner_reads import selected_tenant
+
+                    if selected_tenant.get() is None:
+                        tenant_tok = selected_tenant.set(effective_tenant)
+                except Exception:
+                    tenant_tok = None
             try:
                 items, total, owner_summary = self._read_owner_evidence_page(start=start, page_size=page_size)
             except (_EvidenceOwnerReadError, StopIteration):
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
+            finally:
+                if tenant_tok is not None:
+                    try:
+                        from ..core.owner_reads import selected_tenant
+
+                        selected_tenant.reset(tenant_tok)
+                    except Exception:
+                        pass
             rows = [
                 self._project_evidence_ref_list_item(
                     normalize_source_ingest_evidence_item(it), include_scope_metadata=include_scope_metadata
                 )
                 for it in items
-                if self._record_matches_tenant(it, tenant_id, include_tenant_agnostic=include_tenant_agnostic)
+                if self._record_matches_tenant(it, effective_tenant, include_tenant_agnostic=include_tenant_agnostic)
             ]
             nxt = start + len(items)
             return EvidenceReadResult(
@@ -1389,14 +1452,31 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 summary_unavailable=owner_summary is None,
             )
 
+        tenant_tok = None
+        if effective_tenant is not None:
+            try:
+                from ..core.owner_reads import selected_tenant
+
+                if selected_tenant.get() is None:
+                    tenant_tok = selected_tenant.set(effective_tenant)
+            except Exception:
+                tenant_tok = None
         try:
             raw_refs, source = self._collect_raw_evidence_refs(tenant_id=effective_tenant)
         except _EvidenceOwnerReadError:
             return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
+        finally:
+            if tenant_tok is not None:
+                try:
+                    from ..core.owner_reads import selected_tenant
+
+                    selected_tenant.reset(tenant_tok)
+                except Exception:
+                    pass
         filtered = [
             ref
             for ref in raw_refs
-            if self._record_matches_tenant(ref, tenant_id, include_tenant_agnostic=include_tenant_agnostic)
+            if self._record_matches_tenant(ref, effective_tenant, include_tenant_agnostic=include_tenant_agnostic)
             and self._evidence_matches_scope(ref, linked_entities=linked_entities, source_types=source_types)
         ]
         filtered.sort(
@@ -1488,15 +1568,30 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         clean = str(ref_id or "").strip()
         if not clean:
             return None, "ok", "typed_store"
+        effective_tenant: Optional[str] = None
+        try:
+            from ..core.owner_reads import selected_tenant
+
+            effective_tenant = str(selected_tenant.get() or "").strip() or None
+        except Exception:
+            effective_tenant = None
         if self._evidence_repo is not None:
             try:
-                item = self._evidence_repo.get_evidence_item(clean)
+                item = (
+                    self._evidence_repo.get_evidence_item(clean, tenant_id=effective_tenant)
+                    if effective_tenant is not None
+                    else self._evidence_repo.get_evidence_item(clean)
+                )
             except Exception:
                 return None, "unavailable", "unavailable"
             raw = normalize_source_ingest_evidence_item(item.to_dict()) if item is not None else None
+            if raw is not None and not self._record_matches_tenant(raw, effective_tenant, include_tenant_agnostic=True):
+                raw = None
             return raw, "ok", "typed_store"
         if self._evidence_refs:
             ref = next((r for r in self._evidence_refs.values() if str(r.get("ref_id") or "") == clean), None)
+            if ref is not None and not self._record_matches_tenant(ref, effective_tenant, include_tenant_agnostic=True):
+                ref = None
             return (dict(ref) if ref else None), "ok", "typed_store"
         if self._source_ingest_service_url:
             from urllib.parse import quote
@@ -1509,7 +1604,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 return None, "unavailable", "unavailable"
             record = payload.get("item") if avail and isinstance(payload, dict) else None
             if isinstance(record, dict):
-                return normalize_source_ingest_evidence_item(record), "ok", "service_client"
+                raw = normalize_source_ingest_evidence_item(record)
+                if not self._record_matches_tenant(raw, effective_tenant, include_tenant_agnostic=True):
+                    return None, "ok", "service_client"
+                return raw, "ok", "service_client"
             if avail:
                 return None, "ok", "service_client"
             # The helper reports 404 and transport failure alike; a one-row
@@ -1953,7 +2051,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 version[extra_key] = str(extra_val)
         raw_meta = raw_version.get("metadata") if isinstance(raw_version.get("metadata"), dict) else {}
         spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
-        merged_meta = {**spec_meta, **raw_meta}
+        merged_meta = {**spec_meta, **{k: v for k, v in raw_meta.items() if v is not None or k not in spec_meta}}
+        if isinstance(spec_meta.get("traits"), dict) and isinstance(raw_meta.get("traits"), dict):
+            merged_meta["traits"] = {
+                **spec_meta["traits"],
+                **{k: v for k, v in raw_meta["traits"].items() if v is not None},
+            }
         if merged_meta:
             version["metadata"] = copy.deepcopy(merged_meta)
         top_cap_pool_id = (
@@ -2282,6 +2385,262 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         )
         return items
 
+    _STRATEGY_DTO_LIFECYCLE_MAP: Dict[str, str] = {
+        "draft": "draft",
+        "candidate": "review",
+        "review": "review",
+        "approved": "approved",
+        "active": "deployed",
+        "deployed": "deployed",
+        "paused": "paused",
+        "retired": "retired",
+        "archived": "retired",
+        "rejected": "retired",
+        "superseded": "retired",
+        "paper": "paper_running",
+        "paper_running": "paper_running",
+        "canary": "canary_running",
+        "canary_running": "canary_running",
+        "canary_authorized_not_started": "canary_authorized_not_started",
+        "live": "live_running",
+        "live_running": "live_running",
+        "needs_human_approval": "needs_human_approval",
+        "rollback_required": "rollback_required",
+        "stopped": "stopped",
+        "failed": "failed",
+        "provisioning": "provisioning",
+        "provisioning_failed": "failed",
+        "research_only": "research_only",
+        "consultable": "consultable",
+        "paper_owner": "paper_owner",
+        "live_owner": "live_owner",
+        "frozen": "frozen",
+        "suspended": "suspended",
+    }
+
+    _STRATEGY_DEFAULT_STATE_COUNT_KEYS: Tuple[str, ...] = (
+        "draft",
+        "review",
+        "approved",
+        "paper_running",
+        "canary_running",
+        "live_running",
+        "deployed",
+        "paused",
+        "retired",
+    )
+
+    def list_strategy_specs_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        norm_state = str(state).strip().lower() if state and str(state).strip() else None
+        norm_exclude_state = (
+            str(exclude_state).strip().lower()
+            if exclude_state and str(exclude_state).strip()
+            else None
+        )
+        if norm_state and norm_exclude_state:
+            raise self._strategy_owner_error(
+                400,
+                "VALIDATION_ERROR",
+                "state and exclude_state cannot be combined",
+                "conflicting_state_filters",
+            )
+        use_injected = self._has_injected_strategy_specs and not (
+            os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")
+        )
+        if not use_injected:
+            return self._fetch_canonical_strategy_specs_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                page_token=page_token,
+                page_size=page_size,
+            )
+
+        offset = 0
+        if page_token is not None and str(page_token).strip() != "":
+            try:
+                offset = int(str(page_token).strip())
+            except ValueError as exc:
+                raise self._strategy_owner_error(
+                    400, "VALIDATION_ERROR", "Invalid page_token", "invalid_page_token",
+                ) from exc
+            if offset < 0:
+                raise self._strategy_owner_error(
+                    400, "VALIDATION_ERROR", "Invalid page_token", "invalid_page_token",
+                )
+        if not self._strategy_specs:
+            return None
+
+        effective_tenant: Optional[str] = None
+        try:
+            from services.control_plane.bff.core.owner_reads import selected_tenant
+
+            effective_tenant = str(selected_tenant.get() or "").strip() or None
+        except Exception:
+            effective_tenant = None
+
+        norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
+        state_counts: Optional[Dict[str, int]] = {
+            k: 0 for k in self._STRATEGY_DEFAULT_STATE_COUNT_KEYS
+        }
+        items: List[Dict[str, Any]] = []
+        for strategy_spec in self._strategy_specs.values():
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            strategy_id, selected_index, raw_current, candidate_count, version_count = selected
+            if effective_tenant is not None and (
+                not self._record_matches_tenant(
+                    strategy_spec, effective_tenant, include_tenant_agnostic=True
+                )
+                or not self._record_matches_tenant(
+                    raw_current, effective_tenant, include_tenant_agnostic=True
+                )
+            ):
+                continue
+            raw_meta = (
+                raw_current.get("metadata")
+                if isinstance(raw_current.get("metadata"), dict)
+                else {}
+            )
+            spec_meta = (
+                strategy_spec.get("metadata")
+                if isinstance(strategy_spec.get("metadata"), dict)
+                else {}
+            )
+            raw_lifecycle = (
+                str(
+                    raw_current.get("lifecycle_state")
+                    or raw_current.get("state")
+                    or raw_current.get("status")
+                    or strategy_spec.get("lifecycle_state")
+                    or strategy_spec.get("state")
+                    or strategy_spec.get("status")
+                    or raw_meta.get("lifecycle_state")
+                    or raw_meta.get("state")
+                    or raw_meta.get("status")
+                    or spec_meta.get("lifecycle_state")
+                    or spec_meta.get("state")
+                    or spec_meta.get("status")
+                    or "draft"
+                ).strip()
+                or "draft"
+            )
+            raw_clean = raw_lifecycle.lower()
+            dto_state = self._STRATEGY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
+            if state_counts is not None:
+                state_counts[dto_state] = state_counts.get(dto_state, 0) + 1
+
+            is_retired = raw_clean == "retired" or dto_state == "retired"
+            if norm_state != "retired" and is_retired:
+                continue
+            raw_persona_ids = (
+                raw_current.get("persona_ids") or strategy_spec.get("persona_ids") or []
+            )
+            persona_list = [str(value) for value in raw_persona_ids if str(value).strip()]
+            if norm_persona and norm_persona not in set(persona_list):
+                continue
+            if norm_state:
+                wanted_dto = self._STRATEGY_DTO_LIFECYCLE_MAP.get(norm_state, norm_state)
+                if (
+                    raw_clean != norm_state
+                    and dto_state != norm_state
+                    and dto_state != wanted_dto
+                ):
+                    continue
+            if norm_exclude_state:
+                if norm_exclude_state == "draft":
+                    if raw_clean in {"", "draft"}:
+                        continue
+                else:
+                    excluded_dto = self._STRATEGY_DTO_LIFECYCLE_MAP.get(
+                        norm_exclude_state, norm_exclude_state
+                    )
+                    if (
+                        raw_clean == norm_exclude_state
+                        or dto_state == norm_exclude_state
+                        or dto_state == excluded_dto
+                    ):
+                        continue
+
+            provenance = (
+                raw_current.get("provenance")
+                if isinstance(raw_current.get("provenance"), dict)
+                else {}
+            )
+            current_source_kind = str(
+                raw_current.get("source_kind")
+                or provenance.get("source_kind")
+                or strategy_spec.get("source_kind")
+                or ""
+            )
+            current_version = self._kw05_normalize_version_candidate(
+                strategy_spec,
+                raw_current,
+                strategy_id=strategy_id,
+                index=selected_index,
+                candidate_count=candidate_count,
+                include_detail_bundles=False,
+            )
+            item_dict: Dict[str, Any] = {
+                "object_ref": dict(current_version.get("object_ref") or {}),
+                "strategy_id": strategy_id,
+                "current_spec_version_id": current_version.get("spec_version_id"),
+                "current_spec_version": current_version.get("spec_version"),
+                "title": current_version.get("title"),
+                "lifecycle_state": raw_lifecycle,
+                "source_kind": current_source_kind,
+                "hypothesis_excerpt": self._kw05_hypothesis_excerpt(
+                    current_version.get("hypothesis")
+                ),
+                "version_count": version_count,
+                "last_modified_at": current_version.get("last_modified_at"),
+                "route_href": self._kw05_strategy_route_href(strategy_id),
+                "persona_ids": persona_list,
+                "governance": current_version.get("governance"),
+                "market_scope": current_version.get("market_scope"),
+                "execution_profile": current_version.get("execution_profile"),
+                "allowedActions": current_version.get("allowedActions"),
+                "risk": current_version.get("risk"),
+                "created_at": current_version.get("created_at"),
+                "tenant_id": current_version.get("tenant_id"),
+                "strategy_spec_registry_id": current_version.get(
+                    "strategy_spec_registry_id"
+                ),
+            }
+            if current_version.get("capital_pool_id"):
+                item_dict["capital_pool_id"] = current_version.get("capital_pool_id")
+            if current_version.get("metadata"):
+                item_dict["metadata"] = current_version.get("metadata")
+            items.append(item_dict)
+
+        items.sort(
+            key=lambda item: (
+                _naive_utc(_parse_rfc3339(item.get("last_modified_at"))),
+                str(item.get("strategy_id") or ""),
+            ),
+            reverse=True,
+        )
+        total = len(items)
+        sliced = items[offset : offset + page_size]
+        next_token = str(offset + page_size) if (offset + page_size) < total else None
+        return {
+            "items": sliced,
+            "total": total,
+            "next_page_token": next_token,
+            "state_counts": state_counts,
+        }
+
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
         # Same source, current-version selection, lifecycle filter and persona
         # extraction as list_strategy_specs(), without per-version normalization.
@@ -2312,6 +2671,60 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 counts[persona_id] = counts.get(persona_id, 0) + 1
         return counts
 
+    def _labels_from_persona_binding_rows(self, raw: Any) -> Dict[str, Dict[str, str]]:
+        """Current-version title/name per family from flat registry ``persona_binding`` rows.
+
+        Same current-version rule as the full list (highest semver, created_at,
+        registry id) and the canonical title path (``strategy_spec.title`` then
+        metadata ``title`` then ``name`` then the strategy id).
+        """
+        def invalid() -> Any:
+            return self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry label payload", "strategy_store_unavailable")
+
+        if not isinstance(raw, list):
+            raise invalid()
+        best: Dict[str, Tuple[Any, str]] = {}
+        for item in raw:
+            entry = item.get("entry") if isinstance(item, dict) and isinstance(item.get("entry"), dict) else item
+            if not isinstance(entry, dict) or entry.get("artifact_type") not in (None, "strategy_spec"):
+                raise invalid()
+            meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            inner = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
+            sid = str(entry.get("strategy_id") or inner.get("strategy_id") or "").strip()
+            reg_id = str(entry.get("registry_id") or meta.get("spec_version_id") or "").strip()
+            semver = str(entry.get("version") or inner.get("spec_version") or meta.get("spec_version") or meta.get("version") or "").strip()
+            if not sid or not reg_id or not semver:
+                raise invalid()
+            prov = inner.get("provenance") if isinstance(inner.get("provenance"), dict) else (meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {})
+            key = self._kw05_version_sort_key(
+                spec_version=semver,
+                created_at=entry.get("created_at") or prov.get("created_at"),
+                spec_version_id=reg_id,
+            )
+            if sid not in best or key > best[sid][0]:
+                best[sid] = (key, str(inner.get("title") or meta.get("title") or meta.get("name") or sid))
+        return {sid: {"title": title, "name": title} for sid, (_key, title) in best.items()}
+
+    def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
+        # Bounded label read: no per-version normalization and no deepcopy of spec bodies.
+        if not (self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))):
+            return self._labels_from_persona_binding_rows(self._fetch_canonical_persona_binding_view("persona_binding"))
+        labels = {}
+        for strategy_spec in list(self._strategy_specs.values()):
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            strategy_id, _index, raw_current, _candidates, _versions = selected
+            title = (
+                raw_current.get("title") or raw_current.get("name")
+                or strategy_spec.get("title") or strategy_spec.get("name")
+            )
+            if title:
+                labels[strategy_id] = {"title": str(title), "name": str(title)}
+        return labels
+
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
         if not d:
@@ -2337,6 +2750,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
 
     def _fetch_canonical_persona_binding_counts(self) -> Dict[str, int]:
         """Registry-owned per-persona counts; the Registry applies tenant scope and current-version selection."""
+        raw = self._fetch_canonical_persona_binding_view("persona_binding_counts")
+        if not isinstance(raw, dict):
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry count payload", "strategy_store_unavailable")
+        if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in raw.values()):
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry count payload", "strategy_store_unavailable")
+        return {str(k): int(v) for k, v in raw.items()}
+
+    def _fetch_canonical_persona_binding_view(self, view: str) -> Any:
+        """Registry flat owner view (counts / labels): caller authorization and selected tenant forwarded as-is."""
         import urllib.error
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
         from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
@@ -2346,7 +2768,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback requires caller authorization", "strategy_store_unavailable")
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
-            raw = http_request_json(registry_url("/api/registry/strategy-specs?view=persona_binding_counts"), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
+            raw = http_request_json(registry_url(f"/api/registry/strategy-specs?view={view}"), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch") from exc
@@ -2357,24 +2779,231 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", str(exc.detail), "strategy_store_unavailable") from exc
         except Exception as exc:
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback is unavailable", str(exc) or "strategy_store_unavailable") from exc
-        if not isinstance(raw, dict) or not all(
-            isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in raw.values()
+        return raw
+
+    def _fetch_canonical_strategy_specs_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+
+        norm_state = str(state).strip().lower() if state and str(state).strip() else None
+        norm_exclude_state = (
+            str(exclude_state).strip().lower()
+            if exclude_state and str(exclude_state).strip()
+            else None
+        )
+        if norm_state and norm_exclude_state:
+            raise self._strategy_owner_error(
+                400,
+                "VALIDATION_ERROR",
+                "state and exclude_state cannot be combined",
+                "conflicting_state_filters",
+            )
+
+        if page_token is not None and str(page_token).strip() != "":
+            try:
+                if int(str(page_token).strip()) < 0:
+                    raise ValueError("negative")
+            except ValueError as exc:
+                raise self._strategy_owner_error(
+                    400, "VALIDATION_ERROR", "Invalid page_token", "invalid_page_token",
+                ) from exc
+
+        norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
+        norm_token = str(page_token).strip() if page_token is not None and str(page_token).strip() != "" else None
+        return cached_owner_call(
+            (
+                "rks_canonical_strategy_specs_page",
+                id(self),
+                selected_tenant.get(),
+                norm_state,
+                norm_exclude_state,
+                norm_persona,
+                norm_token,
+                int(page_size),
+            ),
+            lambda: self._fetch_canonical_strategy_specs_page_uncached(
+                state=norm_state,
+                exclude_state=norm_exclude_state,
+                persona_id=norm_persona,
+                page_token=norm_token,
+                page_size=int(page_size),
+            ),
+        )
+
+    def _fetch_canonical_strategy_specs_page_uncached(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        import urllib.error, urllib.parse
+        from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
+        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
+
+        auth = authorization.get()
+        if not auth:
+            raise self._strategy_owner_error(
+                503,
+                "DEPENDENCY_UNAVAILABLE",
+                "Canonical strategy registry readback requires caller authorization",
+                "strategy_store_unavailable",
+            )
+        query_params: list[tuple[str, str]] = [
+            ("view", "strategy_summary_page"),
+            ("page_size", str(page_size)),
+        ]
+        if state:
+            query_params.append(("state", state))
+        if exclude_state:
+            query_params.append(("exclude_state", exclude_state))
+        if persona_id:
+            query_params.append(("persona_id", persona_id))
+        if page_token:
+            query_params.append(("page_token", page_token))
+        path = "/api/registry/strategy-specs?" + urllib.parse.urlencode(query_params)
+        try:
+            caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+            raw = http_request_json(
+                registry_url(path),
+                auth_token=auth.removeprefix("Bearer ").strip(),
+                tenant_id=caller_tenant,
+            )
+        except urllib.error.HTTPError as exc:
+            if exc.code == 400:
+                if state and exclude_state:
+                    raise self._strategy_owner_error(
+                        400,
+                        "VALIDATION_ERROR",
+                        "state and exclude_state cannot be combined",
+                        "conflicting_state_filters",
+                    ) from exc
+                raise self._strategy_owner_error(
+                    400, "VALIDATION_ERROR", "Invalid page_token", "invalid_page_token",
+                ) from exc
+            if exc.code in (401, 403):
+                raise self._strategy_owner_error(
+                    403,
+                    "FORBIDDEN",
+                    "Strategy reference is outside the caller tenant audience",
+                    "strategy_audience_mismatch",
+                ) from exc
+            raise self._strategy_owner_error(
+                503,
+                "DEPENDENCY_UNAVAILABLE",
+                "Canonical strategy registry readback is unavailable",
+                f"strategy_registry_http_{exc.code}",
+            ) from exc
+        except ActionUnavailableError as exc:
+            if exc.status_code == 403:
+                raise self._strategy_owner_error(
+                    403, "FORBIDDEN", str(exc.detail), "strategy_audience_mismatch",
+                ) from exc
+            raise self._strategy_owner_error(
+                503, "DEPENDENCY_UNAVAILABLE", str(exc.detail), "strategy_store_unavailable",
+            ) from exc
+        except Exception as exc:
+            raise self._strategy_owner_error(
+                503,
+                "DEPENDENCY_UNAVAILABLE",
+                "Canonical strategy registry readback is unavailable",
+                str(exc) or "strategy_store_unavailable",
+            ) from exc
+
+        if not isinstance(raw, dict):
+            raise self._strategy_owner_error(
+                503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry payload", "strategy_store_unavailable",
+            )
+        raw_items = raw.get("items")
+        total = raw.get("total")
+        next_page_token = raw.get("next_page_token")
+        if (
+            not isinstance(raw_items, list)
+            or not isinstance(total, int)
+            or isinstance(total, bool)
+            or total < 0
+            or (next_page_token is not None and not isinstance(next_page_token, str))
         ):
-            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry count payload", "strategy_store_unavailable")
-        return {str(k): int(v) for k, v in raw.items()}
+            raise self._strategy_owner_error(
+                503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry payload", "strategy_store_unavailable",
+            )
+        validated_items: List[Dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                raise self._strategy_owner_error(
+                    503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry entry", "strategy_store_unavailable",
+                )
+            sid = str(item.get("strategy_id") or "").strip()
+            ver_id = str(item.get("current_spec_version_id") or item.get("strategy_spec_registry_id") or "").strip()
+            semver = str(item.get("current_spec_version") or "").strip()
+            if not sid or not ver_id or not semver:
+                raise self._strategy_owner_error(
+                    503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry entry", "strategy_store_unavailable",
+                )
+            meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            item_tenant = str(item.get("tenant_id") or meta.get("tenant_id") or "").strip()
+            if item_tenant and item_tenant not in {caller_tenant, "*", "__builtin__"}:
+                raise self._strategy_owner_error(
+                    403,
+                    "FORBIDDEN",
+                    "Strategy reference is outside the caller tenant audience",
+                    "strategy_audience_mismatch",
+                )
+            row = dict(item)
+            resolved_tenant = item_tenant or caller_tenant
+            row["tenant_id"] = resolved_tenant
+            obj_ref = row.get("object_ref")
+            if isinstance(obj_ref, dict) and not obj_ref.get("tenant_id"):
+                row["object_ref"] = {**obj_ref, "tenant_id": resolved_tenant}
+            validated_items.append(row)
+        raw_state_counts = raw.get("state_counts")
+        validated_state_counts: Optional[Dict[str, int]] = None
+        if (
+            isinstance(raw_state_counts, dict)
+            and raw_state_counts
+            and all(
+                isinstance(k, str)
+                and k.strip()
+                and isinstance(v, int)
+                and not isinstance(v, bool)
+                and v >= 0
+                for k, v in raw_state_counts.items()
+            )
+        ):
+            validated_state_counts = {
+                str(k).strip(): int(v) for k, v in raw_state_counts.items()
+            }
+        return {
+            "items": validated_items,
+            "total": total,
+            "next_page_token": next_page_token,
+            "state_counts": validated_state_counts,
+        }
 
     def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
         sid = str(strategy_id).strip() if strategy_id is not None else ""
         from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
 
-        if not sid:
-            return cached_owner_call(
-                ("rks_canonical_strategy_specs", id(self), selected_tenant.get()),
-                lambda: self._fetch_canonical_strategy_specs_uncached(""),
-            )
-        return self._fetch_canonical_strategy_specs_uncached(sid)
+        key = (
+            ("rks_canonical_strategy_specs", id(self), selected_tenant.get())
+            if not sid
+            else ("rks_canonical_strategy_specs", id(self), selected_tenant.get(), sid)
+        )
+        return cached_owner_call(
+            key,
+            lambda: self._fetch_canonical_strategy_specs_uncached(sid),
+        )
 
-    def _fetch_canonical_strategy_specs_uncached(self, sid: str) -> List[Dict[str, Any]]:
+    def _fetch_canonical_strategy_specs_uncached(self, sid: str = "") -> List[Dict[str, Any]]:
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
         from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
@@ -2426,7 +3055,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             state = entry.get("artifact_state") or inner.get("lifecycle_state") or meta.get("lifecycle_state") or meta.get("state") or meta.get("status") or "draft"
             title = inner.get("title") or meta.get("title") or meta.get("name") or entry_sid
             risk = meta.get("risk") or inner.get("risk") or eval_summary.get("risk_level") or (inner.get("governance") or {}).get("risk_level") or (meta.get("governance") or {}).get("risk_level")
-            merged_meta = {**inner_meta, **meta}
+            merged_meta = {**inner_meta, **{k: v for k, v in meta.items() if v is not None or k not in inner_meta}}
+            if isinstance(inner_meta.get("traits"), dict) and isinstance(meta.get("traits"), dict):
+                merged_meta["traits"] = {
+                    **meta["traits"],
+                    **{k: v for k, v in inner_meta["traits"].items() if v is not None},
+                }
             ver_dict: Dict[str, Any] = {
                 **inner, "strategy_id": entry_sid, "tenant_id": entry_tenant or caller_tenant,
                 "strategy_spec_registry_id": reg_id, "spec_version_id": reg_id,

@@ -219,7 +219,7 @@ async def registry_error_handler(request: Request, exc: RegistryError):
 
 
 _REGISTRY_WRITE_ROLES = ("operator", "registry-writer", "admin")
-_REGISTRY_READ_ROLES = _REGISTRY_WRITE_ROLES + ("registry-reader",)
+_REGISTRY_READ_ROLES = _REGISTRY_WRITE_ROLES + ("registry-reader", "viewer", "view_only")
 
 
 def _registry_auth_env() -> dict[str, str]:
@@ -398,7 +398,8 @@ def _authenticate_registry_read(authorization: Optional[str]) -> AuthContext:
     Reviewer finding 1: every read route (GET/list) was reachable
     anonymously — a cross-tenant caller (or no caller at all) could read any
     entry. Reads require the same verified-identity bar as writes, plus a
-    broader role allowlist (``registry-reader``) for read-only integrations.
+    broader role allowlist (``registry-reader``, ``viewer``, ``view_only``)
+    for read-only integrations and BFF read principals.
     """
     return _authenticate_registry(authorization, required_roles=_REGISTRY_READ_ROLES)
 
@@ -1584,7 +1585,12 @@ def read_lineage_graph(
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
-    view: Optional[Literal["persona_binding", "persona_binding_counts"]] = None,
+    view: Optional[Literal["persona_binding", "persona_binding_counts", "strategy_summary_page"]] = None,
+    state: Optional[str] = None,
+    exclude_state: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
@@ -1602,6 +1608,26 @@ def list_all_strategy_spec_entries(
         except ValueError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return JSONResponse(counts)
+    if view == "strategy_summary_page":
+        ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+        wanted_artifact_state = artifact_state.value if artifact_state is not None else None
+        try:
+            page_payload = get_registry_service().strategy_spec_summary_page(
+                visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+                artifact_type=ArtifactType.STRATEGY_SPEC.value,
+                artifact_state=wanted_artifact_state,
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if msg.startswith("Invalid page_token") or "exclude_state" in msg:
+                raise HTTPException(status_code=400, detail=msg) from exc
+            raise HTTPException(status_code=503, detail=msg) from exc
+        return JSONResponse(page_payload)
     return _filter_strategy_spec_views(None, authorization, x_tenant_id, artifact_state)
 
 

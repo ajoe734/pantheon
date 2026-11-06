@@ -45,6 +45,9 @@ READERS = {
     "AGORA_PROJECTOR_SERVICE_JWT": ("pantheon-dev-agora-projector-reader", "source_ingest_reader"),
     # Preview worker -> Training API only: training-service role, no owner/decide roles.
     "TRAINING_SESSION_WORKER_TOKEN": ("training-session-preview-worker", "training-service"),
+    # Research retrain executor -> Training API only: training-service role. The
+    # subject is the X-Pantheon-Service the executor sends; no decide/persona.admin/approval role.
+    "RESEARCH_TRAINING_SERVICE_TOKEN": ("research-orchestrator", "training-service"),
     # Persona precondition/CAS owner roles + Governance decision read; no decide/revoke/promotion roles.
     "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN": (
         "pantheon-dev-training-session-persona-authority", ("persona.admin", "approval_reader")),
@@ -52,6 +55,13 @@ READERS = {
 WRITERS = {
     "DISTILLATION_REGISTRY_SERVICE_TOKEN": (
         "pantheon-dev-distillation-registry-writer",
+        "registry-writer",
+        "pantheon:dev-owner-write",
+    ),
+    # Research retrain executor -> Registry mutate (candidate child only); owner-write
+    # scope like the distillation writer. registry-writer cannot advance or approve.
+    "RESEARCH_REGISTRY_SERVICE_TOKEN": (
+        "pantheon-dev-research-registry-writer",
         "registry-writer",
         "pantheon:dev-owner-write",
     ),
@@ -101,6 +111,7 @@ CONSUMER_FILES = {
         "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",
         "TRAINING_SESSION_WORKER_TOKEN",
     ),
+    "research-orchestrator-svc": ("RESEARCH_REGISTRY_SERVICE_TOKEN", "RESEARCH_TRAINING_SERVICE_TOKEN"),
     "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),

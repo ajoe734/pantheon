@@ -46,6 +46,10 @@ VM = "pantheon-dev-deploy"
 FE_STORE = Path("/var/www/pantheon-dev-fe-releases")
 FE_LINK = Path("/var/www/pantheon-dev-fe")
 OUTER_SCHEMA = "pantheon.dev-release-artifact-baseline.v1"
+# v2 adds ONLY stack_baseline (whole-stack image ids); the sealed three-image bundle is unchanged.
+OUTER_SCHEMA_V2 = "pantheon.dev-release-artifact-baseline.v2"
+OUTER_KEYS = ("schema_version", "environment", "project_id", "vm", "identity", "capture_lease_id", "captured_at", "image_bundle", "image_bundle_sha256", "frontend", "compose_sha256", "baseline_nonsecret_config")
+MIXED_MARKER = "PANTHEON_ARTIFACT_STACK_MIXED_V1 "
 CAPTURED_FE = "candidate-frontend-captured.json"
 CANDIDATE_SCHEMA = "pantheon.dev-candidate-image-admission.v2"
 DOCKERFILES = dict(zip(a.SERVICES, ("services/control-plane/bff/Dockerfile", "services/control-plane/bff/Dockerfile", "services/telemetry/Dockerfile")))
@@ -677,8 +681,12 @@ def _load(args, identity, manifest_path):
     if hashlib.sha256(raw).hexdigest() != args.manifest_sha256:
         raise a.ArtifactError("outer manifest bytes mismatch")
     outer = a._json(raw)
-    a._keys(outer, ("schema_version", "environment", "project_id", "vm", "identity", "capture_lease_id", "captured_at", "image_bundle", "image_bundle_sha256", "frontend", "compose_sha256", "baseline_nonsecret_config"), "outer manifest")
-    if (outer["schema_version"] != OUTER_SCHEMA or outer["environment"] != "dev" or
+    if isinstance(outer, dict) and outer.get("schema_version") == OUTER_SCHEMA_V2:
+        a._keys(outer, (*OUTER_KEYS, "stack_baseline"), "outer manifest")
+        a.validate_stack(outer["stack_baseline"], bundle=outer["image_bundle"], source_sha=args.previous_backend_sha)
+    else:
+        a._keys(outer, OUTER_KEYS, "outer manifest")
+    if (outer["schema_version"] not in (OUTER_SCHEMA, OUTER_SCHEMA_V2) or outer["environment"] != "dev" or
         outer["project_id"] != PROJECT or outer["vm"] != VM or outer["identity"] != identity):
         raise a.ArtifactError("outer manifest scope mismatch")
     a._match(outer["compose_sha256"], a.DIGEST, "baseline Compose digest")
@@ -693,6 +701,18 @@ def _load(args, identity, manifest_path):
     except (ValueError, TypeError, AttributeError):
         raise a.ArtifactError("invalid capture provenance") from None
     return outer, raw
+
+
+def resolve_scope(requested, command, return_final, outer):
+    """Whole-stack scope applies only to baseline compensation, never roundtrip/final."""
+    if requested not in ("auto", "images", "stack"):
+        raise a.ArtifactError("invalid restore scope")
+    has_stack = outer["schema_version"] == OUTER_SCHEMA_V2
+    if requested == "stack" and not (command == "restore" and not return_final and has_stack):
+        raise a.ArtifactError("whole-stack scope requires a baseline restore and a v2 baseline")
+    if requested == "auto":
+        return "stack" if command == "restore" and not return_final and has_stack else "images"
+    return requested
 
 
 def run(args, *, docker, http, barrier):
@@ -717,16 +737,19 @@ def run(args, *, docker, http, barrier):
             raise a.ArtifactError("capture already sealed; use verify with its trusted digest")
         bundle = a.capture_images(docker=docker, archive_root=images, source_sha=args.previous_backend_sha,
                                   check_lease=barrier.check)
+        stack = a.capture_stack(docker=docker, source_sha=args.previous_backend_sha, check_lease=barrier.check)
+        a.validate_stack(stack, bundle=bundle, source_sha=args.previous_backend_sha)
         a.verify_frontend(frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
         if _owners(docker) != owners_before: raise a.ArtifactError("protected owners changed during capture")
         if _config(docker) != config_before: raise a.ArtifactError("baseline configuration changed during capture")
         if _compose_bytes(args.compose_file, args.previous_backend_sha) != compose:
             raise a.ArtifactError("Compose changed during capture")
         bundle_raw = a.manifest_bytes(bundle)
-        outer = {"schema_version": OUTER_SCHEMA, "environment": "dev", "project_id": PROJECT, "vm": VM,
+        outer = {"schema_version": OUTER_SCHEMA_V2, "environment": "dev", "project_id": PROJECT, "vm": VM,
                  "identity": identity, "capture_lease_id": lease_id, "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                  "image_bundle": bundle, "image_bundle_sha256": hashlib.sha256(bundle_raw).hexdigest(),
-                 "frontend": frontend, "compose_sha256": compose_digest, "baseline_nonsecret_config": config_before}
+                 "frontend": frontend, "compose_sha256": compose_digest, "baseline_nonsecret_config": config_before,
+                 "stack_baseline": stack}
         raw = a.manifest_bytes(outer)
         barrier.check()
         _publish(folder / "baseline-compose.yml", compose)
@@ -738,6 +761,7 @@ def run(args, *, docker, http, barrier):
     if args.command == "seal-candidate":
         return _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, http, barrier)
     is_restore = args.command in ("restore", "restore-final")
+    scope = resolve_scope(getattr(args, "scope", "auto"), args.command, return_final, outer)
     if not return_final:
         if compose_digest != outer["compose_sha256"] or a._file_digest(folder / "baseline-compose.yml")[0] != compose_digest:
             raise a.ArtifactError("baseline Compose bytes mismatch")
@@ -783,9 +807,11 @@ def run(args, *, docker, http, barrier):
         # injection prevents ambient values from filling a baseline absence;
         # exact post-recreate equality remains mandatory, never inferred.
         os.environ.update({key: value or "" for key, value in outer["baseline_nonsecret_config"].items()})
-        a.restore_images(bundle_raw, expected_sha256=bundle_sha, expected_source_sha=target_sha,
+        restored = a.restore_images(bundle_raw, expected_sha256=bundle_sha, expected_source_sha=target_sha,
                          archive_root=images, compose_files=compose_files, docker=cas,
-                         check_lease=cas.check, environment="dev")
+                         check_lease=cas.check, environment="dev",
+                         stack=outer["stack_baseline"] if scope == "stack" else None)
+        stack_readback = restored.get("stack")
     observed = {service: a._current(docker, service)["image_id"] for service in a.SERVICES}
     if any(observed[service] != target_images[service] for service in a.SERVICES):
         raise a.ArtifactError("image readback differs despite any equal source SHA")
@@ -799,18 +825,22 @@ def run(args, *, docker, http, barrier):
     if args.command == "verify" and return_final:
         _publish(fe_seal, a.manifest_bytes(target_frontend))
         barrier.check()
-    return {"schema_version": "pantheon.dev-artifact-readback.v1", "operation": args.command,
+    result = {"schema_version": "pantheon.dev-artifact-readback.v1", "operation": args.command,
             "manifest_sha256": hashlib.sha256(raw).hexdigest(), "identity": identity,
             "pre_restore_source_observations": sorted(cas.source_observations) if is_restore else [],
             "image_readback_verified": True, "images": observed, "frontend": target_frontend,
             "baseline_nonsecret_config_verified": True,
             "protected_owners_unchanged": True, "owners": owners_after, "public": public}
+    if scope == "stack":
+        result["stack"] = stack_readback
+    return result
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("capture", "seal-candidate", "verify", "restore", "restore-final"))
     parser.add_argument("--target", choices=("baseline", "final", "candidate"), default="baseline")
+    parser.add_argument("--scope", choices=("auto", "images", "stack"), default="auto")
     for name in ("environment", "project-id", "vm", "candidate-id", "run-id", "attempt", "controller-sha",
                  "candidate-backend-sha", "candidate-frontend-sha", "previous-backend-sha", "previous-frontend-sha", "bff-url", "fe-url"):
         parser.add_argument("--" + name, required=True)
@@ -842,6 +872,10 @@ def main(argv=None):
     except Exception as error:
         # HTTP bodies, credentials and subprocess stderr are not diagnostics.
         record = a.failure_record(error, stage)
+        if isinstance(error, a.StackError) and error.services:
+            # Service names only (validated), never exception text or diagnostics.
+            kind = "mixed" if isinstance(error, a.StackMixedError) else "missing-image" if isinstance(error, a.StackImageMissing) else "stack"
+            print(MIXED_MARKER + json.dumps({"kind": kind, "services": list(error.services)}, sort_keys=True), flush=True)
         print(json.dumps(record, sort_keys=True), file=__import__("sys").stderr)
         return record["exit_code"]
 

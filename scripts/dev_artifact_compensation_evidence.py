@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import stat
 import subprocess
@@ -30,7 +31,11 @@ except ImportError:
     import dev_candidate_receipt as candidate
 
 PREFIX = b"PANTHEON_ARTIFACT_READBACK_V1 "
+MIXED_PREFIX = b"PANTHEON_ARTIFACT_STACK_MIXED_V1 "
+SCOPES = ("auto", "images", "stack")
+SERVICE_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,62}")
 ENV_PREFIX = "PANTHEON_DEV_ARTIFACT_"
+STACK_BASELINE_SCHEMA = "pantheon.dev-release-artifact-baseline.v2"
 PROVENANCES = ("runner-local", "actions-download")
 OWNERS = ("governance", "registry", "deployment", "runtime-manager",
           "deployment-outbox-consumer", "capital", "dev-paper-principal-issuer")
@@ -207,8 +212,16 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
         operation = env[ENV_PREFIX + "OPERATION"]
     if operation == "restore-final" and fe_seal is None:
         raise capture.CaptureError("candidate frontend seal is missing")
+    requested_scope = env.get(ENV_PREFIX + "SCOPE") or "auto"
+    if requested_scope not in SCOPES:
+        raise capture.CaptureError("compensation scope must be auto, images or stack")
+    stack_capable = operation == "restore" and not is_final and baseline.get("schema_version") == STACK_BASELINE_SCHEMA
+    if requested_scope == "stack" and not stack_capable:
+        raise capture.CaptureError("whole-stack compensation requires a baseline restore and a v2 baseline")
+    scope = "stack" if requested_scope == "stack" or (requested_scope == "auto" and stack_capable) else "images"
     exports = {ENV_PREFIX + key.upper(): value for key, value in identity.items()}
     exports.update({ENV_PREFIX + "OPERATION": operation,
+                    ENV_PREFIX + "SCOPE": scope,
                     ENV_PREFIX + "TARGET": target,
                     ENV_PREFIX + "EVIDENCE_PROVENANCE": provenance,
                     ENV_PREFIX + "DRIVER_PATH": str(controller / capture.IMPLEMENTATIONS[0]),
@@ -286,9 +299,13 @@ def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
     is_restore = operation in ("restore", "restore-final")
     if operation != evidence["exports"][ENV_PREFIX + "OPERATION"]:
         raise capture.CaptureError("readback operation differs from validated admission")
+    scope = evidence["exports"].get(ENV_PREFIX + "SCOPE", "images")
     capture.exact_keys(value, ("schema_version", "operation", "manifest_sha256", "identity",
                               "pre_restore_source_observations", "image_readback_verified", "images", "frontend",
-                              "baseline_nonsecret_config_verified", "protected_owners_unchanged", "owners", "public"))
+                              "baseline_nonsecret_config_verified", "protected_owners_unchanged", "owners", "public",
+                              *(("stack",) if scope == "stack" else ())))
+    if scope == "stack":
+        validate_stack_readback(value["stack"], baseline)
     if (value["schema_version"] != "pantheon.dev-artifact-readback.v1" or value["operation"] != operation or
             value["identity"] != identity or
             value["manifest_sha256"] != evidence["exports"][ENV_PREFIX + "MANIFEST_SHA256"]):
@@ -361,6 +378,58 @@ def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
     return value
 
 
+def validate_stack_readback(stack: dict, baseline: dict) -> None:
+    """Every recorded service must list its baseline and observed image, equal."""
+    capture.exact_keys(stack, ("scope", "services", "candidate_only_stopped"))
+    expected = baseline["stack_baseline"]["services"]
+    if stack["scope"] != "stack" or not isinstance(stack["services"], dict) or set(stack["services"]) != set(expected):
+        raise capture.CaptureError("stack readback does not cover every recorded service")
+    for service, row in stack["services"].items():
+        capture.exact_keys(row, ("baseline_image_id", "observed_image_id"))
+        if row["baseline_image_id"] != expected[service]["image_id"] or row["observed_image_id"] != expected[service]["image_id"]:
+            raise capture.CaptureError("stack readback is not the exact baseline image for every service")
+    stopped = stack["candidate_only_stopped"]
+    if (not isinstance(stopped, list) or stopped != sorted(set(stopped)) or len(stopped) > 128 or
+            any(not isinstance(name, str) or not SERVICE_NAME.fullmatch(name) or name in expected for name in stopped)):
+        raise capture.CaptureError("stack readback candidate-only services are invalid")
+
+
+def mixed_summary(input_log: Path, summary_path: Path | None = None) -> str | None:
+    """Turn a driver 'mixed stack' marker into an operator-visible summary.
+
+    Only validated service names are printed; the line never carries diagnostics.
+    """
+    try:
+        lines = private_bytes(input_log, limit=32 * 1024 * 1024).splitlines()
+    except (OSError, capture.CaptureError):
+        return None
+    for line in reversed(lines):
+        if not line.startswith(MIXED_PREFIX):
+            continue
+        try:
+            value = json.loads(line[len(MIXED_PREFIX):], object_pairs_hook=capture.unique_object)
+            capture.exact_keys(value, ("kind", "services"))
+            services = value["services"]
+            if (value["kind"] not in ("mixed", "missing-image", "stack") or not isinstance(services, list) or
+                    not 0 < len(services) <= 128 or
+                    any(not isinstance(n, str) or not SERVICE_NAME.fullmatch(n) for n in services)):
+                raise ValueError
+        except (ValueError, TypeError, capture.CaptureError):
+            continue
+        if value["kind"] == "missing-image":
+            text = ("Dev compensation NOT proven: a recorded baseline image is missing for service(s): "
+                    + ", ".join(services))
+        else:
+            text = ("Dev compensation FAILED: the stack is mixed (not restored to the baseline) for service(s): "
+                    + ", ".join(services))
+        print("::error::" + text, file=sys.stderr)
+        if summary_path is not None:
+            with open(summary_path, "a", encoding="utf-8") as handle:
+                handle.write("## Dev compensation failed\n\n" + text + "\n")
+        return text
+    return None
+
+
 def readback(env: dict[str, str], provenance: str, input_log: Path, output: Path, operation: str) -> dict:
     evidence = load_evidence(env, provenance)
     lines = private_bytes(input_log, limit=4 * 1024 * 1024).splitlines()
@@ -427,10 +496,14 @@ def main(argv=None) -> int:
     read.add_argument("--input-log", type=Path, required=True)
     read.add_argument("--output", type=Path, required=True)
     read.add_argument("--operation", choices=("verify", "restore", "restore-final"), required=True)
+    mixed = commands.add_parser("mixed-summary")
+    mixed.add_argument("--input-log", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         env = dict(os.environ)
-        if args.command == "prepare":
+        if args.command == "mixed-summary":
+            mixed_summary(args.input_log, Path(env["GITHUB_STEP_SUMMARY"]) if env.get("GITHUB_STEP_SUMMARY") else None)
+        elif args.command == "prepare":
             prepare(env, args.provenance, args.output_env)
         else:
             readback(env, args.provenance or env.get(ENV_PREFIX + "EVIDENCE_PROVENANCE", ""),
