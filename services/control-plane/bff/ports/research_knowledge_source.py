@@ -61,7 +61,7 @@ except ImportError:  # pragma: no cover
 
 
 EVIDENCE_OWNER_PAGE_SIZE = 200
-EVIDENCE_OWNER_READ_TIMEOUT_SECONDS = 2.0
+EVIDENCE_OWNER_READ_TIMEOUT_SECONDS = 4.0
 
 
 def evidence_owner_read_timeout_seconds() -> float:

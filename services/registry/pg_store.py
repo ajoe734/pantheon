@@ -1090,6 +1090,7 @@ def _strategy_summary_leaf_paths() -> list[tuple[str, ...]]:
         + [spec + ("market_scope", k) for k in STRATEGY_SUMMARY_MARKET_KEYS]
         + [spec + ("execution_profile", k) for k in STRATEGY_SUMMARY_EXEC_KEYS]
         + [spec_meta + (k,) for k in STRATEGY_SUMMARY_INNER_META_KEYS]
+        + [("evaluation_summary", k) for k in STRATEGY_ARTIFACT_EVAL_KEYS]
     )
 
 
@@ -1117,6 +1118,7 @@ def strategy_spec_summary_rows_from_columns(rows) -> list[dict]:
     i_spec_mkt = i_spec_gov + len(STRATEGY_SUMMARY_GOV_KEYS)
     i_spec_exec = i_spec_mkt + len(STRATEGY_SUMMARY_MARKET_KEYS)
     i_inner = i_spec_exec + len(STRATEGY_SUMMARY_EXEC_KEYS)
+    i_eval = i_inner + len(STRATEGY_SUMMARY_INNER_META_KEYS)
     out: list[dict] = []
     for r in rows:
         def val(i):
@@ -1148,6 +1150,9 @@ def strategy_spec_summary_rows_from_columns(rows) -> list[dict]:
             if r[n + 9] == "object":
                 spec["metadata"] = pick(STRATEGY_SUMMARY_INNER_META_KEYS, i_inner)
             meta["strategy_spec"] = spec
+        eval_summary = pick(STRATEGY_ARTIFACT_EVAL_KEYS, i_eval)
+        if eval_summary:
+            row["evaluation_summary"] = eval_summary
         row["metadata"] = meta
         out.append(row)
     return out
