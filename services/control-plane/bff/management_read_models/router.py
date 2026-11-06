@@ -73,12 +73,39 @@ def _get_management_cockpit_read_timeout() -> Optional[float]:
 # (governance.service.human_inbox_surface_timeout_seconds, at most 1.0 s) so the
 # generic 0.6 s default can never discard contributors that already finished.
 _HUMAN_INBOX_ROUTE_MARGIN_SECONDS = 1.5
+_EVIDENCE_ROUTE_MARGIN_SECONDS = 0.5
 
 
 def _get_human_inbox_read_timeout() -> float:
     from ..governance.service import human_inbox_surface_timeout_seconds
 
+    if not os.getenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "").strip():
+        raw_mgmt = os.getenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "").strip()
+        if raw_mgmt:
+            try:
+                return max(0.05, float(raw_mgmt))
+            except ValueError:
+                pass
     return float(human_inbox_surface_timeout_seconds()) + _HUMAN_INBOX_ROUTE_MARGIN_SECONDS
+
+
+def _get_management_evidence_read_timeout() -> float:
+    raw = os.getenv("PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            pass
+    if not os.getenv("PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS", "").strip():
+        raw_mgmt = os.getenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "").strip()
+        if raw_mgmt:
+            try:
+                return max(0.05, float(raw_mgmt))
+            except ValueError:
+                pass
+    from ..ports.research_knowledge_source import evidence_owner_read_timeout_seconds
+
+    return float(evidence_owner_read_timeout_seconds()) + _EVIDENCE_ROUTE_MARGIN_SECONDS
 
 
 @contextlib.contextmanager
@@ -107,14 +134,15 @@ def _get_evidence_degraded_payload(
     *,
     page_size: int = 20,
     snapshot_at: Optional[str] = None,
+    reason: str = "read_timeout",
 ) -> Dict[str, Any]:
     from .service import _management_evidence_degraded_payload
-    payload = _management_evidence_degraded_payload(page_size=page_size, snapshot_at=snapshot_at)
-    if isinstance(payload, dict) and "meta" in payload and isinstance(payload["meta"], dict):
-        surfaces = payload["meta"].get("surfaces")
-        if isinstance(surfaces, dict) and "management_evidence" in surfaces and isinstance(surfaces["management_evidence"], dict):
-            surfaces["management_evidence"]["reason"] = "read_timeout"
-    return payload
+
+    return _management_evidence_degraded_payload(
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+        reason=reason,
+    )
 
 
 _COCKPIT_DEGRADED_REASONS = {
@@ -1979,7 +2007,10 @@ def create_management_router(
 
         if run_management_read is not None:
             try:
-                return await run_management_read(_do_read)
+                return await run_management_read(
+                    _do_read,
+                    timeout_seconds=_get_management_evidence_read_timeout(),
+                )
             except Exception as e:
                 if type(e).__name__ == "ManagementValidationError" or isinstance(e, ValueError):
                     field = getattr(e, "field", None)
@@ -1992,7 +2023,19 @@ def create_management_router(
                         reason,
                         precondition_failed=field,
                     )
-                return svc.get_evidence_degraded_payload(page_size=page_size, snapshot_at=snap)
+                exc_name = type(e).__name__
+                if exc_name == "ManagementReadTimeout":
+                    reason = "read_timeout"
+                elif exc_name == "ManagementReadSaturated":
+                    reason = "read_capacity_saturated"
+                else:
+                    reason = "read_error"
+                    logging.getLogger(__name__).warning("bff.management_evidence read failed: %s", exc_name)
+                return svc.get_evidence_degraded_payload(
+                    page_size=page_size,
+                    snapshot_at=snap,
+                    reason=reason,
+                )
 
         try:
             return _do_read()
@@ -2018,11 +2061,33 @@ def create_management_router(
         """BFF: one evidence item, read through the owner item route."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        snap = _now()
 
         def _do_read():
             return svc.get_evidence_item(ref_id, identity=identity)
 
-        result = await run_management_read(_do_read) if run_management_read is not None else _do_read()
+        if run_management_read is not None:
+            try:
+                result = await run_management_read(
+                    _do_read,
+                    timeout_seconds=_get_management_evidence_read_timeout(),
+                )
+            except Exception as e:
+                exc_name = type(e).__name__
+                if exc_name == "ManagementReadTimeout":
+                    reason = "read_timeout"
+                elif exc_name == "ManagementReadSaturated":
+                    reason = "read_capacity_saturated"
+                else:
+                    reason = "read_error"
+                    logging.getLogger(__name__).warning("bff.management_evidence_detail read failed: %s", exc_name)
+                return svc.get_evidence_degraded_payload(
+                    page_size=1,
+                    snapshot_at=snap,
+                    reason=reason,
+                )
+        else:
+            result = _do_read()
         if result is None:
             raise _err(404, ErrorCode.RESOURCE_NOT_FOUND, "Evidence not found", f"No evidence item {ref_id}")
         return result
