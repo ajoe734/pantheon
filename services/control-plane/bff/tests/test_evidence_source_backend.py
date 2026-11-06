@@ -232,7 +232,7 @@ def test_real_owner_518_bounded_reads_and_page2_succeed_across_610ms_latency_win
     monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", JWT_SECRET)
     repo = _build_hosted_518_repo()
     # 0.62s exceeds the old 0.60s generic fallback budget that caused 3/10 Dev reads
-    # to fail at 610-612 ms, while staying well within the 2.0s owner / 2.5s route budget.
+    # to fail at 610-612 ms, while staying well within the 4.0s owner / 4.5s route budget.
     server = _RealHttpOwnerServer(repo, latency_seconds=0.62)
     try:
         token = encode_jwt_hs256(
@@ -488,7 +488,7 @@ def test_evidence_route_timeout_budget_outlasts_owner_read_bound(monkeypatch: py
     monkeypatch.delenv("PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", raising=False)
-    assert _get_management_evidence_read_timeout() == pytest.approx(2.5)
+    assert _get_management_evidence_read_timeout() == pytest.approx(4.5)
 
 
 def test_human_inbox_read_timeout_helper_preserved_under_generic_management_timeout(
@@ -504,3 +504,111 @@ def test_human_inbox_read_timeout_helper_preserved_under_generic_management_time
     monkeypatch.setenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.6")
     assert _get_human_inbox_read_timeout() == pytest.approx(human_inbox_surface_timeout_seconds() + 1.5)
 
+
+def _evidence_headers() -> Dict[str, str]:
+    token = encode_jwt_hs256(
+        {"sub": "op-dev", "roles": ["operator", "admin"], "tenant_id": TENANT_DEV, "exp": int(time.time()) + 600},
+        secret=JWT_SECRET,
+    )
+    return {"Authorization": f"Bearer {token}", "X-Tenant-Id": TENANT_DEV}
+
+
+def test_evidence_owner_bound_is_four_seconds_and_env_overrides_still_win(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.control_plane.bff.ports.research_knowledge_source import evidence_owner_read_timeout_seconds
+    from services.control_plane.bff.management_read_models import router as mgmt_router
+
+    for name in (
+        "PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert evidence_owner_read_timeout_seconds() == pytest.approx(4.0)
+    assert _get_management_evidence_read_timeout() == pytest.approx(
+        evidence_owner_read_timeout_seconds() + mgmt_router._EVIDENCE_ROUTE_MARGIN_SECONDS
+    )
+    monkeypatch.setenv("PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS", "1.5")
+    assert evidence_owner_read_timeout_seconds() == pytest.approx(1.5)
+    assert _get_management_evidence_read_timeout() == pytest.approx(2.0)
+    monkeypatch.setenv("PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS", "3.25")
+    assert _get_management_evidence_read_timeout() == pytest.approx(3.25)
+
+
+def test_global_management_default_and_human_inbox_budget_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
+    from services.control_plane.bff.management_read_models import router as mgmt_router
+
+    for name in (
+        "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert mgmt_router._get_human_inbox_read_timeout() == pytest.approx(
+        float(human_inbox_surface_timeout_seconds()) + 1.5
+    )
+    assert float(human_inbox_surface_timeout_seconds()) <= 1.0
+
+
+def test_real_owner_answering_after_three_seconds_is_ok_on_list_and_page_two(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", JWT_SECRET)
+    for name in (
+        "PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    repo = _build_hosted_518_repo()
+    server = _RealHttpOwnerServer(repo, latency_seconds=3.0)
+    try:
+        ks = DefaultResearchKnowledgeSourcePort(source_ingest_service_url=server.base_url)
+        app = _build_bounded_bff_app(create_read_surface_ports(research_knowledge_source=ks))
+        headers = _evidence_headers()
+        with TestClient(app) as client:
+            p1 = client.get("/bff/management/evidence?page_size=20", headers=headers)
+            p2 = client.get("/bff/management/evidence?page_size=20&page_token=20", headers=headers)
+        for resp, token in ((p1, "20"), (p2, "40")):
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["meta"]["surfaces"]["management_evidence"]["status"] == "ok"
+            assert body["meta"]["surfaces"]["evidence_refs"]["status"] == "ok"
+            assert len(body["data"]["items"]) == 20
+            assert body["page_info"] == {"next_page_token": token, "total": 518, "page_size": 20}
+            assert body["data"]["summary"]["total_evidence"] == 518
+            assert body["data"]["summary"]["verified_count"] == 518
+            assert body["data"]["summary"]["by_source_type"] == {"official_reference": 510, "source_record": 8}
+    finally:
+        server.close()
+
+
+def test_hung_owner_is_unavailable_inside_route_budget_with_null_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", JWT_SECRET)
+    for name in (
+        "PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    server = _RealHttpOwnerServer(_build_hosted_518_repo(), latency_seconds=12.0)
+    try:
+        ks = DefaultResearchKnowledgeSourcePort(source_ingest_service_url=server.base_url)
+        app = _build_bounded_bff_app(create_read_surface_ports(research_knowledge_source=ks))
+        with TestClient(app) as client:
+            started = time.monotonic()
+            resp = client.get("/bff/management/evidence?page_size=20", headers=_evidence_headers())
+            elapsed = time.monotonic() - started
+        assert resp.status_code == 200, resp.text
+        assert elapsed < _get_management_evidence_read_timeout() + 1.0, elapsed
+        body = resp.json()
+        assert body["data"]["items"] == []
+        assert body["meta"]["surfaces"]["management_evidence"]["status"] == "unavailable"
+        assert body["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
+        summary = body["data"]["summary"]
+        assert summary["total_evidence"] is None
+        assert summary["verified_count"] is None
+        assert summary["by_source_type"] is None
+    finally:
+        server.close()
