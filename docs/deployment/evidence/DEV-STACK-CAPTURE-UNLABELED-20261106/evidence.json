@@ -13,5 +13,14 @@
   "commands": [
     "python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py -q -rs"
   ],
-  "result": "367 passed, 1 skipped (FE digest helper/Node not present), exit 0"
+  "result": "367 passed, 1 skipped (FE digest helper/Node not present), exit 0",
+  "import_purity_followup": {
+    "problem": "module-level skipif ran `docker version` at import; restore-chain subprocess pickle.load imported the module with a recording docker stub on PATH",
+    "fix": "probe is lazy inside test body (pytest.skip); test_importing_module_makes_no_docker_call asserts a recording docker on PATH is never invoked at import",
+    "local_results": {
+      "scripts/test_dev_release_artifacts.py + scripts/test_dev_release_artifact_driver.py": "368 passed, 1 skipped (before merge of lazy probe)",
+      "docker-tagged tests after merge": "3 passed",
+      "scripts/test_deploy_nonprod_artifact_restore.py": "6 failed/68 passed locally; chain tests fail at dev_remote_guarded_exec.py:76 (sandbox transport condition, pre-existing); authoritative proof is Persona provisioning owner contracts check on the new PR #6988 head"
+    }
+  }
 }
