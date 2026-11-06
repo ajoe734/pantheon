@@ -3244,7 +3244,7 @@ def test_market_refresh_runs_under_held_lease_before_any_stack_mutation() -> Non
 
     text = steps[refresh]["run"]
     # Existing refresh-only path under the pinned wrapper; no second lease or implementation.
-    assert text.count('"${controller}/scripts/run_with_dev_environment_lease.sh"') == 2
+    assert text.count('"${controller}/scripts/run_with_dev_environment_lease.sh" \\\n  bash "${deploy_script}"') == 2
     assert text.count('bash "${deploy_script}"') == 2
     assert '--refresh-only --output "${outcome_dir}/refresh.json"' in text
     assert '--refresh-only --preflight-only --output "${outcome_dir}/preflight.json"' in text
