@@ -3,8 +3,8 @@
   "root_cause": "Postgres strategy_summary_page SQL projection (pg_store._strategy_summary_leaf_paths) omitted evaluation_summary.risk_level; the in-memory twin storage.strategy_spec_summary_row already carried it. BFF risk fallback then hit normalize_risk_level unknown -> medium.",
   "fix": "services/registry/pg_store.py: added (evaluation_summary, risk_level) leaf to the summary projection and assembled it in strategy_spec_summary_rows_from_columns. Same bounded leaf approach as strategy_artifact_select_sql; no full metadata decoded. normalize_risk_level fallback untouched.",
   "tests": {
-    "added": "services/control-plane/bff/tests/test_strategy_list_risk_truth.py (real persona row shape: empty risk fields, governance.risk_profile only, evaluation_summary.risk_level=low; owner summary view + Postgres column assembly + BFF route). Fails without the pg_store change, passes with it. A row with no risk_level still yields the existing medium fallback.",
-    "regression_run": "registry/test_service.py, test_strategy_list_latency.py, test_strategy_list_default_view.py, test_strategy_metrics_truth.py, new test: 125 passed, 1 skipped",
+    "added": "services/control-plane/bff/tests/test_strategy_list_default_view.py (appended; moved from a standalone file to stay inside the artifact contract) (real persona row shape: empty risk fields, governance.risk_profile only, evaluation_summary.risk_level=low; owner summary view + Postgres column assembly + BFF route). Fails without the pg_store change, passes with it. A row with no risk_level still yields the existing medium fallback.",
+    "regression_run": "registry/test_service.py, test_strategy_list_latency.py, test_strategy_list_default_view.py, test_strategy_metrics_truth.py: 125 passed, 1 skipped",
     "weakened_or_changed_assertions": "none"
   },
   "hosted_verification": "not performed here; left to operator acceptance task"
