@@ -830,6 +830,88 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertIsNone(new["fees"])
         self.assertIn("fees", new["coverage"]["missing_refs"])
 
+    def test_retained_paper_fill_events_deduplicates_reversal_and_filters_scope(self) -> None:
+        old_ep, new_ep, other_ep = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+        base = {
+            "tenant_id": "tenant-a",
+            "persona_id": "persona-a",
+            "instrument_id": "2317.TWSE",
+            "runtime_id": "rt-c98e4223",
+            "binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+        }
+        self.store.project_event({
+            **base,
+            "event_id": "fill-1",
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": old_ep,
+            "created_at": "2026-10-30T01:02:11Z",
+            "metrics": {"fill_quantity": -1.0, "fill_price": 245.5},
+            "metadata": {
+                "symbol": "2317.TWSE",
+                "currency": "TWD",
+                "broker": "tw-paper-sim",
+                "ledger_fill_count": 1,
+            },
+        })
+        self.store.project_event({
+            **base,
+            "event_id": "snap-1",
+            "event_type": "position_snapshot",
+            "trade_episode_id": old_ep,
+            "created_at": "2026-10-30T01:02:12Z",
+            "metrics": {"position_qty": -1.0, "price": 245.5, "cash": 100245.5},
+        })
+        # Reversal fill is appended to both old_ep and new_ep inside TradeEpisodeProjectionStore.
+        self.store.project_event({
+            **base,
+            "event_id": "fill-2-reversal",
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": new_ep,
+            "created_at": "2026-10-31T01:02:27Z",
+            "metrics": {"fill_quantity": 2.0, "fill_price": 251.0},
+            "metadata": {
+                "symbol": "2317.TWSE",
+                "currency": "TWD",
+                "broker": "tw-paper-sim",
+                "ledger_fill_count": 2,
+                "reversal": {
+                    "closed_episode_id": old_ep,
+                    "close_quantity": 1.0,
+                    "opened_episode_id": new_ep,
+                    "open_quantity": 1.0,
+                },
+            },
+        })
+        # Unrelated runtime/binding event
+        self.store.project_event({
+            "tenant_id": "tenant-a",
+            "persona_id": "persona-a",
+            "instrument_id": "2330.TWSE",
+            "runtime_id": "rt-other",
+            "binding_id": "rb-other",
+            "event_id": "fill-other",
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": other_ep,
+            "created_at": "2026-10-31T01:05:00Z",
+            "metrics": {"fill_quantity": -1.0, "fill_price": 2370.0},
+            "metadata": {"symbol": "2330.TWSE", "ledger_fill_count": 1},
+        })
+
+        retained = self.store.retained_paper_fill_events(
+            tenant_id="tenant-a",
+            runtime_id="rt-c98e4223",
+            binding_id="rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+        )
+        self.assertEqual([ev["event_id"] for ev in retained], ["fill-1", "fill-2-reversal"])
+        self.assertEqual(
+            self.store.retained_paper_fill_events(
+                tenant_id="tenant-b",
+                runtime_id="rt-c98e4223",
+                binding_id="rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+            ),
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

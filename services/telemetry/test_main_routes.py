@@ -1059,6 +1059,248 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(proj["status"], "open")
         self.assertEqual(proj["instrument_id"], "SPY")
 
+    def test_startup_backfill_through_main_build_service_with_hosted_shaped_files(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        hosted_cases = [
+            {
+                "runtime_id": "rt-535a82a3",
+                "binding_id": "rb-a1c3ada3d5894d57bc2e012f337753be",
+                "symbol": "2330.TWSE",
+                "fills": [
+                    (1, -1.0, 2370.0),
+                    (2, -1.0, 2330.0),
+                    (3, -1.0, 2295.0),
+                    (4, -1.0, 2260.0),
+                    (5, -1.0, 2240.0),
+                ],
+                "mark": 2240.0,
+                "qty": -5.0,
+                "expected_avg": 2299.0,
+                "expected_unrealized": 295.0,
+                "expected_realized": 0.0,
+            },
+            {
+                "runtime_id": "rt-8b0d8649",
+                "binding_id": "rb-fd733d7c192f45898bbe0e90c8555878",
+                "symbol": "0050.TWSE",
+                "fills": [
+                    (1, -1.0, 104.95),
+                    (2, -1.0, 104.1),
+                    (3, -1.0, 100.6),
+                    (4, -1.0, 99.85),
+                    (5, -1.0, 97.15),
+                ],
+                "mark": 97.15,
+                "qty": -5.0,
+                "expected_avg": 101.33,
+                "expected_unrealized": 20.9,
+                "expected_realized": 0.0,
+            },
+            {
+                "runtime_id": "rt-c98e4223",
+                "binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+                "symbol": "2317.TWSE",
+                "fills": [
+                    (1, -1.0, 245.5),
+                    (2, 1.0, 251.0),
+                    (3, -1.0, 245.5),
+                    (4, -1.0, 240.0),
+                    (5, -1.0, 235.0),
+                ],
+                "mark": 235.0,
+                "qty": -3.0,
+                "expected_avg": 240.166667,
+                "expected_unrealized": 15.5,
+                "expected_realized": -5.5,
+            },
+            {
+                "runtime_id": "rt-342d76ff",
+                "binding_id": "rb-73cafebb37064f039751a7a64d0cf04c",
+                "symbol": "2330.TW",
+                "fills": [
+                    (1, -1.0, 2240.0),
+                ],
+                "mark": 2240.0,
+                "qty": -1.0,
+                "expected_avg": 2240.0,
+                "expected_unrealized": 0.0,
+                "expected_realized": 0.0,
+            },
+        ]
+
+        summaries_payload = {}
+        episode_events_payload = {}
+        for case in hosted_cases:
+            rt_id = case["runtime_id"]
+            b_id = case["binding_id"]
+            sym = case["symbol"]
+            base_sym = sym.split(".", 1)[0]
+            summaries_payload[json.dumps([_TENANT_ID, rt_id], separators=(",", ":"))] = {
+                "id": rt_id,
+                "runtime_id": rt_id,
+                "tenant_id": _TENANT_ID,
+                "binding_id": b_id,
+                "runtime_binding_id": b_id,
+                "deployment_stage": "paper",
+                "environment": "paper",
+                "state": "active",
+                "last_event_at": "2026-11-05T02:00:00Z",
+                "_binding_latest_event_at": "2026-11-05T02:00:00Z",
+                "ledger_fill_count": len(case["fills"]),
+                "executed_trade_count": len(case["fills"]),
+                "_positions_by_symbol": {sym: case["qty"]},
+                "_marks_by_symbol": {
+                    sym: {
+                        "as_of": "2026-11-04T00:00:00Z",
+                        "observed_at": "2026-11-04T06:00:00Z",
+                        "lineage": {
+                            "source_ids": [f"tw-official:tw_price_daily:TWSE:{base_sym}:test"],
+                            "connector_ids": ["tw-twse-tpex-official-market"],
+                        },
+                        "binding_id": b_id,
+                        "price": case["mark"],
+                        "source_ref": f"source-ingest://snapshots/mss-{rt_id}",
+                    }
+                },
+                "positions": [
+                    {
+                        "symbol": sym,
+                        "quantity": case["qty"],
+                        "mark_price": case["mark"],
+                        "mark_as_of": "2026-11-04T00:00:00Z",
+                        "mark_source_ref": f"source-ingest://snapshots/mss-{rt_id}",
+                        "market_value": round(case["qty"] * case["mark"], 6),
+                    }
+                ],
+                "position_count": 1,
+            }
+            ep_id = f"ep-{rt_id}"
+            episode_events_payload[ep_id] = [
+                {
+                    "event_id": f"evt-{rt_id}-fill-{lfc}",
+                    "event_type": "paper_fill_simulated",
+                    "created_at": f"2026-11-05T01:00:0{lfc}Z",
+                    "tenant_id": _TENANT_ID,
+                    "runtime_id": rt_id,
+                    "binding_id": b_id,
+                    "trade_episode_id": ep_id,
+                    "metrics": {
+                        "fill_quantity": qty,
+                        "fill_price": price,
+                        "action": "BUY" if qty > 0 else "SELL",
+                        "submitted_to_broker": True,
+                    },
+                    "metadata": {
+                        "symbol": sym,
+                        "currency": "TWD",
+                        "broker": "tw-paper-sim",
+                        "ledger_fill_count": lfc,
+                    },
+                }
+                for lfc, qty, price in case["fills"]
+            ]
+
+        # Also add a gapped runtime (ledger_fill_count=3, only fills 1 and 3 retained)
+        summaries_payload[json.dumps([_TENANT_ID, "rt-gap-startup"], separators=(",", ":"))] = {
+            "id": "rt-gap-startup",
+            "runtime_id": "rt-gap-startup",
+            "tenant_id": _TENANT_ID,
+            "binding_id": "rb-gap-startup",
+            "runtime_binding_id": "rb-gap-startup",
+            "deployment_stage": "paper",
+            "environment": "paper",
+            "state": "active",
+            "last_event_at": "2026-11-05T05:30:00Z",
+            "_binding_latest_event_at": "2026-11-05T05:30:00Z",
+            "ledger_fill_count": 3,
+            "executed_trade_count": 3,
+            "_positions_by_symbol": {"2330.TWSE": -2.0},
+            "_marks_by_symbol": {
+                "2330.TWSE": {
+                    "as_of": "2026-11-05T05:30:00Z",
+                    "binding_id": "rb-gap-startup",
+                    "price": 2240.0,
+                    "source_ref": "source-ingest://snapshots/mss-gap",
+                }
+            },
+            "positions": [{"symbol": "2330.TWSE", "quantity": -2.0}],
+            "position_count": 1,
+        }
+        episode_events_payload["ep-gap-startup"] = [
+            {
+                "event_id": f"evt-gap-fill-{lfc}",
+                "event_type": "paper_fill_simulated",
+                "created_at": f"2026-11-05T01:00:0{lfc}Z",
+                "tenant_id": _TENANT_ID,
+                "runtime_id": "rt-gap-startup",
+                "binding_id": "rb-gap-startup",
+                "trade_episode_id": "ep-gap-startup",
+                "metrics": {"fill_quantity": -1.0, "fill_price": 2300.0},
+                "metadata": {
+                    "symbol": "2330.TWSE",
+                    "currency": "TWD",
+                    "broker": "tw-paper-sim",
+                    "ledger_fill_count": lfc,
+                },
+            }
+            for lfc in (1, 3)
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            summary_file = Path(tmp_dir) / "runtime_summaries.json"
+            ep_proj_file = Path(tmp_dir) / "trade_episode_projections.json"
+            ep_events_file = Path(tmp_dir) / "trade_episode_events.json"
+            summary_file.write_text(json.dumps(summaries_payload), encoding="utf-8")
+            ep_proj_file.write_text("{}", encoding="utf-8")
+            ep_events_file.write_text(json.dumps(episode_events_payload), encoding="utf-8")
+
+            env_overrides = {
+                "TELEMETRY_STORAGE_DIR": tmp_dir,
+                "TELEMETRY_RUNTIME_SUMMARY_STORE": str(summary_file),
+                "TELEMETRY_TRADE_EPISODE_PROJECTION_STORE": str(ep_proj_file),
+                "TELEMETRY_TRADE_EPISODE_EVENTS_STORE": str(ep_events_file),
+                "TELEMETRY_BUFFER_BACKEND": "memory",
+            }
+            orig_svc = _main._svc
+            try:
+                with patch.dict(os.environ, env_overrides):
+                    with self.assertLogs("services.telemetry.runtime_summary", level="WARNING") as cm:
+                        built_svc = _main._build_service()
+                    self.assertTrue(any("rt-gap-startup" in msg for msg in cm.output))
+                    _main._svc = built_svc
+
+                    for case in hosted_cases:
+                        resp = self.client.get(
+                            f"/api/telemetry/runtime-summaries/{case['runtime_id']}"
+                        )
+                        self.assertEqual(resp.status_code, 200)
+                        body = resp.get_json()
+                        row = body["positions"][0]
+                        self.assertEqual(row["average_price"], case["expected_avg"])
+                        self.assertEqual(row["unrealized_pnl"], case["expected_unrealized"])
+                        self.assertEqual(row["realized_pnl"], case["expected_realized"])
+                        self.assertEqual(row["currency"], "TWD")
+                        self.assertEqual(row["broker_id"], "tw-paper-sim")
+
+                    gap_resp = self.client.get("/api/telemetry/runtime-summaries/rt-gap-startup")
+                    self.assertEqual(gap_resp.status_code, 200)
+                    gap_row = gap_resp.get_json()["positions"][0]
+                    self.assertNotIn("average_price", gap_row)
+                    self.assertNotIn("realized_pnl", gap_row)
+                    self.assertNotIn("unrealized_pnl", gap_row)
+                    self.assertEqual(gap_row["currency"], "TWD")
+                    self.assertEqual(gap_row["broker_id"], "tw-paper-sim")
+
+                    # Second start changes nothing
+                    after_first = summary_file.read_text(encoding="utf-8")
+                    _main._build_service()
+                    self.assertEqual(summary_file.read_text(encoding="utf-8"), after_first)
+            finally:
+                _main._svc = orig_svc
+
 
 class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
     """Reproduces and resolves the lineage read restart gap across telemetry restarts.
