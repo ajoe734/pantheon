@@ -470,7 +470,13 @@ def test_human_inbox_timeout_returns_degraded_envelope_without_hanging() -> None
         time.sleep(0.6)
         return [{"item_id": "should-not-appear", "item_type": "DeploymentPlan"}]
 
-    with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+    with patch.dict(
+        os.environ,
+        {
+            "PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS": "0.05",
+            "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05",
+        },
+    ):
         with _isolated_bff() as (client, store):
             store.list_governance_review_queue_items = slow_list_governance_review_queue_items
             started = time.monotonic()
@@ -481,9 +487,12 @@ def test_human_inbox_timeout_returns_degraded_envelope_without_hanging() -> None
     assert elapsed < 0.4, f"human-inbox route took {elapsed:.3f}s; it should degrade near the timeout budget"
     payload = response.json()
     assert payload["data"]["items"] == []
+    assert payload["meta"]["partial"] is True
     surface = payload["meta"]["surfaces"]["human_inbox"]
     assert surface["status"] == "degraded"
-    assert surface["reason"] == "read_timeout"
+    gov_surface = payload["meta"]["surfaces"]["governance_review_queue"]
+    assert gov_surface["status"] == "degraded"
+    assert gov_surface["reason"] == "read_timeout"
 
 
 @contextmanager

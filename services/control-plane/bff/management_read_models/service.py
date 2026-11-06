@@ -72,6 +72,8 @@ from services.control_plane.bff.models import (
 )
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError, wait as _futures_wait
 from services.control_plane.bff.core.owner_reads import (
+    authorization,
+    management_read_deadline,
     remaining_management_read_budget,
     request_read_scope,
     submit_owner_read,
@@ -164,6 +166,18 @@ class _HumanInboxContributorDegraded(Exception):
         super().__init__(reason)
         self.key = key
         self.reason = reason
+
+
+def _is_contributor_timeout_error(exc: BaseException) -> bool:
+    if isinstance(exc, (TimeoutError, _FuturesTimeoutError)):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, BaseException) and reason is not exc and _is_contributor_timeout_error(reason):
+        return True
+    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+    if isinstance(cause, BaseException) and cause is not exc and _is_contributor_timeout_error(cause):
+        return True
+    return False
 
 
 def _is_unpatched_port_method(store: Any, name: str) -> bool:
@@ -4111,10 +4125,36 @@ class ManagementService:
 
         scope = request_read_scope()
         scope.__enter__()
+        contributor_deadline = time.monotonic() + float(timeout_budget)
+        outer_deadline = management_read_deadline.get()
+        if outer_deadline is not None:
+            contributor_deadline = min(outer_deadline, contributor_deadline)
+        deadline_token = management_read_deadline.set(contributor_deadline)
         futures: Dict[Any, str] = {}
         warm_futures: List[Any] = []
         try:
             raw_store = getattr(store, "_target", store)
+            raw_dict = getattr(raw_store, "__dict__", {})
+            review_queue = getattr(getattr(raw_store, "ooda_management", None), "review_queue", None)
+            if (
+                review_queue is not None
+                and "list_governance_review_queue_items" not in raw_dict
+            ):
+                for warm_name, attr_name in (
+                    ("list_approval_decisions", "_approval_decisions_reader"),
+                    ("list_deployment_plans", "_deployment_plans_reader"),
+                    ("list_evolution_decisions", "_evolution_decisions_reader"),
+                ):
+                    if warm_name not in raw_dict:
+                        reader_fn = getattr(review_queue, attr_name, None)
+                        if callable(reader_fn):
+                            _warm = submit_owner_read(
+                                _HEALTH_OWNER_READ_EXECUTOR,
+                                reader_fn,
+                                warm_key=warm_name,
+                            )
+                            if _warm is not None:
+                                warm_futures.append(_warm)
             if (
                 _is_unpatched_port_method(raw_store, "list_approval_queue_items")
                 and _is_unpatched_port_method(raw_store, "list_governance_review_queue_items")
@@ -4139,6 +4179,9 @@ class ManagementService:
                 except _HumanInboxContributorDegraded as exc:
                     failures[key] = self._human_inbox_timeout_surface(key, snap, exc.reason)
                 except BaseException as exc:
+                    if _is_contributor_timeout_error(exc):
+                        failures[key] = self._human_inbox_timeout_surface(key, snap, "read_timeout")
+                        return
                     log.warning("bff.human_inbox contributor %s failed: %s", key, type(exc).__name__)
                     failures[key] = {
                         "status": "degraded",
@@ -4157,6 +4200,7 @@ class ManagementService:
                 fut.add_done_callback(_discard_late_management_read_result_sync)
                 failures.setdefault(key, self._human_inbox_timeout_surface(key, snap))
         finally:
+            management_read_deadline.reset(deadline_token)
             for wf in warm_futures:
                 if not wf.done():
                     wf.cancel()
@@ -4222,6 +4266,19 @@ class ManagementService:
             if not hasattr(store, "list_governance_review_queue_items"):
                 return _unavailable("Governance review queue has no readable source records.")
             records = store.list_governance_review_queue_items() or []
+            if (
+                _is_unpatched_port_method(store, "list_governance_review_queue_items")
+                and authorization.get() is not None
+                and hasattr(store, "dataset_source")
+            ):
+                try:
+                    plans_source = str(store.dataset_source("deployment_plans"))
+                except Exception:
+                    plans_source = "read_store"
+                if plans_source == "unavailable":
+                    if (remaining_management_read_budget() or 1.0) <= 0.0:
+                        raise TimeoutError("deployment_plans exceeded management read budget")
+                    raise RuntimeError("Deployment plan owner read unavailable")
             return [r for r in records if isinstance(r, dict)], {
                 "status": "ok", "source": "read_store", "snapshot_at": snap,
             }
