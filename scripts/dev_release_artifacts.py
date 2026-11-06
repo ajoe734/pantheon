@@ -25,7 +25,7 @@ SCHEMA = "pantheon.dev-bff-image-bundle.v1"
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}")
-IMAGE_FORMAT = '{"id":{{json .Id}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"repo_digests":{{json .RepoDigests}}}'
+IMAGE_FORMAT = '{"id":{{json .Id}},"revision":{{with index .Config "Labels"}}{{json (index . "org.opencontainers.image.revision")}}{{else}}null{{end}},"repo_digests":{{json .RepoDigests}}}'
 CONTAINER_FORMAT = '{"image_id":{{json .Image}},"status":{{json .State.Status}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
 BASELINE_PRINCIPAL_CONFIG = {
     "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
