@@ -22,7 +22,7 @@ Primary configuration:
 TRAINING_SESSION_AUTH_MODE=strict
 TRAINING_SESSION_JWT_SECRET=<secret>
 # or TRAINING_SESSION_JWKS_URI / TRAINING_SESSION_OIDC_DISCOVERY_URL
-TRAINING_SESSION_ALLOWED_CALLER_SERVICES=control-plane-bff,training-session-preview-worker
+TRAINING_SESSION_ALLOWED_CALLER_SERVICES=control-plane-bff,training-session-preview-worker,research-orchestrator
 TRAINING_SESSION_ALLOWED_ROLES=training-service
 TRAINING_SESSION_MFA_REQUIRED=true
 ```
@@ -217,3 +217,24 @@ functional health (`baseline_exempt_failures`, with `job_id` and `error_code`)
 but never set `degraded` and never make `/readyz` return `503`. A stored
 `preview_evaluation` failure whose `detail.job_id` refers to a baseline job is
 treated the same way. Every other preview mode and commit keep the rule above.
+
+## Approved-retrain evaluation (`purpose: "retrain"`)
+
+The research orchestrator's retrain executor calls this API as the
+`research-orchestrator` service with a `training-service` principal. It opens a
+session, queues one `baseline` preview job and, after one bounded control
+change, one candidate preview job. Both jobs are queued with
+`"purpose": "retrain"` and run through the normal
+`POST /api/training/preview-jobs/{job_id}/run` route and real vectorbt
+evaluation. The executor never calls the session `complete` route or the replay
+`commit`/`discard` routes; the session stays `active`.
+
+A job queued with `purpose: "retrain"` records its result under the
+`retrain_evaluation` functional operation. A rejected retrain evaluation stays
+visible in `/readyz` details (`retrain_evaluation_failures`) but never degrades
+readiness. A rejected ordinary refresh evaluation still returns 503. A retrain
+evaluation does not open a Consultation request.
+
+A persona unknown to the Persona owner returns 404 from session creation, and a
+dataset that does not cover the artifact's symbols is a non-retryable
+`evaluation_admission_rejected` job failure.

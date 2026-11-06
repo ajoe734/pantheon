@@ -40,6 +40,7 @@ services:
       - dev-paper-persona-evaluator-tokens:/issued/persona-evaluator-agent
       - dev-paper-training-session-tokens:/issued/training-session-svc
       - dev-paper-training-worker-tokens:/issued/training-session-preview-worker
+      - dev-paper-research-tokens:/issued/research-orchestrator-svc
       - dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
@@ -544,6 +545,7 @@ services:
       TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE:-http://persona:8002/api/personas/{persona_id}/training-target}
       # Fail closed: teaching API verifier resolves from service-specific variable
       # or shared dev BFF JWT secret, ending empty when unset.
+      TRAINING_SESSION_ALLOWED_CALLER_SERVICES: ${TRAINING_SESSION_ALLOWED_CALLER_SERVICES:-control-plane-bff,training-session-preview-worker,research-orchestrator}
       TRAINING_SESSION_AUTH_MODE: ${TRAINING_SESSION_AUTH_MODE:-strict}
       TRAINING_SESSION_JWT_SECRET: ${TRAINING_SESSION_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       TRAINING_SESSION_JWT_ISSUER: ${TRAINING_SESSION_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-}}
@@ -756,8 +758,14 @@ services:
       PANTHEON_RESEARCH_JWT_SECRET: ${PANTHEON_RESEARCH_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       PANTHEON_RESEARCH_JWT_ISSUER: ${PANTHEON_RESEARCH_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}
       PANTHEON_RESEARCH_JWT_AUDIENCE: ${PANTHEON_RESEARCH_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}
+      # Retrain executor credentials: read at call time from the read-only dev-paper volume.
+      TRAINING_SESSION_URL: http://training-session-svc:8099
+      REGISTRY_URL: http://registry:8087
+      RESEARCH_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_REGISTRY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_REGISTRY_SERVICE_TOKEN}
+      RESEARCH_TRAINING_SERVICE_TOKEN_FILE: ${RESEARCH_TRAINING_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_TRAINING_SERVICE_TOKEN}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
+      - dev-paper-research-tokens:/run/pantheon-principals:ro
     ports:
       - "${RESEARCH_ORCHESTRATOR_PORT:-18101}:8101"
     depends_on:
@@ -3114,6 +3122,7 @@ volumes:
   dev-paper-persona-evaluator-tokens:
   dev-paper-training-session-tokens:
   dev-paper-training-worker-tokens:
+  dev-paper-research-tokens:
   dev-paper-agora-projector-tokens:
   broker-data:
   bff-data:

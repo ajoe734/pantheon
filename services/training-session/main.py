@@ -537,6 +537,7 @@ class QueuePreviewJobBody(BaseModel):
     requested_by: str = "operator"
     requested_at: Optional[str] = None
     terminalize_session: bool = False
+    purpose: Optional[str] = None
 
 
 class RunPreviewJobBody(BaseModel):
@@ -554,9 +555,16 @@ class ReplayDecisionBody(BaseModel):
 
 BASELINE_EVAL_MODE = "baseline"
 BASELINE_EVALUATION_OPERATION = "baseline_evaluation"
+# Approved-retrain evaluations (baseline and candidate) run for the Evolution
+# retrain executor, not for an operator session.  Their failures are recorded
+# under this operation so they stay visible without degrading readiness.
+RETRAIN_PURPOSE = "retrain"
+RETRAIN_EVALUATION_OPERATION = "retrain_evaluation"
 
 
-def _evaluation_operation(mode: Any) -> str:
+def _evaluation_operation(mode: Any, purpose: Any = None) -> str:
+    if str(purpose or "").lower() == RETRAIN_PURPOSE:
+        return RETRAIN_EVALUATION_OPERATION
     if str(mode or "").lower() == BASELINE_EVAL_MODE:
         return BASELINE_EVALUATION_OPERATION
     return "preview_evaluation"
@@ -638,6 +646,13 @@ def _is_completed_negative_preview(result: Dict[str, Any]) -> bool:
     return False
 
 
+def _is_retrain_evaluation_result(result: Dict[str, Any]) -> bool:
+    """Retrain evaluations are reported under their own operation, never degrading readiness."""
+    return isinstance(result, dict) and (
+        str(result.get("operation") or "").lower() == RETRAIN_EVALUATION_OPERATION
+    )
+
+
 def _is_baseline_evaluation_result(result: Dict[str, Any]) -> bool:
     """Baseline evaluations are reported but never degrade readiness."""
     if not isinstance(result, dict):
@@ -676,6 +691,8 @@ def _functional_health() -> Dict[str, Any]:
         if str(result.get("status") or "").lower() not in {"ok", "passed", "completed"}
         and not _is_completed_negative_preview(result)
     ]
+    retrain_failures = [result for result in failed if _is_retrain_evaluation_result(result)]
+    failed = [result for result in failed if not _is_retrain_evaluation_result(result)]
     exempt_failures = [result for result in failed if _is_baseline_evaluation_result(result)]
     failures = [result for result in failed if not _is_baseline_evaluation_result(result)]
     return {
@@ -685,6 +702,8 @@ def _functional_health() -> Dict[str, Any]:
         "failures": failures[-10:],
         "baseline_exempt_failure_count": len(exempt_failures),
         "baseline_exempt_failures": exempt_failures[-10:],
+        "retrain_evaluation_failure_count": len(retrain_failures),
+        "retrain_evaluation_failures": retrain_failures[-10:],
     }
 
 
@@ -804,6 +823,8 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
     except (ArtifactLoadError, StrategyArtifactValidationError) as exc:
         raise HTTPException(status_code=409, detail=f"persona model authority failed verification: {exc}") from exc
     except PersonaTargetError as exc:
+        if str(exc).endswith("returned HTTP 404"):
+            raise HTTPException(status_code=404, detail=f"persona not found: {body.persona_id}") from exc
         raise HTTPException(status_code=503, detail=f"persona model authority unavailable: {exc}") from exc
     session = _teaching_session_contract({
         "id": session_id,
@@ -1548,6 +1569,7 @@ def _run_preview_evaluation(
     worker_run_id: Optional[str] = None,
     attempt_count: Optional[int] = None,
     requested_by: str = "operator",
+    purpose: Optional[str] = None,
 ) -> Dict[str, Any]:
     trusted_now = _parse_utc_timestamp(timestamp, "evaluation timestamp")
     eval_id = eval_id or f"teval-{uuid.uuid4().hex[:12]}"
@@ -1757,7 +1779,9 @@ def _run_preview_evaluation(
     # Teaching policy determines whether advisory consultation is required (e.g. evaluation failed thresholds or explicit review mode).
     # When consultation_required=True, Teaching creates a ConsultRequest via TrainingConsultationClient and stores the receipt.
     # Teaching MUST NOT write a ConsultMemo (memo authority belongs to Consultation domain).
-    consultation_required = not is_baseline and (
+    # A retrain evaluation is machine-driven for the Evolution executor; a failed
+    # candidate is reported to it, not escalated to a human consultation.
+    consultation_required = not is_baseline and str(purpose or "").lower() != RETRAIN_PURPOSE and (
         validation_status == "failed"
         or mode in ("consultation_required", "review_required")
         or bool(session.get("consultation_required"))
@@ -2242,15 +2266,19 @@ def queue_preview_job(
     timestamp = utc_now()
     key = _idempotency_key(idempotency_key, x_idempotency_key)
     requested_by = _trusted_actor_id(body.requested_by)
+    purpose = str(body.purpose or "").strip().lower() or None
+    if purpose not in (None, RETRAIN_PURPOSE):
+        raise HTTPException(status_code=422, detail="unsupported preview job purpose")
     job_id = _preview_job_id(session_id, key)
-    request_hash = _stable_hash(
-        {
-            "session_id": session_id,
-            "mode": body.mode,
-            "requested_by": requested_by,
-            "terminalize_session": body.terminalize_session,
-        }
-    )
+    hash_payload = {
+        "session_id": session_id,
+        "mode": body.mode,
+        "requested_by": requested_by,
+        "terminalize_session": body.terminalize_session,
+    }
+    if purpose:
+        hash_payload["purpose"] = purpose
+    request_hash = _stable_hash(hash_payload)
     existing = store.get_preview_job(job_id)
     if existing is not None:
         _require_tenant_record(existing, "preview job not found")
@@ -2272,6 +2300,7 @@ def queue_preview_job(
             "requested_by": requested_by,
             "terminalize_session": body.terminalize_session,
             "request_hash": request_hash,
+            **({"purpose": purpose} if purpose else {}),
         },
         recorded_at=timestamp,
     )
@@ -2291,6 +2320,7 @@ def queue_preview_job(
         "retryable": True,
         "idempotency_key": key,
         "request_hash": request_hash,
+        **({"purpose": purpose} if purpose else {}),
         "admission_evidence": {
             "sequence": evidence["sequence"],
             "checksum": evidence["checksum"],
@@ -2417,7 +2447,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
     session_id = str(job.get("session_id") or "").strip()
     if job.get("status") == "failed":
         _record_functional_result(
-            _evaluation_operation(job.get("mode")),
+            _evaluation_operation(job.get("mode"), job.get("purpose")),
             status="failed",
             detail={
                 "job_id": job_id,
@@ -2453,6 +2483,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                 worker_run_id=worker_run_id,
                 attempt_count=int(job.get("attempt_count") or 0),
                 requested_by=str(job.get("requested_by") or "operator"),
+                purpose=job.get("purpose"),
             )
         except AuthorityValidationError as exc:
             preview = None
@@ -2460,7 +2491,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
             failure_reason = " ".join(message.split())[:300]
             retryable = message.startswith(
                 ("real vectorbt evaluation failed", "persona target authority unavailable")
-            )
+            ) and "does not cover the strategy artifact symbols" not in message
             failure_code = (
                 "evaluation_dependency_unavailable" if retryable else "evaluation_admission_rejected"
             )
@@ -2514,7 +2545,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
 
         failed_job = store.mutate_preview_job(job_id, fail)
         _record_functional_result(
-            _evaluation_operation(job.get("mode")),
+            _evaluation_operation(job.get("mode"), job.get("purpose")),
             status="failed",
             detail={
                 "job_id": job_id,
@@ -2554,7 +2585,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
 
     completed_job = store.mutate_preview_job(job_id, complete)
     _record_functional_result(
-        _evaluation_operation(job.get("mode")),
+        _evaluation_operation(job.get("mode"), job.get("purpose")),
         status="ok",
         detail={
             "job_id": job_id,
