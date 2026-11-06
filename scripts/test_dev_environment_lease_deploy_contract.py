@@ -3293,3 +3293,39 @@ def test_market_refresh_skips_for_refresh_bootstrap_and_non_paper_modes() -> Non
     assert not evaluate(False, False, False)  # modes that do not run the paper baseline
     # run_bounded_source_refresh input and its profile wiring are unchanged.
     assert "BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}" in workflow
+
+
+# --- Whole-stack compensation contract -------------------------------------
+
+def test_whole_stack_scope_is_forwarded_and_only_the_roundtrip_keeps_three_images() -> None:
+    workflow, deploy = _workflow(), DEPLOY.read_text(encoding="utf-8")
+    # The deploy shell forwards a validated scope and carries it to the remote.
+    assert '--scope "${artifact_scope}"' in deploy
+    assert "PANTHEON_DEV_ARTIFACT_SCOPE \\" in deploy
+    assert "mixed-summary" in deploy
+    # Only the roundtrip baseline restore pins the three-image scope.
+    assert workflow.count("PANTHEON_DEV_ARTIFACT_SCOPE: images") == 1
+    roundtrip = workflow.split("id: roundtrip_baseline_restore", 1)[1].split("- name:", 1)[0]
+    assert "PANTHEON_DEV_ARTIFACT_SCOPE: images" in roundtrip
+    for step in ("id: deploy_compensation", "id: compensation"):
+        assert "PANTHEON_DEV_ARTIFACT_SCOPE" not in workflow.split(step, 1)[1].split("\n      - name:", 1)[0]
+    compensation = workflow.split("id: compensation\n", 1)[1].split("- name:", 1)[0]
+    assert "timeout-minutes: 60" in compensation
+    # The shared compensation script bounds its deploy inside the 60 minute step.
+    assert '--deadline-seconds "${DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS:-1500}"' in (
+        SCRIPTS / "compensate_cross_repo_release.sh").read_text(encoding="utf-8")
+
+
+def test_prior_images_are_held_before_any_prune_and_compose_containers_survive_it() -> None:
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    prune = deploy.split("prune_dev_docker_storage_for_build() {", 1)[1].split("\n}\n", 1)[0]
+    # Every running image is tagged pantheon-protect/<service>:<id12> first; stale
+    # tags are removed only for images no container uses.
+    assert prune.index("protect_dev_compose_container_images_for_builder_prune") < prune.index("docker builder prune")
+    assert prune.index("protect_dev_compose_container_images_for_builder_prune") < prune.index("docker image prune -f")
+    keep = 'label!=com.docker.compose.project=pantheon'
+    assert f'docker container prune -f --filter "{keep}"' in prune
+    assert f'docker system prune -f --filter "{keep}"' in prune
+    # Pruning happens before the candidate build/mutation in the root flow.
+    flow = deploy[deploy.index("prune_dev_release_artifacts_for_build\n"):]
+    assert flow.index("prune_dev_docker_storage_for_build") < flow.index("compose", flow.index("prune_dev_docker_storage_for_build"))

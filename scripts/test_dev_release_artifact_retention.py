@@ -727,9 +727,12 @@ prune_dev_docker_storage_for_build
     assert res_opt_in.returncode == 0, res_opt_in.stderr
     calls_opt_in = [json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()]
     assert ["builder", "prune", "-f", "--keep-storage", "20GB"] in calls_opt_in
-    assert ["container", "prune", "-f"] in calls_opt_in
+    # Whole-stack compensation: Compose containers (incl. exited one-shot init
+    # containers) must survive the opt-in prune so their images stay in use.
+    keep_compose = "label!=com.docker.compose.project=pantheon"
+    assert ["container", "prune", "-f", "--filter", keep_compose] in calls_opt_in
     assert ["image", "prune", "-af"] in calls_opt_in
-    assert ["system", "prune", "-f"] in calls_opt_in
+    assert ["system", "prune", "-f", "--filter", keep_compose] in calls_opt_in
 
 
 def test_builder_prune_protects_untagged_compose_container_images_and_skips_when_unprotectable(

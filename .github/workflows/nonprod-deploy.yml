@@ -1996,9 +1996,12 @@ jobs:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
           DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
-          # A rollback is BFF-only and should remain bounded independently of
-          # the full root-build deadline.
-          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS || '1200' }}
+          # Compensation is bounded independently of the full root-build
+          # deadline. It restores the whole stack (3 sealed images with the
+          # existing 120 s wait, then every other recorded service) and then
+          # polls readback for at most 900 s; 1500 s keeps lease wait +
+          # deadline inside this 60 minute step.
+          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS || '1500' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -2760,6 +2763,9 @@ jobs:
           PANTHEON_DEV_ARTIFACT_FINAL_FE_SEAL_FILE: ${{ env.RELEASE_EVIDENCE_DIR }}/candidate/candidate-frontend.json
           PANTHEON_DEV_ARTIFACT_OPERATION: restore
           PANTHEON_DEV_ARTIFACT_TARGET: baseline
+          # The roundtrip keeps its three-image scope; only compensation
+          # restores the whole stack (scope auto = stack for a v2 baseline).
+          PANTHEON_DEV_ARTIFACT_SCOPE: images
           GITHUB_TOKEN: ${{ github.token }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
@@ -2990,6 +2996,7 @@ jobs:
 
       - name: Compensate rejected release to exact hosted baseline
         id: compensation
+        timeout-minutes: 60
         if: ${{ always() && (steps.frontend_release.outcome != 'success' || (steps.final_artifact_verify.conclusion != 'skipped' && steps.final_artifact_verify.outcome != 'success') || (steps.roundtrip_baseline_restore.conclusion != 'skipped' && steps.roundtrip_baseline_restore.outcome != 'success') || (steps.roundtrip_final_return.conclusion != 'skipped' && steps.roundtrip_final_return.outcome != 'success')) }}
         continue-on-error: true
         env:
@@ -3172,6 +3179,10 @@ jobs:
             echo "Frontend admission or switch failed; exact hosted baseline was restored." >&2
             exit 1
           fi
+          {
+            echo "## Exact FE/BFF rollback NOT proven"
+            echo "- the dev stack may be mixed (some services on the rejected candidate); the 'Dev compensation failed' section above names the services when the restore readback identified them"
+          } >> "${GITHUB_STEP_SUMMARY}"
           echo "Frontend admission or switch failed and exact rollback proof is absent." >&2
           exit 75
 
