@@ -3699,7 +3699,11 @@ class ManagementService:
 
         by_status = _management_count_by(runtime_rows, "status")
         by_stage = _management_count_by(runtime_rows, "deployment_stage")
-        by_baseline_status = _management_count_by(baseline_comparisons, "status")
+        by_baseline_status = _management_count_by(
+            baseline_comparisons
+            + [c for c in all_comparisons if c.get("status") == "not_required"],
+            "status",
+        )
         baseline_available_count = sum(
             1
             for comparison in baseline_comparisons

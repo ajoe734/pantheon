@@ -600,6 +600,10 @@ def test_baseline_not_required_for_all_paper_fleet_without_reports() -> None:
     card = next(c for c in data["cards"] if c["card_id"] == "baseline-comparison")
     assert card["details"]["baseline_required_count"] == 0
     assert card["details"]["missing_baseline_runtime_ids"] == []
+    expected = {"not_required": len(rows)}
+    assert len(rows) >= 4
+    assert summary["by_baseline_status"] == expected
+    assert card["details"]["by_baseline_status"] == expected
     for i in range(4):
         comparison = rows[f"r-{i}"]["baseline_comparison"]
         assert comparison["status"] == "not_required"
@@ -624,6 +628,9 @@ def test_baseline_mixed_fleet_covered_live_and_uncovered_paper_not_required() ->
     assert rows["r-1"]["baseline_comparison"]["status"] == "ok"
     assert rows["r-2"]["baseline_comparison"]["status"] == "not_required"
     assert body["meta"]["surfaces"]["paper_live_drift"]["status"] == "ok"
+    assert data["summary"]["by_baseline_status"] == {"ok": 1, "not_required": 1}
+    card = next(c for c in data["cards"] if c["card_id"] == "baseline-comparison")
+    assert card["details"]["by_baseline_status"] == {"ok": 1, "not_required": 1}
 
 
 def test_baseline_live_row_without_report_stays_missing_and_degraded() -> None:
@@ -639,6 +646,7 @@ def test_baseline_live_row_without_report_stays_missing_and_degraded() -> None:
     assert rows["r-1"]["baseline_comparison"]["status"] == "unavailable"
     assert rows["r-2"]["baseline_comparison"]["status"] == "not_required"
     assert body["meta"]["surfaces"]["paper_live_drift"]["status"] == "degraded"
+    assert data["summary"]["by_baseline_status"] == {"unavailable": 1, "not_required": 1}
 
 
 def test_baseline_partial_paper_coverage_stays_degraded() -> None:
