@@ -1,0 +1,25 @@
+{
+  "task_id": "BFF-PULSE-BASELINE-SCOPE-20261106",
+  "outcome": "shared_baseline_required_rule_implemented",
+  "rule": "live/canary rows always require baseline comparison; other rows require one only when at least one non-live row has an available report. Used by _trading_pulse_coverage_summary and the paper_live_drift surface via _trading_pulse_baseline_required_runtime_ids.",
+  "changes": [
+    "service.py: _trading_pulse_baseline_required_runtime_ids, _apply_trading_pulse_baseline_not_required (runs before row sort), baseline_required_count in summary/coverage/meta/baseline card, not_required added to _TRADING_PULSE_BASELINE_OPERATOR_ORDER (sorts last)",
+    "list_paper_live_drift_reports still skipped when no live/canary row exists; rankings response shape unchanged"
+  ],
+  "tests_added": [
+    "test_baseline_not_required_for_all_paper_fleet_without_reports",
+    "test_baseline_mixed_fleet_covered_live_and_uncovered_paper_not_required",
+    "test_baseline_live_row_without_report_stays_missing_and_degraded",
+    "test_baseline_partial_paper_coverage_stays_degraded"
+  ],
+  "verification": [
+    {
+      "command": "python -m pytest services/control-plane/bff/tests/test_bff_b3_trading_pulse.py test_management_read_models_router.py test_bff_management_cockpit.py test_bff_b6_management_nl_ask.py test_owner_read_wiring.py test_event_loop_owner_reads_guard.py -q",
+      "result": "134 passed"
+    },
+    {
+      "command": "python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -q",
+      "result": "39 passed"
+    }
+  ]
+}

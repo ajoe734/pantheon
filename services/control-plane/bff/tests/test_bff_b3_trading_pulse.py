@@ -570,3 +570,91 @@ def test_trading_pulse_drift_read_only_when_live_or_canary_row_exists() -> None:
     with_canary = _FleetStore([_binding(1, "active", stage="canary")], [], telemetry=[_telemetry(1)])
     ManagementService(read_store=with_canary).get_trading_pulse()
     assert with_canary.drift_calls == 1
+
+
+# --- BFF-PULSE-BASELINE-SCOPE-20261106 --------------------------------------
+def _drift(n):
+    return {
+        "runtime_id": f"r-{n}",
+        "threshold_evaluation": {"overall_status": "ok", "breached_metric_ids": []},
+        "drift_groups": [],
+    }
+
+
+def _pulse(store):
+    body = ManagementService(read_store=store).get_trading_pulse()
+    data = body["data"]
+    rows = {r["runtime_id"]: r for r in data["runtime_rows"]}
+    return body, data, rows
+
+
+def test_baseline_not_required_for_all_paper_fleet_without_reports() -> None:
+    store = _hosted_shaped_store()
+    body, data, rows = _pulse(store)
+    assert store.drift_calls == 0
+    summary = data["summary"]
+    assert summary["missing_baseline_runtime_ids"] == []
+    assert summary["baseline_required_count"] == 0
+    assert summary["coverage"]["baseline_required_count"] == 0
+    assert body["meta"]["coverage"]["baseline_required_count"] == 0
+    card = next(c for c in data["cards"] if c["card_id"] == "baseline-comparison")
+    assert card["details"]["baseline_required_count"] == 0
+    assert card["details"]["missing_baseline_runtime_ids"] == []
+    for i in range(4):
+        comparison = rows[f"r-{i}"]["baseline_comparison"]
+        assert comparison["status"] == "not_required"
+        assert comparison["threshold_evaluation"]["overall_status"] == "not_required"
+    assert {
+        r["runtime_id"]: r["baseline_comparison_status"] for r in data["rankings"]
+    }["r-0"] == "not_required"
+    assert body["meta"]["surfaces"]["paper_live_drift"]["status"] == "ok"
+    assert rows["r-0"]["row_health"]["status"] == "ok"
+
+
+def test_baseline_mixed_fleet_covered_live_and_uncovered_paper_not_required() -> None:
+    store = _FleetStore(
+        [_binding(1, "active", stage="live"), _binding(2, "active")],
+        [],
+        telemetry=[_telemetry(1), _telemetry(2)],
+        drift=[_drift(1)],
+    )
+    body, data, rows = _pulse(store)
+    assert data["summary"]["baseline_required_count"] == 1
+    assert data["summary"]["missing_baseline_runtime_ids"] == []
+    assert rows["r-1"]["baseline_comparison"]["status"] == "ok"
+    assert rows["r-2"]["baseline_comparison"]["status"] == "not_required"
+    assert body["meta"]["surfaces"]["paper_live_drift"]["status"] == "ok"
+
+
+def test_baseline_live_row_without_report_stays_missing_and_degraded() -> None:
+    store = _FleetStore(
+        [_binding(1, "active", stage="live"), _binding(2, "active")],
+        [],
+        telemetry=[_telemetry(1), _telemetry(2)],
+        drift=[],
+    )
+    body, data, rows = _pulse(store)
+    assert data["summary"]["baseline_required_count"] == 1
+    assert data["summary"]["missing_baseline_runtime_ids"] == ["r-1"]
+    assert rows["r-1"]["baseline_comparison"]["status"] == "unavailable"
+    assert rows["r-2"]["baseline_comparison"]["status"] == "not_required"
+    assert body["meta"]["surfaces"]["paper_live_drift"]["status"] == "degraded"
+
+
+def test_baseline_partial_paper_coverage_stays_degraded() -> None:
+    store = _FleetStore(
+        [_binding(1, "active", stage="live"), _binding(2, "active"), _binding(3, "active")],
+        [],
+        telemetry=[_telemetry(1), _telemetry(2), _telemetry(3)],
+        drift=[_drift(1), _drift(2)],
+    )
+    body, data, rows = _pulse(store)
+    assert data["summary"]["baseline_required_count"] == 3
+    assert data["summary"]["missing_baseline_runtime_ids"] == ["r-3"]
+    assert rows["r-3"]["baseline_comparison"]["status"] == "unavailable"
+    assert body["meta"]["surfaces"]["paper_live_drift"]["status"] == "degraded"
+    # not_required sorts after every status needing attention
+    from services.control_plane.bff.management_read_models import service as svc
+
+    order = svc._TRADING_PULSE_BASELINE_OPERATOR_ORDER
+    assert all(order["not_required"] > v for k, v in order.items() if k != "not_required")
