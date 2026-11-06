@@ -942,6 +942,7 @@ def test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filter
                 visible_tenants=visible,
                 artifact_type="strategy_spec",
                 state=qs["state"][0] if "state" in qs else None,
+                exclude_state=qs["exclude_state"][0] if "exclude_state" in qs else None,
                 persona_id=qs["persona_id"][0] if "persona_id" in qs else None,
                 page_token=qs["page_token"][0] if "page_token" in qs else None,
                 page_size=int(qs["page_size"][0]) if "page_size" in qs else 20,

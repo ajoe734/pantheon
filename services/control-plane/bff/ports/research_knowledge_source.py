@@ -402,6 +402,7 @@ class ResearchKnowledgeSourcePort:
         self,
         *,
         state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
@@ -2380,20 +2381,80 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         )
         return items
 
+    _STRATEGY_DTO_LIFECYCLE_MAP: Dict[str, str] = {
+        "draft": "draft",
+        "candidate": "review",
+        "review": "review",
+        "approved": "approved",
+        "active": "deployed",
+        "deployed": "deployed",
+        "paused": "paused",
+        "retired": "retired",
+        "archived": "retired",
+        "rejected": "retired",
+        "superseded": "retired",
+        "paper": "paper_running",
+        "paper_running": "paper_running",
+        "canary": "canary_running",
+        "canary_running": "canary_running",
+        "canary_authorized_not_started": "canary_authorized_not_started",
+        "live": "live_running",
+        "live_running": "live_running",
+        "needs_human_approval": "needs_human_approval",
+        "rollback_required": "rollback_required",
+        "stopped": "stopped",
+        "failed": "failed",
+        "provisioning": "provisioning",
+        "provisioning_failed": "failed",
+        "research_only": "research_only",
+        "consultable": "consultable",
+        "paper_owner": "paper_owner",
+        "live_owner": "live_owner",
+        "frozen": "frozen",
+        "suspended": "suspended",
+    }
+
+    _STRATEGY_DEFAULT_STATE_COUNT_KEYS: Tuple[str, ...] = (
+        "draft",
+        "review",
+        "approved",
+        "paper_running",
+        "canary_running",
+        "live_running",
+        "deployed",
+        "paused",
+        "retired",
+    )
+
     def list_strategy_specs_page(
         self,
         *,
         state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Optional[Dict[str, Any]]:
+        norm_state = str(state).strip().lower() if state and str(state).strip() else None
+        norm_exclude_state = (
+            str(exclude_state).strip().lower()
+            if exclude_state and str(exclude_state).strip()
+            else None
+        )
+        if norm_state and norm_exclude_state:
+            raise self._strategy_owner_error(
+                400,
+                "VALIDATION_ERROR",
+                "state and exclude_state cannot be combined",
+                "conflicting_state_filters",
+            )
         use_injected = self._has_injected_strategy_specs and not (
             os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")
         )
         if not use_injected:
             return self._fetch_canonical_strategy_specs_page(
                 state=state,
+                exclude_state=exclude_state,
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
@@ -2413,33 +2474,159 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 )
         if not self._strategy_specs:
             return None
-        items = self.list_strategy_specs(persona_id=persona_id)
-        if state and str(state).strip():
-            wanted_state = str(state).strip().lower()
-            _bff_state_map = {
-                "draft": "draft",
-                "candidate": "review",
-                "review": "review",
-                "approved": "approved",
-                "active": "deployed",
-                "deployed": "deployed",
-                "retired": "retired",
-            }
-            items = [
-                item
-                for item in items
+
+        effective_tenant: Optional[str] = None
+        try:
+            from services.control_plane.bff.core.owner_reads import selected_tenant
+
+            effective_tenant = str(selected_tenant.get() or "").strip() or None
+        except Exception:
+            effective_tenant = None
+
+        norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
+        state_counts: Optional[Dict[str, int]] = {
+            k: 0 for k in self._STRATEGY_DEFAULT_STATE_COUNT_KEYS
+        }
+        items: List[Dict[str, Any]] = []
+        for strategy_spec in self._strategy_specs.values():
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            strategy_id, selected_index, raw_current, candidate_count, version_count = selected
+            if effective_tenant is not None and (
+                not self._record_matches_tenant(
+                    strategy_spec, effective_tenant, include_tenant_agnostic=True
+                )
+                or not self._record_matches_tenant(
+                    raw_current, effective_tenant, include_tenant_agnostic=True
+                )
+            ):
+                continue
+            raw_meta = (
+                raw_current.get("metadata")
+                if isinstance(raw_current.get("metadata"), dict)
+                else {}
+            )
+            spec_meta = (
+                strategy_spec.get("metadata")
+                if isinstance(strategy_spec.get("metadata"), dict)
+                else {}
+            )
+            raw_lifecycle = (
+                str(
+                    raw_current.get("lifecycle_state")
+                    or raw_current.get("state")
+                    or raw_current.get("status")
+                    or strategy_spec.get("lifecycle_state")
+                    or strategy_spec.get("state")
+                    or strategy_spec.get("status")
+                    or raw_meta.get("lifecycle_state")
+                    or raw_meta.get("state")
+                    or raw_meta.get("status")
+                    or spec_meta.get("lifecycle_state")
+                    or spec_meta.get("state")
+                    or spec_meta.get("status")
+                    or "draft"
+                ).strip()
+                or "draft"
+            )
+            raw_clean = raw_lifecycle.lower()
+            dto_state = self._STRATEGY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
+            if state_counts is not None:
+                state_counts[dto_state] = state_counts.get(dto_state, 0) + 1
+
+            is_retired = raw_clean == "retired" or dto_state == "retired"
+            if norm_state != "retired" and is_retired:
+                continue
+            raw_persona_ids = (
+                raw_current.get("persona_ids") or strategy_spec.get("persona_ids") or []
+            )
+            persona_list = [str(value) for value in raw_persona_ids if str(value).strip()]
+            if norm_persona and norm_persona not in set(persona_list):
+                continue
+            if norm_state:
+                wanted_dto = self._STRATEGY_DTO_LIFECYCLE_MAP.get(norm_state, norm_state)
                 if (
-                    raw_st := str(
-                        self._kw05_lifecycle_state(
-                            item.get("state")
-                            or item.get("status")
-                            or item.get("lifecycle_state")
-                        )
-                        or "draft"
-                    ).lower()
-                ) == wanted_state
-                or _bff_state_map.get(raw_st, raw_st) == wanted_state
-            ]
+                    raw_clean != norm_state
+                    and dto_state != norm_state
+                    and dto_state != wanted_dto
+                ):
+                    continue
+            if norm_exclude_state:
+                if norm_exclude_state == "draft":
+                    if raw_clean in {"", "draft"}:
+                        continue
+                else:
+                    excluded_dto = self._STRATEGY_DTO_LIFECYCLE_MAP.get(
+                        norm_exclude_state, norm_exclude_state
+                    )
+                    if (
+                        raw_clean == norm_exclude_state
+                        or dto_state == norm_exclude_state
+                        or dto_state == excluded_dto
+                    ):
+                        continue
+
+            provenance = (
+                raw_current.get("provenance")
+                if isinstance(raw_current.get("provenance"), dict)
+                else {}
+            )
+            current_source_kind = str(
+                raw_current.get("source_kind")
+                or provenance.get("source_kind")
+                or strategy_spec.get("source_kind")
+                or ""
+            )
+            current_version = self._kw05_normalize_version_candidate(
+                strategy_spec,
+                raw_current,
+                strategy_id=strategy_id,
+                index=selected_index,
+                candidate_count=candidate_count,
+                include_detail_bundles=False,
+            )
+            item_dict: Dict[str, Any] = {
+                "object_ref": dict(current_version.get("object_ref") or {}),
+                "strategy_id": strategy_id,
+                "current_spec_version_id": current_version.get("spec_version_id"),
+                "current_spec_version": current_version.get("spec_version"),
+                "title": current_version.get("title"),
+                "lifecycle_state": raw_lifecycle,
+                "source_kind": current_source_kind,
+                "hypothesis_excerpt": self._kw05_hypothesis_excerpt(
+                    current_version.get("hypothesis")
+                ),
+                "version_count": version_count,
+                "last_modified_at": current_version.get("last_modified_at"),
+                "route_href": self._kw05_strategy_route_href(strategy_id),
+                "persona_ids": persona_list,
+                "governance": current_version.get("governance"),
+                "market_scope": current_version.get("market_scope"),
+                "execution_profile": current_version.get("execution_profile"),
+                "allowedActions": current_version.get("allowedActions"),
+                "risk": current_version.get("risk"),
+                "created_at": current_version.get("created_at"),
+                "tenant_id": current_version.get("tenant_id"),
+                "strategy_spec_registry_id": current_version.get(
+                    "strategy_spec_registry_id"
+                ),
+            }
+            if current_version.get("capital_pool_id"):
+                item_dict["capital_pool_id"] = current_version.get("capital_pool_id")
+            if current_version.get("metadata"):
+                item_dict["metadata"] = current_version.get("metadata")
+            items.append(item_dict)
+
+        items.sort(
+            key=lambda item: (
+                _naive_utc(_parse_rfc3339(item.get("last_modified_at"))),
+                str(item.get("strategy_id") or ""),
+            ),
+            reverse=True,
+        )
         total = len(items)
         sliced = items[offset : offset + page_size]
         next_token = str(offset + page_size) if (offset + page_size) < total else None
@@ -2447,6 +2634,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "items": sliced,
             "total": total,
             "next_page_token": next_token,
+            "state_counts": state_counts,
         }
 
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
@@ -2534,11 +2722,26 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         self,
         *,
         state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Dict[str, Any]:
         from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+
+        norm_state = str(state).strip().lower() if state and str(state).strip() else None
+        norm_exclude_state = (
+            str(exclude_state).strip().lower()
+            if exclude_state and str(exclude_state).strip()
+            else None
+        )
+        if norm_state and norm_exclude_state:
+            raise self._strategy_owner_error(
+                400,
+                "VALIDATION_ERROR",
+                "state and exclude_state cannot be combined",
+                "conflicting_state_filters",
+            )
 
         if page_token is not None and str(page_token).strip() != "":
             try:
@@ -2549,7 +2752,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     400, "VALIDATION_ERROR", "Invalid page_token", "invalid_page_token",
                 ) from exc
 
-        norm_state = str(state).strip().lower() if state and str(state).strip() else None
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
         norm_token = str(page_token).strip() if page_token is not None and str(page_token).strip() != "" else None
         return cached_owner_call(
@@ -2558,12 +2760,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 id(self),
                 selected_tenant.get(),
                 norm_state,
+                norm_exclude_state,
                 norm_persona,
                 norm_token,
                 int(page_size),
             ),
             lambda: self._fetch_canonical_strategy_specs_page_uncached(
                 state=norm_state,
+                exclude_state=norm_exclude_state,
                 persona_id=norm_persona,
                 page_token=norm_token,
                 page_size=int(page_size),
@@ -2574,6 +2778,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         self,
         *,
         state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
@@ -2596,6 +2801,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         ]
         if state:
             query_params.append(("state", state))
+        if exclude_state:
+            query_params.append(("exclude_state", exclude_state))
         if persona_id:
             query_params.append(("persona_id", persona_id))
         if page_token:
@@ -2610,6 +2817,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             )
         except urllib.error.HTTPError as exc:
             if exc.code == 400:
+                if state and exclude_state:
+                    raise self._strategy_owner_error(
+                        400,
+                        "VALIDATION_ERROR",
+                        "state and exclude_state cannot be combined",
+                        "conflicting_state_filters",
+                    ) from exc
                 raise self._strategy_owner_error(
                     400, "VALIDATION_ERROR", "Invalid page_token", "invalid_page_token",
                 ) from exc
@@ -2688,10 +2902,28 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if isinstance(obj_ref, dict) and not obj_ref.get("tenant_id"):
                 row["object_ref"] = {**obj_ref, "tenant_id": resolved_tenant}
             validated_items.append(row)
+        raw_state_counts = raw.get("state_counts")
+        validated_state_counts: Optional[Dict[str, int]] = None
+        if (
+            isinstance(raw_state_counts, dict)
+            and raw_state_counts
+            and all(
+                isinstance(k, str)
+                and k.strip()
+                and isinstance(v, int)
+                and not isinstance(v, bool)
+                and v >= 0
+                for k, v in raw_state_counts.items()
+            )
+        ):
+            validated_state_counts = {
+                str(k).strip(): int(v) for k, v in raw_state_counts.items()
+            }
         return {
             "items": validated_items,
             "total": total,
             "next_page_token": next_page_token,
+            "state_counts": validated_state_counts,
         }
 
     def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
