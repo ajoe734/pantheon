@@ -305,6 +305,7 @@ def default_read_surface_meta(
     *,
     snapshot_at: str,
     total: Optional[int] = None,
+    state_counts: Any = _UNSET,
 ) -> Dict[str, Any]:
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
@@ -314,6 +315,8 @@ def default_read_surface_meta(
     }
     if total is not None:
         meta["total"] = total
+    if state_counts is not _UNSET:
+        meta["state_counts"] = state_counts
     return meta
 
 
@@ -451,8 +454,16 @@ class StrategyRouteContext:
                     title = v.get("name") or v.get("title")
                     break
         title = title or strategy_id
-        lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
-        governance = (detail or {}).get("governance") if detail else summary.get("governance")
+        detail_dict = detail if isinstance(detail, dict) else {}
+        lifecycle_raw = (
+            detail_dict.get("lifecycle_state")
+            or detail_dict.get("state")
+            or detail_dict.get("status")
+            or summary.get("lifecycle_state")
+            or summary.get("state")
+            or summary.get("status")
+        )
+        governance = detail_dict.get("governance") if detail else summary.get("governance")
         if not isinstance(governance, dict):
             governance = summary.get("governance") if isinstance(summary.get("governance"), dict) else {}
         market_scope = (detail or {}).get("market_scope") if detail else summary.get("market_scope")

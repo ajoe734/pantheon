@@ -57,6 +57,66 @@ _DEFAULT_SEED_STORE_CLASS = StrategySpecSeedStore
 
 log = logging.getLogger(__name__)
 
+_STRATEGY_DTO_LIFECYCLE_MAP: Dict[str, str] = {
+    "draft": "draft",
+    "candidate": "review",
+    "review": "review",
+    "approved": "approved",
+    "active": "deployed",
+    "deployed": "deployed",
+    "paused": "paused",
+    "retired": "retired",
+    "archived": "retired",
+    "rejected": "retired",
+    "superseded": "retired",
+    "paper": "paper_running",
+    "paper_running": "paper_running",
+    "canary": "canary_running",
+    "canary_running": "canary_running",
+    "canary_authorized_not_started": "canary_authorized_not_started",
+    "live": "live_running",
+    "live_running": "live_running",
+    "needs_human_approval": "needs_human_approval",
+    "rollback_required": "rollback_required",
+    "stopped": "stopped",
+    "failed": "failed",
+    "provisioning": "provisioning",
+    "provisioning_failed": "failed",
+    "research_only": "research_only",
+    "consultable": "consultable",
+    "paper_owner": "paper_owner",
+    "live_owner": "live_owner",
+    "frozen": "frozen",
+    "suspended": "suspended",
+}
+
+STRATEGY_DEFAULT_STATE_COUNT_KEYS: Tuple[str, ...] = (
+    "draft",
+    "review",
+    "approved",
+    "paper_running",
+    "canary_running",
+    "live_running",
+    "deployed",
+    "paused",
+    "retired",
+)
+
+
+def normalize_strategy_dto_state(value: Any) -> str:
+    clean = str(value or "").strip().lower()
+    return _STRATEGY_DTO_LIFECYCLE_MAP.get(clean, "draft")
+
+
+def is_known_strategy_lifecycle_state(value: Any) -> bool:
+    clean = str(value or "").strip().lower()
+    return bool(clean) and clean in _STRATEGY_DTO_LIFECYCLE_MAP
+
+
+def is_true_draft_lifecycle_state(value: Any) -> bool:
+    clean = str(value or "").strip().lower()
+    return clean in {"", "draft"}
+
 
 def list_strategy_summaries(read_store: Any) -> List[Dict[str, Any]]:
     """Return canonical strategy specs from the strategy read owner."""
@@ -144,14 +204,64 @@ class StrategiesService:
             return list(getter() or [])
         return list_strategy_summaries(read_store)
 
+    def list_strategy_summaries_for_filter(
+        self,
+        *,
+        include_retired: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if include_retired:
+            if self._list_strategy_summaries is not None:
+                try:
+                    return list(self._list_strategy_summaries(include_retired=True) or [])  # type: ignore[call-arg]
+                except TypeError:
+                    pass
+            try:
+                read_store = self._get_read_store_port()
+            except Exception:
+                read_store = None
+            if read_store is not None:
+                getter_summaries = getattr(read_store, "list_strategy_summaries", None)
+                if callable(getter_summaries):
+                    try:
+                        return list(getter_summaries(include_retired=True) or [])
+                    except TypeError:
+                        pass
+                getter_specs = getattr(read_store, "list_strategy_specs", None)
+                if callable(getter_specs):
+                    try:
+                        return list(getter_specs(include_retired=True) or [])
+                    except TypeError:
+                        pass
+        return self.list_strategy_summaries()
+
     def list_strategy_summaries_page(
         self,
         *,
         state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Optional[Dict[str, Any]]:
+        norm_state = str(state).strip() if state and str(state).strip() else None
+        norm_exclude_state = (
+            str(exclude_state).strip()
+            if exclude_state and str(exclude_state).strip()
+            else None
+        )
+        if norm_state and norm_exclude_state:
+            if self._bff_error:
+                raise self._bff_error(
+                    400,
+                    ErrorCode.VALIDATION_FAILED,
+                    "Conflicting state filters",
+                    "state and exclude_state cannot be combined",
+                    precondition_failed="exclude_state",
+                )
+            raise HTTPException(
+                status_code=400,
+                detail="state and exclude_state cannot be combined",
+            )
         try:
             read_store = self._get_read_store_port()
         except Exception:
@@ -161,15 +271,43 @@ class StrategiesService:
         )
         if not callable(getter):
             return None
+        call_kwargs: Dict[str, Any] = {
+            "state": norm_state,
+            "persona_id": persona_id,
+            "page_token": page_token,
+            "page_size": page_size,
+        }
+        if norm_exclude_state is not None:
+            call_kwargs["exclude_state"] = norm_exclude_state
         try:
-            page = getter(
-                state=state,
-                persona_id=persona_id,
-                page_token=page_token,
-                page_size=page_size,
-            )
+            try:
+                page = getter(**call_kwargs)
+            except TypeError:
+                if norm_exclude_state is not None:
+                    return None
+                raise
         except HTTPException as exc:
             if exc.status_code == 400 and self._bff_error:
+                detail_obj = exc.detail if isinstance(exc.detail, dict) else {}
+                err_obj = (
+                    detail_obj.get("error")
+                    if isinstance(detail_obj.get("error"), dict)
+                    else {}
+                )
+                reason = str(
+                    err_obj.get("reason")
+                    or detail_obj.get("detail")
+                    or exc.detail
+                    or ""
+                )
+                if "exclude_state" in reason or "conflicting_state_filters" in reason:
+                    raise self._bff_error(
+                        400,
+                        ErrorCode.VALIDATION_FAILED,
+                        "Conflicting state filters",
+                        "state and exclude_state cannot be combined",
+                        precondition_failed="exclude_state",
+                    ) from exc
                 raise self._bff_error(
                     400,
                     ErrorCode.VALIDATION_FAILED,
@@ -180,6 +318,84 @@ class StrategiesService:
         except Exception as exc:
             return self._invoke_read_owner(lambda: (_ for _ in ()).throw(exc))
         return page if isinstance(page, dict) else None
+
+    def resolve_strategy_state_counts(
+        self,
+        *,
+        owner_page: Optional[Dict[str, Any]] = None,
+        fallback_summaries: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, int]]:
+        """Resolve per-DTO-state counts from the bounded owner page read or
+        in-memory summary fallback; return ``None`` on any failure and never
+        fabricate zero counts when the count read fails."""
+        try:
+            read_store = None
+            try:
+                read_store = self._get_read_store_port()
+            except Exception:
+                read_store = None
+            if read_store is not None and callable(
+                custom_getter := getattr(read_store, "get_strategy_state_counts", None)
+            ):
+                custom_counts = custom_getter()
+                if (
+                    isinstance(custom_counts, dict)
+                    and custom_counts
+                    and all(
+                        isinstance(k, str)
+                        and k.strip()
+                        and isinstance(v, int)
+                        and not isinstance(v, bool)
+                        and v >= 0
+                        for k, v in custom_counts.items()
+                    )
+                ):
+                    counts = {k: 0 for k in STRATEGY_DEFAULT_STATE_COUNT_KEYS}
+                    for k, v in custom_counts.items():
+                        counts[str(k).strip()] = int(v)
+                    return counts
+                return None
+
+            if owner_page is not None:
+                if not isinstance(owner_page, dict):
+                    return None
+                raw_counts = owner_page.get("state_counts")
+                if (
+                    not isinstance(raw_counts, dict)
+                    or not raw_counts
+                    or not all(
+                        isinstance(k, str)
+                        and k.strip()
+                        and isinstance(v, int)
+                        and not isinstance(v, bool)
+                        and v >= 0
+                        for k, v in raw_counts.items()
+                    )
+                ):
+                    return None
+                counts = {k: 0 for k in STRATEGY_DEFAULT_STATE_COUNT_KEYS}
+                for k, v in raw_counts.items():
+                    counts[str(k).strip()] = int(v)
+                return counts
+
+            if not isinstance(fallback_summaries, list):
+                return None
+            counts = {k: 0 for k in STRATEGY_DEFAULT_STATE_COUNT_KEYS}
+            for summary in fallback_summaries:
+                if not isinstance(summary, dict):
+                    return None
+                raw_state = (
+                    summary.get("lifecycle_state")
+                    or summary.get("state")
+                    or summary.get("status")
+                )
+                if raw_state is None and "current_spec_version_id" not in summary:
+                    return None
+                dto_state = normalize_strategy_dto_state(raw_state or "draft")
+                counts[dto_state] = counts.get(dto_state, 0) + 1
+            return counts
+        except Exception:
+            return None
 
     def _invoke_read_owner(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:

@@ -3630,3 +3630,119 @@ def test_postgres_registry_store_list_by_strategy_filters_in_sql_without_full_ta
     ]
 
 
+def test_strategy_spec_summary_page_exclude_state_state_counts_retired_and_unknown_lifecycle(strict_client):
+    token_a = _jwt(subject="ssp-ex-a", tenant="tenant-a")
+    token_b = _jwt(subject="ssp-ex-b", tenant="tenant-b")
+    store = get_store()
+
+    def _seed(
+        rid: str,
+        sid: str,
+        version: str,
+        state: ArtifactState,
+        tenant: str,
+        spec_lifecycle: Optional[str] = None,
+    ):
+        spec = _valid_spec(sid, bulk="x" * 128, rev=version)
+        if spec_lifecycle is not None:
+            spec["lifecycle_state"] = spec_lifecycle
+        store.create(
+            RegistryEntryCreate(
+                artifact_type=ArtifactType.STRATEGY_SPEC,
+                strategy_id=sid,
+                version=version,
+                artifact_state=state,
+                lineage=Lineage(source_run_ids=["run-ssp-ex"]),
+                storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+                checksum=f"sha256:{rid}",
+                metadata={"strategy_spec": spec},
+            ),
+            rid,
+            actor={"tenant": tenant},
+        )
+
+    _seed("ex-a-draft", "strat-ex-draft", "1.0.0", ArtifactState.DRAFT, "tenant-a")
+    _seed("ex-a-cand", "strat-ex-cand", "1.0.0", ArtifactState.CANDIDATE, "tenant-a")
+    _seed("ex-a-appr", "strat-ex-appr", "1.0.0", ArtifactState.APPROVED, "tenant-a")
+    _seed("ex-a-paper", "strat-ex-paper", "1.0.0", ArtifactState.APPROVED, "tenant-a", spec_lifecycle="paper_running")
+    _seed("ex-a-unk", "strat-ex-unknown", "1.0.0", ArtifactState.DRAFT, "tenant-a", spec_lifecycle="experimental_unknown")
+    _seed("ex-a-ret", "strat-ex-retired", "1.0.0", ArtifactState.RETIRED, "tenant-a")
+    _seed("ex-b-appr", "strat-ex-b-appr", "1.0.0", ArtifactState.APPROVED, "tenant-b")
+
+    # 1. Default view excludes retired and includes drafts + unknown
+    resp_default = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+        headers=_bearer(token_a),
+    )
+    assert resp_default.status_code == 200, resp_default.text
+    default_body = resp_default.json()
+    assert default_body["total"] == 5
+    assert {i["strategy_id"] for i in default_body["items"]} == {
+        "strat-ex-draft",
+        "strat-ex-cand",
+        "strat-ex-appr",
+        "strat-ex-paper",
+        "strat-ex-unknown",
+    }
+    assert default_body["state_counts"] == {
+        "draft": 2,  # strat-ex-draft + strat-ex-unknown (fallback to draft in DTO state counts)
+        "review": 1,
+        "approved": 1,
+        "paper_running": 1,
+        "canary_running": 0,
+        "live_running": 0,
+        "deployed": 0,
+        "paused": 0,
+        "retired": 1,
+    }
+
+    # 2. exclude_state=draft excludes true draft but keeps unknown stored lifecycle value
+    resp_no_draft = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&exclude_state=draft&page_size=20",
+        headers=_bearer(token_a),
+    )
+    assert resp_no_draft.status_code == 200, resp_no_draft.text
+    no_draft_body = resp_no_draft.json()
+    assert no_draft_body["total"] == 4
+    assert {i["strategy_id"] for i in no_draft_body["items"]} == {
+        "strat-ex-cand",
+        "strat-ex-appr",
+        "strat-ex-paper",
+        "strat-ex-unknown",
+    }
+    by_id = {i["strategy_id"]: i for i in no_draft_body["items"]}
+    assert by_id["strat-ex-unknown"]["lifecycle_state"] == "experimental_unknown"
+
+    # 3. state=retired returns retired strategies
+    resp_retired = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&state=retired&page_size=20",
+        headers=_bearer(token_a),
+    )
+    assert resp_retired.status_code == 200, resp_retired.text
+    retired_body = resp_retired.json()
+    assert retired_body["total"] == 1
+    assert [i["strategy_id"] for i in retired_body["items"]] == ["strat-ex-retired"]
+    assert retired_body["items"][0]["lifecycle_state"] == "retired"
+
+    # 4. Combining state and exclude_state returns 400
+    resp_conflict = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&state=approved&exclude_state=draft",
+        headers=_bearer(token_a),
+    )
+    assert resp_conflict.status_code == 400, resp_conflict.text
+
+    # 5. Tenant B isolation for items and state_counts
+    resp_b = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+        headers=_bearer(token_b),
+    )
+    assert resp_b.status_code == 200, resp_b.text
+    b_body = resp_b.json()
+    assert b_body["total"] == 1
+    assert [i["strategy_id"] for i in b_body["items"]] == ["strat-ex-b-appr"]
+    assert b_body["state_counts"]["approved"] == 1
+    assert b_body["state_counts"]["draft"] == 0
+    assert b_body["state_counts"]["retired"] == 0
+
+
+
