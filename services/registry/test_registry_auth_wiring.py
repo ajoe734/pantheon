@@ -588,6 +588,362 @@ def test_strategy_artifacts_catalog_requires_verified_read_auth(strict_client):
     assert "total" in ok.json()
 
 
+@pytest.mark.parametrize("read_role", ["viewer", "view_only"])
+def test_strict_mode_viewer_and_view_only_can_read_same_tenant_get_surfaces_and_deny_cross_tenant(
+    strict_client, read_role
+):
+    """BFF-VIEWER-REGISTRY-READ-20261106:
+    A genuine strict-mode same-tenant ``viewer`` or ``view_only`` principal can
+    read Registry GET surfaces (entries, strategy-specs including
+    persona_binding / persona_binding_counts / strategy_summary_page views,
+    strategy-artifacts, lineage, and allocation-policy-artifacts) with actual
+    owner data, while missing/invalid credentials (401), unmapped roles (403),
+    cross-tenant X-Tenant-Id selectors (403), and cross-tenant entry reads (403)
+    remain denied.
+    """
+    from .service import _REGISTRY_READ_ROLES, _REGISTRY_WRITE_ROLES
+    from .test_service import _cross_tenant_artifact_registration, _minimal_strategy_spec
+
+    assert _REGISTRY_WRITE_ROLES == ("operator", "registry-writer", "admin")
+    assert read_role in _REGISTRY_READ_ROLES
+    assert read_role not in _REGISTRY_WRITE_ROLES
+
+    op_token_a = _jwt(sub="operator-seed-a", roles=["operator"], tenant="tenant-a")
+    op_token_b = _jwt(sub="operator-seed-b", roles=["operator"], tenant="tenant-b")
+
+    entry_a = strict_client.post(
+        "/api/registry/entries",
+        json={**_ENTRY_PAYLOAD, "strategy_id": "strat-viewer-a", "lineage": {"source_run_ids": ["run-vw-a"]}},
+        headers=_bearer(op_token_a),
+    )
+    assert entry_a.status_code == 200, entry_a.text
+    entry_a_id = entry_a.json()["entry"]["registry_id"]
+
+    entry_b = strict_client.post(
+        "/api/registry/entries",
+        json={**_ENTRY_PAYLOAD, "strategy_id": "strat-viewer-b", "lineage": {"source_run_ids": ["run-vw-b"]}},
+        headers=_bearer(op_token_b),
+    )
+    assert entry_b.status_code == 200, entry_b.text
+    entry_b_id = entry_b.json()["entry"]["registry_id"]
+
+    spec_a = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-viewer-a",
+            "strategy_id": "strat-viewer-a",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-vw-a"]},
+            "metadata": {"persona_ids": ["persona-tw-alpha", "persona-us-core"], "title": "Viewer Tenant A Spec"},
+            "strategy_spec": _minimal_strategy_spec("strat-viewer-a"),
+        },
+        headers=_bearer(op_token_a),
+    )
+    assert spec_a.status_code == 200, spec_a.text
+
+    spec_b = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-viewer-b",
+            "strategy_id": "strat-viewer-b",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-vw-b"]},
+            "metadata": {"persona_ids": ["persona-foreign"], "title": "Foreign Tenant B Spec"},
+            "strategy_spec": _minimal_strategy_spec("strat-viewer-b"),
+        },
+        headers=_bearer(op_token_b),
+    )
+    assert spec_b.status_code == 200, spec_b.text
+
+    from .models import ArtifactState, ArtifactType, Lineage, RegistryEntryCreate, StorageBackend, StorageRef
+    from .storage import get_store
+
+    art_a = strict_client.post(
+        "/api/registry/strategy-artifacts",
+        json=_cross_tenant_artifact_registration(artifact_id="sa-viewer-tenant-a"),
+        headers=_bearer(op_token_a),
+    )
+    assert art_a.status_code == 200, art_a.text
+    art_a_strategy_id = art_a.json()["entry"]["strategy_id"]
+
+    get_store().create(
+        RegistryEntryCreate(
+            artifact_type=ArtifactType.EXECUTION_BUNDLE,
+            strategy_id="strat-viewer-b",
+            version="1.0.0",
+            artifact_state=ArtifactState.CANDIDATE,
+            lineage=Lineage(source_run_ids=["run-vw-b"]),
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_artifact"),
+            checksum="sha256:sa-viewer-tenant-b",
+            metadata={"strategy_artifact": {"artifact_id": "sa-viewer-tenant-b"}},
+        ),
+        "sa-viewer-tenant-b",
+        actor={"tenant": "tenant-b"},
+    )
+
+    alloc_a = strict_client.post(
+        "/api/registry/allocation-policy-artifacts",
+        json={
+            "registry_id": "reg-alloc-viewer-a",
+            "version": "1.0.0",
+            "allocation_policy_artifact": {
+                "artifact_id": "alloc-viewer-a",
+                "capital_pool_id": "pool-viewer-a",
+                "scope_ref": "scope:tw",
+                "sponsor_persona_id": "persona-tw-alpha",
+                "synthesis_method": "single_proposal",
+                "target_weights": {"2330.TW": 0.6, "2317.TW": 0.4},
+                "created_at": "2026-11-06T00:00:00Z",
+                "provenance_refs": ["prop-vw-a-1"],
+                "conflict_resolution_log_id": "crl-vw-a-1",
+            },
+        },
+        headers=_bearer(op_token_a),
+    )
+    assert alloc_a.status_code == 200, alloc_a.text
+
+    viewer_token = _jwt(sub=f"{read_role}-actor-a", roles=[read_role], tenant="tenant-a")
+    viewer_headers = {**_bearer(viewer_token), "X-Tenant-Id": "tenant-a"}
+
+    # 1. Entry & strategy-scoped GET routes succeed for same-tenant viewer / view_only
+    r_entry = strict_client.get(f"/api/registry/entries/{entry_a_id}", headers=viewer_headers)
+    assert r_entry.status_code == 200, r_entry.text
+    assert r_entry.json()["entry"]["registry_id"] == entry_a_id
+
+    r_strat_entries = strict_client.get("/api/registry/strategies/strat-viewer-a/entries", headers=viewer_headers)
+    assert r_strat_entries.status_code == 200, r_strat_entries.text
+    assert {e["entry"]["registry_id"] for e in r_strat_entries.json()} == {entry_a_id, "reg-spec-viewer-a"}
+
+    # 2. StrategySpec list + scoped views (persona_binding, persona_binding_counts, strategy_summary_page)
+    r_specs_full = strict_client.get("/api/registry/strategy-specs", headers=viewer_headers)
+    assert r_specs_full.status_code == 200, r_specs_full.text
+    assert [e["entry"]["registry_id"] for e in r_specs_full.json()] == ["reg-spec-viewer-a"]
+
+    r_pb = strict_client.get("/api/registry/strategy-specs?view=persona_binding", headers=viewer_headers)
+    assert r_pb.status_code == 200, r_pb.text
+    assert [e["entry"]["registry_id"] for e in r_pb.json()] == ["reg-spec-viewer-a"]
+    assert r_pb.json()[0]["entry"]["metadata"]["persona_ids"] == ["persona-tw-alpha", "persona-us-core"]
+
+    r_pbc = strict_client.get("/api/registry/strategy-specs?view=persona_binding_counts", headers=viewer_headers)
+    assert r_pbc.status_code == 200, r_pbc.text
+    assert r_pbc.json() == {"persona-tw-alpha": 1, "persona-us-core": 1}
+
+    r_ssp = strict_client.get("/api/registry/strategy-specs?view=strategy_summary_page&page_size=20", headers=viewer_headers)
+    assert r_ssp.status_code == 200, r_ssp.text
+    ssp_body = r_ssp.json()
+    assert ssp_body["total"] == 1
+    assert ssp_body["items"][0]["strategy_id"] == "strat-viewer-a"
+    assert ssp_body["items"][0]["current_spec_version_id"] == "reg-spec-viewer-a"
+    assert ssp_body["items"][0]["persona_ids"] == ["persona-tw-alpha", "persona-us-core"]
+
+    r_spec_detail = strict_client.get("/api/registry/strategy-specs/reg-spec-viewer-a", headers=viewer_headers)
+    assert r_spec_detail.status_code == 200, r_spec_detail.text
+    assert r_spec_detail.json()["entry"]["registry_id"] == "reg-spec-viewer-a"
+
+    r_strat_specs = strict_client.get("/api/registry/strategies/strat-viewer-a/strategy-specs", headers=viewer_headers)
+    assert r_strat_specs.status_code == 200, r_strat_specs.text
+    assert [e["entry"]["registry_id"] for e in r_strat_specs.json()] == ["reg-spec-viewer-a"]
+
+    # 3. StrategyArtifact, Lineage, and AllocationPolicyArtifact GET routes succeed
+    r_art_list = strict_client.get("/api/registry/strategy-artifacts", headers=viewer_headers)
+    assert r_art_list.status_code == 200, r_art_list.text
+    art_ids = {item["registry_id"] for item in r_art_list.json()["items"]}
+    assert "sa-viewer-tenant-a" in art_ids
+    assert "sa-viewer-tenant-b" not in art_ids
+
+    r_art_detail = strict_client.get("/api/registry/strategy-artifacts/sa-viewer-tenant-a", headers=viewer_headers)
+    assert r_art_detail.status_code == 200, r_art_detail.text
+
+    r_strat_arts = strict_client.get(
+        f"/api/registry/strategies/{art_a_strategy_id}/strategy-artifacts",
+        headers=viewer_headers,
+    )
+    assert r_strat_arts.status_code == 200, r_strat_arts.text
+    assert any(e["entry"]["registry_id"] == "sa-viewer-tenant-a" for e in r_strat_arts.json())
+    assert not any(e["entry"]["registry_id"] == "sa-viewer-tenant-b" for e in r_strat_arts.json())
+
+    r_lineage = strict_client.get("/api/registry/lineage?root_id=reg-spec-viewer-a", headers=viewer_headers)
+    assert r_lineage.status_code == 200, r_lineage.text
+    lineage_ids = {n["id"] for n in r_lineage.json()["nodes"]}
+    assert "reg-spec-viewer-a" in lineage_ids
+    assert "reg-spec-viewer-b" not in lineage_ids
+    assert "sa-viewer-tenant-b" not in lineage_ids
+
+    r_alloc_detail = strict_client.get("/api/registry/allocation-policy-artifacts/reg-alloc-viewer-a", headers=viewer_headers)
+    assert r_alloc_detail.status_code == 200, r_alloc_detail.text
+
+    r_alloc_list = strict_client.get("/api/registry/pools/pool-viewer-a/allocation-policy-artifacts", headers=viewer_headers)
+    assert r_alloc_list.status_code == 200, r_alloc_list.text
+    assert [e["entry"]["registry_id"] for e in r_alloc_list.json()] == ["reg-alloc-viewer-a"]
+
+    # 4. Cross-tenant selectors and cross-tenant entry reads remain denied (403)
+    cross_tenant_headers = {**_bearer(viewer_token), "X-Tenant-Id": "tenant-b"}
+    for path in (
+        "/api/registry/strategy-specs",
+        "/api/registry/strategy-specs?view=persona_binding",
+        "/api/registry/strategy-specs?view=persona_binding_counts",
+        "/api/registry/strategy-specs?view=strategy_summary_page",
+        "/api/registry/strategies/strat-viewer-a/strategy-specs",
+        "/api/registry/strategy-artifacts",
+    ):
+        resp_cross_hdr = strict_client.get(path, headers=cross_tenant_headers)
+        assert resp_cross_hdr.status_code == 403, (path, resp_cross_hdr.text)
+
+    for foreign_path in (
+        f"/api/registry/entries/{entry_b_id}",
+        "/api/registry/entries/sa-viewer-tenant-b",
+        "/api/registry/strategy-specs/reg-spec-viewer-b",
+    ):
+        resp_foreign = strict_client.get(foreign_path, headers=viewer_headers)
+        assert resp_foreign.status_code == 403, (foreign_path, resp_foreign.text)
+
+    viewer_b_headers = {
+        **_bearer(_jwt(sub=f"{read_role}-actor-b", roles=[read_role], tenant="tenant-b")),
+        "X-Tenant-Id": "tenant-b",
+    }
+    resp_foreign_art = strict_client.get("/api/registry/strategy-artifacts/sa-viewer-tenant-a", headers=viewer_b_headers)
+    assert resp_foreign_art.status_code == 403, resp_foreign_art.text
+
+    # 5. Missing/invalid credentials (401) and non-read roles (403) remain denied
+    assert strict_client.get("/api/registry/strategy-specs?view=persona_binding_counts").status_code == 401
+    assert strict_client.get(
+        "/api/registry/strategy-specs?view=persona_binding_counts",
+        headers={"Authorization": "Bearer invalid.jwt.token"},
+    ).status_code == 401
+    unmapped_token = _jwt(sub="auditor-1", roles=["auditor"], tenant="tenant-a")
+    assert strict_client.get(
+        "/api/registry/strategy-specs?view=persona_binding_counts",
+        headers=_bearer(unmapped_token),
+    ).status_code == 403
 
 
+@pytest.mark.parametrize("read_role", ["viewer", "view_only"])
+def test_strict_mode_every_registry_mutation_rejects_viewer_and_view_only_and_keeps_write_roles_narrow(
+    strict_client, read_role
+):
+    """BFF-VIEWER-REGISTRY-READ-20261106:
+    Every Registry mutation route rejects ``viewer`` and ``view_only`` with 403
+    and ``_REGISTRY_WRITE_ROLES`` remains strictly ``("operator", "registry-writer", "admin")``.
+    """
+    from .service import _REGISTRY_WRITE_ROLES
+    from .test_service import _cross_tenant_artifact_registration, _minimal_strategy_spec
+
+    assert _REGISTRY_WRITE_ROLES == ("operator", "registry-writer", "admin")
+
+    op_token = _jwt(sub="operator-mut-seed", roles=["operator"], tenant="tenant-a")
+    entry_resp = strict_client.post(
+        "/api/registry/entries",
+        json={**_ENTRY_PAYLOAD, "strategy_id": "strat-mut-guard", "lineage": {"source_run_ids": ["run-mut-1"]}},
+        headers=_bearer(op_token),
+    )
+    assert entry_resp.status_code == 200, entry_resp.text
+    entry_id = entry_resp.json()["entry"]["registry_id"]
+
+    spec_resp = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-mut-guard",
+            "strategy_id": "strat-mut-guard",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-mut-1"]},
+            "strategy_spec": _minimal_strategy_spec("strat-mut-guard"),
+        },
+        headers=_bearer(op_token),
+    )
+    assert spec_resp.status_code == 200, spec_resp.text
+
+    art_resp = strict_client.post(
+        "/api/registry/strategy-artifacts",
+        json=_cross_tenant_artifact_registration(artifact_id="sa-mut-guard"),
+        headers=_bearer(op_token),
+    )
+    assert art_resp.status_code == 200, art_resp.text
+
+    alloc_resp = strict_client.post(
+        "/api/registry/allocation-policy-artifacts",
+        json={
+            "registry_id": "reg-alloc-mut-guard",
+            "version": "1.0.0",
+            "allocation_policy_artifact": {
+                "artifact_id": "alloc-mut-guard",
+                "capital_pool_id": "pool-mut-guard",
+                "scope_ref": "scope:tw",
+                "sponsor_persona_id": "persona-tw-alpha",
+                "synthesis_method": "single_proposal",
+                "target_weights": {"2330.TW": 1.0},
+                "created_at": "2026-11-06T00:00:00Z",
+                "provenance_refs": ["prop-mut-1"],
+                "conflict_resolution_log_id": "crl-mut-1",
+            },
+        },
+        headers=_bearer(op_token),
+    )
+    assert alloc_resp.status_code == 200, alloc_resp.text
+
+    viewer_headers = _bearer(_jwt(sub=f"{read_role}-mut-attempt", roles=[read_role], tenant="tenant-a"))
+    mutation_cases = [
+        ("POST", "/api/registry/entries", _ENTRY_PAYLOAD),
+        ("PATCH", f"/api/registry/entries/{entry_id}/metadata", {"expected_metadata": None, "metadata": {"note": "denied"}}),
+        ("POST", f"/api/registry/entries/{entry_id}/advance", {"target_state": "candidate", "expected_artifact_state": "draft"}),
+        ("PUT", f"/api/registry/entries/{entry_id}/deployment-summary", {"current_stage": "paper"}),
+        (
+            "POST",
+            "/api/registry/strategy-specs",
+            {
+                "strategy_id": "strat-viewer-write-denied",
+                "version": "1.0.0",
+                "lineage": {"source_run_ids": ["run-1"]},
+                "strategy_spec": _minimal_strategy_spec("strat-viewer-write-denied"),
+            },
+        ),
+        (
+            "POST",
+            "/api/registry/strategy-specs/reg-spec-mut-guard/advance",
+            {"target_state": "candidate", "expected_artifact_state": "draft"},
+        ),
+        ("POST", "/api/registry/strategy-artifacts", _cross_tenant_artifact_registration(artifact_id="sa-viewer-write-denied")),
+        (
+            "POST",
+            "/api/registry/strategy-artifacts/sa-mut-guard/mutate",
+            {
+                "new_artifact_id": "sa-mut-guard-v2",
+                "new_version": "1.2.0",
+                "parameter_updates": {"momentum_threshold": 0.04},
+                "source_run_ids": ["run-mut-2"],
+            },
+        ),
+        (
+            "POST",
+            "/api/registry/strategy-artifacts/sa-mut-guard/advance",
+            {"target_state": "retired", "expected_artifact_state": "candidate"},
+        ),
+        (
+            "POST",
+            "/api/registry/allocation-policy-artifacts",
+            {
+                "version": "1.0.0",
+                "allocation_policy_artifact": {
+                    "artifact_id": "alloc-viewer-denied",
+                    "capital_pool_id": "pool-mut-guard",
+                    "scope_ref": "scope:tw",
+                    "sponsor_persona_id": "persona-tw-alpha",
+                    "synthesis_method": "single_proposal",
+                    "target_weights": {"2330.TW": 1.0},
+                    "created_at": "2026-11-06T00:00:00Z",
+                    "provenance_refs": ["prop-mut-2"],
+                    "conflict_resolution_log_id": "crl-mut-2",
+                },
+            },
+        ),
+        (
+            "POST",
+            "/api/registry/allocation-policy-artifacts/reg-alloc-mut-guard/advance",
+            {"target_state": "retired", "expected_artifact_state": "candidate"},
+        ),
+    ]
+
+    for method, path, body in mutation_cases:
+        resp = strict_client.request(method, path, json=body, headers=viewer_headers)
+        assert resp.status_code == 403, (read_role, method, path, resp.status_code, resp.text)
+        assert "not authorized" in resp.json()["detail"].lower()
 

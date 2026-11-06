@@ -219,7 +219,7 @@ async def registry_error_handler(request: Request, exc: RegistryError):
 
 
 _REGISTRY_WRITE_ROLES = ("operator", "registry-writer", "admin")
-_REGISTRY_READ_ROLES = _REGISTRY_WRITE_ROLES + ("registry-reader",)
+_REGISTRY_READ_ROLES = _REGISTRY_WRITE_ROLES + ("registry-reader", "viewer", "view_only")
 
 
 def _registry_auth_env() -> dict[str, str]:
@@ -398,7 +398,8 @@ def _authenticate_registry_read(authorization: Optional[str]) -> AuthContext:
     Reviewer finding 1: every read route (GET/list) was reachable
     anonymously — a cross-tenant caller (or no caller at all) could read any
     entry. Reads require the same verified-identity bar as writes, plus a
-    broader role allowlist (``registry-reader``) for read-only integrations.
+    broader role allowlist (``registry-reader``, ``viewer``, ``view_only``)
+    for read-only integrations and BFF read principals.
     """
     return _authenticate_registry(authorization, required_roles=_REGISTRY_READ_ROLES)
 

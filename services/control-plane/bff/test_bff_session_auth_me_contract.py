@@ -1171,3 +1171,285 @@ def test_bff_auth_login_test_admin_preserves_stable_subject_and_exposes_client_i
         "reviewer_on_duty",
         "reviewer",
     }
+
+
+def test_bff_persona_fleet_works_for_same_tenant_viewer_and_view_only_via_real_registry_read_contract(
+    monkeypatch,
+) -> None:
+    """BFF-VIEWER-REGISTRY-READ-20261106:
+    Prove that ``GET /bff/management/persona-fleet?purpose=trading&data_scope=regular&archived=exclude&page_size=20``
+    works for same-tenant ``viewer`` (minted via ``/bff/auth/dev-login`` and tested via both
+    ``Authorization: Bearer`` and browser ``Cookie: pantheon_session``) and ``view_only``
+    principals through the real Registry read contract (``GET /api/registry/strategy-specs?view=persona_binding_counts``)
+    in strict JWT mode with actual owner data and without empty fallback data or a
+    substituted service or operator token, while preserving operator/admin reads and
+    denying cross-tenant requests.
+    """
+    import urllib.error
+    from urllib.parse import urlparse
+
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+    from services.registry import service as reg_service
+    from services.registry.split_api import RegistryService
+    from services.registry.storage import RegistryStore
+
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID", "viewer-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET", "viewer-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID", "operator-a-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", "operator-a-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID", "admintest")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET", "test-admin-secret")
+
+    # Configure real Registry service in strict JWT mode sharing the same JWT verifier settings
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", JWT_AUDIENCE)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.real.local")
+
+    remote_store = RegistryStore()
+    remote_svc = RegistryService(remote_store)
+    monkeypatch.setattr(reg_service, "get_registry_service", lambda: remote_svc)
+    monkeypatch.setattr(reg_service, "get_store", lambda: remote_store)
+    reg_client = TestClient(reg_service.app)
+
+    op_seed_token = _jwt_token(
+        roles=["operator"],
+        extra={"sub": "op-seed-dev", "tenant_id": "tenant-dev", "tenant": "tenant-dev"},
+    )
+    op_other_token = _jwt_token(
+        roles=["operator"],
+        extra={"sub": "op-seed-other", "tenant_id": "tenant-other", "tenant": "tenant-other"},
+    )
+
+    def _spec_payload(strategy_id: str, title: str) -> dict:
+        return {
+            "spec_version": "1.0",
+            "strategy_id": strategy_id,
+            "title": title,
+            "hypothesis": "Orderflow mean-reverts over short horizons.",
+            "objective": "Verify fleet routed-strategy counts against real strict Registry.",
+            "market_scope": {"symbols": ["2330.TW"], "frequency": "1h"},
+            "data_dependencies": [{"ref": "seed-fleet-1", "kind": "note"}],
+            "execution_profile": {
+                "signal_schema_version": "research-signal-v1",
+                "quantity_type": "PERCENT_PORTFOLIO",
+                "execution_mode_hint": "paper",
+            },
+            "evaluation_plan": {"metrics": ["sharpe_ratio"], "candidate_gate": "schema-valid"},
+            "governance": {"approval_required": True, "risk_profile": "research"},
+            "provenance": {
+                "source_kind": "workflow",
+                "created_at": "2026-11-06T00:00:00Z",
+                "source_refs": ["seed-fleet-1"],
+                "created_by": "op-seed-dev",
+            },
+        }
+
+    for reg_id, strat_id, personas in (
+        ("reg-fleet-spec-1", "strat-fleet-tw-1", ["persona-tw-alpha", "persona-us-core"]),
+        ("reg-fleet-spec-2", "strat-fleet-tw-2", ["persona-tw-alpha"]),
+    ):
+        resp_seed = reg_client.post(
+            "/api/registry/strategy-specs",
+            json={
+                "registry_id": reg_id,
+                "strategy_id": strat_id,
+                "version": "1.0.0",
+                "artifact_state": "candidate",
+                "lineage": {"source_run_ids": ["run-fleet-1"]},
+                "metadata": {"persona_ids": personas, "title": f"Title {strat_id}"},
+                "strategy_spec": _spec_payload(strat_id, f"Title {strat_id}"),
+            },
+            headers={"Authorization": f"Bearer {op_seed_token}"},
+        )
+        assert resp_seed.status_code == 200, resp_seed.text
+
+    resp_other = reg_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-fleet-spec-other",
+            "strategy_id": "strat-fleet-other",
+            "version": "1.0.0",
+            "artifact_state": "candidate",
+            "lineage": {"source_run_ids": ["run-other-1"]},
+            "metadata": {"persona_ids": ["persona-tw-alpha"], "title": "Foreign Tenant Strategy"},
+            "strategy_spec": _spec_payload("strat-fleet-other", "Foreign Tenant Strategy"),
+        },
+        headers={"Authorization": f"Bearer {op_other_token}"},
+    )
+    assert resp_other.status_code == 200, resp_other.text
+
+    forwarded_registry_requests: list[dict] = []
+
+    def strict_registry_bridge(
+        url: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        auth_token=None,
+        tenant_id=None,
+        **kwargs,
+    ):
+        parsed = urlparse(url)
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        forwarded_registry_requests.append(
+            {
+                "method": method,
+                "path": path,
+                "auth_token": auth_token,
+                "tenant_id": tenant_id,
+            }
+        )
+        hdrs = {}
+        if auth_token:
+            hdrs["Authorization"] = f"Bearer {auth_token}"
+        if tenant_id:
+            hdrs["X-Tenant-Id"] = tenant_id
+        resp = reg_client.request(method, path, json=payload, headers=hdrs)
+        if resp.status_code >= 400:
+            raise urllib.error.HTTPError(url, resp.status_code, resp.text, hdrs=None, fp=None)
+        return resp.json()
+
+    monkeypatch.setattr(adapter_base, "http_request_json", strict_registry_bridge)
+
+    from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+
+    assert _harness is not None
+    _harness.default_tenant_id = "tenant-dev"
+    _harness.allowed_tenants = ["tenant-dev"]
+    _harness.app.add_middleware(OwnerReadContextMiddleware)
+
+    fleet_read_store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": [
+                {
+                    "id": "persona-tw-alpha",
+                    "persona_id": "persona-tw-alpha",
+                    "name": "TW Alpha Trading Persona",
+                    "tenant_id": "tenant-dev",
+                    "owner": "op-seed-dev",
+                    "lifecycle_state": "paper_running",
+                    "status": "paper_running",
+                    "metadata": {
+                        "tenant_id": "tenant-dev",
+                        "market_scope": ["TW"],
+                        "persona_class": "trading",
+                        "persona_purpose": "trading",
+                        "data_scope": "regular",
+                    },
+                },
+                {
+                    "id": "persona-us-core",
+                    "persona_id": "persona-us-core",
+                    "name": "US Core Trading Persona",
+                    "tenant_id": "tenant-dev",
+                    "owner": "op-seed-dev",
+                    "lifecycle_state": "draft",
+                    "status": "draft",
+                    "metadata": {
+                        "tenant_id": "tenant-dev",
+                        "market_scope": ["US"],
+                        "persona_class": "trading",
+                        "persona_purpose": "trading",
+                        "data_scope": "regular",
+                    },
+                },
+            ]
+        }
+    )
+    _harness.persona_service._read_store = fleet_read_store
+
+    client = TestClient(bff_main.app)
+
+    def _dev_login(client_id: str, client_secret: str) -> str:
+        resp = client.post(
+            "/bff/auth/dev-login",
+            json={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["access_token"]
+
+    viewer_token = _dev_login("viewer-client", "viewer-secret")
+    operator_token = _dev_login("operator-a-client", "operator-a-secret")
+    admin_token = _dev_login("admintest", "test-admin-secret")
+    view_only_token = _jwt_token(
+        roles=["view_only"],
+        extra={
+            "sub": "pantheon-dev-view-only",
+            "tenant_id": "tenant-dev",
+            "tenant": "tenant-dev",
+            "sid": "sess-view-only-1",
+        },
+    )
+
+    fleet_path = "/bff/management/persona-fleet?purpose=trading&data_scope=regular&archived=exclude&page_size=20"
+
+    # 1. Bearer GET /bff/management/persona-fleet succeeds for viewer, view_only, operator, and admin
+    for label, token in (
+        ("viewer", viewer_token),
+        ("view_only", view_only_token),
+        ("operator", operator_token),
+        ("admin", admin_token),
+    ):
+        forwarded_registry_requests.clear()
+        resp = client.get(
+            fleet_path,
+            headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-dev"},
+        )
+        assert resp.status_code == 200, (label, resp.text)
+        body = resp.json()
+        items_by_id = {
+            (item.get("persona_id") or item.get("id")): item
+            for item in body["data"]["items"]
+        }
+        assert set(items_by_id) >= {"persona-tw-alpha", "persona-us-core"}, (label, set(items_by_id))
+        tw_row = items_by_id["persona-tw-alpha"]
+        us_row = items_by_id["persona-us-core"]
+        assert tw_row.get("routed_strategies") == 2, (label, tw_row)
+        assert us_row.get("routed_strategies") == 1, (label, us_row)
+        assert any(
+            req["path"] == "/api/registry/strategy-specs?view=persona_binding_counts"
+            and req["auth_token"] == token
+            and req["tenant_id"] == "tenant-dev"
+            for req in forwarded_registry_requests
+        ), (label, forwarded_registry_requests)
+
+    # 2. Browser cookie-only GET /bff/management/persona-fleet (pantheon_session cookie, no Authorization header)
+    for label, token in (("viewer_cookie", viewer_token), ("view_only_cookie", view_only_token)):
+        forwarded_registry_requests.clear()
+        cookie_client = TestClient(bff_main.app)
+        cookie_client.cookies.set("pantheon_session", token)
+        resp_cookie = cookie_client.get(fleet_path, headers={"X-Tenant-Id": "tenant-dev"})
+        assert resp_cookie.status_code == 200, (label, resp_cookie.text)
+        items_by_id = {
+            (item.get("persona_id") or item.get("id")): item
+            for item in resp_cookie.json()["data"]["items"]
+        }
+        assert items_by_id["persona-tw-alpha"].get("routed_strategies") == 2
+        assert items_by_id["persona-us-core"].get("routed_strategies") == 1
+        assert any(
+            req["path"] == "/api/registry/strategy-specs?view=persona_binding_counts"
+            and req["auth_token"] == token
+            and req["tenant_id"] == "tenant-dev"
+            for req in forwarded_registry_requests
+        ), (label, forwarded_registry_requests)
+
+    # 3. Cross-tenant selector on /bff/management/persona-fleet remains denied (403)
+    cross_resp = client.get(
+        fleet_path,
+        headers={"Authorization": f"Bearer {viewer_token}", "X-Tenant-Id": "tenant-other"},
+    )
+    assert cross_resp.status_code == 403, cross_resp.text
+

@@ -947,3 +947,272 @@ def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> 
         assert local_store_calls == []
 
 
+import pytest
+
+
+@pytest.mark.parametrize("read_role", ["viewer", "view_only"])
+def test_bff_viewer_and_view_only_read_strategy_specs_and_persona_bindings_against_strict_real_registry_app(
+    monkeypatch, tmp_path, read_role: str
+):
+    """BFF-VIEWER-REGISTRY-READ-20261106:
+    Prove that same-tenant ``viewer`` and ``view_only`` strict JWT principals
+    can read ``/bff/strategies``, ``/bff/strategies/{id}``,
+    ``/api/v1/knowledge/strategy-specs``, ``count_strategy_persona_bindings``,
+    and ``list_strategy_persona_bindings`` against the real
+    ``services.registry.service.app`` in strict JWT mode by forwarding the
+    caller's own verified JWT and tenant (never a substituted service or
+    operator token), while cross-tenant reads remain denied (403).
+    """
+    import time
+    import urllib.error
+    from urllib.parse import urlparse
+
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.control_plane.bff.auth import policy as auth_policy
+    from services.control_plane.bff.core.owner_reads import (
+        OwnerReadContextMiddleware,
+        authorization as owner_read_authorization,
+        selected_tenant as owner_read_selected_tenant,
+    )
+    from services.control_plane.bff.models import utc_now
+    from services.control_plane.bff.ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+    from services.control_plane.bff.strategies.router import create_strategies_router
+    from services.registry import service as reg_service
+    from services.registry.split_api import RegistryService
+    from services.registry.storage import RegistryStore
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    jwt_secret = "bff-viewer-registry-read-strict-secret"
+    jwt_issuer = "pantheon-bff-strict-test"
+    jwt_audience = "bff-operators"
+
+    def _mint_jwt(sub: str, roles: list[str], tenant_id: str) -> str:
+        now = int(time.time())
+        return encode_jwt_hs256(
+            {
+                "sub": sub,
+                "roles": roles,
+                "tenant_id": tenant_id,
+                "tenant": tenant_id,
+                "iss": jwt_issuer,
+                "aud": jwt_audience,
+                "iat": now,
+                "exp": now + 1800,
+            },
+            secret=jwt_secret,
+        )
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", jwt_issuer)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", jwt_audience)
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-dev")
+
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", jwt_issuer)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", jwt_audience)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.real.local")
+
+    remote_store = RegistryStore()
+    remote_svc = RegistryService(remote_store)
+    monkeypatch.setattr(reg_service, "get_registry_service", lambda: remote_svc)
+    monkeypatch.setattr(reg_service, "get_store", lambda: remote_store)
+
+    reg_client = TestClient(reg_service.app)
+
+    op_dev_token = _mint_jwt("op-dev-seed", ["operator"], "tenant-dev")
+    op_other_token = _mint_jwt("op-other-seed", ["operator"], "tenant-other")
+
+    spec_v1 = {
+        "spec_version": "1.0",
+        "strategy_id": "strategy-viewer-tw-1",
+        "title": "Viewer Readable TW Strategy Spec",
+        "hypothesis": "Intraday orderflow imbalance mean-reverts.",
+        "objective": "Verify same-tenant viewer reads against strict Registry.",
+        "market_scope": {"symbols": ["2330.TW"], "frequency": "1h"},
+        "data_dependencies": [{"ref": "seed-vw-1", "kind": "note"}],
+        "execution_profile": {
+            "signal_schema_version": "research-signal-v1",
+            "quantity_type": "PERCENT_PORTFOLIO",
+            "execution_mode_hint": "paper",
+        },
+        "evaluation_plan": {"metrics": ["sharpe_ratio"], "candidate_gate": "schema-valid"},
+        "governance": {"approval_required": True, "risk_profile": "research"},
+        "provenance": {
+            "source_kind": "workflow",
+            "created_at": "2026-11-06T00:00:00Z",
+            "source_refs": ["seed-vw-1"],
+            "created_by": "op-dev-seed",
+        },
+    }
+    r_seed_dev = reg_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-viewer-tw-1",
+            "strategy_id": "strategy-viewer-tw-1",
+            "version": "1.0.0",
+            "artifact_state": "candidate",
+            "source_seed_id": "seed-vw-1",
+            "metadata": {
+                "persona_ids": ["persona-tw-equity", "persona-us-equity"],
+                "title": "Viewer Readable TW Strategy Spec",
+            },
+            "strategy_spec": spec_v1,
+        },
+        headers={"Authorization": f"Bearer {op_dev_token}"},
+    )
+    assert r_seed_dev.status_code == 200, r_seed_dev.text
+
+    spec_other = json.loads(json.dumps(spec_v1))
+    spec_other["strategy_id"] = "strategy-other-secret"
+    spec_other["title"] = "Other Tenant Secret Spec"
+    r_seed_other = reg_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-other-secret",
+            "strategy_id": "strategy-other-secret",
+            "version": "1.0.0",
+            "source_seed_id": "seed-other-1",
+            "metadata": {"persona_ids": ["persona-foreign"], "title": "Other Tenant Secret Spec"},
+            "strategy_spec": spec_other,
+        },
+        headers={"Authorization": f"Bearer {op_other_token}"},
+    )
+    assert r_seed_other.status_code == 200, r_seed_other.text
+
+    forwarded_calls: list[dict[str, Any]] = []
+
+    def strict_bridge_http_request_json(
+        url: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        auth_token=None,
+        tenant_id=None,
+        **kwargs,
+    ):
+        parsed = urlparse(url)
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        forwarded_calls.append(
+            {
+                "method": method,
+                "path": path,
+                "auth_token": auth_token,
+                "tenant_id": tenant_id,
+            }
+        )
+        hdrs = {}
+        if auth_token:
+            # Forward the caller's actual token verbatim — never substitute a service or operator token.
+            hdrs["Authorization"] = f"Bearer {auth_token}"
+        if tenant_id:
+            hdrs["X-Tenant-Id"] = tenant_id
+        resp = reg_client.request(method, path, json=payload, headers=hdrs)
+        if resp.status_code >= 400:
+            raise urllib.error.HTTPError(url, resp.status_code, resp.text, hdrs=None, fp=None)
+        return resp.json()
+
+    monkeypatch.setattr(adapter_base, "http_request_json", strict_bridge_http_request_json)
+
+    port = DefaultResearchKnowledgeSourcePort()
+    read_ports = ReadSurfacePorts(research_knowledge_source=port)
+    app = _build_test_app(read_ports)
+    app.include_router(
+        create_strategies_router(
+            read_surface=read_ports,
+            list_strategy_summaries=port.list_strategy_specs,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=utc_now,
+        )
+    )
+    app.add_middleware(OwnerReadContextMiddleware)
+
+    viewer_token = _mint_jwt(f"pantheon-dev-{read_role}", [read_role], "tenant-dev")
+    viewer_headers = {
+        "Authorization": f"Bearer {viewer_token}",
+        "X-Tenant-Id": "tenant-dev",
+    }
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        # 1. GET /bff/strategies succeeds for same-tenant viewer / view_only with forwarded caller JWT
+        forwarded_calls.clear()
+        bff_list = client.get("/bff/strategies?page_size=20", headers=viewer_headers)
+        assert bff_list.status_code == 200, bff_list.text
+        bff_body = bff_list.json()
+        assert bff_body["page_info"]["total"] == 1
+        assert bff_body["items"][0]["id"] == "strategy-viewer-tw-1"
+        assert bff_body["items"][0]["name"] == "Viewer Readable TW Strategy Spec"
+        assert set(bff_body["items"][0]["personaIds"]) == {"persona-tw-equity", "persona-us-equity"}
+        assert forwarded_calls == [
+            {
+                "method": "GET",
+                "path": "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+                "auth_token": viewer_token,
+                "tenant_id": "tenant-dev",
+            }
+        ]
+
+        # 2. GET /bff/strategies/{id} and GET /api/v1/knowledge/strategy-specs succeed for viewer / view_only
+        forwarded_calls.clear()
+        bff_detail = client.get("/bff/strategies/strategy-viewer-tw-1", headers=viewer_headers)
+        assert bff_detail.status_code == 200, bff_detail.text
+        assert bff_detail.json()["data"]["id"] == "strategy-viewer-tw-1"
+        assert all(c["auth_token"] == viewer_token and c["tenant_id"] == "tenant-dev" for c in forwarded_calls)
+
+        forwarded_calls.clear()
+        kw05_list = client.get("/api/v1/knowledge/strategy-specs", headers=viewer_headers)
+        assert kw05_list.status_code == 200, kw05_list.text
+        assert [i["strategy_id"] for i in kw05_list.json()["items"]] == ["strategy-viewer-tw-1"]
+        assert all(c["auth_token"] == viewer_token and c["tenant_id"] == "tenant-dev" for c in forwarded_calls)
+
+        # 3. Direct port reads (persona_binding_counts & persona_binding) under viewer / view_only caller context
+        tok_auth = owner_read_authorization.set(f"Bearer {viewer_token}")
+        tok_tenant = owner_read_selected_tenant.set("tenant-dev")
+        try:
+            forwarded_calls.clear()
+            counts = port.count_strategy_persona_bindings()
+            assert counts == {"persona-tw-equity": 1, "persona-us-equity": 1}
+            assert forwarded_calls == [
+                {
+                    "method": "GET",
+                    "path": "/api/registry/strategy-specs?view=persona_binding_counts",
+                    "auth_token": viewer_token,
+                    "tenant_id": "tenant-dev",
+                }
+            ]
+
+            forwarded_calls.clear()
+            labels = port.get_strategy_labels()
+            assert labels == {
+                "strategy-viewer-tw-1": {
+                    "title": "Viewer Readable TW Strategy Spec",
+                    "name": "Viewer Readable TW Strategy Spec",
+                }
+            }
+            assert forwarded_calls == [
+                {
+                    "method": "GET",
+                    "path": "/api/registry/strategy-specs?view=persona_binding",
+                    "auth_token": viewer_token,
+                    "tenant_id": "tenant-dev",
+                }
+            ]
+        finally:
+            owner_read_selected_tenant.reset(tok_tenant)
+            owner_read_authorization.reset(tok_auth)
+
+        # 4. Cross-tenant selector with viewer / view_only token is denied (403)
+        cross_resp = client.get(
+            "/bff/strategies?page_size=20",
+            headers={"Authorization": f"Bearer {viewer_token}", "X-Tenant-Id": "tenant-other"},
+        )
+        assert cross_resp.status_code == 403, cross_resp.text
+
