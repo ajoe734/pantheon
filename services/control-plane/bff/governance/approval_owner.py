@@ -57,6 +57,7 @@ def call_owner(
     body: Optional[Mapping[str, Any]] = None,
     idempotency_key: Optional[str] = None,
     query: Optional[Mapping[str, Any]] = None,
+    timeout: Optional[float] = None,
 ) -> Any:
     params = {k: v for k, v in (query or {}).items() if v not in (None, "")}
     url = owner_url(path) + (("?" + urllib.parse.urlencode(params)) if params else "")
@@ -66,8 +67,11 @@ def call_owner(
         headers["Content-Type"] = "application/json"
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
+    effective_timeout = _TIMEOUT if timeout is None else min(float(_TIMEOUT), float(timeout))
+    if effective_timeout <= 0.0:
+        raise TimeoutError("Governance approval owner read budget exhausted")
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -118,10 +122,20 @@ def list_decisions(
     state: Optional[str] = None,
     outcome: Optional[str] = None,
     pending_only: bool = False,
+    timeout: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     ws = {p.strip().lower() for p in str(state or "").split(",") if p.strip()}
     wo = {p.strip().lower() for p in str(outcome or "").split(",") if p.strip()}
-    raw_decisions = call_owner("GET", "/api/governance/approvals", authorization)
+    if timeout is None:
+        from ..core.owner_reads import remaining_management_read_budget
+
+        timeout = remaining_management_read_budget()
+    raw_decisions = call_owner(
+        "GET",
+        "/api/governance/approvals",
+        authorization,
+        **({"timeout": timeout} if timeout is not None else {}),
+    )
     if not isinstance(raw_decisions, list):
         raise ValueError("Governance owner returned non-list decisions response")
     results = []

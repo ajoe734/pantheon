@@ -116,6 +116,28 @@ class PersonaMutationPort(Protocol):
     ) -> Optional[Dict[str, Any]]: ...
 
 
+def _cached_port_records_with_error(
+    key: str,
+    port: Any,
+    store: Any,
+    attr: str,
+    provider: Optional[Callable[[], List[Dict[str, Any]]]],
+) -> Tuple[str, List[Dict[str, Any]], Optional[Exception]]:
+    def _load() -> Tuple[str, List[Dict[str, Any]], Optional[Exception]]:
+        if store is not None and callable(getattr(store, attr, None)):
+            try:
+                return "store", list(getattr(store, attr)() or []), None
+            except Exception as exc:
+                return ("missing", [], None) if _is_unconfigured(exc) else ("unavailable", [], exc)
+        if provider is not None:
+            try:
+                return "service", [dict(r) for r in (provider() or [])], None
+            except Exception as exc:
+                return ("missing", [], None) if _is_unconfigured(exc) else ("unavailable", [], exc)
+        return "missing", [], None
+    return cached_owner_call((key, id(port), selected_tenant.get()), _load)
+
+
 def _cached_port_records(
     key: str,
     port: Any,
@@ -123,19 +145,11 @@ def _cached_port_records(
     attr: str,
     provider: Optional[Callable[[], List[Dict[str, Any]]]],
 ) -> Tuple[str, List[Dict[str, Any]]]:
-    def _load() -> Tuple[str, List[Dict[str, Any]]]:
-        if store is not None and callable(getattr(store, attr, None)):
-            try:
-                return "store", list(getattr(store, attr)() or [])
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        if provider is not None:
-            try:
-                return "service", [dict(r) for r in (provider() or [])]
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        return "missing", []
-    return cached_owner_call((key, id(port), selected_tenant.get()), _load)
+    try:
+        source, records, _err = _cached_port_records_with_error(key, port, store, attr, provider)
+        return source, records
+    except Exception as exc:
+        return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +407,9 @@ class DeploymentPlanPort:
         self._store = store
         self._plans_provider = plans_provider
 
+    def _get_raw_plans_with_error(self) -> Tuple[str, List[Dict[str, Any]], Optional[Exception]]:
+        return _cached_port_records_with_error("pcr_plans", self, self._store, "list_deployment_plans", self._plans_provider)
+
     def _get_raw_plans(self) -> Tuple[str, List[Dict[str, Any]]]:
         return _cached_port_records("pcr_plans", self, self._store, "list_deployment_plans", self._plans_provider)
 
@@ -419,8 +436,14 @@ class DeploymentPlanPort:
         *,
         status: Optional[str] = None,
         capital_pool_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> List[Dict[str, Any]]:
-        _, raw = self._get_raw_plans()
+        if raise_on_error:
+            _, raw, err = self._get_raw_plans_with_error()
+            if err is not None:
+                raise err
+        else:
+            _, raw = self._get_raw_plans()
         items = [_deep_copy(p) for p in raw if self._plan_id(p)]
         if status:
             items = [p for p in items if str(p.get("status") or "").lower() == status.lower()]
