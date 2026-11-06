@@ -16,6 +16,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import time
 from typing import Callable
 
 
@@ -40,8 +41,47 @@ BASELINE_AUTH_FLAGS = ("PANTHEON_BFF_MFA_REQUIRED", *(
 ))
 BASELINE_CONFIG_KEYS = (*BASELINE_PRINCIPAL_CONFIG, *BASELINE_AUTH_FLAGS)
 
+# Whole-stack compensation. The sealed three-image bundle above is unchanged;
+# every other service is restored from the image the host already holds (its
+# pantheon-protect/<service>:<id12> tag), so no archive is ever written for it.
+STACK_SCHEMA = "pantheon.dev-stack-image-baseline.v1"
+STACK_ENV_KEYS = ("PANTHEON_TENANT_ID", "GIT_SHA")
+SERVICE_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,62}")
+STACK_MAX_SERVICES = 128
+# Readback budget: recreated services start together, the slowest (source-ingest,
+# ~110 s) must fit with room for a second attempt. Far inside the 60 minute step.
+STACK_READBACK_SECONDS = 900
+STACK_POLL_SECONDS = 5
+STACK_FORMAT = (
+    '{"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
+    '"oneoff":{{json (index .Config.Labels "com.docker.compose.oneoff")}},'
+    '"image_id":{{json .Image}},"status":{{json .State.Status}},"exit_code":{{json .State.ExitCode}},'
+    '"health_test":{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{else}}null{{end}},'
+    '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
+)
+# Filtering happens in Docker's formatter: only these two nonsecret names leave it.
+STACK_ENV_FORMAT = ('{{range .Config.Env}}{{$v := split . "="}}{{if or ' + ' '.join(
+    '(eq (index $v 0) "' + key + '")' for key in STACK_ENV_KEYS
+) + '}}{{json .}}{{"\\n"}}{{end}}{{end}}')
+
 
 class ArtifactError(RuntimeError):
+    pass
+
+
+class StackError(ArtifactError):
+    """A whole-stack failure that may name services (never exception text)."""
+
+    def __init__(self, message: str, services=()):
+        super().__init__(message)
+        self.services = tuple(sorted(set(services)))
+
+
+class StackImageMissing(StackError):
+    pass
+
+
+class StackMixedError(StackError):
     pass
 
 
@@ -352,13 +392,204 @@ def validate_images(raw: bytes, *, expected_sha256: str, expected_source_sha: st
     return bundle
 
 
+def _stack_rows(docker: Docker) -> dict[str, list[dict]]:
+    """Every non-one-off Compose container of the project, by service."""
+    ids = docker.call("ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=pantheon").split()
+    rows: dict[str, list[dict]] = {}
+    for container_id in ids:
+        _match(container_id, re.compile(r"[0-9a-f]{12,64}"), "container ID")
+        row = _json(docker.call("inspect", "--format", STACK_FORMAT, container_id))
+        _keys(row, ("service", "oneoff", "image_id", "status", "exit_code", "health_test", "health"), "stack container")
+        if row["oneoff"] == "True":
+            continue
+        _match(row["service"], SERVICE_NAME, "Compose service name")
+        _match(row["image_id"], IMAGE, "container image ID")
+        row["container_id"] = container_id
+        rows.setdefault(row["service"], []).append(row)
+    return rows
+
+
+def _has_healthcheck(row: dict) -> bool:
+    test = row["health_test"]
+    return isinstance(test, list) and bool(test) and test[0] != "NONE"
+
+
+def _stack_env(docker: Docker, container_id: str) -> dict:
+    found = dict.fromkeys(STACK_ENV_KEYS)
+    for line in docker.call("inspect", "--format", STACK_ENV_FORMAT, container_id).splitlines():
+        if not line.strip():
+            continue
+        entry = _json(line)
+        name, separator, value = entry.partition("=") if isinstance(entry, str) else ("", "", "")
+        if not separator or name not in found:
+            raise ArtifactError("unexpected container environment entry")
+        found[name] = value
+    return found
+
+
+def _protect_tag(service: str, image_id: str) -> str:
+    return f"pantheon-protect/{service}:{image_id.removeprefix('sha256:')[:12]}"
+
+
+def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], None]) -> dict:
+    """Record the image of every running (or completed one-shot) Compose service.
+
+    Nothing is archived: the host already holds each running image, and the
+    deploy's builder-cache prune tags every running image as
+    pantheon-protect/<service>:<id12> before it removes anything. The same tag
+    is applied here (idempotent) so the image of every recorded service is held
+    from capture time, and a missing image is reported by service name.
+    """
+    _match(source_sha, SHA, "source SHA")
+    check_lease()
+    first = _stack_rows(docker)
+    services, missing = {}, []
+    for service, containers in sorted(first.items()):
+        if len(containers) != 1:
+            raise StackError(f"{service}: expected exactly one Compose container", [service])
+        row = containers[0]
+        completed = row["status"] == "exited" and row["exit_code"] == 0 and not _has_healthcheck(row)
+        if row["status"] != "running" and not completed:
+            continue
+        try:
+            _image(docker, row["image_id"])
+        except ArtifactError:
+            missing.append(service)
+            continue
+        services[service] = {"image_id": row["image_id"], "state": "running" if row["status"] == "running" else "completed",
+                             "has_healthcheck": _has_healthcheck(row),
+                             "env": _stack_env(docker, row["container_id"])}
+    if missing:
+        raise StackImageMissing("recorded stack image is missing", missing)
+    if not services or len(services) > STACK_MAX_SERVICES:
+        raise ArtifactError("stack baseline service count is out of bounds")
+    for service, row in services.items():
+        check_lease()
+        try:
+            docker.call("tag", row["image_id"], _protect_tag(service, row["image_id"]))
+        except ArtifactError as error:
+            raise StackError(f"{service}: failed to hold the recorded image", [service]) from error
+    second = _stack_rows(docker)
+    for service, row in services.items():
+        again = second.get(service)
+        if not again or len(again) != 1 or again[0]["image_id"] != row["image_id"] or \
+                (again[0]["status"] == "running") != (row["state"] == "running"):
+            raise StackError(f"{service}: container changed during stack capture", [service])
+    if {s for s, c in second.items() if c[0]["status"] == "running"} != {s for s, r in services.items() if r["state"] == "running"}:
+        raise ArtifactError("stack membership changed during capture")
+    check_lease()
+    return validate_stack({"schema_version": STACK_SCHEMA, "source_sha": source_sha, "services": services})
+
+
+def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None = None) -> dict:
+    _keys(value, ("schema_version", "source_sha", "services"), "stack baseline")
+    if value["schema_version"] != STACK_SCHEMA:
+        raise ArtifactError("stack baseline schema mismatch")
+    _match(value["source_sha"], SHA, "stack source SHA")
+    if source_sha is not None and value["source_sha"] != source_sha:
+        raise ArtifactError("stack baseline source mismatch")
+    services = value["services"]
+    if not isinstance(services, dict) or not 0 < len(services) <= STACK_MAX_SERVICES:
+        raise ArtifactError("invalid stack baseline services")
+    for service, row in services.items():
+        _match(service, SERVICE_NAME, "stack service name")
+        _keys(row, ("image_id", "state", "has_healthcheck", "env"), "stack service")
+        _match(row["image_id"], IMAGE, "stack image ID")
+        if row["state"] not in ("running", "completed") or type(row["has_healthcheck"]) is not bool:
+            raise ArtifactError("invalid stack service state")
+        if row["state"] == "completed" and row["has_healthcheck"]:
+            raise ArtifactError("a completed one-shot service cannot have a healthcheck")
+        _keys(row["env"], STACK_ENV_KEYS, "stack service environment")
+        if any(item is not None and (not isinstance(item, str) or len(item) > 512 or "\0" in item)
+               for item in row["env"].values()):
+            raise ArtifactError("invalid stack service environment")
+    if bundle is not None:
+        for service in SERVICES:
+            if service not in services or services[service]["image_id"] != bundle["services"][service]["image_id"] \
+                    or services[service]["state"] != "running":
+                raise ArtifactError("stack baseline disagrees with the sealed image bundle")
+    return value
+
+
+def _stack_problems(stack: dict, current: dict[str, list[dict]]) -> tuple[dict[str, str], dict[str, str]]:
+    """(hard, soft) problems by service. Hard ones cannot heal by waiting."""
+    hard, soft = {}, {}
+    for service, expected in stack["services"].items():
+        containers = current.get(service, [])
+        if len(containers) != 1:
+            hard[service] = "container-missing" if not containers else "container-ambiguous"
+            continue
+        row = containers[0]
+        if row["image_id"] != expected["image_id"]:
+            hard[service] = "image-mismatch"
+        elif expected["state"] == "completed":
+            if row["status"] != "exited" or row["exit_code"] != 0:
+                soft[service] = "one-shot-not-completed"
+        elif row["status"] != "running":
+            soft[service] = "not-running"
+        elif expected["has_healthcheck"] and row["health"] != "healthy":
+            soft[service] = "not-healthy"
+    for service, containers in current.items():
+        if service not in stack["services"] and any(c["status"] in ("running", "restarting", "paused") for c in containers):
+            hard[service] = "candidate-only-still-running"
+    return hard, soft
+
+
+def _mixed(problems: dict[str, str]) -> StackMixedError:
+    return StackMixedError("stack is mixed: " + ", ".join(sorted(problems)), problems)
+
+
+def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], None],
+                   recreated=(), sleep: Callable[[float], None] = time.sleep,
+                   monotonic: Callable[[], float] = time.monotonic,
+                   budget_seconds: int = STACK_READBACK_SECONDS) -> dict:
+    """Prove each recorded service runs its recorded image, healthy within budget.
+
+    A wrong image, missing container or surviving candidate-only service fails at
+    once; run/health states may heal and are polled until ``budget_seconds``.
+    """
+    deadline = monotonic() + budget_seconds
+    while True:
+        check_lease()
+        current = _stack_rows(docker)
+        hard, soft = _stack_problems(stack, current)
+        if hard:
+            raise _mixed({**soft, **hard})
+        if not soft:
+            break
+        if monotonic() >= deadline:
+            raise _mixed(soft)
+        sleep(STACK_POLL_SECONDS)
+    drift = {}
+    for service in sorted(set(recreated) & set(stack["services"])):
+        check_lease()
+        if _stack_env(docker, current[service][0]["container_id"]) != stack["services"][service]["env"]:
+            drift[service] = "environment-mismatch"
+    if drift:
+        raise _mixed(drift)
+    check_lease()
+    return {"scope": "stack",
+            "services": {service: {"baseline_image_id": row["image_id"],
+                                   "observed_image_id": current[service][0]["image_id"]}
+                         for service, row in sorted(stack["services"].items())},
+            "candidate_only_stopped": sorted(s for s in current if s not in stack["services"])}
+
+
 def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str,
                    archive_root: Path, compose_files: tuple[tuple[Path, str], ...],
-                   docker: Docker, check_lease: Callable[[], None], environment: str) -> dict:
-    """Restore ONLY three images. Caller owns authenticated admission/config/guard.
+                   docker: Docker, check_lease: Callable[[], None], environment: str,
+                   stack: dict | None = None, sleep: Callable[[float], None] = time.sleep,
+                   monotonic: Callable[[], float] = time.monotonic,
+                   readback_seconds: int = STACK_READBACK_SECONDS) -> dict:
+    """Restore the sealed three images; with ``stack`` also every other service.
 
-    No FE switch, issuer preparation, environment dump or fallback build/pull.
-    This returns image readback, NOT whole-release compensation success.
+    Caller owns authenticated admission/config/guard. No FE switch, issuer
+    preparation, environment dump or fallback build/pull. Without ``stack`` this
+    returns image readback for the three services only, NOT whole-release
+    compensation success. With ``stack`` it returns a whole-stack proof or raises.
+    The three sealed services are always recreated (their configuration is
+    restored from the seal); any other recorded service already on its recorded
+    image is left alone.
     """
     if environment != "dev" or not compose_files:
         raise ArtifactError("artifact restore requires dev and trusted Compose files")
@@ -369,6 +600,22 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
         _match(digest, DIGEST, "Compose digest")
         if _file_digest(path)[0] != digest:
             raise ArtifactError("Compose configuration digest mismatch")
+    rest, held_ids = [], set(bundle["archives"])
+    if stack is not None:
+        validate_stack(stack, bundle=bundle, source_sha=expected_source_sha)
+        rest = sorted(service for service in stack["services"] if service not in SERVICES)
+        # Prove every held image BEFORE the first mutation, naming each gap.
+        missing = []
+        for service in rest:
+            image_id = stack["services"][service]["image_id"]
+            if image_id in held_ids:
+                continue
+            try:
+                _image(docker, image_id)
+            except ArtifactError:
+                missing.append(service)
+        if missing:
+            raise StackImageMissing("recorded stack image is missing: " + ", ".join(sorted(missing)), missing)
     for image_id, archive in bundle["archives"].items():
         try:
             _image(docker, image_id)
@@ -379,9 +626,29 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
                 raise ArtifactError("archive changed before load")
             docker.call("image", "load", "--input", str(path))
             _image(docker, image_id)
-    with tempfile.TemporaryDirectory(prefix=".restore-", dir=archive_root) as stage:
+
+    def pinned(service: str) -> dict:
+        # A recreated container must keep the tenant and GIT_SHA it ran with at
+        # baseline; Compose defaults reset PANTHEON_TENANT_ID (source-ingest).
+        env = {key: value for key, value in stack["services"][service]["env"].items() if value is not None}
+        return {"environment": env} if env else {}
+
+    def compose_up(stage: str, services: dict[str, dict], tail: tuple[str, ...], names: list[str]) -> None:
         override = Path(stage) / "images.json"
-        override.write_bytes(manifest_bytes({"services": {
+        override.write_bytes(manifest_bytes({"services": services}))
+        command = ["compose", "-p", "pantheon"]
+        for path, digest in compose_files:
+            if _file_digest(path)[0] != digest:
+                raise ArtifactError("Compose configuration changed before restore")
+            command.extend(("-f", str(path)))
+        command.extend(("-f", str(override), "up", "-d", "--no-build", "--pull", "never", *tail, *names))
+        check_lease()
+        docker.call(*command)
+        override.unlink()
+
+    recreated = []
+    with tempfile.TemporaryDirectory(prefix=".restore-", dir=archive_root) as stage:
+        compose_up(stage, {
             service: {
                 "image": row["image_id"], "pull_policy": "never",
                 # Retained worker images import the application in their
@@ -389,24 +656,50 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
                 # check and require healthy, with a bounded execution budget.
                 **({"healthcheck": {"timeout": "30s"}}
                    if service == "agora-interaction-worker" else {}),
+                **(pinned(service) if stack is not None else {}),
             }
             for service, row in bundle["services"].items()
-        }}))
-        command = ["compose", "-p", "pantheon"]
-        for path, digest in compose_files:
-            if _file_digest(path)[0] != digest:
-                raise ArtifactError("Compose configuration changed before restore")
-            command.extend(("-f", str(path)))
-        command.extend(("-f", str(override), "up", "-d", "--no-build", "--pull", "never",
-                        "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "120", *SERVICES))
-        check_lease()
-        docker.call(*command)
+        }, ("--no-deps", "--force-recreate", "--wait", "--wait-timeout", "120"), list(SERVICES))
+        if stack is not None:
+            recreated.extend(SERVICES)
+            current = _stack_rows(docker)
+            for service, containers in sorted(current.items()):
+                if service in stack["services"]:
+                    continue
+                for row in containers:
+                    if row["status"] in ("running", "restarting", "paused"):
+                        check_lease()
+                        docker.call("stop", row["container_id"])
+            wanted = {"running": [], "completed": []}
+            for service in rest:
+                expected = stack["services"][service]
+                containers = current.get(service, [])
+                if len(containers) == 1 and containers[0]["image_id"] == expected["image_id"]:
+                    if expected["state"] == "running" and containers[0]["status"] != "running":
+                        check_lease()
+                        docker.call("start", containers[0]["container_id"])
+                    continue
+                wanted[expected["state"]].append(service)
+            # One-shot init containers exit 0 by design, so no group uses
+            # --wait; readback requires "running and healthy" or "exited 0".
+            for state in ("running", "completed"):
+                if wanted[state]:
+                    compose_up(stage, {service: {"image": stack["services"][service]["image_id"],
+                                                 "pull_policy": "never", **pinned(service)}
+                                       for service in wanted[state]},
+                               ("--no-deps", "--force-recreate"), wanted[state])
+                    recreated.extend(wanted[state])
     check_lease()
     observed = {service: _current(docker, service)["image_id"] for service in SERVICES}
     if any(observed[service] != bundle["services"][service]["image_id"] for service in SERVICES):
         raise ArtifactError("restored image readback mismatch")
+    result = {"image_readback_verified": True, "services": observed}
+    if stack is not None:
+        result["stack"] = readback_stack(stack, docker=docker, check_lease=check_lease,
+                                         recreated=recreated, sleep=sleep, monotonic=monotonic,
+                                         budget_seconds=readback_seconds)
     check_lease()
-    return {"image_readback_verified": True, "services": observed}
+    return result
 
 
 def frontend_dist_digest(root: Path) -> str:

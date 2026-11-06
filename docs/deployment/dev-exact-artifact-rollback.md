@@ -183,6 +183,62 @@ are matched against the exact committed blobs before installation. The prior
 Compose checkout is a new retained worktree; an owner-mounted source checkout
 is never switched for rollback.
 
+## Whole-stack compensation (baseline restore)
+
+The sealed three-image bundle (`pantheon.dev-bff-image-bundle.v1`: operator-bff,
+agora-interaction-worker, loop-run-projector-scheduler, with archives) is
+unchanged. Compensating only those three left the other ~50 containers on the
+rejected candidate while `deployment.json` still showed the old pair accepted.
+
+* **Baseline.** The outer manifest is now `pantheon.dev-release-artifact-baseline.v2`,
+  which adds exactly one field, `stack_baseline` (`pantheon.dev-stack-image-baseline.v1`):
+  for every running Compose service (and every one-shot that exited 0, e.g.
+  `minio-init`, `source-ingest-controller-migrate`) the image id, whether it has a
+  healthcheck, and the recorded `PANTHEON_TENANT_ID` / `GIT_SHA` from its
+  `Config.Env` (only those two names are read; the filter runs in Docker's
+  formatter). v1 manifests are still accepted for `verify` and the roundtrip but
+  cannot be used for whole-stack scope.
+* **No new archives.** Other services add no tar (hosted: 54 images, 7.8 GB
+  with shared layers, disk 111/193 GB, release-artifacts 3.1 GB; see
+  DEV-RELEASE-ARTIFACT-RETENTION-20261103). Capture tags each recorded image
+  `pantheon-protect/<service>:<id12>` (idempotent; the same tag the deploy prune
+  step writes) and fails by service name if an image is not inspectable.
+* **Prune safety.** `deploy_nonprod_vm.sh` tags every compose container image
+  with `pantheon-protect/*` before builder/dangling prune; stale protect tags are
+  removed only for images no container uses, i.e. on a later deploy. The opt-in
+  `PANTHEON_DEV_DOCKER_PRUNE=true` branch now excludes the Compose project
+  (`--filter label!=com.docker.compose.project=pantheon`) from container/system
+  prune, so exited one-shot containers keep their images in use. All pruning
+  precedes candidate mutation.
+* **Scope.** `--scope auto|images|stack` (`PANTHEON_DEV_ARTIFACT_SCOPE`). `auto` is
+  whole-stack for a baseline `restore` of a v2 baseline: the deploy job compensation
+  (`rollback_dev_bff_on_failure` and the `deploy_compensation` step) and
+  `compensate_cross_repo_release.sh`. `restore-final`, `verify`, and the roundtrip
+  baseline restore (workflow sets `images`) keep the three-image scope.
+* **Restore** extends `restore_images` (no second path). It first checks every
+  recorded image is held and names missing services before any mutation; then runs
+  the unchanged three-service `up --force-recreate --wait --wait-timeout 120`; stops
+  candidate-only services (`docker stop`); starts a stopped service already on its
+  recorded image; recreates only services whose image differs, via the same
+  compose override (`image`, `pull_policy: never`) plus the recorded
+  `PANTHEON_TENANT_ID`/`GIT_SHA` so Compose defaults cannot reset them. Services
+  already on their recorded image are not recreated. The three sealed services are
+  always recreated (their configuration is restored from the seal). One-shot
+  containers are recreated without `--wait` and pass when `exited 0`.
+* **Readback and budget.** Every recorded service must run the recorded image id
+  (wrong image, missing container or a still-running candidate-only service fail
+  immediately); services with a healthcheck must be `healthy` and one-shots
+  `exited 0`, polled every 5 s for at most 900 s (`STACK_READBACK_SECONDS`), then
+  the environment of recreated services is compared with the baseline. The
+  compensation deadline default is 1500 s inside the 60 minute step.
+* **Evidence.** The readback gains `stack` (`scope`, per service
+  `baseline_image_id` / `observed_image_id`, `candidate_only_stopped`), validated
+  against the sealed baseline. On failure the driver prints
+  `PANTHEON_ARTIFACT_STACK_MIXED_V1 {"kind","services"}` (validated service names
+  only); the deploy shell turns it into an `::error::` line and a job-summary
+  section: "the stack is mixed" for mismatches or "compensation NOT proven" for
+  missing images. The run fails; database migrations are not rolled back.
+
 ## Remote cancellation and limitations
 
 The runner and SSH sender stay in the pinned guard's process group. A remote

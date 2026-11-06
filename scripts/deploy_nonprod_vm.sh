@@ -937,6 +937,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 \
     PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID \
     PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON \
+    PANTHEON_DEV_ARTIFACT_SCOPE \
     PANTHEON_DEV_FE_DEPLOY_SCRIPT PANTHEON_EXECUTE_PLANS_ROOT PANTHEON_DEV_FE_CONTROLLER_SHA \
     PANTHEON_DEV_FE_NODE_BIN_DIR \
     PANTHEON_DEV_FE_ROOT PANTHEON_DEV_FE_RELEASES_DIR \
@@ -1101,6 +1102,12 @@ with os.fdopen(fd, "wb") as stream:
               DEV_DEPLOY_SSH_USER="${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" python3 "${SCRIPT_DIR}/dev_remote_guarded_exec.py" \
               --ssh-helper "${SCRIPT_DIR}/dev_vm_ssh.sh" --script-file "${remote_script}" \
               --deadline-seconds "${deadline_seconds}" >"${private_dir}/transport.log") || transport_status=$?
+          fi
+          if [[ "${transport_status}" != 0 ]]; then
+            # Name mixed/unproven services in the log and job summary; the run
+            # still fails with the original status.
+            python3 "${SCRIPT_DIR}/dev_artifact_compensation_evidence.py" mixed-summary \
+              --input-log "${private_dir}/transport.log" || true
           fi
           if [[ "${transport_status}" == 0 ]]; then
             local operation=verify
@@ -4169,9 +4176,11 @@ prune_dev_docker_storage_for_build() {
   fi
 
   info "pruning dev Docker build cache and unused containers/images before root build"
-  run_bounded_docker_prune "stopped containers" docker container prune -f
+  # Compose containers (including exited one-shot init containers) stay: their
+  # images are the whole-stack compensation baseline and must remain in use.
+  run_bounded_docker_prune "stopped containers" docker container prune -f --filter "label!=com.docker.compose.project=pantheon"
   run_bounded_docker_prune "unused images" docker image prune -af
-  run_bounded_docker_prune "system cache" docker system prune -f
+  run_bounded_docker_prune "system cache" docker system prune -f --filter "label!=com.docker.compose.project=pantheon"
   docker_storage_diagnostics "after prune"
 }
 
@@ -4525,8 +4534,14 @@ ARTIFACT_PY
   # preservation. It restores allowlisted baseline paths and historical auth
   # booleans from the sealed manifest, never from candidate defaults;
   # no issuer, source checkout, FE switch or Caddy write belongs in this lane.
+  # auto = whole-stack for a baseline restore of a v2 baseline (both compensation
+  # entry points); the roundtrip baseline restore passes images and keeps the
+  # three-image scope. The driver, not this shell, enforces what is allowed.
+  local artifact_scope="${PANTHEON_DEV_ARTIFACT_SCOPE:-auto}"
+  [[ "${artifact_scope}" =~ ^(auto|images|stack)$ ]] || error "artifact scope must be auto, images or stack"
   with_dev_bff_runtime_env "${runtime_sha}" false \
     python3 "${PANTHEON_DEV_ARTIFACT_DRIVER_PATH}" "${operation}" \
+      --scope "${artifact_scope}" \
       --environment dev --project-id "${PANTHEON_DEPLOY_PROJECT_ID}" --vm pantheon-dev-deploy \
       --candidate-id "${PANTHEON_DEV_ARTIFACT_CANDIDATE_ID}" \
       --run-id "${PANTHEON_DEV_ARTIFACT_RUN_ID}" --attempt "${PANTHEON_DEV_ARTIFACT_ATTEMPT}" \
