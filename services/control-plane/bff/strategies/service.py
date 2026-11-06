@@ -144,6 +144,43 @@ class StrategiesService:
             return list(getter() or [])
         return list_strategy_summaries(read_store)
 
+    def list_strategy_summaries_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            read_store = self._get_read_store_port()
+        except Exception:
+            return None
+        getter = getattr(read_store, "list_strategy_summaries_page", None) or getattr(
+            read_store, "list_strategy_specs_page", None
+        )
+        if not callable(getter):
+            return None
+        try:
+            page = getter(
+                state=state,
+                persona_id=persona_id,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 400 and self._bff_error:
+                raise self._bff_error(
+                    400,
+                    ErrorCode.VALIDATION_FAILED,
+                    "Invalid page_token",
+                    "page_token must be a non-negative integer offset",
+                ) from exc
+            return self._invoke_read_owner(lambda: (_ for _ in ()).throw(exc))
+        except Exception as exc:
+            return self._invoke_read_owner(lambda: (_ for _ in ()).throw(exc))
+        return page if isinstance(page, dict) else None
+
     def _invoke_read_owner(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)

@@ -865,7 +865,7 @@ def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> 
         assert bff_payload["items"][0]["risk"] == "medium"
         assert bff_payload["items"][0]["personaIds"] == [persona_id]
         # Zero per-row detail fanout and zero local store reads even when risk_raw is absent
-        assert http_paths == ["/api/registry/strategy-specs"]
+        assert http_paths == ["/api/registry/strategy-specs?view=strategy_summary_page&page_size=1"]
         assert local_store_calls == []
 
         bff_detail = client.get(f"/bff/strategies/{strategy_id}", headers=dev_headers)
@@ -908,7 +908,30 @@ def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> 
         monkeypatch.setattr(
             adapter_base,
             "http_request_json",
-            lambda *a, **k: [{"registry_id": "reg-foreign", "artifact_type": "strategy_spec", "strategy_id": "s-1", "version": "1.0.0", "owner_tenant": "tenant-foreign"}],
+            lambda url, *a, **k: (
+                {
+                    "items": [
+                        {
+                            "strategy_id": "s-1",
+                            "current_spec_version_id": "reg-foreign",
+                            "current_spec_version": "1.0.0",
+                            "tenant_id": "tenant-foreign",
+                        }
+                    ],
+                    "total": 1,
+                    "next_page_token": None,
+                }
+                if "view=strategy_summary_page" in str(url)
+                else [
+                    {
+                        "registry_id": "reg-foreign",
+                        "artifact_type": "strategy_spec",
+                        "strategy_id": "s-1",
+                        "version": "1.0.0",
+                        "owner_tenant": "tenant-foreign",
+                    }
+                ]
+            ),
         )
         assert client.get("/bff/strategies", headers=dev_headers).status_code == 403
         assert client.get("/api/v1/knowledge/strategy-specs", headers=dev_headers).status_code == 403

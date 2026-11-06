@@ -31,7 +31,14 @@ from .models import (
     utc_now_iso,
 )
 from .pg_store import DivergentCommandReplayError
-from .storage import build_lineage_graph, persona_binding_counts, RegistryConcurrentUpdateError, RegistryStore, RegistryUniqueViolationError
+from .storage import (
+    build_lineage_graph,
+    persona_binding_counts,
+    project_strategy_spec_summary_page,
+    RegistryConcurrentUpdateError,
+    RegistryStore,
+    RegistryUniqueViolationError,
+)
 
 # ``register_if_absent`` is called from two kinds of places: real API routes
 # (service.py), which always pass a verified caller's ``actor`` explicitly,
@@ -376,6 +383,38 @@ class RegistryService:
         return persona_binding_counts(self.list_persona_binding_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
         ))
+
+    def list_strategy_spec_summary_rows(
+        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",
+    ) -> list[dict]:
+        """Strategy-spec summary rows projected by the owner store without full payload decode."""
+        return self.store.list_strategy_spec_summary_rows(
+            visible_tenants=visible_tenants, artifact_type=artifact_type,
+        )
+
+    def strategy_spec_summary_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_type: Optional[str] = "strategy_spec",
+        artifact_state: Optional[str] = None,
+        state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> dict[str, object]:
+        """Owner-filtered and paged canonical strategy summary page."""
+        rows = self.list_strategy_spec_summary_rows(
+            visible_tenants=visible_tenants, artifact_type=artifact_type,
+        )
+        return project_strategy_spec_summary_page(
+            rows,
+            artifact_state=artifact_state,
+            state=state,
+            persona_id=persona_id,
+            page_token=page_token,
+            page_size=page_size,
+        )
 
     def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:
         """Return the entry exactly as it was at its first successful
