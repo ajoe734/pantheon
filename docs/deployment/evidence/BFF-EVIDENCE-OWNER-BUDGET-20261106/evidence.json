@@ -1,0 +1,20 @@
+{
+  "task_id": "BFF-EVIDENCE-OWNER-BUDGET-20261106",
+  "change": {"EVIDENCE_OWNER_READ_TIMEOUT_SECONDS": "2.0 -> 4.0", "evidence_route_budget_seconds": "2.5 -> 4.5 (owner bound + unchanged 0.5 margin)"},
+  "unchanged": ["global management read default 0.6s", "human inbox budget/margin", "env overrides PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS and PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS"],
+  "functional_tests": {
+    "command": "/tmp/civenv/bin/python -m pytest tests/test_evidence_source_backend.py tests/test_evidence_owner_list_bounded.py test_mgmt_load_005_read_concurrency.py tests/test_human_inbox_governance_latency.py tests/test_bff_management_cockpit.py",
+    "result": "85 passed",
+    "notes": "An earlier -x run showed one failure in test_mgmt_load_005 test_jobs_router_returns_narrow_port_records_without_legacy_reader; it passed in isolation (15 passed) and in the full rerun, so it is order/timing flaky and unrelated to evidence."
+  },
+  "new_tests": [
+    "real local HTTP owner (hosted 518-row shape) answering after 3.0s: status ok, total 518, real summary, 20 rows on list and page 2",
+    "hung owner (12s): unavailable within route budget, items empty, summary fields null",
+    "default 4.0 / 4.5 and env overrides win; human inbox helper unchanged"
+  ],
+  "changed_assertions": [
+    {"file": "tests/test_evidence_source_backend.py", "assertion": "route budget 2.5 -> 4.5", "justification": "the test encodes owner bound + 0.5 margin; owner bound is now 4.0 per acceptance 1"},
+    {"file": "tests/test_evidence_owner_list_bounded.py", "assertion": "OWNER_BUDGET_SECONDS 2.0 -> 4.0", "justification": "mirrors the client timeout constant; the assertion that bounded reads are faster than it still holds"}
+  ],
+  "hosted_verification": "not performed here; left to the operator acceptance task"
+}
