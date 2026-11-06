@@ -851,22 +851,61 @@ def _management_evidence_summary(
     }
 
 
-def _management_evidence_degraded_payload(*, page_size: int = 20, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+_EVIDENCE_DEGRADED_REASONS = {
+    "read_timeout": (
+        "timeout_fallback",
+        "Evidence aggregation timed out under concurrent read fanout; degraded empty response returned.",
+    ),
+    "read_capacity_saturated": (
+        "capacity_fallback",
+        "Evidence read capacity is saturated; degraded empty response returned.",
+    ),
+    "read_error": (
+        "error_fallback",
+        "Evidence aggregation failed; degraded empty response returned.",
+    ),
+}
+
+
+def _management_evidence_degraded_payload(
+    *,
+    page_size: int = 20,
+    snapshot_at: Optional[str] = None,
+    reason: str = "read_timeout",
+) -> Dict[str, Any]:
     now = snapshot_at or _utc_now_rfc3339()
-    summary = _management_evidence_summary(filtered_total=0, page_items=[], redacted_count=0)
+    reason_key = reason if reason in _EVIDENCE_DEGRADED_REASONS else "read_error"
+    source, message = _EVIDENCE_DEGRADED_REASONS[reason_key]
+    summary = _management_evidence_summary(
+        filtered_total=0,
+        page_items=[],
+        redacted_count=0,
+        unavailable=True,
+    )
     facets = {
-        "source_types": summary["by_source_type"],
-        "link_types": summary["by_link_type"],
-        "credibility_tiers": summary["by_credibility_tier"],
+        "source_types": {},
+        "link_types": {},
+        "credibility_tiers": {},
+    }
+    evidence_surface = {
+        "status": "unavailable",
+        "reason": reason_key,
+        "source": source,
+        "message": "Evidence reference read surface is unavailable.",
+        "snapshot_at": now,
+        "staleness": {"served_from": "unverifiable", "last_known_at": now},
     }
     meta = _snapshot_meta(now)
     meta["surfaces"] = {
         "management_evidence": {
             "status": "degraded",
-            "source": "bff_composed",
-            "message": "Evidence aggregation timed out under concurrent read fanout; degraded empty response returned.",
+            "reason": reason_key,
+            "source": source,
+            "message": message,
             "snapshot_at": now,
-        }
+        },
+        "evidence_refs": evidence_surface,
+        "knowledge_evidence": dict(evidence_surface),
     }
     meta["redacted_evidence_count"] = 0
     return {

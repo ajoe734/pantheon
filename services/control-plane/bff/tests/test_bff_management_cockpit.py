@@ -497,6 +497,45 @@ def test_cockpit_failure_reason_is_not_always_timeout(exc_name, reason) -> None:
     assert response.json()["meta"]["surfaces"]["management_cockpit"]["reason"] == reason
 
 
+@pytest.mark.parametrize(
+    "exc_name,reason,source",
+    [
+        ("ManagementReadTimeout", "read_timeout", "timeout_fallback"),
+        ("ManagementReadSaturated", "read_capacity_saturated", "capacity_fallback"),
+        ("RuntimeError", "read_error", "error_fallback"),
+    ],
+)
+def test_evidence_failure_reason_is_not_always_timeout_and_preserves_nofake0(
+    exc_name: str, reason: str, source: str
+) -> None:
+    from services.control_plane.bff.personas.routes import common
+
+    exc_type = getattr(common, exc_name, RuntimeError)
+
+    async def _failing_read(*_args, **_kwargs):
+        raise exc_type()
+
+    app = FastAPI()
+    app.include_router(
+        create_management_router(
+            get_read_store=lambda: create_in_memory_read_surface_ports(),
+            run_management_read=_failing_read,
+        )
+    )
+    response = TestClient(app).get("/bff/management/evidence", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    surface = body["meta"]["surfaces"]["management_evidence"]
+    assert surface["status"] == "degraded"
+    assert surface["reason"] == reason
+    assert surface["source"] == source
+    assert body["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
+    assert body["meta"]["surfaces"]["evidence_refs"]["reason"] == reason
+    assert body["data"]["summary"]["total_evidence"] is None
+    assert body["data"]["summary"]["verified_count"] is None
+    assert body["data"]["summary"]["by_source_type"] is None
+
+
 def test_incident_owner_list_is_fetched_once_per_request_and_not_across_requests() -> None:
     import json as _json
     from services.control_plane.bff.core.owner_reads import request_read_scope, selected_tenant

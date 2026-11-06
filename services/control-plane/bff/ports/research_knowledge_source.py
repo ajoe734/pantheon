@@ -61,6 +61,17 @@ except ImportError:  # pragma: no cover
 
 
 EVIDENCE_OWNER_PAGE_SIZE = 200
+EVIDENCE_OWNER_READ_TIMEOUT_SECONDS = 2.0
+
+
+def evidence_owner_read_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            pass
+    return EVIDENCE_OWNER_READ_TIMEOUT_SECONDS
 
 
 @dataclass
@@ -713,9 +724,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return False, None
         try:
             import urllib.request
-            from ..core.owner_reads import authorization, selected_tenant
+            from ..core.owner_reads import authorization, remaining_management_read_budget, selected_tenant
+
+            timeout = evidence_owner_read_timeout_seconds()
+            budget = remaining_management_read_budget(timeout)
+            if budget is not None:
+                if budget <= 0.0:
+                    return False, None
+                timeout = max(0.05, float(budget))
             h = {k: v for k, v in (("Authorization", authorization.get()), ("X-Tenant-Id", selected_tenant.get())) if v}
-            with urllib.request.urlopen(urllib.request.Request(f"{base_url.rstrip('/')}/{path.lstrip('/')}", headers=h), timeout=2.0) as resp:
+            with urllib.request.urlopen(
+                urllib.request.Request(f"{base_url.rstrip('/')}/{path.lstrip('/')}", headers=h),
+                timeout=timeout,
+            ) as resp:
                 return True, json.loads(raw.decode("utf-8")) if (raw := resp.read()) else None
         except Exception:
             return False, None
@@ -1254,6 +1275,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     ) -> Tuple[List[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
         """Read one bounded page and its tenant summary from the owner service."""
         try:
+            from ..core.owner_reads import remaining_management_read_budget
+
+            budget = remaining_management_read_budget()
+            if budget is not None and budget <= 0.0:
+                raise _EvidenceOwnerReadError("source-ingest evidence owner read budget exhausted")
+        except _EvidenceOwnerReadError:
+            raise
+        except Exception:
+            pass
+        try:
             avail, payload = self._http_get(
                 self._source_ingest_service_url,
                 f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}",
@@ -1367,16 +1398,33 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 start = int(page_token) if page_token else 0
             except ValueError:
                 start = 0
+            tenant_tok = None
+            if effective_tenant is not None:
+                try:
+                    from ..core.owner_reads import selected_tenant
+
+                    if selected_tenant.get() is None:
+                        tenant_tok = selected_tenant.set(effective_tenant)
+                except Exception:
+                    tenant_tok = None
             try:
                 items, total, owner_summary = self._read_owner_evidence_page(start=start, page_size=page_size)
             except (_EvidenceOwnerReadError, StopIteration):
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
+            finally:
+                if tenant_tok is not None:
+                    try:
+                        from ..core.owner_reads import selected_tenant
+
+                        selected_tenant.reset(tenant_tok)
+                    except Exception:
+                        pass
             rows = [
                 self._project_evidence_ref_list_item(
                     normalize_source_ingest_evidence_item(it), include_scope_metadata=include_scope_metadata
                 )
                 for it in items
-                if self._record_matches_tenant(it, tenant_id, include_tenant_agnostic=include_tenant_agnostic)
+                if self._record_matches_tenant(it, effective_tenant, include_tenant_agnostic=include_tenant_agnostic)
             ]
             nxt = start + len(items)
             return EvidenceReadResult(
@@ -1389,14 +1437,31 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 summary_unavailable=owner_summary is None,
             )
 
+        tenant_tok = None
+        if effective_tenant is not None:
+            try:
+                from ..core.owner_reads import selected_tenant
+
+                if selected_tenant.get() is None:
+                    tenant_tok = selected_tenant.set(effective_tenant)
+            except Exception:
+                tenant_tok = None
         try:
             raw_refs, source = self._collect_raw_evidence_refs(tenant_id=effective_tenant)
         except _EvidenceOwnerReadError:
             return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
+        finally:
+            if tenant_tok is not None:
+                try:
+                    from ..core.owner_reads import selected_tenant
+
+                    selected_tenant.reset(tenant_tok)
+                except Exception:
+                    pass
         filtered = [
             ref
             for ref in raw_refs
-            if self._record_matches_tenant(ref, tenant_id, include_tenant_agnostic=include_tenant_agnostic)
+            if self._record_matches_tenant(ref, effective_tenant, include_tenant_agnostic=include_tenant_agnostic)
             and self._evidence_matches_scope(ref, linked_entities=linked_entities, source_types=source_types)
         ]
         filtered.sort(
@@ -1488,15 +1553,30 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         clean = str(ref_id or "").strip()
         if not clean:
             return None, "ok", "typed_store"
+        effective_tenant: Optional[str] = None
+        try:
+            from ..core.owner_reads import selected_tenant
+
+            effective_tenant = str(selected_tenant.get() or "").strip() or None
+        except Exception:
+            effective_tenant = None
         if self._evidence_repo is not None:
             try:
-                item = self._evidence_repo.get_evidence_item(clean)
+                item = (
+                    self._evidence_repo.get_evidence_item(clean, tenant_id=effective_tenant)
+                    if effective_tenant is not None
+                    else self._evidence_repo.get_evidence_item(clean)
+                )
             except Exception:
                 return None, "unavailable", "unavailable"
             raw = normalize_source_ingest_evidence_item(item.to_dict()) if item is not None else None
+            if raw is not None and not self._record_matches_tenant(raw, effective_tenant, include_tenant_agnostic=True):
+                raw = None
             return raw, "ok", "typed_store"
         if self._evidence_refs:
             ref = next((r for r in self._evidence_refs.values() if str(r.get("ref_id") or "") == clean), None)
+            if ref is not None and not self._record_matches_tenant(ref, effective_tenant, include_tenant_agnostic=True):
+                ref = None
             return (dict(ref) if ref else None), "ok", "typed_store"
         if self._source_ingest_service_url:
             from urllib.parse import quote
@@ -1509,7 +1589,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 return None, "unavailable", "unavailable"
             record = payload.get("item") if avail and isinstance(payload, dict) else None
             if isinstance(record, dict):
-                return normalize_source_ingest_evidence_item(record), "ok", "service_client"
+                raw = normalize_source_ingest_evidence_item(record)
+                if not self._record_matches_tenant(raw, effective_tenant, include_tenant_agnostic=True):
+                    return None, "ok", "service_client"
+                return raw, "ok", "service_client"
             if avail:
                 return None, "ok", "service_client"
             # The helper reports 404 and transport failure alike; a one-row
