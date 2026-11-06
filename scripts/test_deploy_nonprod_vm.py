@@ -2029,6 +2029,36 @@ def test_taiwan_preflight_friday_session_delayed_into_saturday_proceeds_unless_s
     assert (result["status"], result["reason"]) == ("skipped", "weekend")
 
 
+def test_taiwan_preflight_dev_root_deploy_between_close_and_delayed_refresh_2026_11_05() -> None:
+    """Run 41988080438: a deploy at 08:04Z (16:04 Taipei) saw only the pre-close snapshot."""
+    before_close = _stored_tw_snapshot("2026-11-04", "2026-11-04T08:00:00Z")
+    result = _run_pinned_taiwan_preflight("2026-11-05T08:04:21Z", {"2330.TW": before_close})
+    assert (result["status"], result["reason"]) == ("proceed", "closed_session_missing")
+    assert result["session_date"] == "2026-11-05"
+    refreshed = _stored_tw_snapshot("2026-11-05", "2026-11-05T15:13:00Z")
+    result = _run_pinned_taiwan_preflight("2026-11-05T15:14:00Z", {"2330.TW": refreshed})
+    assert (result["status"], result["reason"]) == ("noop", "already_fresh")
+    assert result["session_date"] == "2026-11-05"
+    # A snapshot observed before the 13:30 close does not prove the session, even on the same day.
+    early = _stored_tw_snapshot("2026-11-05", "2026-11-05T04:00:00Z")
+    result = _run_pinned_taiwan_preflight("2026-11-05T08:04:21Z", {"2330.TW": early})
+    assert (result["status"], result["reason"]) == ("proceed", "closed_session_missing")
+
+
+def test_preflight_only_entry_point_never_refreshes_and_reports_no_active_symbols() -> None:
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    assert "--preflight-only) PREFLIGHT_ONLY=true; shift ;;" in script
+    assert 'PREFLIGHT_ONLY=$(shell_quote "${PREFLIGHT_ONLY:-false}")' in script
+    dispatch = script.split("  refresh-only)\n    if [[", 1)[1].split("    exit $?", 1)[0]
+    assert dispatch.index("execute_taiwan_refresh_preflight_only") < dispatch.index("execute_bounded_source_refresh_entrypoint")
+    body = script.split("execute_taiwan_refresh_preflight_only() {", 1)[1].split("\n}\n", 1)[0]
+    for forbidden in ("docker stop", "manage_source_ingest_refresh_runtime", "docker compose -p pantheon -f docker-compose.yml up"):
+        assert forbidden not in body
+    assert '"reason": "no_active_taiwan_symbols"' in body
+    assert "check_taiwan_refresh_preflight false" in body
+    assert "return 0" in body
+
+
 def test_taiwan_preflight_covers_every_resolved_active_symbol() -> None:
     fresh = _stored_tw_snapshot("2026-11-02", "2026-11-02T08:00:00Z")
     stale = _stored_tw_snapshot("2026-10-30", "2026-10-30T08:00:00Z")

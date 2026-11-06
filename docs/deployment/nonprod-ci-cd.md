@@ -131,6 +131,9 @@ scripts/deploy_nonprod_vm.sh \
 
 # Dev bounded Taiwan market refresh without redeploying
 scripts/deploy_nonprod_vm.sh --refresh-only [--force] [--output <path>]
+
+# Prove the latest closed Taiwan session only (no refresh, no stack change)
+scripts/deploy_nonprod_vm.sh --refresh-only --preflight-only --output <path>
 ```
 
 Emergency flags:
@@ -155,8 +158,10 @@ Attempts are matched by the exact `Dev release <backend> + <frontend>` run name,
 so a later merge on either `dev` tip is a new pair and deploys normally. A
 cancelled attempt does not block the pair, and neither does one whose
 `Acquire shared dev environment lease` step failed: without the lease no later
-step touches the VM, so the next tick retries that pair. To retry the same pair after fixing
-the environment, dispatch Nonprod Deploy for it; a successful attempt makes the
+step touches the VM, so the next tick retries that pair. The same holds when
+`Refresh Taiwan market session under lease before stack mutation` failed (see
+below); a failure in any later step still returns `failed_pair_not_retried`.
+To retry the same pair after fixing the environment, dispatch Nonprod Deploy for it; a successful attempt makes the
 pair `up_to_date`.
 
 An already accepted hosted manifest and matching live BFF version produce
@@ -424,6 +429,14 @@ An immutable `publish/v*` snapshot is a promotion input and historical source
 identity; it is not a dev deployment. Dev delivery is the explicit exact-pair
 controller run described above. There is no staging-live promotion lane since the staging-live job was retired on 2026-10-08.
 
+### Whole-stack dev compensation
+
+Dev compensation restores every Compose service recorded in the pre-mutation
+baseline, not only the three sealed BFF images, and proves it with a bounded
+readback (900 s inside the 60 minute step). The roundtrip steps keep their
+three-image scope. Design, scope flag, prune safety and evidence:
+`docs/deployment/dev-exact-artifact-rollback.md` ("Whole-stack compensation").
+
 ## Rollback
 
 The deploy script writes a pre-deploy snapshot on each VM under:
@@ -448,3 +461,37 @@ snapshot recovery remains an operator procedure and must be followed by a
 controller release that restores repository/deployment identity agreement.
 
 Pantheon dev frontend delivery does not use Lovable publish state.
+
+### Market session refresh before stack mutation
+
+The paper baseline admits a new binding only when the latest closed Taiwan
+session is stored. The scheduled refresh (`0 7 * * 1-5`) can run hours late, so
+a deploy between the 13:30 Taipei close and that refresh used to pause its new
+binding with `market_input_stale`, time out in the baseline wait, and fail
+after the stack had already been replaced.
+
+Nonprod Deploy therefore runs `Refresh Taiwan market session under lease before
+stack mutation` right after `Start identity-bound lease heartbeat` and before
+the bootstrap predecessor, `Capture actual prior artifacts under pinned dev
+lease`, and `Deploy dev VM stack under lease`. It uses the lease already held
+(through the pinned `run_with_dev_environment_lease.sh`) and the existing
+`deploy_nonprod_vm.sh --refresh-only --output` path without `--force`, so the
+refresh's own preflight skips the pull when the closed session is already
+stored. A completed refresh only proves that it ran, so the step then repeats the
+preflight with `--refresh-only --preflight-only --output`, which never changes
+the stack. The step passes only for `noop` `already_fresh` or `skipped`
+`weekend`, `holiday`, or `session_not_closed`. Every other outcome, including
+`proceed`, `error`, and `no_active_taiwan_symbols`, fails the step and the failure
+names the status, reason, and outcome JSON.
+
+The step runs only when the paper baseline will run (`PAPER_BOOTSTRAP_REQUESTED`)
+and is skipped when `run_bounded_source_refresh` is true, on an empty bootstrap
+host, and for every mode that does not run the paper baseline.
+
+A failure stops the job before any prior artifact capture or candidate image
+build, so compensation (which needs a successful artifact baseline) does not
+run and the lease ends as it does for any other pre-mutation failure.
+`auto_deploy_dev_pair.py` treats this step like the lease step: the pair is not
+recorded as failed and the next tick dispatches the same pair again. A failure
+in any later step returns `failed_pair_not_retried`. The GitHub schedule itself
+is unchanged.

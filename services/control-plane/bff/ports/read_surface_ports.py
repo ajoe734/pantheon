@@ -641,6 +641,14 @@ class ReadSurfacePorts:
             )
         return self.research_knowledge_source.list_strategy_specs(**kwargs)
 
+    def list_strategy_specs_page(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        if getattr(self, "allow_local_snapshot_fallback", False):
+            return None
+        return self.research_knowledge_source.list_strategy_specs_page(**kwargs)
+
+    def list_strategy_summaries_page(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.list_strategy_specs_page(**kwargs)
+
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
         def _read() -> Dict[str, int]:
             counts = self.research_knowledge_source.count_strategy_persona_bindings()
@@ -652,6 +660,13 @@ class ReadSurfacePorts:
             ("rsp_strategy_persona_binding_counts", id(self), selected_tenant.get()),
             _read,
         )
+
+    def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
+        """Bounded owner label read (no cache): ``{strategy_id: {"title", "name"}}``."""
+        labels = self.research_knowledge_source.get_strategy_labels()
+        if not isinstance(labels, dict):
+            raise TypeError("get_strategy_labels must return a dict")
+        return dict(labels)
 
     def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.list_strategy_specs(**kwargs)

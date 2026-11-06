@@ -72,6 +72,8 @@ from services.control_plane.bff.models import (
 )
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError, wait as _futures_wait
 from services.control_plane.bff.core.owner_reads import (
+    authorization,
+    management_read_deadline,
     remaining_management_read_budget,
     request_read_scope,
     submit_owner_read,
@@ -164,6 +166,18 @@ class _HumanInboxContributorDegraded(Exception):
         super().__init__(reason)
         self.key = key
         self.reason = reason
+
+
+def _is_contributor_timeout_error(exc: BaseException) -> bool:
+    if isinstance(exc, (TimeoutError, _FuturesTimeoutError)):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, BaseException) and reason is not exc and _is_contributor_timeout_error(reason):
+        return True
+    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+    if isinstance(cause, BaseException) and cause is not exc and _is_contributor_timeout_error(cause):
+        return True
+    return False
 
 
 def _is_unpatched_port_method(store: Any, name: str) -> bool:
@@ -851,22 +865,61 @@ def _management_evidence_summary(
     }
 
 
-def _management_evidence_degraded_payload(*, page_size: int = 20, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+_EVIDENCE_DEGRADED_REASONS = {
+    "read_timeout": (
+        "timeout_fallback",
+        "Evidence aggregation timed out under concurrent read fanout; degraded empty response returned.",
+    ),
+    "read_capacity_saturated": (
+        "capacity_fallback",
+        "Evidence read capacity is saturated; degraded empty response returned.",
+    ),
+    "read_error": (
+        "error_fallback",
+        "Evidence aggregation failed; degraded empty response returned.",
+    ),
+}
+
+
+def _management_evidence_degraded_payload(
+    *,
+    page_size: int = 20,
+    snapshot_at: Optional[str] = None,
+    reason: str = "read_timeout",
+) -> Dict[str, Any]:
     now = snapshot_at or _utc_now_rfc3339()
-    summary = _management_evidence_summary(filtered_total=0, page_items=[], redacted_count=0)
+    reason_key = reason if reason in _EVIDENCE_DEGRADED_REASONS else "read_error"
+    source, message = _EVIDENCE_DEGRADED_REASONS[reason_key]
+    summary = _management_evidence_summary(
+        filtered_total=0,
+        page_items=[],
+        redacted_count=0,
+        unavailable=True,
+    )
     facets = {
-        "source_types": summary["by_source_type"],
-        "link_types": summary["by_link_type"],
-        "credibility_tiers": summary["by_credibility_tier"],
+        "source_types": {},
+        "link_types": {},
+        "credibility_tiers": {},
+    }
+    evidence_surface = {
+        "status": "unavailable",
+        "reason": reason_key,
+        "source": source,
+        "message": "Evidence reference read surface is unavailable.",
+        "snapshot_at": now,
+        "staleness": {"served_from": "unverifiable", "last_known_at": now},
     }
     meta = _snapshot_meta(now)
     meta["surfaces"] = {
         "management_evidence": {
             "status": "degraded",
-            "source": "bff_composed",
-            "message": "Evidence aggregation timed out under concurrent read fanout; degraded empty response returned.",
+            "reason": reason_key,
+            "source": source,
+            "message": message,
             "snapshot_at": now,
-        }
+        },
+        "evidence_refs": evidence_surface,
+        "knowledge_evidence": dict(evidence_surface),
     }
     meta["redacted_evidence_count"] = 0
     return {
@@ -927,6 +980,7 @@ _TRADING_PULSE_BASELINE_OPERATOR_ORDER = {
     "unavailable": 2,
     "unknown": 3,
     "ok": 4,
+    "not_required": 5,
 }
 
 
@@ -1721,6 +1775,60 @@ def _trading_pulse_metric_coverage(rows: List[Dict[str, Any]]) -> Dict[str, Dict
     return coverage
 
 
+def _trading_pulse_baseline_required_runtime_ids(
+    rows: List[Dict[str, Any]],
+    baseline_comparisons: List[Dict[str, Any]],
+) -> List[str]:
+    """Shared rule: live/canary rows always require a baseline comparison;
+    other rows only when at least one non-live row has an available report."""
+    available_ids = {
+        str(c.get("runtime_id") or c.get("runtimeId") or "").strip()
+        for c in baseline_comparisons
+        if (c.get("paper_live_drift") or {}).get("available") is True
+    }
+    live_ids: List[str] = []
+    other_ids: List[str] = []
+    for row in rows:
+        runtime_id = str(row.get("runtime_id") or "").strip()
+        if not runtime_id:
+            continue
+        if _trading_pulse_stage(row) in {"live", "canary"}:
+            live_ids.append(runtime_id)
+        else:
+            other_ids.append(runtime_id)
+    required = list(live_ids)
+    if any(runtime_id in available_ids for runtime_id in other_ids):
+        required.extend(other_ids)
+    return required
+
+
+def _apply_trading_pulse_baseline_not_required(
+    rows: List[Dict[str, Any]],
+    comparisons: List[Dict[str, Any]],
+) -> List[str]:
+    """Mark report-less comparisons that need no comparison as not_required.
+
+    Returns the runtime ids that require a comparison."""
+    required_ids = _trading_pulse_baseline_required_runtime_ids(rows, comparisons)
+    required = set(required_ids)
+    for comparison in comparisons:
+        runtime_id = str(comparison.get("runtime_id") or comparison.get("runtimeId") or "").strip()
+        if runtime_id in required or (comparison.get("paper_live_drift") or {}).get("available"):
+            continue
+        comparison["status"] = "not_required"
+        paper_live_drift = comparison.get("paper_live_drift")
+        if isinstance(paper_live_drift, dict):
+            paper_live_drift["status"] = "not_required"
+        threshold = {
+            "overall_status": "not_required",
+            "summary": "Paper/live baseline comparison not required for this runtime.",
+            "breached_metric_ids": [],
+        }
+        comparison["thresholdEvaluation"] = threshold
+        comparison["threshold_evaluation"] = _management_json_clone(threshold)
+    return required_ids
+
+
 def _trading_pulse_coverage_summary(
     rows: List[Dict[str, Any]],
     baseline_comparisons: List[Dict[str, Any]],
@@ -1755,7 +1863,8 @@ def _trading_pulse_coverage_summary(
             if not isinstance(row.get("paper_runtime_monitoring"), dict)
         }
     )
-    missing_baseline_runtime_ids = sorted(set(runtime_ids) - set(baseline_runtime_ids))
+    baseline_required_ids = _trading_pulse_baseline_required_runtime_ids(rows, baseline_comparisons)
+    missing_baseline_runtime_ids = sorted(set(baseline_required_ids) - set(baseline_runtime_ids))
     row_health_status_counts = _trading_pulse_status_counts(rows)
     metric_coverage = _trading_pulse_metric_coverage(rows)
     return {
@@ -1764,6 +1873,7 @@ def _trading_pulse_coverage_summary(
         "telemetry_coverage_count": len(telemetry_runtime_ids),
         "monitoring_coverage_count": len(monitoring_runtime_ids),
         "baseline_comparison_count": len(baseline_runtime_ids),
+        "baseline_required_count": len(baseline_required_ids),
         "missing_telemetry_runtime_ids": missing_telemetry_runtime_ids,
         "missing_monitoring_runtime_ids": missing_monitoring_runtime_ids,
         "missing_baseline_runtime_ids": missing_baseline_runtime_ids,
@@ -3516,6 +3626,9 @@ class ManagementService:
             c for row, c in zip(runtime_rows, all_comparisons)
             if _trading_pulse_stage(row) in {"live", "canary"} or (c.get("paper_live_drift") or {}).get("available")
         ]
+        baseline_required_ids = _apply_trading_pulse_baseline_not_required(
+            runtime_rows, all_comparisons
+        )
         for row in runtime_rows:
             comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or ""))
             row["baseline_comparison"] = comparison
@@ -3600,7 +3713,11 @@ class ManagementService:
 
         by_status = _management_count_by(runtime_rows, "status")
         by_stage = _management_count_by(runtime_rows, "deployment_stage")
-        by_baseline_status = _management_count_by(baseline_comparisons, "status")
+        by_baseline_status = _management_count_by(
+            baseline_comparisons
+            + [c for c in all_comparisons if c.get("status") == "not_required"],
+            "status",
+        )
         baseline_available_count = sum(
             1
             for comparison in baseline_comparisons
@@ -3667,20 +3784,16 @@ class ManagementService:
             )
 
         paper_live_drift_surface = _make_dataset_surface("paper_live_drift_reports")
-        live_rows = [row for row in runtime_rows if _trading_pulse_stage(row) in {"live", "canary"}]
-        paper_available_count = sum(
-            1 for row in runtime_rows
-            if _trading_pulse_stage(row) not in {"live", "canary"}
-            and ((row.get("baseline_comparison") or {}).get("paper_live_drift") or {}).get("available")
-        )
-        if not live_rows and baseline_available_count == 0:
+        baseline_available_ids = {
+            str(c.get("runtime_id") or "")
+            for c in baseline_comparisons
+            if (c.get("paper_live_drift") or {}).get("available")
+        }
+        if not baseline_required_ids:
             if paper_live_drift_surface.get("status") == "ok":
                 paper_live_drift_surface["message"] = "No live runtimes require paper/live baseline comparison."
         elif (
-            (
-                (live_rows and (baseline_available_count - paper_available_count) < len(live_rows))
-                or (paper_available_count > 0 and paper_available_count < (len(runtime_rows) - len(live_rows)))
-            )
+            any(rid not in baseline_available_ids for rid in baseline_required_ids)
             and paper_live_drift_surface.get("status") == "ok"
         ):
             paper_live_drift_surface["status"] = "degraded"
@@ -3730,6 +3843,7 @@ class ManagementService:
             "worst_slippage_bps": max(slippage_values) if slippage_values else None,
             "total_trades": int(sum(trade_values)) if trade_values else 0,
             "baseline_comparison_count": baseline_available_count,
+            "baseline_required_count": coverage["baseline_required_count"],
             "baseline_breached_count": baseline_breached_count,
             "baseline_watch_count": baseline_watch_count,
             "by_baseline_status": by_baseline_status,
@@ -3795,6 +3909,7 @@ class ManagementService:
                 "value": summary["baseline_breached_count"],
                 "details": {
                     "baseline_comparison_count": summary["baseline_comparison_count"],
+                    "baseline_required_count": coverage["baseline_required_count"],
                     "by_baseline_status": by_baseline_status,
                     "missing_baseline_runtime_ids": coverage["missing_baseline_runtime_ids"],
                 },
@@ -4010,10 +4125,36 @@ class ManagementService:
 
         scope = request_read_scope()
         scope.__enter__()
+        contributor_deadline = time.monotonic() + float(timeout_budget)
+        outer_deadline = management_read_deadline.get()
+        if outer_deadline is not None:
+            contributor_deadline = min(outer_deadline, contributor_deadline)
+        deadline_token = management_read_deadline.set(contributor_deadline)
         futures: Dict[Any, str] = {}
         warm_futures: List[Any] = []
         try:
             raw_store = getattr(store, "_target", store)
+            raw_dict = getattr(raw_store, "__dict__", {})
+            review_queue = getattr(getattr(raw_store, "ooda_management", None), "review_queue", None)
+            if (
+                review_queue is not None
+                and "list_governance_review_queue_items" not in raw_dict
+            ):
+                for warm_name, attr_name in (
+                    ("list_approval_decisions", "_approval_decisions_reader"),
+                    ("list_deployment_plans", "_deployment_plans_reader"),
+                    ("list_evolution_decisions", "_evolution_decisions_reader"),
+                ):
+                    if warm_name not in raw_dict:
+                        reader_fn = getattr(review_queue, attr_name, None)
+                        if callable(reader_fn):
+                            _warm = submit_owner_read(
+                                _HEALTH_OWNER_READ_EXECUTOR,
+                                reader_fn,
+                                warm_key=warm_name,
+                            )
+                            if _warm is not None:
+                                warm_futures.append(_warm)
             if (
                 _is_unpatched_port_method(raw_store, "list_approval_queue_items")
                 and _is_unpatched_port_method(raw_store, "list_governance_review_queue_items")
@@ -4038,6 +4179,9 @@ class ManagementService:
                 except _HumanInboxContributorDegraded as exc:
                     failures[key] = self._human_inbox_timeout_surface(key, snap, exc.reason)
                 except BaseException as exc:
+                    if _is_contributor_timeout_error(exc):
+                        failures[key] = self._human_inbox_timeout_surface(key, snap, "read_timeout")
+                        return
                     log.warning("bff.human_inbox contributor %s failed: %s", key, type(exc).__name__)
                     failures[key] = {
                         "status": "degraded",
@@ -4056,6 +4200,7 @@ class ManagementService:
                 fut.add_done_callback(_discard_late_management_read_result_sync)
                 failures.setdefault(key, self._human_inbox_timeout_surface(key, snap))
         finally:
+            management_read_deadline.reset(deadline_token)
             for wf in warm_futures:
                 if not wf.done():
                     wf.cancel()
@@ -4121,6 +4266,20 @@ class ManagementService:
             if not hasattr(store, "list_governance_review_queue_items"):
                 return _unavailable("Governance review queue has no readable source records.")
             records = store.list_governance_review_queue_items() or []
+            if (
+                _is_unpatched_port_method(store, "list_governance_review_queue_items")
+                and authorization.get() is not None
+                and hasattr(store, "dataset_source")
+            ):
+                try:
+                    plans_source = str(store.dataset_source("deployment_plans"))
+                except Exception:
+                    plans_source = "read_store"
+                if plans_source == "unavailable":
+                    rem = remaining_management_read_budget()
+                    if rem is not None and rem <= 0.0:
+                        raise TimeoutError("deployment_plans exceeded management read budget")
+                    raise RuntimeError("Deployment plan owner read unavailable")
             return [r for r in records if isinstance(r, dict)], {
                 "status": "ok", "source": "read_store", "snapshot_at": snap,
             }

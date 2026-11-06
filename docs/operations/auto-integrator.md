@@ -146,7 +146,10 @@ through the existing content-addressed unblock inbox with dedicated reason
   stay `waiting` and report which task they are queued behind.
 - Under the canonical task-state lock, the supervisor's
   `materialize_auto_integrator_unblock_requests` revalidates that the source task
-  is still `review_approved` with the same `generation` and `delivery_binding`
+  (repository identity compared through the canonical resolver
+  `task_target_repository_id`, so `target_repo: execute-plans` matches the
+  config-key `repository_id: execute_plans`; a missing `target_repo` means
+  `pantheon` and an unknown one is rejected) is still `review_approved` with the same `generation` and `delivery_binding`
   PR/head as the request. If stale, it records a rejected receipt and changes
   nothing. If valid, after releasing the canonical lock it invokes
   `scripts/ai_status.py reopen <source_task_id> <message>` through

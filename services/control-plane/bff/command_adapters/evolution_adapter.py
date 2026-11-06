@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from .base import (
     http_request_json as _base_http_request_json,
     utc_now,
 )
+from .contracts import _EVOLUTION_ACTION_ALIASES
 
 
 
@@ -153,13 +155,60 @@ def _program_principal(
 
 
 def _program_actor_role(params: Dict[str, Any], sub_payload: Dict[str, Any], held: List[str]) -> str:
-    named = str(params.get("actor_role") or sub_payload.get("actor_role") or "").strip()
+    claimed_roles = {
+        str(value).strip()
+        for value in (params.get("actor_role"), sub_payload.get("actor_role"))
+        if str(value or "").strip()
+    }
+    if len(claimed_roles) > 1:
+        raise _evolution_forbidden("Conflicting actor_role claims.")
+    named = next(iter(claimed_roles), "")
     if named and named in held:
         return named
+    if held and named and not (params.get("request_hash") and named in _ADMISSION_GENERIC_ROLES):
+        raise _evolution_forbidden(f"Authenticated principal does not hold role {named!r}.")
     for preferred in _PROGRAM_ROLE_ORDER:
         if preferred in held:
             return preferred
+    for preferred in _GOVERNANCE_ROLE_ORDER:
+        if preferred in held:
+            return preferred
+    if held:
+        raise _evolution_forbidden("Authenticated principal holds no Evolution program role.")
     return named or "operator"
+
+
+_DRAFT_METADATA_PROGRAM_ACTIONS = frozenset({
+    "create_constraint",
+    "create_fitness_formula",
+    "create_mutation_rule",
+})
+
+_DRAFT_METADATA_FIELDS = (
+    "id",
+    "name",
+    "scope",
+    "operator",
+    "value",
+    "penalty_weight",
+    "enabled",
+    "expression",
+    "metrics",
+    "applied_scope",
+    "rate",
+    "risk",
+    "memo",
+)
+
+
+def _normalize_program_action_alias(raw: Any) -> str:
+    clean = str(raw or "").strip()
+    if not clean or clean == "EvolutionProgramAction":
+        return ""
+    if clean in _CMD_TO_ACTION_ID:
+        return _CMD_TO_ACTION_ID[clean]
+    norm = re.sub(r"[^a-z0-9]", "", clean.lower())
+    return _EVOLUTION_ACTION_ALIASES.get(norm, clean)
 
 
 _CMD_TO_ACTION_ID = {
@@ -219,11 +268,12 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:
         normalized_cmd = str(command_type or "").strip()
         normalized_entity = str(entity_type or "").strip().lower().replace("_", "-")
-        normalized_action = str(action_id or "").strip()
+        normalized_action = _normalize_program_action_alias(action_id)
         return (
             normalized_cmd in self._HANDLED_COMMANDS
             or normalized_action in _CMD_TO_ACTION_ID
             or normalized_action in _CMD_TO_ACTION_ID.values()
+            or normalized_action in _DRAFT_METADATA_PROGRAM_ACTIONS
             or normalized_entity in self._HANDLED_ENTITIES
         )
 
@@ -236,10 +286,10 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         action_id = str(params.get("action_id") or command_type or "").strip()
-        if action_id in _CMD_TO_ACTION_ID:
-            action_id = _CMD_TO_ACTION_ID[action_id]
-        elif command_type in _CMD_TO_ACTION_ID and (not action_id or action_id == "EvolutionProgramAction"):
+        if command_type in _CMD_TO_ACTION_ID and (not action_id or action_id == "EvolutionProgramAction"):
             action_id = _CMD_TO_ACTION_ID[command_type]
+        elif action_id:
+            action_id = _normalize_program_action_alias(action_id) or action_id
 
         entity_id = str(params.get("evolution_decision_id") or params.get("decision_id") or params.get("program_id") or params.get("experiment_id") or params.get("job_id") or params.get("entity_id") or "").strip()
 
@@ -332,9 +382,31 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         if not target_id:
             raise ValueError("EvolutionProgramAction requires program_id.")
 
-        clean_action = str(action_id or params.get("action_id") or "").strip()
-        if clean_action in _CMD_TO_ACTION_ID:
-            clean_action = _CMD_TO_ACTION_ID[clean_action]
+        sub_payload = dict(params.get("payload")) if isinstance(params.get("payload"), dict) else {}
+        carrier_actions = {
+            norm_act
+            for raw_act in (
+                action_id,
+                params.get("action_id"),
+                params.get("actionId"),
+                params.get("action"),
+                sub_payload.get("action_id"),
+                sub_payload.get("actionId"),
+                sub_payload.get("action"),
+            )
+            for norm_act in (_normalize_program_action_alias(raw_act),)
+            if norm_act
+        }
+        if len(carrier_actions) > 1:
+            raise ActionUnavailableError(
+                f"Conflicting evolution program action carriers on {target_id!r}.",
+                action_id=str(action_id or params.get("action_id") or "").strip(),
+                entity_type="EvolutionProgram",
+                error_code="VALIDATION_FAILED",
+                retryable=False,
+                downstream_status=422,
+            )
+        clean_action = next(iter(carrier_actions), "")
         if not clean_action:
             raise ValueError("EvolutionProgramAction requires action_id.")
 
@@ -351,7 +423,6 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
                 downstream_status=422,
             ) from exc
 
-        sub_payload = params.get("payload") if isinstance(params.get("payload"), dict) else {}
         # The acting identity is the verified principal, never a body claim; a
         # claimed actor_id may only equal it.  System identities are refused
         # here as well as at the owner.
@@ -382,6 +453,13 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             val = params.get(field) if params.get(field) is not None else sub_payload.get(field)
             if val is not None:
                 payload[field] = val
+
+        if clean_action in _DRAFT_METADATA_PROGRAM_ACTIONS:
+            for field in _DRAFT_METADATA_FIELDS:
+                val = params.get(field) if params.get(field) is not None else sub_payload.get(field)
+                if val is not None:
+                    payload[field] = val
+                    sub_payload.setdefault(field, val)
 
         digest = (
             params.get("artifact_digest")

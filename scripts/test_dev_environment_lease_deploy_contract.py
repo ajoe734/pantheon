@@ -3212,3 +3212,120 @@ def test_workflow_has_no_hard_coded_ssh_host_fallback() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "35.194.154.62" not in text
     assert "vars.DEV_DEPLOY_SSH_HOST ||" not in text
+
+
+MARKET_REFRESH_STEP = "Refresh Taiwan market session under lease before stack mutation"
+
+
+def _dev_steps() -> list[dict]:
+    import yaml
+
+    return yaml.safe_load(_workflow())["jobs"]["deploy-dev"]["steps"]
+
+
+def _step_index(steps: list[dict], name: str) -> int:
+    return [step.get("name") for step in steps].index(name)
+
+
+def test_market_refresh_runs_under_held_lease_before_any_stack_mutation() -> None:
+    steps = _dev_steps()
+    refresh = _step_index(steps, MARKET_REFRESH_STEP)
+    # After the heartbeat, before bootstrap predecessor, artifact capture, and deploy.
+    assert _step_index(steps, "Start identity-bound lease heartbeat") < refresh
+    for later in (
+        "Deploy bootstrap predecessor pair in strict live read-only mode under lease",
+        "Capture actual prior artifacts under pinned dev lease",
+        "Upload sealed prior artifact metadata before candidate mutation",
+        "Deploy dev VM stack under lease",
+        "Ensure governed dev paper baseline under lease",
+    ):
+        assert refresh < _step_index(steps, later), later
+    assert steps[refresh]["id"] == "market_refresh"
+
+    text = steps[refresh]["run"]
+    # Existing refresh-only path under the pinned wrapper; no second lease or implementation.
+    assert text.count('"${controller}/scripts/run_with_dev_environment_lease.sh" \\\n  bash "${deploy_script}"') == 2
+    assert text.count('bash "${deploy_script}"') == 2
+    assert '--refresh-only --output "${outcome_dir}/refresh.json"' in text
+    assert '--refresh-only --preflight-only --output "${outcome_dir}/preflight.json"' in text
+    assert text.index("refresh.json") < text.index("preflight.json")
+    assert CONTROLLER_SCRIPT_SHA256 in text and CONTROLLER_WRAPPER_SHA256 in text
+    assert "dev_environment_lease.py acquire" not in text and " acquire " not in text
+    assert "--force" not in text
+    # Passing outcomes are exactly the proven-session ones; every other outcome fails by name.
+    for allowed in ('("noop", "already_fresh")', '("skipped", "weekend")',
+                    '("skipped", "holiday")', '("skipped", "session_not_closed")'):
+        assert allowed in text
+    assert "no_active_taiwan_symbols" not in text.split("ALLOWED = {", 1)[1].split("}", 1)[0]
+    assert "status={status!r} reason={reason!r}" in text
+
+
+def test_market_refresh_failure_stops_before_baseline_so_compensation_cannot_run() -> None:
+    steps = _dev_steps()
+    names = [step.get("name") for step in steps]
+    baseline_pos = names.index("Capture actual prior artifacts under pinned dev lease")
+    assert names.index(MARKET_REFRESH_STEP) < baseline_pos
+    # Later mutating steps are not `always()` steps, so they never run after this failure.
+    for later in ("Capture actual prior artifacts under pinned dev lease", "Deploy dev VM stack under lease"):
+        assert "always()" not in str(steps[names.index(later)].get("if", ""))
+    # Compensation requires a successful artifact baseline.
+    compensation = next(step for step in steps if step.get("id") == "deploy_compensation")
+    assert "steps.artifact_baseline.outcome == 'success'" in compensation["if"]
+
+
+def test_market_refresh_skips_for_refresh_bootstrap_and_non_paper_modes() -> None:
+    steps = _dev_steps()
+    condition = steps[_step_index(steps, MARKET_REFRESH_STEP)]["if"]
+    assert "env.PAPER_BOOTSTRAP_REQUESTED == 'true'" in condition
+    assert "env.BOUNDED_SOURCE_REFRESH_ENABLED != 'true'" in condition
+    assert "env.BOOTSTRAP_EMPTY_HOST != 'true'" in condition
+
+    workflow = _workflow()
+    paper_line = next(line for line in workflow.splitlines() if line.strip().startswith("PAPER_BOOTSTRAP_REQUESTED:"))
+    assert "(inputs.component == 'auto' || inputs.component == 'root')" in paper_line
+
+    def evaluate(paper: bool, refresh: bool, bootstrap: bool) -> bool:
+        return paper and not refresh and not bootstrap
+
+    assert evaluate(True, False, False)
+    assert not evaluate(True, True, False)   # run_bounded_source_refresh
+    assert not evaluate(True, False, True)   # empty bootstrap host
+    assert not evaluate(False, False, False)  # modes that do not run the paper baseline
+    # run_bounded_source_refresh input and its profile wiring are unchanged.
+    assert "BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}" in workflow
+
+
+# --- Whole-stack compensation contract -------------------------------------
+
+def test_whole_stack_scope_is_forwarded_and_only_the_roundtrip_keeps_three_images() -> None:
+    workflow, deploy = _workflow(), DEPLOY.read_text(encoding="utf-8")
+    # The deploy shell forwards a validated scope and carries it to the remote.
+    assert '--scope "${artifact_scope}"' in deploy
+    assert "PANTHEON_DEV_ARTIFACT_SCOPE \\" in deploy
+    assert "mixed-summary" in deploy
+    # Only the roundtrip baseline restore pins the three-image scope.
+    assert workflow.count("PANTHEON_DEV_ARTIFACT_SCOPE: images") == 1
+    roundtrip = workflow.split("id: roundtrip_baseline_restore", 1)[1].split("- name:", 1)[0]
+    assert "PANTHEON_DEV_ARTIFACT_SCOPE: images" in roundtrip
+    for step in ("id: deploy_compensation", "id: compensation"):
+        assert "PANTHEON_DEV_ARTIFACT_SCOPE" not in workflow.split(step, 1)[1].split("\n      - name:", 1)[0]
+    compensation = workflow.split("id: compensation\n", 1)[1].split("- name:", 1)[0]
+    assert "timeout-minutes: 60" in compensation
+    # The shared compensation script bounds its deploy inside the 60 minute step.
+    assert '--deadline-seconds "${DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS:-1500}"' in (
+        SCRIPTS / "compensate_cross_repo_release.sh").read_text(encoding="utf-8")
+
+
+def test_prior_images_are_held_before_any_prune_and_compose_containers_survive_it() -> None:
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    prune = deploy.split("prune_dev_docker_storage_for_build() {", 1)[1].split("\n}\n", 1)[0]
+    # Every running image is tagged pantheon-protect/<service>:<id12> first; stale
+    # tags are removed only for images no container uses.
+    assert prune.index("protect_dev_compose_container_images_for_builder_prune") < prune.index("docker builder prune")
+    assert prune.index("protect_dev_compose_container_images_for_builder_prune") < prune.index("docker image prune -f")
+    keep = 'label!=com.docker.compose.project=pantheon'
+    assert f'docker container prune -f --filter "{keep}"' in prune
+    assert f'docker system prune -f --filter "{keep}"' in prune
+    # Pruning happens before the candidate build/mutation in the root flow.
+    flow = deploy[deploy.index("prune_dev_release_artifacts_for_build\n"):]
+    assert flow.index("prune_dev_docker_storage_for_build") < flow.index("compose", flow.index("prune_dev_docker_storage_for_build"))

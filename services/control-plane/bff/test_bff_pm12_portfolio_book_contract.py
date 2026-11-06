@@ -2268,6 +2268,7 @@ def test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar
         "updated_at": "2026-10-25T21:41:42Z",
         "collected_at": "2026-10-25T21:41:42Z",
         "_binding_latest_event_at": "2026-10-25T21:41:42Z",
+        "executed_trade_count": 2,
         "_positions_by_symbol": {"2330.TW": -2.0},
         "_marks_by_symbol": {
             "2330.TW": {
@@ -2390,6 +2391,19 @@ def test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar
             return [dict(h12_runtime)]
 
     with tempfile.TemporaryDirectory() as tmp_dir:
+        import services.execution.lean_runtime.paper_runtime as _paper_runtime_mod
+
+        orig_value_portfolio = _paper_runtime_mod.value_portfolio
+        monkeypatch.setattr(
+            _paper_runtime_mod,
+            "_iso_now",
+            lambda: "2026-10-25T21:41:44Z",
+        )
+        monkeypatch.setattr(
+            _paper_runtime_mod,
+            "value_portfolio",
+            lambda **kw: orig_value_portfolio(**{**kw, "now": kw.get("now") or now_oct25}),
+        )
         monkeypatch.setenv("PANTHEON_LIFECYCLE_OUTBOX_DIR", f"{tmp_dir}/outbox")
         monkeypatch.setenv("PANTHEON_PERFORMANCE_STATE_PATH", f"{tmp_dir}/paper-ledger.json")
         service = PaperRuntimeService(
@@ -2507,3 +2521,125 @@ def test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar
     assert non_tw_item["mark_price"] is None
     assert non_tw_item["market_value"] is None
     assert non_tw_item["notional"] is None
+
+
+def test_portfolio_holdings_projects_cost_unrealized_realized_currency_and_broker_from_runtime_summary(monkeypatch) -> None:
+    from services.control_plane.bff.pm12 import service as pm12_service
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    runtime_id = "rt-c98e4223"
+    binding_id = "rb-eda9b9a3379d4fb5a09f0e8432c84f20"
+    runtime_record = {
+        "id": binding_id,
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "capital_pool_id": "pool-tw-equities-core",
+        "artifact_id": "artifact-tw-equities",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "persona_id": "persona-tw-swing-trader",
+        "strategy_id": "strat-tw-swing-breakout",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+
+    store = RuntimeSummaryProjectionStore(path=None)
+    fills = [
+        (1, -1.0, 245.5),
+        (2, 1.0, 251.0),
+        (3, -1.0, 245.5),
+        (4, -1.0, 240.0),
+        (5, -1.0, 235.0),
+    ]
+    for lfc, qty, price in fills:
+        store.project_event(
+            {
+                "event_id": f"evt-c98-fill-{lfc}",
+                "event_type": "paper_fill_simulated",
+                "created_at": f"2026-11-05T01:00:0{lfc}Z",
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "deployment_stage": "paper",
+                "runtime_id": runtime_id,
+                "binding_id": binding_id,
+                "metrics": {
+                    "fill_quantity": qty,
+                    "fill_price": price,
+                    "action": "BUY" if qty > 0 else "SELL",
+                    "submitted_to_broker": True,
+                },
+                "metadata": {
+                    "symbol": "2317.TWSE",
+                    "currency": "TWD",
+                    "broker": "tw-paper-sim",
+                    "ledger_fill_count": lfc,
+                },
+            }
+        )
+    projected = store.project_event(
+        {
+            "event_id": "evt-c98-pnl-5",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-11-05T02:00:00Z",
+            "pnl_as_of": "2026-11-04T00:00:00Z",
+            "tenant_id": "tenant-dev",
+            "environment": "paper",
+            "deployment_stage": "paper",
+            "runtime_id": runtime_id,
+            "binding_id": binding_id,
+            "metrics": {"pnl": 10.0, "fill_count": 5},
+            "metadata": {
+                "mark_refs": [
+                    {
+                        "symbol": "2317.TWSE",
+                        "price": 235.0,
+                        "as_of": "2026-11-04T00:00:00Z",
+                        "observed_at": "2026-11-04T06:00:00Z",
+                        "lineage": {
+                            "source_ids": ["tw-official:tw_price_daily:TWSE:2317:test"],
+                            "connector_ids": ["tw-twse-tpex-official-market"],
+                        },
+                        "source_ref": "source-ingest://snapshots/mss-2317",
+                    }
+                ]
+            },
+        }
+    )
+
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-05T02:05:00Z")
+    fresh_body = _holdings_for(monkeypatch, [runtime_record], {runtime_id: projected})
+    (item,) = fresh_body["data"]["items"]
+    assert item["holding_id"] == "rt-c98e4223:2317.TWSE"
+    assert item["symbol"] == "2317.TWSE"
+    assert item["quantity"] == -3.0
+    assert item["average_price"] == 240.166667
+    assert item["mark_price"] == 235.0
+    assert item["market_value"] == -705.0
+    assert item["unrealized_pnl"] == 15.5
+    assert item["realized_pnl"] == -5.5
+    assert item["currency"] == "TWD"
+    assert item["broker_id"] == "tw-paper-sim"
+    assert item["mark_status"] == "available"
+
+    # Stale mark yields average_price and currency with null mark_price, null market_value, and null unrealized_pnl
+    from datetime import datetime, timezone
+
+    stale_summary = store.get(
+        runtime_id,
+        tenant_id="tenant-dev",
+        now=datetime(2026, 11, 10, 0, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-10T00:00:00Z")
+    stale_body = _holdings_for(monkeypatch, [runtime_record], {runtime_id: stale_summary})
+    (stale_item,) = stale_body["data"]["items"]
+    assert stale_item["holding_id"] == "rt-c98e4223:2317.TWSE"
+    assert stale_item["average_price"] == 240.166667
+    assert stale_item["realized_pnl"] == -5.5
+    assert stale_item["currency"] == "TWD"
+    assert stale_item["broker_id"] == "tw-paper-sim"
+    assert stale_item["mark_status"] == "stale"
+    assert stale_item["mark_price"] is None
+    assert stale_item["market_value"] is None
+    assert stale_item["unrealized_pnl"] is None

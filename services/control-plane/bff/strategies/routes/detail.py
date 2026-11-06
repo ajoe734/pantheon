@@ -27,15 +27,19 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         snapshot_at = ctx.utc_now()
-        summary = ctx.service.get_strategy(strategy_id) if ctx.service else None
+        detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
+        summary = (
+            detail
+            if isinstance(detail, dict) and (detail.get("strategy_id") or detail.get("id"))
+            else (ctx.service.get_strategy(strategy_id) if ctx.service else None)
+        )
         if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
-        detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
-        dto = ctx.project_strategy_dto(summary, detail=detail)
+        dto = ctx.project_strategy_dto(summary, detail=detail or summary, include_spec=True)
         return {
             "data": dto,
             "meta": ctx.read_surface_meta(
@@ -64,7 +68,12 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         cached = ctx.strategy_persona_idempotency_check(resolved_key, request_hash)
         if cached is not None:
             return cached
-        summary = ctx.service.get_strategy(strategy_id) if ctx.service else None
+        detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
+        summary = (
+            detail
+            if isinstance(detail, dict) and (detail.get("strategy_id") or detail.get("id"))
+            else (ctx.service.get_strategy(strategy_id) if ctx.service else None)
+        )
         if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -72,8 +81,8 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
                 f"Strategy {strategy_id} does not exist",
             )
         snapshot_at = ctx.utc_now()
-        detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
         base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
+        base.pop("spec", None)
         for field_name in (
             "name", "owner", "state", "risk", "alpha",
             "capitalPoolId", "personaIds",

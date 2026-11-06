@@ -301,6 +301,7 @@ PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
       --project-id "${GCP_DEPLOY_PROJECT_ID}" \
       "--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}" \
       --artifact-readback-out "${artifact_readback}" \
+      --deadline-seconds "${DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS:-1500}" \
       "${extra_deploy_args[@]}"
 
 python3 - \
