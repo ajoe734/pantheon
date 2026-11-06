@@ -886,6 +886,8 @@ def test_importing_module_makes_no_docker_call(tmp_path):
 
 
 def test_image_format_against_real_docker_for_all_label_shapes(tmp_path):
+    # Probe lazily: a module-level skipif would run `docker` at import time, and
+    # other suites (restore chain) import this module with a stub docker on PATH.
     if _docker_daemon() is None:
         pytest.skip("no reachable Docker daemon")
     tag = "pantheon-imgfmt-test-" + os.urandom(4).hex()

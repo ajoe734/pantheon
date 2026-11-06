@@ -1,0 +1,7 @@
+{
+  "task": "INTEGRATION-UNBLOCK-DEV-STACK-CAPTURE-UNLABELED-20261106-CI-RED-F5EE4F7536DB",
+  "pr": 6988,
+  "root_cause": "PR added test_image_format_against_real_docker_for_all_label_shapes with a module-level @pytest.mark.skipif(_docker_daemon() is None). _docker_daemon() runs `docker version` at import time. test_deploy_nonprod_artifact_restore's original-chain tests import test_dev_release_artifacts while a recording stub docker is on PATH, so the probe was recorded as an UNEXPECTED_docker event and the exact-events assertion failed (2 tests in Persona provisioning owner contracts). Deterministic; reproduced locally; dev passes.",
+  "fix": "Probe Docker lazily inside the test body (pytest.skip) instead of at import time. Applied on the PR branch task/DEV-STACK-CAPTURE-UNLABELED-20261106.",
+  "verification": "pytest scripts/test_deploy_nonprod_artifact_restore.py scripts/test_dev_release_artifacts.py: 176 passed, 1 skipped"
+}
