@@ -1,91 +1,217 @@
 {
-  "task": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
-  "recordedAt": "2026-11-05T17:06Z",
-  "owner": "Antigravity",
-  "reviewer": "Antigravity2",
-  "status": "in_progress_not_accepted",
-  "hosted": {
-    "profile": "read-only",
-    "deploymentState": "accepted",
-    "frontendSha": "b15608ce1aad37cc80fc6bf1ef09382c17d369eb",
-    "bffSha": "0bd88495e27e90f6cfaadc1991139d28a8809501",
-    "releaseName": "20261105T023205Z-b15608ce1aad-gate-41952025305-41954076568-1-3625774 (run 41947653837)",
-    "buildMode": {
+  "taskId": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
+  "title": "Restore persistent operable Dev profile and prove isolated authenticated product writes",
+  "recordedAtUtc": "2026-11-06T01:24:00Z",
+  "status": "in_progress_awaiting_merged_defect_release_and_ui_edit_replay",
+  "rootCause": {
+    "summary": "The hosted Dev frontend deployment manifest was previously pinned to read-only because .github/workflows/nonprod-deploy.yml defaults the workflow_dispatch input frontend_profile to read-only (withVITE_BFF_REAL_WRITES=false) unless frontend_profile=operator-live is explicitly passed to the exact-pair release controller, and scripts/auto_deploy_dev_pair.py preserves the currently accepted hosted profile from https://app.dev.mvl-cap.tw/deployment.json (defaulting to read-only only when no valid hosted profile is readable).",
+    "workflowDefault": {
+      "file": ".github/workflows/nonprod-deploy.yml",
+      "input": "frontend_profile",
+      "default": "read-only",
+      "operatorLiveSetting": "VITE_BFF_REAL_WRITES=true with VITE_BFF_MODE=live, VITE_BFF_FALLBACK=strict, VITE_BFF_ALLOW_DEV_STUB_WRITES=false, VITE_BFF_EMBEDDED_BEARER_TOKEN=false"
+    },
+    "autoDeployPreservation": {
+      "file": "scripts/auto_deploy_dev_pair.py",
+      "function": "resolve_accepted_frontend_profile",
+      "behavior": "Reads https://app.dev.mvl-cap.tw/deployment.json and preserves operator-live across subsequent hourly/automatic dev-pair deployments once an accepted operator-live release is published; falls back to read-only only if the manifest is unreachable or invalid.",
+      "verifiedByTests": [
+        "scripts/test_auto_deploy_dev_pair.py::TestResolveAcceptedFrontendProfile::test_preserves_operator_live_from_hosted_manifest",
+        "scripts/test_auto_deploy_dev_pair.py::TestMain::test_main_passes_hosted_operator_live_profile_to_controller",
+        "scripts/test_cross_repo_release_controller.py"
+      ],
+      "regressionSuiteResult": "126 passed in 17.09s (.venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_deploy_dev_pair.py scripts/test_cross_repo_release_controller.py)"
+    }
+  },
+  "currentlyServedAcceptedOperatorLiveDeployment": {
+    "deploymentJsonUrl": "https://app.dev.mvl-cap.tw/deployment.json",
+    "bffVersionUrl": "https://api.dev.mvl-cap.tw/bff/version",
+    "bffHealthUrl": "https://api.dev.mvl-cap.tw/bff/health",
+    "verifiedAtUtc": "2026-11-06T01:17:04Z",
+    "environment": "dev",
+    "profile": "operator-live",
+    "frontendRepo": "ajoe734/execute-plans",
+    "frontendSha": "a8206a2d333f5c9b148bf4db9d6431bbe7042102",
+    "bffRepo": "ajoe734/pantheon",
+    "bffSha": "0cd59ab286b7ad4d7c742993215cb39919cce580",
+    "pairId": "1f671798815927b0b737103b3150094cf23e0b8bdf78836fa4edb99d877b11b1",
+    "releaseCandidateId": "a1ff2d2231e25b59405bd7a3a6c7e34de548c37f327949baaa294849cdb6ff01",
+    "releaseName": "20261105T235044Z-a8206a2d333f-gate-42127287936-42130498661-1-3042093",
+    "deployedAtUtc": "2026-11-05T23:50:44Z",
+    "workflowRuns": {
+      "controllerRunId": 42123862167,
+      "controllerRunUrl": "https://github.com/ajoe734/pantheon/actions/runs/42123862167",
+      "pairedFrontendGateRunId": 42127287936,
+      "pairedFrontendGateRunUrl": "https://github.com/ajoe734/execute-plans/actions/runs/42127287936",
+      "frontendDeployRunId": 42130498661,
+      "frontendDeployRunUrl": "https://github.com/ajoe734/execute-plans/actions/runs/42130498661"
+    },
+    "buildEnv": {
+      "VITE_BFF_BASE_URL": "https://api.dev.mvl-cap.tw",
       "VITE_BFF_MODE": "live",
       "VITE_BFF_FALLBACK": "strict",
-      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_REAL_WRITES": "true",
       "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
       "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
     },
-    "bffConfigPosture": {
+    "bffRuntimeAuthPosture": {
+      "status": "ok",
+      "service": "pantheon-bff",
       "auth_mode": "strict",
       "auth_stub": false,
-      "dev_login_enabled": true,
-      "mfa_required": false
+      "mfa_required": false,
+      "cors_origins": [
+        "https://app.dev.mvl-cap.tw"
+      ]
     },
-    "pairId": "560966946e67b01c6e188d5ff065c282a3c2d3accfe915d22130c0b3c5d4f6bf"
+    "capitalAndBrokerSafetyBoundary": {
+      "receipt": "/tmp/pantheon-dev-operable-20261104/actual-final-auth-capital-boundary-421238.json",
+      "verifiedAtUtc": "2026-11-05T23:57:23.985Z",
+      "strictAuth": true,
+      "authority": {
+        "interaction": "advisory",
+        "execution": "none",
+        "broker": "none",
+        "capital": "none"
+      },
+      "brokerLiveEnabled": false,
+      "capitalLiveEnabled": false,
+      "liveRuntimeBindings": 0,
+      "pass": true
+    },
+    "rollbackTarget": {
+      "frontendSha": "d114f57208593e553f9c6a9f892e00ffac3b4cbe",
+      "bffSha": "2a2411124c77ddce6c6963d927d99654c7e5f6fe",
+      "pairId": "6087a69df84c9987f7ca1494af49f2bc164826c66f53a20c5a06ceb1c58ba4b7",
+      "releaseCandidateId": "d21a8c3df9bfad8e4e65772e283b81fb717fdde74c5bd2f4267ba275da5cd119",
+      "releaseName": "20261105T181408Z-d114f5720859-gate-42076184651-42079777481-1-736195",
+      "profile": "operator-live"
+    }
   },
-  "rootCause": "nonprod-deploy.yml frontend_profile defaults to read-only and scripts/auto_deploy_dev_pair.py preserves the accepted hosted profile, so Dev stays read-only until one operator-live deploy is dispatched and accepted.",
-  "sourceChangesNeeded": false,
-  "regression": "Rebased onto origin/dev 2a2411124c77ddce6c6963d927d99654c7e5f6fe; .venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_deploy_dev_pair.py (51 passed in 9.72s) and scripts/test_cross_repo_release_controller.py (75 passed in 18.15s) -> 126 passed total (operator-live preserved; inconsistent posture fails closed)",
-  "authIdentityPreflight": {
-    "artifact": "/tmp/pantheon-dev-operable-20261104/login-profile-availability.json",
-    "profilesConfigured": ["TEST_ADMIN", "VIEWER", "OPERATOR_A", "OPERATOR_B"],
-    "secretsDisclosed": false
+  "hostedUiVerificationOnCurrentPair": {
+    "pairId": "1f671798815927b0b737103b3150094cf23e0b8bdf78836fa4edb99d877b11b1",
+    "frontendSha": "a8206a2d333f5c9b148bf4db9d6431bbe7042102",
+    "bffSha": "0cd59ab286b7ad4d7c742993215cb39919cce580",
+    "loginAndLogoutMatrix": {
+      "receipt": "/tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793924539414.json",
+      "accountsTested": [
+        {
+          "account": "TEST_ADMIN",
+          "loginUiStatus": 200,
+          "meStatus": 200,
+          "logoutStatus": 200
+        },
+        {
+          "account": "OPERATOR_A",
+          "loginUiStatus": 200,
+          "meStatus": 200,
+          "logoutStatus": 200
+        },
+        {
+          "account": "OPERATOR_B",
+          "loginUiStatus": 200,
+          "meStatus": 200,
+          "logoutStatus": 200
+        },
+        {
+          "account": "VIEWER",
+          "loginUiStatus": 200,
+          "meStatus": 200,
+          "logoutStatus": 200
+        }
+      ],
+      "finalLogoutVerified": {
+        "logoutStatus": 200,
+        "postLogoutMeStatus": 401
+      }
+    },
+    "isolatedManualEvolutionDraft": {
+      "programId": "evp-c0ce26091e8b443495bfa61e3dac34ff",
+      "name": "DEV ACCEPTANCE ONLY 1793924182061",
+      "createdViaUi": true,
+      "createEndpoint": "POST /bff/evolution-programs",
+      "createStatus": 201,
+      "status": "draft",
+      "revision": 1,
+      "constraints": [],
+      "runIds": [],
+      "candidateIds": [],
+      "reloadReadbackVerified": true,
+      "reloadReadbackReceipt": "/tmp/pantheon-dev-operable-20261104/evolution-ui-0QU26j/result.json",
+      "disposition": "RETAINED_SINGLE_ISOLATED_DRAFT_FOR_EDIT_REPLAY_TESTS_NO_DUPLICATE_CREATE"
+    },
+    "defectsDiscoveredAndFollowUpTasks": [
+      {
+        "taskId": "BFF-EVO-DRAFT-ACTION-CARRIER-20261106",
+        "status": "done",
+        "mergedPr": "https://github.com/ajoe734/pantheon/pull/6974",
+        "mergeCommit": "56bc44618762fadee995d2ab99e1ed3549786fd2",
+        "symptomOn0cd59ab286b7": "UI constraint edit (POST /bff/v1/commands with action create_constraint on evp-c0ce26091e8b443495bfa61e3dac34ff) returned 422 VALIDATION_FAILED: Unknown evolution program action: createconstraint because BFF stripped underscores from action and did not forward commandPayload.action to the evolution owner service.",
+        "hostedDeploymentStatus": "merged_to_pantheon_dev_awaiting_dev_vm_release"
+      },
+      {
+        "taskId": "FE-EVO-JOURNAL-PARTIAL-READ-20261106",
+        "status": "done",
+        "mergedPr": "https://github.com/ajoe734/execute-plans/pull/934",
+        "mergeCommit": "c1e4f43110b23abf29e719ec77cf6c9dca021db2",
+        "symptomOna8206a2d333f": "Evolution Journal tab hid counts and controls when secondary reads failed even though primary /bff/management/evolution-journal succeeded.",
+        "hostedDeploymentStatus": "merged_to_execute_plans_dev_awaiting_dev_vm_release"
+      },
+      {
+        "taskId": "BFF-EVIDENCE-BOUNDED-READ-20261106",
+        "status": "review",
+        "openPr": "https://github.com/ajoe734/pantheon/pull/6976",
+        "headCommit": "d8213a32a81e1ab572b733f23744c7c69cd84701",
+        "symptomOn0cd59ab286b7": "/bff/management/evidence intermittently exceeded the 1.2s owner read timeout on hosted Dev, causing degraded banner on /management/evidence.",
+        "hostedDeploymentStatus": "in_review_awaiting_merge_and_dev_vm_release"
+      }
+    ]
   },
-  "quietCrudTarget": {
-    "auditArtifact": "/tmp/pantheon-dev-operable-20261104/existing-private-workspace-crud-side-effect-and-remount-audit.md",
-    "surface": "User-private TradingRoomWorkspace (/agora/trading-room/{strategyId})",
-    "endpoints": [
-      "POST /bff/agora/strategies/{strategy_id}/trading-room/proposals",
-      "POST /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/accept",
-      "PATCH /bff/agora/trading-room/workspaces/{workspace_id}/layout",
-      "GET /bff/agora/trading-room/workspaces/{workspace_id}",
-      "GET /bff/agora/trading-room/workspaces/lookup",
-      "GET /bff/agora/trading-room/workspaces/{workspace_id}/versions"
-    ],
-    "sideEffects": "Pure declarative layout compiler and PostgresTradingRoomStore state only; zero provider, model, backtest, strategy mutation, broker order, or capital execution calls."
-  },
-  "workflows": {
-    "41947126368": "completed failure (capture stage); lease released/expired; not mine",
-    "41946522116": "failure at capture stage (DEV_ARTIFACT_OPERATION_FAILED exit 75) for backend 0bd88495e + FE b15608ce1; not mine",
-    "41758658026": "prior read-only baseline pair FE 809e1ce0a / BFF cc074638f",
-    "41947653837": "completed success; current served pair FE b15608ce1 / BFF 0bd88495e (read-only)",
-    "41956583442/41956938180": "success, all-12 chain segments only; deploy jobs skipped, no release",
-    "41972441340": "failure at Resolve and validate dev payload (Bounded source refresh requires an isolated clean dev/root deploy with strict auth; run_bounded_source_refresh=true was combined with frontend_profile=operator-live)",
-    "41988080438": "dispatched by Hourly Publish Cut 41988024352 for BE 2a2411124 + FE d114f5720; failed at Ensure governed dev paper baseline under lease after 59 attempts/630s waiting for persona-2cc049a04aac389246cd (lifecycle provisioning, exit 75) because paper-fleet-reconciler paused new binding rb-bce2cf90 after 120s grace with market_input_stale before dev-tw-market-refresh admitted the 2026-11-05 snapshot at 15:13Z; diagnostics.json showed all 7 sampled containers healthy with 0 restarts and no runtime-manager sample/events; compensated BFF/FE back to 0bd88495e + b15608ce1 (read-only)",
-    "42067757439": "failure at Resolve and validate dev payload before lease acquisition (payload=0bd88495e while current dev=2a2411124)",
-    "42069435023": "in_progress (dispatched 2026-11-05T16:55:23Z by existing sole publisher for exact current pair BE 2a2411124c77ddce6c6963d927d99654c7e5f6fe + FE d114f57208593e553f9c6a9f892e00ffac3b4cbe under lease dcb4c003-b5d0-4944-b570-32af771e5bb6; currently in step 19 Deploy dev VM stack under lease)"
-  },
-  "rollbackTarget": "FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb / BFF 0bd88495e27e90f6cfaadc1991139d28a8809501 (read-only, pair 560966946e67b01c6e188d5ff065c282a3c2d3accfe915d22130c0b3c5d4f6bf)",
-  "acceptanceMatrix": {
-    "operatorLiveDeploy": "not-run",
-    "loginUiOperatorCreateEditReload": "not-run",
-    "viewer403": "not-run",
-    "missingSession401": "not-run",
-    "tenantMismatch": "not-run",
-    "idempotency": "not-run",
-    "realBrokerCapitalDisabledProof": "passed-source-and-posture (post-switch re-verification pending operator-live deploy)",
-    "testResourceDisposition": "none created"
-  },
-  "coreFlowInventory": {
-    "publicReadManifestAndVersion": "passed (accepted read-only pair FE b15608ce1 / BFF 0bd88495e)",
-    "loginUiAdminSession": "passed (read-only baseline login verified; operator-live session acceptance pending qualified operator-live pair)",
-    "tradingRoomPrivateWorkspaceCreateAcceptEditReload": "not-run (blocked on active nonprod-deploy run 42069435023 completing and serving operator-live pair with execute-plans d114f5720 containing c5a3156bf PR #913)",
-    "rbacViewerWriteDenied403": "not-run (pending qualified operator-live pair)",
-    "missingSessionWriteDenied401": "not-run (pending qualified operator-live pair)",
-    "crossUserWorkspaceAccessDenied403": "not-run (pending qualified operator-live pair)",
-    "tenantMismatchRejected403": "not-run (pending qualified operator-live pair)",
-    "idempotencyConflict409AndETag412_428": "not-run (pending qualified operator-live pair)",
-    "realBrokerAndCapitalExecutionDisabled": "passed (paper/isolated Dev only; live broker authority fail-closed)"
-  },
-  "blockers": [
-    "Served FE b15608ce1aad37cc80fc6bf1ef09382c17d369eb / BFF 0bd88495e27e90f6cfaadc1991139d28a8809501 is still read-only (VITE_BFF_REAL_WRITES=false) while nonprod-deploy run 42069435023 (BE 2a2411124c77ddce6c6963d927d99654c7e5f6fe + FE d114f57208593e553f9c6a9f892e00ffac3b4cbe) is in_progress under shared lease dcb4c003-b5d0-4944-b570-32af771e5bb6.",
-    "Per canonical completion_tracks.hosted (in_progress under Human/Ops sole serial publisher), source workers must not start a competing deployment or interfere with the active lease.",
-    "Next: once nonprod-deploy run 42069435023 (or subsequent sole-publisher operator-live release) completes and https://app.dev.mvl-cap.tw/deployment.json serves an accepted operator-live pair containing execute-plans c5a3156bf (d114f5720), reopen and execute hosted login-UI private-workspace create/accept/edit/reload, viewer 403, missing-session 401, cross-user 403, tenant mismatch 403, and idempotency/ETag checks."
-  ],
-  "dependencies": {
-    "EVOLUTION-OWNER-WRITE-SERVICE-AUTH-20261104": "done (satisfied=true)",
-    "FE-TRADINGROOM-WORKSPACE-RESTORE-20261105": "done (satisfied=true; execute-plans dev c5a3156bf7fa295c60da225d8f3e76d3ec9f3df0 PR #913 merged 2026-11-05T02:51:48Z, included in candidate FE d114f57208593e553f9c6a9f892e00ffac3b4cbe)"
-  }
+  "coreFlowInventory": [
+    {
+      "flow": "Deployment identity & persistent operator-live manifest (deployment.json + /bff/version + /bff/health)",
+      "status": "passed",
+      "detail": "Verified FE a8206a2d333f5c9b148bf4db9d6431bbe7042102 / BFF 0cd59ab286b7ad4d7c742993215cb39919cce580 with profile=operator-live, VITE_BFF_REAL_WRITES=true, strict auth, no stub writes, no embedded bearer token."
+    },
+    {
+      "flow": "Capital & broker safety boundary verification",
+      "status": "passed",
+      "detail": "Verified broker_live_enabled=false, capital_live_enabled=false, live_runtime_bindings=0, execution/broker/capital authority=none."
+    },
+    {
+      "flow": "Actual login UI & session lifecycle (TEST_ADMIN, OPERATOR_A, OPERATOR_B, VIEWER + logout -> 401)",
+      "status": "passed",
+      "detail": "All 4 role accounts logged in via /login UI (200), resolved /bff/me (200), and logged out via /bff/logout (200) with post-logout /bff/me returning 401."
+    },
+    {
+      "flow": "Isolated non-capital Evolution draft UI create + read-after-write + reload persistence",
+      "status": "passed",
+      "detail": "Created single isolated draft evp-c0ce26091e8b443495bfa61e3dac34ff (DEV ACCEPTANCE ONLY 1793924182061, status=draft, revision=1, run_ids=[], candidate_ids=[]) via UI (201) and verified persistence across page reloads."
+    },
+    {
+      "flow": "Evolution qualification read-only UI & unqualified-program gate",
+      "status": "passed",
+      "detail": "Verified 442 evaluated / 0 qualified / 0 auto-drafted programs on /management/evolution and readback of evp-c0ce26091e8b443495bfa61e3dac34ff without dispatching training or approvals."
+    },
+    {
+      "flow": "Isolated Evolution draft UI constraint edit, readback, reload persistence, idempotency replay (200/202 + divergent 409), RBAC 403/401, and tenant mismatch (403/422 + X-Tenant-Id 403)",
+      "status": "failed",
+      "detail": "Blocked on currently served BFF 0cd59ab286b7ad4d7c742993215cb39919cce580 by 422 Unknown evolution program action: createconstraint. Fix BFF-EVO-DRAFT-ACTION-CARRIER-20261106 is merged in pantheon dev (56bc44618762fadee995d2ab99e1ed3549786fd2) and awaits sole-publisher exact-pair release to replay against existing draft evp-c0ce26091e8b443495bfa61e3dac34ff."
+    },
+    {
+      "flow": "Evolution Journal UI readback under partial secondary read failure",
+      "status": "failed",
+      "detail": "Blocked on currently served FE a8206a2d333f5c9b148bf4db9d6431bbe7042102. Fix FE-EVO-JOURNAL-PARTIAL-READ-20261106 is merged in execute-plans dev (c1e4f43110b23abf29e719ec77cf6c9dca021db2) and awaits sole-publisher exact-pair release."
+    },
+    {
+      "flow": "Management Evidence UI readback (/management/evidence)",
+      "status": "failed",
+      "detail": "Intermittent 502 owner timeout on /bff/management/evidence on BFF 0cd59ab286b7ad4d7c742993215cb39919cce580. Fix BFF-EVIDENCE-BOUNDED-READ-20261106 (PR #6976) is in review."
+    },
+    {
+      "flow": "Controlled retrain stimulus & execution",
+      "status": "not-run",
+      "detail": "Separate Teaching hold (EVOLUTION-RETRAIN-EXEC-AUTH-20261105) remains unchanged per operator instruction; no training or approval dispatched."
+    }
+  ]
 }
