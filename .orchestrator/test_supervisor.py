@@ -2921,6 +2921,166 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertEqual(receipt["reason"], reason)
         self.assertEqual(receipt["source_task_id"], "ABC-001")
 
+    def _make_execute_plans_source(self, target_repo: str = "execute-plans") -> dict[str, object]:
+        """Re-seed ABC-001 as a real-shape execute-plans review_approved source."""
+
+        self.source["target_repo"] = target_repo
+        self.source["delivery_binding"] = {"pr": 940, "head_sha": "a" * 40}
+        self.status["tasks"] = [self.source]
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], self.status, source="test-seed-fe"
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(self.status), encoding="utf-8"
+        )
+        return {
+            "repository_id": "execute_plans",
+            "repository_slug": "ajoe734/execute-plans",
+            "pr": 940,
+        }
+
+    def _fe_task_id(self, reason: str, **changes: object) -> str:
+        request = {
+            "source_task_id": "ABC-001", "source_task_generation": 1,
+            "repository_slug": "ajoe734/execute-plans", "pr": 940,
+            "head_sha": "a" * 40, "reason": reason,
+        }
+        request.update(changes)
+        return supervisor._auto_integrator_unblock_task_id(request)
+
+    def _rejected_receipt(self, request: Path) -> Path:
+        return (
+            self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+            / "rejected" / request.name
+        )
+
+    def test_execute_plans_source_accepts_config_key_repository_id(self) -> None:
+        fe = self._make_execute_plans_source()
+        reason = "exact-head-behind-base"
+        unblock_id = self._fe_task_id(reason)
+        request = self._publish(
+            reason=reason, detail="PR #940 is BEHIND origin/dev.",
+            unblock_task_id=unblock_id, **fe,
+        )
+        calls: list[tuple[list[str], dict[str, str], str]] = []
+        with mock.patch.object(
+            supervisor.subprocess, "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self.assertTrue(self._materialize())
+        self.assertFalse(request.exists())
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(self._rejected_receipt(request).exists())
+        processed = (
+            self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+            / "processed" / request.name
+        )
+        receipt = json.loads(processed.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["outcome"], "processed")
+        self.assertEqual(receipt["repository_id"], "execute_plans")
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        tasks = snapshot["state"]["tasks"]
+        self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+        self.assertEqual(tasks[0]["status"], "in_progress")
+
+        # Replay changes nothing.
+        after_first = supervisor.load_status(self.config)
+        with mock.patch.object(
+            supervisor.subprocess, "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self._publish(
+                reason=reason, detail="PR #940 is BEHIND origin/dev.",
+                unblock_task_id=unblock_id, **fe,
+            )
+            self.assertFalse(self._materialize())
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(supervisor.load_status(self.config), after_first)
+
+    def test_execute_plans_source_stale_head_and_forged_reason_change_nothing(self) -> None:
+        fe = self._make_execute_plans_source()
+        before = supervisor.load_status(self.config)
+        reason = "exact-head-behind-base"
+        for label, kwargs in (
+            ("stale-head", {
+                "reason": reason, "head_sha": "c" * 40,
+                "unblock_task_id": self._fe_task_id(reason, head_sha="c" * 40),
+            }),
+            ("forged-reason", {
+                "reason": "exact-head-behind-forged",
+                "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-EXACT-HEAD-BEHIND-FORGED",
+            }),
+        ):
+            with self.subTest(case=label):
+                request = self._publish(**(fe | kwargs))
+                self.assertFalse(self._materialize())
+                self.assertEqual(supervisor.load_status(self.config), before)
+                self.assertTrue(self._rejected_receipt(request).is_file())
+
+    def test_repository_identity_still_fails_closed(self) -> None:
+        reason = "exact-head-behind-base"
+        # Source is pantheon (default) but request names execute_plans.
+        before = supervisor.load_status(self.config)
+        request = self._publish(
+            reason=reason, repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            unblock_task_id=self._task_id(reason, repository_slug="ajoe734/execute-plans"),
+        )
+        self.assertFalse(self._materialize())
+        self.assertEqual(supervisor.load_status(self.config), before)
+        receipt = json.loads(self._rejected_receipt(request).read_text(encoding="utf-8"))
+        self.assertEqual(receipt["detail"], "unblock request repository differs from canonical task")
+
+        # Source is execute-plans but request names pantheon.
+        fe = self._make_execute_plans_source()
+        before = supervisor.load_status(self.config)
+        request = self._publish(
+            reason=reason, unblock_task_id=self._fe_task_id(reason, repository_slug="ajoe734/pantheon"),
+            repository_id="pantheon", repository_slug="ajoe734/pantheon", pr=940,
+        )
+        self.assertFalse(self._materialize())
+        self.assertEqual(supervisor.load_status(self.config), before)
+        receipt = json.loads(self._rejected_receipt(request).read_text(encoding="utf-8"))
+        self.assertEqual(receipt["detail"], "unblock request repository differs from canonical task")
+
+        # Unknown target_repo fails closed.
+        fe = self._make_execute_plans_source(target_repo="no-such-repo")
+        before = supervisor.load_status(self.config)
+        request = self._publish(
+            reason=reason, unblock_task_id=self._fe_task_id(reason), **fe,
+        )
+        self.assertFalse(self._materialize())
+        self.assertEqual(supervisor.load_status(self.config), before)
+        self.assertTrue(self._rejected_receipt(request).is_file())
+
+    def test_execute_plans_ci_red_creates_one_repair_task_in_execute_plans_workspace(self) -> None:
+        fe = self._make_execute_plans_source()
+        unblock_id = self._fe_task_id("ci-red")
+        request = self._publish(
+            reason="ci-red", unblock_task_id=unblock_id, detail="PR #940 has failing checks.",
+            **fe,
+        )
+        self.assertTrue(self._materialize())
+        self.assertFalse(request.exists())
+        status = supervisor.load_status(self.config)
+        repairs = [t for t in status["tasks"] if t["id"] == unblock_id]
+        self.assertEqual(len(repairs), 1)
+        self.assertEqual(len(status["tasks"]), 2)
+        repair = repairs[0]
+        self.assertEqual(
+            supervisor.task_target_repository_id(self.config, repair), "execute_plans"
+        )
+        self.assertEqual(
+            supervisor.task_primary_repository_id(self.config, repair), "execute_plans"
+        )
+        self.assertEqual(
+            supervisor.repository_slug(self.config, "execute_plans"), "ajoe734/execute-plans"
+        )
+        # Repair task must pass the same repository-scope validation used by dispatch.
+        supervisor.validate_task_repository_scope(self.config, repair)
+
     def test_exact_head_behind_base_reopen_failure_keeps_request_retryable(self) -> None:
         reason = "exact-head-behind-base"
         request = self._publish(

@@ -1,0 +1,26 @@
+{
+  "task_id": "OPS-UNBLOCK-REPO-ID-20261106",
+  "root_cause": "_validate_auto_integrator_unblock_request compared request.repository_id (config key execute_plans) with raw source.target_repo (execute-plans) by string.",
+  "fix": "Compare via multi_repo_registry.task_target_repository_id (canonical resolver); missing target_repo => pantheon; unknown target_repo => ValueError (fail closed). Downstream resolve_repository/repository_slug use the canonical id.",
+  "offline_replay": {
+    "request_shape": {"reason": "exact-head-behind-base", "repository_id": "execute_plans", "repository_slug": "ajoe734/execute-plans", "pr": 940, "source_task_generation": 2, "owner": "Claude", "reviewer": "Antigravity", "source_target_repo": "execute-plans"},
+    "note": "Real archived requests carry pr and source_task_generation as integers (verified in coordination-root archive, read-only); the validator is type-strict, so ints were used.",
+    "before_fix": "rejected: unblock request repository differs from canonical task",
+    "after_fix": "accepted",
+    "live_state_touched": false
+  },
+  "raw_comparison_audit": "On the unblock request path (_validate_auto_integrator_unblock_request, materialize_auto_integrator_unblock_requests, repair-task writer) the only raw target_repo vs repository id comparison was supervisor.py line ~2252; removed. Repair-task writer stores target_repo=execute_plans (config key), which task_target_repository_id, task_primary_repository_id and validate_task_repository_scope all resolve to execute_plans (covered by test).",
+  "new_tests": [
+    "test_execute_plans_source_accepts_config_key_repository_id (real reopen subprocess, replay idempotent)",
+    "test_execute_plans_source_stale_head_and_forged_reason_change_nothing",
+    "test_repository_identity_still_fails_closed (cross-repo both directions, unknown target_repo)",
+    "test_execute_plans_ci_red_creates_one_repair_task_in_execute_plans_workspace"
+  ],
+  "tests_fail_before_fix": "2 of the 4 (accept/reopen and ci-red) fail on the old supervisor.py; the other 2 are negative controls.",
+  "commands": [
+    {"cmd": "cd .orchestrator && python3 -m unittest test_supervisor.AutoIntegratorUnblockAuthorityTests", "result": "Ran 25 tests OK"},
+    {"cmd": "cd .orchestrator && python3 -m unittest test_supervisor", "result": "Ran 412 tests, 1 error: test_ignored_build_artifacts_do_not_dirty_worktree (cwd-dependent .gitignore lookup, unrelated); passes when run from repo root: python3 -m unittest discover -s .orchestrator -p test_supervisor.py -k test_ignored_build_artifacts -> OK"},
+    {"cmd": "python3 -m unittest scripts/git/test_auto_integrator.py", "result": "Ran 170 tests OK"}
+  ],
+  "not_changed": "No receipts, archived requests or live coordination-root state touched; rejected requests are not replayed. Live effect requires runtime promotion by the coordinator after merge."
+}

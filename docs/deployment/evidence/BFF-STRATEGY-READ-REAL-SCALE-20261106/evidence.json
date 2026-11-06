@@ -1,0 +1,193 @@
+{
+  "task_id": "BFF-STRATEGY-READ-REAL-SCALE-20261106",
+  "title": "Bound BFF Strategy List and Detail Reads at 5,000+ Real-Scale Spec Rows",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "captured_at": "2026-11-06T04:13:30Z",
+  "root_cause_and_slow_steps": {
+    "hosted_5031_row_population_facts": {
+      "note": "Retained coordinator population facts (5031 spec version rows across 4900 distinct strategy families; local fixture creates 2 retired families so 4900 - 2 = 4898 non-retired in fixture, not a fresh live hosted query).",
+      "total_strategy_spec_rows": 5031,
+      "full_owner_list_payload_bytes": 25532825,
+      "full_owner_list_payload_mb": 24.35,
+      "distinct_strategy_families": 4900,
+      "non_retired_strategy_families": 4898,
+      "lifecycle_breakdown": {
+        "draft_families": 4764,
+        "approved_rows": 264,
+        "approved_families": 133,
+        "candidate_families": 1,
+        "retired_families": 2,
+        "dominant_AutoGen_families": {
+          "strat-tw-official:tw_price_daily": 3209,
+          "strat-dev-paper-simulation:SPY": 1554
+        }
+      },
+      "hosted_coordinator_timings_seconds": {
+        "registry_list_all_entries_5031_rows": 1.307,
+        "registry_list_by_strategy_unindexed_scan_for_1_strategy_4_rows": 1.328,
+        "bff_json_parse_24_35_mb": 0.256,
+        "bff_fetch_canonical_strategy_specs_uncached_group": 0.076,
+        "bff_list_strategy_specs_uncached_normalize_all": 1.085,
+        "bff_deepcopy_base_items": 0.959,
+        "cprofile_kw05_normalize_version_candidate_total": 2.75,
+        "cprofile_deepcopy_inside_normalizer": 2.58,
+        "cprofile_total_request_cpu": 3.33,
+        "existing_postgres_projected_persona_binding_view_263_rows_179_kb": 0.106
+      }
+    },
+    "local_5031_row_regression_benchmark": {
+      "dataset_shape": {
+        "rows_total": 5031,
+        "families_total": 4900,
+        "families_non_retired": 4898,
+        "draft_families": 4764,
+        "approved_families": 133,
+        "candidate_families": 1,
+        "retired_families": 2
+      },
+      "owner_boundary_transfer": {
+        "before_list_rows_crossed": 5031,
+        "before_list_bytes_crossed": 17281110,
+        "after_list_page_20_rows_crossed": 20,
+        "after_list_page_20_bytes_crossed": 25727,
+        "list_bytes_reduction_ratio": 671.7,
+        "before_detail_rows_scanned_in_postgres": 5031,
+        "after_detail_rows_crossed": 2,
+        "after_detail_bytes_crossed": 7288
+      },
+      "measured_step_timings_seconds": {
+        "before_owner_full_list_5031_rows": 0.2028,
+        "before_json_parse_5031_rows": 0.2737,
+        "before_bff_fetch_and_group_5031_rows": 0.1549,
+        "before_bff_normalize_all_4900_families": 0.6218,
+        "before_bff_list_strategy_specs_uncached_total": 0.7767,
+        "before_bff_deepcopy_4898_summaries": 0.6614,
+        "before_bff_list_total_per_cache_miss_or_deepcopy": 1.9146,
+        "after_owner_summary_page_20_rows": 0.2096,
+        "after_bff_get_strategies_page_20_end_to_end": 0.5692,
+        "after_owner_list_by_strategy_2_rows": 0.0001,
+        "after_bff_get_strategy_detail_end_to_end": 0.0344
+      }
+    },
+    "slow_steps_identified": [
+      "1. PostgresRegistryStore.list_by_strategy previously called self.list_all_entries() and filtered in Python, scanning and decoding all 5,031 strategy_spec JSONB blobs (1.328s on hosted dev) even when reading 1 strategy (1-4 rows).",
+      "2. GET /bff/strategies/{id} and PATCH /bff/strategies/{id} called ctx.service.get_strategy(strategy_id) which fell back to scanning list_strategy_summaries() (all 4,898 strategies) even after get_strategy_spec_detail(strategy_id, version_selector='current') had already resolved the single strategy.",
+      "3. GET /bff/strategies fetched GET /api/registry/strategy-specs (all 5,031 rows / 24.35 MB on hosted dev, 17.28 MB in local 5,031-row fixture), parsed all 5,031 JSON objects (0.256s-0.274s), normalized all 4,900 families through _kw05_normalize_version_candidate with repeated copy.deepcopy calls (1.085s uncached + 0.959s deepcopy on hosted dev; 2.75s of 3.33s under cProfile), only to slice 20 items.",
+      "4. project_strategy_dto fell back to detail.get('source_kind') and summary.get('hypothesis_excerpt') when market_scope.alpha was absent, causing GET /bff/strategies list items to show truncated hypothesis text as alpha while GET /bff/strategies/{id} detail showed 'workflow'."
+    ]
+  },
+  "changes_implemented": {
+    "owner_registry_sql_and_summary_page_view": {
+      "files": [
+        "services/registry/pg_store.py",
+        "services/registry/storage.py",
+        "services/registry/split_api.py",
+        "services/registry/service.py",
+        "services/registry/contract.md"
+      ],
+      "details": [
+        "PostgresRegistryStore.list_by_strategy now queries WHERE payload ->> 'strategy_id' = %s ORDER BY created_at ASC instead of scanning list_all_entries().",
+        "PostgresRegistryStore.list_strategy_spec_summary_rows projects only leaf JSONB fields needed for version sorting, tenant/state/persona filtering, and BFF summary DTO projection without transferring full inline strategy_spec bodies.",
+        "Added GET /api/registry/strategy-specs?view=strategy_summary_page supporting tenant visibility, state (including BFF aliases review->candidate and deployed->active), persona_id, page_size, and page_token, returning {'items': [...], 'total': <int>, 'next_page_token': <str|None>} ordered by (last_modified_at DESC, strategy_id DESC)."
+      ]
+    },
+    "bff_bounded_list_and_single_strategy_detail": {
+      "files": [
+        "services/control-plane/bff/ports/research_knowledge_source.py",
+        "services/control-plane/bff/ports/read_surface_ports.py",
+        "services/control-plane/bff/strategies/service.py",
+        "services/control-plane/bff/strategies/routes/collection.py",
+        "services/control-plane/bff/strategies/routes/detail.py",
+        "services/control-plane/bff/strategies/routes/common.py",
+        "services/control-plane/bff/BFF_API_CONTRACT.md",
+        "services/control-plane/bff/test_kw05_strategy_spec_contract.py"
+      ],
+      "details": [
+        "DefaultResearchKnowledgeSourcePort.list_strategy_specs_page calls GET /api/registry/strategy-specs?view=strategy_summary_page with state, persona_id, page_size, and page_token, requiring a typed dict envelope (failing closed with 503 DEPENDENCY_UNAVAILABLE on unexpected raw-list or malformed payloads) and validating caller tenant isolation on every returned item.",
+        "StrategiesService.list_strategy_summaries_page delegates directly to the declared public read_store.list_strategy_summaries_page / list_strategy_specs_page dependency without callable/bytecode/dict reflection, so lambda, equivalent named wrappers, and bound methods route identically to the bounded owner summary page while genuine legacy whole-list stores without the page method remain on list_strategy_summaries().",
+        "detail.py (GET /bff/strategies/{id} and PATCH /bff/strategies/{id}) reuses the single-strategy get_strategy_spec_detail(strategy_id, version_selector='current') read (GET /api/registry/strategies/{id}/strategy-specs) directly when it resolves a strategy dict, without triggering a full list_strategy_summaries() scan.",
+        "common.py (project_strategy_dto) sets alpha strictly from market_scope.alpha (defaulting to '') so list and detail always agree and never leak source_kind or hypothesis_excerpt into alpha."
+      ]
+    },
+    "fe_consumer_detail_spec_projection": {
+      "coordinated_consumer_task": "FE-STRATEGY-DETAIL-TRUTH-20261106",
+      "contract": {
+        "route": "GET /bff/strategies/{id}",
+        "field": "data.spec",
+        "shape": {
+          "spec_version_id": "str | None",
+          "spec_version": "str | None",
+          "market_scope": "dict | None",
+          "execution_profile": "dict | None",
+          "evaluation_plan": "dict | None",
+          "metadata": {
+            "market": "str | list[str] | None",
+            "execution_context": "str | None",
+            "traits": {
+              "instruments": "list[str] | str | None",
+              "time_horizon": "str | None"
+            }
+          }
+        },
+        "guarantees": [
+          "Projected exclusively from the already-resolved current owner version in GET /bff/strategies/{id} (include_spec=True); no extra owner read or endpoint.",
+          "Exposes only values actually present in the resolved owner version; empty or absent sub-objects become None.",
+          "Metadata is strictly allowlisted to market, execution_context, traits.instruments, and traits.time_horizon; arbitrary metadata blobs and secrets are never exposed.",
+          "Does not invent evaluation_plan.benchmark when absent in the canonical owner version.",
+          "Not included on GET /bff/strategies paged list items and stripped before persisting on PATCH /bff/strategies/{id}."
+        ]
+      }
+    }
+  },
+  "acceptance_criteria_verification": {
+    "ac1_evidence_measures_time_at_5000_plus_rows": {
+      "status": "passed",
+      "notes": "Measured both hosted 5,031-row (24.35 MB) timings and local 5,031-row (4,900 families / 4,898 non-retired) before/after step breakdown in root_cause_and_slow_steps."
+    },
+    "ac2_detail_reads_single_strategy_from_owner": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filters_and_alpha_parity",
+        "services/control-plane/bff/tests/test_strategy_ranking_router.py::test_bff_strategy_detail_single_owner_read_and_alpha_never_uses_source_kind",
+        "services/registry/test_service.py::test_postgres_registry_store_list_by_strategy_filters_in_sql_without_full_table_scan"
+      ]
+    },
+    "ac3_list_returns_one_page_and_exact_total_with_owner_filters": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filters_and_alpha_parity",
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_strategies_service_equivalent_named_wrapper_and_lambda_both_use_bounded_owner_page",
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_strategy_summary_page_rejects_unexpected_raw_list_owner_shape_fail_closed_503",
+        "services/registry/test_service.py::test_strategy_spec_summary_page_view_tenant_scope_filters_pagination_and_sql_projection",
+        "services/control-plane/bff/test_kw05_strategy_spec_contract.py::test_bff_strategies_and_kw05_list_against_real_registry_app"
+      ]
+    },
+    "ac4_tenant_isolation_stable_paging_and_ranking_metrics_unchanged": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_strategy_list_production_scale_555_plus_inventory_pagination_filters_and_metrics_truth",
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_capital_pool_id_populated_from_registry_metadata_capital_pool_id",
+        "services/control-plane/bff/tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation",
+        "services/control-plane/bff/test_kw05_strategy_spec_contract.py::test_bff_strategies_and_kw05_list_against_real_registry_app"
+      ]
+    },
+    "ac5_alpha_only_from_market_scope_alpha_and_list_detail_parity": {
+      "status": "passed",
+      "tests": [
+        "services/control-plane/bff/tests/test_strategy_metrics_truth.py::test_strategy_alpha_comes_only_from_market_scope_alpha_and_agrees_between_list_and_detail",
+        "services/control-plane/bff/tests/test_strategy_list_latency.py::test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filters_and_alpha_parity"
+      ]
+    },
+    "ac6_no_existing_test_weakened_or_deleted": {
+      "status": "passed",
+      "justification": "All existing tests in test_strategy_list_latency.py, test_strategy_metrics_truth.py, test_strategy_ranking_router.py, and services/registry/test_service.py are preserved intact without weakening or deleting assertions; new tests were appended for 5,031-row scale boundary assertions, SQL pushdown, alpha parity, detail data.spec projection, equivalent callable wrapper routing, and fail-closed 503 rejection of unexpected raw-list owner responses on the summary page route. In services/control-plane/bff/test_kw05_strategy_spec_contract.py::test_bff_strategies_and_kw05_list_against_real_registry_app, two assertions were aligned with the bounded summary page contract: (1) line 868 now asserts http_paths == ['/api/registry/strategy-specs?view=strategy_summary_page&page_size=1'] instead of ['/api/registry/strategy-specs'] because GET /bff/strategies?page_size=1 reads the bounded owner summary page rather than the unbounded full spec list; and (2) lines 908-935 return the typed {'items': [...], 'total': 1, 'next_page_token': None} summary page envelope when view=strategy_summary_page is requested while preserving the raw list for /api/v1/knowledge/strategy-specs, so both endpoints continue to verify 403 fail-closed foreign-tenant rejection after raw-list fallback removal."
+    }
+  },
+  "test_execution": [
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/registry/test_service.py",
+      "result": "132 passed, 1 skipped in 117.55s"
+    }
+  ]
+}
