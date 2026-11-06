@@ -1,0 +1,17 @@
+{
+  "task_id": "BFF-JOBS-LIST-COMPACT-ROWS-20261106",
+  "change": "GET /bff/jobs rows omit `detail` (applied in jobs/router.py after sort and page_slice); GET /bff/jobs/{id} unchanged.",
+  "callers_checked": [
+    {"caller": "assistant/source_collectors.py (_list_jobs, line ~313)", "result": "reads read_store.list_jobs_bff() directly, not the /bff/jobs route; unaffected, rows still carry detail"},
+    {"caller": "assistant/context_composer.py", "result": "references /bff/jobs only as a source path label; no row-field reads"},
+    {"caller": "ports/job_read.py sort_jobs_newest_first", "result": "uses detail timestamps as fallback; runs before compaction, so ordering unchanged"},
+    {"caller": "execute-plans frontend list", "result": "NOT inspected from this repo (separate repository); every non-detail row field is preserved, only `detail` is removed"}
+  ],
+  "validation": {
+    "command": "pytest tests/test_bff_jobs_compact_rows.py tests/test_bff_jobs_newest_first.py tests/test_jobs_source_owner_contract.py tests/test_assistant_context_pack.py test_bff_evolution_experiment_jobs_events_contract.py test_bff_consol_010_fixture_pack_c.py test_execute_plans_final_live_wiring_contract.py",
+    "result": "97 passed, 1 skipped, 1 failed",
+    "preexisting_failure": "test_execute_plans_final_seeded_detail_paths_use_read_model_dtos fails on /bff/alerts and fails identically on origin/dev (verified via git archive of origin/dev); unrelated to jobs"
+  },
+  "page_size_check": "test_bff_jobs_compact_rows: 20 rows with 17 KB detail each serialize to <= 100 KB",
+  "existing_tests_changed": "none"
+}

@@ -993,3 +993,10 @@ resumed in place at startup, so the same item reaches a terminal state.
 - `GET /bff/jobs` orders composed jobs across all qualified sources newest first by `started_at` falling back to `created_at` (normalized to UTC ISO-8601 when parseable), with a deterministic tie break by `id` (`job_id`) and any job with neither `started_at` nor `created_at` sorted last.
 - Cross-source ordering is enforced both in `JobReadPort.list_jobs_bff` (`services/control-plane/bff/ports/job_read.py`) and in the `GET /bff/jobs` handler (`services/control-plane/bff/jobs/router.py`) after `status` and `job_type` filtering and before `page_slice(jobs, page_token, page_size)`.
 - Walking every page via `page_size` and `next_page_token` returns each matching job exactly once in global newest-first order while `page_info.total` and `meta` source diagnostics (`healthy_sources`, `degraded_sources`, `bff_composed` / single-source owner / `unavailable`) remain unchanged.
+
+## Compact job list rows (BFF-JOBS-LIST-COMPACT-ROWS-20261106)
+
+- `GET /bff/jobs` rows omit the `detail` field (the full source record); every other row field (`job_id`, `id`, `native_id`, `source`, `job_type`, `status`, timestamps, `progress`, `logs`, `allowedActions`, ...) is unchanged. `GET /bff/jobs/{job_id}` still returns `detail` unchanged.
+- Ordering, filters, paging and `page_info.total` are unchanged; ordering is computed before `detail` is dropped, so the `detail` timestamp fallback still applies.
+- Assistant context collectors read jobs from `read_store.list_jobs_bff()` directly, not from this route, and are unaffected.
+
