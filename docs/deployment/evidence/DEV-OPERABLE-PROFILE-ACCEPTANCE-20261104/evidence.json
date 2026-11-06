@@ -1,7 +1,7 @@
 {
   "taskId": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
   "title": "Restore persistent operable Dev profile and prove isolated authenticated product writes",
-  "recordedAtUtc": "2026-11-06T01:24:00Z",
+  "recordedAtUtc": "2026-11-06T01:55:00Z",
   "status": "in_progress_awaiting_merged_defect_release_and_ui_edit_replay",
   "rootCause": {
     "summary": "The hosted Dev frontend deployment manifest was previously pinned to read-only because .github/workflows/nonprod-deploy.yml defaults the workflow_dispatch input frontend_profile to read-only (withVITE_BFF_REAL_WRITES=false) unless frontend_profile=operator-live is explicitly passed to the exact-pair release controller, and scripts/auto_deploy_dev_pair.py preserves the currently accepted hosted profile from https://app.dev.mvl-cap.tw/deployment.json (defaulting to read-only only when no valid hosted profile is readable).",
@@ -20,7 +20,7 @@
         "scripts/test_auto_deploy_dev_pair.py::TestMain::test_main_passes_hosted_operator_live_profile_to_controller",
         "scripts/test_cross_repo_release_controller.py"
       ],
-      "regressionSuiteResult": "126 passed in 17.09s (.venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_deploy_dev_pair.py scripts/test_cross_repo_release_controller.py)"
+      "regressionSuiteResult": "126 passed in 17.69s (.venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_deploy_dev_pair.py scripts/test_cross_repo_release_controller.py)"
     }
   },
   "currentlyServedAcceptedOperatorLiveDeployment": {
@@ -159,13 +159,31 @@
       },
       {
         "taskId": "BFF-EVIDENCE-BOUNDED-READ-20261106",
-        "status": "review",
-        "openPr": "https://github.com/ajoe734/pantheon/pull/6976",
+        "status": "done",
+        "mergedPr": "https://github.com/ajoe734/pantheon/pull/6976",
         "headCommit": "d8213a32a81e1ab572b733f23744c7c69cd84701",
+        "mergeCommit": "0cc4d38fcc3c9439a7d83171321b5a08b7b24613",
+        "mergedAtUtc": "2026-11-06T01:40:25Z",
+        "independentLocalVerification": "72 passed, 0 skipped on exact reviewed head d8213a32a81e1ab572b733f23744c7c69cd84701 (evidence_source_backend + evidence_owner_list_bounded + bff_b3_management_evidence + bff_management_cockpit = 67 passed; load concurrency -k evidence = 4 passed; human_inbox_truth route_budget_outlasts_contributor_bound = 1 passed)",
         "symptomOn0cd59ab286b7": "/bff/management/evidence intermittently exceeded the 1.2s owner read timeout on hosted Dev, causing degraded banner on /management/evidence.",
-        "hostedDeploymentStatus": "in_review_awaiting_merge_and_dev_vm_release"
+        "hostedDeploymentStatus": "merged_to_pantheon_dev_awaiting_dev_vm_release"
       }
-    ]
+    ],
+    "isolatedProviderQualificationObservation": {
+      "runId": 42142685606,
+      "runUrl": "https://github.com/ajoe734/pantheon/actions/runs/42142685606",
+      "headSha": "56bc44618762fadee995d2ab99e1ed3549786fd2",
+      "frontendLabel": "c1e4f43110b23abf29e719ec77cf6c9dca021db2",
+      "scope": "isolated_provider_qualification_only",
+      "deployJobsExecuted": false,
+      "rootDeployJobStatus": "skipped",
+      "frontendSwitchJobStatus": "skipped",
+      "hostedSwitchOccurred": false,
+      "conclusion": "failure",
+      "finishedAtUtc": "2026-11-06T01:40:48Z",
+      "exactFailure": "consultation.supervised_executor_published_memo timeout on cr-l12-hl-04e94f420b and consequent missing consult_request_id in tests/integration/l12/test_current_human_learning_deployed_e2e.py (human suite 2 failed, 4 passed; top-level 1 failed, 4 passed, 1 skipped)",
+      "disposition": "Preserved honestly as a separate isolated provider qualification failure; does not roll back or alter the currently served accepted Dev pair (a8206a2d333f5c9b148bf4db9d6431bbe7042102 + 0cd59ab286b7ad4d7c742993215cb39919cce580), does not waive gates, and keeps Teaching/production obligations separate."
+    }
   },
   "coreFlowInventory": [
     {
@@ -196,7 +214,7 @@
     {
       "flow": "Isolated Evolution draft UI constraint edit, readback, reload persistence, idempotency replay (200/202 + divergent 409), RBAC 403/401, and tenant mismatch (403/422 + X-Tenant-Id 403)",
       "status": "failed",
-      "detail": "Blocked on currently served BFF 0cd59ab286b7ad4d7c742993215cb39919cce580 by 422 Unknown evolution program action: createconstraint. Fix BFF-EVO-DRAFT-ACTION-CARRIER-20261106 is merged in pantheon dev (56bc44618762fadee995d2ab99e1ed3549786fd2) and awaits sole-publisher exact-pair release to replay against existing draft evp-c0ce26091e8b443495bfa61e3dac34ff."
+      "detail": "Blocked on currently served BFF 0cd59ab286b7ad4d7c742993215cb39919cce580 by 422 Unknown evolution program action: createconstraint. Fix BFF-EVO-DRAFT-ACTION-CARRIER-20261106 is merged in pantheon dev (56bc44618762fadee995d2ab99e1ed3549786fd2, included in 0cc4d38fcc3c9439a7d83171321b5a08b7b24613) and awaits sole-publisher exact-pair release to replay against existing draft evp-c0ce26091e8b443495bfa61e3dac34ff."
     },
     {
       "flow": "Evolution Journal UI readback under partial secondary read failure",
@@ -206,7 +224,7 @@
     {
       "flow": "Management Evidence UI readback (/management/evidence)",
       "status": "failed",
-      "detail": "Intermittent 502 owner timeout on /bff/management/evidence on BFF 0cd59ab286b7ad4d7c742993215cb39919cce580. Fix BFF-EVIDENCE-BOUNDED-READ-20261106 (PR #6976) is in review."
+      "detail": "Intermittent 502 owner timeout on /bff/management/evidence on currently served BFF 0cd59ab286b7ad4d7c742993215cb39919cce580. Fix BFF-EVIDENCE-BOUNDED-READ-20261106 (PR #6976, head d8213a32a81e1ab572b733f23744c7c69cd84701) is merged in pantheon dev (0cc4d38fcc3c9439a7d83171321b5a08b7b24613) and awaits sole-publisher exact-pair release."
     },
     {
       "flow": "Controlled retrain stimulus & execution",
