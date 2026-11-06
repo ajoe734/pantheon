@@ -101,7 +101,9 @@ from multi_repo_registry import (
     repository_slug,
     repositories,
     resolve_repository,
+    task_declared_target_repository,
     task_primary_repository_id,
+    task_target_repository_id,
     validate_task_repository_scope,
 )
 from provider_permissions import probe_provider_auth
@@ -2249,7 +2251,16 @@ def _validate_auto_integrator_unblock_request(
         raise ValueError("unblock request PR differs from canonical delivery binding")
     if request.get("head_sha") != str(binding.get("head_sha") or "").lower():
         raise ValueError("unblock request head differs from canonical delivery binding")
-    repository_id = str(source.get("target_repo") or "pantheon")
+    # Canonical identity: target_repo may be written as the config key
+    # (execute_plans), display name or slug (execute-plans); the request always
+    # carries the config key. Missing target_repo means pantheon; an unknown
+    # declared repo fails closed.
+    if task_declared_target_repository(source):
+        repository_id = task_target_repository_id(config, source)
+        if repository_id is None:
+            raise ValueError("unblock request source target_repo is not a configured repository")
+    else:
+        repository_id = "pantheon"
     if request.get("repository_id") != repository_id:
         raise ValueError("unblock request repository differs from canonical task")
     resolve_repository(config, repository_id)

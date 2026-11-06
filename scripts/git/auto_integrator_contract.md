@@ -124,7 +124,7 @@ For each eligible task, capped by `max_tasks_per_run` after observational
 `waiting`, `not_ready`, and `already_merged` results are skipped:
 
 1. Read the task row from canonical `ai-status.json` (`PANTHEON_STATUS_ROOT` or `--status-file`)
-   and resolve repository scope (`repository_id`, `repository_slug`,
+   and resolve repository scope (`repository_id` is always the config key, e.g. `execute_plans`; the supervisor matches it against the task's `target_repo` via the canonical resolver, so display-name/slug spellings like `execute-plans` are equivalent; `repository_slug`,
    dedicated `integration_path`, `target_branch`). Live execution refuses a
    repository without an explicit integration path.
 2. Find the open PR for `task/<TASK-ID>` into the candidate's `target_branch` within `repository_root`.
