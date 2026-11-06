@@ -267,3 +267,87 @@ def test_controller_reuses_one_queue_across_ticks(tmp_path, monkeypatch):
     assert controller.main() == 0
     assert len(successes) == 3
     assert len(bootstrap_calls) == 1
+
+
+def test_controller_reuses_queue_across_ticks_with_market_sources_and_zero_registry_io(
+    tmp_path, monkeypatch
+):
+    from services.source_ingestion.distillation_worker import MARKET_SOURCE_SKIP_REASON
+
+    config = controller.DistillationControllerConfig(
+        database_url="unused",
+        registry_url="http://unused.invalid",
+        interval_seconds=1,
+        max_ticks=2,
+        state_path=tmp_path / "state.json",
+        alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=tmp_path / "evidence.jsonl",
+        source_dirs=[],
+    )
+    market_source = SourceRecord(
+        source_id="tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+        connector_id="tw-official",
+        source_type="market",
+        status="normalized",
+        title="TWSE 2330 daily bar",
+        content_ref="https://www.twse.com.tw/exchangeReport/STOCK_DAY?stockNo=2330",
+        metadata={
+            "tenant_id": "default",
+            "trust_score": 0.9,
+            "access_scope": ["research"],
+            "license_scope": "public",
+            "keywords": ["2330", "TWSE"],
+            "strategy_seed": {
+                "hypothesis": "TWSE 2330 bar observation",
+                "asset_class": ["equity"],
+                "market_scope": ["Taiwan"],
+                "holding_period": "5 days",
+                "required_data": ["OHLCV"],
+                "backend_hint": "qlib",
+                "feature_hints": ["close"],
+                "label_hints": ["return"],
+                "risk_notes": ["none"],
+            },
+        },
+    )
+    successes = []
+
+    async def record_success(**kwargs):
+        successes.append(kwargs)
+
+    monkeypatch.setattr(controller, "config_from_env", lambda: config)
+    monkeypatch.setattr(
+        controller,
+        "build_loop_writer",
+        lambda **_: SimpleNamespace(record_success=record_success),
+    )
+    monkeypatch.setattr(
+        controller,
+        "read_source_records_for_tenant",
+        lambda **_: [market_source],
+    )
+    monkeypatch.setattr(
+        controller,
+        "_get_registry_entry",
+        lambda *args, **kwargs: pytest.fail("no Registry read allowed for market source"),
+    )
+    monkeypatch.setattr(
+        controller,
+        "_register_strategy_spec_if_absent",
+        lambda *args, **kwargs: pytest.fail("no Registry write allowed for market source"),
+    )
+    monkeypatch.setattr(controller.time, "sleep", lambda _: None)
+
+    assert controller.main() == 0
+    assert len(successes) == 2
+    assert successes[0]["downstream_actual_state"]["status"] == "ready"
+    assert successes[0]["downstream_actual_state"]["summary"] == "0 terminal drafts; 0 dead letters"
+    queue = storage.DistillationJobQueue(config.job_queue_path)
+    jobs = queue.list_all()
+    assert len(jobs) == 1
+    assert jobs[0].status == "skipped"
+    assert jobs[0].skip_reason == MARKET_SOURCE_SKIP_REASON
+    assert jobs[0].registry_id is None
+

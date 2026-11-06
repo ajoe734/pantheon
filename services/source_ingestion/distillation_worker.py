@@ -33,7 +33,11 @@ from pathlib import Path
 from typing import Any
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
-from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
+from services.source_ingestion.connectors.base import (
+    SourceRecord,
+    SourceRecordStatus,
+    SourceType,
+)
 from services.source_ingestion.seed_materializer import (
     MaterializationMode,
     SeedMaterializationError,
@@ -41,6 +45,13 @@ from services.source_ingestion.seed_materializer import (
 )
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeedStatus
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
+
+
+# Stable skip reason for market sources that materialize evidence/seed locally
+# without reading or writing strategy drafts in the Registry.
+MARKET_SOURCE_SKIP_REASON: str = (
+    "source_type=market does not produce Registry strategy drafts"
+)
 
 
 # Statuses where re-distillation is allowed (seed is still a mutable draft).
@@ -1879,6 +1890,16 @@ class DistillationWorker:
             )
             return "failed", failure_status.value
 
+        if source.source_type == SourceType.MARKET:
+            self._queue.mark_skipped(
+                job.job_id,
+                reason=MARKET_SOURCE_SKIP_REASON,
+                seed_id=result.seed.seed_id,
+                processed_at=now,
+                claim_token=job.lease_token,
+            )
+            return "skipped", "market_source"
+
         if self._registry_sync is not None:
             try:
                 registry_result = self._registry_sync(
@@ -1899,6 +1920,19 @@ class DistillationWorker:
                     now=now,
                 )
                 return "failed", failure_status.value
+            if registry_result.status == "skipped":
+                self._queue.mark_skipped(
+                    job.job_id,
+                    reason=registry_result.reason or MARKET_SOURCE_SKIP_REASON,
+                    seed_id=result.seed.seed_id,
+                    registry_id=registry_result.registry_id or None,
+                    strategy_id=registry_result.strategy_id,
+                    version=registry_result.version,
+                    checksum=registry_result.checksum,
+                    processed_at=now,
+                    claim_token=job.lease_token,
+                )
+                return "skipped", "skipped"
             if registry_result.status == "immutable":
                 self._queue.mark_skipped(
                     job.job_id,
@@ -1984,6 +2018,7 @@ __all__ = [
     "DistillationJobStatus",
     "DistillationRunResult",
     "DistillationWorker",
+    "MARKET_SOURCE_SKIP_REASON",
     "is_transient_registry_failure",
     "RegistrySyncResult",
     "make_distillation_worker",
