@@ -534,3 +534,140 @@ def test_retry_after_a_restart_during_evaluation_resumes_without_a_second_sessio
         if (e.get("parameters") or {}).get("decision_id") == "dec-resume-001" and e.get("candidate_artifact_id")
     ]
     assert [c["candidate_artifact_id"] for c in children] == [second["candidate_artifact_id"]]
+
+
+# --- startup resume ---------------------------------------------------------
+#
+# A restart leaves the run exactly as the dying process last persisted it:
+# status ``running`` with the fields recorded so far.  Each test brings the real
+# run to that state, then runs the real startup handler ``resume_retrain_runs``.
+
+def _settle(world: World, run_id: str) -> None:
+    """Wait until this process's executor thread for the run has fully exited."""
+    deadline = time.monotonic() + 30
+    while run_id in world.research._retrain_active_runs:
+        assert time.monotonic() < deadline, "executor thread never exited"
+        time.sleep(0.05)
+
+
+def _as_left_by_a_restart(world: World, run: dict[str, Any], *, drop: tuple[str, ...] = ()) -> dict[str, Any]:
+    _settle(world, run["run_id"])
+    left = {k: v for k, v in run.items() if k not in {"failed_step", "rejection", *drop}}
+    left["status"] = "running"
+    world.research.get_store().put_run(left)
+    return left
+
+
+def _decision_sessions(world: World, persona_id: str, decision_id: str) -> list[dict]:
+    return [s for s in _sessions(world, persona_id) if {"type": "evolution_decision", "id": decision_id} in s["context_refs"]]
+
+
+def _decision_runs(world: World, decision_id: str) -> list[dict]:
+    return [r for r in world.research.get_store().list_runs() if (r.get("parameters") or {}).get("decision_id") == decision_id]
+
+
+def _no_second_session_run_or_child(world: World, decision_id: str, persona_id: str, first: dict, resumed: dict) -> None:
+    assert resumed["run_id"] == first["run_id"]
+    assert [r["run_id"] for r in _decision_runs(world, decision_id)] == [first["run_id"]]
+    assert len(_decision_sessions(world, persona_id, decision_id)) == 1
+    assert resumed["session_id"] == first["session_id"]
+    children = [r["candidate_artifact_id"] for r in _decision_runs(world, decision_id) if r.get("candidate_artifact_id")]
+    assert len(children) == len(set(children)) <= 1
+
+
+def test_startup_resumes_a_run_that_was_in_the_baseline_evaluation(world, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("RESEARCH_RETRAIN_EVAL_WAIT_SECONDS", "0.001")
+    first = _run(world, "artifact-retrain-better-v1", "dec-restart-baseline")
+    assert first["failed_step"] == "wait_baseline_evaluation" and first["baseline_job_id"] and not first.get("baseline_metrics")
+    monkeypatch.delenv("RESEARCH_RETRAIN_EVAL_WAIT_SECONDS")
+    _as_left_by_a_restart(world, first)
+
+    world.research.resume_retrain_runs()
+    resumed = _wait(TestClient(world.research.app), first["run_id"])
+    assert resumed["status"] == "completed" and resumed["outcome"] == "candidate_created", resumed
+    assert resumed["baseline_job_id"] == first["baseline_job_id"]
+    _no_second_session_run_or_child(world, "dec-restart-baseline", PERSONA_BETTER, first, resumed)
+
+
+def test_startup_resumes_a_run_that_was_in_the_candidate_evaluation(world, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    original = world.research._retrain_evaluate
+
+    def candidate_wait_runs_out(**kwargs):
+        if kwargs["kind"] != "candidate":
+            return original(**kwargs)
+        monkeypatch.setenv("RESEARCH_RETRAIN_EVAL_WAIT_SECONDS", "0.001")
+        try:
+            return original(**kwargs)
+        finally:
+            monkeypatch.delenv("RESEARCH_RETRAIN_EVAL_WAIT_SECONDS")
+
+    monkeypatch.setattr(world.research, "_retrain_evaluate", candidate_wait_runs_out)
+    first = _run(world, "artifact-retrain-better-v1", "dec-restart-candidate")
+    assert first["failed_step"] == "wait_candidate_evaluation", first
+    assert first["baseline_metrics"] and first["candidate_job_id"] and not first.get("candidate_metrics")
+    monkeypatch.setattr(world.research, "_retrain_evaluate", original)
+    _as_left_by_a_restart(world, first)
+
+    world.research.resume_retrain_runs()
+    resumed = _wait(TestClient(world.research.app), first["run_id"])
+    assert resumed["status"] == "completed" and resumed["outcome"] == "candidate_created", resumed
+    assert resumed["candidate_job_id"] == first["candidate_job_id"]
+    assert resumed["baseline_metrics"] == first["baseline_metrics"]
+    _no_second_session_run_or_child(world, "dec-restart-candidate", PERSONA_BETTER, first, resumed)
+
+
+def test_startup_resumes_a_run_whose_child_was_registered_but_not_marked_terminal(world):
+    from fastapi.testclient import TestClient
+
+    done = _run(world, "artifact-retrain-better-v1", "dec-restart-child")
+    assert done["outcome"] == "candidate_created" and done["candidate_artifact_id"]
+    child_status, _ = _registry_entry(world, done["candidate_artifact_id"])
+    assert child_status == 200
+    mutates_before = [p for p in world.log.paths() if p.endswith("/mutate")]
+    _as_left_by_a_restart(world, done, drop=("outcome", "outcome_reason"))
+
+    world.research.resume_retrain_runs()
+    resumed = _wait(TestClient(world.research.app), done["run_id"])
+    assert resumed["status"] == "completed" and resumed["outcome"] == "candidate_created", resumed
+    assert resumed["candidate_artifact_id"] == done["candidate_artifact_id"]
+    assert [p for p in world.log.paths() if p.endswith("/mutate")] == mutates_before
+    _no_second_session_run_or_child(world, "dec-restart-child", PERSONA_BETTER, done, resumed)
+
+
+def test_startup_fails_a_run_that_cannot_resume_naming_the_step(world, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("RESEARCH_RETRAIN_EVAL_WAIT_SECONDS", "0.001")
+    first = _run(world, "artifact-retrain-better-v1", "dec-restart-unresumable")
+    monkeypatch.delenv("RESEARCH_RETRAIN_EVAL_WAIT_SECONDS")
+    _as_left_by_a_restart(world, first)
+    monkeypatch.setenv("RESEARCH_TRAINING_SERVICE_TOKEN_FILE", "")
+    monkeypatch.delenv("RESEARCH_TRAINING_SERVICE_TOKEN", raising=False)
+
+    world.research.resume_retrain_runs()
+    resumed = _wait(TestClient(world.research.app), first["run_id"])
+    assert resumed["status"] == "failed" and resumed["failed_step"] == "resume_session", resumed
+    assert resumed["rejection"]["reason"] == "retrain_failed" and resumed["rejection"]["step"] == "resume_session"
+    assert [r["run_id"] for r in _decision_runs(world, "dec-restart-unresumable")] == [first["run_id"]]
+
+
+def test_startup_leaves_non_retrain_and_finished_runs_alone(world):
+    store = world.research.get_store()
+    stub = {"run_id": "run-not-retrain-restart", "status": "queued", "tenant_id": TENANT,
+            "parameters": {"decision_id": "dec-other", "target_artifact_id": "artifact-x", "action_type": "rebalance"}}
+    finished = {"run_id": "run-finished-retrain-restart", "status": "completed", "tenant_id": TENANT, "outcome": "no_candidate",
+                "parameters": {"tenant_id": TENANT, "decision_id": "dec-fin", "target_artifact_id": "artifact-x", "action_type": "retrain"}}
+    store.put_run(dict(stub))
+    store.put_run(dict(finished))
+    sessions_before = len(world.training.store.list_sessions())
+
+    world.research.resume_retrain_runs()
+    time.sleep(0.5)
+    # The store adds its own ``id`` key on write; nothing else may change.
+    assert {k: v for k, v in store.get_run("run-not-retrain-restart").items() if k != "id"} == stub
+    assert {k: v for k, v in store.get_run("run-finished-retrain-restart").items() if k != "id"} == finished
+    assert len(world.training.store.list_sessions()) == sessions_before

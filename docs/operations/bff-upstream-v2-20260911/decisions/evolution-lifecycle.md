@@ -236,9 +236,20 @@ deployment.**
    timeout ends the run `failed` and names the failing step.
 5. The run records `session_id`, job and eval ids, `baseline_metrics`,
    `candidate_metrics`, `outcome`, `outcome_reason` and `candidate_artifact_id`
-   as they become known; `GET /bff/evolution-programs/{id}/runs` returns them. A
-   retry for the same decision resumes from the recorded session and job ids and
-   never opens a second session or registers a second child.
+   as they become known; `GET /bff/evolution-programs/{id}/runs` returns
+   `outcome`, `outcome_reason`, `candidate_artifact_id`, `baseline_metrics`,
+   `candidate_metrics` and `session_id` as structured fields (null when the run
+   recorded none). A retry for the same decision resumes from the recorded
+   session and job ids and never opens a second session or registers a second
+   child.
+6. **A restart resumes running retrains.** Every research-orchestrator deploy
+   restarts the process while an evaluation can take minutes. On startup each
+   retrain run left `queued` or `running` is resumed in place through the same
+   executor from its own recorded session and job ids: no new run, second
+   session or second child is created (job keys are per decision and the child
+   id is derived from the decision). A child already registered is adopted. A
+   run that cannot resume ends `failed` and names the failing step. A run that
+   is not a retrain is not touched.
 
 The executor writes no runtime binding, deployment plan or capital record and
 never advances `artifact_state` beyond `candidate`.

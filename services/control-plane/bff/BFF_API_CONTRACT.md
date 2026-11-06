@@ -965,10 +965,28 @@ Each item is read back from the owning plane. For a retrain run the item's
 `detail` additionally ends with `; retrain outcome=<candidate_created |
 no_candidate | evaluation_rejected> outcome_reason=… candidate_artifact_id=…
 session_id=…` once the run recorded an outcome. Existing fields are unchanged.
-The structured record (`session_id`, `baseline_job_id`, `candidate_job_id`,
-`baseline_eval_id`, `candidate_eval_id`, `baseline_metrics`, `candidate_metrics`,
-`outcome`, `outcome_reason`, `candidate_artifact_id`) is returned by
-`GET /api/research-orchestrator/runs/{run_id}`.
+
+Each item also carries the structured result as top-level fields, passed
+through unchanged from the owning run (Evolution
+`GET /api/evolution/programs/{program_id}/runs`, which the BFF returns as is;
+nothing is parsed from `detail`):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `outcome` | string \| null | `candidate_created`, `no_candidate` or `evaluation_rejected` |
+| `outcome_reason` | string \| null | the reason the run recorded for the outcome |
+| `candidate_artifact_id` | string \| null | the registered candidate child, only for `candidate_created` |
+| `baseline_metrics` | object \| null | baseline evaluation metrics, including `sharpe_ratio` and `sharpe_defined` |
+| `candidate_metrics` | object \| null | candidate evaluation metrics; null when no candidate was evaluated |
+| `session_id` | string \| null | the Teaching session opened for the decision |
+
+A field the run did not record is `null`; a run that recorded none of them
+(still queued, or not a retrain) returns all six as `null`. These fields are
+never defaulted, so a run is never reported as a successful evolution by them.
+The remaining record (`baseline_job_id`, `candidate_job_id`, `baseline_eval_id`,
+`candidate_eval_id`) is returned by `GET /api/research-orchestrator/runs/{run_id}`.
+A retrain run left `queued` or `running` by a research-orchestrator restart is
+resumed in place at startup, so the same item reaches a terminal state.
 
 ## Cross-source newest-first job list ordering and pagination (BFF-JOBS-LIST-NEWEST-FIRST-20261106)
 

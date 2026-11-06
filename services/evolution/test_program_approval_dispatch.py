@@ -520,3 +520,56 @@ def test_qualifier_surfaces_a_program_and_a_human_submit_attaches_the_governance
     app_env["governance"].decide("apv-attach", actor_role="governance_reviewer")
     approved, _ = _approve(service, program_id)
     assert approved["program_status"] == "active"
+
+
+class _FixedReceiptAdapter:
+    """The owner's readback: returns the receipt evidence the plane reported, nothing more."""
+
+    kind = "research_run"
+
+    def __init__(self, evidence_by_run: Dict[str, Dict[str, Any]]) -> None:
+        self._evidence = evidence_by_run
+
+    def read_receipt(self, run_id: str, *, expected_intent=None):
+        from services.evolution.dispatch_receipts import DispatchReceipt
+
+        return DispatchReceipt(
+            outcome="succeeded", downstream_kind=self.kind, downstream_ref_id=run_id,
+            downstream_status="completed", detail=f"research run {run_id} reported status=completed",
+            evidence=self._evidence[run_id],
+        )
+
+
+def test_program_runs_return_the_recorded_outcome_fields_and_null_for_a_run_that_recorded_none(app_env, monkeypatch):
+    program_id = _auto_program([_propose("evo-runs-1")])
+    for run_id in ("run-recorded", "run-bare"):
+        evo_main.program_service.link_run(
+            tenant_id=TENANT, decision_id="evo-runs-1", run_id=run_id,
+            downstream_kind="research_run", actor_id="evolution-dispatch-worker")
+    recorded = {
+        "outcome": "candidate_created", "outcome_reason": "candidate_passed_gate_and_beat_baseline",
+        "candidate_artifact_id": "art-1-retrain-abc", "session_id": "ts-1",
+        "baseline_metrics": {"sharpe_ratio": 0.5, "sharpe_defined": True},
+        "candidate_metrics": {"sharpe_ratio": 1.5, "sharpe_defined": True},
+        "baseline_job_id": "job-base",
+    }
+    adapter = _FixedReceiptAdapter({"run-recorded": recorded, "run-bare": {"run_id": "run-bare", "status": "completed"}})
+    monkeypatch.setattr(evo_main, "receipt_registry", {"research": adapter})
+
+    items = {i["run_id"]: i for i in client.get(f"/api/evolution/programs/{program_id}/runs", headers=HEADERS).json()["items"]}
+    fields = ("outcome", "outcome_reason", "candidate_artifact_id", "baseline_metrics", "candidate_metrics", "session_id")
+    assert {f: items["run-recorded"][f] for f in fields} == {f: recorded[f] for f in fields}
+    assert "baseline_job_id" not in items["run-recorded"]  # only the six stated fields are added
+    assert {f: items["run-bare"][f] for f in fields} == {f: None for f in fields}
+    for item in items.values():  # existing fields unchanged
+        assert item["detail"] == f"research run {item['run_id']} reported status=completed"
+        assert item["source"] == "orchestrator_readback" and item["status"] == "success"
+
+
+def test_program_run_without_an_adapter_returns_null_outcome_fields(app_env, monkeypatch):
+    program_id = _auto_program([_propose("evo-runs-2")])
+    evo_main.program_service.link_run(
+        tenant_id=TENANT, decision_id="evo-runs-2", run_id="run-orphan",
+        downstream_kind="unknown_plane", actor_id="evolution-dispatch-worker")
+    item = client.get(f"/api/evolution/programs/{program_id}/runs", headers=HEADERS).json()["items"][0]
+    assert item["status"] == "unknown" and item["outcome"] is None and item["candidate_artifact_id"] is None

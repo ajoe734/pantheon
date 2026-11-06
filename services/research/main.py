@@ -1697,7 +1697,9 @@ def _retrain_prior_state(run_id: str, params: Dict[str, Any], tenant_id: str) ->
 
     A retry is a new run for the same decision; it resumes from the recorded
     session and job ids and never opens a second session or registers a second
-    child.
+    child.  A startup resume re-runs the same run in place, so the run's own
+    recorded fields are part of the state too (a run with no session yet
+    recorded nothing and contributes nothing).
     """
     decision_id = str(params.get("decision_id") or "")
     keys = (
@@ -1712,7 +1714,7 @@ def _retrain_prior_state(run_id: str, params: Dict[str, Any], tenant_id: str) ->
             continue
         if str(other.get("tenant_id") or other_params.get("tenant_id") or "") != tenant_id:
             continue
-        if other.get("run_id") == run_id or not other.get("session_id"):
+        if not other.get("session_id"):
             continue
         related.append(other)
     related.sort(key=lambda item: str(item.get("created_at") or ""))
@@ -2044,7 +2046,16 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     raise _RetrainFinished("candidate_created", "candidate_passed_gate_and_beat_baseline")
 
 
+_retrain_active_runs: set = set()
+_retrain_active_lock = threading.Lock()
+
+
 def _trigger_retrain_execution(run_id: str, params: dict) -> None:
+    with _retrain_active_lock:
+        if run_id in _retrain_active_runs:
+            return  # this process already executes the run; never start a second executor for it
+        _retrain_active_runs.add(run_id)
+
     def run_worker():
         rstore = get_store()
         try:
@@ -2064,8 +2075,29 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
                 run["failed_step"] = "executor"
                 run["rejection"] = {"reason": "retrain_failed", "step": "executor", "detail": f"{type(exc).__name__}: {exc}"}
                 rstore.put_run(run)
+        finally:
+            with _retrain_active_lock:
+                _retrain_active_runs.discard(run_id)
 
     threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
+
+
+@app.on_event("startup")
+def resume_retrain_runs() -> None:
+    """Resume in place every retrain run a restart left queued or running.
+
+    The run, its session and its evaluation job ids are the ones already
+    recorded: the same executor continues from them, so no new run, second
+    session or second child is created.  A non-retrain run is not touched.
+    """
+    for record in get_store().list_runs():
+        status = str(record.get("status") or "").lower()
+        params = record.get("parameters") or {}
+        if status not in {"queued", "running"} or not isinstance(params, dict) or not _is_retrain_action(params):
+            continue
+        if record.get("cancellation_fence"):
+            continue
+        _trigger_retrain_execution(str(record["run_id"]), params)
 
 
 @app.get("/api/research-orchestrator/runs")
