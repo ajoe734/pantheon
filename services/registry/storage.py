@@ -31,9 +31,11 @@ from .models import (
 PERSONA_BINDING_META_KEYS = (
     "spec_version_id", "tenant_id", "spec_version", "version", "personaIds",
     "persona_ids", "persona_id", "lifecycle_state", "state", "status",
+    "title", "name",
 )
 PERSONA_BINDING_SPEC_KEYS = (
     "persona_ids", "spec_version", "lifecycle_state", "strategy_id", "created_at",
+    "title",
 )
 PERSONA_BINDING_INNER_META_KEYS = ("tenant_id", "persona_id")
 # Top-level identity/version/tenant/state fields the count path needs; no

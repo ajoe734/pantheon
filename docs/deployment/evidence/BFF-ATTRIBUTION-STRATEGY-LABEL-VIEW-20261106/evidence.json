@@ -1,0 +1,36 @@
+{
+  "task_id": "BFF-ATTRIBUTION-STRATEGY-LABEL-VIEW-20261106",
+  "kind": "functional",
+  "hosted_latency_claimed": false,
+  "note": "Functional and fixture-scale evidence only; hosted verification is done later by the coordinator.",
+  "design": {
+    "registry_view": "GET /api/registry/strategy-specs?view=persona_binding (existing route, unchanged); PERSONA_BINDING_META_KEYS gain title/name and PERSONA_BINDING_SPEC_KEYS gain title, so the memory store and the Postgres SQL projection (built from the same key tuples) return the same row shape",
+    "bff_read": "ReadSurfacePorts.get_strategy_labels -> DefaultResearchKnowledgeSourcePort.get_strategy_labels -> _fetch_canonical_persona_binding_view (shared with the count read: caller authorization + selected tenant forwarded) -> _labels_from_persona_binding_rows picks each family's current version (semver, created_at, registry id) with the canonical title path",
+    "attribution": "pm12_performance_attribution_sources no longer reads strategies; pm12_attribution_strategy_labels resolves labels after paging, only when the returned page has a strategy row; failure keeps strategy id label and marks meta.surfaces.strategies degraded",
+    "no_cache_or_ttl": true
+  },
+  "call_counts": {
+    "list_strategy_specs_calls_in_attribution_and_per_persona_read_model": 0,
+    "page_without_strategy_row_registry_strategy_reads": 0,
+    "page_with_strategy_rows_registry_strategy_reads": 1,
+    "failed_label_read_attribution_response": "200 with id labels and strategies surface degraded"
+  },
+  "fixture_scale_timings_5031_rows": {
+    "setup": "in-memory RegistryStore, 5031 strategy_spec entries (263 persona bound, ~4 KB spec body each), single process, no hosted access",
+    "view_rows": 263,
+    "registry_list_persona_binding_rows_s": 0.1911,
+    "bff_label_derivation_s": 0.00174,
+    "persona_binding_rows_payload_bytes": 86350
+  },
+  "tests": {
+    "registry": "services/registry/test_service.py -k persona_binding: 7 passed (view rows carry title/name, no spec bodies, other tenant title never returned); test_owner_durability.py Postgres cases skipped here (no Postgres)",
+    "bff": "tests/test_bff_pm12_attribution_strategy_labels.py: 11 passed (current version of a 3-version family, title/name/id fallback, auth+tenant forwarding, 403/503 handling, zero/one read counts, degraded meta); see run list in task notes",
+    "fixed_prerequisite_gap": "tests/test_bff_pm12_persona_league.py fake store lacked count_strategy_persona_bindings (added by BFF-STRATEGY-READ-REAL-SCALE); 10 tests failed before, 15 pass now",
+    "not_run": "services/registry/test_service.py deployment_view tests need flask (absent in this venv, unrelated)"
+  },
+  "hosted_rows_covered_by_tests": [
+    "strategy-persona-298e138c136c9840b0e4",
+    "strategy-persona-01390a4b72713295b001",
+    "strategy-persona-8ae996980eeccb80d928"
+  ]
+}
