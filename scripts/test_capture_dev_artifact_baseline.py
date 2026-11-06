@@ -556,3 +556,39 @@ def test_generated_installer_boundary_with_real_implementations_succeeds_beyond_
     assert (source / "docker-compose.yml").read_bytes() == source_before
 
 
+
+
+# --- Versioned whole-stack baseline (v2 adds exactly stack_baseline) --------
+
+def v2_result(mutate=None):
+    outer = manifest()
+    bundle = outer["image_bundle"]
+    stack = {"schema_version": primitive.STACK_SCHEMA, "source_sha": IDENTITY["previous_backend_sha"],
+             "services": {**{s: {"image_id": r["image_id"], "state": "running", "has_healthcheck": True,
+                                 "env": {"PANTHEON_TENANT_ID": "tenant-a", "GIT_SHA": IDENTITY["previous_backend_sha"]}}
+                             for s, r in bundle["services"].items()},
+                          "minio-init": {"image_id": "sha256:" + "5" * 64, "state": "completed",
+                                         "has_healthcheck": False, "env": {"PANTHEON_TENANT_ID": None, "GIT_SHA": None}}}}
+    outer.update(schema_version="pantheon.dev-release-artifact-baseline.v2", stack_baseline=stack)
+    if mutate:
+        mutate(outer)
+    return {"manifest_path": result()["manifest_path"], "manifest_sha256": c.digest(c.encoded(outer)), "manifest": outer}
+
+
+def test_v2_baseline_seals_with_stack_and_v1_remains_sealable():
+    emitted = v2_result()
+    raw, _ = c.seal_result(json.dumps(emitted).encode(), IDENTITY)
+    assert primitive.manifest_bytes(emitted["manifest"]) == raw
+    c.seal_result(json.dumps(result()).encode(), IDENTITY)
+
+
+@pytest.mark.parametrize("change", ["missing_stack", "sealed_image_differs", "extra_stack_field", "v1_with_stack"])
+def test_v2_baseline_rejects_partial_or_inconsistent_stack(change):
+    def mutate(outer):
+        if change == "missing_stack": del outer["stack_baseline"]
+        elif change == "sealed_image_differs": outer["stack_baseline"]["services"]["operator-bff"]["image_id"] = "sha256:" + "d" * 64
+        elif change == "extra_stack_field": outer["stack_baseline"]["services"]["operator-bff"]["secret"] = "x"
+        else: outer["schema_version"] = "pantheon.dev-release-artifact-baseline.v1"
+    emitted = v2_result(mutate)
+    with pytest.raises(c.CaptureError):
+        c.seal_result(json.dumps(emitted).encode(), IDENTITY)

@@ -2864,6 +2864,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "STRATEGY-METRICS-TRUTH-20261104 regression coverage for strategy metrics projection from ranking snapshot truth and capitalPoolId from registry metadata; never imports main"
+    },
+    {
+      "file": "tests/test_strategy_list_default_view.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-STRATEGY-LIST-DEFAULT-VIEW-20261106 regression coverage for GET /bff/strategies exclude_state=draft, meta.state_counts at 5000 real-shape rows, state=retired, unknown lifecycle visibility, and tenant isolation; never imports main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,

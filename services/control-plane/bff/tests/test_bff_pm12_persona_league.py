@@ -196,6 +196,9 @@ class _Pm12LeagueTestStore:
         self.personas = {}
         self.ranking_snapshots = {}
 
+    def count_strategy_persona_bindings(self) -> Dict[str, int]:
+        return {}
+
     def dataset_source(self, dataset: str) -> str:
         if dataset == "evidence_refs" and self.fallback:
             return "local_snapshot"

@@ -574,3 +574,273 @@ def test_project_strategy_dto_rejects_overlay() -> None:
 
     with pytest.raises(AttributeError, match="strategy overlay is retired"):
         ctx.project_strategy_dto({"id": "s-1"}, overlay={"name": "illegal"})
+
+
+def test_bff_strategy_detail_single_owner_read_and_alpha_never_uses_source_kind() -> None:
+    with _client() as client:
+        rks = getattr(client.app.state.read_store, "research_knowledge_source", None)
+        assert rks is not None
+        rks._strategy_specs["strat-detail-single-01"] = {
+            "strategy_id": "strat-detail-single-01",
+            "title": "Single Read Detail Strategy",
+            "lifecycle_state": "approved",
+            "risk": "medium",
+            "versions": [
+                {
+                    "spec_version_id": "reg-strat-detail-single-01-v1",
+                    "spec_version": "1.0.0",
+                    "title": "Single Read Detail Strategy",
+                    "lifecycle_state": "approved",
+                    "risk": "medium",
+                    "source_kind": "workflow",
+                    "hypothesis": "Never leak hypothesis into alpha.",
+                    "market_scope": {"markets": ["TWSE"]},
+                    "persona_ids": ["persona-01"],
+                }
+            ],
+            "current_spec_version_id": "reg-strat-detail-single-01-v1",
+            "current_spec_version": "1.0.0",
+        }
+        detail_calls: list[str] = []
+        list_calls: list[str] = []
+        orig_detail = rks.get_strategy_spec_detail
+        orig_list = rks.list_strategy_specs
+
+        def _spy_detail(sid: str, **kwargs: Any):
+            detail_calls.append(sid)
+            return orig_detail(sid, **kwargs)
+
+        def _spy_list(**kwargs: Any):
+            list_calls.append("list_strategy_specs")
+            return orig_list(**kwargs)
+
+        rks.get_strategy_spec_detail = _spy_detail  # type: ignore[method-assign]
+        rks.list_strategy_specs = _spy_list  # type: ignore[method-assign]
+
+        detail_resp = client.get("/bff/strategies/strat-detail-single-01", headers=OPERATOR_HEADERS)
+        assert detail_resp.status_code == 200, detail_resp.text
+        assert detail_calls == ["strat-detail-single-01"]
+        assert list_calls == []
+        assert detail_resp.json()["data"]["alpha"] == ""
+
+
+def test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import urllib.parse
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+
+    sid_real = "strategy-persona-298e138c136c9840b0e4"
+    sid_absent = "strategy-minimal-absent-spec"
+    sid_foreign = "strategy-foreign-tenant-b"
+
+    registry_rows = {
+        sid_real: [
+            {
+                "entry": {
+                    "registry_id": f"reg-{sid_real}-v2",
+                    "artifact_type": "strategy_spec",
+                    "strategy_id": sid_real,
+                    "version": "1.1.0",
+                    "artifact_state": "approved",
+                    "owner_tenant": "tenant-corp",
+                    "created_at": "2026-11-05T15:00:00Z",
+                    "updated_at": "2026-11-05T15:30:00Z",
+                    "metadata": {
+                        "tenant_id": "tenant-corp",
+                        "persona_id": "persona-298e138c136c9840b0e4",
+                        "capital_pool_id": "pool-persona-paper-298e138c136c9840b0e4",
+                        "execution_context": "paper",
+                        "provisioning_request_hash": "hash-do-not-expose",
+                        "rollback_target_registry_id": f"reg-{sid_real}-v1",
+                        "strategy_spec": {
+                            "spec_version": "1.0",
+                            "strategy_id": sid_real,
+                            "title": "TW Semiconductor Momentum",
+                            "hypothesis": "Close-to-close momentum over 2330.TWSE",
+                            "objective": "Admit Persona to paper-only evaluation",
+                            "lifecycle_state": "approved",
+                            "market_scope": {
+                                "symbols": ["2330.TWSE"],
+                                "asset_classes": ["equity"],
+                                "frequency": "1d",
+                            },
+                            "execution_profile": {
+                                "signal_schema_version": "1.0",
+                                "quantity_type": "SHARES",
+                                "rebalance_cadence": "1d bar close, paper only",
+                                "execution_mode_hint": "paper",
+                            },
+                            "evaluation_plan": {
+                                "metrics": [
+                                    "paper_pnl",
+                                    "max_drawdown",
+                                    "turnover_rate",
+                                    "no_live_capital_side_effects",
+                                ],
+                                "paper_gate": "ApprovalDecision may approve this target for paper-stage deployment only, with capital_scale_pct=0.",
+                                "live_gate": "Canary and live activation remain fail-closed; this revision never authorizes live capital.",
+                            },
+                            "governance": {
+                                "approval_required": True,
+                                "policy_id": "persona-paper-admission",
+                                "risk_profile": "low: paper-only Persona admission, zero live capital",
+                            },
+                            "provenance": {
+                                "source_kind": "workflow",
+                                "created_at": "2026-11-05T15:00:00Z",
+                                "created_by": "op-user",
+                            },
+                            "metadata": {
+                                "market": "TW",
+                                "execution_context": "paper",
+                                "traits": {
+                                    "instruments": ["2330.TWSE"],
+                                    "time_horizon": "1d",
+                                    "hard_rules": ["zero_capital"],
+                                    "persona_voice": "concise",
+                                },
+                                "internal_secret": "must-not-leak",
+                            },
+                        },
+                    },
+                },
+                "deployment_stage": "none",
+            }
+        ],
+        sid_absent: [
+            {
+                "entry": {
+                    "registry_id": f"reg-{sid_absent}-v1",
+                    "artifact_type": "strategy_spec",
+                    "strategy_id": sid_absent,
+                    "version": "1.0.0",
+                    "artifact_state": "draft",
+                    "owner_tenant": "tenant-corp",
+                    "created_at": "2026-11-05T12:00:00Z",
+                    "updated_at": "2026-11-05T12:00:00Z",
+                    "metadata": {
+                        "tenant_id": "tenant-corp",
+                        "unlisted_field": "drop-me",
+                        "strategy_spec": {
+                            "spec_version": "1.0.0",
+                            "strategy_id": sid_absent,
+                            "title": "Minimal Absent Spec Strategy",
+                            "lifecycle_state": "draft",
+                            "metadata": {
+                                "market": "",
+                                "traits": {"instruments": [], "hard_rules": ["drop"]},
+                                "arbitrary_blob": {"nested": True},
+                            },
+                        },
+                    },
+                },
+                "deployment_stage": "none",
+            }
+        ],
+        sid_foreign: [
+            {
+                "entry": {
+                    "registry_id": f"reg-{sid_foreign}-v1",
+                    "artifact_type": "strategy_spec",
+                    "strategy_id": sid_foreign,
+                    "version": "1.0.0",
+                    "artifact_state": "approved",
+                    "owner_tenant": "tenant-b",
+                    "created_at": "2026-11-05T12:00:00Z",
+                    "updated_at": "2026-11-05T12:00:00Z",
+                    "metadata": {
+                        "tenant_id": "tenant-b",
+                        "strategy_spec": {
+                            "spec_version": "1.0.0",
+                            "strategy_id": sid_foreign,
+                            "title": "Foreign Strategy",
+                            "lifecycle_state": "approved",
+                            "metadata": {"market": "US"},
+                        },
+                    },
+                },
+                "deployment_stage": "none",
+            }
+        ],
+    }
+
+    def _http_stub(url: str, **kwargs: Any) -> Any:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.path.startswith("/api/registry/strategies/") and parsed.path.endswith("/strategy-specs"):
+            target_sid = urllib.parse.unquote(parsed.path.split("/")[4])
+            return list(registry_rows.get(target_sid, []))
+        raise AssertionError(f"Unexpected owner HTTP call: {url}")
+
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.local")
+    monkeypatch.setattr(adapter_base, "http_request_json", _http_stub)
+
+    read_store = create_in_memory_read_surface_ports()
+    strategy_write_owner = create_strategy_write_owner()
+    app = _build_app(read_store, strategy_write_owner)
+    app.add_middleware(OwnerReadContextMiddleware)
+    with TestClient(app) as client:
+        # 1. Real supplied shape for strategy-persona-298e138c136c9840b0e4
+        resp_real = client.get(f"/bff/strategies/{sid_real}", headers=OPERATOR_HEADERS)
+        assert resp_real.status_code == 200, resp_real.text
+        data_real = resp_real.json()["data"]
+        assert data_real["id"] == sid_real
+        assert data_real["alpha"] == ""  # source_kind and hypothesis are never alpha
+        spec_real = data_real["spec"]
+        assert spec_real == {
+            "spec_version_id": f"reg-{sid_real}-v2",
+            "spec_version": "1.1.0",
+            "market_scope": {
+                "symbols": ["2330.TWSE"],
+                "asset_classes": ["equity"],
+                "frequency": "1d",
+            },
+            "execution_profile": {
+                "signal_schema_version": "1.0",
+                "quantity_type": "SHARES",
+                "rebalance_cadence": "1d bar close, paper only",
+                "execution_mode_hint": "paper",
+            },
+            "evaluation_plan": {
+                "metrics": [
+                    "paper_pnl",
+                    "max_drawdown",
+                    "turnover_rate",
+                    "no_live_capital_side_effects",
+                ],
+                "paper_gate": "ApprovalDecision may approve this target for paper-stage deployment only, with capital_scale_pct=0.",
+                "live_gate": "Canary and live activation remain fail-closed; this revision never authorizes live capital.",
+            },
+            "metadata": {
+                "market": "TW",
+                "execution_context": "paper",
+                "traits": {
+                    "instruments": ["2330.TWSE"],
+                    "time_horizon": "1d",
+                },
+            },
+        }
+        assert "benchmark" not in spec_real["evaluation_plan"]
+        assert "provisioning_request_hash" not in spec_real["metadata"]
+        assert "internal_secret" not in spec_real["metadata"]
+        assert "hard_rules" not in spec_real["metadata"]["traits"]
+
+        # 2. Absent/empty spec fields remain None and arbitrary metadata is not exposed
+        resp_absent = client.get(f"/bff/strategies/{sid_absent}", headers=OPERATOR_HEADERS)
+        assert resp_absent.status_code == 200, resp_absent.text
+        spec_absent = resp_absent.json()["data"]["spec"]
+        assert spec_absent == {
+            "spec_version_id": f"reg-{sid_absent}-v1",
+            "spec_version": "1.0.0",
+            "market_scope": None,
+            "execution_profile": None,
+            "evaluation_plan": None,
+            "metadata": None,
+        }
+
+        # 3. Tenant-negative case: foreign tenant row is rejected (403 FORBIDDEN)
+        resp_foreign = client.get(f"/bff/strategies/{sid_foreign}", headers=OPERATOR_HEADERS)
+        assert resp_foreign.status_code == 403, resp_foreign.text
+
+

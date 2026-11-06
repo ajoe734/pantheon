@@ -31,9 +31,11 @@ from .models import (
 PERSONA_BINDING_META_KEYS = (
     "spec_version_id", "tenant_id", "spec_version", "version", "personaIds",
     "persona_ids", "persona_id", "lifecycle_state", "state", "status",
+    "title", "name",
 )
 PERSONA_BINDING_SPEC_KEYS = (
     "persona_ids", "spec_version", "lifecycle_state", "strategy_id", "created_at",
+    "title",
 )
 PERSONA_BINDING_INNER_META_KEYS = ("tenant_id", "persona_id")
 # Top-level identity/version/tenant/state fields the count path needs; no
@@ -408,6 +410,436 @@ def persona_binding_counts(rows: list[dict]) -> dict[str, int]:
     return counts
 
 
+# ---------------------------------------------------------------------------
+# Strategy summary page read projection (BFF-STRATEGY-READ-REAL-SCALE-20261106)
+# ---------------------------------------------------------------------------
+STRATEGY_SUMMARY_ROW_KEYS = (
+    "registry_id", "artifact_type", "artifact_state", "strategy_id", "version",
+    "owner_tenant", "created_at", "updated_at",
+)
+STRATEGY_SUMMARY_META_KEYS = (
+    "spec_version_id", "tenant_id", "spec_version", "version", "personaIds",
+    "persona_ids", "persona_id", "lifecycle_state", "state", "status",
+    "title", "name", "risk", "owner", "requested_by", "capital_pool_id",
+    "capitalPoolId", "source_kind",
+)
+STRATEGY_SUMMARY_SPEC_KEYS = (
+    "strategy_id", "spec_version", "lifecycle_state", "state", "status", "title",
+    "name", "risk", "persona_ids", "created_at", "updated_at",
+    "last_modified_at", "created_by", "source_kind", "capital_pool_id",
+    "capitalPoolId",
+)
+STRATEGY_SUMMARY_INNER_META_KEYS = (
+    "tenant_id", "persona_id", "capital_pool_id", "capitalPoolId", "owner", "risk",
+    "lifecycle_state", "state", "status",
+)
+STRATEGY_SUMMARY_PROV_KEYS = ("created_at", "created_by", "source_kind")
+STRATEGY_SUMMARY_GOV_KEYS = ("risk_level", "risk", "owner", "capital_pool_id", "capitalPoolId")
+STRATEGY_SUMMARY_MARKET_KEYS = ("alpha", "market", "frequency", "symbols")
+STRATEGY_SUMMARY_EXEC_KEYS = ("capital_pool_id", "capitalPoolId", "risk_level", "execution_mode_hint")
+
+_STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP: dict[str, str] = {
+    "draft": "draft",
+    "candidate": "review",
+    "review": "review",
+    "approved": "approved",
+    "active": "deployed",
+    "deployed": "deployed",
+    "paused": "paused",
+    "retired": "retired",
+    "archived": "retired",
+    "rejected": "retired",
+    "superseded": "retired",
+    "paper": "paper_running",
+    "paper_running": "paper_running",
+    "canary": "canary_running",
+    "canary_running": "canary_running",
+    "canary_authorized_not_started": "canary_authorized_not_started",
+    "live": "live_running",
+    "live_running": "live_running",
+    "needs_human_approval": "needs_human_approval",
+    "rollback_required": "rollback_required",
+    "stopped": "stopped",
+    "failed": "failed",
+    "provisioning": "provisioning",
+    "provisioning_failed": "failed",
+    "research_only": "research_only",
+    "consultable": "consultable",
+    "paper_owner": "paper_owner",
+    "live_owner": "live_owner",
+    "frozen": "frozen",
+    "suspended": "suspended",
+}
+
+STRATEGY_SUMMARY_DEFAULT_STATE_COUNT_KEYS: tuple[str, ...] = (
+    "draft",
+    "review",
+    "approved",
+    "paper_running",
+    "canary_running",
+    "live_running",
+    "deployed",
+    "paused",
+    "retired",
+)
+
+
+def _extract_strategy_summary_raw_lifecycle(row: dict) -> str:
+    """Resolve the stored lifecycle value on a strategy summary row without
+    collapsing unknown lifecycle values to ``draft``."""
+    meta = _binding_dict(row.get("metadata"))
+    inner = _binding_dict(meta.get("strategy_spec"))
+    inner_meta = _binding_dict(inner.get("metadata"))
+    art_state = str(row.get("artifact_state") or "").strip()
+    art_lower = art_state.lower()
+    spec_state = str(
+        inner.get("lifecycle_state")
+        or inner.get("state")
+        or inner.get("status")
+        or meta.get("lifecycle_state")
+        or meta.get("state")
+        or meta.get("status")
+        or inner_meta.get("lifecycle_state")
+        or inner_meta.get("state")
+        or inner_meta.get("status")
+        or ""
+    ).strip()
+    spec_lower = spec_state.lower()
+    if art_lower not in {"", "draft", "candidate", "approved", "retired"}:
+        return art_state
+    if art_lower in {"", "draft"}:
+        if spec_state and spec_lower != "draft":
+            return spec_state
+        return "draft"
+    if spec_state and spec_lower not in {"draft", "candidate", "review", "approved", "retired"}:
+        if art_lower == "retired":
+            return "retired"
+        return spec_state
+    return art_lower
+
+
+def compute_strategy_spec_state_counts(
+    current: dict[str, tuple[tuple, str, list, dict]],
+) -> dict[str, int]:
+    """Count current tenant-visible strategies per normalized DTO state value."""
+    counts: dict[str, int] = {k: 0 for k in STRATEGY_SUMMARY_DEFAULT_STATE_COUNT_KEYS}
+    for _key, raw_state, _persona_ids, _row in current.values():
+        raw_clean = str(raw_state or "").strip().lower()
+        dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
+        counts[dto_state] = counts.get(dto_state, 0) + 1
+    return counts
+
+
+def strategy_spec_summary_row(entry: RegistryEntry) -> dict:
+    """Flat light row for StrategySpec list summary projection (in-memory twin of SQL projection)."""
+    full = entry.to_dict()
+    row = {k: full[k] for k in STRATEGY_SUMMARY_ROW_KEYS if k in full}
+    eval_summary = full.get("evaluation_summary")
+    if isinstance(eval_summary, dict):
+        row["evaluation_summary"] = {
+            k: eval_summary[k] for k in ("risk_level",) if k in eval_summary
+        }
+    meta = full.get("metadata")
+    if isinstance(meta, dict):
+        light_meta = {k: meta[k] for k in STRATEGY_SUMMARY_META_KEYS if k in meta}
+        for sub_name, sub_keys in (
+            ("provenance", STRATEGY_SUMMARY_PROV_KEYS),
+            ("governance", STRATEGY_SUMMARY_GOV_KEYS),
+            ("market_scope", STRATEGY_SUMMARY_MARKET_KEYS),
+            ("execution_profile", STRATEGY_SUMMARY_EXEC_KEYS),
+        ):
+            sub_val = meta.get(sub_name)
+            if isinstance(sub_val, dict):
+                light_meta[sub_name] = {k: sub_val[k] for k in sub_keys if k in sub_val}
+        inner = meta.get("strategy_spec")
+        if isinstance(inner, dict):
+            light_inner = {k: inner[k] for k in STRATEGY_SUMMARY_SPEC_KEYS if k in inner}
+            for sub_name, sub_keys in (
+                ("provenance", STRATEGY_SUMMARY_PROV_KEYS),
+                ("governance", STRATEGY_SUMMARY_GOV_KEYS),
+                ("market_scope", STRATEGY_SUMMARY_MARKET_KEYS),
+                ("execution_profile", STRATEGY_SUMMARY_EXEC_KEYS),
+                ("metadata", STRATEGY_SUMMARY_INNER_META_KEYS),
+            ):
+                sub_val = inner.get(sub_name)
+                if isinstance(sub_val, dict):
+                    light_inner[sub_name] = {k: sub_val[k] for k in sub_keys if k in sub_val}
+            light_meta["strategy_spec"] = light_inner
+        row["metadata"] = light_meta
+    else:
+        row["metadata"] = {}
+    return row
+
+
+def _strategy_summary_last_modified_at(row: dict) -> Optional[str]:
+    meta = _binding_dict(row.get("metadata"))
+    inner = _binding_dict(meta.get("strategy_spec"))
+    prov = (
+        inner["provenance"]
+        if isinstance(inner.get("provenance"), dict)
+        else _binding_dict(meta.get("provenance"))
+    )
+    val = (
+        row.get("updated_at")
+        or row.get("created_at")
+        or inner.get("updated_at")
+        or inner.get("last_modified_at")
+        or inner.get("created_at")
+        or prov.get("created_at")
+    )
+    return str(val) if val is not None else None
+
+
+def _build_strategy_spec_summary_item(
+    sid: str,
+    row: dict,
+    version_count: int,
+    current_state: str,
+    persona_list: list[str],
+    last_modified_at: Optional[str],
+) -> dict[str, Any]:
+    meta = _binding_dict(row.get("metadata"))
+    inner = _binding_dict(meta.get("strategy_spec"))
+    inner_meta = _binding_dict(inner.get("metadata"))
+    eval_summary = _binding_dict(row.get("evaluation_summary"))
+    prov = (
+        inner["provenance"]
+        if isinstance(inner.get("provenance"), dict)
+        else _binding_dict(meta.get("provenance"))
+    )
+    reg_id = str(row.get("registry_id") or meta.get("spec_version_id") or "").strip()
+    semver = str(
+        row.get("version")
+        or inner.get("spec_version")
+        or meta.get("spec_version")
+        or meta.get("version")
+        or ""
+    ).strip()
+    title = (
+        inner.get("title")
+        or inner.get("name")
+        or meta.get("title")
+        or meta.get("name")
+        or sid
+    )
+    inner_gov = _binding_dict(inner.get("governance"))
+    meta_gov = _binding_dict(meta.get("governance"))
+    governance = dict(inner_gov or meta_gov)
+    risk = (
+        meta.get("risk")
+        or inner.get("risk")
+        or eval_summary.get("risk_level")
+        or inner_gov.get("risk_level")
+        or meta_gov.get("risk_level")
+        or inner_gov.get("risk")
+        or meta_gov.get("risk")
+    )
+    if risk and "risk_level" not in governance:
+        governance["risk_level"] = risk
+    market_scope = dict(_binding_dict(inner.get("market_scope")) or _binding_dict(meta.get("market_scope")))
+    execution_profile = dict(
+        _binding_dict(inner.get("execution_profile")) or _binding_dict(meta.get("execution_profile"))
+    )
+    source_kind = str(
+        inner.get("source_kind")
+        or prov.get("source_kind")
+        or meta.get("source_kind")
+        or ""
+    )
+    created_at = (
+        row.get("created_at")
+        or prov.get("created_at")
+        or inner.get("created_at")
+        or row.get("updated_at")
+    )
+    entry_tenant = str(
+        row.get("owner_tenant")
+        or meta.get("tenant_id")
+        or inner_meta.get("tenant_id")
+        or ""
+    ).strip()
+    merged_meta = {
+        **inner_meta,
+        **{k: v for k, v in meta.items() if k != "strategy_spec"},
+    }
+    capital_pool_id = str(
+        execution_profile.get("capital_pool_id")
+        or execution_profile.get("capitalPoolId")
+        or governance.get("capital_pool_id")
+        or governance.get("capitalPoolId")
+        or inner.get("capital_pool_id")
+        or inner.get("capitalPoolId")
+        or meta.get("capital_pool_id")
+        or meta.get("capitalPoolId")
+        or inner_meta.get("capital_pool_id")
+        or inner_meta.get("capitalPoolId")
+        or ""
+    ).strip()
+    item: dict[str, Any] = {
+        "object_ref": {"type": "StrategySpec", "id": reg_id},
+        "strategy_id": sid,
+        "current_spec_version_id": reg_id,
+        "current_spec_version": semver,
+        "title": title,
+        "name": title,
+        "lifecycle_state": current_state,
+        "source_kind": source_kind,
+        "hypothesis_excerpt": None,
+        "version_count": version_count,
+        "last_modified_at": last_modified_at,
+        "route_href": f"/knowledge/strategy-specs/{sid}",
+        "persona_ids": persona_list,
+        "governance": governance,
+        "market_scope": market_scope,
+        "execution_profile": execution_profile,
+        "allowedActions": {
+            "canSubmitForApproval": current_state == "draft",
+            "canRetire": current_state in {"candidate", "approved"},
+            "canCompare": current_state in {"candidate", "approved", "retired"},
+        },
+        "risk": risk,
+        "created_at": created_at,
+        "tenant_id": entry_tenant,
+        "strategy_spec_registry_id": reg_id,
+    }
+    owner = meta.get("owner") or inner_gov.get("owner") or meta_gov.get("owner") or inner_meta.get("owner")
+    if owner:
+        item["owner"] = owner
+    if capital_pool_id:
+        item["capital_pool_id"] = capital_pool_id
+    if merged_meta:
+        item["metadata"] = merged_meta
+    return item
+
+
+def project_strategy_spec_summary_page(
+    rows: list[dict],
+    *,
+    artifact_state: Optional[str] = None,
+    state: Optional[str] = None,
+    exclude_state: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = 20,
+) -> dict[str, Any]:
+    """Owner-side current-version selection, filtering, sorting, and pagination over summary rows."""
+    has_state_filter = state is not None and str(state).strip() != ""
+    has_exclude_state_filter = exclude_state is not None and str(exclude_state).strip() != ""
+    if has_state_filter and has_exclude_state_filter:
+        raise ValueError("state and exclude_state cannot be combined")
+
+    effective_page_size = max(1, min(int(page_size or 20), 200))
+    start = 0
+    if page_token is not None and str(page_token).strip() != "":
+        try:
+            start = int(str(page_token).strip())
+        except ValueError as exc:
+            raise ValueError("Invalid page_token") from exc
+        if start < 0:
+            raise ValueError("Invalid page_token")
+
+    wanted_artifact_state = str(artifact_state).strip() if artifact_state else None
+    current: dict[str, tuple[tuple, str, list, dict]] = {}
+    version_counts: dict[str, int] = {}
+
+    for row in rows:
+        if not isinstance(row, dict) or row.get("artifact_type") not in (None, "strategy_spec"):
+            raise ValueError("Invalid strategy registry entry")
+        if wanted_artifact_state is not None and row.get("artifact_state") != wanted_artifact_state:
+            continue
+        meta = _binding_dict(row.get("metadata"))
+        inner = _binding_dict(meta.get("strategy_spec"))
+        sid = str(row.get("strategy_id") or inner.get("strategy_id") or "").strip()
+        version = _binding_version(row)
+        if not sid or version is None:
+            raise ValueError("Invalid strategy registry entry")
+        raw_lifecycle = _extract_strategy_summary_raw_lifecycle(row)
+        version_counts[sid] = version_counts.get(sid, 0) + 1
+        if sid not in current or version[0] > current[sid][0]:
+            current[sid] = (version[0], raw_lifecycle, version[2], row)
+
+    try:
+        state_counts: Optional[dict[str, int]] = compute_strategy_spec_state_counts(current)
+    except Exception:
+        state_counts = None
+
+    raw_state_filter = str(state).strip().lower() if has_state_filter else ""
+    wanted_dto_state = (
+        _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_state_filter, raw_state_filter)
+        if has_state_filter
+        else None
+    )
+    raw_exclude_filter = str(exclude_state).strip().lower() if has_exclude_state_filter else ""
+    excluded_dto_state = (
+        _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_exclude_filter, raw_exclude_filter)
+        if has_exclude_state_filter
+        else None
+    )
+
+    wanted_persona = (
+        str(persona_id).strip()
+        if persona_id is not None and str(persona_id).strip() != ""
+        else None
+    )
+
+    matched: list[tuple[datetime, str, dict, int, str, list[str], Optional[str]]] = []
+    for sid, (_key, current_state, raw_persona_ids, row) in current.items():
+        raw_clean = str(current_state or "").strip().lower()
+        is_known_state = (not raw_clean) or (raw_clean in _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP)
+        dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
+        is_true_draft = (not raw_clean) or (raw_clean == "draft")
+
+        if has_state_filter and wanted_dto_state == "retired":
+            if not ((is_known_state and dto_state == "retired") or raw_clean == raw_state_filter):
+                continue
+        else:
+            if is_known_state and dto_state == "retired":
+                continue
+            if has_state_filter:
+                if raw_state_filter == "draft":
+                    if not is_true_draft:
+                        continue
+                elif not ((is_known_state and dto_state == wanted_dto_state) or raw_clean == raw_state_filter):
+                    continue
+            elif has_exclude_state_filter:
+                if raw_exclude_filter == "draft":
+                    if is_true_draft:
+                        continue
+                elif (is_known_state and dto_state == excluded_dto_state) or raw_clean == raw_exclude_filter:
+                    continue
+
+        persona_list = [str(v) for v in raw_persona_ids if str(v).strip()]
+        if wanted_persona is not None and wanted_persona not in persona_list:
+            continue
+        last_mod = _strategy_summary_last_modified_at(row)
+        matched.append(
+            (_binding_utc(last_mod), sid, row, version_counts[sid], current_state, persona_list, last_mod)
+        )
+
+    matched.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    total = len(matched)
+    page_rows = matched[start : start + effective_page_size]
+    next_offset = start + len(page_rows)
+    next_page_token = str(next_offset) if (next_offset < total and page_rows) else None
+
+    items = [
+        _build_strategy_spec_summary_item(sid, row, vcount, current_state, persona_list, last_mod)
+        for (_dt, sid, row, vcount, current_state, persona_list, last_mod) in page_rows
+    ]
+    return {
+        "items": items,
+        "total": total,
+        "page_size": effective_page_size,
+        "next_page_token": next_page_token,
+        "state_counts": state_counts,
+        "page_info": {
+            "total": total,
+            "page_size": effective_page_size,
+            "next_page_token": next_page_token,
+        },
+    }
+
+
 class RegistryUniqueViolationError(ValueError):
     """Raised when a create would collide on a composite ``unique_fields``
     identity (e.g. (strategy_id, version, artifact_type)) already held by a
@@ -643,6 +1075,24 @@ class RegistryStore:
                 entry.to_dict(), visible_tenants, "execution_bundle"
             )
         ]
+
+    def list_strategy_spec_summary_rows(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_type: Optional[str] = "strategy_spec",
+    ) -> list[dict]:
+        with self._lock:
+            entries = list(self._entries.values())
+        rows: list[dict] = []
+        for entry in entries:
+            art_type = entry.artifact_type.value if hasattr(entry.artifact_type, "value") else entry.artifact_type
+            if artifact_type is not None and art_type != artifact_type:
+                continue
+            if visible_tenants is not None and entry.owner_tenant not in visible_tenants:
+                continue
+            rows.append(strategy_spec_summary_row(entry))
+        return rows
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""

@@ -353,6 +353,77 @@ def test_evidence_timeout_returns_degraded_envelope_without_hanging() -> None:
     surface = payload["meta"]["surfaces"]["management_evidence"]
     assert surface["status"] == "degraded"
     assert surface["reason"] == "read_timeout"
+    assert surface["source"] == "timeout_fallback"
+    assert payload["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
+    assert payload["meta"]["surfaces"]["evidence_refs"]["reason"] == "read_timeout"
+    assert payload["data"]["summary"]["total_evidence"] is None
+    assert payload["data"]["summary"]["verified_count"] is None
+    assert payload["data"]["summary"]["by_source_type"] is None
+
+
+def test_evidence_610ms_owner_read_completes_under_evidence_route_budget() -> None:
+    """BFF-EVIDENCE-BOUNDED-READ-20261106: a 0.62s bounded owner page + population
+    summary read (matching the 491-612ms Dev diagnostic) must complete under the
+    default Evidence route budget without tripping the generic 0.6s fallback, while
+    concurrent /health remains responsive."""
+
+    def owner_620ms_read(**_kwargs):
+        time.sleep(0.62)
+        items = [
+            {
+                "id": f"evi-{i:016x}",
+                "ref_id": f"evi-{i:016x}",
+                "evidence_type": "source_record",
+                "display_label": f"TWSE 0050 #{i}",
+                "source_document": {
+                    "title": f"TWSE 0050 #{i}",
+                    "source_type": "official_reference",
+                    "source_ref": f"tw-official://0050/{i}",
+                    "captured_at": "2026-11-05T14:30:00+08:00",
+                },
+                "link_type": "supporting",
+                "credibility": {"tier": "verified", "verified": True},
+                "resolved_link": {"route_href": None},
+                "linked_object_summary": None,
+            }
+            for i in range(20)
+        ]
+        return EvidenceReadResult(
+            items,
+            518,
+            "ok",
+            "service_client",
+            next_page_token="20",
+            summary={
+                "total": 518,
+                "verified_count": 518,
+                "verified_evidence": 518,
+                "by_source_type": {"official_reference": 510, "source_record": 8},
+                "by_link_type": {"supporting": 518},
+                "by_credibility_tier": {"verified": 518},
+            },
+        )
+
+    with _isolated_bff() as (client, store):
+        store.read_evidence_refs = owner_620ms_read
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            ev_future = pool.submit(client.get, "/bff/management/evidence?page_size=20", headers=HEADERS)
+            time.sleep(0.05)
+            health_started = time.monotonic()
+            health_resp = client.get("/health")
+            health_elapsed = time.monotonic() - health_started
+            ev_resp = ev_future.result()
+
+    assert health_resp.status_code == 200
+    assert health_elapsed < 0.3
+    assert ev_resp.status_code == 200, ev_resp.text
+    payload = ev_resp.json()
+    assert payload["page_info"]["total"] == 518
+    assert len(payload["data"]["items"]) == 20
+    assert payload["data"]["summary"]["total_evidence"] == 518
+    assert payload["data"]["summary"]["verified_count"] == 518
+    assert payload["data"]["summary"]["by_source_type"] == {"official_reference": 510, "source_record": 8}
+    assert payload["meta"]["surfaces"]["management_evidence"]["status"] == "ok"
 
 
 def test_human_inbox_returns_normal_payload_when_fast() -> None:
@@ -399,7 +470,13 @@ def test_human_inbox_timeout_returns_degraded_envelope_without_hanging() -> None
         time.sleep(0.6)
         return [{"item_id": "should-not-appear", "item_type": "DeploymentPlan"}]
 
-    with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+    with patch.dict(
+        os.environ,
+        {
+            "PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS": "0.05",
+            "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05",
+        },
+    ):
         with _isolated_bff() as (client, store):
             store.list_governance_review_queue_items = slow_list_governance_review_queue_items
             started = time.monotonic()
@@ -410,9 +487,12 @@ def test_human_inbox_timeout_returns_degraded_envelope_without_hanging() -> None
     assert elapsed < 0.4, f"human-inbox route took {elapsed:.3f}s; it should degrade near the timeout budget"
     payload = response.json()
     assert payload["data"]["items"] == []
+    assert payload["meta"]["partial"] is True
     surface = payload["meta"]["surfaces"]["human_inbox"]
     assert surface["status"] == "degraded"
-    assert surface["reason"] == "read_timeout"
+    gov_surface = payload["meta"]["surfaces"]["governance_review_queue"]
+    assert gov_surface["status"] == "degraded"
+    assert gov_surface["reason"] == "read_timeout"
 
 
 @contextmanager

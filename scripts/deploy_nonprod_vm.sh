@@ -389,6 +389,8 @@ Options:
   --refresh-only         dev only: run bounded Taiwan market refresh without redeploying.
   --force                With --refresh-only: force refresh even outside session or if fresh.
   --output <path>        With --refresh-only: write JSON execution outcome to path.
+  --preflight-only       With --refresh-only: run only the Taiwan closed-session preflight (no
+                         refresh, no stack change) and write its JSON outcome to --output.
   --help                 Show this message.
 
 Environment overrides:
@@ -601,6 +603,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --refresh-only) REFRESH_ONLY=true; shift ;;
     --force) FORCE_REFRESH=true; shift ;;
+    --preflight-only) PREFLIGHT_ONLY=true; shift ;;
     --output) REFRESH_OUTPUT_PATH="${2:-}"; shift 2 ;;
     --dry-run)
       DRY_RUN=true
@@ -901,6 +904,7 @@ ssh_bash() {
     command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:+${PANTHEON_DEPLOY_WORKTREE_ROOT%/}/dev-root}")"
     command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
     command_prefix+=" FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}")"
+    command_prefix+=" PREFLIGHT_ONLY=$(shell_quote "${PREFLIGHT_ONLY:-false}")"
     command_prefix+=" REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}")"
     command_prefix+=" bash -s"
   else
@@ -933,6 +937,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 \
     PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID \
     PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON \
+    PANTHEON_DEV_ARTIFACT_SCOPE \
     PANTHEON_DEV_FE_DEPLOY_SCRIPT PANTHEON_EXECUTE_PLANS_ROOT PANTHEON_DEV_FE_CONTROLLER_SHA \
     PANTHEON_DEV_FE_NODE_BIN_DIR \
     PANTHEON_DEV_FE_ROOT PANTHEON_DEV_FE_RELEASES_DIR \
@@ -1055,6 +1060,7 @@ ssh_bash() {
     if [[ "${remote_component}" == "refresh-only" && -z "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
       PANTHEON_DEPLOY_COMPONENT=refresh-only \
       FORCE_REFRESH="${FORCE_REFRESH:-false}" \
+      PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-false}" \
       REFRESH_OUTPUT_PATH="${REFRESH_OUTPUT_PATH:-}" \
       bash -s
       return $?
@@ -1096,6 +1102,12 @@ with os.fdopen(fd, "wb") as stream:
               DEV_DEPLOY_SSH_USER="${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" python3 "${SCRIPT_DIR}/dev_remote_guarded_exec.py" \
               --ssh-helper "${SCRIPT_DIR}/dev_vm_ssh.sh" --script-file "${remote_script}" \
               --deadline-seconds "${deadline_seconds}" >"${private_dir}/transport.log") || transport_status=$?
+          fi
+          if [[ "${transport_status}" != 0 ]]; then
+            # Name mixed/unproven services in the log and job summary; the run
+            # still fails with the original status.
+            python3 "${SCRIPT_DIR}/dev_artifact_compensation_evidence.py" mixed-summary \
+              --input-log "${private_dir}/transport.log" || true
           fi
           if [[ "${transport_status}" == 0 ]]; then
             local operation=verify
@@ -2168,6 +2180,34 @@ if unsuccessful:
 
 print(f"[remote-deploy] DLQ recovery completed: all {len(eligible_entry_ids)} entries terminalized")
 RECOVER_DLQ_PY
+}
+
+# Proves the latest closed Taiwan session without refreshing anything. The outcome is always
+# written to the output path (exit 0) so the caller can name it; it never changes the stack.
+execute_taiwan_refresh_preflight_only() {
+  local output_path="${1:-}" preflight_output
+  # Same profile as the refresh entrypoint, so the same active symbols are resolved and checked.
+  PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" \
+  PANTHEON_EXTERNAL_EGRESS="allowlist" \
+  PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" \
+  SOURCE_INGEST_BOUNDED_CONNECTOR_ID="tw-twse-tpex-official-market" \
+  SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}" \
+  SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull" \
+  SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="reconciled_live_proof" \
+  SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no" \
+  SOURCE_INGEST_CONTROLLER_MAX_TICKS="1" \
+  SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1" \
+  SOURCE_INGEST_MAX_RECORDS="100"
+  validate_source_refresh_profile
+  resolve_bounded_source_refresh_active_symbols
+  if [[ -z "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" ]]; then
+    preflight_output='{"status": "error", "reason": "no_active_taiwan_symbols"}'
+  else
+    preflight_output="$(check_taiwan_refresh_preflight false)" || error "preflight execution failed: ${preflight_output}"
+  fi
+  [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+  info "taiwan refresh preflight-only outcome: ${preflight_output}"
+  return 0
 }
 
 execute_bounded_source_refresh_entrypoint() {
@@ -4136,9 +4176,11 @@ prune_dev_docker_storage_for_build() {
   fi
 
   info "pruning dev Docker build cache and unused containers/images before root build"
-  run_bounded_docker_prune "stopped containers" docker container prune -f
+  # Compose containers (including exited one-shot init containers) stay: their
+  # images are the whole-stack compensation baseline and must remain in use.
+  run_bounded_docker_prune "stopped containers" docker container prune -f --filter "label!=com.docker.compose.project=pantheon"
   run_bounded_docker_prune "unused images" docker image prune -af
-  run_bounded_docker_prune "system cache" docker system prune -f
+  run_bounded_docker_prune "system cache" docker system prune -f --filter "label!=com.docker.compose.project=pantheon"
   docker_storage_diagnostics "after prune"
 }
 
@@ -4492,8 +4534,14 @@ ARTIFACT_PY
   # preservation. It restores allowlisted baseline paths and historical auth
   # booleans from the sealed manifest, never from candidate defaults;
   # no issuer, source checkout, FE switch or Caddy write belongs in this lane.
+  # auto = whole-stack for a baseline restore of a v2 baseline (both compensation
+  # entry points); the roundtrip baseline restore passes images and keeps the
+  # three-image scope. The driver, not this shell, enforces what is allowed.
+  local artifact_scope="${PANTHEON_DEV_ARTIFACT_SCOPE:-auto}"
+  [[ "${artifact_scope}" =~ ^(auto|images|stack)$ ]] || error "artifact scope must be auto, images or stack"
   with_dev_bff_runtime_env "${runtime_sha}" false \
     python3 "${PANTHEON_DEV_ARTIFACT_DRIVER_PATH}" "${operation}" \
+      --scope "${artifact_scope}" \
       --environment dev --project-id "${PANTHEON_DEPLOY_PROJECT_ID}" --vm pantheon-dev-deploy \
       --candidate-id "${PANTHEON_DEV_ARTIFACT_CANDIDATE_ID}" \
       --run-id "${PANTHEON_DEV_ARTIFACT_RUN_ID}" --attempt "${PANTHEON_DEV_ARTIFACT_ATTEMPT}" \
@@ -5150,7 +5198,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ;;
 
   refresh-only)
-    execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
+    if [[ "${PREFLIGHT_ONLY:-false}" == "true" ]]; then
+      execute_taiwan_refresh_preflight_only "${REFRESH_OUTPUT_PATH:-}"
+    else
+      execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
+    fi
     exit $?
     ;;
 

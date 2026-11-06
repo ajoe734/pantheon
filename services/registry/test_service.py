@@ -3345,6 +3345,48 @@ def test_strategy_spec_persona_binding_counts_view_is_scoped_and_matches_rows(st
     assert strict_client.get(f"{path}?view=persona_binding_counts").status_code in (401, 403)
 
 
+def test_persona_binding_rows_carry_title_and_name_without_spec_bodies(strict_client):
+    token_a = _jwt(subject="pbl-a", tenant="tenant-a")
+    token_b = _jwt(subject="pbl-b", tenant="tenant-b")
+    for token, sid, title in ((token_a, "pbl-a1", "Title A"), (token_b, "pbl-b1", "Other tenant secret")):
+        spec = _valid_spec(sid, rev="1.0.0")
+        spec["title"] = title
+        resp = strict_client.post(
+            "/api/registry/strategy-specs",
+            json={"strategy_id": sid, "version": "1.0.0", "lineage": {"source_run_ids": ["run-1"]},
+                  "strategy_spec": spec, "metadata": {"persona_ids": ["p1"], "name": "Meta " + sid}},
+            headers=_bearer(token),
+        )
+        assert resp.status_code == 200, resp.text
+    resp = strict_client.get("/api/registry/strategy-specs?view=persona_binding", headers=_bearer(token_a))
+    assert resp.status_code == 200
+    rows = {e["entry"]["strategy_id"]: e["entry"] for e in resp.json()}
+    assert set(rows) == {"pbl-a1"} and "Other tenant secret" not in resp.text
+    meta = rows["pbl-a1"]["metadata"]
+    assert meta["name"] == "Meta pbl-a1" and meta["strategy_spec"]["title"] == "Title A"
+    assert "evaluation_summary" not in rows["pbl-a1"] and "parameters" not in meta["strategy_spec"]
+
+
+def test_persona_binding_row_keeps_title_and_name_paths_only():
+    from .storage import RegistryStore, persona_binding_row
+
+    store = RegistryStore()
+    store.create(
+        RegistryEntryCreate(
+            artifact_type="strategy_spec", strategy_id="l1", version="1.0.0",
+            storage_ref={"backend": "object_store", "path": "spec.json"}, checksum="sha256:cafef00d",
+            metadata={"persona_ids": ["p1"], "title": "Meta T", "name": "Meta N", "big": "x" * 100,
+                      "strategy_spec": {"title": "Spec T", "name": "ignored", "body": "x" * 100}},
+        ),
+        "l1-v1", actor={"tenant": "tenant-a"},
+    )
+    row = persona_binding_row(store.list_all_entries()[0])
+    assert row["metadata"]["title"] == "Meta T" and row["metadata"]["name"] == "Meta N"
+    assert row["metadata"]["strategy_spec"]["title"] == "Spec T"
+    assert "big" not in row["metadata"] and "body" not in row["metadata"]["strategy_spec"]
+    assert "name" not in row["metadata"]["strategy_spec"]
+
+
 def test_strategy_artifacts_list_and_detail_tenant_scope_and_x_tenant_id(strict_client):
     """GET /api/registry/strategy-artifacts uses the same visible-tenant rule as persona_binding,
     and GET /api/registry/strategy-artifacts/{id} never exposes another tenant's entry."""
@@ -3400,4 +3442,307 @@ def test_strategy_artifacts_list_and_detail_tenant_scope_and_x_tenant_id(strict_
 
     cross_b = strict_client.get("/api/registry/entries/bundle-tenant-b", headers=_bearer(token_a))
     assert cross_b.status_code == 403
+
+
+def test_strategy_spec_summary_page_view_tenant_scope_filters_pagination_and_sql_projection(strict_client):
+    from .pg_store import (
+        _STRATEGY_SUMMARY_CONTAINER_PATHS,
+        _strategy_summary_leaf_paths,
+        strategy_spec_summary_rows_from_columns,
+        strategy_spec_summary_select_sql,
+    )
+
+    token_a = _jwt(subject="ssp-a", tenant="tenant-a")
+    token_b = _jwt(subject="ssp-b", tenant="tenant-b")
+    store = get_store()
+
+    def _seed(rid: str, sid: str, version: str, state: ArtifactState, tenant: str, personas: list[str], alpha: str = ""):
+        spec = _valid_spec(sid, bulk="x" * 2048, rev=version)
+        if alpha:
+            spec["market_scope"] = {**dict(spec.get("market_scope") or {}), "alpha": alpha}
+        store.create(
+            RegistryEntryCreate(
+                artifact_type=ArtifactType.STRATEGY_SPEC,
+                strategy_id=sid,
+                version=version,
+                artifact_state=state,
+                lineage=Lineage(source_run_ids=["run-ssp"]),
+                storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+                checksum=f"sha256:{rid}",
+                metadata={"strategy_spec": spec, "persona_ids": personas, "capital_pool_id": f"pool-{sid}"},
+            ),
+            rid,
+            actor={"tenant": tenant},
+        )
+
+    _seed("ssp-a1-v1", "strat-ssp-a1", "1.0.0", ArtifactState.DRAFT, "tenant-a", ["p-old"])
+    _seed("ssp-a1-v2", "strat-ssp-a1", "1.2.0", ArtifactState.CANDIDATE, "tenant-a", ["p-mid"])
+    _seed("ssp-a1-v10", "strat-ssp-a1", "1.10.0", ArtifactState.APPROVED, "tenant-a", ["p1", "p2"], alpha="momentum-tw")
+    _seed("ssp-a2-v1", "strat-ssp-a2", "1.0.0", ArtifactState.CANDIDATE, "tenant-a", ["p2"])
+    _seed("ssp-a3-v1", "strat-ssp-a3", "1.0.0", ArtifactState.DRAFT, "tenant-a", ["p1"])
+    _seed("ssp-a4-ret", "strat-ssp-a4", "1.0.0", ArtifactState.RETIRED, "tenant-a", ["p1"])
+    _seed("ssp-b1-v1", "strat-ssp-b1", "1.0.0", ArtifactState.APPROVED, "tenant-b", ["p1"])
+
+    resp_p1 = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=2",
+        headers=_bearer(token_a),
+    )
+    assert resp_p1.status_code == 200, resp_p1.text
+    page1 = resp_p1.json()
+    assert page1["total"] == 3
+    assert page1["next_page_token"] == "2"
+    assert len(page1["items"]) == 2
+
+    resp_p2 = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=2&page_token=2",
+        headers=_bearer(token_a),
+    )
+    assert resp_p2.status_code == 200, resp_p2.text
+    page2 = resp_p2.json()
+    assert page2["total"] == 3
+    assert page2["next_page_token"] is None
+    assert len(page2["items"]) == 1
+
+    all_items = {item["strategy_id"]: item for item in page1["items"] + page2["items"]}
+    assert set(all_items) == {"strat-ssp-a1", "strat-ssp-a2", "strat-ssp-a3"}
+    assert all_items["strat-ssp-a1"]["current_spec_version"] == "1.10.0"
+    assert all_items["strat-ssp-a1"]["current_spec_version_id"] == "ssp-a1-v10"
+    assert all_items["strat-ssp-a1"]["version_count"] == 3
+    assert all_items["strat-ssp-a1"]["lifecycle_state"] == "approved"
+    assert all_items["strat-ssp-a1"]["persona_ids"] == ["p1", "p2"]
+    assert all_items["strat-ssp-a1"]["market_scope"]["alpha"] == "momentum-tw"
+    assert all_items["strat-ssp-a1"]["capital_pool_id"] == "pool-strat-ssp-a1"
+
+    # State filter: review maps to candidate
+    resp_review = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&state=review",
+        headers=_bearer(token_a),
+    )
+    assert resp_review.status_code == 200
+    assert resp_review.json()["total"] == 1
+    assert [i["strategy_id"] for i in resp_review.json()["items"]] == ["strat-ssp-a2"]
+
+    # Persona filter + state filter combined
+    resp_persona = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&persona_id=p1&state=approved",
+        headers=_bearer(token_a),
+    )
+    assert resp_persona.status_code == 200
+    assert resp_persona.json()["total"] == 1
+    assert [i["strategy_id"] for i in resp_persona.json()["items"]] == ["strat-ssp-a1"]
+
+    # Invalid page_token returns 400
+    resp_bad_token = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_token=not-an-int",
+        headers=_bearer(token_a),
+    )
+    assert resp_bad_token.status_code == 400
+
+    # Verify Postgres leaf-column projection matches in-memory summary rows
+    assert "payload #>" in strategy_spec_summary_select_sql()
+    mem_rows = store.list_strategy_spec_summary_rows(
+        visible_tenants=frozenset({"tenant-a", "__builtin__"}),
+        artifact_type="strategy_spec",
+    )
+    leaf_paths = _strategy_summary_leaf_paths()
+    simulated_sql_rows = []
+    for entry in store.list_all_entries():
+        if entry.owner_tenant not in {"tenant-a", "__builtin__"} or entry.artifact_type.value != "strategy_spec":
+            continue
+        payload = entry.to_dict()
+
+        def _extract(p: tuple[str, ...]):
+            cur: Any = payload
+            for k in p:
+                if not isinstance(cur, dict) or k not in cur:
+                    return None
+                cur = cur[k]
+            return json.dumps(cur)
+
+        def _typeof(p: tuple[str, ...]):
+            cur: Any = payload
+            for k in p:
+                if not isinstance(cur, dict) or k not in cur:
+                    return None
+                cur = cur[k]
+            return "object" if isinstance(cur, dict) else ("array" if isinstance(cur, list) else "scalar")
+
+        simulated_sql_rows.append(
+            tuple(_extract(p) for p in leaf_paths)
+            + tuple(_typeof(p) for p in _STRATEGY_SUMMARY_CONTAINER_PATHS)
+        )
+    pg_rows = strategy_spec_summary_rows_from_columns(simulated_sql_rows)
+    assert pg_rows == mem_rows
+
+
+def test_postgres_registry_store_list_by_strategy_filters_in_sql_without_full_table_scan():
+    from .models import RegistryEntry
+    from .pg_store import PostgresRegistryStore
+
+    target_entry = RegistryEntry(
+        registry_id="reg-strat-tw-0042-v1",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-tw-0042",
+        version="1.0.0",
+        artifact_state=ArtifactState.DRAFT,
+        lineage=Lineage(source_run_ids=["run-1"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:strat-tw-0042-v1",
+        metadata={"strategy_spec": _minimal_strategy_spec("strat-tw-0042")},
+        created_at="2026-11-05T00:00:00Z",
+        updated_at="2026-11-05T00:00:00Z",
+        owner_tenant="tenant-a",
+    )
+
+    class _FakeEntriesTable:
+        def __init__(self) -> None:
+            self.list_all_calls = 0
+            self.selected_calls: list[tuple[str, str, tuple]] = []
+
+        def list_all(self, *, conn=None):
+            self.list_all_calls += 1
+            raise AssertionError("list_all() must not be called by list_by_strategy()")
+
+        def list_all_selected(
+            self,
+            select_sql: str,
+            *,
+            visible_sql: str = "TRUE",
+            family_sql: Optional[str] = None,
+            bound_sql: Optional[str] = None,
+            keep_params: tuple = (),
+            conn=None,
+        ):
+            self.selected_calls.append((select_sql, visible_sql, keep_params))
+            return [(json.dumps(target_entry.to_dict()),)]
+
+    pg_store = PostgresRegistryStore.__new__(PostgresRegistryStore)
+    fake_entries = _FakeEntriesTable()
+    pg_store._entries = fake_entries
+
+    found = pg_store.list_by_strategy("strat-tw-0042")
+    assert len(found) == 1
+    assert found[0].registry_id == "reg-strat-tw-0042-v1"
+    assert found[0].strategy_id == "strat-tw-0042"
+    assert fake_entries.list_all_calls == 0
+    assert fake_entries.selected_calls == [
+        ("(payload)::text", "payload ->> 'strategy_id' = %s", ("strat-tw-0042",))
+    ]
+
+
+def test_strategy_spec_summary_page_exclude_state_state_counts_retired_and_unknown_lifecycle(strict_client):
+    token_a = _jwt(subject="ssp-ex-a", tenant="tenant-a")
+    token_b = _jwt(subject="ssp-ex-b", tenant="tenant-b")
+    store = get_store()
+
+    def _seed(
+        rid: str,
+        sid: str,
+        version: str,
+        state: ArtifactState,
+        tenant: str,
+        spec_lifecycle: Optional[str] = None,
+    ):
+        spec = _valid_spec(sid, bulk="x" * 128, rev=version)
+        if spec_lifecycle is not None:
+            spec["lifecycle_state"] = spec_lifecycle
+        store.create(
+            RegistryEntryCreate(
+                artifact_type=ArtifactType.STRATEGY_SPEC,
+                strategy_id=sid,
+                version=version,
+                artifact_state=state,
+                lineage=Lineage(source_run_ids=["run-ssp-ex"]),
+                storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+                checksum=f"sha256:{rid}",
+                metadata={"strategy_spec": spec},
+            ),
+            rid,
+            actor={"tenant": tenant},
+        )
+
+    _seed("ex-a-draft", "strat-ex-draft", "1.0.0", ArtifactState.DRAFT, "tenant-a")
+    _seed("ex-a-cand", "strat-ex-cand", "1.0.0", ArtifactState.CANDIDATE, "tenant-a")
+    _seed("ex-a-appr", "strat-ex-appr", "1.0.0", ArtifactState.APPROVED, "tenant-a")
+    _seed("ex-a-paper", "strat-ex-paper", "1.0.0", ArtifactState.APPROVED, "tenant-a", spec_lifecycle="paper_running")
+    _seed("ex-a-unk", "strat-ex-unknown", "1.0.0", ArtifactState.DRAFT, "tenant-a", spec_lifecycle="experimental_unknown")
+    _seed("ex-a-ret", "strat-ex-retired", "1.0.0", ArtifactState.RETIRED, "tenant-a")
+    _seed("ex-b-appr", "strat-ex-b-appr", "1.0.0", ArtifactState.APPROVED, "tenant-b")
+
+    # 1. Default view excludes retired and includes drafts + unknown
+    resp_default = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+        headers=_bearer(token_a),
+    )
+    assert resp_default.status_code == 200, resp_default.text
+    default_body = resp_default.json()
+    assert default_body["total"] == 5
+    assert {i["strategy_id"] for i in default_body["items"]} == {
+        "strat-ex-draft",
+        "strat-ex-cand",
+        "strat-ex-appr",
+        "strat-ex-paper",
+        "strat-ex-unknown",
+    }
+    assert default_body["state_counts"] == {
+        "draft": 2,  # strat-ex-draft + strat-ex-unknown (fallback to draft in DTO state counts)
+        "review": 1,
+        "approved": 1,
+        "paper_running": 1,
+        "canary_running": 0,
+        "live_running": 0,
+        "deployed": 0,
+        "paused": 0,
+        "retired": 1,
+    }
+
+    # 2. exclude_state=draft excludes true draft but keeps unknown stored lifecycle value
+    resp_no_draft = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&exclude_state=draft&page_size=20",
+        headers=_bearer(token_a),
+    )
+    assert resp_no_draft.status_code == 200, resp_no_draft.text
+    no_draft_body = resp_no_draft.json()
+    assert no_draft_body["total"] == 4
+    assert {i["strategy_id"] for i in no_draft_body["items"]} == {
+        "strat-ex-cand",
+        "strat-ex-appr",
+        "strat-ex-paper",
+        "strat-ex-unknown",
+    }
+    by_id = {i["strategy_id"]: i for i in no_draft_body["items"]}
+    assert by_id["strat-ex-unknown"]["lifecycle_state"] == "experimental_unknown"
+
+    # 3. state=retired returns retired strategies
+    resp_retired = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&state=retired&page_size=20",
+        headers=_bearer(token_a),
+    )
+    assert resp_retired.status_code == 200, resp_retired.text
+    retired_body = resp_retired.json()
+    assert retired_body["total"] == 1
+    assert [i["strategy_id"] for i in retired_body["items"]] == ["strat-ex-retired"]
+    assert retired_body["items"][0]["lifecycle_state"] == "retired"
+
+    # 4. Combining state and exclude_state returns 400
+    resp_conflict = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&state=approved&exclude_state=draft",
+        headers=_bearer(token_a),
+    )
+    assert resp_conflict.status_code == 400, resp_conflict.text
+
+    # 5. Tenant B isolation for items and state_counts
+    resp_b = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+        headers=_bearer(token_b),
+    )
+    assert resp_b.status_code == 200, resp_b.text
+    b_body = resp_b.json()
+    assert b_body["total"] == 1
+    assert [i["strategy_id"] for i in b_body["items"]] == ["strat-ex-b-appr"]
+    assert b_body["state_counts"]["approved"] == 1
+    assert b_body["state_counts"]["draft"] == 0
+    assert b_body["state_counts"]["retired"] == 0
+
+
 
