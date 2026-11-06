@@ -6814,8 +6814,6 @@ def _pm12_persona_league_rows(
     on_records_read: Optional[Callable[[], None]] = None,
 ) -> List[Dict[str, Any]]:
     raw_records = _list_persona_records(tenant_id, reuse_request_read=reuse_request_read)
-    if on_records_read is not None:
-        on_records_read()
     if not include_advisory:
         # Classify from canonical raw metadata before projection drops it, so
         # every league consumer shares one trading-only cohort.
@@ -6868,6 +6866,10 @@ def _pm12_persona_league_rows(
             all_league_entries = [record for record in (active_store.list_persona_league() or []) if isinstance(record, dict)]
         except Exception:
             all_league_entries = []
+    # Fire only after the rank-snapshot league read so post-rank reads (which
+    # include a league read) can never race ahead of it.
+    if on_records_read is not None:
+        on_records_read()
 
     sessions_by_persona: Optional[Dict[str, List[Dict[str, Any]]]] = None
     clean_tenant = str(tenant_id or "").strip()
@@ -8990,7 +8992,7 @@ def _persona_fleet_submit_post_rank_reads(
 ) -> None:
     """Start the reads that must follow the Paper rank snapshot, together.
 
-    Called once the league's persona records are read. The directory snapshot,
+    Called once the league's rank-snapshot reads (records and league) are done. The directory snapshot,
     the league-with-market-defaults read and the capital-pool read are
     independent owner reads that previously ran back to back on the request
     thread after the directory; they now overlap and the sequential code finds

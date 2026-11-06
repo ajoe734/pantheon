@@ -46,9 +46,11 @@ def test_delayed_defaults_league_and_pools_overlap_instead_of_serializing() -> N
 
     _, elapsed = _timed_items(ports)
 
-    # league rows -> (directory | defaults league | pools) is two owner waits;
-    # the previous serial order paid league, directory, league, pools.
-    assert elapsed < _DELAY * 3, elapsed
+    # records -> league -> (directory | defaults league | pools) is three owner
+    # waits; the previous serial order paid five (records, league, directory,
+    # defaults league, pools). The post-rank reads start only after the rank
+    # snapshot's league read, so ordering is deterministic.
+    assert elapsed < _DELAY * 4, elapsed
     assert log.count("list_persona_league:True") == 1
     assert log.count("list_capital_pools:True") == 1
 
