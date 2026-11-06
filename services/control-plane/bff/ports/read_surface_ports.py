@@ -661,6 +661,13 @@ class ReadSurfacePorts:
             _read,
         )
 
+    def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
+        """Bounded owner label read (no cache): ``{strategy_id: {"title", "name"}}``."""
+        labels = self.research_knowledge_source.get_strategy_labels()
+        if not isinstance(labels, dict):
+            raise TypeError("get_strategy_labels must return a dict")
+        return dict(labels)
+
     def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.list_strategy_specs(**kwargs)
 

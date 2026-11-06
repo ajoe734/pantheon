@@ -225,7 +225,7 @@ def http_request_json(
     payload: Optional[Dict[str, Any]] = None,
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
-    timeout: Optional[int] = None,
+    timeout: Optional[float] = None,
     tenant_id: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
 ) -> Any:
@@ -233,15 +233,26 @@ def http_request_json(
     from services.control_plane.bff import command_executor
     normalized_method = method.upper()
     if headers is None and normalized_method == "GET" and hasattr(command_executor, "_get_json"):
-        return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token, tenant_id=tenant_id)
+        if timeout is None:
+            return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token, tenant_id=tenant_id)
+        return command_executor._get_json(
+            url,
+            auth_token=auth_token,
+            mfa_token=mfa_token,
+            tenant_id=tenant_id,
+            timeout=timeout,
+        )
     if headers is None and normalized_method == "POST" and hasattr(command_executor, "_post_json"):
         return command_executor._post_json(url, payload or {}, auth_token=auth_token, mfa_token=mfa_token, tenant_id=tenant_id)
 
+    effective_timeout = _DEFAULT_REQUEST_TIMEOUT if timeout is None else min(float(_DEFAULT_REQUEST_TIMEOUT), float(timeout))
     headers = {**(headers or {}), **_headers(payload, auth_token, mfa_token, tenant_id)}
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=normalized_method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout or _DEFAULT_REQUEST_TIMEOUT) as resp:
+        if effective_timeout <= 0.0:
+            raise TimeoutError("Owner HTTP request read budget exhausted")
+        with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
             status_code = int(resp.status)
             body = json.loads(resp.read().decode("utf-8"))
             record_downstream_outcome(url, ok=True, status_code=status_code)
@@ -262,7 +273,7 @@ def evolution_owner_request(
     payload: Optional[Dict[str, Any]] = None,
     tenant_id: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
-    timeout: Optional[int] = None,
+    timeout: Optional[float] = None,
 ) -> Any:
     """Single request path for every BFF call to the Evolution owner (reads and writes).
 
@@ -293,9 +304,12 @@ def evolution_owner_request(
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         req_headers["Content-Type"] = "application/json"
+    effective_timeout = _DEFAULT_REQUEST_TIMEOUT if timeout is None else min(float(_DEFAULT_REQUEST_TIMEOUT), float(timeout))
     req = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
     try:
-        with urllib.request.urlopen(req, timeout=timeout or _DEFAULT_REQUEST_TIMEOUT) as resp:
+        if effective_timeout <= 0.0:
+            raise TimeoutError("Evolution owner request read budget exhausted")
+        with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
             status_code = int(resp.status)
             body = json.loads(resp.read().decode("utf-8"))
             record_downstream_outcome(url, ok=True, status_code=status_code)

@@ -1586,6 +1586,7 @@ def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
     view: Optional[Literal["persona_binding", "persona_binding_counts", "strategy_summary_page"]] = None,
     state: Optional[str] = None,
+    exclude_state: Optional[str] = None,
     persona_id: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
@@ -1615,13 +1616,14 @@ def list_all_strategy_spec_entries(
                 artifact_type=ArtifactType.STRATEGY_SPEC.value,
                 artifact_state=wanted_artifact_state,
                 state=state,
+                exclude_state=exclude_state,
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
             )
         except ValueError as exc:
             msg = str(exc)
-            if msg.startswith("Invalid page_token"):
+            if msg.startswith("Invalid page_token") or "exclude_state" in msg:
                 raise HTTPException(status_code=400, detail=msg) from exc
             raise HTTPException(status_code=503, detail=msg) from exc
         return JSONResponse(page_payload)

@@ -31,9 +31,11 @@ from .models import (
 PERSONA_BINDING_META_KEYS = (
     "spec_version_id", "tenant_id", "spec_version", "version", "personaIds",
     "persona_ids", "persona_id", "lifecycle_state", "state", "status",
+    "title", "name",
 )
 PERSONA_BINDING_SPEC_KEYS = (
     "persona_ids", "spec_version", "lifecycle_state", "strategy_id", "created_at",
+    "title",
 )
 PERSONA_BINDING_INNER_META_KEYS = ("tenant_id", "persona_id")
 # Top-level identity/version/tenant/state fields the count path needs; no
@@ -422,25 +424,110 @@ STRATEGY_SUMMARY_META_KEYS = (
     "capitalPoolId", "source_kind",
 )
 STRATEGY_SUMMARY_SPEC_KEYS = (
-    "strategy_id", "spec_version", "lifecycle_state", "status", "title",
+    "strategy_id", "spec_version", "lifecycle_state", "state", "status", "title",
     "name", "risk", "persona_ids", "created_at", "updated_at",
     "last_modified_at", "created_by", "source_kind", "capital_pool_id",
     "capitalPoolId",
 )
 STRATEGY_SUMMARY_INNER_META_KEYS = (
     "tenant_id", "persona_id", "capital_pool_id", "capitalPoolId", "owner", "risk",
+    "lifecycle_state", "state", "status",
 )
 STRATEGY_SUMMARY_PROV_KEYS = ("created_at", "created_by", "source_kind")
 STRATEGY_SUMMARY_GOV_KEYS = ("risk_level", "risk", "owner", "capital_pool_id", "capitalPoolId")
 STRATEGY_SUMMARY_MARKET_KEYS = ("alpha", "market", "frequency", "symbols")
 STRATEGY_SUMMARY_EXEC_KEYS = ("capital_pool_id", "capitalPoolId", "risk_level", "execution_mode_hint")
 
-_STRATEGY_SUMMARY_FILTER_STATES = {
+_STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP: dict[str, str] = {
     "draft": "draft",
-    "candidate": "candidate",
-    "review": "candidate",
+    "candidate": "review",
+    "review": "review",
     "approved": "approved",
+    "active": "deployed",
+    "deployed": "deployed",
+    "paused": "paused",
+    "retired": "retired",
+    "archived": "retired",
+    "rejected": "retired",
+    "superseded": "retired",
+    "paper": "paper_running",
+    "paper_running": "paper_running",
+    "canary": "canary_running",
+    "canary_running": "canary_running",
+    "canary_authorized_not_started": "canary_authorized_not_started",
+    "live": "live_running",
+    "live_running": "live_running",
+    "needs_human_approval": "needs_human_approval",
+    "rollback_required": "rollback_required",
+    "stopped": "stopped",
+    "failed": "failed",
+    "provisioning": "provisioning",
+    "provisioning_failed": "failed",
+    "research_only": "research_only",
+    "consultable": "consultable",
+    "paper_owner": "paper_owner",
+    "live_owner": "live_owner",
+    "frozen": "frozen",
+    "suspended": "suspended",
 }
+
+STRATEGY_SUMMARY_DEFAULT_STATE_COUNT_KEYS: tuple[str, ...] = (
+    "draft",
+    "review",
+    "approved",
+    "paper_running",
+    "canary_running",
+    "live_running",
+    "deployed",
+    "paused",
+    "retired",
+)
+
+
+def _extract_strategy_summary_raw_lifecycle(row: dict) -> str:
+    """Resolve the stored lifecycle value on a strategy summary row without
+    collapsing unknown lifecycle values to ``draft``."""
+    meta = _binding_dict(row.get("metadata"))
+    inner = _binding_dict(meta.get("strategy_spec"))
+    inner_meta = _binding_dict(inner.get("metadata"))
+    art_state = str(row.get("artifact_state") or "").strip()
+    art_lower = art_state.lower()
+    spec_state = str(
+        inner.get("lifecycle_state")
+        or inner.get("state")
+        or inner.get("status")
+        or meta.get("lifecycle_state")
+        or meta.get("state")
+        or meta.get("status")
+        or inner_meta.get("lifecycle_state")
+        or inner_meta.get("state")
+        or inner_meta.get("status")
+        or ""
+    ).strip()
+    spec_lower = spec_state.lower()
+    if art_lower not in {"", "draft", "candidate", "approved", "retired"}:
+        return art_state
+    if art_lower in {"", "draft"}:
+        if spec_state and spec_lower != "draft":
+            return spec_state
+        return "draft"
+    if spec_state and spec_lower not in {"draft", "candidate", "review", "approved", "retired"}:
+        if art_lower == "retired":
+            return "retired"
+        return spec_state
+    return art_lower
+
+
+def compute_strategy_spec_state_counts(
+    current: dict[str, tuple[tuple, str, list, dict]],
+) -> dict[str, int]:
+    """Count current tenant-visible strategies per normalized DTO state value."""
+    counts: dict[str, int] = {k: 0 for k in STRATEGY_SUMMARY_DEFAULT_STATE_COUNT_KEYS}
+    for _key, raw_state, _persona_ids, _row in current.values():
+        raw_clean = str(raw_state or "").strip().lower()
+        dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
+        counts[dto_state] = counts.get(dto_state, 0) + 1
+    return counts
 
 
 def strategy_spec_summary_row(entry: RegistryEntry) -> dict:
@@ -630,11 +717,17 @@ def project_strategy_spec_summary_page(
     *,
     artifact_state: Optional[str] = None,
     state: Optional[str] = None,
+    exclude_state: Optional[str] = None,
     persona_id: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = 20,
 ) -> dict[str, Any]:
     """Owner-side current-version selection, filtering, sorting, and pagination over summary rows."""
+    has_state_filter = state is not None and str(state).strip() != ""
+    has_exclude_state_filter = exclude_state is not None and str(exclude_state).strip() != ""
+    if has_state_filter and has_exclude_state_filter:
+        raise ValueError("state and exclude_state cannot be combined")
+
     effective_page_size = max(1, min(int(page_size or 20), 200))
     start = 0
     if page_token is not None and str(page_token).strip() != "":
@@ -660,14 +753,28 @@ def project_strategy_spec_summary_page(
         version = _binding_version(row)
         if not sid or version is None:
             raise ValueError("Invalid strategy registry entry")
+        raw_lifecycle = _extract_strategy_summary_raw_lifecycle(row)
         version_counts[sid] = version_counts.get(sid, 0) + 1
         if sid not in current or version[0] > current[sid][0]:
-            current[sid] = (version[0], version[1], version[2], row)
+            current[sid] = (version[0], raw_lifecycle, version[2], row)
 
-    wanted_state: Optional[str] = None
-    has_state_filter = state is not None and str(state).strip() != ""
-    if has_state_filter:
-        wanted_state = _STRATEGY_SUMMARY_FILTER_STATES.get(str(state).strip().lower())
+    try:
+        state_counts: Optional[dict[str, int]] = compute_strategy_spec_state_counts(current)
+    except Exception:
+        state_counts = None
+
+    raw_state_filter = str(state).strip().lower() if has_state_filter else ""
+    wanted_dto_state = (
+        _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_state_filter, raw_state_filter)
+        if has_state_filter
+        else None
+    )
+    raw_exclude_filter = str(exclude_state).strip().lower() if has_exclude_state_filter else ""
+    excluded_dto_state = (
+        _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_exclude_filter, raw_exclude_filter)
+        if has_exclude_state_filter
+        else None
+    )
 
     wanted_persona = (
         str(persona_id).strip()
@@ -677,10 +784,30 @@ def project_strategy_spec_summary_page(
 
     matched: list[tuple[datetime, str, dict, int, str, list[str], Optional[str]]] = []
     for sid, (_key, current_state, raw_persona_ids, row) in current.items():
-        if current_state == "retired":
-            continue
-        if has_state_filter and (wanted_state is None or current_state != wanted_state):
-            continue
+        raw_clean = str(current_state or "").strip().lower()
+        is_known_state = (not raw_clean) or (raw_clean in _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP)
+        dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
+        is_true_draft = (not raw_clean) or (raw_clean == "draft")
+
+        if has_state_filter and wanted_dto_state == "retired":
+            if not ((is_known_state and dto_state == "retired") or raw_clean == raw_state_filter):
+                continue
+        else:
+            if is_known_state and dto_state == "retired":
+                continue
+            if has_state_filter:
+                if raw_state_filter == "draft":
+                    if not is_true_draft:
+                        continue
+                elif not ((is_known_state and dto_state == wanted_dto_state) or raw_clean == raw_state_filter):
+                    continue
+            elif has_exclude_state_filter:
+                if raw_exclude_filter == "draft":
+                    if is_true_draft:
+                        continue
+                elif (is_known_state and dto_state == excluded_dto_state) or raw_clean == raw_exclude_filter:
+                    continue
+
         persona_list = [str(v) for v in raw_persona_ids if str(v).strip()]
         if wanted_persona is not None and wanted_persona not in persona_list:
             continue
@@ -704,6 +831,7 @@ def project_strategy_spec_summary_page(
         "total": total,
         "page_size": effective_page_size,
         "next_page_token": next_page_token,
+        "state_counts": state_counts,
         "page_info": {
             "total": total,
             "page_size": effective_page_size,

@@ -1,0 +1,133 @@
+{
+  "task_id": "BFF-HUMAN-INBOX-GOVERNANCE-READ-20261106",
+  "title": "Bound actual governance contributor reads in Human Inbox",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-06T05:13:00Z",
+  "verification_scope": "source_only_local_reproduction_and_regression_hosted_deployment_and_ten_browser_reloads_owned_by_root_sole_publisher",
+  "inspected_pair": {
+    "bff_sha": "0cc4d38fcc3c9439a7d83171321b5a08b7b24613",
+    "frontend_sha": "bdf2a6640f1fed5fee2d14106325770727ca7684",
+    "pair_digest": "4eb0ccf1a629eca836e37186e1e77777917de35acbb8c7a3a59344703cc12b24"
+  },
+  "captured_dev_diagnostics": {
+    "browser_audit_result": {
+      "path": "/tmp/pantheon-dev-operable-20261104/management-ui-ivbNEL/result.json",
+      "sha256": "770952b33678e08ca6046b16665f433235b16b6f57d62389cb271aeb635d2ed7",
+      "evidence_reloads": {
+        "consecutive_reloads_passed": 10,
+        "page1_total": 518,
+        "page2_total": 518,
+        "known_evidence_timeout": null
+      },
+      "knowledge_reload": {
+        "status": "ok",
+        "total": 0,
+        "honest_empty": true
+      },
+      "human_inbox_reloads": {
+        "reloads_1_to_4": {
+          "status": "ok",
+          "total": 0,
+          "all_contributor_surfaces": "ok"
+        },
+        "reload_5_failure_at_2026_11_06T03_33_17Z": {
+          "http_status": 200,
+          "partial": true,
+          "degraded_contributors": [
+            "governance_review_queue"
+          ],
+          "governance_review_queue_surface": {
+            "status": "degraded",
+            "source": "management_read_timeout",
+            "reason": "read_timeout",
+            "snapshot_at": "2026-11-06T03:33:17Z"
+          },
+          "healthy_contributor_surfaces": [
+            "approval_queue",
+            "incidents",
+            "persona_readiness"
+          ],
+          "passed_recorded_subset": false
+        }
+      }
+    },
+    "actual_owner_counts": {
+      "path": "/tmp/pantheon-dev-operable-20261104/actual-owner-counts-032834.json",
+      "sha256": "b8b40362a9ee8180f4d265e8f4a27364d4e08e8f93c66efa4e78500b7eca4835",
+      "at": "2026-11-06T03:28:34.281106+00:00",
+      "governance_by_tenant_state": {
+        "tenant-dev": {
+          "decided": 540,
+          "revoked": 3,
+          "proposed": 0
+        }
+      }
+    },
+    "actual_incident_postmortem_owner": {
+      "path": "/tmp/pantheon-dev-operable-20261104/actual-incident-postmortem-owner-032855.json",
+      "sha256": "02b29f1206ae043e2f09afa4347a473dc75532deaee2bbb4f5c5bf9758b46fa7",
+      "at": "2026-11-06T03:28:55.167764+00:00",
+      "incident_http_samples": 20,
+      "open_incidents": 0,
+      "median_ms": 33.9135
+    },
+    "source_deadline_audit": {
+      "markdown_path": "/tmp/pantheon-dev-operable-20261104/Root01a10-HumanInbox-governance-budget-source-audit-20261106.md",
+      "markdown_sha256": "e0f5aec9a53238cd8b42cbd1b21f300042f0484d02b22e4edb0306628c9549d0",
+      "json_path": "/tmp/pantheon-dev-operable-20261104/Root01a10-HumanInbox-governance-budget-source-audit-20261106.json",
+      "json_sha256": "7d527094db8266d1c084a472156913c756420ad71587867b78adf86b86363f38",
+      "unknown_physical_trigger_note": "Original physical trigger of the 5th reload timeout at 2026-11-06T03:33:17Z (per-owner SQL/HTTP timings/HAR not captured in browser audit) remains unknown; source proof is limited to the proven deadline propagation gap, default DeploymentPlanPort failure-swallowing gap, and reproduced slow/failing owner reads."
+    }
+  },
+  "admitted_scope_repairs": [
+    {
+      "file": "services/control-plane/bff/core/owner_reads.py",
+      "symbol": "cached_owner_call / read_records / _evolution_http_get",
+      "change": "Make cached_owner_call budget-aware using remaining_management_read_budget() on per-key lock acquisition and pre-invocation checks while preserving request/caller/tenant failure caching; forward remaining_management_read_budget() as timeout to http_request_json and evolution_owner_request when a management_read_deadline is active without altering default non-management calls."
+    },
+    {
+      "file": "services/control-plane/bff/governance/approval_owner.py",
+      "symbol": "call_owner / list_decisions",
+      "change": "Accept optional timeout in call_owner and list_decisions, bounding GET /api/governance/approvals to remaining_management_read_budget() when management_read_deadline is active (failing fast with TimeoutError when <= 0.0) while preserving the 15s default for non-management and write calls."
+    },
+    {
+      "file": "services/control-plane/bff/command_adapters/base.py",
+      "symbol": "http_request_json / evolution_owner_request",
+      "change": "Forward explicit timeout from http_request_json GET calls to command_executor._get_json when provided, and bound urllib.request.urlopen in http_request_json and evolution_owner_request to effective_timeout (raising TimeoutError when <= 0.0) while keeping 30s default for non-management and write calls."
+    },
+    {
+      "file": "services/control-plane/bff/command_executor.py",
+      "symbol": "_get_json",
+      "change": "Accept optional timeout in _get_json and bound urllib.request.urlopen to min(_REQUEST_TIMEOUT, timeout) (raising TimeoutError when <= 0.0) while keeping the 30s default when timeout is None."
+    },
+    {
+      "file": "services/control-plane/bff/ports/persona_capital_runtime.py",
+      "symbol": "_cached_port_records_with_error / DeploymentPlanPort.list_deployment_plans",
+      "change": "Preserve the underlying provider/store exception in request-scoped port cache alongside ('unavailable', []) and add raise_on_error: bool = False to DeploymentPlanPort.list_deployment_plans so governance review queue reads propagate real DeploymentPlanPort timeouts and errors instead of returning a false healthy empty list."
+    },
+    {
+      "file": "services/control-plane/bff/ports/ooda_management.py",
+      "symbol": "ManagementReviewQueuePort._wrap_request_scoped_reader / _read_source",
+      "change": "Reuse core.owner_reads.cached_owner_call for request/caller/tenant-scoped memoization of approval_decisions, deployment_plans, and evolution_decisions readers, invoking DeploymentPlanPort with raise_on_error=True while preserving all linked terminal approval outcomes for DeploymentPlan allowedActions."
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "symbol": "ManagementService.get_human_inbox / _human_inbox_contributor_readers / _is_contributor_timeout_error",
+      "change": "Tighten management_read_deadline inside get_human_inbox to the contributor surface budget (min(human_inbox_surface_timeout_seconds(), outer_remaining), default 1.0s); prewarm review_queue readers on _HEALTH_OWNER_READ_EXECUTOR via submit_owner_read; classify contributor deadline/socket timeouts as read_timeout; and check rem is not None and rem <= 0.0 when classifying unavailable deployment_plans."
+    },
+    {
+      "file": "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+      "symbol": "test_human_inbox_timeout_returns_degraded_envelope_without_hanging",
+      "change": "Set PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS=0.05 alongside PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS=0.05 and verify partial=True, surfaces.human_inbox.status=='degraded', and surfaces.governance_review_queue.reason=='read_timeout'."
+    }
+  ],
+  "local_validation": {
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_human_inbox_governance_latency.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_ooda_management_ports.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_receipt_default_reads.py services/control-plane/bff/tests/test_bff_management_cockpit.py && .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_mgmt_load_005_read_concurrency.py -k human_inbox",
+    "passed_count": 106,
+    "budgets_preserved": {
+      "human_inbox_surface_timeout_seconds": 1.0,
+      "route_outer_deadline_seconds": 2.5
+    }
+  }
+}
