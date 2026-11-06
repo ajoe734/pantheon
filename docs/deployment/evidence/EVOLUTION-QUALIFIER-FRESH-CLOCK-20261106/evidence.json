@@ -1,0 +1,13 @@
+{
+  "task_id": "EVOLUTION-QUALIFIER-FRESH-CLOCK-20261106",
+  "kind": "functional",
+  "hosted_verification": "deferred to EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104",
+  "change": "ProgramQualifier._fresh_evidence now reads self._clock() after the runtime summary and evaluations are fetched and uses it for summary_is_stale_or_degraded and metric_is_stale. Run-start now still drives evaluated_at, the lookback and the since window. threshold_sweep_worker.py is unchanged.",
+  "tests_added": [
+    "test_heartbeat_newer_than_sweep_start_passes_fresh_evidence_with_advancing_clock",
+    "test_fresh_evidence_still_fails_with_advancing_clock[no heartbeat | heartbeat later than read clock | staleness | state degraded | connectivity degraded | metric older than max age]"
+  ],
+  "existing_tests_changed": "none weakened or deleted",
+  "command": "/tmp/civenv/bin/python -m pytest services/evolution/test_program_qualification.py services/evolution/test_threshold_sweep_worker.py",
+  "result": "135 passed"
+}

@@ -1,0 +1,100 @@
+{
+  "task_id": "BFF-EVIDENCE-BOUNDED-READ-20261106",
+  "outcome": "root_causes_proven_and_repaired",
+  "reproduced": true,
+  "inspected_on": "0cd59ab286b7ad4d7c742993215cb39919cce580",
+  "frontend_head": "41b7f18b7e34a1a1f741c79060cfbb676177dd42",
+  "captured_dev_diagnostics": {
+    "ten_read_sequential_diagnostic": {
+      "path": "/tmp/pantheon-dev-operable-20261104/actual-evidence-ten-read-diagnostic-0031.json",
+      "sha256": "428dcb54252575859464844b287a2322504c91ed157a6778a48b0cceae218774",
+      "total_reads": 10,
+      "healthy_reads": 7,
+      "healthy_latency_ms_range": [491.3, 594.0],
+      "healthy_payload": {
+        "page_info_total": 518,
+        "returned_items": 20,
+        "summary": {
+          "total_evidence": 518,
+          "verified_count": 518,
+          "by_source_type": {
+            "official_reference": 510,
+            "source_record": 8
+          }
+        },
+        "surface_status": "ok"
+      },
+      "failed_reads": 3,
+      "failed_latency_ms": [610.7, 610.9, 612.2],
+      "failed_payload_before_repair": {
+        "page_info_total": 0,
+        "returned_items": 0,
+        "summary_total_evidence": 0,
+        "summary_verified_count": 0,
+        "surface": {
+          "status": "degraded",
+          "source": "bff_composed",
+          "reason": "read_timeout",
+          "message": "Evidence aggregation timed out under concurrent read fanout; degraded empty response returned."
+        }
+      }
+    },
+    "browser_audit_result": {
+      "path": "/tmp/pantheon-dev-operable-20261104/management-ui-LbIzUk/result.json",
+      "sha256": "de1153ddea4e8e3d22ecda6a88d72897c022f05e221259ea483ebee13f4f1423"
+    },
+    "service_logs_snapshot": {
+      "path": "/tmp/pantheon-dev-operable-20261104/actual-evidence-timeout-service-logs-0030.json",
+      "sha256": "9c7dc0a97668c1280d825ad11679fc03189981bdf99d0f18c326967063c00d36"
+    },
+    "served_timeout_config": {
+      "path": "/tmp/pantheon-dev-operable-20261104/actual-served-evidence-timeout-config.json",
+      "values": {
+        "PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": null,
+        "PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS": null
+      }
+    },
+    "readonly_audit_scripts": [
+      {
+        "path": "/tmp/pantheon-dev-operable-20261104/management-hosted-readonly-ui.cjs",
+        "sha256": "728087e5513c9a0a8adcc56f5a8902f669b9dec3b495d4a3cdd47a10fe10e4a2"
+      },
+      {
+        "path": "/tmp/pantheon-dev-operable-20261104/management-current-readonly.cjs",
+        "sha256": "0845d039fe479f5d4c9cbe05ea1fee2b8e566b1c7b32e8f854e818ee4ba89712"
+      }
+    ]
+  },
+  "proven_root_causes": [
+    {
+      "id": "RC-1",
+      "file": "services/control-plane/bff/management_read_models/router.py",
+      "symbol": "bff_management_evidence / bff_management_evidence_detail / _get_management_evidence_read_timeout",
+      "cause": "GET /bff/management/evidence and GET /bff/management/evidence/{ref_id} invoked run_management_read(_do_read) without a route-specific timeout_seconds argument, falling back to the generic 0.6s _management_read_timeout_seconds() budget even though DefaultResearchKnowledgeSourcePort._default_http_get bounds source-ingest owner HTTP reads at 2.0s and a healthy bounded 20-row page + 518-row SQL population summary read takes 491-612ms on Dev. Any read taking 601-612ms was cut off at 600ms as read_timeout.",
+      "repair": "Introduce evidence-local _get_management_evidence_read_timeout() (defaulting to evidence_owner_read_timeout_seconds() + 0.5s = 2.5s, overridable via PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS and respecting explicit PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS overrides) and wire it into bff_management_evidence and bff_management_evidence_detail without increasing the global management read timeout."
+    },
+    {
+      "id": "RC-2",
+      "file": "services/control-plane/bff/ports/research_knowledge_source.py",
+      "symbol": "DefaultResearchKnowledgeSourcePort._default_http_get / _read_owner_evidence_page / read_evidence_refs / _read_raw_evidence_ref_checked",
+      "cause": "_default_http_get used a fixed 2.0s socket timeout without consulting remaining_management_read_budget, _read_owner_evidence_page did not abort when management_read_deadline had already expired, and read_evidence_refs filtered service_client and fallback rows with raw tenant_id (None when invoked from ManagementService.get_evidence) instead of effective_tenant resolved from selected_tenant.",
+      "repair": "Bound _default_http_get socket timeout to remaining_management_read_budget(evidence_owner_read_timeout_seconds()) and abort immediately when the deadline is exhausted; check remaining_management_read_budget() in _read_owner_evidence_page; propagate effective_tenant to selected_tenant when needed and enforce _record_matches_tenant(..., effective_tenant) across paged, fallback, and single-item evidence reads."
+    },
+    {
+      "id": "RC-3",
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "symbol": "_management_evidence_degraded_payload / _get_evidence_degraded_payload",
+      "cause": "_management_evidence_degraded_payload called _management_evidence_summary(filtered_total=0, page_items=[], redacted_count=0) with unavailable=False, causing route timeouts to fabricate a zero dataset (total_evidence: 0, verified_count: 0, by_source_type: {}) and router.py stamped every exception as reason='read_timeout'.",
+      "repair": "Pass unavailable=True in _management_evidence_degraded_payload so degraded/timed-out responses report null summary counts (total_evidence: null, verified_count: null, by_source_type: null) and unavailable evidence_refs/knowledge_evidence surfaces, and distinguish ManagementReadTimeout (read_timeout / timeout_fallback), ManagementReadSaturated (read_capacity_saturated / capacity_fallback), and unexpected errors (read_error / error_fallback)."
+    }
+  ],
+  "validation": {
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_evidence_source_backend.py services/control-plane/bff/tests/test_evidence_owner_list_bounded.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py services/control-plane/bff/tests/test_bff_management_cockpit.py -q && .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_mgmt_load_005_read_concurrency.py -k evidence -q && .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_human_inbox_truth.py -k test_route_budget_outlasts_the_contributor_bound -q",
+    "status": "passed",
+    "passed_count": 72,
+    "preserved_invariants": {
+      "human_inbox_timeout_helper": "services/control-plane/bff/management_read_models/router.py::_get_human_inbox_read_timeout preserved identically to 0cd59ab286b7ad4d7c742993215cb39919cce580 (human_inbox_surface_timeout_seconds() + 1.5s margin, unaffected by generic PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS).",
+      "reproduced_baseline_limitation_on_0cd59ab28": "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_human_inbox_timeout_returns_degraded_envelope_without_hanging fails on accepted baseline 0cd59ab286b7ad4d7c742993215cb39919cce580 because commit 04780601f1b38e5d914bb6132645bc40be677524 (BFF-HUMAN-INBOX-TRUTH-20261104) deliberately decoupled _get_human_inbox_read_timeout() from PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS while that older test only patches PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS=0.05."
+    }
+  }
+}

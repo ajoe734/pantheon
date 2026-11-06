@@ -101,7 +101,9 @@ from multi_repo_registry import (
     repository_slug,
     repositories,
     resolve_repository,
+    task_declared_target_repository,
     task_primary_repository_id,
+    task_target_repository_id,
     validate_task_repository_scope,
 )
 from provider_permissions import probe_provider_auth
@@ -2249,7 +2251,16 @@ def _validate_auto_integrator_unblock_request(
         raise ValueError("unblock request PR differs from canonical delivery binding")
     if request.get("head_sha") != str(binding.get("head_sha") or "").lower():
         raise ValueError("unblock request head differs from canonical delivery binding")
-    repository_id = str(source.get("target_repo") or "pantheon")
+    # Canonical identity: target_repo may be written as the config key
+    # (execute_plans), display name or slug (execute-plans); the request always
+    # carries the config key. Missing target_repo means pantheon; an unknown
+    # declared repo fails closed.
+    if task_declared_target_repository(source):
+        repository_id = task_target_repository_id(config, source)
+        if repository_id is None:
+            raise ValueError("unblock request source target_repo is not a configured repository")
+    else:
+        repository_id = "pantheon"
     if request.get("repository_id") != repository_id:
         raise ValueError("unblock request repository differs from canonical task")
     resolve_repository(config, repository_id)
@@ -2264,6 +2275,17 @@ def _validate_auto_integrator_unblock_request(
     if request.get("owner") != expected_owner or request.get("reviewer") != expected_reviewer:
         raise ValueError("unblock request owner/reviewer differs from canonical task")
     return dict(request), source
+
+
+AUTO_INTEGRATOR_UNBLOCK_DELIVERY_RULE = (
+    "Delivery rule: deliver the fix from this repair task's own branch and PR only. "
+    "Do NOT push to the source task's branch: commits carrying this repair task's "
+    "Task-ID make the source task's handoff fail the commit trailer check. "
+    "If the defect is in the source PR's own commits, start from origin/dev and "
+    "restate the needed change as your own commit. "
+    "If you need a file outside this task's artifact contract, report a block "
+    "naming that file instead of working around it."
+)
 
 
 def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool:
@@ -2451,13 +2473,16 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                     ),
                     "acceptance": [
                         f"Root cause for {valid['source_task_id']} integration blocker is documented",
-                        "Original PR is updated or superseded and no longer stranded",
+                        (
+                            "The fix is delivered from this repair task's own branch and PR "
+                            f"(Task-ID {task_id} only); the source PR is superseded or no longer stranded"
+                        ),
                     ],
                     "artifacts": [
                         "scripts/git/auto_integrator.py",
                         f"docs/deployment/evidence/{task_id}/evidence.json",
                     ],
-                    "next": detail,
+                    "next": f"{detail}\n\n{AUTO_INTEGRATOR_UNBLOCK_DELIVERY_RULE}",
                     "last_update": timestamp,
                     "auto_created_by": "supervisor:auto_integrator_unblock_request",
                     "auto_generated": True,

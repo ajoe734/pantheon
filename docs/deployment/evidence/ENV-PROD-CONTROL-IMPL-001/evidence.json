@@ -1,147 +1,26 @@
 {
-  "task_id": "ENV-PROD-CONTROL-IMPL-001",
-  "track": "functional",
-  "evidence_kind": "local_source_validation",
-  "hosted_drill_evidence": false,
-  "release_complete_claimed": false,
-  "prior_merged_source_deliveries": [
-    {
-      "pr": 6759,
-      "head_sha": "fdfcb5c418649f8328409039a52b468e057971fa",
-      "merge_commit": "7a5cefd475ae25df75e0bd4480f13c5796b0a1e5",
-      "scope": "Initial production control plane blue/green delivery, preflight, bootstrap, ops adapter, workflow, runbook, and local test suite"
-    },
-    {
-      "pr": 6773,
-      "head_sha": "fc2eb326e7db2e756abdb34e1bd172f4bc1c115b",
-      "merge_commit": "5ead7084e590afc9694d4d9cb73808bcc3c2c7cc",
-      "scope": "Same-account production GitHub Environment approval policy alignment (prevent_self_review=false when explicitly configured in Environment policy)"
-    }
-  ],
-  "rework_fixes_verified": [
-    {
-      "id": "first_release_old_new_compat",
-      "summary": "Explicit PROD_BOOTSTRAP_FIRST_RELEASE=true passes gate old_new_compat when no state/baseline.json exists and candidate port 8002 is live and the verified versioned SQL and live catalog match the Stage migration contract, without requiring a nonexistent old baseline on port 8001; fails closed if state/baseline.json already exists; retains concurrent old+new readiness check for two-release paths."
-    },
-    {
-      "id": "rollback_baseline_closure_and_singleton_owner",
-      "summary": "prod_atomic_switch.sh journals full baseline_release.json closure (including backend_images for operator_bff, runtime_manager, governance, deployment, lifecycle_projector), prev_runtime_config.js, prev_manifest.json, and prev_compose.env; prod_rollback.sh and prod_ops.sh resume_baseline_singletons use baseline_env (never candidate release_env) and verify the restored lifecycle-projector container runs the retained baseline image."
-    },
-    {
-      "id": "bootstrap_abort_503_and_singleton_drain",
-      "summary": "When a first-release bootstrap aborts after partial switch mutations, prod_rollback.sh drains any started singletons (drain_singletons), stops green (stop_green), removes fe/current and active_manifest.json, restores the explicit 503 no-active-release upstream placeholder, reloads Caddy, and exits 4 (no_rollback_target)."
-    },
-    {
-      "id": "public_hosted_fe_bff_identity_and_artifact_retention",
-      "summary": "prod_atomic_switch.sh retains immutable FE archives/checksums in fe/artifacts/ and manifests in manifests/, renders deployment.json into fe/releases/<id>/, and prod_ops.sh post_identity + post-rollback baseline_health verify public hosted FE /deployment.json (Cache-Control: no-store) and public BFF /bff/version + /bff/readyz alongside local .artifact_sha256 and BFF/singleton Config.Image."
-    },
-    {
-      "id": "host_bootstrap_and_digest_pinned_prepull_wiring",
-      "summary": "production-release.yml creates /tmp/pantheon-release-<id> over IAP SSH before SCP, installs and invokes deploy/production/bootstrap.sh and prod_ops.sh prepull_images on the control VM before prod_atomic_switch.sh; bootstrap.sh and prod_ops.sh support non-root OS Login (run_priv), validate runtime binaries and secret content, and pre-acquire only @sha256:... digest-pinned images."
-    },
-    {
-      "id": "staging_live_evidence_contract",
-      "summary": "prod_preflight.check_staging_evidence now additionally requires dry_run=false and observed_from_live_vm=true, matching the merged ENV-STG-EPHEMERAL-IMPL-001 staging_verify.sh output, so dry_run_validated or unobserved staging evidence cannot admit production."
-    },
-    {
-      "id": "original_scope_wiring_and_public_contract",
-      "summary": "Compose now uses accepted native ports (BFF 8001, runtime 8080, governance 8082, deployment 8095), the existing projector run command with GIT_SHA and isolated DSNs; bootstrap and atomic switch render only the accepted pantheon.fe.public-runtime-config.v1 fields (configRef, gcpIdentity, truthful optional configSha256); prod_ops verify_runtime_config consumes configRef/schema/identity/sha; production-release.yml maps and forwards PROD_PUBLIC_GCP_IDENTITY_* and preflight requires them. Local fixtures only; no hosted evidence."
-    },
-    {
-      "id": "schema_compat_gate_no_image_labels",
-      "summary": "prod_ops schema/old_new_compat gates and prod_preflight no longer require org.pantheon.migration_set_sha256/compatibility_manifest_sha256 image labels (retained accepted BFF ccb9 has none). They bind manifest migration_set_sha256/compatibility_manifest_sha256 and digest-pinned BFF image to live staging_verified evidence (migration_verified, old_app_new_schema_compatible, matching hash), the running candidate container image, and the Stage migration contract (verified versioned SQL set digest plus live information_schema catalog; gates never apply migrations). Local controller tests only; not hosted evidence."
-    },
-    {
-      "id": "schema_gate_staging_contract_alignment",
-      "summary": "Phantom schema_migrations readback removed. prod_preflight.py (migration) re-hashes the qualified migration-spec.json + versioned SQL with Stage's recipe (must equal manifest migration_set_sha256, expand-only) and requires the live information_schema catalog (Stage's query) to contain every relation the SQL creates plus the Stage-required relations; prod_ops.sh migrate applies the same verified bytes out of band. Tests use the unmodified Stage manifest builder with the real versioned SQL and a fake catalog; no schema_migrations table exists anywhere. Local only; not hosted drill evidence."
-    },
-    {
-      "id": "first_release_schema_initialization_and_column_contract",
-      "summary": "Workflow now renders migration-spec.json + versioned SQL (Stage recipe, proven equal to manifest migration_set_sha256), ships them with scripts/db_migrate.sh to PROD_MIGRATION_DIR and runs prod_ops.sh migrate before the switch: product base-schema initializer (db_migrate.sh --print-sql, creates public.telemetry_events) first, then the qualified expand SQL, then the gate. Catalog check is column/type/default level (telemetry_events ingested_seq/ingested_at etc. plus SQL-declared columns); id-only and wrong-type catalogs are rejected with independent regressions. No manifests/SQL/hashes rewritten. Local controller tests only (no PostgreSQL binary available in this worker); real-PG replay of the reviewer reproducers is left to the reviewer/hosted drill; not hosted evidence."
-    },
-    {
-      "id": "durable_application_stores",
-      "summary": "Compose wires Stage's selected native store paths for runtime-manager, governance, deployment, lifecycle-projector and both BFF colors onto the retained data disk ($PROD_DATA_MOUNT/{runtime,governance,bff}, created by bootstrap.sh) with identical shared mounts per color; static tests assert paths/mounts/env parity. Runbook documents backup (pg_dump + owner-store tar) and restore readability drill. Local only; hosted backup/restore drill remains external_wait."
-    },
-    {
-      "id": "product_owner_packaging_extension",
-      "summary": "Same-task source extension (fresh task head, new PR; merged PR6829 untouched). Consumes merged ENV-STG-EPHEMERAL-IMPL-001 packaging contract (staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS): production compose packages the 16 existing product owners plus the Agora request worker from immutable manifest backend.images with native Postgres stores, per-owner stores under $PROD_DATA_MOUNT/product, no published ports, safe-off flags, BFF owner-route URLs and Agora store env. bootstrap.sh requires PROD_TENANT_ID and all product DSN/service secrets (rejecting Dev defaults) and pre-pulls the full pinned closure; prod_ops.sh requires every owner digest, acquires with --no-recreate, activates the worker as a singleton with the lifecycle projector, verifies exact running digests, and rolls product owners back to exact retained baseline digests (removing them when the baseline predates them, failing closed on a partial baseline, never inventing a digest). prod_preflight requires PROD_TENANT_ID. Local fake-docker tests only; no provisioning, deployment, secret or business-data access; not hosted evidence."
-    },
-    {
-      "id": "baseline_json_rollback_and_paper_owner_packaging",
-      "summary": "prod_atomic_switch.sh journals prior state/baseline.json (prev_baseline.json); prod_rollback.sh restores it after a post-success manual rollback and removes any baseline.json on a bootstrap abort (honest no-baseline safe 503, exit 4). Existing paper-fleet-reconciler and paper-signal-producer singleton owners plus the existing Redis signal-store are packaged in Stage and Prod compose/ops/bootstrap, reusing the training_session_svc image digest (enforced by release_manifest.py); drained/resumed with the lifecycle projector, exactly one each. Local controller tests only; no hosted qualification or release manifest is claimed.",
-      "pr": 6844
-    },
-    {
-      "id": "prod_migration_backend_commit_and_8vcpu_gate_20261103",
-      "summary": "production-release.yml renders versioned SQL and db_migrate.sh from manifest backend.commit via prod_preflight.py migration render-commit (shallow fetch + git archive; fail-closed reasons invalid_backend_commit, backend_commit_fetch_failed, migration_path_missing, substrate_path_missing, migration_archive_failed, migration_digest_or_spec_mismatch), never from the workflow checkout; migration_set_sha256 check unchanged. e2-standard-8 recorded as minimum Prod control VM; read-only prod_preflight.py vm-size gate rejects <8 vCPUs (tested 2, 4 rejected; 8 accepted) and runs in the workflow before the snapshot. Resize procedure for pantheon-prod-control prepared in the runbook and NOT executed. Local source validation only; no workflow dispatch, no Prod VM/GSM/IAM mutation, not hosted drill evidence."
-    }
-  ],
-  "validation": {
-    "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
-    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
-    "result": "tests.deployment.test_production_release pytest run locally (script behavior only; not hosted drill evidence)",
-    "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
-  },
-  "hosted_acceptance": {
-    "status": "external_wait",
-    "missing": [
-      "Stage release 102 staging_verified summaries are published (see published_staging_verification); real 3-account hosted QA, distinct release 103 and full Prod acceptance remain pending",
-      "production project, billing, domain, IdP",
-      "production WIF/SA/IAM/secrets",
-      "GitHub production Environment approval is configured (reviewer ajoe734, prevent_self_review=false); a genuine run approval remains a hosted prerequisite",
-      "production control VM provisioning, secrets env/postgres password files, GATE token identity, manifest backend.images owner closure and image labels (contracts in runbook)",
-      "approved RPO/RTO/retention/on-call/rollback owner",
-      "two production-shaped deploy/rollback drills (<120s rollback)",
-      "30-minute observation window"
-    ]
-  },
-  "final_head_verification": {
-    "scope": "rework of review REJECT on 3db9f47f; full test_production_release (81 OK, 118.9s) plus focused Stage tests",
-    "passed": [
-      "test_production_release (81 tests OK) incl. test_pre_paper_baseline_restores_retained_owners_and_removes_new_paper_workers, test_bff_reads_paper_reconciler_and_producer_health_in_both_environments, test_paper_reconciler_requires_controller_dsn_and_exact_release_sha",
-      "test_staging_release Stage Release/Sanitize/Workflow classes (16 pass; 1 env error: flask missing, not a pass)",
-      "StagingControllerLifecycleTests: product_owner_inputs_fail_closed, dsn_query_routing_override_rejected, bff_and_worker_share_durable_agora_stores, bare_debian_bootstrap_secrets_and_real_collector_negative_gates, two_consecutive_simulated_releases"
-    ],
-    "delta": "pre-Paper baseline restores retained owners and removes absent paper workers (Prod prod_ops.sh + Stage bootstrap baseline env); BFF gets PANTHEON_PAPER_FLEET_RECONCILER_URL and read-only /data/health in Prod blue/green and Stage; reconciler binds PANTHEON_DEPLOYMENT_SHA/GIT_SHA to PANTHEON_BACKEND_COMMIT; RECONCILER_LOOP_CONTROLLER_DSN required in both bootstraps; hosted acceptance remains external_wait",
-    "review_rework_bb9670ba3": {
-      "fix_commit": "2aa9b1647bfb99ef0122e230e8e04937ea45b1cd",
-      "p1": "Stage collector/sanitize carry baseline-absent Paper owners through validation, drain, health and exact-pair rollback readback; e2e test_pre_paper_baseline_rolls_back_without_inventing_absent_workers",
-      "p2": "Prod bootstrap resolves/validates/pulls effective PANTHEON_SIGNAL_STORE_IMAGE from shell or compose.env; test_bootstrap_pulls_effective_signal_store_image_from_existing_compose_env",
-      "validation": "test_production_release 82 OK; StagingControllerLifecycleTests 30/30 OK run serially per shard (parallel shards contend and fail spuriously); Manifest/Workflow classes OK; sanitize 8/9 with 1 env error (flask missing, not a pass); bash -n and git diff --check clean"
-    }
-  },
-  "published_staging_verification": {
-    "purpose": "Top-level status/dry_run/observed_from_live_vm/release_id/manifest/gates/workflow_run_id fields of this file are the latest native verification (run 41581135775) and are consumable as production-release staging_evidence_path; prod_preflight.check_staging_evidence passes natively for the exact manifest. Both runs listed in staging_verification_runs.",
-    "release_id": "pantheon-20261028-102",
-    "manifest_sha256": "sha256:617e2936f3534a1f425e8c71726750826979c5b1d98cf767fec2fdb0c728bcf3",
-    "control_source_commit": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
-    "omitted": "owner timestamps, per-table row counts, schema names, resource identities, secrets",
-    "scope_limits": {
-      "hosted_QA_step": "skipped (QA 0, step 9 skipped in both runs)",
-      "complete_original_acceptance": false,
-      "production_acceptance_verified": false,
-      "release_complete_claimed": false
-    },
-    "still_pending": [
-      "3 real hosted QA accounts",
-      "distinct release 103",
-      "Prod release 102 baseline",
-      "backup/restore DR with measured RPO/RTO",
-      "VM replacement drill",
-      "two Prod deploy/rollback drills (<120s)",
-      "1800s observation window"
-    ]
-  },
-  "production_environment_config": {
-    "scope": "PROD_* values are GitHub Environment-scoped in 'production' (not repository-only); read-only readback 2026-11-05: 20 required names present, none missing, safe defaults accepted; metadata only, not live VM proof. The earlier 'missing 21 PROD vars' claim is disproved."
-  },
   "actual_final_teardown": {
     "deleted_resource_count": 4,
     "evidence_sha256": "sha256:08029feda84a4c2a7f2c800bb0d4a3f8b807d1b055a757ef4491e299ea8ab8c9",
     "post_delete_readback_verified": true
   },
   "dry_run": false,
+  "evidence_kind": "local_source_validation",
+  "final_head_verification": {
+    "delta": "pre-Paper baseline restores retained owners and removes absent paper workers (Prod prod_ops.sh + Stage bootstrap baseline env); BFF gets PANTHEON_PAPER_FLEET_RECONCILER_URL and read-only /data/health in Prod blue/green and Stage; reconciler binds PANTHEON_DEPLOYMENT_SHA/GIT_SHA to PANTHEON_BACKEND_COMMIT; RECONCILER_LOOP_CONTROLLER_DSN required in both bootstraps; hosted acceptance remains external_wait",
+    "passed": [
+      "test_production_release (81 tests OK) incl. test_pre_paper_baseline_restores_retained_owners_and_removes_new_paper_workers, test_bff_reads_paper_reconciler_and_producer_health_in_both_environments, test_paper_reconciler_requires_controller_dsn_and_exact_release_sha",
+      "test_staging_release Stage Release/Sanitize/Workflow classes (16 pass; 1 env error: flask missing, not a pass)",
+      "StagingControllerLifecycleTests: product_owner_inputs_fail_closed, dsn_query_routing_override_rejected, bff_and_worker_share_durable_agora_stores, bare_debian_bootstrap_secrets_and_real_collector_negative_gates, two_consecutive_simulated_releases"
+    ],
+    "review_rework_bb9670ba3": {
+      "fix_commit": "2aa9b1647bfb99ef0122e230e8e04937ea45b1cd",
+      "p1": "Stage collector/sanitize carry baseline-absent Paper owners through validation, drain, health and exact-pair rollback readback; e2e test_pre_paper_baseline_rolls_back_without_inventing_absent_workers",
+      "p2": "Prod bootstrap resolves/validates/pulls effective PANTHEON_SIGNAL_STORE_IMAGE from shell or compose.env; test_bootstrap_pulls_effective_signal_store_image_from_existing_compose_env",
+      "validation": "test_production_release 82 OK; StagingControllerLifecycleTests 30/30 OK run serially per shard (parallel shards contend and fail spuriously); Manifest/Workflow classes OK; sanitize 8/9 with 1 env error (flask missing, not a pass); bash -n and git diff --check clean"
+    },
+    "scope": "rework of review REJECT on 3db9f47f; full test_production_release (81 OK, 118.9s) plus focused Stage tests"
+  },
   "gates": {
     "backup_restore_readability": {
       "backup_id": "stg-backup-pantheon-20261028-102",
@@ -193,6 +72,20 @@
       "security_and_safety_readback_verified": true
     }
   },
+  "hosted_acceptance": {
+    "missing": [
+      "Stage release 102 staging_verified summaries are published (see published_staging_verification); real 3-account hosted QA, distinct release 103 and full Prod acceptance remain pending",
+      "production project, billing, domain, IdP",
+      "production WIF/SA/IAM/secrets",
+      "GitHub production Environment approval is configured (reviewer ajoe734, prevent_self_review=false); a genuine run approval remains a hosted prerequisite",
+      "production control VM provisioning, secrets env/postgres password files, GATE token identity, manifest backend.images owner closure and image labels (contracts in runbook)",
+      "approved RPO/RTO/retention/on-call/rollback owner",
+      "two production-shaped deploy/rollback drills (<120s rollback)",
+      "30-minute observation window"
+    ],
+    "status": "external_wait"
+  },
+  "hosted_drill_evidence": false,
   "manifest": {
     "backend_commit": "9a12eb361165867d39b7c7c6f55e846a1b4564e1",
     "frontend_artifact_sha256": "sha256:47cfd8d3c0f970569c22cfb9736294f6e7c01ed73f0141c3d07c7de9b0ead69a",
@@ -206,6 +99,23 @@
     "rollback_previous_release_id": "pantheon-20261028-100"
   },
   "observed_from_live_vm": true,
+  "prior_merged_source_deliveries": [
+    {
+      "head_sha": "fdfcb5c418649f8328409039a52b468e057971fa",
+      "merge_commit": "7a5cefd475ae25df75e0bd4480f13c5796b0a1e5",
+      "pr": 6759,
+      "scope": "Initial production control plane blue/green delivery, preflight, bootstrap, ops adapter, workflow, runbook, and local test suite"
+    },
+    {
+      "head_sha": "fc2eb326e7db2e756abdb34e1bd172f4bc1c115b",
+      "merge_commit": "5ead7084e590afc9694d4d9cb73808bcc3c2c7cc",
+      "pr": 6773,
+      "scope": "Same-account production GitHub Environment approval policy alignment (prevent_self_review=false when explicitly configured in Environment policy)"
+    }
+  ],
+  "production_environment_config": {
+    "scope": "PROD_* values are GitHub Environment-scoped in 'production' (not repository-only); read-only readback 2026-11-05: 20 required names present, none missing, safe defaults accepted; metadata only, not live VM proof. The earlier 'missing 21 PROD vars' claim is disproved."
+  },
   "provenance": {
     "artifact_id": 13205758813,
     "control_source_commit": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
@@ -213,7 +123,109 @@
     "projection": "Allowlisted public contract summary; owner timestamps, per-table row counts, schema names and resource identities omitted; observed values retained.",
     "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/41581135775"
   },
+  "public_real_writes_producer_wiring": {
+    "baseline": "never inherits",
+    "candidate_true": "rendered into candidate only with new digest",
+    "default": "false (key absent, legacy bytes/digest preserved)",
+    "flag": "VITE_BFF_REAL_WRITES",
+    "hosted_acceptance": "external_wait",
+    "malformed": "rejected PUBLIC_REAL_WRITES_INVALID on RAW value (no strip): ' true ', 'true\\n', ' false ', 'false\\n', TRUE, 1, yes, on",
+    "raw_input_correction": {
+      "files": [
+        "deploy/staging/bootstrap.sh",
+        "scripts/deploy/prod_atomic_switch.sh",
+        "tests/deployment/test_staging_release.py",
+        "tests/deployment/test_production_release.py"
+      ],
+      "tests": "unittest -k real_writes/REAL_WRITES on both modules: 6 tests OK (local script behavior only)"
+    },
+    "scope": "source_only",
+    "stage_prod_dispatched": false,
+    "tests": "tests/deployment/test_production_release.py (95 OK); tests/deployment/test_staging_release.py -k public_real_writes/runtime_config OK"
+  },
+  "published_staging_verification": {
+    "control_source_commit": "9df41340b9606ea8ceeb9e0b45c4eef62d5e3f0b",
+    "manifest_sha256": "sha256:617e2936f3534a1f425e8c71726750826979c5b1d98cf767fec2fdb0c728bcf3",
+    "omitted": "owner timestamps, per-table row counts, schema names, resource identities, secrets",
+    "purpose": "Top-level status/dry_run/observed_from_live_vm/release_id/manifest/gates/workflow_run_id fields of this file are the latest native verification (run 41581135775) and are consumable as production-release staging_evidence_path; prod_preflight.check_staging_evidence passes natively for the exact manifest. Both runs listed in staging_verification_runs.",
+    "release_id": "pantheon-20261028-102",
+    "scope_limits": {
+      "complete_original_acceptance": false,
+      "hosted_QA_step": "skipped (QA 0, step 9 skipped in both runs)",
+      "production_acceptance_verified": false,
+      "release_complete_claimed": false
+    },
+    "still_pending": [
+      "3 real hosted QA accounts",
+      "distinct release 103",
+      "Prod release 102 baseline",
+      "backup/restore DR with measured RPO/RTO",
+      "VM replacement drill",
+      "two Prod deploy/rollback drills (<120s)",
+      "1800s observation window"
+    ]
+  },
+  "release_complete_claimed": false,
   "release_id": "pantheon-20261028-102",
+  "rework_fixes_verified": [
+    {
+      "id": "first_release_old_new_compat",
+      "summary": "Explicit PROD_BOOTSTRAP_FIRST_RELEASE=true passes gate old_new_compat when no state/baseline.json exists and candidate port 8002 is live and the verified versioned SQL and live catalog match the Stage migration contract, without requiring a nonexistent old baseline on port 8001; fails closed if state/baseline.json already exists; retains concurrent old+new readiness check for two-release paths."
+    },
+    {
+      "id": "rollback_baseline_closure_and_singleton_owner",
+      "summary": "prod_atomic_switch.sh journals full baseline_release.json closure (including backend_images for operator_bff, runtime_manager, governance, deployment, lifecycle_projector), prev_runtime_config.js, prev_manifest.json, and prev_compose.env; prod_rollback.sh and prod_ops.sh resume_baseline_singletons use baseline_env (never candidate release_env) and verify the restored lifecycle-projector container runs the retained baseline image."
+    },
+    {
+      "id": "bootstrap_abort_503_and_singleton_drain",
+      "summary": "When a first-release bootstrap aborts after partial switch mutations, prod_rollback.sh drains any started singletons (drain_singletons), stops green (stop_green), removes fe/current and active_manifest.json, restores the explicit 503 no-active-release upstream placeholder, reloads Caddy, and exits 4 (no_rollback_target)."
+    },
+    {
+      "id": "public_hosted_fe_bff_identity_and_artifact_retention",
+      "summary": "prod_atomic_switch.sh retains immutable FE archives/checksums in fe/artifacts/ and manifests in manifests/, renders deployment.json into fe/releases/<id>/, and prod_ops.sh post_identity + post-rollback baseline_health verify public hosted FE /deployment.json (Cache-Control: no-store) and public BFF /bff/version + /bff/readyz alongside local .artifact_sha256 and BFF/singleton Config.Image."
+    },
+    {
+      "id": "host_bootstrap_and_digest_pinned_prepull_wiring",
+      "summary": "production-release.yml creates /tmp/pantheon-release-<id> over IAP SSH before SCP, installs and invokes deploy/production/bootstrap.sh and prod_ops.sh prepull_images on the control VM before prod_atomic_switch.sh; bootstrap.sh and prod_ops.sh support non-root OS Login (run_priv), validate runtime binaries and secret content, and pre-acquire only @sha256:... digest-pinned images."
+    },
+    {
+      "id": "staging_live_evidence_contract",
+      "summary": "prod_preflight.check_staging_evidence now additionally requires dry_run=false and observed_from_live_vm=true, matching the merged ENV-STG-EPHEMERAL-IMPL-001 staging_verify.sh output, so dry_run_validated or unobserved staging evidence cannot admit production."
+    },
+    {
+      "id": "original_scope_wiring_and_public_contract",
+      "summary": "Compose now uses accepted native ports (BFF 8001, runtime 8080, governance 8082, deployment 8095), the existing projector run command with GIT_SHA and isolated DSNs; bootstrap and atomic switch render only the accepted pantheon.fe.public-runtime-config.v1 fields (configRef, gcpIdentity, truthful optional configSha256); prod_ops verify_runtime_config consumes configRef/schema/identity/sha; production-release.yml maps and forwards PROD_PUBLIC_GCP_IDENTITY_* and preflight requires them. Local fixtures only; no hosted evidence."
+    },
+    {
+      "id": "schema_compat_gate_no_image_labels",
+      "summary": "prod_ops schema/old_new_compat gates and prod_preflight no longer require org.pantheon.migration_set_sha256/compatibility_manifest_sha256 image labels (retained accepted BFF ccb9 has none). They bind manifest migration_set_sha256/compatibility_manifest_sha256 and digest-pinned BFF image to live staging_verified evidence (migration_verified, old_app_new_schema_compatible, matching hash), the running candidate container image, and the Stage migration contract (verified versioned SQL set digest plus live information_schema catalog; gates never apply migrations). Local controller tests only; not hosted evidence."
+    },
+    {
+      "id": "schema_gate_staging_contract_alignment",
+      "summary": "Phantom schema_migrations readback removed. prod_preflight.py (migration) re-hashes the qualified migration-spec.json + versioned SQL with Stage's recipe (must equal manifest migration_set_sha256, expand-only) and requires the live information_schema catalog (Stage's query) to contain every relation the SQL creates plus the Stage-required relations; prod_ops.sh migrate applies the same verified bytes out of band. Tests use the unmodified Stage manifest builder with the real versioned SQL and a fake catalog; no schema_migrations table exists anywhere. Local only; not hosted drill evidence."
+    },
+    {
+      "id": "first_release_schema_initialization_and_column_contract",
+      "summary": "Workflow now renders migration-spec.json + versioned SQL (Stage recipe, proven equal to manifest migration_set_sha256), ships them with scripts/db_migrate.sh to PROD_MIGRATION_DIR and runs prod_ops.sh migrate before the switch: product base-schema initializer (db_migrate.sh --print-sql, creates public.telemetry_events) first, then the qualified expand SQL, then the gate. Catalog check is column/type/default level (telemetry_events ingested_seq/ingested_at etc. plus SQL-declared columns); id-only and wrong-type catalogs are rejected with independent regressions. No manifests/SQL/hashes rewritten. Local controller tests only (no PostgreSQL binary available in this worker); real-PG replay of the reviewer reproducers is left to the reviewer/hosted drill; not hosted evidence."
+    },
+    {
+      "id": "durable_application_stores",
+      "summary": "Compose wires Stage's selected native store paths for runtime-manager, governance, deployment, lifecycle-projector and both BFF colors onto the retained data disk ($PROD_DATA_MOUNT/{runtime,governance,bff}, created by bootstrap.sh) with identical shared mounts per color; static tests assert paths/mounts/env parity. Runbook documents backup (pg_dump + owner-store tar) and restore readability drill. Local only; hosted backup/restore drill remains external_wait."
+    },
+    {
+      "id": "product_owner_packaging_extension",
+      "summary": "Same-task source extension (fresh task head, new PR; merged PR6829 untouched). Consumes merged ENV-STG-EPHEMERAL-IMPL-001 packaging contract (staging_sanitize.PRODUCT_OWNER_IMAGE_KEYS): production compose packages the 16 existing product owners plus the Agora request worker from immutable manifest backend.images with native Postgres stores, per-owner stores under $PROD_DATA_MOUNT/product, no published ports, safe-off flags, BFF owner-route URLs and Agora store env. bootstrap.sh requires PROD_TENANT_ID and all product DSN/service secrets (rejecting Dev defaults) and pre-pulls the full pinned closure; prod_ops.sh requires every owner digest, acquires with --no-recreate, activates the worker as a singleton with the lifecycle projector, verifies exact running digests, and rolls product owners back to exact retained baseline digests (removing them when the baseline predates them, failing closed on a partial baseline, never inventing a digest). prod_preflight requires PROD_TENANT_ID. Local fake-docker tests only; no provisioning, deployment, secret or business-data access; not hosted evidence."
+    },
+    {
+      "id": "baseline_json_rollback_and_paper_owner_packaging",
+      "pr": 6844,
+      "summary": "prod_atomic_switch.sh journals prior state/baseline.json (prev_baseline.json); prod_rollback.sh restores it after a post-success manual rollback and removes any baseline.json on a bootstrap abort (honest no-baseline safe 503, exit 4). Existing paper-fleet-reconciler and paper-signal-producer singleton owners plus the existing Redis signal-store are packaged in Stage and Prod compose/ops/bootstrap, reusing the training_session_svc image digest (enforced by release_manifest.py); drained/resumed with the lifecycle projector, exactly one each. Local controller tests only; no hosted qualification or release manifest is claimed."
+    },
+    {
+      "id": "prod_migration_backend_commit_and_8vcpu_gate_20261103",
+      "summary": "production-release.yml renders versioned SQL and db_migrate.sh from manifest backend.commit via prod_preflight.py migration render-commit (shallow fetch + git archive; fail-closed reasons invalid_backend_commit, backend_commit_fetch_failed, migration_path_missing, substrate_path_missing, migration_archive_failed, migration_digest_or_spec_mismatch), never from the workflow checkout; migration_set_sha256 check unchanged. e2-standard-8 recorded as minimum Prod control VM; read-only prod_preflight.py vm-size gate rejects <8 vCPUs (tested 2, 4 rejected; 8 accepted) and runs in the workflow before the snapshot. Resize procedure for pantheon-prod-control prepared in the runbook and NOT executed. Local source validation only; no workflow dispatch, no Prod VM/GSM/IAM mutation, not hosted drill evidence."
+    }
+  ],
   "scope_limits": {
     "both_native_drills_same_release": "pantheon-20261028-102",
     "complete_original_acceptance": false,
@@ -223,32 +235,40 @@
     "production_acceptance_verified": false,
     "three_account_hosted_QA": "not_executed"
   },
-  "status": "staging_verified",
-  "workflow_run_id": "41581135775",
   "staging_verification_runs": [
     {
-      "workflow_run_id": "41579314601",
-      "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/41579314601",
       "artifact_id": 13205541547,
-      "original_verification_sha256": "sha256:87367805143a43cb7edee18cb6c708e87ba7be4216c80b950342cc6155337d6c",
-      "rollback_duration_seconds": 107.727,
       "cleanup": {
         "deleted_resource_count": 4,
         "evidence_sha256": "sha256:97bca5012934cf14a2e3902335458802eee6adbc10c18284bc625a040c608ba3",
         "post_delete_readback_verified": true
-      }
+      },
+      "original_verification_sha256": "sha256:87367805143a43cb7edee18cb6c708e87ba7be4216c80b950342cc6155337d6c",
+      "rollback_duration_seconds": 107.727,
+      "workflow_run_id": "41579314601",
+      "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/41579314601"
     },
     {
-      "workflow_run_id": "41581135775",
-      "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/41581135775",
       "artifact_id": 13205758813,
-      "original_verification_sha256": "sha256:fe505400f0f0a1d71fb1b68291ea5bea4da1fa8aae3c4f5d7d72e7c07b737f88",
-      "rollback_duration_seconds": 108.599,
       "cleanup": {
         "deleted_resource_count": 4,
         "evidence_sha256": "sha256:08029feda84a4c2a7f2c800bb0d4a3f8b807d1b055a757ef4491e299ea8ab8c9",
         "post_delete_readback_verified": true
-      }
+      },
+      "original_verification_sha256": "sha256:fe505400f0f0a1d71fb1b68291ea5bea4da1fa8aae3c4f5d7d72e7c07b737f88",
+      "rollback_duration_seconds": 108.599,
+      "workflow_run_id": "41581135775",
+      "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/41581135775"
     }
-  ]
+  ],
+  "status": "staging_verified",
+  "task_id": "ENV-PROD-CONTROL-IMPL-001",
+  "track": "functional",
+  "validation": {
+    "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
+    "result": "tests.deployment.test_production_release pytest run locally (script behavior only; not hosted drill evidence)",
+    "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
+  },
+  "workflow_run_id": "41581135775"
 }

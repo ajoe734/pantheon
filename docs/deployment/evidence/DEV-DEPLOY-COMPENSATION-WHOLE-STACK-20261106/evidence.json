@@ -1,0 +1,32 @@
+{
+  "task_id": "DEV-DEPLOY-COMPENSATION-WHOLE-STACK-20261106",
+  "kind": "functional-contract-evidence",
+  "hosted_verification": "not run; coordinator verifies hosted behavior later",
+  "no_vm_or_ssh_access": true,
+  "design": {
+    "baseline": "outer manifest pantheon.dev-release-artifact-baseline.v2 adds only stack_baseline (pantheon.dev-stack-image-baseline.v1); sealed three-image bundle pantheon.dev-bff-image-bundle.v1 unchanged; v1 still accepted (verify, roundtrip)",
+    "no_new_archives": "other services add no tar; capture tags each recorded image pantheon-protect/<service>:<id12> and names a missing image by service",
+    "scope": "--scope auto|images|stack; auto = whole stack for baseline restore of a v2 baseline (deploy job compensation, compensate_cross_repo_release.sh); restore-final, verify and the roundtrip baseline restore (workflow sets images) keep three images",
+    "restore": "extends restore_images (no second path): preflight of held images before any mutation, unchanged 3-service up --wait 120, candidate-only docker stop, start stopped matching service, recreate only differing services via the same override plus recorded PANTHEON_TENANT_ID/GIT_SHA, one-shots without --wait",
+    "readback_budget": "wrong image/missing/candidate-only fail at once; health/running/exited-0 polled every 5 s for at most 900 s; env of recreated services compared; compensation deadline 1500 s inside the 60 minute step",
+    "prune_safety": "protect tags precede all prunes and all prunes precede mutation; opt-in container/system prune now excludes the Compose project so exited one-shot containers keep their images in use",
+    "failure_summary": "driver prints PANTHEON_ARTIFACT_STACK_MIXED_V1 with validated service names; deploy shell mixed-summary writes ::error:: and job summary ('stack is mixed' / 'compensation NOT proven'); run still fails"
+  },
+  "acceptance_tests": {
+    "1": "test_dev_release_artifacts.py::test_stack_baseline_records_every_service_and_adds_no_archive; test_dev_release_artifact_driver.py::test_capture_seals_a_versioned_stack_baseline_beside_the_unchanged_three_image_bundle; test_capture_dev_artifact_baseline.py::test_v2_baseline_*",
+    "2": "test_dev_environment_lease_deploy_contract.py::test_prior_images_are_held_before_any_prune_and_compose_containers_survive_it; test_dev_release_artifact_retention.py (opt-in prune filter); test_missing_recorded_image_is_named_and_nothing_is_mutated; test_missing_image_at_capture_is_named",
+    "3": "test_whole_stack_success_restores_all_54_and_keeps_tenant (candidate-only stopped, matching service not recreated); test_stopped_service_on_recorded_image_is_started_not_recreated; test_three_image_restore_without_stack_leaves_the_rest_alone; test_whole_stack_scope_is_forwarded_and_only_the_roundtrip_keeps_three_images",
+    "4": "test_whole_stack_success_restores_all_54_and_keeps_tenant; test_recreated_service_with_compose_default_environment_fails_the_proof",
+    "5": "test_unhealthy_service_fails_only_after_the_stated_budget; test_slow_service_that_becomes_healthy_within_budget_passes; test_wrong_image_after_restore_fails_fast_naming_the_service",
+    "6": "test_dev_artifact_compensation_evidence.py::test_stack_readback_*; test_mixed_summary_names_services_and_ignores_forged_lines; test_whole_stack_failure_prints_only_validated_service_names",
+    "7": "StackDocker fake with 54 services (3 sealed, 1 one-shot): success, missing image, candidate-only, already matching"
+  },
+  "verification": {
+    "scripts/test_dev_release_artifacts.py + capture + evidence + retention": "393 passed, 1 skipped",
+    "scripts/test_dev_release_artifact_driver.py + test_dev_paper_diagnostics_failure_path.py": "293 passed",
+    "scripts/test_dev_environment_lease_deploy_contract.py": "2 new tests pass; the same 7 tests fail on the base commit 4bbc13884 tree (pre-existing)",
+    "scripts/test_deploy_nonprod_artifact_restore.py": "the same 6 tests fail on the base commit 4bbc13884 tree (pre-existing, driver transport contract in this environment)"
+  },
+  "changed_assertions": "none weakened or deleted; test_dev_release_artifact_retention.py opt-in prune assertions tightened to the new --filter form; FakeDocker in test_dev_release_artifacts.py extended with whole-stack primitives only",
+  "not_done": "no hosted run; migrations are not rolled back; baseline-unhealthy services with a healthcheck make the proof fail (brief requires healthy)"
+}

@@ -380,3 +380,41 @@ def test_evolution_execute_proposer_is_propose_only_and_mounted_for_evolution():
     from scripts import issue_dev_paper_principals as issuer
     assert variable in issuer.CONSUMER_FILES["evolution"]
     assert not any(variable in names for consumer, names in issuer.CONSUMER_FILES.items() if consumer != "evolution")
+
+
+def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    registry_var = "RESEARCH_REGISTRY_SERVICE_TOKEN"
+    training_var = "RESEARCH_TRAINING_SERVICE_TOKEN"
+    assert CONSUMER_FILES["research-orchestrator-svc"] == (registry_var, training_var)
+    values = issue_environment(configured(), now=NOW)
+
+    registry = verify(values[registry_var])
+    assert registry["roles"] == ["registry-writer"]
+    assert registry["scope"] == "pantheon:dev-owner-write"
+    assert registry["tenant_id"] == "tenant-dev" and registry["allowed_tenants"] == ["tenant-dev"]
+
+    training = verify(values[training_var])
+    # The subject is the X-Pantheon-Service the executor sends to Training.
+    assert training["sub"] == training["service"] == "research-orchestrator"
+    assert training["roles"] == ["training-service"]
+    assert training["tenant_id"] == "tenant-dev" and training["allowed_tenants"] == ["tenant-dev"]
+    for claims in (registry, training):
+        assert claims["exp"] - claims["iat"] <= TTL_SECONDS
+        forbidden = {"decide", "persona.admin", "approver", "approval_proposer", "approval_reader", "operator", "admin"}
+        assert not forbidden & set(claims["roles"])
+    assert values[registry_var + "_FILE"] == "/run/pantheon-principals/" + registry_var
+    assert values[training_var + "_FILE"] == "/run/pantheon-principals/" + training_var
+
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    research = compose["services"]["research-orchestrator-svc"]
+    assert "dev-paper-research-tokens:/run/pantheon-principals:ro" in research["volumes"]
+    for variable in (registry_var, training_var):
+        assert research["environment"][variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+        assert variable not in research["environment"]  # no published fixture token
+    assert "dev-paper-research-tokens:/issued/research-orchestrator-svc" in (
+        compose["services"]["dev-paper-principal-issuer"]["volumes"])
+    assert "dev-paper-research-tokens" in compose["volumes"]
+    training_env = compose["services"]["training-session-svc"]["environment"]
+    assert "research-orchestrator" in training_env["TRAINING_SESSION_ALLOWED_CALLER_SERVICES"].split(":-", 1)[1].rstrip("}").split(",")

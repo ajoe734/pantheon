@@ -150,6 +150,26 @@ def test_attempt_that_never_acquired_the_dev_lease_does_not_fail_the_pair():
     assert run(apply=True)["state"] == "failed_pair_not_retried"
 
 
+def test_market_session_refresh_failure_keeps_the_same_pair_eligible():
+    # The step runs under the lease but before any stack change, like a lost lease race.
+    from scripts.auto_deploy_dev_pair import MARKET_REFRESH_STEP, LEASE_STEP
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    assert f"- name: {MARKET_REFRESH_STEP}\n" in workflow and MARKET_REFRESH_STEP != LEASE_STEP
+    backend, _, _, _, run = setup_pair()
+    backend.deploys = [deploy_run(10, "failure")]
+    backend.failed_steps[10] = MARKET_REFRESH_STEP
+    assert run(apply=False)["state"] != "failed_pair_not_retried"
+    assert run(apply=True)["state"] == "dispatched"
+    assert len(backend.dispatches) == 1
+    for later in ("Capture actual prior artifacts under pinned dev lease", "Deploy dev VM stack under lease",
+                  "Ensure governed dev paper baseline under lease"):
+        backend.failed_steps[10] = later
+        backend.dispatches.clear()
+        for apply in (False, True):
+            assert run(apply=apply)["state"] == "failed_pair_not_retried", later
+        assert not backend.dispatches
+
+
 @pytest.mark.parametrize("failed_backend,failed_frontend", [(OLD, F), (B, OLD)])
 def test_new_merge_on_either_dev_tip_after_failure_dispatches(failed_backend, failed_frontend):
     backend, _, _, _, run = setup_pair()

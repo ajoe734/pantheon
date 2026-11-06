@@ -537,6 +537,107 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertIsNone(proj["fees"])
         self.assertIn("fees", proj["coverage"]["missing_refs"])
 
+    def test_paper_fill_ingest_projects_cost_currency_broker_and_startup_backfill(self):
+        async def scenario():
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            episode_store = TradeEpisodeProjectionStore()
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                trade_episode_projection_store=episode_store,
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            emitter = RuntimeTelemetryEmitter(_runtime_identity(), _FakeBindingResolver())
+            episode_id = str(uuid.uuid4())
+            fill_1 = emitter.build_event(
+                "paper_fill_simulated",
+                {"fill_quantity": -1.0, "fill_price": 245.5},
+                metadata={
+                    "trade_episode_id": episode_id,
+                    "symbol": "2317.TWSE",
+                    "side": "sell",
+                    "currency": "TWD",
+                    "broker": "tw-paper-sim",
+                    "ledger_committed": True,
+                    "ledger_fill_count": 1,
+                    "position_quantity": -1.0,
+                },
+                event_id=str(uuid.uuid4()),
+                created_at="2026-05-01T00:01:00Z",
+            )
+            fill_2 = emitter.build_event(
+                "paper_fill_simulated",
+                {"fill_quantity": 1.0, "fill_price": 251.0},
+                metadata={
+                    "trade_episode_id": episode_id,
+                    "symbol": "2317.TWSE",
+                    "side": "buy",
+                    "currency": "TWD",
+                    "broker": "tw-paper-sim",
+                    "ledger_committed": True,
+                    "ledger_fill_count": 2,
+                    "position_quantity": 0.0,
+                },
+                event_id=str(uuid.uuid4()),
+                created_at="2026-05-01T00:01:05Z",
+            )
+            fill_3 = emitter.build_event(
+                "paper_fill_simulated",
+                {"fill_quantity": -1.0, "fill_price": 245.5},
+                metadata={
+                    "trade_episode_id": episode_id,
+                    "symbol": "2317.TWSE",
+                    "side": "sell",
+                    "currency": "TWD",
+                    "broker": "tw-paper-sim",
+                    "ledger_committed": True,
+                    "ledger_fill_count": 3,
+                    "position_quantity": -1.0,
+                },
+                event_id=str(uuid.uuid4()),
+                created_at="2026-05-01T00:01:10Z",
+            )
+            pnl_snap = emitter.build_event(
+                "pnl_snapshot",
+                {"pnl": 5.0, "fill_count": 3, "pnl_as_of": "2026-04-30T00:00:00Z"},
+                metadata={
+                    "mark_refs": [
+                        {
+                            "symbol": "2317.TWSE",
+                            "price": 235.0,
+                            "as_of": "2026-04-30T00:00:00Z",
+                            "observed_at": "2026-04-30T06:00:00Z",
+                            "lineage": {
+                                "source_ids": ["tw-official:tw_price_daily:TWSE:2317:test"],
+                                "connector_ids": ["tw-twse-tpex-official-market"],
+                            },
+                            "source_ref": "source-ingest://snapshots/mss-2317",
+                        }
+                    ]
+                },
+                event_id=str(uuid.uuid4()),
+                created_at="2026-05-01T00:01:15Z",
+            )
+            for ev in (fill_1, fill_2, fill_3, pnl_snap):
+                self.assertTrue(await svc.ingest(ev))
+            await asyncio.sleep(0.05)
+            await svc.stop(graceful=True)
+            return summary_store.get(_known_binding().runtime_id)
+
+        summary = asyncio.run(scenario())
+        self.assertIsNotNone(summary)
+        row = summary["positions"][0]
+        self.assertEqual(row["symbol"], "2317.TWSE")
+        self.assertEqual(row["quantity"], -1.0)
+        self.assertEqual(row["average_price"], 245.5)
+        self.assertEqual(row["realized_pnl"], -5.5)
+        self.assertEqual(row["unrealized_pnl"], 10.5)
+        self.assertEqual(row["currency"], "TWD")
+        self.assertEqual(row["broker_id"], "tw-paper-sim")
+
     def test_canonical_batch_read_cross_run_and_ineligible_guards(self):
         async def scenario():
             summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)

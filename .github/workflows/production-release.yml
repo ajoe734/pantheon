@@ -31,6 +31,11 @@ on:
         description: "gs:// URI of the immutable FE bundle named by the manifest (never rebuilt)"
         required: true
         type: string
+      VITE_BFF_REAL_WRITES:
+        description: "Per-dispatch public runtime write posture for the candidate FE only (true/false; default false keeps the legacy key absent)"
+        required: false
+        default: "false"
+        type: string
       bootstrap_first_release:
         description: "Explicitly declare first production release (no prior baseline)"
         required: false
@@ -74,6 +79,14 @@ jobs:
             --manifest "${RELEASE_MANIFEST_PATH}" \
             --expected-sha256 "${EXPECTED_MANIFEST_SHA256}"
           test -f "${STAGING_EVIDENCE_PATH}"
+      - name: Validate public write posture input (true/false only)
+        env:
+          VITE_BFF_REAL_WRITES: ${{ inputs.VITE_BFF_REAL_WRITES || 'false' }}
+        run: |
+          case "${VITE_BFF_REAL_WRITES}" in
+            true|false) ;;
+            *) echo "VITE_BFF_REAL_WRITES must be exactly true or false" >&2; exit 1 ;;
+          esac
 
   deploy:
     name: Production blue/green switch (protected Environment approval)
@@ -109,6 +122,7 @@ jobs:
       PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN || '' }}
       PROD_PUBLIC_GCP_IDENTITY_ISSUER: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_ISSUER || '' }}
       PROD_PUBLIC_GCP_IDENTITY_AUDIENCE: ${{ vars.PROD_PUBLIC_GCP_IDENTITY_AUDIENCE || '' }}
+      VITE_BFF_REAL_WRITES: ${{ inputs.VITE_BFF_REAL_WRITES || 'false' }}
       PROD_RPO_SECONDS: ${{ vars.PROD_RPO_SECONDS }}
       PROD_RTO_SECONDS: ${{ vars.PROD_RTO_SECONDS }}
       PROD_RETENTION_DAYS: ${{ vars.PROD_RETENTION_DAYS }}
@@ -195,7 +209,7 @@ jobs:
                      PROD_RETENTION_DAYS PROD_ONCALL_OWNER PROD_ROLLBACK_OWNER STAGING_GCP_PROJECT_ID \
                      DEV_GCP_PROJECT_ID PROD_PUBLIC_GCP_IDENTITY_API_KEY PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID \
                      PROD_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN PROD_PUBLIC_GCP_IDENTITY_ISSUER \
-                     PROD_PUBLIC_GCP_IDENTITY_AUDIENCE; do
+                     PROD_PUBLIC_GCP_IDENTITY_AUDIENCE VITE_BFF_REAL_WRITES; do
               printf 'export %s=%q\n' "$v" "${!v}"
             done
             printf 'export WORKFLOW_INITIATOR=%q\n' "${{ github.triggering_actor }}"

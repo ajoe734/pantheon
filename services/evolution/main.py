@@ -2937,6 +2937,13 @@ _RUN_STATUS_BY_OUTCOME = {
 }
 
 
+# Structured result fields a retrain run records; null for a run that recorded none.
+_RUN_OUTCOME_FIELDS = (
+    "outcome", "outcome_reason", "candidate_artifact_id",
+    "baseline_metrics", "candidate_metrics", "session_id",
+)
+
+
 @app.get("/api/evolution/programs/{program_id}/runs")
 def program_runs(program_id: str) -> Dict[str, Any]:
     """Runs linked to this program, each read back from the owning plane now.
@@ -2957,6 +2964,9 @@ def program_runs(program_id: str) -> Dict[str, Any]:
             receipt = adapter.read_receipt(
                 link["run_id"], expected_intent=_dispatch_payload_for(link["decision_id"], tenant))
         outcome = receipt.outcome if receipt is not None else "unsupported"
+        # Structured retrain result exactly as the owning run recorded it (receipt
+        # evidence); a run that recorded none of it returns null, never a default.
+        evidence = (receipt.evidence if receipt is not None else None) or {}
         items.append({
             "run_id": link["run_id"],
             "decision_id": link["decision_id"],
@@ -2966,6 +2976,7 @@ def program_runs(program_id: str) -> Dict[str, Any]:
             "detail": receipt.detail if receipt is not None else "no adapter for this run",
             "source": "orchestrator_readback",
             "linked_at": link.get("linked_at"),
+            **{field: evidence.get(field) for field in _RUN_OUTCOME_FIELDS},
         })
     return {"items": items}
 

@@ -1,0 +1,30 @@
+{
+  "task_id": "BFF-PERSONA-FLEET-CURRENT-LATENCY-20261106",
+  "scope": "source-only; hosted p95/fresh-page proof remains Root-owned and is NOT claimed here",
+  "profile": {
+    "method": "Delayed each Fleet read-port method by 0.8s against the canonical PM12 fixture and recorded call count, thread and stack per call.",
+    "finding": "_persona_fleet_slim_list_payload issued list_persona_league(include_market_persona_defaults=True) and list_capital_pools(include_market_persona_defaults=True) on the request thread after the directory read. They are independent owner reads, so each added its full latency serially (league rows -> directory -> league(defaults) -> pools).",
+    "not_proven": "No network, CPU or watchdog cause is claimed. The nine prefetches are all consumed on the hot path in the fixture; the final 2.0s wait was not shown to wait on an unused source. Per-owner hosted durations were not available."
+  },
+  "change": {
+    "files": ["services/control-plane/bff/personas/service.py"],
+    "summary": "Submit the league-with-defaults and capital-pool reads together with the directory snapshot from the existing on_records_read hook (after the Paper rank snapshot read), through submit_owner_read(warm_key) and cached_owner_call. The sequential code now finds the value or cached failure. No new cache, pool or framework; timeouts unchanged."
+  },
+  "preserved": ["Paper rank snapshot precedes broader reads", "caller context copied into workers", "bounded 2.0s late-worker wait", "owner failures re-raised, not masked"],
+  "tests": {
+    "new": "services/control-plane/bff/tests/test_persona_fleet_current_latency.py (4 tests; 2 fail on the pre-change source)",
+    "existing_passed": [
+      "tests/test_persona_archived_lifecycle.py",
+      "tests/test_bff_b3_persona_fleet.py",
+      "management_read_models/test_persona_fleet_read_failures.py",
+      "tests/test_bff_persona_provisioning_baseline_500.py",
+      "tests/test_owner_unavailable_503_consistency.py",
+      "test_pathreon_market_persona_fleet_contract.py",
+      "tests/test_mgmt_read_001_persona_fleet_owner_observations.py",
+      "tests/test_read_surface_paper_fleet_owner.py"
+    ],
+    "results": "62 passed; 82 passed, 8 skipped; 11 passed (new + archived lifecycle)"
+  },
+  "hosted_proof": "pending Root: 20 warm real-browser p95 <= 1000ms; 3 fresh logged-in page APIs <= 2000ms and usable <= 2500ms",
+  "independent_review": "pending (Antigravity)"
+}

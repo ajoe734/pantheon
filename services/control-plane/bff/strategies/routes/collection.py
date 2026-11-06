@@ -5,6 +5,10 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
+from ..service import (
+    is_true_draft_lifecycle_state,
+    normalize_strategy_dto_state,
+)
 from .common import StrategyRouteContext, _build_ranking_strategy_index
 
 try:
@@ -19,6 +23,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
     @router.get("/bff/strategies")
     def bff_list_strategies(
         state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -27,49 +32,154 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         """BFF: strategy list (execute-plans Strategy DTO compatibility)."""
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
+        norm_state = str(state).strip() if state and str(state).strip() else None
+        norm_exclude_state = (
+            str(exclude_state).strip()
+            if exclude_state and str(exclude_state).strip()
+            else None
+        )
+        if norm_state and norm_exclude_state:
+            raise ctx.bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Conflicting state filters",
+                "state and exclude_state cannot be combined",
+                precondition_failed="exclude_state",
+            )
         snapshot_at = ctx.utc_now()
-        summaries = ctx.service._invoke_read_owner(ctx.service.list_strategy_summaries) if ctx.service else ctx.list_strategy_summaries_records()
-        if not isinstance(summaries, list):
-            raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy list payload", "strategy_store_unavailable")
-        for summary in summaries:
-            strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
-            if not strategy_id:
-                raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy summary entry", "strategy_store_unavailable")
-        if persona_id:
-            summaries = [
-                s
-                for s in summaries
-                if persona_id in (s.get("persona_ids") or s.get("personaIds") or [])
-            ]
         detail_by_id: Dict[str, Optional[Dict[str, Any]]] = {}
-        if state:
-            filtered_summaries: List[Dict[str, Any]] = []
-            for summary in summaries:
-                strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip()
-                if (
-                    "current_spec_version_id" in summary
-                    or summary.get("lifecycle_state") is not None
-                    or summary.get("state") is not None
-                    or summary.get("status") is not None
-                ):
-                    lifecycle_raw = (
-                        summary.get("lifecycle_state")
-                        or summary.get("state")
-                        or summary.get("status")
+        state_counts: Optional[Dict[str, int]] = None
+        owner_page = (
+            ctx.service.list_strategy_summaries_page(
+                state=norm_state,
+                exclude_state=norm_exclude_state,
+                persona_id=persona_id,
+                page_token=page_token,
+                page_size=page_size,
+            )
+            if ctx.service
+            else None
+        )
+        if owner_page is not None:
+            if not isinstance(owner_page, dict) or not isinstance(owner_page.get("items"), list):
+                raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy list payload", "strategy_store_unavailable")
+            page_summaries = list(owner_page["items"])
+            for summary in page_summaries:
+                strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
+                if not strategy_id:
+                    raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy summary entry", "strategy_store_unavailable")
+            total = int(owner_page.get("total") or 0)
+            next_page_token = owner_page.get("next_page_token")
+            if ctx.service and hasattr(ctx.service, "resolve_strategy_state_counts"):
+                state_counts = ctx.service.resolve_strategy_state_counts(
+                    owner_page=owner_page
+                )
+        else:
+            want_retired = bool(norm_state and norm_state.lower() == "retired")
+            if ctx.service:
+                if hasattr(ctx.service, "list_strategy_summaries_for_filter") and want_retired:
+                    summaries = ctx.service._invoke_read_owner(
+                        lambda: ctx.service.list_strategy_summaries_for_filter(
+                            include_retired=True
+                        )
                     )
                 else:
-                    detail = (
-                        ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current")
-                        if ctx.service
-                        else None
+                    summaries = ctx.service._invoke_read_owner(
+                        ctx.service.list_strategy_summaries
                     )
-                    detail_by_id[strategy_id] = detail
-                    lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
-                if ctx.normalize_lifecycle_state(lifecycle_raw) == state:
+            else:
+                summaries = ctx.list_strategy_summaries_records()
+            if not isinstance(summaries, list):
+                raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy list payload", "strategy_store_unavailable")
+            for summary in summaries:
+                strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
+                if not strategy_id:
+                    raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy summary entry", "strategy_store_unavailable")
+            if ctx.service and hasattr(ctx.service, "resolve_strategy_state_counts"):
+                state_counts = ctx.service.resolve_strategy_state_counts(
+                    fallback_summaries=summaries
+                )
+            if persona_id:
+                summaries = [
+                    s
+                    for s in summaries
+                    if persona_id in (s.get("persona_ids") or s.get("personaIds") or [])
+                ]
+            if norm_state:
+                wanted_lower = norm_state.lower()
+                wanted_dto = normalize_strategy_dto_state(wanted_lower)
+                filtered_summaries: List[Dict[str, Any]] = []
+                for summary in summaries:
+                    strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip()
+                    if (
+                        "current_spec_version_id" in summary
+                        or summary.get("lifecycle_state") is not None
+                        or summary.get("state") is not None
+                        or summary.get("status") is not None
+                    ):
+                        lifecycle_raw = (
+                            summary.get("lifecycle_state")
+                            or summary.get("state")
+                            or summary.get("status")
+                        )
+                    else:
+                        detail = (
+                            ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current")
+                            if ctx.service
+                            else None
+                        )
+                        detail_by_id[strategy_id] = detail
+                        lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
+                    raw_clean = str(lifecycle_raw or "").strip().lower()
+                    if (
+                        ctx.normalize_lifecycle_state(lifecycle_raw) == norm_state
+                        or raw_clean == wanted_lower
+                        or normalize_strategy_dto_state(lifecycle_raw) == wanted_dto
+                    ):
+                        filtered_summaries.append(summary)
+                summaries = filtered_summaries
+            elif norm_exclude_state:
+                excluded_lower = norm_exclude_state.lower()
+                excluded_dto = normalize_strategy_dto_state(excluded_lower)
+                filtered_summaries = []
+                for summary in summaries:
+                    strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip()
+                    if (
+                        "current_spec_version_id" in summary
+                        or summary.get("lifecycle_state") is not None
+                        or summary.get("state") is not None
+                        or summary.get("status") is not None
+                    ):
+                        lifecycle_raw = (
+                            summary.get("lifecycle_state")
+                            or summary.get("state")
+                            or summary.get("status")
+                        )
+                    else:
+                        detail = (
+                            ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current")
+                            if ctx.service
+                            else None
+                        )
+                        detail_by_id[strategy_id] = detail
+                        lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
+                    raw_clean = str(lifecycle_raw or "").strip().lower()
+                    dto_state = normalize_strategy_dto_state(lifecycle_raw)
+                    if raw_clean == "retired" or dto_state == "retired":
+                        continue
+                    if excluded_lower == "draft":
+                        if is_true_draft_lifecycle_state(lifecycle_raw):
+                            continue
+                    elif (
+                        ctx.normalize_lifecycle_state(lifecycle_raw) == norm_exclude_state
+                        or raw_clean == excluded_lower
+                        or dto_state == excluded_dto
+                    ):
+                        continue
                     filtered_summaries.append(summary)
-            summaries = filtered_summaries
-        total = len(summaries)
-        page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
+                summaries = filtered_summaries
+            total = len(summaries)
+            page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
         ranking_snapshot, ranking_read_failed = (
             ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
         )
@@ -98,14 +208,20 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                     ranking_index=ranking_index,
                 )
             )
+        meta = dict(
+            ctx.read_surface_meta(
+                "strategy_specs",
+                "strategy_list",
+                snapshot_at=snapshot_at,
+                total=total,
+            )
+        )
+        meta["state_counts"] = state_counts
         return {
             "data": page_items,
             "items": page_items,
             "page_info": {"next_page_token": next_page_token, "total": total},
-            "meta": ctx.read_surface_meta(
-                "strategy_specs", "strategy_list",
-                snapshot_at=snapshot_at, total=total,
-            ),
+            "meta": meta,
         }
 
     @router.post("/bff/strategies", status_code=201)

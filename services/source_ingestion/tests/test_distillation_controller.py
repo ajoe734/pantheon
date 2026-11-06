@@ -19,6 +19,8 @@ from services.source_ingestion.distillation_controller import (
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 from services.source_ingestion.distillation_worker import (
     DistillationJobQueue,
+    DistillationJobStatus,
+    MARKET_SOURCE_SKIP_REASON,
     source_version_digest,
 )
 
@@ -919,5 +921,390 @@ def test_build_registry_payload_accepts_previous_raw_refs_digest_and_rejects_tam
             ),
             registry_id=_versioned_registry_id(source, tampered_job),
         )
+
+
+def test_controller_tick_with_only_market_sources_skips_registry_and_records_healthy_success(
+    tmp_path, monkeypatch
+) -> None:
+    import importlib
+    import jsonschema
+    from services.source_ingestion.distillation_controller import (
+        RegistrySyncRequest,
+        _make_registry_sync,
+    )
+    from services.source_ingestion.distillation_worker import (
+        DistillationJob,
+        _stable_job_id,
+        _synthesize_evidence_bundle,
+        _synthesize_evidence_item,
+    )
+    from services.source_ingestion.seed_materializer import (
+        MaterializationMode,
+        SeedMaterializationService,
+    )
+
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    evidence_path = tmp_path / "evidence.jsonl"
+    market_sources = [
+        _normalized_source(
+            "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+            title="TWSE 2330 daily price bar",
+            source_type="market",
+            tenant_id="test",
+            symbol="2330",
+        ),
+        _normalized_source(
+            "tw-official:tw_price_daily:TWSE:2317:99aabbccddeeff00",
+            title="TWSE 2317 daily price bar",
+            source_type="market",
+            tenant_id="test",
+            symbol="2317",
+        ),
+    ]
+    with evidence_path.open("w", encoding="utf-8") as fh:
+        for src in market_sources:
+            fh.write(json.dumps({"record_type": "source_record", "payload": src.to_dict()}) + "\n")
+
+    state_path = tmp_path / "state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://fake",
+        registry_url="http://fake-registry",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "jobs.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[source_dir],
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    state_store = ControllerStateStore(state_path)
+    state_store.save(state)
+    writer = DummyLoopWriter()
+
+    registry_reads: list[str] = []
+    registry_writes: list[dict[str, Any]] = []
+
+    def forbidden_get_entry(url: str, registry_id: str) -> dict | None:
+        registry_reads.append(registry_id)
+        pytest.fail(f"Registry read must not occur for market source: {registry_id}")
+
+    def forbidden_register(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        registry_writes.append(payload)
+        pytest.fail(f"Registry write must not occur for market source: {payload.get('registry_id')}")
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", forbidden_get_entry)
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", forbidden_register)
+
+    # Also verify direct _make_registry_sync guard makes zero HTTP calls for market sources.
+    direct_sync = _make_registry_sync(config)
+    m0 = market_sources[0]
+    m0_digest = source_version_digest(m0)
+    m0_item = _synthesize_evidence_item(m0, m0_digest)
+    m0_bundle = _synthesize_evidence_bundle(m0, m0_item, m0_digest)
+    temp_seeds = StrategySpecSeedStore(tmp_path / "direct_seeds.jsonl")
+    m0_seed = SeedMaterializationService(store=temp_seeds, created_by="test").materialize(
+        m0_bundle,
+        source_records=[m0],
+        evidence_items=[m0_item],
+        mode=MaterializationMode.CREATE_IF_ABSENT,
+        requested_by="test",
+        idempotency_key=f"distill:{m0.source_id}:{m0_digest}",
+    ).seed
+    direct_res = direct_sync(
+        RegistrySyncRequest(
+            source=m0,
+            seed=m0_seed,
+            job=DistillationJob(
+                job_id=_stable_job_id(m0.source_id, m0_digest),
+                source_id=m0.source_id,
+                idempotency_key=f"distill:{m0.source_id}:{m0_digest}",
+                status=DistillationJobStatus.LEASED,
+                enqueued_at="2026-11-06T00:00:00Z",
+                source_digest=m0_digest,
+            ),
+            evidence_item=m0_item,
+            evidence_bundle=m0_bundle,
+            version_key=m0_digest,
+        )
+    )
+    assert direct_res.status == "skipped"
+    assert direct_res.reason == MARKET_SOURCE_SKIP_REASON
+    assert direct_res.registry_id == ""
+
+    res = run_controller_tick(config=config, state=state, store=state_store, writer=writer)
+    assert res["status"] == "success"
+    assert registry_reads == []
+    assert registry_writes == []
+    assert res["reconcile"]["enqueued"] == 2
+    assert res["reconcile"]["processed"] == 2
+    assert res["reconcile"]["created"] == 0
+    assert res["reconcile"]["skipped"] == 2
+    assert res["reconcile"]["failed"] == 0
+    assert res["reconcile"]["registry_synced"] == 0
+    assert res["actual"]["synced_count"] == 0
+    assert res["actual"]["sync_failures_count"] == 0
+    assert res["actual"]["pending_dead_letter_count"] == 0
+    assert res["actual"]["terminal_drafts"] == []
+
+    # Seeds are still materialized locally for market sources.
+    seed_store = StrategySpecSeedStore(config.seed_store_path)
+    assert len(seed_store.list_all()) == 2
+
+    queue = DistillationJobQueue(config.job_queue_path)
+    for src in market_sources:
+        job = queue.get(src.source_id, source_version_digest(src))
+        assert job is not None
+        assert job.status == DistillationJobStatus.SKIPPED
+        assert job.skip_reason == MARKET_SOURCE_SKIP_REASON
+        assert job.registry_id is None
+        assert job.attempts == 1
+    assert queue.list_dead_letters() == []
+
+    # LoopControllerWriter received healthy desired & downstream status and 0 terminal drafts in summary.
+    assert len(writer.successes) == 1
+    assert len(writer.failures) == 0
+    recorded = writer.successes[0]
+    assert recorded["desired_state"]["present"] is True
+    assert recorded["desired_state"]["source"] == "source-ingest.normalized_source_records"
+    assert recorded["desired_state"]["summary"] == "2 eligible normalized source records"
+    assert recorded["downstream_actual_state"]["status"] == "ready"
+    assert recorded["downstream_actual_state"]["source"] == "registry.distillation_job_queue"
+    assert recorded["downstream_actual_state"]["summary"] == "0 terminal drafts; 0 dead letters"
+
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    lease_seconds = recorded["lease_duration_seconds"]
+    row = {
+        "loop_id": recorded["loop_id"],
+        "tenant_id": state.tenant_id,
+        "environment": state.environment,
+        "controller_id": state.controller_id,
+        "controller_name": state.controller_name,
+        "deployment_sha": "test-sha",
+        "desired_state_query": None,
+        "actual_state_query": None,
+        "desired_state": recorded["desired_state"],
+        "downstream_actual_state": recorded["downstream_actual_state"],
+        "last_heartbeat_at": now,
+        "last_tick_at": None,
+        "last_success_at": now,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "last_repair_at": None,
+        "last_repair_reason": None,
+        "backlog": recorded["backlog"],
+        "lag": None,
+        "dlq_count": None,
+        "evidence_refs": recorded["evidence_refs"],
+        "truth_level": recorded["truth_level"],
+        "lease_token": "token",
+        "lease_expires_at": now + timedelta(seconds=lease_seconds),
+        "payload": recorded["payload"],
+    }
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3] / "schemas" / "loop-controller-record.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    jsonschema.Draft7Validator(schema).validate(
+        json.loads(json.dumps(row, default=lambda v: v.isoformat()))
+    )
+    projector = importlib.import_module("services.loop-control.projector")
+    projected = projector.project_controller_record_to_bff(
+        row,
+        now=now + timedelta(seconds=config.interval_seconds),
+    )
+    assert projected["desired_state_presence"]["authoritative"] is True
+    assert projected["downstream_actual_state"]["authoritative"] is True
+    assert projected["controller_health"]["status"] == "healthy"
+
+
+def test_controller_tick_internal_note_syncs_while_market_skips_and_approved_row_is_untouched(
+    tmp_path, monkeypatch
+) -> None:
+    import copy
+
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    approved_registry_id = (
+        "reg-strategy-spec-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-da7cb8297afb"
+    )
+    approved_entry = {
+        "registry_id": approved_registry_id,
+        "artifact_kind": "StrategySpec",
+        "artifact_state": "approved",
+        "status": "ACTIVE",
+        "strategy_id": "strat-tw-2330-approved",
+        "version": "1.0.0",
+        "checksum": "chk-approved-2330",
+        "payload": {
+            "registry_id": approved_registry_id,
+            "strategy_id": "strat-tw-2330-approved",
+            "version": "1.0.0",
+            "checksum": "chk-approved-2330",
+            "status": "ACTIVE",
+        },
+    }
+
+    historical_market = _normalized_source(
+        "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+        title="TWSE 2330 historical bar",
+        source_type="market",
+        tenant_id="test",
+        ingest_run_id="ingest-run-old",
+        raw_storage_refs=[
+            {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/old/2330.json", "sha256": "11" * 32}
+        ],
+    )
+    new_market = _normalized_source(
+        "tw-official:tw_price_daily:TWSE:2454:1122334455667788",
+        title="TWSE 2454 daily bar",
+        source_type="market",
+        tenant_id="test",
+        ingest_run_id="ingest-run-new",
+    )
+    note_source = _normalized_source(
+        "internal-note:desk:semi-cycle-20261106",
+        title="Semiconductor inventory inflection note",
+        source_type="internal_note",
+        tenant_id="test",
+    )
+
+    queue_path = tmp_path / "jobs.jsonl"
+    queue = DistillationJobQueue(queue_path)
+    hist_digest = source_version_digest(historical_market)
+    enqueued_hist = queue.enqueue_source_record(historical_market, requested_by="legacy", enqueued_at=1000.0)
+    claimed_hist = queue.claim_due(worker_id="legacy", lease_seconds=30.0, now=1000.0)
+    assert len(claimed_hist) == 1
+    queue.mark_done(
+        claimed_hist[0].job_id,
+        seed_id="seed-legacy-2330",
+        registry_id=approved_registry_id,
+        strategy_id="strat-tw-2330-approved",
+        version="1.0.0",
+        checksum="chk-approved-2330",
+        processed_at=1001.0,
+        claim_token=claimed_hist[0].lease_token,
+    )
+
+    # Replay the historical market source with a newer ingest_run_id alongside a new market bar and an internal_note.
+    replayed_historical_market = _normalized_source(
+        "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+        title="TWSE 2330 historical bar",
+        source_type="market",
+        tenant_id="test",
+        ingest_run_id="ingest-run-replayed",
+        raw_storage_refs=[
+            {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/new/2330.json", "sha256": "22" * 32}
+        ],
+    )
+    evidence_path = tmp_path / "evidence.jsonl"
+    with evidence_path.open("w", encoding="utf-8") as fh:
+        for src in (replayed_historical_market, new_market, note_source):
+            fh.write(json.dumps({"record_type": "source_record", "payload": src.to_dict()}) + "\n")
+
+    registry_entries: dict[str, dict[str, Any]] = {
+        approved_registry_id: copy.deepcopy(approved_entry),
+    }
+    registry_reads: list[str] = []
+    registry_writes: list[str] = []
+
+    def get_entry(url: str, registry_id: str) -> dict[str, Any] | None:
+        registry_reads.append(registry_id)
+        entry = registry_entries.get(registry_id)
+        return {"entry": copy.deepcopy(entry)} if entry is not None else None
+
+    def register(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        reg_id = payload["registry_id"]
+        registry_writes.append(reg_id)
+        metadata = dict(payload.get("metadata") or {})
+        if isinstance(payload.get("strategy_spec"), dict):
+            metadata.setdefault("strategy_spec", payload["strategy_spec"])
+        entry = {
+            **copy.deepcopy(payload),
+            "artifact_type": "strategy_spec",
+            "artifact_state": "draft",
+            "lineage": {
+                "parent_registry_ids": None,
+                **dict(payload.get("lineage") or {}),
+                "source_strategy_spec_id": None,
+            },
+            "metadata": metadata,
+        }
+        entry.pop("strategy_spec", None)
+        entry.pop("source_digest", None)
+        registry_entries[reg_id] = entry
+        return {"entry": copy.deepcopy(entry)}
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", get_entry)
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", register)
+
+    state_path = tmp_path / "state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://fake",
+        registry_url="http://fake-registry",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "alive",
+        job_queue_path=queue_path,
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[source_dir],
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    writer = DummyLoopWriter()
+
+    res = run_controller_tick(config=config, state=state, store=store, writer=writer, queue=queue)
+    assert res["status"] == "success"
+    assert res["reconcile"]["enqueued"] == 2
+    assert res["reconcile"]["processed"] == 2
+    assert res["reconcile"]["created"] == 1
+    assert res["reconcile"]["skipped"] == 1
+    assert res["reconcile"]["failed"] == 0
+    assert res["reconcile"]["registry_synced"] == 1
+
+    note_digest = source_version_digest(note_source)
+    expected_note_reg_id = (
+        f"reg-strategy-spec-{note_source.source_id}-{note_digest.removeprefix('sha256:')[:12]}"
+    )
+    assert registry_writes == [expected_note_reg_id]
+    assert set(registry_reads) == {expected_note_reg_id}
+
+    # Approved row in Registry is completely untouched.
+    assert registry_entries[approved_registry_id] == approved_entry
+
+    # Historical market job stayed terminal (DONE) and did not fail; new market job is SKIPPED.
+    hist_job = queue.get(historical_market.source_id, hist_digest)
+    assert hist_job is not None
+    assert hist_job.status == DistillationJobStatus.DONE
+    assert hist_job.registry_id == approved_registry_id
+
+    new_market_job = queue.get(new_market.source_id, source_version_digest(new_market))
+    assert new_market_job is not None
+    assert new_market_job.status == DistillationJobStatus.SKIPPED
+    assert new_market_job.skip_reason == MARKET_SOURCE_SKIP_REASON
+    assert new_market_job.registry_id is None
+
 
 

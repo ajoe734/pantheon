@@ -745,12 +745,16 @@ def pm12_performance_attribution_sources(
     else:
         personas = []
 
+    # Strategy rows are labelled lazily after paging (see
+    # ``pm12_attribution_strategy_labels``); the full strategy registry list is
+    # never read here.
+    strategies: List[Dict[str, Any]] = []
+    strategy_label_loader: Optional[Callable[[], Dict[str, Any]]] = None
     if list_strategy_summaries is not None:
-        strategies = list_strategy_summaries()
-    elif resolved_read_store is not None and hasattr(resolved_read_store, "list_strategy_specs"):
-        strategies = list(resolved_read_store.list_strategy_specs() or [])
-    else:
-        strategies = []
+        strategy_label_loader = None
+        strategies = list(list_strategy_summaries() or [])
+    elif resolved_read_store is not None and hasattr(resolved_read_store, "get_strategy_labels"):
+        strategy_label_loader = resolved_read_store.get_strategy_labels
 
     plans_by_id = {
         _pm12_management_record_id(plan, "plan_id", "id"): plan
@@ -822,6 +826,8 @@ def pm12_performance_attribution_sources(
         "pools_by_id": pools_by_id,
         "personas_by_id": personas_by_id,
         "strategies_by_id": strategies_by_id,
+        "strategy_label_loader": strategy_label_loader,
+        "strategy_label_status": {},
         "telemetry_by_runtime_id": telemetry_by_runtime_id,
     }
 
@@ -1256,6 +1262,43 @@ def pm12_attribution_data_confidence(metrics: Dict[str, Any]) -> str:
     return "formal"
 
 
+def pm12_attribution_strategy_labels(
+    entries: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Strategy labels for the returned page only.
+
+    Zero registry reads when the page has no strategy row; otherwise exactly one
+    bounded label read.  A failed read keeps the strategy id as the label and
+    records ``strategy_label_status`` so the response reports a degraded label
+    source instead of failing.
+    """
+    labels: Dict[str, Dict[str, Any]] = dict(sources.get("strategies_by_id") or {})
+    loader = sources.get("strategy_label_loader")
+    status = sources.get("strategy_label_status")
+    needs_labels = any(
+        str(entry.get("dimension") or "") == "strategy"
+        and str(entry.get("dimension_key") or "") not in ("", "unassigned")
+        for entry in entries
+    )
+    if not needs_labels or loader is None:
+        return labels
+    try:
+        loaded = loader()
+        if not isinstance(loaded, dict):
+            raise TypeError("strategy label read must return a dict")
+    except Exception as exc:
+        if isinstance(status, dict):
+            status.update({"state": "degraded", "reason": type(exc).__name__})
+        return labels
+    for sid, label in loaded.items():
+        if isinstance(label, dict):
+            labels.setdefault(str(sid), label)
+    if isinstance(status, dict):
+        status.update({"state": "ok"})
+    return labels
+
+
 def pm12_performance_attribution_rows(
     entries: List[Dict[str, Any]],
     *,
@@ -1263,6 +1306,7 @@ def pm12_performance_attribution_rows(
     sources: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    strategy_labels = pm12_attribution_strategy_labels(entries, sources)
 
     for entry in entries:
         dimension = str(entry.get("dimension") or "")
@@ -1293,7 +1337,7 @@ def pm12_performance_attribution_rows(
             dimension,
             key,
             personas_by_id=sources["personas_by_id"],
-            strategies_by_id=sources["strategies_by_id"],
+            strategies_by_id=strategy_labels,
             pools_by_id=sources["pools_by_id"],
         )
         data_confidence = pm12_attribution_data_confidence(metrics)
@@ -1451,6 +1495,15 @@ def pm12_performance_attribution_response(
         "personas": _dataset_status("personas"),
         "strategies": _dataset_status("strategy_specs"),
     }
+    label_status = sources.get("strategy_label_status")
+    if isinstance(label_status, dict) and label_status.get("state") == "degraded":
+        strategies_surface = dict(source_surfaces["strategies"])
+        strategies_surface["status"] = "degraded"
+        strategies_surface["note"] = (
+            "Strategy labels unavailable; strategy ids are shown as labels "
+            f"({label_status.get('reason') or 'label read failed'})."
+        )
+        source_surfaces["strategies"] = strategies_surface
     attribution_surface = aggregate_fn(
         surface_key,
         list(source_surfaces.values()),
@@ -1512,7 +1565,7 @@ def pm12_performance_attribution_response(
                 "GET /api/v1/persona-capital-bindings",
                 "GET /bff/capital-pools",
                 "GET /bff/personas",
-                "GET /bff/strategies",
+                "GET /api/registry/strategy-specs?view=persona_binding_labels",
             ],
             "period": period_scope,
             "dimensions": dimensions,

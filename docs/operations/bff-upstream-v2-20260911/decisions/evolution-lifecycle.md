@@ -207,6 +207,61 @@ this source scope. Cooldown/observation retain the L1 acceptance-time boundary;
 U8B must test it separately from the terminal completion timestamp and report
 any implementation divergence instead of silently moving the clock.
 
+### 7.1 What an approved retrain does
+
+An approved `retrain` decision makes the research orchestrator's retrain
+executor run **one bounded parameter change, evaluated against the original
+through Persona Teaching, and at most one candidate artifact with no
+deployment.**
+
+1. The persona comes from the target Registry entry's `metadata.persona_id`. A
+   target without one ends the run `completed` / `evaluation_rejected`
+   (`target_has_no_persona`) with no Teaching session and no mutation.
+2. One Teaching session is opened for that persona (context refs name the
+   decision and the run). The executor queues and waits for one **baseline**
+   evaluation of the original, then applies the existing bounded rule through
+   the existing controls route, then queues and waits for one **candidate**
+   evaluation. Both run through the real preview job route and real vectorbt
+   evaluation under the `research-orchestrator` service principal and the
+   decision tenant.
+3. A child is registered through the existing Registry mutate route only when
+   the candidate proof and its governance gate are `passed` and the candidate
+   Sharpe is strictly greater than the baseline Sharpe (both defined). The child
+   stays `candidate`; promotion remains with the existing approver actions. The
+   run ends `completed` / `candidate_created`.
+4. Otherwise no child exists: `no_candidate` with `evaluation_gate_failed`,
+   `not_better_than_baseline` or `baseline_unavailable`; an owner rejection (for
+   example a dataset that does not cover the symbol) ends `evaluation_rejected`
+   with the owner's reason; a transport or auth failure or a bounded wait
+   timeout ends the run `failed` and names the failing step.
+5. The run records `session_id`, job and eval ids, `baseline_metrics`,
+   `candidate_metrics`, `outcome`, `outcome_reason` and `candidate_artifact_id`
+   as they become known; `GET /bff/evolution-programs/{id}/runs` returns
+   `outcome`, `outcome_reason`, `candidate_artifact_id`, `baseline_metrics`,
+   `candidate_metrics` and `session_id` as structured fields (null when the run
+   recorded none). A retry for the same decision resumes from the recorded
+   session and job ids and never opens a second session or registers a second
+   child.
+6. **A restart resumes running retrains.** Every research-orchestrator deploy
+   restarts the process while an evaluation can take minutes. On startup each
+   retrain run left `queued` or `running` is resumed in place through the same
+   executor from its own recorded session and job ids: no new run, second
+   session or second child is created (job keys are per decision and the child
+   id is derived from the decision). A child already registered is adopted. A
+   run that cannot resume ends `failed` and names the failing step. A run that
+   is not a retrain is not touched.
+
+The executor writes no runtime binding, deployment plan or capital record and
+never advances `artifact_state` beyond `candidate`.
+
+**The Teaching commit is not part of this path.** The Teaching session
+`complete`, replay `commit` and replay `discard` routes are never called: commit
+only writes the Persona training-target record, which nothing consumes, and it
+requires a human MFA claim the executor must not fabricate. The session stays
+`active`. A rejected retrain evaluation is recorded under the Training
+`retrain_evaluation` functional operation, so it stays visible without taking
+Training's `/readyz` out of service.
+
 ## 8. Operator decisions recorded for finalization
 
 Operator decisions recorded 2026-09-14 by Human/Ops. All proposed choices are

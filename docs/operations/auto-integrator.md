@@ -146,7 +146,10 @@ through the existing content-addressed unblock inbox with dedicated reason
   stay `waiting` and report which task they are queued behind.
 - Under the canonical task-state lock, the supervisor's
   `materialize_auto_integrator_unblock_requests` revalidates that the source task
-  is still `review_approved` with the same `generation` and `delivery_binding`
+  (repository identity compared through the canonical resolver
+  `task_target_repository_id`, so `target_repo: execute-plans` matches the
+  config-key `repository_id: execute_plans`; a missing `target_repo` means
+  `pantheon` and an unknown one is rejected) is still `review_approved` with the same `generation` and `delivery_binding`
   PR/head as the request. If stale, it records a rejected receipt and changes
   nothing. If valid, after releasing the canonical lock it invokes
   `scripts/ai_status.py reopen <source_task_id> <message>` through
@@ -160,6 +163,16 @@ through the existing content-addressed unblock inbox with dedicated reason
   non-zero exit code it keeps the request in the inbox for retry; on success it
   writes the `processed` receipt. Replays are idempotent by revalidating that
   the source is still `review_approved` at the request head before calling.
+- Repair tasks created from an unblock request carry a delivery rule in their
+  acceptance and `next`: the fix is delivered from the repair task's own branch
+  and PR (its own Task-ID only) and the source PR is superseded or no longer
+  stranded. The worker must not push to the source task's branch, because
+  commits carrying the repair task id make the source task's handoff fail the
+  commit trailer check (`check_commit_trailers`, unchanged). If the defect is in
+  the source PR's own commits, the repair branch starts from `origin/dev` and
+  restates the needed change as its own commit. A needed file outside the repair
+  task's artifact contract is reported as a block naming the file, not worked
+  around. The exact-head-behind-base source return is unchanged.
 - Only `BEHIND` routes. Other non-direct merge states keep waiting; a real
   conflict keeps the `exact-head-merge-conflict` path.
 - The integrator never pushes or rewrites the approved head.

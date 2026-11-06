@@ -1267,6 +1267,14 @@ class TelemetryIngestService:
         self._binding_store = binding_store
         self._runtime_summary_store = runtime_summary_store
         self._trade_episode_projection_store = trade_episode_projection_store
+        if (
+            self._runtime_summary_store is not None
+            and self._trade_episode_projection_store is not None
+            and hasattr(self._runtime_summary_store, "backfill_open_position_costs")
+        ):
+            self._runtime_summary_store.backfill_open_position_costs(
+                self._trade_episode_projection_store
+            )
         self._lineage_write_store = lineage_write_store
         self._event_reader = event_reader
 

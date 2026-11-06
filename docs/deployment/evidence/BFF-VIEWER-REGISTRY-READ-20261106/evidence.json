@@ -1,0 +1,120 @@
+{
+  "task_id": "BFF-VIEWER-REGISTRY-READ-20261106",
+  "title": "修復 Viewer 同租戶艦隊讀取被 Registry 角色對照擋成 403",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "ready_for_review",
+  "generated_at": "2026-11-06T09:51:30Z",
+  "repository": "pantheon",
+  "branch": "task/BFF-VIEWER-REGISTRY-READ-20261106",
+  "base_branch": "dev",
+  "base_commit": "2638f809cd4c933aeb26df017979eb122552e5dd",
+  "root_cause_analysis": {
+    "summary": "BFF admits `viewer` and `view_only` principals into `_READ_ROLES` and forwards the caller's verified JWT (`Authorization: Bearer <viewer_jwt>`) and `X-Tenant-Id: tenant-dev` to Registry when `GET /bff/management/persona-fleet` computes routed strategy counts via `GET /api/registry/strategy-specs?view=persona_binding_counts`. Registry's `_REGISTRY_READ_ROLES` in `services/registry/service.py` previously allowed only `_REGISTRY_WRITE_ROLES + (\"registry-reader\",)`, causing strict-mode `_authenticate_registry_read` to reject same-tenant `viewer` and `view_only` principals with HTTP 403 (`Caller roles ('viewer',) do not satisfy required roles ('operator', 'registry-writer', 'admin', 'registry-reader')`), which BFF translated into a 403 `FORBIDDEN` failure on `/bff/management/persona-fleet`.",
+    "bff_read_roles_source": "services/control-plane/bff/auth/policy.py:54",
+    "registry_read_roles_source": "services/registry/service.py:222",
+    "fix": "Extended `_REGISTRY_READ_ROLES` in `services/registry/service.py` to `_REGISTRY_WRITE_ROLES + (\"registry-reader\", \"viewer\", \"view_only\")` while keeping `_REGISTRY_WRITE_ROLES = (\"operator\", \"registry-writer\", \"admin\")` unchanged."
+  },
+  "live_failure_receipts": [
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/private-workspace-profile-routes-1793954651097.json",
+      "sha256": "1801b6254d611c51e7bf15bcb762852a3ab11303579327a0469d8589f2949ac3",
+      "profile": "viewer",
+      "route": "GET /bff/management/persona-fleet?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+      "status": 403,
+      "correlation_id": "084c4748-32b5-4a12-83c7-a2c14bd2507e",
+      "upstream_error": "HTTP 403 from http://registry:8000/api/registry/strategy-specs?view=persona_binding_counts: {\"detail\":\"Caller roles ('viewer',) do not satisfy required roles ('operator', 'registry-writer', 'admin', 'registry-reader')\"}"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/private-workspace-profile-routes-1793955884157.json",
+      "sha256": "b541ec9959adb767ef12de97a374f7fe6418a8fba15c866edb46a8b64b81f4bf",
+      "profile": "viewer",
+      "route": "GET /bff/management/persona-fleet?purpose=trading&data_scope=regular&archived=exclude&page_size=20",
+      "status": 403,
+      "correlation_id": "cid_mw4r0fz6_in5yjwx044",
+      "upstream_error": "HTTP 403 from http://registry:8000/api/registry/strategy-specs?view=persona_binding_counts: {\"detail\":\"Caller roles ('viewer',) do not satisfy required roles ('operator', 'registry-writer', 'admin', 'registry-reader')\"}"
+    }
+  ],
+  "scoped_artifacts": [
+    "services/registry/service.py",
+    "services/registry/test_registry_auth_wiring.py",
+    "services/registry/test_service.py",
+    "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+    "services/control-plane/bff/test_kw05_strategy_spec_contract.py",
+    "docs/deployment/evidence/BFF-VIEWER-REGISTRY-READ-20261106/evidence.json"
+  ],
+  "acceptance_criteria_verification": [
+    {
+      "criterion_index": 1,
+      "criterion": "A genuine locally verified same-tenant viewer and view_only read principal can read the intended scoped Registry GET surfaces including persona_binding, persona_binding_counts, and strategy_summary_page with actual owner data.",
+      "verified_by": [
+        "services/registry/test_registry_auth_wiring.py::test_strict_mode_viewer_and_view_only_can_read_same_tenant_get_surfaces_and_deny_cross_tenant",
+        "services/registry/test_service.py::test_strict_viewer_and_view_only_read_scoped_strategy_spec_views_and_preserve_builtin_policy"
+      ],
+      "status": "passed"
+    },
+    {
+      "criterion_index": 2,
+      "criterion": "The BFF fleet GET works for the same-tenant Viewer principal through the real Registry read contract without empty fallback data or a substituted service or operator token.",
+      "verified_by": [
+        "services/control-plane/bff/test_bff_session_auth_me_contract.py::test_bff_persona_fleet_works_for_same_tenant_viewer_and_view_only_via_real_registry_read_contract",
+        "services/control-plane/bff/test_kw05_strategy_spec_contract.py::test_bff_viewer_and_view_only_read_strategy_specs_and_persona_bindings_against_strict_real_registry_app"
+      ],
+      "status": "passed"
+    },
+    {
+      "criterion_index": 3,
+      "criterion": "Missing or invalid credentials remain denied and cross-tenant selectors and cross-tenant entry reads remain denied while builtin public reads and protected builtin mutations retain the existing policy.",
+      "verified_by": [
+        "services/registry/test_registry_auth_wiring.py::test_strict_mode_viewer_and_view_only_can_read_same_tenant_get_surfaces_and_deny_cross_tenant",
+        "services/registry/test_service.py::test_strict_viewer_and_view_only_read_scoped_strategy_spec_views_and_preserve_builtin_policy",
+        "services/control-plane/bff/test_bff_session_auth_me_contract.py::test_bff_persona_fleet_works_for_same_tenant_viewer_and_view_only_via_real_registry_read_contract"
+      ],
+      "status": "passed"
+    },
+    {
+      "criterion_index": 4,
+      "criterion": "Every Registry mutation still rejects viewer and view_only and no write role list or runtime or broker or capital authority is widened.",
+      "verified_by": [
+        "services/registry/test_registry_auth_wiring.py::test_strict_mode_every_registry_mutation_rejects_viewer_and_view_only_and_keeps_write_roles_narrow"
+      ],
+      "status": "passed"
+    },
+    {
+      "criterion_index": 5,
+      "criterion": "Existing operator and admin reads and writes and persona fleet functional data and tenant boundaries do not regress.",
+      "verified_by": [
+        "services/registry/test_registry_auth_wiring.py",
+        "services/registry/test_service.py",
+        "services/control-plane/bff/test_kw05_strategy_spec_contract.py",
+        "services/control-plane/bff/test_bff_session_auth_me_contract.py"
+      ],
+      "status": "passed"
+    },
+    {
+      "criterion_index": 6,
+      "criterion": "Focused strict auth and scoped view tests and BFF integration regression pass and evidence records exact source and commands; final hosted four-profile acceptance remains Human/Ops owned after exact pair delivery.",
+      "verified_by": [
+        "docs/deployment/evidence/BFF-VIEWER-REGISTRY-READ-20261106/evidence.json"
+      ],
+      "status": "passed"
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_registry_auth_wiring.py services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/test_bff_session_auth_me_contract.py",
+        "exit_code": 0,
+        "summary": "93 passed, 3 warnings in 108.19s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_service.py",
+        "exit_code": 0,
+        "summary": "106 passed, 1 warning in 59.55s"
+      }
+    ]
+  },
+  "hosted_delivery_boundary": {
+    "note": "This task repairs and verifies the source and contract tests in repository branch task/BFF-VIEWER-REGISTRY-READ-20261106. Final hosted dev four-profile acceptance (operator, approver, viewer, risk_owner) against https://dev-pantheon.cctech-support.com and https://dev-bff.cctech-support.com remains Human/Ops owned after exact pair delivery."
+  }
+}

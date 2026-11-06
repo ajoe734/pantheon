@@ -1,0 +1,15 @@
+{
+  "task_id": "OPS-UNBLOCK-OWN-BRANCH-20261106",
+  "summary": "Repair tasks from materialize_auto_integrator_unblock_requests now state delivery from their own branch/PR; next carries AUTO_INTEGRATOR_UNBLOCK_DELIVERY_RULE (no push to source branch, restate from origin/dev, block naming out-of-contract file). check_commit_trailers and the exact-head-behind-base path are unchanged; no new gate or hook.",
+  "changed_files": [
+    ".orchestrator/supervisor.py",
+    ".orchestrator/test_supervisor.py",
+    "docs/operations/auto-integrator.md",
+    "scripts/git/auto_integrator_contract.md"
+  ],
+  "commands": [
+    {"cmd": "python3 -m unittest discover -s .orchestrator -p test_supervisor.py", "result": "Ran 414 tests, OK"},
+    {"cmd": "python3 -m unittest scripts.git.test_auto_integrator", "result": "Ran 170 tests, OK"}
+  ],
+  "notes": "Earlier run from .orchestrator cwd showed a cwd-dependent .gitignore error and a timing-threshold flake (7.1s vs 5.0s under load); both passed when rerun from repo root. Live effect needs runtime promotion by the coordinator after merge."
+}

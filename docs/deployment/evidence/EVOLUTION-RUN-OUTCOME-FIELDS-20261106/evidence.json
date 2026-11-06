@@ -1,0 +1,21 @@
+{
+  "task_id": "EVOLUTION-RUN-OUTCOME-FIELDS-20261106",
+  "kind": "functional",
+  "hosted_verification": "not performed; owned by EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104",
+  "changes": {
+    "services/evolution/main.py": "program_runs adds outcome, outcome_reason, candidate_artifact_id, baseline_metrics, candidate_metrics, session_id from receipt evidence (already passed through by dispatch_receipts.read_receipt); null when the run recorded none. No parsing of detail. The BFF router passes owner items through unchanged.",
+    "services/research/main.py": "New startup handler resume_retrain_runs re-runs every retrain run in status queued/running through _trigger_retrain_execution on the same run id. _retrain_prior_state no longer skips the run itself, so an in-place resume reads its own recorded session/job ids/metrics/candidate id (a run with no session recorded contributes nothing, so fresh runs are unchanged). _trigger_retrain_execution refuses a second executor for a run id already active in the process."
+  },
+  "unchanged": ["candidate rule and outcomes", "no runtime binding, deployment plan or capital write", "no new store, client or route"],
+  "tests": {
+    "services/evolution/test_program_approval_dispatch.py": "29 passed (2 new: fields passed through and null for a run that recorded none; null with no adapter)",
+    "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py": "11 passed (4 new: candidate_created, no_candidate, evaluation_rejected through real research run -> real evolution route -> real BFF route with strict JWT / service token auth; run with nothing recorded returns nulls)",
+    "services/research/tests/test_retrain_executor_real_auth.py": "14 passed (5 new startup-resume tests on the real Registry/Training apps with strict auth: baseline evaluation, candidate evaluation, child registered before terminal, unresumable run fails naming resume_session, non-retrain/finished runs untouched)",
+    "services/research/tests/test_research_orchestrator_http_service.py": "33 passed, unchanged"
+  },
+  "existing_tests": "none weakened or deleted. The BFF test helper _training_owner gained a module-level scenario dict whose defaults reproduce the previous canned answers; existing assertions are unchanged.",
+  "notes": [
+    "Item status in the runs list still maps a completed research run to success (existing behaviour, unchanged); consumers must read outcome to tell candidate_created from no_candidate or evaluation_rejected.",
+    "Restart is simulated by persisting the run as a dying process leaves it (status running plus fields recorded so far) and calling the real startup handler; no process is killed."
+  ]
+}
