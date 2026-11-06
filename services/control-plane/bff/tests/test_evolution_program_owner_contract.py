@@ -335,3 +335,65 @@ def test_pause_program_action_is_honestly_unavailable_via_router(client) -> None
     body = resp.json()
     assert "prog-001" not in str(body)
     assert body.get("action_id") == "pause_program"
+
+
+@pytest.mark.parametrize(
+    "raw_action,expected_canonical",
+    [
+        ("create_constraint", "create_constraint"),
+        ("createConstraint", "create_constraint"),
+        ("create_fitness_formula", "create_fitness_formula"),
+        ("createFitnessFormula", "create_fitness_formula"),
+        ("create_mutation_rule", "create_mutation_rule"),
+        ("createMutationRule", "create_mutation_rule"),
+    ],
+)
+def test_draft_metadata_action_aliases_fail_closed_when_owner_unconfigured(
+    monkeypatch, raw_action: str, expected_canonical: str
+) -> None:
+    """Draft metadata actions normalize cleanly through contracts and adapter,
+    and still fail closed with 422 when PANTHEON_EVOLUTION_API_URL is unset."""
+    from services.control_plane.bff.command_adapters.contracts import canonicalize_wrapped_payload
+
+    monkeypatch.delenv("PANTHEON_EVOLUTION_API_URL", raising=False)
+    monkeypatch.delenv("EVOLUTION_API_URL", raising=False)
+
+    wrapped = canonicalize_wrapped_payload(
+        {
+            "command": "EvolutionProgramAction",
+            "target": {"type": "EvolutionProgram", "id": "evp-draft-001"},
+            "action": raw_action,
+            "params": {"action_id": raw_action, "name": "max_drawdown <= 0.10"},
+        }
+    )
+    assert wrapped["action"] == expected_canonical
+    assert wrapped["params"]["action_id"] == expected_canonical
+
+    adapter = EvolutionCommandAdapter()
+    assert adapter.can_handle("EvolutionProgramAction", "EvolutionProgram", raw_action) is True
+    with pytest.raises(ActionUnavailableError) as exc_info:
+        adapter.execute(
+            command_id="cmd-draft-unconfigured",
+            command_type="EvolutionProgramAction",
+            params={"action_id": raw_action, "program_id": "evp-draft-001", "name": "max_drawdown <= 0.10"},
+        )
+    assert exc_info.value.downstream_status == 422
+    assert exc_info.value.action_id == expected_canonical
+    assert exc_info.value.retryable is False
+
+
+def test_adapter_rejects_conflicting_program_action_carriers() -> None:
+    adapter = EvolutionCommandAdapter()
+    with pytest.raises(ActionUnavailableError) as exc_info:
+        adapter.execute(
+            command_id="cmd-conflict-carriers",
+            command_type="EvolutionProgramAction",
+            params={
+                "action_id": "create_constraint",
+                "action": "pause_program",
+                "program_id": "evp-draft-001",
+            },
+        )
+    assert exc_info.value.downstream_status == 422
+    assert exc_info.value.retryable is False
+
