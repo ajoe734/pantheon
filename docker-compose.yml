@@ -2189,6 +2189,10 @@ services:
       EVOLUTION_GOVERNANCE_BASE_URL: ${EVOLUTION_GOVERNANCE_BASE_URL:-http://governance:8082}
       EVOLUTION_GOVERNANCE_SERVICE_TOKEN: ${EVOLUTION_GOVERNANCE_SERVICE_TOKEN:-}
       EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE: ${EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE:-}
+      # EVOLUTION-BFF-FREEZE-EXEC-20261105: propose-only principal the owner
+      # files the Governance evolution_execute request under (no decide role).
+      EVOLUTION_EXECUTE_PROPOSER_TOKEN: ${EVOLUTION_EXECUTE_PROPOSER_TOKEN:-}
+      EVOLUTION_EXECUTE_PROPOSER_TOKEN_FILE: ${EVOLUTION_EXECUTE_PROPOSER_TOKEN_FILE:-}
       # EVOLUTION-PROGRAM-QUALIFY-R2-20261105: owner reads for program
       # qualification (drift history, telemetry, registry, persona). A missing
       # URL or token fails the criterion closed; nothing is drafted from it.

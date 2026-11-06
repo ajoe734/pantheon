@@ -122,6 +122,7 @@ from models import (  # type: ignore
     DispatchOutboxRecordResponse,
     DispatchReplayRequest,
     ExecuteRequest,
+    ExecutionApprovalRequestIn,
     LearnFeedbackWritebackRequest,
     LearnFeedbackWritebackResponse,
     ObservationWindowReportResponse,
@@ -147,15 +148,19 @@ from services.evolution.dispatch_outbox import (
     DispatchIntent,
     EvolutionDispatchError,
     EvolutionDispatchOutbox,
+    ExecutionApprovalRequestError,
     build_dispatch_outbox_store,
+    file_execution_approval_request,
     install_program_approval_resolver,
     install_program_sibling_resolver,
+    unsupported_freeze_reason,
 )
 from services.evolution.dispatch_receipts import (
     DispatchReceiptError,
     OUTCOME_FAILED,
     OUTCOME_SUCCEEDED,
     build_adapter_registry,
+    configured_adapter_registry,
     supported_planes,
     verify_terminal_receipt,
 )
@@ -709,10 +714,9 @@ dispatch_outbox = EvolutionDispatchOutbox(
     build_dispatch_outbox_store(data_dir=EVOLUTION_DATA_DIR)
 )
 compensation_ledger = CompensationLedger(data_dir=EVOLUTION_DATA_DIR)
-receipt_registry = build_adapter_registry(
+receipt_registry = configured_adapter_registry(
     research_api_url=RESEARCH_API_URL,
     timeout=DOWNSTREAM_TIMEOUT_SECONDS,
-    governance_api_url=(os.getenv("EVOLUTION_GOVERNANCE_BASE_URL") or "").strip() or None,
 )
 
 
@@ -2432,6 +2436,78 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
         decision.observation_window_ends_at,
     )
     return _decision_to_response(decision)
+
+
+# --- Execute approval request / freeze receipt binding ------------------------
+
+@app.post("/api/evolution/proposals/{decision_id}/execution-approval-request")
+def request_execution_approval(decision_id: str, body: ExecutionApprovalRequestIn):
+    """File the Governance ``evolution_execute`` request for this decision.
+
+    The owner computes the binding (decision id and immutable content digest)
+    and files it under its own propose-only principal, so the human operator is
+    never the proposer.  The deterministic request id makes a resubmission
+    reuse the same request.  Only a decision still awaiting review/approval
+    can be filed; nothing here approves or executes anything.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
+    if any(
+        decision_id in (p.get("source_decision_ids") or [])
+        for p in program_service.list_programs(tenant_id=tenant)
+    ):
+        raise _delivery_conflict(
+            f"EvolutionDecision {decision_id} belongs to an EvolutionProgram; "
+            "only a direct EvolutionDecision may file an execution-approval-request"
+        )
+    state = EvolutionDecisionState(decision.decision_state)
+    if state not in (EvolutionDecisionState.PROPOSED, EvolutionDecisionState.REVIEWED):
+        raise HTTPException(
+            status_code=422,
+            detail=f"An execute approval can only be requested from proposed or reviewed, not {state.value}",
+        )
+    data = decision.to_dict()
+    try:
+        filed = file_execution_approval_request(
+            data, content_digest=immutable_decision_fingerprint(data)
+        )
+    except ExecutionApprovalRequestError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    return {
+        "approval_decision_id": filed["approval_id"],
+        "created": filed["created"],
+        "decision_state": filed.get("decision_state"),
+        "decision": filed.get("decision"),
+        "expires_at": filed.get("expires_at"),
+        "decision_id": decision.decision_id,
+        "tenant_id": tenant,
+        "target_type": "evolution_execute",
+        "target_id": decision.decision_id,
+        "target_version": data.get("target_version"),
+        "proposal_content_digest": immutable_decision_fingerprint(data),
+    }
+
+
+@app.get("/api/evolution/proposals/{decision_id}/receipt-binding")
+def get_receipt_binding(decision_id: str):
+    """Exact receipt binding for a paper freeze, after re-running the approval check.
+
+    Refuses (and the caller then makes no Governance write) unless the decision
+    is approved on a current ``evolution_execute`` grant bound to exactly this
+    stored proposal, and is a paper freeze of a candidate artifact.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    tenant = _guard_read_tenant(decision)
+    _require_execution_approval(decision)
+    binding = _receipt_binding(decision)
+    unsupported = unsupported_freeze_reason(binding)
+    if unsupported:
+        raise HTTPException(status_code=422, detail=unsupported)
+    return {**binding, "decision_id": decision.decision_id, "tenant_id": tenant}
 
 
 # --- Boundary query ----------------------------------------------------------

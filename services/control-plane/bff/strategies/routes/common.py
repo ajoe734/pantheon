@@ -28,11 +28,36 @@ def default_utc_now() -> str:
 _UNSET = object()
 
 
+def _build_ranking_strategy_index(
+    ranking_snapshot: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+    if not isinstance(ranking_snapshot, dict):
+        return None
+    items = ranking_snapshot.get("items")
+    if not isinstance(items, (list, tuple)):
+        return None
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        raw_strategy_ids = row.get("strategy_ids")
+        if not isinstance(raw_strategy_ids, (list, tuple)):
+            continue
+        seen_in_row: Set[str] = set()
+        for sid in raw_strategy_ids:
+            normalized = str(sid or "").strip()
+            if normalized and normalized not in seen_in_row:
+                seen_in_row.add(normalized)
+                index.setdefault(normalized, []).append(row)
+    return index
+
+
 def _project_strategy_ranking_metrics(
     strategy_id: str,
     ranking_snapshot: Optional[Dict[str, Any]],
     *,
     ranking_read_failed: bool = False,
+    ranking_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     base_metrics: Dict[str, Any] = {
         "pnl": None,
@@ -46,19 +71,22 @@ def _project_strategy_ranking_metrics(
     }
     if ranking_read_failed or not strategy_id or not isinstance(ranking_snapshot, dict):
         return base_metrics
-    items = ranking_snapshot.get("items")
-    if not isinstance(items, (list, tuple)):
-        return base_metrics
-    matched_rows: List[Dict[str, Any]] = []
-    for row in items:
-        if not isinstance(row, dict):
-            continue
-        raw_strategy_ids = row.get("strategy_ids")
-        if not isinstance(raw_strategy_ids, (list, tuple)):
-            continue
-        row_strategy_ids = [str(sid).strip() for sid in raw_strategy_ids if str(sid or "").strip()]
-        if strategy_id in row_strategy_ids:
-            matched_rows.append(row)
+    if ranking_index is not None:
+        matched_rows = ranking_index.get(strategy_id) or []
+    else:
+        items = ranking_snapshot.get("items")
+        if not isinstance(items, (list, tuple)):
+            return base_metrics
+        matched_rows = []
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            raw_strategy_ids = row.get("strategy_ids")
+            if not isinstance(raw_strategy_ids, (list, tuple)):
+                continue
+            row_strategy_ids = [str(sid).strip() for sid in raw_strategy_ids if str(sid or "").strip()]
+            if strategy_id in row_strategy_ids:
+                matched_rows.append(row)
     if not matched_rows:
         return base_metrics
     if len(matched_rows) > 1:
@@ -144,7 +172,15 @@ def default_require_operator_role(identity: Any, err_fn=None) -> None:
 def default_page_slice(
     items: List[Dict[str, Any]], page_token: Optional[str], page_size: int
 ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-    return list(items[:page_size]), None
+    start = 0
+    if page_token not in (None, ""):
+        try:
+            start = max(0, int(page_token))
+        except (TypeError, ValueError):
+            start = 0
+    end = start + page_size
+    next_page_token = str(end) if end < len(items) else None
+    return list(items[start:end]), next_page_token
 
 
 def default_read_surface_meta(
@@ -286,6 +322,7 @@ class StrategyRouteContext:
         overlay: Optional[Dict[str, Any]] = None,
         ranking_snapshot: Any = _UNSET,
         ranking_read_failed: bool = False,
+        ranking_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         if overlay is not None:
             raise AttributeError("strategy overlay is retired; process-local state overlays are deleted")
@@ -351,6 +388,7 @@ class StrategyRouteContext:
             strategy_id,
             ranking_snapshot if isinstance(ranking_snapshot, dict) else None,
             ranking_read_failed=bool(ranking_read_failed),
+            ranking_index=ranking_index,
         )
         dto: Dict[str, Any] = {
             "id": strategy_id,

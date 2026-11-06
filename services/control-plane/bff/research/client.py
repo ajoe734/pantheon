@@ -127,8 +127,12 @@ class ResearchServiceClient:
 
     # Notes (KW-02)
     def list_research_notes(self) -> List[Dict[str, Any]]:
-        res = self._call("GET", "/api/research/notes", allow_none=(404,))
-        return res if isinstance(res, list) else []
+        # No allow_none: a 404 or a non-list body is an owner failure, never a genuine
+        # empty collection, so callers can tell a failed read from zero rows.
+        res = self._call("GET", "/api/research/notes")
+        if not isinstance(res, list):
+            raise ResearchCommandError("Research note collection response was not a list", status_code=502)
+        return res
     def get_research_note(self, note_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._call("GET", f"/api/research/notes/{note_id}", allow_none=(404,)) if note_id else None
     def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:

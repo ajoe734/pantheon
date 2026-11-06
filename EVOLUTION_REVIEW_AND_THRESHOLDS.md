@@ -354,6 +354,22 @@ human_correction:
 
 - governance-only `freeze` / `retire` / `restrict_pool_eligibility`：
   - governance state change 已寫入，並取得 state-change ref
+  - 目前唯一可執行的是 **paper 階段、`candidate_artifact` 的 freeze**，且只有一條序列：
+    Evolution owner 以自己的 propose-only service principal 向 Governance 提出一筆
+    `evolution_execute` 申請（owner 自行計算 `subject.proposal_id` 與 `subject.proposal_content_digest`，
+    request id 為 deterministic，重送會重用同一筆）→ 人類在既有 `/bff/approvals/{id}/decide` 決定**一次**
+    （決定者不得是提案者，Governance 語意不變）→ 同一筆核准同時供 `ReviewMutation` 與
+    `ApproveEvolutionDecision` 使用 → `ExecuteEvolutionAction` 先向 owner 取得 receipt binding
+    （owner 重跑 `require_execution_approval`，失敗則不寫任何 Governance 資料）→ 在 Governance 寫入綁定
+    decision 的 FreezeOrder（`scope=artifact`、`status=active`，帶 `evolution_decision_id`、`tenant_id`、
+    `target_id`、`target_version`、`proposal_content_digest`、`approval_decision_id`）→ 以
+    `execution_receipt`（`governance_freeze_order`）呼叫 `/execute`。重試會重用同一筆 FreezeOrder，
+    不會重複建立，也不會產生第二個 cooldown。其他 freeze 範圍以 `unsupported_freeze_scope` 拒絕。
+  - **重要**：FreezeOrder 只是治理隔離紀錄（governance quarantine record）。目前除 BFF read model 外，
+    沒有任何服務會讀取並強制執行它，所以 `executed` **不會停止交易**；本變更不新增任何 enforcement，
+    回應與 BFF 契約都明確標示 `trading_stopped: false`。
+  - governance plane 永不自動派工：dispatch worker 對這類已核准的 decision 只保持（hold），
+    不 submit、不計失敗次數、不進 dead letter；decision 被 executed 後由既有 converged 路徑發佈 outbox。
 - research `retrain` / `revalidate`：
   - research job 或 governed work item 已建立
 - deployment follow-through：
@@ -458,7 +474,7 @@ Operator decision 2026-11-04: automatically generated programs must pass this st
 | # | 標準 | 通過條件 |
 |---|---|---|
 | 1 | `real_threshold_signal` | snapshot `breached`，`signal_type` ∈ {`performance_degradation`, `execution_drift`, `feature_drift`, `human_correction`}，`metric_name` 在 policy allowlist（目前只有 `rolling_drawdown_multiple`），`observed_value`/`threshold_value` 為數值且用 comparator 重新判定仍超標。`manual_review`、`incident_followup_required`、`severity1_incident_count` 永不通過。 |
-| 2 | `real_target` | `target_id` 經 registry owner 讀回為允許的 artifact 類型且 deployment stage 在 policy 內（預設 `paper`）；`infra-component` 目標拒絕；其 persona 的 `data_scope` 為 test/acceptance/fixture/synthetic 時拒絕（`allow_test_scope` 預設 false）；無法讀回 = `target_unverifiable`。 |
+| 2 | `real_target` | `target_id` 經 registry owner 讀回為允許的 artifact 類型（registry 僅驗證身分與 artifact_type，不提供 stage）；stage 取自決策指名之 runtime 的 `GET /api/telemetry/runtime-summaries/{runtime_id}`，其 `artifact_id` 必須等於 `target_id`，且 `deployment_stage` 在 policy 內（預設 `paper`）；決策未指名 runtime、summary 指向其他 artifact 或讀不到一律 `target_unverifiable`；`infra-component` 目標拒絕；其 persona 的 `data_scope` 為 test/acceptance/fixture/synthetic 時拒絕（`allow_test_scope` 預設 false）；無法讀回 = `target_unverifiable`。 |
 | 3 | `persistent_breach` | 目標 binding 的 drift 評估歷史（`GET /api/reconciliation-drift/evaluations`）在 `lookback_days`（預設 30）內，同一 `threshold_metric` 的 `governed_threshold_breached=true` 涵蓋至少 `min_distinct_breach_days`（預設 3）個不同的行情日。行情日 = 該評估所引用 `drawdown_snapshot` 事件（`drift_checks[].drawdown_event_id`）的 `metadata.mark_refs[].as_of` 日期；週末或假日重複同一個 mark、同一天多次評估、未指名因果事件的評估都不加天數。IncidentCase 與 decision 不是計數來源（同一 binding 與 cluster 永遠只有一筆 IncidentCase）。 |
 | 4 | `fresh_evidence` | `GET /api/telemetry/runtime-summaries/{runtime_id}` 通過與 `threshold_sweep_worker` 相同的 stale/degraded 與逐指標年齡檢查（`metric_max_age_seconds` 預設 172800），且該 binding 的最新評估（`latest_evaluation_window_seconds` 預設 3600 內）仍為 `governed_threshold_breached=true`。IncidentCase 第一個事件的年齡不影響此項。讀不到即失敗。 |
 | 5 | `executable_action` | `action_type` 在 `_ACTION_PATHS` 對應 `execution_plane=research`（`retrain`、`revalidate`）。`freeze`、`flag_for_review` 等不建立 program，維持原決策路徑。 |
@@ -467,5 +483,5 @@ Operator decision 2026-11-04: automatically generated programs must pass this st
 ### 17.3 讀取邊界
 
 - 需要讀其他服務的標準（2、3、4）只對已通過標準 1、5、6 的決策執行；數百筆無關提案不做任何逐筆 owner 讀取，其餘項目回報 `not_evaluated`。
-- 讀取的服務與憑證：reconciliation-drift（`RECONCILIATION_DRIFT_URL`/`RECONCILIATION_DRIFT_AUTH_TOKEN`）、telemetry（`PANTHEON_TELEMETRY_API_URL`/`PANTHEON_TELEMETRY_SERVICE_TOKEN`）、registry（`PANTHEON_REGISTRY_API_URL`/`EVOLUTION_REGISTRY_SERVICE_TOKEN[_FILE]`）、persona（`PERSONA_URL`/`EVOLUTION_PERSONA_SERVICE_TOKEN[_FILE]`）。任一缺失 fail closed。
+- 讀取的服務與憑證：reconciliation-drift（`RECONCILIATION_DRIFT_URL`/`RECONCILIATION_DRIFT_AUTH_TOKEN`）、telemetry（`PANTHEON_TELEMETRY_API_URL`/`PANTHEON_TELEMETRY_SERVICE_TOKEN`）、registry（`PANTHEON_REGISTRY_API_URL`/`EVOLUTION_REGISTRY_SERVICE_TOKEN[_FILE]`）、persona（`PERSONA_URL`/`EVOLUTION_PERSONA_SERVICE_TOKEN[_FILE]`）。任一缺失 fail closed。檔案型憑證（`*_SERVICE_TOKEN_FILE`，由 `scripts/issue_dev_paper_principals.py` 簽發：registry 僅 `registry-reader`、persona 僅 `viewer`）於每次讀取時才解析，續簽後無需重啟；檔案不可讀只使該次讀取 fail closed。
 - 目前只有 `rolling_drawdown_multiple`（經 reconciliation-drift）能產生通過標準 1 的指標；Sharpe、slippage、reject rate、PSI、human correction 有 evaluator 但尚無 producer。

@@ -141,7 +141,7 @@ def env(monkeypatch, tmp_path):
     read_store.seed_approval_decision(
         {
             "id": "apv-ws-1",
-            "target_type": "evolution_proposal",
+            "target_type": "evolution_execute",
             "target_id": did,
             "decision": "approved",
             "decision_state": "decided",

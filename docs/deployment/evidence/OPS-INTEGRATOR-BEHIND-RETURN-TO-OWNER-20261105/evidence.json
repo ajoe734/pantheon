@@ -1,0 +1,42 @@
+{
+  "task_id": "OPS-INTEGRATOR-BEHIND-RETURN-TO-OWNER-20261105",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change": "Added dedicated unblock reason exact-head-behind-base and predicate requires_source_reopen (separate from requires_repair_task). route_behind_results in scripts/git/auto_integrator.py publishes exact-head-behind-base requests via the content-addressed inbox with deterministic oldest-first ordering and enforces one outstanding BEHIND return per repository and target branch while a processed exact-head-behind-base receipt names a source task still in canonical tasks with status in_progress, review, or review_approved at generation >= the returned one (blocked/todo sources do not hold the queue). In .orchestrator/supervisor.py, materialize_auto_integrator_unblock_requests revalidates under the canonical lock that the source task is still review_approved with matching generation and delivery_binding PR/head, then releases the lock and invokes scripts/ai_status.py reopen via status_command_subprocess_context(config) with AI_NAME=Human/Ops, PANTHEON_LOCAL_HUMAN_OPS=1, and HUMAN_OPS_REASON=auto-integrator-behind-unblock:<request_sha256> without creating a child repair task.",
+  "tests": {
+    "test_auto_integrator": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "170 passed, 662 subtests passed in 27.44s",
+      "covered": [
+        "BehindReturnToOwnerTests::test_oldest_behind_routed_and_newer_queued",
+        "BehindReturnToOwnerTests::test_repeated_pass_reuses_content_addressed_request",
+        "BehindReturnToOwnerTests::test_real_conflict_keeps_exact_head_merge_conflict_path",
+        "BehindReturnToOwnerTests::test_non_behind_states_keep_waiting_without_route",
+        "BehindReturnToOwnerTests::test_repair_of_repair_is_refused_and_waits_for_operator",
+        "BehindReturnToOwnerTests::test_one_outstanding_return_per_repo_blocks_second_until_first_merges_or_closes",
+        "BehindReturnToOwnerTests::test_blocked_source_does_not_hold_behind_queue"
+      ]
+    },
+    "test_supervisor": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "exit_code": 0,
+      "result": "408 passed, 159 subtests passed",
+      "covered": [
+        "AutoIntegratorUnblockAuthorityTests::test_exact_head_behind_base_reopens_source_without_creating_repair_task",
+        "AutoIntegratorUnblockAuthorityTests::test_exact_head_behind_base_reopen_failure_keeps_request_retryable",
+        "AutoIntegratorUnblockAuthorityTests::test_exact_head_behind_base_stale_head_or_generation_changes_nothing",
+        "AutoIntegratorUnblockAuthorityTests::test_exact_head_behind_base_replay_is_idempotent",
+        "AutoIntegratorUnblockAuthorityTests::test_forged_behind_reason_is_refused",
+        "AutoIntegratorUnblockAuthorityTests::test_consumer_allowlist_covers_literal_auto_integrator_reason_producers"
+      ]
+    }
+  },
+  "not_changed": [
+    "branch protection",
+    "strict required checks",
+    "no child repair task created for BEHIND",
+    "no manual reopen step required"
+  ],
+  "activation": "Requires runtime promotion by the coordinator after merge."
+}

@@ -4388,6 +4388,341 @@ class MultiTaskPerRunOrderingTests(unittest.TestCase):
         )
 
 
+class BehindReturnToOwnerTests(unittest.TestCase):
+    """An approved, green, clean-trial-merge PR that is BEHIND goes back to its owner."""
+
+    def _candidates(self, extra_raw: Mapping[str, Any] | None = None):
+        out = []
+        for index, task_id in enumerate(("THRU-101", "THRU-102"), start=1):
+            raw = {
+                "generation": 1,
+                "delivery_binding": {"pr": 300 + index, "head_sha": APPROVED_HEAD},
+            }
+            if task_id == "THRU-101" and extra_raw:
+                raw.update(extra_raw)
+            out.append(
+                auto_integrator.TaskCandidate(
+                    task_id=task_id,
+                    title=task_id,
+                    owner="Codex",
+                    reviewer="Claude",
+                    branch=f"task/{task_id}",
+                    repository_slug="ajoe734/pantheon",
+                    raw_task=raw,
+                )
+            )
+        return out
+
+    def _gate(self) -> auto_integrator.ReviewGate:
+        # THRU-102 is approved EARLIER than THRU-101 although it is listed
+        # second, so ordering must follow approval time, not row order.
+        events = []
+        for task_id, number, ts in (
+            ("THRU-101", 301, "2026-06-12T00:46:00Z"),
+            ("THRU-102", 302, "2026-06-12T00:45:00Z"),
+        ):
+            events.append(
+                {
+                    "ts": ts,
+                    "agent": "Claude",
+                    "type": "review_approved",
+                    "task_id": task_id,
+                    "message": "Independent review approved.",
+                    "review_binding": {
+                        "pr": number,
+                        "head_sha": APPROVED_HEAD,
+                        "head_branch": f"task/{task_id}",
+                        "base": "dev",
+                    },
+                }
+            )
+        return auto_integrator.ReviewGate(
+            state={
+                "tasks": [
+                    {"id": t, "title": t, "status": "review_approved",
+                     "owner": "Codex", "reviewer": "Claude"}
+                    for t in ("THRU-101", "THRU-102")
+                ]
+            },
+            events=events,
+        )
+
+    def _run(self, *, merge_state="BEHIND", ephemeral_merge_returncode=0, extra_raw=None):
+        prs = {}
+        for task_id, number in (("THRU-101", 301), ("THRU-102", 302)):
+            pr = green_pr(number=number, task_id=task_id)
+            pr["mergeStateStatus"] = merge_state
+            prs[f"task/{task_id}"] = pr
+        runner = TwoTaskFakeRunner(prs)
+        runner.merge_base_returncode = 1
+        runner.ephemeral_merge_returncode = ephemeral_merge_returncode
+        settings = auto_integrator.Settings(
+            smoke_commands=("true",),
+            status_identity_sha256="d" * 64,
+            command_runtime_sha="b" * 40,
+        )
+        candidates = self._candidates(extra_raw)
+        gate = self._gate()
+        results = [
+            auto_integrator.integrate_candidate(
+                c, settings, runner, execute=False, open_unblock=False, gate=gate
+            )
+            for c in candidates
+        ]
+        return candidates, results, settings, runner
+
+    def test_oldest_behind_routed_and_newer_queued(self) -> None:
+        candidates, results, settings, runner = self._run()
+        self.assertTrue(all(r.action == "waiting" and r.behind_route for r in results))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            auto_integrator.route_behind_results(
+                candidates, results, settings, runner, root=root, execute=True
+            )
+            requests = list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            self.assertEqual(len(requests), 1)
+            payload = json.loads(requests[0].read_text())
+            self.assertEqual(payload["source_task_id"], "THRU-102")
+            self.assertEqual(payload["reason"], "exact-head-behind-base")
+        by_id = {r.task_id: r for r in results}
+        self.assertEqual(by_id["THRU-102"].action, "blocked")
+        self.assertTrue(by_id["THRU-102"].unblock_task_id)
+        self.assertEqual(by_id["THRU-101"].action, "waiting")
+        self.assertIsNone(by_id["THRU-101"].unblock_task_id)
+        self.assertIn("Queued behind", by_id["THRU-101"].detail)
+        self.assertIn("THRU-102", by_id["THRU-101"].detail)
+        # The approved head is never pushed or rewritten.
+        self.assertFalse(any("push" in c for c in runner.commands))
+
+    def test_repeated_pass_reuses_content_addressed_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            ids = []
+            for _ in range(2):
+                candidates, results, settings, runner = self._run()
+                auto_integrator.route_behind_results(
+                    candidates, results, settings, runner, root=root, execute=True
+                )
+                ids.append(next(r.unblock_task_id for r in results if r.unblock_task_id))
+            self.assertEqual(ids[0], ids[1])
+            self.assertEqual(
+                len(list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))), 1
+            )
+
+    def test_real_conflict_keeps_exact_head_merge_conflict_path(self) -> None:
+        candidates, results, _settings, _runner = self._run(ephemeral_merge_returncode=1)
+        for result in results:
+            self.assertEqual(result.action, "blocked")
+            self.assertIsNone(result.behind_route)
+
+    def test_non_behind_states_keep_waiting_without_route(self) -> None:
+        for state in ("BLOCKED", "DIRTY", "DRAFT"):
+            with self.subTest(state=state):
+                _c, results, _s, _r = self._run(merge_state=state)
+                self.assertTrue(all(r.behind_route is None for r in results))
+
+    def test_repair_of_repair_is_refused_and_waits_for_operator(self) -> None:
+        candidates, results, settings, runner = self._run(
+            extra_raw={"unblock_request": {"source_task_id": "X"}}
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            auto_integrator.route_behind_results(
+                candidates, results, settings, runner, root=root, execute=True
+            )
+            requests = list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            # THRU-101 is a repair and is excluded; the other one routes.
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(json.loads(requests[0].read_text())["source_task_id"], "THRU-102")
+        by_id = {r.task_id: r for r in results}
+        self.assertEqual(by_id["THRU-101"].action, "waiting")
+        self.assertIn("waiting for an operator", by_id["THRU-101"].detail)
+
+    def test_one_outstanding_return_per_repo_blocks_second_until_first_merges_or_closes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidates, results, settings, runner = self._run()
+            auto_integrator.route_behind_results(
+                candidates, results, settings, runner, root=root, execute=True
+            )
+            inbox = root / auto_integrator.UNBLOCK_REQUEST_INBOX
+            requests = list(inbox.glob("*.json"))
+            self.assertEqual(len(requests), 1)
+            first_payload = json.loads(requests[0].read_text(encoding="utf-8"))
+            self.assertEqual(first_payload["source_task_id"], "THRU-102")
+            self.assertEqual(first_payload["reason"], "exact-head-behind-base")
+
+            # Simulate supervisor materializing the reopen: receipt written,
+            # THRU-102 is now in_progress (no longer a review_approved candidate),
+            # while THRU-101 remains review_approved and BEHIND.
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "processed"
+            archive_dir = root / ".orchestrator/auto-integrator-unblock-archive/processed"
+            receipt_dir.mkdir(parents=True)
+            archive_dir.mkdir(parents=True)
+            (receipt_dir / requests[0].name).write_text(
+                json.dumps(
+                    {
+                        "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                        "request_sha256": requests[0].stem,
+                        "outcome": "processed",
+                        "detail": "reopened source task",
+                        "task_id": first_payload["unblock_task_id"],
+                        "reason": "exact-head-behind-base",
+                        "source_task_id": "THRU-102",
+                        "source_task_generation": 1,
+                        "repository_slug": "ajoe734/pantheon",
+                        "pr": 302,
+                        "head_sha": APPROVED_HEAD,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            requests[0].replace(archive_dir / requests[0].name)
+            state_open = {
+                "tasks": [
+                    {
+                        "id": "THRU-102",
+                        "status": "in_progress",
+                        "generation": 1,
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                    },
+                    {
+                        "id": "THRU-101",
+                        "status": "review_approved",
+                        "generation": 1,
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                    },
+                ]
+            }
+            (root / "ai-status.json").write_text(
+                json.dumps(state_open), encoding="utf-8"
+            )
+
+            pass2_candidates, pass2_results, _, _ = self._run()
+            only_101_candidates = [c for c in pass2_candidates if c.task_id == "THRU-101"]
+            only_101_results = [r for r in pass2_results if r.task_id == "THRU-101"]
+            auto_integrator.route_behind_results(
+                only_101_candidates,
+                only_101_results,
+                settings,
+                runner,
+                root=root,
+                execute=True,
+                state=state_open,
+            )
+            self.assertEqual(only_101_results[0].action, "waiting")
+            self.assertIsNone(only_101_results[0].unblock_task_id)
+            self.assertIn("Queued behind outstanding BEHIND return for THRU-102", only_101_results[0].detail)
+            self.assertEqual(list(inbox.glob("*.json")), [])
+
+            # Once THRU-102 finishes (`done` tasks leave `tasks`), THRU-101 may be returned.
+            state_merged = {
+                "tasks": [
+                    {
+                        "id": "THRU-101",
+                        "status": "review_approved",
+                        "generation": 1,
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                    },
+                ]
+            }
+            (root / "ai-status.json").write_text(
+                json.dumps(state_merged), encoding="utf-8"
+            )
+            pass3_candidates, pass3_results, _, _ = self._run()
+            only_101_candidates_3 = [c for c in pass3_candidates if c.task_id == "THRU-101"]
+            only_101_results_3 = [r for r in pass3_results if r.task_id == "THRU-101"]
+            auto_integrator.route_behind_results(
+                only_101_candidates_3,
+                only_101_results_3,
+                settings,
+                runner,
+                root=root,
+                execute=True,
+                state=state_merged,
+            )
+            self.assertEqual(only_101_results_3[0].action, "blocked")
+            self.assertIsNotNone(only_101_results_3[0].unblock_task_id)
+            new_requests = list(inbox.glob("*.json"))
+            self.assertEqual(len(new_requests), 1)
+            second_payload = json.loads(new_requests[0].read_text(encoding="utf-8"))
+            self.assertEqual(second_payload["source_task_id"], "THRU-101")
+            self.assertEqual(second_payload["reason"], "exact-head-behind-base")
+
+    def test_blocked_source_does_not_hold_behind_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "processed"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / ("a" * 64 + ".json")).write_text(
+                json.dumps(
+                    {
+                        "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                        "request_sha256": "a" * 64,
+                        "outcome": "processed",
+                        "detail": "reopened source task",
+                        "task_id": "OPS-AUTO-INTEGRATOR-UNBLOCK-THRU-102-PR302",
+                        "reason": "exact-head-behind-base",
+                        "source_task_id": "THRU-102",
+                        "source_task_generation": 1,
+                        "repository_slug": "ajoe734/pantheon",
+                        "target_branch": "dev",
+                        "pr": 302,
+                        "head_sha": APPROVED_HEAD,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            for non_holding_status in ("blocked", "todo"):
+                with self.subTest(status=non_holding_status):
+                    inbox = root / auto_integrator.UNBLOCK_REQUEST_INBOX
+                    if inbox.exists():
+                        for existing in inbox.glob("*.json"):
+                            existing.unlink()
+                    state_non_holding = {
+                        "tasks": [
+                            {
+                                "id": "THRU-102",
+                                "status": non_holding_status,
+                                "generation": 1,
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            },
+                            {
+                                "id": "THRU-101",
+                                "status": "review_approved",
+                                "generation": 1,
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            },
+                        ]
+                    }
+                    candidates, results, settings, runner = self._run()
+                    only_101_candidates = [c for c in candidates if c.task_id == "THRU-101"]
+                    only_101_results = [r for r in results if r.task_id == "THRU-101"]
+                    auto_integrator.route_behind_results(
+                        only_101_candidates,
+                        only_101_results,
+                        settings,
+                        runner,
+                        root=root,
+                        execute=True,
+                        state=state_non_holding,
+                    )
+                    self.assertEqual(only_101_results[0].action, "blocked")
+                    self.assertIsNotNone(only_101_results[0].unblock_task_id)
+                    new_requests = list(inbox.glob("*.json"))
+                    self.assertEqual(len(new_requests), 1)
+                    payload = json.loads(new_requests[0].read_text(encoding="utf-8"))
+                    self.assertEqual(payload["source_task_id"], "THRU-101")
+                    self.assertEqual(payload["reason"], "exact-head-behind-base")
+
+
 class AutoIntegratorProcessE2ETests(unittest.TestCase):
     def _run_child(self, body: str, *arguments: str) -> dict[str, Any]:
         environment = os.environ.copy()

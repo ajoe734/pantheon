@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from .contracts import ManagementRecordsEnvelope
+
+log = logging.getLogger(__name__)
 
 
 ExtractIdentity = Callable[[Optional[str]], Any]
@@ -79,15 +82,24 @@ def create_knowledge_router(
         items.sort(key=_item_sort_value, reverse=True)
         total = len(items)
         page_items, next_page_token = _page_slice(items, page_token, page_size)
+        # A sub-surface is unusable when it is not configured ("missing") or its
+        # owner read failed ("unavailable"). Everything else was actually read,
+        # including an owner that answered with zero rows.
         available_sources = [
             surface
             for surface in surfaces.values()
-            if surface.get("status") != "unavailable" or surface.get("source") != "missing"
+            if not (surface.get("status") == "unavailable" and surface.get("source") in ("missing", "unavailable"))
         ]
         knowledge_inbox_surface = _knowledge_inbox_surface(
             snapshot_at=snapshot_at,
             available=bool(available_sources),
-            degraded=any(surface.get("status") != "ok" for surface in surfaces.values()),
+            # "missing" is a not-configured dataset reported on its own sub-surface;
+            # it does not degrade an inbox whose other datasets were read. A failed
+            # read or any other non-ok state does.
+            degraded=any(
+                surface.get("status") != "ok" and surface.get("source") != "missing"
+                for surface in surfaces.values()
+            ),
         )
 
         meta = {
@@ -131,13 +143,14 @@ def _collect_knowledge_items(
     counts: Dict[str, int] = {}
 
     for dataset, inbox_type, surface_key, _ in _SOURCE_DATASETS:
-        records = _records_for_dataset(store, dataset)
-        source = _dataset_source(store, dataset, records)
+        records, read_failed = _records_for_dataset(store, dataset)
+        # A failed owner read is never reported as an empty dataset.
+        source = "unavailable" if read_failed else _dataset_source(store, dataset, records)
         surfaces[surface_key] = dataset_surface_status(
             dataset,
             snapshot_at=snapshot_at,
             source=source,
-            has_data=(source != "missing"),
+            has_data=(source not in ("missing", "unavailable")),
             missing_message=f"{dataset} has no readable source records.",
         )
         projected = [
@@ -151,23 +164,28 @@ def _collect_knowledge_items(
     return items, surfaces, counts
 
 
-def _records_for_dataset(store: Any, dataset: str) -> List[Dict[str, Any]]:
-    if dataset == "research_notes":
-        reader = getattr(store, "list_research_notes", None)
-        return _safe_list(reader)
-    if dataset == "insight_cards":
-        reader = getattr(store, "list_insight_cards", None)
-        return _safe_list(reader)
-    if dataset == "institutional_memory_entries":
-        reader = getattr(store, "list_institutional_memory_entries", None)
-        return _safe_list(reader)
-    return []
+def _records_for_dataset(store: Any, dataset: str) -> Tuple[List[Dict[str, Any]], bool]:
+    """Return ``(records, read_failed)``; a raising reader is a failed read, not an empty one."""
+    readers = {
+        "research_notes": "list_research_notes",
+        "insight_cards": "list_insight_cards",
+        "institutional_memory_entries": "list_institutional_memory_entries",
+    }
+    name = readers.get(dataset)
+    if name is None:
+        return [], False
+    return _safe_list(getattr(store, name, None), dataset)
 
 
-def _safe_list(reader: Any) -> List[Dict[str, Any]]:
+def _safe_list(reader: Any, dataset: str = "") -> Tuple[List[Dict[str, Any]], bool]:
     if not callable(reader):
-        return []
-    return [item for item in reader() if isinstance(item, dict)]
+        return [], False
+    try:
+        rows = reader()
+    except Exception as exc:  # noqa: BLE001 - any owner failure means the read did not happen
+        log.warning("Knowledge inbox read of %s failed: %s", dataset or "dataset", exc)
+        return [], True
+    return [item for item in (rows or []) if isinstance(item, dict)], False
 
 
 def _dataset_source(store: Any, dataset: str, records: List[Dict[str, Any]]) -> str:

@@ -72,6 +72,7 @@ Every accepted command must persist:
 | Control | Contract |
 |---|---|
 | Actor | `actor_ref` from authenticated operator identity; anonymous commands are rejected. |
+| Tenant | Verified caller tenant from `_trusted_tenant_for_identity(identity)` is compared against `params` keys (`tenant_id`, `tenant`, `tenantId`) and nested `params.payload` keys (`tenant_id`, `tenant`, `tenantId`, when `payload` is an object) before any store write or downstream owner call; any differing tenant claim is refused with HTTP 403 `TENANT_MISMATCH` and one server audit log line (without tokens). |
 | Trace | non-empty `trace_id` and `correlation_id`; `X-Trace-Id` may be supplied by caller, otherwise BFF generates one. |
 | Idempotency | non-empty idempotency key from header; duplicate key with same request returns the original receipt; same key with different request returns conflict. On final routes, `Idempotency-Key` is canonical and `X-Idempotency-Key` is a temporary compatibility alias; body-level `idempotencyKey` is rejected. |
 | RBAC / policy | command-specific validator must produce a policy decision (`allow` or `deny`) tied to actor, target, action, environment, and trace. |
@@ -177,6 +178,7 @@ codes include:
 | `CONFIRM_TOKEN_REQUIRED` | Operator confirmation token is missing or expired. |
 | `APPROVAL_REQUIRED` | Required approval evidence is absent. |
 | `TWO_MAN_REQUIRED` | A second authorized operator decision/signature is required. |
+| `TENANT_MISMATCH` | Claimed tenant in `params` or `params.payload` (`tenant_id`, `tenant`, `tenantId`) differs from the verified caller tenant; refused at command admission with HTTP 403 before any store write or downstream owner call. |
 | `IDEMPOTENCY_CONFLICT` | Same idempotency key was reused with a different payload. |
 | `ACTION_RETIRED` | Command or action has been retired; returned with HTTP 410 through the existing retired-command mechanism. This is the client-visible code for all such retirements, not `VALIDATION_FAILED`. |
 | `SSE_REPLAY_UNAVAILABLE` | Requested SSE replay window is no longer available. |
@@ -232,27 +234,64 @@ confirmation, and audit gates.
 | Incident / kill switch | `IssueRiskOff`, `LiquidateAll`, `IssueSafeMode`, `ActivateKillSwitch` | operator/admin role per action; admin+MFA for destructive commands; audit reason and command receipt. |
 | Evolution / governance | `ApproveEvolutionDecision`, `ExecuteEvolutionAction`, `ApproveMutation`, `RejectMutation`, `RecordSponsorDecision` | policy-gated governance role; target state checked against read projection before dispatch. |
 
-### 7.1 H4: Evolution proposal approval sequence
+### 7.1 H4: Evolution decision approval and paper-freeze execution sequence
 
-Governance records an Evolution proposal approval with `target_type=evolution_proposal`
-and `target_id=<EvolutionDecision id>`. For `ReviewMutation` and
-`ApproveEvolutionDecision` **only**, an approved record of that type binds to a command
-whose `target` is `{"type":"EvolutionDecision","id":<same id>}`; `decision_id` /
-`evolution_decision_id` params, when present, must equal that id. It never binds to any other
-command, target type, or id (`APPROVAL_DECISION_BINDING_MISMATCH`); pending or rejected
-records stay `APPROVAL_DECISION_NOT_APPROVED`. The approval is not consumed, so one record
-serves both steps. `actor_id` is always the logged-in principal and `actor_role` is resolved from the roles
-the principal holds (e.g. `risk_owner` for a MEDIUM proposal); an unheld or foreign
-actor value is refused with 403.
+A direct EvolutionDecision reaches `executed` through exactly one sequence and one approval
+record. The execution side (`require_execution_approval`) accepts only a Governance
+`target_type=evolution_execute` approval whose `target_id` is the decision id and whose
+`subject.proposal_id` / `subject.proposal_content_digest` are the decision id and its immutable
+content digest, so that is the only record type that binds a direct decision.
 
-1. Create and approve one governance ApprovalDecision (`target_type=evolution_proposal`,
-   `target_id=<evo id>`); note its id as `<apv id>`.
-2. `POST /bff/v1/commands` (header `Idempotency-Key`):
+Binding rules. For `ReviewMutation` and `ApproveEvolutionDecision` **only**, an approved
+`evolution_execute` record binds to a command whose `target` is
+`{"type":"EvolutionDecision","id":<same id>}`; `decision_id` / `evolution_decision_id` params,
+when present, must equal that id. It never binds to any other command, target type, or id
+(`APPROVAL_DECISION_BINDING_MISMATCH`). An `evolution_proposal` record no longer binds a direct
+decision (it can never execute one); program-level approvals keep `evolution_proposal` and are
+unchanged. Pending or rejected records stay `APPROVAL_DECISION_NOT_APPROVED`. All refusals happen
+at admission, before any owner write. The approval is not consumed, so one record serves both
+steps. `actor_id` is always the logged-in principal and `actor_role` is resolved from the roles the
+principal holds (e.g. `risk_owner` for a MEDIUM proposal); an unheld or foreign actor value is
+refused with 403.
+
+1. `POST /bff/evolution-decisions/{id}/execution-approval-request` (operator role). The BFF asks the
+   Evolution owner to file the request; the **owner** computes `subject.proposal_id` and
+   `subject.proposal_content_digest` and files one Governance `evolution_execute` request under its
+   own propose-only service principal (`evolution-execute-proposer`, role `approval_proposer`, no
+   decide or revoke authority). The request id is deterministic (`apv-evoexec-<decision>-<digest16>`),
+   so a resubmission reuses the same request. The BFF computes no digest and files nothing itself.
+   Response: `approval_decision_id`, `created`.
+2. A human operator decides it **once** with the existing `POST /bff/approvals/{id}/decide`.
+   Governance semantics are unchanged: the decider must not be the proposer (the proposer is the
+   service principal, never a human login).
+3. `POST /bff/v1/commands` `ReviewMutation` (proposed -> reviewed) and then
+   `ApproveEvolutionDecision` (reviewed -> approved), both with `approval_decision_id=<apv id>`.
+4. `POST /bff/v1/commands` `ExecuteEvolutionAction` with `action_type=freeze`
+   (approved -> executed), supported only for a **paper freeze of a `candidate_artifact`**:
+   1. the BFF asks the Evolution owner for the exact receipt binding
+      (`GET /api/evolution/proposals/{id}/receipt-binding`); the owner re-runs
+      `require_execution_approval` and refuses with no Governance write when it fails;
+   2. the BFF records the FreezeOrder in Governance (`freeze-<decision id>`, `scope=artifact`,
+      `status=active`, with `evolution_decision_id`, `tenant_id`, `target_id`, `target_version`,
+      `proposal_content_digest`, `approval_decision_id`); a retry reuses the same FreezeOrder;
+   3. the BFF posts `/execute` with `execution_receipt` `downstream_kind=governance_freeze_order`,
+      `downstream_ref_id=<FreezeOrder id>`. No FreezeOrder is written after `/execute`.
+   Result: `decision_state=executed`, `execution_ref_id` equal to the FreezeOrder id, and canonical
+   cooldown / observation timestamps. Any other freeze scope fails with
+   `unsupported_freeze_scope` and records nothing.
+
+**This records a governance quarantine only. It does not stop trading**: no runtime, broker or
+capital call is made and no service outside the BFF read models enforces a FreezeOrder. The
+command result carries `governance_quarantine_only: true`, `trading_stopped: false` and a notice.
+
+The dispatch worker holds an approved decision routed to a plane that is never auto-dispatched
+(governance): no submit, no failed attempt, no dead letter. Once the decision is executed the
+existing converged path publishes the outbox record.
+
+Example commands:
    `{"command":"ReviewMutation","target":{"type":"EvolutionDecision","id":"<evo id>"},"params":{"decision_id":"<evo id>","approval_decision_id":"<apv id>","actor_role":"risk_owner"},"audit_context":{"reason":"H4 review"}}`
-   (proposed -> reviewed)
-3. `POST /bff/v1/commands` (new `Idempotency-Key`, after step 2 completes):
    `{"command":"ApproveEvolutionDecision","target":{"type":"EvolutionDecision","id":"<evo id>"},"params":{"evolution_decision_id":"<evo id>","approval_action":"approve","approval_decision_id":"<apv id>","actor_role":"risk_owner"},"audit_context":{"reason":"H4 approve"}}`
-   (reviewed -> approved)
+   `{"command":"ExecuteEvolutionAction","target":{"type":"EvolutionDecision","id":"<evo id>"},"params":{"evolution_decision_id":"<evo id>","action_type":"freeze"},"audit_context":{"reason":"paper freeze"}}`
 
 ### 7.2 Evolution owner write credential
 

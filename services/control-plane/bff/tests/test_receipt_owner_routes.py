@@ -267,9 +267,9 @@ def test_same_operator_cannot_replay_another_tenant_receipt(owner, tmp_path):
     payload = {"command": "EvolutionProgramAction", "target": {"type": "EvolutionProgram", "id": "program-a"},
                "action": "pause_program", "params": {"action_id": "pause_program", "program_id": "program-a"},
                "audit_context": {"reason": "tenant scoped admission"}}
-    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "shared-key"}
+    headers = {"Authorization": _custom_tok("shared-operator", "tenant-a"), "Idempotency-Key": "shared-key"}
     assert client.post("/bff/v1/commands", json=payload, headers=headers).status_code == 202
-    other = client.post("/bff/v1/commands", json=payload, headers={**headers, "Authorization": _tok("tenant-b")})
+    other = client.post("/bff/v1/commands", json=payload, headers={**headers, "Authorization": _custom_tok("shared-operator", "tenant-b")})
     assert other.status_code == 409, other.text
     assert json.loads(owner.read_text())["writes"] == 1
 

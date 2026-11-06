@@ -737,6 +737,9 @@ def _management_evidence_summary(
     page_items: List[Dict[str, Any]],
     redacted_count: int,
     unavailable: bool = False,
+    population_summary: Optional[Dict[str, Any]] = None,
+    population_summary_unavailable: bool = False,
+    population_items: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     if unavailable:
         # An unreadable owner is "unknown", not zero.
@@ -748,11 +751,62 @@ def _management_evidence_summary(
             "redacted_evidence": None,
             "verified_evidence": None,
             "verified_count": None,
-            "by_source_type": {},
-            "by_link_type": {},
-            "by_credibility_tier": {},
+            "by_source_type": None,
+            "by_link_type": None,
+            "by_credibility_tier": None,
         }
-    visible_items = [item for item in page_items if not item.get("redacted")]
+    visible_page_items = [item for item in page_items if not item.get("redacted")]
+    if population_summary_unavailable:
+        # When the owner count/aggregation read fails while the bounded page
+        # read succeeded, affected summary fields are null (never page-sized).
+        return {
+            "total_evidence": filtered_total,
+            "total_items": filtered_total,
+            "returned_evidence": len(page_items),
+            "visible_evidence": len(visible_page_items),
+            "redacted_evidence": redacted_count,
+            "verified_evidence": None,
+            "verified_count": None,
+            "by_source_type": None,
+            "by_link_type": None,
+            "by_credibility_tier": None,
+        }
+    if population_summary is not None:
+        if page_items and not visible_page_items:
+            verified_count = 0
+            by_source_type: Dict[str, int] = {}
+            by_link_type: Dict[str, int] = {}
+            by_credibility_tier: Dict[str, int] = {}
+        else:
+            verified_count = int(
+                population_summary.get("verified_count")
+                if population_summary.get("verified_count") is not None
+                else (population_summary.get("verified_evidence") or 0)
+            )
+            by_source_type = {
+                str(k): int(v) for k, v in (population_summary.get("by_source_type") or {}).items()
+            }
+            by_link_type = {
+                str(k): int(v) for k, v in (population_summary.get("by_link_type") or {}).items()
+            }
+            by_credibility_tier = {
+                str(k): int(v) for k, v in (population_summary.get("by_credibility_tier") or {}).items()
+            }
+        return {
+            "total_evidence": filtered_total,
+            "total_items": filtered_total,
+            "returned_evidence": len(page_items),
+            "visible_evidence": len(visible_page_items),
+            "redacted_evidence": redacted_count,
+            "verified_evidence": verified_count,
+            "verified_count": verified_count,
+            "by_source_type": by_source_type,
+            "by_link_type": by_link_type,
+            "by_credibility_tier": by_credibility_tier,
+        }
+
+    source_items = population_items if population_items is not None else page_items
+    visible_items = [item for item in source_items if not item.get("redacted")]
     verified_count = len(
         [
             item
@@ -760,7 +814,7 @@ def _management_evidence_summary(
             if bool((item.get("credibility") or {}).get("verified") if (item.get("credibility") or {}).get("verified") is not None else item.get("verified"))
         ]
     )
-    by_source_type: Dict[str, int] = {}
+    by_source_type = {}
     for item in visible_items:
         source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
         source_type = (
@@ -772,12 +826,12 @@ def _management_evidence_summary(
         key = str(source_type or "unknown").strip() or "unknown"
         by_source_type[key] = by_source_type.get(key, 0) + 1
 
-    by_link_type: Dict[str, int] = {}
+    by_link_type = {}
     for item in visible_items:
         key = str(item.get("link_type") or "unknown").strip() or "unknown"
         by_link_type[key] = by_link_type.get(key, 0) + 1
 
-    by_credibility_tier: Dict[str, int] = {}
+    by_credibility_tier = {}
     for item in visible_items:
         cred = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
         key = str(cred.get("tier") or item.get("credibility_tier") or "unknown").strip() or "unknown"
@@ -787,7 +841,7 @@ def _management_evidence_summary(
         "total_evidence": filtered_total,
         "total_items": filtered_total,
         "returned_evidence": len(page_items),
-        "visible_evidence": len(visible_items),
+        "visible_evidence": len(visible_page_items),
         "redacted_evidence": redacted_count,
         "verified_evidence": verified_count,
         "verified_count": verified_count,
@@ -1548,19 +1602,60 @@ def _trading_pulse_index_by_runtime(records: List[Dict[str, Any]]) -> Dict[str, 
     return by_runtime
 
 
+def _trading_pulse_session_is_ended(session: Dict[str, Any]) -> bool:
+    return bool(
+        _runtime_state_monitoring_terminal_reason(session)
+        or session.get("active") is False
+        or session.get("ended_at") not in (None, "")
+    )
+
+
+def _trading_pulse_session_sort_key(session: Dict[str, Any]) -> str:
+    return str(
+        session.get("ended_at")
+        or session.get("updated_at")
+        or session.get("started_at")
+        or session.get("created_at")
+        or ""
+    )
+
+
+def _trading_pulse_prefer_session(
+    current: Optional[Dict[str, Any]], candidate: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Pick a non-ended session over an ended one; among ended, the latest."""
+    if current is None:
+        return candidate
+    current_ended = _trading_pulse_session_is_ended(current)
+    candidate_ended = _trading_pulse_session_is_ended(candidate)
+    if current_ended and not candidate_ended:
+        return candidate
+    if current_ended and candidate_ended:
+        if _trading_pulse_session_sort_key(candidate) > _trading_pulse_session_sort_key(current):
+            return candidate
+    return current
+
+
 def _trading_pulse_monitoring_indexes(
     sessions: List[Dict[str, Any]],
 ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     by_runtime: Dict[str, Dict[str, Any]] = {}
     by_binding: Dict[str, Dict[str, Any]] = {}
     for session in sessions:
+        if not isinstance(session, dict):
+            continue
         runtime_id = _trading_pulse_runtime_id(session)
         binding_id = _trading_pulse_binding_id(session)
-        if runtime_id and runtime_id not in by_runtime:
-            by_runtime[runtime_id] = session
-        if binding_id and binding_id not in by_binding:
-            by_binding[binding_id] = session
+        if runtime_id:
+            by_runtime[runtime_id] = _trading_pulse_prefer_session(by_runtime.get(runtime_id), session)
+        if binding_id:
+            by_binding[binding_id] = _trading_pulse_prefer_session(by_binding.get(binding_id), session)
     return by_runtime, by_binding
+
+
+def _trading_pulse_binding_is_retired(binding: Dict[str, Any]) -> bool:
+    status = str(binding.get("status") or "").strip().lower()
+    return status == "retired" or binding.get("retired_at") not in (None, "")
 
 
 def _trading_pulse_stage(row: Dict[str, Any]) -> str:
@@ -3344,15 +3439,6 @@ class ManagementService:
                         telemetry_summaries = t_res
                 except Exception:
                     telemetry_summaries = []
-            if hasattr(store, "list_paper_live_drift_reports"):
-                try:
-                    d_res = store.list_paper_live_drift_reports() or []
-                    if isinstance(d_res, dict):
-                        drift_reports = list(d_res.values())
-                    elif isinstance(d_res, list):
-                        drift_reports = d_res
-                except Exception:
-                    drift_reports = []
             if hasattr(store, "list_paper_runtime_monitoring_sessions"):
                 try:
                     m_res = store.list_paper_runtime_monitoring_sessions() or []
@@ -3363,8 +3449,17 @@ class ManagementService:
                 except Exception:
                     monitoring_sessions = []
 
+        retired_runtime_count = sum(
+            1
+            for binding in runtime_bindings
+            if isinstance(binding, dict) and _trading_pulse_binding_is_retired(binding)
+        )
+        runtime_bindings = [
+            binding
+            for binding in runtime_bindings
+            if isinstance(binding, dict) and not _trading_pulse_binding_is_retired(binding)
+        ]
         telemetry_by_runtime_id = _trading_pulse_index_by_runtime(telemetry_summaries)
-        drift_by_runtime_id = _trading_pulse_index_by_runtime(drift_reports)
         monitoring_by_runtime_id, monitoring_by_binding_id = _trading_pulse_monitoring_indexes(monitoring_sessions)
 
         runtime_rows = []
@@ -3390,6 +3485,19 @@ class ManagementService:
                     prefetched=True,
                 )
             )
+
+        if store is not None and hasattr(store, "list_paper_live_drift_reports") and any(
+            _trading_pulse_stage(row) in {"live", "canary"} for row in runtime_rows
+        ):
+            try:
+                d_res = store.list_paper_live_drift_reports() or []
+                if isinstance(d_res, dict):
+                    drift_reports = list(d_res.values())
+                elif isinstance(d_res, list):
+                    drift_reports = d_res
+            except Exception:
+                drift_reports = []
+        drift_by_runtime_id = _trading_pulse_index_by_runtime(drift_reports)
 
         all_comparisons = [
             _build_trading_pulse_baseline_comparison(
@@ -3612,6 +3720,7 @@ class ManagementService:
 
         summary = {
             "runtime_count": len(runtime_rows),
+            "retired_runtime_count": retired_runtime_count,
             "telemetry_coverage_count": len(telemetry_rows),
             "by_status": by_status,
             "by_stage": by_stage,
@@ -5488,6 +5597,8 @@ class ManagementService:
         stored_evidence_refs: List[Dict[str, Any]] = []
         owner_total: Optional[int] = None
         owner_next_token: Optional[str] = None
+        owner_summary: Optional[Dict[str, Any]] = None
+        owner_summary_unavailable = False
         owner_page_served = False
         # Availability is decided by THIS read, never by shared store state.
         read_available: Optional[bool] = None
@@ -5526,6 +5637,8 @@ class ManagementService:
                     stored_evidence_refs = list(result.items or [])
                     owner_total = result.total
                     owner_next_token = result.next_page_token
+                    owner_summary = getattr(result, "summary", None)
+                    owner_summary_unavailable = bool(getattr(result, "summary_unavailable", False))
                     owner_page_served = paged
                     read_available = bool(result.available)
                     read_source = result.source
@@ -5680,6 +5793,27 @@ class ManagementService:
                 list(page_items), default_kind="artifact"
             )
 
+        population_processed_items: Optional[List[Dict[str, Any]]] = None
+        if not unavailable and not owner_page_served:
+            if len(evidence_refs) == len(page_items):
+                population_processed_items = processed_items
+            elif redact_evidence_refs is not None:
+                try:
+                    population_processed_items, _ = redact_evidence_refs(
+                        identity,
+                        list(evidence_refs),
+                        capabilities=capabilities,
+                        default_kind="artifact",
+                    )
+                except Exception:
+                    population_processed_items, _ = fail_closed_redacted_refs(
+                        list(evidence_refs), default_kind="artifact"
+                    )
+            else:
+                population_processed_items, _ = fail_closed_redacted_refs(
+                    list(evidence_refs), default_kind="artifact"
+                )
+
         public_items = [
             _management_evidence_public_item(item)
             for item in processed_items
@@ -5690,11 +5824,14 @@ class ManagementService:
             page_items=processed_items,
             redacted_count=redacted_count,
             unavailable=unavailable,
+            population_summary=owner_summary if owner_page_served else None,
+            population_summary_unavailable=owner_summary_unavailable if owner_page_served else False,
+            population_items=population_processed_items,
         )
         facets = {
-            "source_types": summary["by_source_type"],
-            "link_types": summary["by_link_type"],
-            "credibility_tiers": summary["by_credibility_tier"],
+            "source_types": summary["by_source_type"] if summary["by_source_type"] is not None else {},
+            "link_types": summary["by_link_type"] if summary["by_link_type"] is not None else {},
+            "credibility_tiers": summary["by_credibility_tier"] if summary["by_credibility_tier"] is not None else {},
         }
         meta = _snapshot_meta(snap)
         meta["surfaces"] = {

@@ -1,0 +1,54 @@
+{
+  "task_id": "EVOLUTION-BFF-FREEZE-EXEC-20261105",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "evidence_class": "source_and_unit_only",
+  "hosted_actions": "none: the owner ran nothing on hosted and issued no staging or production principal. The coordinator pre-reviews and runs hosted acceptance after merge.",
+  "principal_added": {
+    "variable": "EVOLUTION_EXECUTE_PROPOSER_TOKEN",
+    "file_variable": "EVOLUTION_EXECUTE_PROPOSER_TOKEN_FILE",
+    "subject": "evolution-execute-proposer",
+    "roles": ["approval_proposer"],
+    "scope": "pantheon:dev-owner-write",
+    "tenant": "tenant-dev (dev issuer only)",
+    "issued_by": "scripts/issue_dev_paper_principals.py (same WRITERS form as persona-evaluator-agent); mounted only for the evolution consumer via the existing dev-paper-evolution-tokens volume; wired in docker-compose.yml on the evolution service only",
+    "authority": "propose only: no decide or revoke role, so Governance 'decider must not be the proposer' is unchanged"
+  },
+  "sequence": [
+    "POST /bff/evolution-decisions/{id}/execution-approval-request -> Evolution owner verifies the decision is a direct EvolutionDecision (not listed in any EvolutionProgram.source_decision_ids, else 409), computes subject.proposal_id and subject.proposal_content_digest, and files one Governance evolution_execute request (deterministic id apv-evoexec-<decision>-<digest16>) under the propose-only principal; on 409 from Governance, the owner reads the existing request back under its proposer principal and returns decision_state, decision, and expires_at so the BFF reuses pending/valid-approved requests and returns 409 (approval_rejected, approval_revoked, approval_expired) telling the caller to cancel the decision and propose anew when terminal/expired",
+    "operator decides once via existing POST /bff/approvals/{id}/decide",
+    "that one approved record binds ReviewMutation and ApproveEvolutionDecision (BFF preconditions: evolution_execute binds a direct decision; evolution_proposal no longer does; program approvals unchanged)",
+    "ExecuteEvolutionAction (paper candidate_artifact freeze): owner receipt-binding preflight re-runs require_execution_approval -> bound FreezeOrder recorded in Governance (reused on retry) -> /execute with execution_receipt downstream_kind=governance_freeze_order"
+  ],
+  "behavior_notes": [
+    "The old unbound FreezeOrder write after /execute is removed for every action type.",
+    "The FreezeOrder is a governance quarantine record only; it does not stop trading. Command result carries governance_quarantine_only=true, trading_stopped=false and a notice.",
+    "Dispatch worker main() and Evolution main share configured_adapter_registry(EVOLUTION_GOVERNANCE_BASE_URL) so both processes build GovernanceFreezeOrderAdapter identically and cannot drift.",
+    "Dispatch worker holds an approved decision only when adapter.auto_dispatch is False and unsupported_freeze_reason(payload) is None (paper candidate_artifact freeze): no submit, no failed attempt, no dead letter, no error log. Live/canary freeze, retire, and other governance actions keep the unsupported refusal + dead-letter path.",
+    "Re-requesting an approval after rejection, revocation, or expiry returns 409 from the BFF with a named reason (approval_rejected, approval_revoked, approval_expired) instructing the caller to cancel the decision and propose anew; pending and still-valid approved requests reuse the deterministic id.",
+    "A decision listed in any EvolutionProgram.source_decision_ids is refused with 409 on POST /api/evolution/proposals/{id}/execution-approval-request.",
+    "Freezes outside paper candidate_artifact scope are refused with unsupported_freeze_scope and write nothing.",
+    "No already approved decision is migrated or executed, including the chain 4923 decision; services/governance behavior is not modified."
+  ],
+  "revalidated_pre_review_fixes": [
+    "P1: services/evolution/dispatch_receipts.py configured_adapter_registry wires EVOLUTION_GOVERNANCE_BASE_URL in both services/evolution/main.py and services/evolution/dispatch_worker.py main(); verified by test_worker_main_builds_governance_adapter_from_env_and_holds_paper_freeze and test_evolution_freeze_execute_e2e.py _tick.",
+    "P2: services/evolution/dispatch_worker.py holds only when unsupported_freeze_reason(payload) is None; live/canary freeze, retire, and other governance actions record unsupported refusal and dead-letter (verified by test_non_paper_freeze_and_other_governance_actions_dead_letter_not_held and test_l12_evo_001_process_recovery.py).",
+    "P2: services/evolution/dispatch_outbox.py reads back GET /api/governance/approvals/{id} under the proposer principal on 409 and returns decision_state, decision, and expires_at; services/control-plane/bff/command_adapters/evolution_adapter.py returns 409 with named reasons approval_rejected, approval_revoked, and approval_expired telling the caller to cancel the decision and propose anew while reusing pending and still-valid approved requests.",
+    "P3: services/evolution/main.py request_execution_approval refuses decisions listed in any EvolutionProgram.source_decision_ids with 409."
+  ],
+  "validation": [
+    {"command": "pytest services/evolution -q", "result": "460 passed, 3 skipped"},
+    {"command": "pytest services/control-plane/bff/{test_command_executor.py,test_loop_auto_bff004_cross_loop_drill.py,tests/test_evolution_decision_approval_binding.py,tests/test_evolution_owner_write_service_auth.py,tests/test_management_domain_actions.py,tests/test_receipt_owner_routes.py,tests/test_evochain_005_governance_writes.py,tests/test_evolution_freeze_execute_e2e.py,tests/test_evolution_router.py}", "result": "130 passed"},
+    {"command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py", "result": "39 passed"},
+    {"command": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_bff_route_diff.py", "result": "54 passed"}
+  ],
+  "e2e": "services/control-plane/bff/tests/test_evolution_freeze_execute_e2e.py drives the real BFF command routes and /bff/approvals/{id}/decide with the real Evolution app (EVOLUTION_AUTH_MODE=token) and the real Governance app (strict JWT) in process, using dispatch_worker.configured_adapter_registry for _tick. The only seam is urllib.request.urlopen routing a host to the app and forwarding the exact emitted headers; any host other than evolution/governance fails the test (zero runtime, broker, capital calls). Negative cases: evolution_proposal record, pending, rejected, another tenant, changed proposal digest, Governance write failure, failure after the FreezeOrder write (retry reuses it, single cooldown), freeze outside paper artifact scope, re-request after rejected/revoked/expired (409 named reason), and program-linked decision refused with 409.",
+  "not_run": [
+    "services/governance/test_governance_api.py needs a Postgres test database (GOV_APPROVAL_TEST_DSN) that is unavailable here; services/governance was not modified.",
+    "No hosted, staging or production run."
+  ],
+  "judgment_calls": [
+    "scripts/dev_release_artifacts.py BASELINE_PRINCIPAL_CONFIG and its four test files were not changed: the artifact driver captures token-file paths only from the operator-bff and persona-evaluator-agent containers, and the new principal lives on the evolution service, so adding it would require a new captured service in the sealed baseline and driver. Left for a separate deploy-lane task.",
+    "scripts/bff_route_manifest_backend.py family rules were not changed, so the new route is listed with family 'unknown' like its neighbours; the regenerated manifest also normalised one pre-existing path parameter name ({ref_id} -> {param})."
+  ]
+}

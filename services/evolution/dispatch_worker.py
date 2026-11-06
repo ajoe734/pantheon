@@ -46,6 +46,7 @@ from services.evolution.dispatch_outbox import (
     build_dispatch_outbox_store,
     reconcile_dispatch_outbox,
     require_execution_approval,
+    unsupported_freeze_reason,
 )
 from services.evolution.dispatch_receipts import (
     OUTCOME_FAILED,
@@ -55,6 +56,7 @@ from services.evolution.dispatch_receipts import (
     OUTCOME_TERMINAL_ERROR,
     OUTCOME_UNSUPPORTED,
     build_adapter_registry,
+    configured_adapter_registry,
 )
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -267,6 +269,7 @@ def run_poll(
         "claimed": 0,
         "executed": 0,
         "pending": 0,
+        "held": 0,
         "retried": 0,
         "dead_lettered": 0,
         "compensated": 0,
@@ -446,6 +449,21 @@ def _deliver_one(
             result,
             permanent=True,
             now=now,
+        )
+        return
+
+    if getattr(adapter, "auto_dispatch", True) is False and unsupported_freeze_reason(payload) is None:
+        # The plane is owner-recorded and never auto-dispatched (governance
+        # paper candidate_artifact freeze order).  An approved decision here
+        # waits for the owner path (BFF ExecuteEvolutionAction) to execute it;
+        # once executed, the converged branch above publishes the outbox record.
+        # Live/canary freeze, retire, and other governance actions keep the
+        # refusal + dead-letter path below.
+        result["held"] += 1
+        item["disposition"] = "held"
+        item["detail"] = (
+            f"execution plane {plane!r} is never auto-dispatched; "
+            "awaiting owner-recorded execution"
         )
         return
 
@@ -781,7 +799,7 @@ def main() -> int:
 
     outbox = EvolutionDispatchOutbox(build_dispatch_outbox_store(data_dir=data_dir))
     compensations = CompensationLedger(data_dir=data_dir)
-    registry = build_adapter_registry(
+    registry = configured_adapter_registry(
         research_api_url=research_api_url, timeout=timeout_seconds
     )
 

@@ -769,11 +769,152 @@ def _execute_approve_evolution_decision(
     }
 
 
+_FREEZE_RECEIPT_KIND = "governance_freeze_order"
+_FREEZE_QUARANTINE_NOTICE = (
+    "Recorded a governance quarantine (FreezeOrder) only. It does not stop trading: "
+    "no runtime, broker or capital call is made and no service enforces it."
+)
+_FREEZE_BOUND_FIELDS = (
+    "tenant_id", "target_id", "target_version", "proposal_content_digest", "approval_decision_id",
+)
+
+
+class EvolutionFreezeUnsupportedError(ValueError):
+    """The decision is a freeze outside paper candidate_artifact scope."""
+
+
+def _freeze_order_id_for(decision_id: str) -> str:
+    return f"freeze-{decision_id}"
+
+
+def _owner_get(path: str, auth_token: Optional[str]) -> Dict[str, Any]:
+    return evolution_owner_request(_evolution_url(path), caller_token=auth_token, method="GET")
+
+
+def _existing_bound_freeze_order(
+    freeze_order_id: str, binding: Dict[str, Any], decision_id: str, auth_token: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    """Return the already-recorded FreezeOrder for this decision, or None.
+
+    A retry after a partial failure reuses it; one that is not bound to this
+    exact decision is refused rather than overwritten or duplicated.
+    """
+    try:
+        existing = _get_json(
+            _governance_approval_url(f"/api/governance/freeze-orders/{quote(freeze_order_id, safe='')}"),
+            auth_token=auth_token,
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+    if not isinstance(existing, dict):
+        return None
+    bound_decision = str(existing.get("evolution_decision_id") or existing.get("decision_id") or "").strip()
+    mismatched = [
+        field for field in _FREEZE_BOUND_FIELDS
+        if str(existing.get(field) or "").strip() != str(binding.get(field) or "").strip()
+    ]
+    if bound_decision != decision_id or mismatched or str(existing.get("scope") or "").lower() != "artifact":
+        raise ValueError(
+            f"FreezeOrder {freeze_order_id} exists but is not bound to this decision "
+            f"(mismatched: {mismatched or ['evolution_decision_id/scope']}); refusing to reuse it."
+        )
+    if str(existing.get("status") or "").lower() != "active":
+        raise ValueError(
+            f"FreezeOrder {freeze_order_id} is {existing.get('status')!r}, not active; refusing to reuse it."
+        )
+    return existing
+
+
+def _execute_paper_artifact_freeze(
+    command_id: str, decision_id: str, params: Dict[str, Any], payload: Dict[str, Any],
+    actor_id: str, actor_role: str,
+    auth_token: Optional[str], mfa_token: Optional[str],
+) -> Dict[str, Any]:
+    """Execute an approved paper freeze of a candidate_artifact.
+
+    Order: (1) the owner returns the exact receipt binding after re-running
+    require_execution_approval (a failure here means no Governance write at
+    all); (2) the FreezeOrder is recorded in Governance, bound to the decision,
+    or the existing one is reused; (3) /execute is posted with that
+    FreezeOrder as the downstream receipt.  The FreezeOrder is a governance
+    quarantine record only; nothing here stops trading.
+    """
+    freeze_order_id = _freeze_order_id_for(decision_id)
+    quoted = quote(decision_id, safe="")
+    binding = _owner_get(f"/api/evolution/proposals/{quoted}/receipt-binding", auth_token)
+    existing = _existing_bound_freeze_order(freeze_order_id, binding, decision_id, auth_token)
+    if existing is None:
+        timestamp = _utc_now()
+        freeze_payload = {
+            "freeze_order_id": freeze_order_id,
+            "id": freeze_order_id,
+            "status": "active",
+            "scope": "artifact",
+            "evolution_decision_id": decision_id,
+            "tenant_id": binding["tenant_id"],
+            "target_id": binding["target_id"],
+            "target_version": binding["target_version"],
+            "proposal_content_digest": binding["proposal_content_digest"],
+            "approval_decision_id": binding["approval_decision_id"],
+            "actor": actor_role,
+            "identity": actor_id,
+            "created_at": timestamp,
+            "issued_at": timestamp,
+            "source_command_id": command_id,
+            "reason": params.get("note") or params.get("rationale") or "Evolution paper artifact freeze.",
+        }
+        _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
+
+    execute_payload = {
+        **payload,
+        "freeze_mode": "governance_only",
+        "force_stage_freeze": False,
+        "execution_receipt": {
+            "downstream_kind": _FREEZE_RECEIPT_KIND,
+            "downstream_ref_id": freeze_order_id,
+        },
+    }
+    body = _post_evolution_owner(
+        _evolution_url(f"/api/evolution/proposals/{quoted}/execute"), execute_payload, auth_token=auth_token
+    )
+    return _freeze_result(command_id, decision_id, body, freeze_order_id, reused=existing is not None)
+
+
+def _freeze_result(
+    command_id: str, decision_id: str, body: Dict[str, Any], freeze_order_id: str, *, reused: bool = False,
+) -> Dict[str, Any]:
+    execution_result = body.get("execution_result") or {}
+    return {
+        "authoritative_readback": body,
+        "command_id": command_id,
+        "evolution_decision_id": body.get("decision_id", decision_id),
+        "action_type": body.get("action_type"),
+        "decision_state": body.get("decision_state"),
+        "execution_result": execution_result,
+        "execution_ref_id": execution_result.get("execution_ref_id"),
+        "freeze_order_id": freeze_order_id,
+        "freeze_order_reused": reused,
+        "cooldown_ends_at": body.get("cooldown_ends_at"),
+        "observation_window_ends_at": body.get("observation_window_ends_at"),
+        "governance_quarantine_only": True,
+        "trading_stopped": False,
+        "notice": _FREEZE_QUARANTINE_NOTICE,
+    }
+
+
 def _execute_evolution_action(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ExecuteEvolutionAction to the Evolution owner API."""
+    """Dispatch ExecuteEvolutionAction to the Evolution owner API.
+
+    A paper freeze of a candidate_artifact records its governance FreezeOrder
+    first (bound to the decision) and executes on that receipt; any other
+    freeze is refused with ``unsupported_freeze_scope`` and writes nothing.
+    No FreezeOrder is written after /execute.
+    """
     decision_id = str(params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ExecuteEvolutionAction requires evolution_decision_id.")
@@ -800,31 +941,38 @@ def _execute_evolution_action(
     if note:
         payload["note"] = note
 
-    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/execute")
+    quoted = quote(decision_id, safe="")
+    # A client-named action_type only selects the path; the owner's preflight
+    # and /execute still decide from the stored decision, so naming a freeze
+    # as something else cannot skip the FreezeOrder receipt.
+    if str(params.get("action_type") or "").lower() == "freeze":
+        stored = _owner_get(f"/api/evolution/proposals/{quoted}", auth_token)
+        if str(stored.get("action_type") or "").lower() != "freeze":
+            raise ValueError(
+                f"action_type freeze does not match the stored decision ({stored.get('action_type')!r})"
+            )
+        freeze_order_id = _freeze_order_id_for(decision_id)
+        execution_result = stored.get("execution_result") or {}
+        if stored.get("decision_state") == "executed" and execution_result.get("execution_ref_id") == freeze_order_id:
+            # Retry after the execute committed: report it, never execute twice.
+            return _freeze_result(command_id, decision_id, stored, freeze_order_id, reused=True)
+        unsupported = (
+            str(stored.get("target_type") or "").lower() != "candidate_artifact"
+            or str(stored.get("target_stage") or "").lower() != "paper"
+        )
+        if unsupported:
+            raise EvolutionFreezeUnsupportedError(
+                "unsupported_freeze_scope: only a paper freeze of a candidate_artifact is supported "
+                f"(got target_type={stored.get('target_type')!r}, target_stage={stored.get('target_stage')!r}); "
+                "nothing was recorded."
+            )
+        return _execute_paper_artifact_freeze(
+            command_id, decision_id, params, payload, actor_id, actor_role, auth_token, mfa_token
+        )
+
+    url = _evolution_url(f"/api/evolution/proposals/{quoted}/execute")
     body = _post_evolution_owner(url, payload, auth_token=auth_token)
     execution_result = body.get("execution_result") or {}
-
-    freeze_mode = params.get("freeze_mode")
-    force_stage_freeze = params.get("force_stage_freeze")
-    is_real_freeze = freeze_mode and freeze_mode != "governance_only"
-    if is_real_freeze or force_stage_freeze:
-        timestamp = _utc_now()
-        freeze_order_id = f"freeze-{decision_id}"
-        freeze_payload = {
-            "freeze_order_id": freeze_order_id,
-            "id": freeze_order_id,
-            "status": "active",
-            "scope": str(freeze_mode or "persona"),
-            "target_id": body.get("target_id") or params.get("persona_id") or params.get("target_id") or "unknown",
-            "actor": actor_role,
-            "identity": actor_id,
-            "created_at": timestamp,
-            "issued_at": timestamp,
-            "source_command_id": command_id,
-            "reason": params.get("note") or params.get("rationale") or "Evolution action freeze.",
-        }
-        _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
-
     return {
         "authoritative_readback": body,
         "command_id": command_id,

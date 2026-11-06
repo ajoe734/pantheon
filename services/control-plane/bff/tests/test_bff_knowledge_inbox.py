@@ -224,3 +224,59 @@ def test_bff_knowledge_inbox_surface_state_parity(
         assert body["meta"]["surfaces"]["knowledge_inbox"]["status"] == expected_meta
         assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["status"] == expected_notes
 
+
+
+# --- BFF-KNOWLEDGE-EMPTY-NOT-UNAVAILABLE-20261105 -------------------------
+# Hosted shape: owner answered GET /api/research/notes 200 with [] while the
+# inbox reported unavailable/missing with total 0.
+
+
+def _owner_store(rows_or_exc: Any, *, memory_rows: Optional[list] = None):
+    store = create_in_memory_read_surface_ports()
+
+    def _notes():
+        if isinstance(rows_or_exc, Exception):
+            raise rows_or_exc
+        return rows_or_exc
+
+    store.list_research_notes = _notes
+    store.list_institutional_memory_entries = lambda: memory_rows or []
+    owner = SimpleNamespace(list_research_notes=_notes)
+    store.research_knowledge_source._research_write_owner = owner
+    return store
+
+
+def _get(store) -> Dict[str, Any]:
+    response = TestClient(_create_app(lambda: store)).get("/bff/knowledge", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_reachable_owner_with_zero_notes_is_empty_not_unavailable() -> None:
+    body = _get(_owner_store([]))
+    assert body["page_info"]["total"] == 0
+    assert body["meta"]["status"] != "unavailable"
+    assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["status"] == "ok"
+    assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["source"] == "service_client"
+    assert body["meta"]["composition"]["itemCounts"]["research_note"] == 0
+
+
+def test_owner_read_failure_is_unavailable_and_not_empty() -> None:
+    body = _get(_owner_store(RuntimeError("owner 503")))
+    notes = body["meta"]["surfaces"]["knowledge_inbox_notes"]
+    assert notes["status"] == "unavailable"
+    assert notes["source"] == "unavailable"
+    assert body["meta"]["status"] == "unavailable"
+
+
+def test_missing_dataset_does_not_force_inbox_unavailable_when_another_was_read() -> None:
+    note = {"note_id": "note-1", "title": "Owner note", "updated_at": "2026-06-15T08:10:00Z"}
+    body = _get(_owner_store([note]))
+    surfaces = body["meta"]["surfaces"]
+    assert surfaces["knowledge_inbox_notes"]["status"] == "ok"
+    # No insight owner exists: reported missing on its own sub-surface only.
+    missing = [k for k, v in surfaces.items() if k != "knowledge_inbox" and v.get("source") == "missing"]
+    assert missing
+    assert all(surfaces[k]["status"] == "unavailable" for k in missing)
+    assert body["meta"]["status"] == "ok"
+    assert body["page_info"]["total"] == 1

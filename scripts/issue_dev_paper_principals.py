@@ -37,6 +37,8 @@ READERS = {
     "PERSONA_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-persona-approval-reader", "approval_reader"),
     "CAPITAL_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-capital-approval-reader", "approval_reader"),
     "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-evolution-approval-reader", "approval_reader"),
+    "EVOLUTION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-evolution-registry-reader", "registry-reader"),
+    "EVOLUTION_PERSONA_SERVICE_TOKEN": ("pantheon-dev-evolution-persona-reader", "viewer"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", ("viewer", "registry-reader")),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
@@ -59,6 +61,15 @@ WRITERS = {
         "approval_proposer",
         "pantheon:dev-owner-write",
     ),
+    # Evolution owner files the Governance evolution_execute request under this
+    # propose-only identity (owner_user_id must equal the subject). It has no
+    # decide/revoke role, so a human decides once and Governance's
+    # "decider must not be the proposer" rule stays intact.
+    "EVOLUTION_EXECUTE_PROPOSER_TOKEN": (
+        "evolution-execute-proposer",
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
 }
 # Downstream health monitor -> Telemetry infrastructure-health only. The telemetry
 # verifier needs the service role plus a producer scope inside its own allowlist.
@@ -78,7 +89,12 @@ CONSUMER_FILES = {
     "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN"),
     "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN",),
     "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
-    "evolution": ("EVOLUTION_GOVERNANCE_SERVICE_TOKEN",),
+    "evolution": (
+        "EVOLUTION_GOVERNANCE_SERVICE_TOKEN",
+        "EVOLUTION_REGISTRY_SERVICE_TOKEN",
+        "EVOLUTION_PERSONA_SERVICE_TOKEN",
+        "EVOLUTION_EXECUTE_PROPOSER_TOKEN",
+    ),
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN", "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
     "alpha-replication-worker": (

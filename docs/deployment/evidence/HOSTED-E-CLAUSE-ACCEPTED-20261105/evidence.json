@@ -1,0 +1,34 @@
+{
+  "task_id": "HOSTED-E-CLAUSE-ACCEPTED-20261105",
+  "evidence_type": "documentation_correction",
+  "hosted_acceptance": false,
+  "date": "2026-11-05",
+  "statement": "Documentation correction only in section 4 (2026-11-05 amendment note) of docs/deployment/hosted-all12-causal-chain-design.md. Records that the release coordinator proposed the E_close baseline clause amendment first (PR #6958) and the operator accepted it on 2026-11-05 with the verbatim answer 「接受（建議）」 while preserving the stated limits on removed baseline binding attribution and chain 4923 E_close runs 41956938180 and 41962827263.",
+  "operator_decision": {
+    "date": "2026-11-05",
+    "proposed_by": "release_coordinator",
+    "prior_pr": 6958,
+    "operator_verbatim_answer": "接受（建議）",
+    "amended_clause_text_changed": false
+  },
+  "referenced_runs": {
+    "first_write_round_run_id": "41956938180",
+    "noop_fleet_check_run_id": "41962827263",
+    "chain_id": "h12-claude-20261027-4923",
+    "chain_short_id": "4923",
+    "limits": [
+      "chain 4923 E_close run 41956938180 stays all12_passed false and has no non-chain before and after proof",
+      "run 41962827263 is a no-op that verified the fleet check under the amended clause and is not proof for the first write round",
+      "a removed baseline binding is proven retired before E_close and unlabelled, but not who retired it"
+    ]
+  },
+  "scope": {
+    "files_changed": [
+      "docs/deployment/hosted-all12-causal-chain-design.md",
+      "docs/deployment/evidence/HOSTED-E-CLAUSE-ACCEPTED-20261105/evidence.json"
+    ],
+    "code_changes": false,
+    "test_changes": false,
+    "other_sections_changed": false
+  }
+}

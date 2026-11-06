@@ -22,6 +22,18 @@
     "hosted-all12-h12-claude-20261027-4923-execution-artifact": {
       "expected_drawdown": 0.0325,
       "policy_source": "docs/deployment/evidence/H12-4923-DRAWDOWN-POLICY-CONFIG-20261101/policy.md#reviewer-decision"
+    },
+    "artifact-persona-paper-298e138c136c9840b0e4": {
+      "expected_drawdown": 0.0027,
+      "policy_source": "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/policy.md#reviewer-decision"
+    },
+    "artifact-persona-paper-01390a4b72713295b001": {
+      "expected_drawdown": 0.0002,
+      "policy_source": "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/policy.md#reviewer-decision"
+    },
+    "artifact-persona-paper-8ae996980eeccb80d928": {
+      "expected_drawdown": 0.0011,
+      "policy_source": "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/policy.md#reviewer-decision"
     }
   }
 }
