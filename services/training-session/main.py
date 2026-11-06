@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -52,6 +53,7 @@ from models import TeachingEvent, TeachingEvaluationResult, TeachingSession
 from consultation_client import TrainingConsultationClient
 from persona_target import (
     PersonaTargetError,
+    PersonaTargetResponse,
     UrllibPersonaTargetTransport,
     _request_json_object,
     _unwrap,
@@ -418,6 +420,25 @@ def _frozen_model(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return model if isinstance(model, dict) else None
 
 
+class _StatusPreservingPersonaTransport(UrllibPersonaTargetTransport):
+    """Return an owner's HTTP verdict as a response instead of a transport failure.
+
+    ``_request_json_object`` then reports ``returned HTTP <status>``, which lets
+    session creation tell an unknown persona (404) from an unreachable owner.
+    """
+
+    def request(self, method, url, *, headers, json_body, timeout_seconds):
+        try:
+            return super().request(
+                method, url, headers=headers, json_body=json_body, timeout_seconds=timeout_seconds
+            )
+        except PersonaTargetError as exc:
+            match = re.search(r"returned HTTP (\d{3})$", str(exc))
+            if match is None:
+                raise
+            return PersonaTargetResponse(status_code=int(match.group(1)), body=b"")
+
+
 def _persona_model(persona_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     """Freeze the model the owner Persona runs, read from the Persona and Registry here.
 
@@ -441,7 +462,7 @@ def _persona_model(persona_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     if url.rstrip("/").endswith("/training-target"):
         url = url.rstrip("/")[: -len("/training-target")]
     payload = _request_json_object(
-        UrllibPersonaTargetTransport(),
+        _StatusPreservingPersonaTransport(),
         "GET",
         url,
         label="persona model readback",

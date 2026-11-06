@@ -65,6 +65,22 @@ _RESEARCH_SUCCESS_STATUSES = frozenset({"completed", "succeeded"})
 _RESEARCH_FAILURE_STATUSES = frozenset({"failed", "rejected", "canceled", "cancelled", "error"})
 
 
+def _retrain_detail_suffix(run: Mapping[str, Any]) -> str:
+    """Readable retrain outcome for a run that recorded one (empty for any other run).
+
+    The Evolution program-runs listing exposes the receipt ``detail``; the full
+    structured fields stay on the research run and in the receipt evidence.
+    """
+    outcome = run.get("outcome")
+    if not outcome:
+        return ""
+    parts = [f"outcome={outcome}"]
+    for key in ("outcome_reason", "candidate_artifact_id", "session_id"):
+        if run.get(key):
+            parts.append(f"{key}={run[key]}")
+    return "; retrain " + " ".join(parts)
+
+
 class DispatchReceiptError(RuntimeError):
     """Raised when a receipt cannot be obtained or is internally inconsistent."""
 
@@ -341,7 +357,10 @@ class ResearchPlaneAdapter:
             downstream_kind=self.kind,
             downstream_ref_id=downstream_ref_id,
             downstream_status=run_status or None,
-            detail=f"research run {downstream_ref_id} reported status={run_status or 'unknown'}",
+            detail=(
+                f"research run {downstream_ref_id} reported status={run_status or 'unknown'}"
+                + _retrain_detail_suffix(body)
+            ),
             evidence={
                 "run_id": body.get("run_id"),
                 "task_id": body.get("task_id"),

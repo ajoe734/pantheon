@@ -441,15 +441,15 @@ def test_human_approved_program_runs_a_real_retrain_through_the_existing_chain(s
     runs = stack.evolution.get(f"/api/evolution/programs/{program_id}/runs", headers=_service_headers()).json()
     assert [(r["run_id"], r["status"], r["source"]) for r in runs["items"]] == [
         (run_id, "success", "orchestrator_readback")]
-    # The retrain outcome recorded on the run is returned, here and through the BFF.
-    item = runs["items"][0]
-    assert item["outcome"] == "candidate_created" and item["candidate_artifact_id"] == "art-e2e-v1-retrain-child"
-    assert item["session_id"] == "ts-e2e-1" and item["baseline_job_id"] == "job-base"
-    assert item["candidate_metrics"]["sharpe_ratio"] > item["baseline_metrics"]["sharpe_ratio"]
+    # The retrain outcome recorded on the run is carried in the readback detail, here and through the BFF.
+    detail = runs["items"][0]["detail"]
+    assert "retrain outcome=candidate_created" in detail and "candidate_artifact_id=art-e2e-v1-retrain-child" in detail
     bff_runs = stack.client.get(f"/bff/evolution-programs/{program_id}/runs", headers={"Authorization": f"Bearer {HUMAN}"})
     assert bff_runs.status_code == 200, bff_runs.text
-    assert bff_runs.json()["items"][0]["outcome"] == "candidate_created"
-    assert bff_runs.json()["items"][0]["candidate_artifact_id"] == "art-e2e-v1-retrain-child"
+    assert "retrain outcome=candidate_created" in bff_runs.json()["items"][0]["detail"]
+    # The structured fields stay on the research run itself.
+    assert run["session_id"] == "ts-e2e-1" and run["baseline_job_id"] == "job-base"
+    assert run["candidate_metrics"]["sharpe_ratio"] > run["baseline_metrics"]["sharpe_ratio"]
 
     # Auth: every call that reached Evolution carried the service credential, never the operator JWT.
     for call in stack.seen:
