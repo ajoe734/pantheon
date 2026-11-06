@@ -160,6 +160,10 @@ class Stack:
         )
 
 
+# Training owner answers that differ per scenario; the defaults are the better-candidate path.
+_TRAINING_SCENARIO = {"candidate_sharpe": 1.5, "controls": {"status": "accepted"}}
+
+
 def _training_owner(method: str, path: str, body) -> dict:
     """Canned Training owner answers for the retrain executor's evaluation calls."""
     payload = json.loads(body) if body else {}
@@ -170,7 +174,7 @@ def _training_owner(method: str, path: str, body) -> dict:
         return {"job_id": f"job-{kind}", "eval_id": f"eval-{kind}", "status": "queued"}
     if method == "GET" and "/preview-jobs/" in path:
         kind = path.rsplit("/", 1)[1].removeprefix("job-")
-        sharpe = 0.5 if kind == "base" else 1.5
+        sharpe = 0.5 if kind == "base" else _TRAINING_SCENARIO["candidate_sharpe"]
         return {"job_id": f"job-{kind}", "eval_id": f"eval-{kind}", "status": "completed", "preview": {
             "evaluation_proof": {"status": "passed", "governance_gate_state": "passed", "proof_ref": f"proof-{kind}",
                                  "metrics": {"sharpe_ratio": sharpe, "total_return": 0.1, "max_drawdown": 0.01},
@@ -178,12 +182,14 @@ def _training_owner(method: str, path: str, body) -> dict:
     if method == "GET" and "/api/training/controls/" in path:
         return {"controls": [{"parameter_key": "lookback_bars", "current_value": 2}]}
     if method == "POST" and path.endswith("/controls"):
-        return {"status": "accepted"}
+        return dict(_TRAINING_SCENARIO["controls"])
     return {}
 
 
 @pytest.fixture
 def stack(monkeypatch, tmp_path):
+    monkeypatch.setitem(_TRAINING_SCENARIO, "candidate_sharpe", 1.5)
+    monkeypatch.setitem(_TRAINING_SCENARIO, "controls", {"status": "accepted"})
     monkeypatch.setenv("RESEARCH_REGISTRY_SERVICE_TOKEN", "e2e-registry-token")
     monkeypatch.setenv("RESEARCH_TRAINING_SERVICE_TOKEN", "e2e-training-token")
     for key, value in JWT_ENV.items():
@@ -563,3 +569,94 @@ def test_program_detail_allowed_actions_reflect_status_and_caller_role(stack):
         headers={"Authorization": f"Bearer {sweep_jwt}"},
     ).json()["data"]
     assert sweep_review["allowedActions"] == []
+
+
+def _approve_and_run(stack: Stack, key: str) -> tuple:
+    """Drive a human-approved program through the real chain to a terminal research run."""
+    decision_id = f"evo-e2e-{uuid.uuid4().hex[:8]}"
+    _propose_retrain(stack, decision_id)
+    program_id = _auto_program(decision_id)
+    stack.result(stack.command(HUMAN, "submit_evolution_review", program_id, f"k-submit-{key}"))
+    approval_id = next(
+        s for s in stack.seen if s.get("path") == "/api/governance/approvals" and s.get("method") == "POST"
+        and s["payload"]["target_id"] == program_id
+    )["payload"]["decision_id"]
+    stack.decide_approval(approval_id, actor_id="human-approver", actor_role="governance_reviewer")
+    stack.result(stack.command(HUMAN, "approve_program", program_id, f"k-approve-{key}"))
+    first = _tick(stack)
+    run_id = first["items"][0]["downstream_ref_id"]
+    return program_id, run_id, _wait_for_run(run_id)
+
+
+_BFF_RUN_FIELDS = (
+    "outcome", "outcome_reason", "candidate_artifact_id", "baseline_metrics", "candidate_metrics", "session_id",
+)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "candidate_sharpe", "controls", "outcome", "reason", "child"),
+    [
+        ("candidate_created", 1.5, {"status": "accepted"},
+         "candidate_created", "candidate_passed_gate_and_beat_baseline", "art-e2e-v1-retrain-child"),
+        ("no_candidate", 0.1, {"status": "accepted"}, "no_candidate", "not_better_than_baseline", None),
+        ("evaluation_rejected", 1.5,
+         {"status": "rejected", "field_errors": [{"parameter_key": "lookback_bars", "error": "out_of_range"}]},
+         "evaluation_rejected",
+         'control change rejected by Training: [{"error": "out_of_range", "parameter_key": "lookback_bars"}]', None),
+    ],
+)
+def test_bff_runs_carry_the_structured_outcome_fields_the_research_run_recorded(
+    stack, scenario, candidate_sharpe, controls, outcome, reason, child
+):
+    """research run -> Evolution runs route -> BFF runs route, real auth at every hop.
+
+    The structured values are read from the fields; the ``detail`` text is not parsed.
+    """
+    _TRAINING_SCENARIO["candidate_sharpe"] = candidate_sharpe
+    _TRAINING_SCENARIO["controls"] = controls
+    program_id, run_id, run = _approve_and_run(stack, scenario)
+    assert run["status"] == "completed" and run["outcome"] == outcome, run
+
+    owner = stack.evolution.get(f"/api/evolution/programs/{program_id}/runs", headers=_service_headers())
+    assert owner.status_code == 200, owner.text
+    bff = stack.client.get(f"/bff/evolution-programs/{program_id}/runs", headers={"Authorization": f"Bearer {HUMAN}"})
+    assert bff.status_code == 200, bff.text
+
+    for item in (owner.json()["items"][0], bff.json()["items"][0]):
+        assert item["run_id"] == run_id and item["source"] == "orchestrator_readback"
+        assert item["outcome"] == outcome
+        assert item["outcome_reason"] == reason
+        assert item["candidate_artifact_id"] == child
+        assert item["session_id"] == "ts-e2e-1"
+        assert item["baseline_metrics"] == run["baseline_metrics"]
+        assert item["baseline_metrics"]["sharpe_ratio"] == 0.5
+        if scenario == "evaluation_rejected":
+            # Rejected before the candidate was evaluated: nothing is invented for it.
+            assert item["candidate_metrics"] is None
+        else:
+            assert item["candidate_metrics"] == run["candidate_metrics"]
+            assert item["candidate_metrics"]["sharpe_ratio"] == candidate_sharpe
+        assert isinstance(item["detail"], str) and item["detail"]  # existing field unchanged
+    assert [call for call in stack.seen if call.get("headers") and call["headers"].get("Authorization") == f"Bearer {HUMAN}"] == []
+
+
+def test_a_run_that_recorded_no_outcome_returns_null_fields(stack, monkeypatch):
+    decision_id = f"evo-e2e-{uuid.uuid4().hex[:8]}"
+    _propose_retrain(stack, decision_id)
+    program_id = _auto_program(decision_id)
+    stack.result(stack.command(HUMAN, "submit_evolution_review", program_id, "k-submit-n"))
+    approval_id = next(
+        s for s in stack.seen if s.get("path") == "/api/governance/approvals" and s.get("method") == "POST"
+    )["payload"]["decision_id"]
+    stack.decide_approval(approval_id, actor_id="human-approver", actor_role="governance_reviewer")
+    stack.result(stack.command(HUMAN, "approve_program", program_id, "k-approve-n"))
+    # The executor never starts, so the run is still queued with nothing recorded.
+    monkeypatch.setattr(research_main, "_trigger_retrain_execution", lambda run_id, params: None)
+    first = _tick(stack)
+    run_id = first["items"][0]["downstream_ref_id"]
+    assert research_main.get_store().get_run(run_id)["status"] == "queued"
+    bff = stack.client.get(f"/bff/evolution-programs/{program_id}/runs", headers={"Authorization": f"Bearer {HUMAN}"})
+    item = bff.json()["items"][0]
+    assert item["run_id"] == run_id and item["status"] == "running"
+    for field in _BFF_RUN_FIELDS:
+        assert item[field] is None, field
