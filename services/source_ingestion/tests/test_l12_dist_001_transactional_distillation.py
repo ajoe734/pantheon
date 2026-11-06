@@ -1453,3 +1453,88 @@ class TestThreadRegressions:
 
         assert len(claimed) == 20
         assert len(set(claimed)) == 20
+
+
+class TestMarketSourceTransactionalExclusion:
+    """Market sources materialize seeds without Registry reads/writes or DLQ entry."""
+
+    def test_market_source_makes_zero_registry_reads_or_writes_while_internal_note_syncs(
+        self, tmp_path: Path, registry: _RecordingRegistry
+    ) -> None:
+        from services.source_ingestion.distillation_worker import MARKET_SOURCE_SKIP_REASON
+
+        approved_id = (
+            "reg-strategy-spec-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-da7cb8297afb"
+        )
+        registry.approve(approved_id)
+        approved_snapshot = json.dumps(registry.entries[approved_id], sort_keys=True)
+
+        market_source = SourceRecord(
+            source_id="tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+            connector_id="tw-official",
+            source_type="market",
+            title="TWSE 2330 daily bar",
+            content_ref="https://www.twse.com.tw/exchangeReport/STOCK_DAY?stockNo=2330",
+            status="normalized",
+            metadata={
+                "tenant_id": "test",
+                "trust_score": 0.95,
+                "access_scope": ["research"],
+                "license_scope": "public",
+                "keywords": ["2330", "TWSE", "daily"],
+                "strategy_seed": {
+                    "hypothesis": "TWSE 2330 daily price observation",
+                    "asset_class": ["equity"],
+                    "market_scope": ["Taiwan"],
+                    "holding_period": "5 days",
+                    "required_data": ["OHLCV"],
+                    "backend_hint": "qlib",
+                    "feature_hints": ["close"],
+                    "label_hints": ["return"],
+                    "risk_notes": ["none"],
+                },
+            },
+        )
+        config = _controller_config(tmp_path)
+        _write_evidence(config, market_source)
+        writer = _DummyLoopWriter()
+
+        result, error, _ = _run_tick(config, writer)
+        assert error is None
+        assert result is not None
+        assert result["status"] == "success"
+        assert registry.readbacks == []
+        assert registry.writes == []
+        assert registry.write_attempts == []
+        assert json.dumps(registry.entries[approved_id], sort_keys=True) == approved_snapshot
+        assert result["actual"]["terminal_drafts"] == []
+
+        queue = DistillationJobQueue(config.job_queue_path)
+        market_job = queue.get(market_source.source_id)
+        assert market_job is not None
+        assert market_job.status == DistillationJobStatus.SKIPPED
+        assert market_job.skip_reason == MARKET_SOURCE_SKIP_REASON
+        assert market_job.registry_id is None
+        assert queue.list_dead_letters() == []
+
+        # Adding an internal_note source produces and reads back a Registry draft normally.
+        note_source = SourceRecord(
+            source_id="src-internal-note-transactional-001",
+            connector_id="conn-notes",
+            source_type="internal_note",
+            title="Internal research note on factor decay",
+            content_ref="pantheon://notes/src-internal-note-transactional-001",
+            status="normalized",
+            metadata=dict(market_source.metadata),
+        )
+        _write_evidence(config, market_source, note_source)
+        result2, error2, _ = _run_tick(config, writer)
+        assert error2 is None
+        assert result2 is not None
+        assert result2["actual"]["synced_count"] == 1
+        note_reg_id = _registry_id_for(note_source)
+        assert registry.writes == [note_reg_id]
+        assert len( result2["actual"]["terminal_drafts"]) == 1
+        assert result2["actual"]["terminal_drafts"][0]["registry_id"] == note_reg_id
+        assert json.dumps(registry.entries[approved_id], sort_keys=True) == approved_snapshot
+

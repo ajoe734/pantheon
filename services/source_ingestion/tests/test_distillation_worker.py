@@ -24,6 +24,9 @@ from services.source_ingestion.distillation_worker import (
     DistillationJobStatus,
     DistillationRunResult,
     DistillationWorker,
+    MARKET_SOURCE_SKIP_REASON,
+    RegistrySyncRequest,
+    RegistrySyncResult,
     _canonical_json,
     _stable_bundle_id,
     _stable_item_id,
@@ -946,16 +949,237 @@ class TestBatchRawStorageRefsIdentity:
         assert queue.count() == 1
         assert queue.get(initial.source_id, source_version_digest(reingested)).job_id == legacy_job_id
 
+        seed_store = StrategySpecSeedStore(tmp_path / "seeds.jsonl")
         worker = DistillationWorker(
             queue,
-            StrategySpecSeedStore(tmp_path / "seeds.jsonl"),
+            seed_store,
             created_by="test_worker",
         )
         catch_up_result = worker.catch_up([reingested], tenant_id="tenant-dev")
         assert catch_up_result.enqueued == 0
         assert catch_up_result.processed == 1
-        assert catch_up_result.created == 1
+        assert catch_up_result.created == 0
+        assert catch_up_result.skipped == 1
+        assert len(seed_store.list_all()) == 1
         assert queue.version_count(initial.source_id) == 1
         assert queue.count() == 1
-        assert queue.get(initial.source_id, legacy_digest).status == DistillationJobStatus.DONE
+        resolved_job = queue.get(initial.source_id, legacy_digest)
+        assert resolved_job is not None
+        assert resolved_job.status == DistillationJobStatus.SKIPPED
+        assert resolved_job.skip_reason == MARKET_SOURCE_SKIP_REASON
+        assert resolved_job.seed_id == seed_store.list_all()[0].seed_id
+        assert resolved_job.registry_id is None
+
+
+# ---------------------------------------------------------------------------
+# SOURCE-DISTILL-NO-MARKET-REGISTRY-DRAFTS-20261106: Market sources skip
+# Registry strategy draft creation while preserving seed/evidence flow
+# ---------------------------------------------------------------------------
+
+
+class TestMarketSourceNoRegistryDrafts:
+    """Verify source_type=market skips Registry reads/writes with one stable reason."""
+
+    def test_market_source_skips_registry_with_zero_registry_calls_and_never_retries_or_dead_letters(
+        self, tmp_path: Path
+    ) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3", default_max_attempts=2)
+        seed_store = StrategySpecSeedStore(tmp_path / "seeds.jsonl")
+        registry_calls: list[RegistrySyncRequest] = []
+
+        def _forbidden_registry_sync(request: RegistrySyncRequest) -> RegistrySyncResult:
+            registry_calls.append(request)
+            raise AssertionError("Registry sync must not be called for source_type=market")
+
+        worker = DistillationWorker(
+            queue,
+            seed_store,
+            created_by="test_worker",
+            registry_sync=_forbidden_registry_sync,
+        )
+        market_source = _tw_market_source(
+            ingest_run_id="ingest-market-skip-001",
+            trace_id="trace-market-skip-001",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/2330/bar.json", "sha256": "ab" * 32}
+            ],
+        )
+
+        # Evidence item and bundle synthesis for market sources behave as today.
+        digest = source_version_digest(market_source)
+        evidence_item = _synthesize_evidence_item(market_source, digest)
+        evidence_bundle = _synthesize_evidence_bundle(market_source, evidence_item, digest)
+        assert evidence_item.source_id == market_source.source_id
+        assert list(evidence_bundle.evidence_item_ids) == [evidence_item.evidence_item_id]
+
+        run_result = worker.catch_up([market_source], tenant_id="tenant-dev")
+        assert run_result.enqueued == 1
+        assert run_result.processed == 1
+        assert run_result.created == 0
+        assert run_result.skipped == 1
+        assert run_result.failed == 0
+        assert run_result.registry_synced == 0
+        assert run_result.retried == 0
+        assert run_result.dead_lettered == 0
+        assert registry_calls == []
+
+        seeds = seed_store.list_all()
+        assert len(seeds) == 1
+        job = queue.get(market_source.source_id, digest)
+        assert job is not None
+        assert job.status == DistillationJobStatus.SKIPPED
+        assert job.skip_reason == MARKET_SOURCE_SKIP_REASON
+        assert job.seed_id == seeds[0].seed_id
+        assert job.registry_id is None
+        assert job.attempts == 1
+        assert queue.list_dead_letters() == []
+        assert queue.metrics()["retry_wait"] == 0
+        assert queue.metrics()["dead_letter"] == 0
+
+    def test_non_market_internal_note_source_produces_and_reads_back_registry_draft(
+        self, tmp_path: Path
+    ) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        seed_store = StrategySpecSeedStore(tmp_path / "seeds.jsonl")
+        registry_store: dict[str, dict[str, Any]] = {}
+        registry_reads: list[str] = []
+        registry_writes: list[str] = []
+
+        def _fake_registry_sync(request: RegistrySyncRequest) -> RegistrySyncResult:
+            reg_id = f"reg-strategy-spec-{request.source.source_id}-{(request.version_key or '')[:12]}"
+            registry_reads.append(reg_id)
+            registry_store[reg_id] = {
+                "registry_id": reg_id,
+                "strategy_id": f"strat-{request.seed.seed_id}",
+                "version": "0.1.0-draft",
+                "checksum": "chk-internal-note-001",
+                "source_type": request.source.source_type.value,
+            }
+            registry_writes.append(reg_id)
+            readback = registry_store[reg_id]
+            registry_reads.append(reg_id)
+            return RegistrySyncResult(
+                registry_id=readback["registry_id"],
+                strategy_id=readback["strategy_id"],
+                version=readback["version"],
+                checksum=readback["checksum"],
+                status="synced",
+            )
+
+        worker = DistillationWorker(
+            queue,
+            seed_store,
+            created_by="test_worker",
+            registry_sync=_fake_registry_sync,
+        )
+        note_source = _normalized_source(
+            source_id="src-internal-note-001",
+            title="Desk internal note on TW semiconductor inventory cycle",
+            source_type="internal_note",
+        )
+        run_result = worker.catch_up([note_source])
+        assert run_result.enqueued == 1
+        assert run_result.processed == 1
+        assert run_result.created == 1
+        assert run_result.skipped == 0
+        assert run_result.failed == 0
+        assert run_result.registry_synced == 1
+        assert len(registry_writes) == 1
+        assert len(registry_reads) == 2
+
+        job = queue.get(note_source.source_id)
+        assert job is not None
+        assert job.status == DistillationJobStatus.DONE
+        assert job.registry_id == registry_writes[0]
+        assert job.registry_id in registry_store
+
+    def test_replaying_market_job_that_already_produced_draft_stays_terminal_and_does_not_fail(
+        self, tmp_path: Path
+    ) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        seed_store = StrategySpecSeedStore(tmp_path / "seeds.jsonl")
+        market_source = _tw_market_source(
+            ingest_run_id="ingest-historical-market-001",
+            trace_id="trace-historical-market-001",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/2330/hist.json", "sha256": "cd" * 32}
+            ],
+        )
+        digest = source_version_digest(market_source)
+        enqueued = queue.enqueue_source_record(market_source, requested_by="legacy_worker", enqueued_at=1000.0)
+        claimed = queue.claim_due(worker_id="legacy_worker", lease_seconds=30.0, now=1000.0)
+        assert len(claimed) == 1
+
+        # Simulate a historical market job that already produced a seed and Registry draft before this change.
+        from services.source_ingestion.seed_materializer import (
+            MaterializationMode,
+            SeedMaterializationService,
+        )
+
+        item = _synthesize_evidence_item(market_source, digest)
+        bundle = _synthesize_evidence_bundle(market_source, item, digest)
+        seed_result = SeedMaterializationService(
+            store=seed_store,
+            created_by="legacy_worker",
+        ).materialize(
+            bundle,
+            source_records=[market_source],
+            evidence_items=[item],
+            mode=MaterializationMode.CREATE_IF_ABSENT,
+            requested_by="legacy_worker",
+            idempotency_key=enqueued.idempotency_key,
+        )
+        legacy_registry_id = f"reg-strategy-spec-{market_source.source_id}-{digest[:12]}"
+        queue.mark_done(
+            claimed[0].job_id,
+            seed_id=seed_result.seed.seed_id,
+            registry_id=legacy_registry_id,
+            strategy_id="strat-legacy-2330",
+            version="0.1.0-draft",
+            checksum="chk-legacy-2330",
+            processed_at=1001.0,
+            claim_token=claimed[0].lease_token,
+        )
+
+        registry_calls: list[RegistrySyncRequest] = []
+        worker_with_guard = DistillationWorker(
+            queue,
+            seed_store,
+            created_by="test_worker",
+            registry_sync=lambda req: (
+                registry_calls.append(req) or RegistrySyncResult(registry_id="", status="synced")
+            ),
+        )
+
+        # 1. Replaying via catch_up / on_source_normalized with new batch metadata keeps the job terminal (DONE).
+        reingested = _tw_market_source(
+            ingest_run_id="ingest-historical-market-002",
+            trace_id="trace-historical-market-002",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/2330/hist-2.json", "sha256": "ef" * 32}
+            ],
+        )
+        replay_result = worker_with_guard.catch_up([reingested], tenant_id="tenant-dev")
+        assert replay_result.enqueued == 0
+        assert replay_result.processed == 0
+        assert replay_result.failed == 0
+        assert registry_calls == []
+        existing_job = queue.get(market_source.source_id, digest)
+        assert existing_job is not None
+        assert existing_job.status == DistillationJobStatus.DONE
+        assert existing_job.registry_id == legacy_registry_id
+
+        # 2. Explicit redispatch of that historical market job refreshes the seed and ends terminal (SKIPPED) without failing or touching Registry.
+        worker_with_guard.redispatch(market_source.source_id, reingested)
+        redispatch_result = worker_with_guard.run_pending(tenant_id="tenant-dev")
+        assert redispatch_result.processed == 1
+        assert redispatch_result.skipped == 1
+        assert redispatch_result.failed == 0
+        assert registry_calls == []
+        after_redispatch = queue.get(market_source.source_id, digest)
+        assert after_redispatch is not None
+        assert after_redispatch.status == DistillationJobStatus.SKIPPED
+        assert after_redispatch.skip_reason == MARKET_SOURCE_SKIP_REASON
+        assert queue.list_dead_letters() == []
+
 
