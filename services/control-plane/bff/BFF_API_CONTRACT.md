@@ -969,3 +969,9 @@ The structured record (`session_id`, `baseline_job_id`, `candidate_job_id`,
 `baseline_eval_id`, `candidate_eval_id`, `baseline_metrics`, `candidate_metrics`,
 `outcome`, `outcome_reason`, `candidate_artifact_id`) is returned by
 `GET /api/research-orchestrator/runs/{run_id}`.
+
+## Cross-source newest-first job list ordering and pagination (BFF-JOBS-LIST-NEWEST-FIRST-20261106)
+
+- `GET /bff/jobs` orders composed jobs across all qualified sources newest first by `started_at` falling back to `created_at` (normalized to UTC ISO-8601 when parseable), with a deterministic tie break by `id` (`job_id`) and any job with neither `started_at` nor `created_at` sorted last.
+- Cross-source ordering is enforced both in `JobReadPort.list_jobs_bff` (`services/control-plane/bff/ports/job_read.py`) and in the `GET /bff/jobs` handler (`services/control-plane/bff/jobs/router.py`) after `status` and `job_type` filtering and before `page_slice(jobs, page_token, page_size)`.
+- Walking every page via `page_size` and `next_page_token` returns each matching job exactly once in global newest-first order while `page_info.total` and `meta` source diagnostics (`healthy_sources`, `degraded_sources`, `bff_composed` / single-source owner / `unavailable`) remain unchanged.
