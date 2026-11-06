@@ -111,6 +111,122 @@ def _project_strategy_ranking_metrics(
     return base_metrics
 
 
+def _clean_str_list(value: Any) -> List[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [s.strip() for s in value if isinstance(s, str) and s.strip()]
+
+
+def _project_strategy_spec_detail(source: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a bounded, allowlisted read-only spec view from an owner-resolved StrategySpec version."""
+    if not isinstance(source, dict) or not source:
+        return None
+
+    top_meta = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+    nested_spec = (
+        top_meta.get("strategy_spec")
+        if isinstance(top_meta.get("strategy_spec"), dict)
+        else (source.get("strategy_spec") if isinstance(source.get("strategy_spec"), dict) else {})
+    )
+    inner_meta = nested_spec.get("metadata") if isinstance(nested_spec.get("metadata"), dict) else {}
+
+    raw_ver_id = (
+        source.get("spec_version_id")
+        or source.get("current_spec_version_id")
+        or source.get("strategy_spec_registry_id")
+    )
+    spec_version_id = str(raw_ver_id).strip() if isinstance(raw_ver_id, str) and raw_ver_id.strip() else None
+
+    raw_ver = (
+        source.get("spec_version")
+        or source.get("current_spec_version")
+        or source.get("semantic_version")
+        or source.get("version")
+        or nested_spec.get("spec_version")
+    )
+    spec_version = str(raw_ver).strip() if isinstance(raw_ver, str) and raw_ver.strip() else None
+
+    raw_ms = source.get("market_scope") if isinstance(source.get("market_scope"), dict) else {}
+    if not raw_ms and isinstance(nested_spec.get("market_scope"), dict):
+        raw_ms = nested_spec["market_scope"]
+    ms_out: Dict[str, Any] = {}
+    for list_key in ("symbols", "asset_classes", "venues", "markets"):
+        cleaned = _clean_str_list(raw_ms.get(list_key))
+        if cleaned:
+            ms_out[list_key] = cleaned
+    raw_universe = raw_ms.get("universe")
+    if isinstance(raw_universe, (list, tuple)):
+        cleaned_u = _clean_str_list(raw_universe)
+        if cleaned_u:
+            ms_out["universe"] = cleaned_u
+    elif isinstance(raw_universe, str) and raw_universe.strip():
+        ms_out["universe"] = raw_universe.strip()
+    for str_key in ("frequency", "alpha"):
+        val = raw_ms.get(str_key)
+        if isinstance(val, str) and val.strip():
+            ms_out[str_key] = val.strip()
+
+    raw_ep = source.get("execution_profile") if isinstance(source.get("execution_profile"), dict) else {}
+    if not raw_ep and isinstance(nested_spec.get("execution_profile"), dict):
+        raw_ep = nested_spec["execution_profile"]
+    ep_out: Dict[str, Any] = {}
+    for str_key in (
+        "signal_schema_version",
+        "quantity_type",
+        "rebalance_cadence",
+        "execution_mode_hint",
+        "mode",
+        "capital_pool_id",
+    ):
+        val = raw_ep.get(str_key)
+        if isinstance(val, str) and val.strip():
+            ep_out[str_key] = val.strip()
+
+    raw_ev = source.get("evaluation_plan") if isinstance(source.get("evaluation_plan"), dict) else {}
+    if not raw_ev and isinstance(nested_spec.get("evaluation_plan"), dict):
+        raw_ev = nested_spec["evaluation_plan"]
+    ev_out: Dict[str, Any] = {}
+    ev_metrics = _clean_str_list(raw_ev.get("metrics"))
+    if ev_metrics:
+        ev_out["metrics"] = ev_metrics
+    for str_key in ("candidate_gate", "paper_gate", "live_gate", "benchmark"):
+        val = raw_ev.get(str_key)
+        if isinstance(val, str) and val.strip():
+            ev_out[str_key] = val.strip()
+
+    meta_out: Dict[str, Any] = {}
+    for meta_key in ("market", "execution_context"):
+        val = inner_meta.get(meta_key) if inner_meta.get(meta_key) not in (None, "") else top_meta.get(meta_key)
+        if isinstance(val, str) and val.strip():
+            meta_out[meta_key] = val.strip()
+
+    top_traits = top_meta.get("traits") if isinstance(top_meta.get("traits"), dict) else {}
+    inner_traits = inner_meta.get("traits") if isinstance(inner_meta.get("traits"), dict) else {}
+    combined_traits = {**top_traits, **{k: v for k, v in inner_traits.items() if v not in (None, "")}}
+    traits_out: Dict[str, Any] = {}
+    raw_instruments = combined_traits.get("instruments")
+    if isinstance(raw_instruments, str) and raw_instruments.strip():
+        traits_out["instruments"] = raw_instruments.strip()
+    elif isinstance(raw_instruments, (list, tuple)):
+        cleaned_inst = _clean_str_list(raw_instruments)
+        if cleaned_inst:
+            traits_out["instruments"] = cleaned_inst
+    raw_horizon = combined_traits.get("time_horizon")
+    if isinstance(raw_horizon, str) and raw_horizon.strip():
+        traits_out["time_horizon"] = raw_horizon.strip()
+    if traits_out:
+        meta_out["traits"] = traits_out
+
+    return {
+        "spec_version_id": spec_version_id,
+        "spec_version": spec_version,
+        "market_scope": ms_out or None,
+        "execution_profile": ep_out or None,
+        "evaluation_plan": ev_out or None,
+        "metadata": meta_out or None,
+    }
+
+
 def default_bff_error(
     status_code: int,
     code: str,
@@ -323,6 +439,7 @@ class StrategyRouteContext:
         ranking_snapshot: Any = _UNSET,
         ranking_read_failed: bool = False,
         ranking_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        include_spec: bool = False,
     ) -> Dict[str, Any]:
         if overlay is not None:
             raise AttributeError("strategy overlay is retired; process-local state overlays are deleted")
@@ -410,4 +527,7 @@ class StrategyRouteContext:
             "labelKey": f"strategy.{strategy_id}" if strategy_id else None,
             "lifecycleStatus": str(lifecycle_raw or ""),
         }
+        if include_spec:
+            spec_source = detail if (isinstance(detail, dict) and detail) else summary
+            dto["spec"] = _project_strategy_spec_detail(spec_source)
         return dto

@@ -38,7 +38,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
-        dto = ctx.project_strategy_dto(summary, detail=detail)
+        dto = ctx.project_strategy_dto(summary, detail=detail or summary, include_spec=True)
         return {
             "data": dto,
             "meta": ctx.read_surface_meta(
@@ -80,6 +80,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         snapshot_at = ctx.utc_now()
         base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
+        base.pop("spec", None)
         for field_name in (
             "name", "owner", "state", "risk", "alpha",
             "capitalPoolId", "personaIds",

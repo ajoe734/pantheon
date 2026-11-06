@@ -648,6 +648,27 @@ class ReadSurfacePorts:
         return self.list_strategy_specs_page(**kwargs)
 
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
+        if (
+            "list_strategy_specs" in getattr(self, "__dict__", {})
+            or (
+                type(self) is not ReadSurfacePorts
+                and (
+                    "list_strategy_specs" in type(self).__dict__
+                    or "list_strategies" in type(self).__dict__
+                )
+            )
+        ):
+            counts: Dict[str, int] = {}
+            for item in self.list_strategy_specs() or []:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("lifecycle_state") or item.get("state") or "").strip().lower() == "retired":
+                    continue
+                raw_ids = item.get("persona_ids") or item.get("personaIds") or []
+                for persona_id in {str(v).strip() for v in raw_ids if str(v).strip()}:
+                    counts[persona_id] = counts.get(persona_id, 0) + 1
+            return counts
+
         def _read() -> Dict[str, int]:
             counts = self.research_knowledge_source.count_strategy_persona_bindings()
             if not isinstance(counts, dict):

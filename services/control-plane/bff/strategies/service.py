@@ -147,6 +147,12 @@ class StrategiesService:
     def _can_use_owner_summary_page(self, read_store: Any) -> bool:
         if not callable(getattr(read_store, "list_strategy_summaries_page", None)):
             return False
+        if type(read_store) is not ReadSurfacePorts and (
+            "list_strategy_summaries_page" not in type(read_store).__dict__
+            and "list_strategy_specs_page" not in type(read_store).__dict__
+            and "list_strategy_summaries_page" not in getattr(read_store, "__dict__", {})
+        ):
+            return False
         if (
             "list_strategy_specs" in getattr(read_store, "__dict__", {})
             or "list_strategy_summaries" in getattr(read_store, "__dict__", {})
@@ -165,7 +171,10 @@ class StrategiesService:
         ):
             return True
         code = getattr(fn, "__code__", None)
-        if getattr(code, "co_names", ()) == ("list_strategy_summaries", "read_surface"):
+        co_names = getattr(code, "co_names", ())
+        if getattr(fn, "__name__", "") == "<lambda>" and (
+            "list_strategy_summaries" in co_names or "list_strategy_specs" in co_names
+        ):
             return True
         return False
 

@@ -2046,7 +2046,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 version[extra_key] = str(extra_val)
         raw_meta = raw_version.get("metadata") if isinstance(raw_version.get("metadata"), dict) else {}
         spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
-        merged_meta = {**spec_meta, **raw_meta}
+        merged_meta = {**spec_meta, **{k: v for k, v in raw_meta.items() if v is not None or k not in spec_meta}}
+        if isinstance(spec_meta.get("traits"), dict) and isinstance(raw_meta.get("traits"), dict):
+            merged_meta["traits"] = {
+                **spec_meta["traits"],
+                **{k: v for k, v in raw_meta["traits"].items() if v is not None},
+            }
         if merged_meta:
             version["metadata"] = copy.deepcopy(merged_meta)
         top_cap_pool_id = (
@@ -2747,7 +2752,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             lambda: self._fetch_canonical_strategy_specs_uncached(sid),
         )
 
-    def _fetch_canonical_strategy_specs_uncached(self, sid: str) -> List[Dict[str, Any]]:
+    def _fetch_canonical_strategy_specs_uncached(self, sid: str = "") -> List[Dict[str, Any]]:
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
         from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
@@ -2799,7 +2804,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             state = entry.get("artifact_state") or inner.get("lifecycle_state") or meta.get("lifecycle_state") or meta.get("state") or meta.get("status") or "draft"
             title = inner.get("title") or meta.get("title") or meta.get("name") or entry_sid
             risk = meta.get("risk") or inner.get("risk") or eval_summary.get("risk_level") or (inner.get("governance") or {}).get("risk_level") or (meta.get("governance") or {}).get("risk_level")
-            merged_meta = {**inner_meta, **meta}
+            merged_meta = {**inner_meta, **{k: v for k, v in meta.items() if v is not None or k not in inner_meta}}
+            if isinstance(inner_meta.get("traits"), dict) and isinstance(meta.get("traits"), dict):
+                merged_meta["traits"] = {
+                    **meta["traits"],
+                    **{k: v for k, v in inner_meta["traits"].items() if v is not None},
+                }
             ver_dict: Dict[str, Any] = {
                 **inner, "strategy_id": entry_sid, "tenant_id": entry_tenant or caller_tenant,
                 "strategy_spec_registry_id": reg_id, "spec_version_id": reg_id,

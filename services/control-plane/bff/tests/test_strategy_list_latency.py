@@ -721,3 +721,353 @@ def test_strategy_list_never_silently_drops_malformed_summary_even_off_page() ->
     resp = client.get("/bff/strategies?page_size=20", headers=HEADERS)
     assert resp.status_code == 503, resp.text
     assert strategies_service_mod.list_strategy_summaries(read_ports)
+
+
+def _build_real_5031_registry_entries() -> List[Any]:
+    """Build the exact 5031 strategy_spec rows (~2.4 KB each -> ~12 MB total) across 4900 families:
+    - 3209 strat-tw-* draft families
+    - 1554 strat-dev-* draft families
+    - 132 strategy-persona-* approved families (131 of which also have an older 1.0.0 draft revision -> +131 rows)
+    - 1 strat-approved-extra-0133 approved family (with market_scope.alpha = 'cross-sectional-momentum')
+    - 1 strat-candidate-0001 candidate family
+    - 1 strat-other-draft-0001 draft family
+    - 2 strat-retired-* retired families
+    Total families = 4764 draft + 133 approved + 1 candidate + 2 retired = 4900 (4898 non-retired).
+    Total rows = 4900 + 131 = 5031.
+    """
+    from services.registry.models import ArtifactState, ArtifactType, Lineage, RegistryEntry, StorageBackend, StorageRef
+
+    entries: List[RegistryEntry] = []
+    heavy_body = "x" * 1600
+
+    def _make_entry(
+        rid: str,
+        sid: str,
+        version: str,
+        state: ArtifactState,
+        *,
+        persona_ids: List[str],
+        updated_at: str,
+        alpha: str = "",
+        pool_id: str = "",
+    ) -> RegistryEntry:
+        market_scope: Dict[str, Any] = {"markets": ["TWSE"], "universe": ["2330.TW", "2317.TW"]}
+        if alpha:
+            market_scope["alpha"] = alpha
+        inner_spec: Dict[str, Any] = {
+            "strategy_id": sid,
+            "spec_version": version,
+            "title": f"Real Scale {sid} {version}",
+            "lifecycle_state": state.value,
+            "source_kind": "workflow",
+            "hypothesis": f"Hypothesis for {sid}: {heavy_body}",
+            "objective": {"summary": "Maximize risk-adjusted return", "notes": heavy_body[:400]},
+            "market_scope": market_scope,
+            "execution_profile": {"mode": "paper", **({"capital_pool_id": pool_id} if pool_id else {})},
+            "governance": {"risk_level": "medium", "owner": "operator-tw"},
+            "persona_ids": list(persona_ids),
+            "provenance": {"source_kind": "workflow", "created_at": updated_at, "created_by": "op-latency"},
+        }
+        meta: Dict[str, Any] = {
+            "tenant_id": "tenant-dev",
+            "title": inner_spec["title"],
+            "source_kind": "workflow",
+            "persona_ids": list(persona_ids),
+            "strategy_spec": inner_spec,
+        }
+        if pool_id:
+            meta["capital_pool_id"] = pool_id
+        return RegistryEntry(
+            registry_id=rid,
+            artifact_type=ArtifactType.STRATEGY_SPEC,
+            strategy_id=sid,
+            version=version,
+            artifact_state=state,
+            lineage=Lineage(source_run_ids=["run-scale"]),
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+            checksum=f"sha256:{rid}",
+            metadata=meta,
+            created_at=updated_at,
+            updated_at=updated_at,
+            owner_tenant="tenant-dev",
+        )
+
+    # 132 strategy-persona-* approved families (+ 131 prior v1.0.0 draft rows)
+    for idx in range(1, 133):
+        sid = f"strategy-persona-{idx:04d}"
+        pid = f"persona-scale-{idx:04d}"
+        pool_id = "pool-persona-paper-fd1281847a3b1c6a9735"
+        if idx <= 131:
+            entries.append(
+                _make_entry(
+                    f"reg-{sid}-v1",
+                    sid,
+                    "1.0.0",
+                    ArtifactState.DRAFT,
+                    persona_ids=[pid],
+                    updated_at="2026-11-05T11:00:00Z",
+                    pool_id=pool_id,
+                )
+            )
+        entries.append(
+            _make_entry(
+                f"reg-{sid}-v2",
+                sid,
+                "1.1.0",
+                ArtifactState.APPROVED,
+                persona_ids=[pid],
+                updated_at="2026-11-05T15:30:00Z" if idx == 1 else "2026-11-05T15:00:00Z",
+                pool_id=pool_id,
+            )
+        )
+
+    # 1 extra approved family with explicit market_scope.alpha (total approved = 133)
+    entries.append(
+        _make_entry(
+            "reg-strat-approved-extra-0133-v1",
+            "strat-approved-extra-0133",
+            "1.0.0",
+            ArtifactState.APPROVED,
+            persona_ids=["persona-scale-0133"],
+            updated_at="2026-11-05T16:00:00Z",
+            alpha="cross-sectional-momentum",
+            pool_id="pool-persona-paper-fd1281847a3b1c6a9735",
+        )
+    )
+
+    # 1 candidate family (state=review)
+    entries.append(
+        _make_entry(
+            "reg-strat-candidate-0001-v1",
+            "strat-candidate-0001",
+            "1.0.0",
+            ArtifactState.CANDIDATE,
+            persona_ids=["persona-scale-0134"],
+            updated_at="2026-11-05T14:30:00Z",
+        )
+    )
+
+    # 3209 strat-tw-* draft families
+    for idx in range(1, 3210):
+        sid = f"strat-tw-{idx:04d}"
+        entries.append(
+            _make_entry(
+                f"reg-{sid}-v1",
+                sid,
+                "1.0.0",
+                ArtifactState.DRAFT,
+                persona_ids=[],
+                updated_at="2026-11-05T12:00:00Z",
+            )
+        )
+
+    # 1554 strat-dev-* draft families
+    for idx in range(1, 1555):
+        sid = f"strat-dev-{idx:04d}"
+        entries.append(
+            _make_entry(
+                f"reg-{sid}-v1",
+                sid,
+                "1.0.0",
+                ArtifactState.DRAFT,
+                persona_ids=[],
+                updated_at="2026-11-05T11:30:00Z",
+            )
+        )
+
+    # 1 additional draft family -> 3209 + 1554 + 1 = 4764 draft families
+    entries.append(
+        _make_entry(
+            "reg-strat-other-draft-0001-v1",
+            "strat-other-draft-0001",
+            "1.0.0",
+            ArtifactState.DRAFT,
+            persona_ids=[],
+            updated_at="2026-11-05T11:15:00Z",
+        )
+    )
+
+    # 2 retired families -> 4900 total families (4898 non-retired), 5031 total rows
+    for idx in (1, 2):
+        sid = f"strat-retired-{idx:04d}"
+        entries.append(
+            _make_entry(
+                f"reg-{sid}-v1",
+                sid,
+                "1.0.0",
+                ArtifactState.RETIRED,
+                persona_ids=[],
+                updated_at="2026-11-05T10:00:00Z",
+            )
+        )
+
+    assert len(entries) == 5031
+    return entries
+
+
+def test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filters_and_alpha_parity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import urllib.parse
+    import services.control_plane.bff.command_adapters.base as adapter_base
+    from services.registry.split_api import RegistryService
+    from services.registry.storage import RegistryStore
+
+    entries = _build_real_5031_registry_entries()
+    reg_store = RegistryStore()
+    for entry in entries:
+        reg_store.put(entry)
+    reg_service = RegistryService(reg_store)
+
+    owner_http_calls: List[Tuple[str, int, int]] = []
+
+    def _owner_http_stub(url: str, **kwargs: Any) -> Any:
+        parsed = urllib.parse.urlparse(url)
+        qs = urllib.parse.parse_qs(parsed.query)
+        tenant_id = str(kwargs.get("tenant_id") or "tenant-dev")
+        visible = frozenset({tenant_id, "__builtin__"})
+        if parsed.path == "/api/registry/strategy-specs" and qs.get("view") == ["strategy_summary_page"]:
+            payload = reg_service.strategy_spec_summary_page(
+                visible_tenants=visible,
+                artifact_type="strategy_spec",
+                state=qs["state"][0] if "state" in qs else None,
+                persona_id=qs["persona_id"][0] if "persona_id" in qs else None,
+                page_token=qs["page_token"][0] if "page_token" in qs else None,
+                page_size=int(qs["page_size"][0]) if "page_size" in qs else 20,
+            )
+            raw_bytes = len(json.dumps(payload).encode("utf-8"))
+            owner_http_calls.append((f"{parsed.path}?{parsed.query}", len(payload["items"]), raw_bytes))
+            return payload
+        if parsed.path.startswith("/api/registry/strategies/") and parsed.path.endswith("/strategy-specs"):
+            sid = urllib.parse.unquote(parsed.path.split("/")[4])
+            views = [
+                {"entry": v.entry.to_dict(), "deployment_stage": v.deployment_stage.value}
+                for v in reg_service.list_by_strategy(sid)
+                if v.entry.owner_tenant in visible
+            ]
+            raw_bytes = len(json.dumps(views).encode("utf-8"))
+            owner_http_calls.append((parsed.path, len(views), raw_bytes))
+            return views
+        raise AssertionError(f"Unexpected owner HTTP call: {url}")
+
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.local")
+    monkeypatch.setattr(adapter_base, "http_request_json", _owner_http_stub)
+
+    rks_port = _CountingResearchKnowledgeSourcePort()
+    ranking_store = _CountingRankingStore([_build_140_historical_snapshots()[-1]])
+    read_ports = create_read_surface_ports(
+        research_knowledge_source=rks_port,
+        ranking_store=ranking_store,
+    )
+
+    app = FastAPI()
+    app.include_router(
+        create_strategies_router(
+            read_surface=read_ports,
+            list_strategy_summaries=lambda: strategies_service_mod.list_strategy_summaries(read_ports),
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-11-05T17:45:00Z",
+            page_slice=default_page_slice,
+            read_surface_meta=default_read_surface_meta,
+            normalize_lifecycle_state=_normalize_lifecycle_state,
+            normalize_risk_level=_normalize_risk_level,
+        )
+    )
+    app.add_middleware(OwnerReadContextMiddleware)
+    client = TestClient(app)
+
+    # 1. Default page (page_size=20) over 5031 rows / 4898 non-retired strategies
+    resp = client.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["page_info"]["total"] == 4898
+    assert body["meta"]["total"] == 4898
+    assert body["page_info"]["next_page_token"] == "20"
+    assert len(body["data"]) == 20
+    assert rks_port.detail_calls == []
+
+    # Verify owner boundary: 1 call to view=strategy_summary_page returning 20 rows (< 30 KB, not 5031 rows / 12 MB)
+    assert len(owner_http_calls) == 1
+    call_path, call_rows, call_bytes = owner_http_calls[0]
+    assert call_path == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20"
+    assert call_rows == 20
+    assert call_bytes < 30_000
+
+    # Verify alpha parity on list:
+    # - strat-approved-extra-0133 has market_scope.alpha == 'cross-sectional-momentum'
+    # - strategy-persona-0001 has source_kind == 'workflow' and hypothesis, but no market_scope.alpha -> alpha == ""
+    by_id = {item["id"]: item for item in body["data"]}
+    assert by_id["strat-approved-extra-0133"]["alpha"] == "cross-sectional-momentum"
+    assert by_id["strategy-persona-0001"]["alpha"] == ""
+    assert all("spec" not in item for item in body["data"])
+
+    # 2. Owner-filtered state=approved (exact total 133)
+    owner_http_calls.clear()
+    resp_approved = client.get("/bff/strategies?state=approved&page_size=20", headers=HEADERS)
+    assert resp_approved.status_code == 200
+    body_approved = resp_approved.json()
+    assert body_approved["page_info"]["total"] == 133
+    assert len(body_approved["data"]) == 20
+    assert all(item["state"] == "approved" for item in body_approved["data"])
+    assert owner_http_calls[0][0] == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&state=approved"
+    assert owner_http_calls[0][1] == 20
+
+    # 3. Owner-filtered state=draft (exact total 4764)
+    owner_http_calls.clear()
+    resp_draft = client.get("/bff/strategies?state=draft&page_size=20", headers=HEADERS)
+    assert resp_draft.status_code == 200
+    body_draft = resp_draft.json()
+    assert body_draft["page_info"]["total"] == 4764
+    assert len(body_draft["data"]) == 20
+    assert all(item["state"] == "draft" for item in body_draft["data"])
+    assert owner_http_calls[0][0] == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&state=draft"
+    assert owner_http_calls[0][1] == 20
+
+    # 4. Owner-filtered state=review (exact total 1)
+    owner_http_calls.clear()
+    resp_review = client.get("/bff/strategies?state=review&page_size=20", headers=HEADERS)
+    assert resp_review.status_code == 200
+    body_review = resp_review.json()
+    assert body_review["page_info"]["total"] == 1
+    assert [item["id"] for item in body_review["data"]] == ["strat-candidate-0001"]
+
+    # 5. Owner-filtered persona_id=persona-scale-0001 (exact total 1)
+    owner_http_calls.clear()
+    resp_persona = client.get("/bff/strategies?persona_id=persona-scale-0001&page_size=20", headers=HEADERS)
+    assert resp_persona.status_code == 200
+    body_persona = resp_persona.json()
+    assert body_persona["page_info"]["total"] == 1
+    assert [item["id"] for item in body_persona["data"]] == ["strategy-persona-0001"]
+    assert owner_http_calls[0][0] == (
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&persona_id=persona-scale-0001"
+    )
+    assert owner_http_calls[0][1] == 1
+
+    # 6. Detail endpoint reads only that strategy (2 version rows) in a single owner HTTP request and agrees on alpha
+    owner_http_calls.clear()
+    resp_detail_1 = client.get("/bff/strategies/strategy-persona-0001", headers=HEADERS)
+    assert resp_detail_1.status_code == 200, resp_detail_1.text
+    detail_1 = resp_detail_1.json()["data"]
+    assert detail_1["id"] == "strategy-persona-0001"
+    assert detail_1["alpha"] == ""
+    assert detail_1["alpha"] == by_id["strategy-persona-0001"]["alpha"]
+    assert detail_1["spec"]["spec_version_id"] == "reg-strategy-persona-0001-v2"
+    assert detail_1["spec"]["spec_version"] == "1.1.0"
+    assert detail_1["spec"]["market_scope"] == {"markets": ["TWSE"], "universe": ["2330.TW", "2317.TW"]}
+    assert len(owner_http_calls) == 1
+    assert owner_http_calls[0][0] == "/api/registry/strategies/strategy-persona-0001/strategy-specs"
+    assert owner_http_calls[0][1] == 2
+
+    owner_http_calls.clear()
+    resp_detail_alpha = client.get("/bff/strategies/strat-approved-extra-0133", headers=HEADERS)
+    assert resp_detail_alpha.status_code == 200, resp_detail_alpha.text
+    detail_alpha = resp_detail_alpha.json()["data"]
+    assert detail_alpha["alpha"] == "cross-sectional-momentum"
+    assert detail_alpha["alpha"] == by_id["strat-approved-extra-0133"]["alpha"]
+    assert len(owner_http_calls) == 1
+    assert owner_http_calls[0][0] == "/api/registry/strategies/strat-approved-extra-0133/strategy-specs"
+    assert owner_http_calls[0][1] == 1
+
