@@ -1,0 +1,45 @@
+{
+  "task_id": "BFF-EVIDENCE-SUMMARY-POPULATION-20261105",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "kind": "functional (offline, real hosted row shape); hosted verification is owned by the sole Devpublisher task",
+  "no_vm_or_ssh_access": true,
+  "root_cause": "EVIDENCE-OWNER-LIST-BOUNDED-20261104 changed GET /bff/management/evidence to read one bounded 20-row owner page (returning page_info.total = 518 on hosted tenant-dev after excluding 96 legacy tenantless rows), but _management_evidence_summary in services/control-plane/bff/management_read_models/service.py continued computing verified_count, verified_evidence, by_source_type, by_link_type, and by_credibility_tier from page_items (the 20 rows on the current page), causing the UI summary to report 總數 518 alongside 已驗證 20.",
+  "design_summary": {
+    "owner_models": "Added EVIDENCE_VERIFIED_CONFIDENCE_THRESHOLD = 0.8 and summarize_evidence_items_collection in services/knowledge/evidence/models.py so EvidenceItem and BFF evidence ref collections share one canonical population summary aggregation.",
+    "owner_repositories": "Added summarize_evidence_items(tenant_id=...) to InMemoryEvidenceRepository (services/knowledge/evidence/repository.py) and PostgresSourceEvidenceRepository (services/source_ingestion/pg_store.py). The Postgres implementation executes one bounded GROUP BY SQL query with the exact same WHERE record_type = 'evidence_item' AND payload->'metadata'->>'tenant_id' = %s scope filter as list_evidence_items_page, excluding tenantless and foreign-tenant rows without materializing full rows.",
+    "owner_route": "Updated GET /api/source-ingest/evidence/items in services/source_ingestion/routers/ingest_operations.py to return 'summary' alongside 'items', 'total', 'page_size', and 'next_page_token' in one bounded owner response. If summarize_evidence_items fails while list_evidence_items_page succeeds, 'summary' is null while 'items' and 'total' remain intact.",
+    "bff_port_and_service": "Extended EvidenceReadResult with summary and summary_unavailable in services/control-plane/bff/ports/research_knowledge_source.py, and updated _management_evidence_summary and ManagementService.get_evidence in services/control-plane/bff/management_read_models/service.py to populate verified_count, verified_evidence, by_source_type, by_link_type, and by_credibility_tier from the tenant population summary (or null when the owner count read fails, never a page-sized number)."
+  },
+  "acceptance_map": {
+    "1_tenant_population_summary_identical_across_pages": "verified_count, verified_evidence, by_source_type, by_link_type, and by_credibility_tier in GET /bff/management/evidence describe the whole tenant population and are identical on page 1 (page_token=0, page_size=20) and page 2 (page_token=20, page_size=20); covered by test_management_evidence_summary_covers_whole_tenant_population_across_pages_with_one_bounded_read and test_evidence_items_route_returns_tenant_population_summary_and_excludes_tenantless_rows.",
+    "2_single_bounded_owner_read_500_plus_real_shape_rows": "GET /bff/management/evidence issues exactly 1 bounded owner request per page call against a 518-row tenant-dev population (630 total rows in repo) with real hosted tw_price_daily/TWSE/0050 row shape; covered by test_management_evidence_summary_covers_whole_tenant_population_across_pages_with_one_bounded_read and test_unfiltered_management_page_does_not_download_every_owner_row.",
+    "3_tenantless_rows_excluded_reconciling_hosted_518": "96 legacy rows without metadata.tenant_id and foreign-tenant rows stay excluded from both list total and summary counts in InMemoryEvidenceRepository, GET /api/source-ingest/evidence/items, and PostgresSourceEvidenceRepository.summarize_evidence_items so tenant-dev counts reconcile to 518; covered by test_management_evidence_summary_covers_whole_tenant_population_across_pages_with_one_bounded_read, test_postgres_owner_summarize_evidence_items_aggregates_in_sql_and_excludes_tenantless_rows, and test_evidence_items_route_returns_tenant_population_summary_and_excludes_tenantless_rows.",
+    "4_null_on_owner_count_failure_preserving_list_total": "When the owner count/summary read fails while the bounded list read succeeds, verified_count, verified_evidence, by_source_type, by_link_type, and by_credibility_tier are null (never a page-sized 20) while page_info.total and summary.total_evidence/total_items remain 518; when the entire owner read fails, all summary fields are null; covered by test_owner_count_failure_returns_null_summary_fields_and_preserves_bounded_list_total and test_owner_failure_reports_unavailable_with_null_totals.",
+    "5_no_test_weakened_and_changed_fixtures_justified": "No existing test or assertion was weakened or deleted. Mock owner fixtures in test_evidence_owner_list_bounded.py, test_ranking_evidence_surfaces_default_composition.py, and test_pm12_request_scoped_reads.py were updated to include the owner summary envelope (and the dict response for /api/registry/strategy-specs?view=persona_binding_counts)."
+  },
+  "changed_assertions": [
+    {
+      "file": "services/control-plane/bff/tests/test_evidence_owner_list_bounded.py",
+      "change": "FakeOwner includes 'summary' computed via summarize_evidence_items_collection(real_row(i) for i in range(rows)) unless fail_summary=True; added 3 new regression tests for AC1-AC4; no existing assertions modified or weakened.",
+      "why": "FakeOwner emulates GET /api/source-ingest/evidence/items which now returns the tenant population summary in the same bounded response."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py",
+      "change": "MockOwnerServer returns total + summary on /api/source-ingest/evidence/items and returns {} when view=persona_binding_counts on /api/registry/strategy-specs; no test assertions changed.",
+      "why": "Aligns the local HTTP mock owner with the current source-ingest evidence items envelope and registry persona_binding_counts contract."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_pm12_request_scoped_reads.py",
+      "change": "CountingOwnerServer returns total + empty summary on /api/source-ingest/evidence/items and returns {} when view=persona_binding_counts on /api/registry/strategy-specs; no test assertions changed.",
+      "why": "Aligns the local HTTP mock owner with the current source-ingest evidence items envelope and registry persona_binding_counts contract."
+    }
+  ],
+  "verified_commands": [
+    "./.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_evidence_owner_list_bounded.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py services/source_ingestion/test_pg_store.py -q (28 passed, 5 skipped)",
+    "./.venv-pantheon/bin/python3 -m pytest services/source_ingestion/test_service.py -q (36 passed, 2 skipped)",
+    "./.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py -q (5 passed)",
+    "./.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_pm12_request_scoped_reads.py -q (3 passed)",
+    "./.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q (44 passed)"
+  ]
+}

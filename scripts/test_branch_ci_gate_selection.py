@@ -25,6 +25,10 @@ STEP_NAMES = (
 
 WORKFLOW_CONTRACT_STEP_NAME = "Verify workflow contract"
 EXPECTED_CONTRACT_TEST_COMMAND = "python3 -m unittest scripts.test_branch_ci_gate_selection"
+TENANT_FALLBACK_AUDIT_STEP_NAME = "BFF tenant fallback audit gate"
+EXPECTED_TENANT_FALLBACK_AUDIT_COMMAND = (
+    "python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py"
+)
 EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES = 30
 SOURCE_INGESTION_STEP_NAME = "Run source ingestion tests"
 COMPOSE_CONTRACT_STEP_NAME = "Run compose contract tests"
@@ -119,6 +123,22 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         deps_index = names.index("Install test dependencies")
         contract_index = names.index(WORKFLOW_CONTRACT_STEP_NAME)
         self.assertGreater(contract_index, deps_index)
+
+    def test_tenant_fallback_audit_step_pinned(self) -> None:
+        names = [s.get("name") for s in self.smoke_steps]
+        self.assertIn(TENANT_FALLBACK_AUDIT_STEP_NAME, names)
+        step = self.smoke_steps[names.index(TENANT_FALLBACK_AUDIT_STEP_NAME)]
+        self.assertNotIn("if", step, "BFF tenant fallback audit gate must run unconditionally")
+        self.assertFalse(step.get("continue-on-error", False))
+        self.assertGreater(
+            names.index(TENANT_FALLBACK_AUDIT_STEP_NAME),
+            names.index("Install test dependencies"),
+        )
+        command = step.get("run", "").strip()
+        self.assertEqual(command, EXPECTED_TENANT_FALLBACK_AUDIT_COMMAND)
+        pytest_args = command.split("python3 -m pytest", 1)[1]
+        for flag in ("--deselect", "--ignore", " -k ", " -m ", "--lf"):
+            self.assertNotIn(flag, pytest_args)
 
     def test_source_ingestion_step_pinned(self) -> None:
         names = [s.get("name") for s in self.smoke_steps]

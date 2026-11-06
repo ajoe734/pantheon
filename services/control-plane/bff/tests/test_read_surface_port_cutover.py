@@ -383,7 +383,9 @@ class TestResearchKnowledgeSourcePortCutover(unittest.TestCase):
 
     def test_dataset_source_and_surface_status(self) -> None:
         source = self.port.dataset_source("research_notes")
-        self.assertEqual(source, "typed_store")
+        # Notes are read from the configured research owner, not the in-process dict
+        # (BFF-KNOWLEDGE-EMPTY-NOT-UNAVAILABLE-20261105), so the label is service_client.
+        self.assertEqual(source, "service_client")
         status = self.port.dataset_surface_status("research_notes", snapshot_at="2026-08-28T12:00:00Z", has_data=True)
         self.assertEqual(status["status"], "ok")
 

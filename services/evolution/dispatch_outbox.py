@@ -32,7 +32,11 @@ durable and auditable.
 """
 from __future__ import annotations
 
+import json
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -161,6 +165,202 @@ _program_sibling_resolver: Optional[Callable[[str, str], Optional[str]]] = None
 def install_program_sibling_resolver(resolver: Optional[Callable[[str, str], Optional[str]]]) -> None:
     global _program_sibling_resolver
     _program_sibling_resolver = resolver
+
+
+EXECUTE_APPROVAL_TARGET_TYPE = "evolution_execute"
+# Governance verifies owner_user_id equals the verified principal subject.
+EXECUTE_PROPOSER_ID = "evolution-execute-proposer"
+EXECUTE_PROPOSER_TOKEN_VARIABLE = "EVOLUTION_EXECUTE_PROPOSER_TOKEN"
+DEFAULT_REQUEST_TTL_HOURS = 72.0
+
+# The only freeze this owner can bind to an executable receipt.
+SUPPORTED_FREEZE_CAPABILITY = (
+    ("action_type", "freeze"),
+    ("target_type", "candidate_artifact"),
+    ("target_stage", "paper"),
+)
+
+
+class ExecutionApprovalRequestError(RuntimeError):
+    """The Governance request could not be filed; ``status`` is the HTTP mapping."""
+
+    def __init__(self, message: str, *, status: int = 502) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+def execution_approval_id(decision_id: str, content_digest: str) -> str:
+    """Deterministic request id: a resubmission reuses the same request."""
+    return f"apv-evoexec-{decision_id}-{str(content_digest)[:16]}"
+
+
+def unsupported_freeze_reason(binding: Mapping[str, Any]) -> str | None:
+    """Named reason when a decision is not a paper freeze of a candidate artifact."""
+    for field, supported in SUPPORTED_FREEZE_CAPABILITY:
+        if str(binding.get(field) or "").strip().lower() != supported:
+            return (
+                "unsupported_freeze_scope: only a paper freeze of a candidate_artifact "
+                f"is supported ({field} must be {supported!r})"
+            )
+    return None
+
+
+def build_execution_approval_body(
+    decision: Mapping[str, Any],
+    *,
+    content_digest: str,
+    now: datetime | None = None,
+    ttl_hours: float | None = None,
+) -> dict[str, Any]:
+    ttl = DEFAULT_REQUEST_TTL_HOURS if ttl_hours is None else ttl_hours
+    expires = (now or datetime.now(timezone.utc)) + timedelta(hours=ttl)
+    decision_id = str(decision["decision_id"])
+    return {
+        "decision_id": execution_approval_id(decision_id, content_digest),
+        "expected_version": 0,
+        "tenant_id": decision["tenant_id"],
+        "owner_user_id": EXECUTE_PROPOSER_ID,
+        "target_type": EXECUTE_APPROVAL_TARGET_TYPE,
+        "target_id": decision_id,
+        "target_version": decision["target_version"],
+        "risk_level": _value(decision.get("risk_level")),
+        "expires_at": expires.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "subject": {
+            "proposal_id": decision_id,
+            "proposal_content_digest": content_digest,
+        },
+    }
+
+
+def _value(raw: Any) -> Any:
+    return getattr(raw, "value", raw)
+
+
+def _default_proposer_token() -> str:
+    from services.service_token_file import configured_service_token
+
+    try:
+        return configured_service_token(EXECUTE_PROPOSER_TOKEN_VARIABLE)
+    except RuntimeError as exc:
+        raise ExecutionApprovalRequestError(
+            "Evolution execute proposer principal is unavailable", status=503
+        ) from exc
+
+
+def _read_existing_approval_request(
+    *,
+    base: str,
+    approval_id: str,
+    token: str,
+    timeout: float,
+) -> dict[str, Any]:
+    read_req = urllib.request.Request(
+        f"{base}/api/governance/approvals/{urllib.parse.quote(approval_id, safe='')}",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(read_req, timeout=timeout) as response:
+            raw = response.read()
+        parsed = json.loads(raw.decode("utf-8")) if raw else {}
+        return dict(parsed) if isinstance(parsed, Mapping) else {}
+    except urllib.error.HTTPError as exc:
+        status = 503 if exc.code in (502, 503, 504) else 502
+        raise ExecutionApprovalRequestError(
+            f"Governance approval readback failed after conflict: HTTP {exc.code}",
+            status=status,
+        ) from exc
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
+        raise ExecutionApprovalRequestError(
+            f"Governance approval readback unavailable: {exc}", status=503
+        ) from exc
+
+
+def file_execution_approval_request(
+    decision: Mapping[str, Any],
+    *,
+    content_digest: str,
+    governance_base_url: str | None = None,
+    token_provider: Callable[[], str] | None = None,
+    timeout: float = 10.0,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """File (or reuse) the deterministic ``evolution_execute`` request.
+
+    Returns ``{"approval_id", "created", "decision_state", "decision", "expires_at"}``.
+    A 409 from Governance means the deterministic request already exists; the
+    owner reads the existing request back under its proposer principal so the
+    caller can see whether it is still pending/valid or already terminal/expired.
+    """
+    base = (governance_base_url or os.getenv("EVOLUTION_GOVERNANCE_BASE_URL") or "").strip().rstrip("/")
+    if not base:
+        raise ExecutionApprovalRequestError("Governance base URL is not configured", status=503)
+    token = (token_provider or _default_proposer_token)()
+    if not token:
+        raise ExecutionApprovalRequestError(
+            "Evolution execute proposer principal is unavailable", status=503
+        )
+    try:
+        ttl_hours = float(os.getenv("EVOLUTION_EXECUTE_REQUEST_TTL_HOURS", DEFAULT_REQUEST_TTL_HOURS))
+    except ValueError:
+        ttl_hours = DEFAULT_REQUEST_TTL_HOURS
+    body = build_execution_approval_body(
+        decision, content_digest=content_digest, now=now, ttl_hours=ttl_hours
+    )
+    approval_id = body["decision_id"]
+    request = urllib.request.Request(
+        f"{base}/api/governance/approvals",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": f"{approval_id}:{uuid.uuid4().hex}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+        try:
+            created_doc = json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            created_doc = {}
+        if not isinstance(created_doc, Mapping):
+            created_doc = {}
+        return {
+            "approval_id": approval_id,
+            "created": True,
+            "decision_state": created_doc.get("decision_state", "proposed"),
+            "decision": created_doc.get("decision"),
+            "expires_at": created_doc.get("expires_at", body["expires_at"]),
+        }
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            existing = _read_existing_approval_request(
+                base=base,
+                approval_id=approval_id,
+                token=token,
+                timeout=timeout,
+            )
+            return {
+                "approval_id": approval_id,
+                "created": False,
+                "decision_state": existing.get("decision_state"),
+                "decision": existing.get("decision"),
+                "expires_at": existing.get("expires_at"),
+            }
+        status = 503 if exc.code in (502, 503, 504) else 502
+        raise ExecutionApprovalRequestError(
+            f"Governance refused the execute approval request: HTTP {exc.code}", status=status
+        ) from exc
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise ExecutionApprovalRequestError(
+            f"Governance execute approval request unavailable: {exc}", status=503
+        ) from exc
 
 
 OWNER_SERVICE = "evolution-svc"

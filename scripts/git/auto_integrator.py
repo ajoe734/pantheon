@@ -102,6 +102,7 @@ FAILURE_VALUES = {
 IGNORABLE_DIAGNOSTIC_WORKFLOWS = frozenset({"Canonical Review Attestation Audit"})
 ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNSTABLE", "UNKNOWN"}
 ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNSTABLE", "UNKNOWN"}
+BEHIND_MERGE_STATE = "BEHIND"
 PR_DETAIL_FIELDS = (
     "number,title,url,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,"
     "reviewDecision,statusCheckRollup,state,mergeCommit,mergedAt,commits,"
@@ -157,6 +158,9 @@ class IntegrationResult:
     unblock_task_id: str | None = None
     dry_run: bool = True
     commands: list[list[str]] = field(default_factory=list)
+    # Set only for a clean-trial-merge BEHIND PR awaiting per-repo routing;
+    # (approved_at_text, head_sha). Never serialized.
+    behind_route: tuple[str, str] | None = field(default=None, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -216,11 +220,19 @@ class IntegrationLockHeld(IntegrationLockError):
 class FinalMergeRevalidationError(AutoIntegratorError):
     """Live canonical state or PR state changed after smoke validation."""
 
-    def __init__(self, reason: str, detail: str, *, waiting: bool = False) -> None:
+    def __init__(
+        self,
+        reason: str,
+        detail: str,
+        *,
+        waiting: bool = False,
+        merge_state: str = "",
+    ) -> None:
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
         self.waiting = waiting
+        self.merge_state = merge_state
 
 
 class ExecuteAuthorityError(AutoIntegratorError):
@@ -1972,6 +1984,7 @@ def revalidate_before_merge(
             f"PR #{fresh_number} final mergeStateStatus={fresh_merge_state}; "
             "refusing an auto-merge or merge-queue handoff.",
             waiting=True,
+            merge_state=fresh_merge_state,
         )
     return fresh_pr, fresh_decision, fresh_checks
 
@@ -2112,7 +2125,10 @@ def open_unblock_task(
             file=sys.stderr,
         )
         return None
-    if not unblock_contract.requires_repair_task(reason):
+    if not (
+        unblock_contract.requires_repair_task(reason)
+        or unblock_contract.requires_source_reopen(reason)
+    ):
         print(
             f"auto-integrator: {candidate.task_id} remains blocked by {reason}; "
             "resolve canonical authority on the source task, no repair task published",
@@ -2187,6 +2203,174 @@ def open_unblock_task(
         )
         return None
     return outcome.task_id
+
+
+def _outstanding_behind_return_for_repo(
+    repository_slug: str,
+    target_branch: str,
+    *,
+    root: Path,
+    state: Mapping[str, Any] | None = None,
+) -> str | None:
+    if state is None:
+        status_file = root / "ai-status.json"
+        loaded = (
+            load_json(status_file, {})
+            if status_file.is_file() and not status_file.is_symlink()
+            else {}
+        )
+        state = loaded if isinstance(loaded, Mapping) else {}
+    tasks = {
+        str(item.get("id")): item
+        for item in (state.get("tasks") or ())
+        if isinstance(item, Mapping) and item.get("id")
+    }
+    processed_dir = root / unblock_contract.RECEIPT_ROOT / "processed"
+    if not processed_dir.is_dir() or processed_dir.is_symlink():
+        return None
+    expected_slug = normalize_github_repo_slug(repository_slug)
+    for path in sorted(processed_dir.glob("*.json")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        receipt = load_json(path, {})
+        if (
+            not isinstance(receipt, Mapping)
+            or receipt.get("outcome") != "processed"
+            or receipt.get("reason") != unblock_contract.EXACT_HEAD_BEHIND_BASE_REASON
+        ):
+            continue
+        if normalize_github_repo_slug(str(receipt.get("repository_slug") or "")) != expected_slug:
+            continue
+        source_id = str(receipt.get("source_task_id") or "").strip()
+        task = tasks.get(source_id)
+        if not isinstance(task, Mapping):
+            continue
+        if str(task.get("status") or "") not in {"in_progress", "review", "review_approved"}:
+            continue
+        binding = task.get("delivery_binding")
+        task_branch = (
+            str(binding.get("base") or "").strip()
+            if isinstance(binding, Mapping)
+            else ""
+        ) or str(task.get("target_branch") or target_branch).strip() or target_branch
+        if task_branch != target_branch:
+            continue
+        returned_gen = receipt.get("source_task_generation", 1)
+        current_gen = task.get("generation", 1)
+        if (
+            isinstance(returned_gen, int)
+            and not isinstance(returned_gen, bool)
+            and isinstance(current_gen, int)
+            and not isinstance(current_gen, bool)
+            and current_gen >= returned_gen
+        ):
+            return source_id
+    return None
+
+
+def route_behind_results(
+    candidates: Sequence[TaskCandidate],
+    results: Sequence[IntegrationResult],
+    settings: Settings,
+    runner: CommandRunner,
+    *,
+    root: Path,
+    execute: bool,
+    open_unblock: bool = True,
+    state: Mapping[str, Any] | None = None,
+) -> None:
+    """Send at most the oldest BEHIND approved PR per repository back to its owner.
+
+    Mutates ``results`` in place. Uses the existing unblock request path only;
+    never pushes or rewrites an approved head. Ordering is by approval time then
+    task id, so it does not depend on candidate or dict order. Enforces one
+    outstanding BEHIND return per repository and target branch while the
+    returned source task remains in_progress, review, or review_approved.
+    """
+
+    by_repo: dict[tuple[str, str], list[tuple[Any, str, TaskCandidate, IntegrationResult]]] = {}
+    for candidate, result in zip(candidates, results):
+        if result.behind_route is None:
+            continue
+        approved_text, _head = result.behind_route
+        approved = review_gate.parse_timestamp(approved_text) if approved_text else None
+        sort_key = (approved is None, approved.timestamp() if approved else 0.0)
+        by_repo.setdefault(
+            (candidate.repository_slug, candidate.target_branch), []
+        ).append((sort_key, candidate.task_id, candidate, result))
+
+    for key in sorted(by_repo):
+        repo_slug, target_branch = key
+        queue = sorted(by_repo[key], key=lambda item: (item[0], item[1]))
+        routable: list[tuple[Any, str, TaskCandidate, IntegrationResult]] = []
+        for item in queue:
+            _, _, candidate, result = item
+            try:
+                unblock_contract.require_root_repair_source(
+                    candidate.task_id, candidate.raw_task
+                )
+            except ValueError:
+                result.detail += (
+                    " This task is itself a repair (depth limit 1); waiting for an "
+                    "operator to refresh its branch."
+                )
+                continue
+            routable.append(item)
+        if not routable:
+            continue
+        outstanding_id = _outstanding_behind_return_for_repo(
+            repo_slug,
+            target_branch,
+            root=root,
+            state=state,
+        )
+        if outstanding_id is not None and all(
+            item[1] != outstanding_id for item in routable
+        ):
+            for _, _task_id, _, result in routable:
+                result.detail += (
+                    f" Queued behind outstanding BEHIND return for {outstanding_id}; "
+                    "one BEHIND PR is returned per repository and target branch until "
+                    "it merges or is no longer open."
+                )
+            continue
+        if outstanding_id is not None:
+            selected = next(item for item in routable if item[1] == outstanding_id)
+            others = [item for item in routable if item[1] != outstanding_id]
+        else:
+            selected = routable[0]
+            others = routable[1:]
+        _, head_id, head_candidate, head_result = selected
+        for _, _task_id, _, result in others:
+            result.detail += (
+                f" Queued behind older approved BEHIND PR for {head_id}; "
+                "one BEHIND PR is returned per repository and target branch until "
+                "it merges or is no longer open."
+            )
+        if not open_unblock:
+            continue
+        detail = (
+            f"{head_result.detail} Clean trial merge: returning source task to owner "
+            f"via supervisor reopen to merge origin/{head_candidate.target_branch} into "
+            "the task branch with no other change and resubmit; reviewer confirms "
+            f"git diff origin/{head_candidate.target_branch}...HEAD equals the previously "
+            "approved change. The integrator never moves the approved head."
+        )
+        unblock = open_unblock_task(
+            head_candidate,
+            "exact-head-behind-base",
+            detail,
+            settings,
+            runner,
+            root=root,
+            execute=execute,
+        )
+        if unblock:
+            head_result.action = "blocked"
+            head_result.detail = detail
+            head_result.unblock_task_id = unblock
+        else:
+            head_result.detail += " Unblock request was not published; waiting for an operator."
 
 
 def preflight_repository(
@@ -3296,6 +3480,25 @@ def integrate_candidate(
         # Canonical locks have exited before any task-state mutation below.
         action = "waiting" if exc.waiting else "blocked"
         detail = f"PR #{number} failed final merge revalidation: {exc.detail}"
+        if (
+            exc.reason == "final-merge-state-not-direct"
+            and exc.merge_state == BEHIND_MERGE_STATE
+            and gated
+            and rebase_status == "exact_head_verified_clean"
+        ):
+            # Approved, green and merely stale (clean trial merge): defer to
+            # the per-repository routing step so only the oldest is sent back.
+            return IntegrationResult(
+                candidate.task_id,
+                "waiting",
+                detail,
+                number,
+                url,
+                None,
+                not execute,
+                runner.commands[:],
+                behind_route=(str(decision.approved_at or ""), decision.head_oid),
+            )
         unblock = (
             open_unblock_task(
                 candidate,
@@ -3581,6 +3784,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     actionable_count += 1
                     if actionable_count >= max_tasks:
                         break
+            route_behind_results(
+                candidates,
+                results,
+                settings,
+                runner,
+                root=status_root,
+                execute=args.execute,
+                open_unblock=not args.no_open_unblock,
+                state=state,
+            )
     except IntegrationLockHeld as exc:
         payload = {
             "dry_run": not args.execute,

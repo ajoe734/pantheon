@@ -627,6 +627,231 @@ def test_unsupported_plane_is_dead_lettered_with_a_reason_not_executed(isolated_
     assert "authoritative governance owner" in (record.last_error or "")
 
 
+def test_governance_plane_decision_is_held_not_failed_or_dead_lettered(isolated_state, caplog):
+    """EVOLUTION-BFF-FREEZE-EXEC-20261105: a never-auto-dispatched plane holds an approved decision.
+
+    The owner path (BFF ExecuteEvolutionAction) executes it; the worker neither
+    submits nor counts a failed attempt, dead-letters, or logs an approval error.
+    """
+    import logging
+
+    evo_main.receipt_registry.update(
+        build_adapter_registry(
+            research_api_url="http://research.test", governance_api_url="http://governance.test"
+        )
+    )
+    assert evo_main.receipt_registry["governance"].auto_dispatch is False
+    decision_id = _new_decision_id("evo-freeze-hold")
+    created = client.post("/api/evolution/proposals", json={
+        "decision_id": decision_id, "tenant_id": RESEARCH_TENANT, "target_type": "candidate_artifact",
+        "target_id": f"artifact-{decision_id}", "target_version": "1.0.0", "action_type": "freeze",
+        "target_stage": "paper", "rationale": "Severity-2 incident recurrence on this artifact.",
+        "created_by_id": "evolution-controller-01", "linked_incident_id": f"inc-{decision_id}"})
+    assert created.status_code == 201, created.text
+    for step in ("review", "approve"):
+        response = client.post(f"/api/evolution/proposals/{decision_id}/{step}", json={
+            "actor_role": "risk_owner", "actor_id": "risk-01", "tenant_id": RESEARCH_TENANT,
+            "approval_decision_id": f"approval-{decision_id}"})
+        assert response.status_code == 200, response.text
+
+    outbox_id, _, _ = dispatch_identity(RESEARCH_TENANT, decision_id)
+    attempts_before = isolated_state["outbox"].get_by_id(outbox_id).delivery_attempts
+    with caplog.at_level(logging.ERROR):
+        for minutes in (0, 5, 10):  # each tick is past the previous claim's lease
+            now = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+            result = run_tick(isolated_state, now=now)
+            assert result["held"] == 1 and result["errors"] == [], result
+            assert result["retried"] == 0 and result["dead_lettered"] == 0
+            assert result["unsupported"] == 0 and result["executed"] == 0
+            assert result["items"][0]["disposition"] == "held"
+    record = isolated_state["outbox"].get_by_id(outbox_id)
+    assert record.status.value == "pending" and record.delivery_attempts == attempts_before
+    assert not record.last_error
+    assert decision_state(decision_id) == "approved"
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_worker_main_builds_governance_adapter_from_env_and_holds_paper_freeze(
+    isolated_state, monkeypatch
+):
+    """P1: dispatch_worker.main() must wire EVOLUTION_GOVERNANCE_BASE_URL via shared helper and hold paper freeze."""
+    import json
+    from services.evolution.dispatch_receipts import GovernanceFreezeOrderAdapter
+
+    monkeypatch.setenv("EVOLUTION_GOVERNANCE_BASE_URL", "http://governance.test")
+    monkeypatch.setenv("EVOLUTION_DATA_DIR", str(isolated_state["data_dir"]))
+    monkeypatch.setenv("EVOLUTION_STORE_BACKEND", "json")
+    monkeypatch.setenv("EVOLUTION_DISPATCH_MAX_TICKS", "1")
+    monkeypatch.setenv("EVOLUTION_DISPATCH_INTERVAL_SECONDS", "1")
+    health_path = isolated_state["data_dir"] / "worker-main-health.json"
+    monkeypatch.setenv("EVOLUTION_DISPATCH_HEALTH_FILE", str(health_path))
+
+    worker_registry = dispatch_worker.configured_adapter_registry(timeout=5.0)
+    assert isinstance(worker_registry["governance"], GovernanceFreezeOrderAdapter)
+    assert worker_registry["governance"].auto_dispatch is False
+
+    decision_id = _new_decision_id("evo-main-hold")
+    created = client.post(
+        "/api/evolution/proposals",
+        json={
+            "decision_id": decision_id,
+            "tenant_id": RESEARCH_TENANT,
+            "target_type": "candidate_artifact",
+            "target_id": f"artifact-{decision_id}",
+            "target_version": "1.0.0",
+            "action_type": "freeze",
+            "target_stage": "paper",
+            "rationale": "Paper freeze held by real dispatch_worker.main() registry.",
+            "created_by_id": "evolution-controller-01",
+            "linked_incident_id": f"inc-{decision_id}",
+        },
+    )
+    assert created.status_code == 201, created.text
+    for step in ("review", "approve"):
+        response = client.post(
+            f"/api/evolution/proposals/{decision_id}/{step}",
+            json={
+                "actor_role": "risk_owner",
+                "actor_id": "risk-01",
+                "tenant_id": RESEARCH_TENANT,
+                "approval_decision_id": f"approval-{decision_id}",
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    rc = dispatch_worker.main()
+    assert rc == 0
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    assert health["ticks"] == 1
+    assert health["total_dead_lettered"] == 0
+    assert health["total_errors"] == 0
+
+    outbox_id, _, _ = dispatch_identity(RESEARCH_TENANT, decision_id)
+    record = isolated_state["outbox"].get_by_id(outbox_id)
+    assert record is not None
+    assert record.status.value == "pending"
+    assert record.delivery_attempts == 0
+    assert not record.last_error
+    assert decision_state(decision_id) == "approved"
+
+
+@pytest.mark.parametrize(
+    "case_name,action_type,target_stage,actor_role,extra_propose,extra_approve",
+    [
+        (
+            "canary-freeze",
+            "freeze",
+            "canary",
+            "risk_owner",
+            {},
+            {},
+        ),
+        (
+            "live-freeze",
+            "freeze",
+            "live",
+            "governance_committee",
+            {},
+            {"second_approver_id": "gov-committee-02", "two_man_approval_verified": True},
+        ),
+        (
+            "retire-artifact",
+            "retire",
+            "paper",
+            "governance_committee",
+            {
+                "evidence_refs": [
+                    {
+                        "ref_type": "evaluator_result",
+                        "ref_id": "eval-retire-01",
+                        "summary": "Evaluator replacement verified",
+                    }
+                ]
+            },
+            {"second_approver_id": "gov-committee-02", "two_man_approval_verified": True},
+        ),
+    ],
+)
+def test_non_paper_freeze_and_other_governance_actions_dead_letter_not_held(
+    isolated_state,
+    monkeypatch,
+    case_name,
+    action_type,
+    target_stage,
+    actor_role,
+    extra_propose,
+    extra_approve,
+):
+    """P2: Hold applies only when unsupported_freeze_reason(payload) is None.
+
+    Live or canary freeze, retire, and other governance actions must record an
+    unsupported refusal and dead-letter rather than silently holding forever.
+    """
+    monkeypatch.setenv("EVOLUTION_GOVERNANCE_BASE_URL", "http://governance.test")
+    registry = dispatch_worker.configured_adapter_registry(timeout=5.0)
+    assert registry["governance"].auto_dispatch is False
+
+    decision_id = _new_decision_id(f"evo-{case_name}")
+    created = client.post(
+        "/api/evolution/proposals",
+        json={
+            "decision_id": decision_id,
+            "tenant_id": RESEARCH_TENANT,
+            "target_type": "candidate_artifact",
+            "target_id": f"artifact-{decision_id}",
+            "target_version": "1.0.0",
+            "action_type": action_type,
+            "target_stage": target_stage,
+            "rationale": f"Governance non-hold path test for {case_name}.",
+            "created_by_id": "evolution-controller-01",
+            "linked_incident_id": f"inc-{decision_id}",
+            **extra_propose,
+        },
+    )
+    assert created.status_code == 201, created.text
+    reviewed = client.post(
+        f"/api/evolution/proposals/{decision_id}/review",
+        json={
+            "actor_role": actor_role,
+            "actor_id": f"{actor_role}-01",
+            "tenant_id": RESEARCH_TENANT,
+            "approval_decision_id": f"approval-{decision_id}",
+        },
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    approved = client.post(
+        f"/api/evolution/proposals/{decision_id}/approve",
+        json={
+            "actor_role": actor_role,
+            "actor_id": f"{actor_role}-01",
+            "tenant_id": RESEARCH_TENANT,
+            "approval_decision_id": f"approval-{decision_id}",
+            **extra_approve,
+        },
+    )
+    assert approved.status_code == 200, approved.text
+
+    result = dispatch_worker.run_poll(
+        api_url="http://evolution.test",
+        outbox=isolated_state["outbox"],
+        registry=registry,
+        compensations=isolated_state["compensations"],
+        timeout_seconds=5.0,
+    )
+    assert result["held"] == 0, result
+    assert result["unsupported"] == 1, result
+    assert result["dead_lettered"] == 1, result
+    assert result["executed"] == 0, result
+    assert result["items"][0]["disposition"] == "unsupported"
+
+    outbox_id, _, _ = dispatch_identity(RESEARCH_TENANT, decision_id)
+    record = isolated_state["outbox"].get_by_id(outbox_id)
+    assert record is not None
+    assert record.status.value == "dead_lettered"
+    assert "unsupported plane:" in (record.last_error or "")
+    assert decision_state(decision_id) == "approved"
+
+
 # ---------------------------------------------------------------------------
 # Proof: compensation readback
 # ---------------------------------------------------------------------------

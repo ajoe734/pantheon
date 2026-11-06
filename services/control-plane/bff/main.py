@@ -4266,6 +4266,14 @@ app = compose_bff_app(
     # the module compatibility facade is installed only after composition.
     _project_operator_runtime_state_row=_project_operator_runtime_state_row,
 )
+from .command_adapters.evolution_adapter import create_evolution_decision_approval_router
+app.include_router(
+    create_evolution_decision_approval_router(
+        extract_identity=_extract_identity,
+        require_operator_role=auth_policy.require_operator_role,
+        bff_error=_bff_error,
+    )
+)
 _events_router = app.state.events_router
 _deployment_router = app.state.deployment_router
 _agora_router = app.state.agora_router

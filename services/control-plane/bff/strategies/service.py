@@ -139,7 +139,10 @@ class StrategiesService:
     def list_strategy_summaries(self) -> List[Dict[str, Any]]:
         if self._list_strategy_summaries is not None:
             return self._list_strategy_summaries()
-        raise NotImplementedError("list_strategy_summaries dependency was not supplied")
+        read_store = self._get_read_store_port()
+        if callable(getter := getattr(read_store, "list_strategy_summaries", None)):
+            return list(getter() or [])
+        return list_strategy_summaries(read_store)
 
     def _invoke_read_owner(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:
@@ -200,22 +203,10 @@ class StrategiesService:
                         return snap, False
                     except Exception:
                         return None, True
-                list_snaps = getattr(read_store, "list_ranking_snapshots", None)
-                if callable(list_snaps):
+                if hasattr(read_store, "list_ranking_snapshots") or hasattr(read_store, "_records_table"):
                     try:
-                        raw_list = list(list_snaps() or [])
-                        candidates = []
-                        for idx, item in enumerate(raw_list):
-                            payload = (
-                                item.to_canonical_dict()
-                                if hasattr(item, "to_canonical_dict")
-                                else (dict(item) if isinstance(item, dict) else None)
-                            )
-                            if isinstance(payload, dict):
-                                candidates.append((str(payload.get("created_at") or ""), idx, payload))
-                        if not candidates:
-                            return None, False
-                        return max(candidates, key=lambda entry: (entry[0], entry[1]))[2], False
+                        snap = latest_ranking_snapshot(read_store)
+                        return (snap if isinstance(snap, dict) else None), False
                     except Exception:
                         return None, True
             try:

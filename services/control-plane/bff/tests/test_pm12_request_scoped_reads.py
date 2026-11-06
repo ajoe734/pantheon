@@ -415,7 +415,7 @@ class CountingOwnerServer:
                     )
                 elif path == "/api/registry/strategy-specs":
                     outer._record("strategy_specs_collection", self.path)
-                    self.send_json(200, [])
+                    self.send_json(200, {} if "view=persona_binding_counts" in self.path else [])
                 elif path in ("/api/evolution/proposals", "/api/evolution/decisions"):
                     outer._record("evolution_decisions_collection", self.path)
                     self.send_json(200, [])
@@ -430,7 +430,21 @@ class CountingOwnerServer:
                     self.send_json(200, [])
                 elif path == "/api/source-ingest/evidence/items":
                     outer._record("evidence_items_collection", self.path)
-                    self.send_json(200, {"items": []})
+                    self.send_json(
+                        200,
+                        {
+                            "items": [],
+                            "total": 0,
+                            "summary": {
+                                "total": 0,
+                                "verified_count": 0,
+                                "verified_evidence": 0,
+                                "by_source_type": {},
+                                "by_link_type": {},
+                                "by_credibility_tier": {},
+                            },
+                        },
+                    )
                 elif path == "/api/source-ingest/connectors/registry":
                     outer._record("source_connector_registry", self.path)
                     self.send_json(200, {"connectors": []})

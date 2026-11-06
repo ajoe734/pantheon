@@ -109,12 +109,21 @@ class MockOwnerServer:
                     res = [r for r in outer.runtime_bindings if tenant is None or r.get("tenant_id") == tenant]
                     self.send_json(200, {"bindings": res})
                 elif self.path.startswith("/api/source-ingest/evidence/items"):
+                    from services.knowledge.evidence.models import summarize_evidence_items_collection
+
                     res = [e for e in outer.evidence_items if tenant is None or e.get("tenant_id") == tenant]
-                    self.send_json(200, {"items": res})
+                    self.send_json(
+                        200,
+                        {
+                            "items": res,
+                            "total": len(res),
+                            "summary": summarize_evidence_items_collection(res),
+                        },
+                    )
                 elif self.path.startswith("/api/telemetry/"):
                     self.send_json(200, {"summaries": [], "items": []})
                 elif self.path.startswith("/api/registry/strategy-specs"):
-                    self.send_json(200, [])
+                    self.send_json(200, {} if "view=persona_binding_counts" in self.path else [])
                 else:
                     self.send_json(404, {"error": "not found"})
 

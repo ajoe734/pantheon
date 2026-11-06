@@ -1,0 +1,99 @@
+{
+  "task_id": "BFF-CMD-TENANT-REJECT-20261105",
+  "title": "Refuse mismatched tenant in BFF command admission",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 90,
+  "net_prod_lines": 23,
+  "acceptance_criteria": {
+    "ac_1_compare_verified_tenant_against_params_and_nested_payload": {
+      "status": "satisfied",
+      "detail": "submit_command_admission in services/control-plane/bff/command_adapters/service.py resolves trusted_tenant = self._trusted_tenant_for_identity(identity) and compares it against cmd.params keys ('tenant_id', 'tenant', 'tenantId') and nested cmd.params['payload'] keys ('tenant_id', 'tenant', 'tenantId', when dict) before any store lookup, store write, or downstream owner call."
+    },
+    "ac_2_http_403_tenant_mismatch_top_level_error_code": {
+      "status": "satisfied",
+      "detail": "Added ErrorCode.TENANT_MISMATCH = 'TENANT_MISMATCH' in services/control-plane/bff/models.py and raised self._raise_error(403, ErrorCode.TENANT_MISMATCH, ...) on mismatch so the normal BFF error shape returns HTTP 403 with top-level error.code == 'TENANT_MISMATCH' and never stringifies it inside another error code; zero downstream owner calls occur and no command is stored or reaches executed."
+    },
+    "ac_3_matching_or_absent_param_tenant_and_unverified_caller_preserved": {
+      "status": "satisfied",
+      "detail": "When params omit tenant keys or match trusted_tenant, submit_command_admission proceeds unchanged and preserves the existing trusted-tenant stamp on stored_params['tenant_id'] and command_envelope.payload['tenant_id']. Callers with no verified tenant (trusted_tenant is None) keep the existing refusal."
+    },
+    "ac_4_single_audit_log_line_without_tokens": {
+      "status": "satisfied",
+      "detail": "Each refusal logs exactly one warning line on services.control_plane.bff.command_adapters.service with operator_id, verified_tenant, claimed_tenant, and command name, and excludes raw JWTs, Bearer headers, and confirm tokens."
+    },
+    "ac_5_three_red_tests_on_dev_pass_unchanged": {
+      "status": "satisfied",
+      "detail": "test_command_route_binds_owner_write_to_jwt_tenant[EvolutionProgramAction-target0-params0], test_mounted_capital_command_route_scopes_to_the_jwt_tenant[tenant-a-tenant-b-False], and test_mounted_capital_command_route_scopes_to_the_jwt_tenant[tenant-b-tenant-foreign-False] pass unchanged, and no assertion in test_tenant_fallback_audit.py was weakened."
+    },
+    "ac_6_new_tests_across_all_admission_entries_and_nested_payload": {
+      "status": "satisfied",
+      "detail": "Added test_command_admission_refuses_foreign_tenant_claims_and_logs_without_token (6 parameterizations covering tenant_id, tenant, tenantId at top-level params and inside params.payload) and test_command_admission_entries_refuse_foreign_tenant_with_signed_jwt (10 parameterizations covering POST /bff/v1/commands, resource action routes PATCH /bff/deployments/plan-a and POST /bff/evolution-programs/program-a/actions/pause_program, persona lifecycle route POST /bff/personas/persona-a/actions/AdvanceLifecycle, and assistant command submission via execute_governed_tool / POST /bff/assistant/tools/execute, across both top-level and nested params.payload tenant claims, asserting HTTP 403 TENANT_MISMATCH, zero owner calls, zero stored commands, and one token-free audit log line)."
+    },
+    "ac_7_required_branch_ci_smoke_acceptance_gate_and_negative_control_proof": {
+      "status": "satisfied",
+      "detail": "Added unconditional step 'BFF tenant fallback audit gate' running 'python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py' in jobs.smoke of .github/workflows/branch-ci.yml and pinned it in scripts/test_branch_ci_gate_selection.py::BranchCiGateSelectionTests.test_tenant_fallback_audit_step_pinned. Negative control verified: without the new admission check in service.py, pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py exits with code 1 (3 failed on baseline dev tests, 19 failed including the 16 new refusal test cases)."
+    },
+    "ac_8_contract_documentation_and_scope_discipline": {
+      "status": "satisfied",
+      "detail": "Updated services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md Section 4 (Required Admission Controls) and Section 6 (Response Shape error code table) to document the HTTP 403 TENANT_MISMATCH refusal. No other routes or out-of-scope failing tests were modified."
+    }
+  },
+  "negative_control_proof": {
+    "without_admission_check_baseline": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py",
+      "exit_code": 1,
+      "summary": "3 failed, 121 passed, 1 skipped in 80.03s",
+      "failing_tests": [
+        "services/control-plane/bff/tests/test_tenant_fallback_audit.py::test_command_route_binds_owner_write_to_jwt_tenant[EvolutionProgramAction-target0-params0]",
+        "services/control-plane/bff/tests/test_tenant_fallback_audit.py::test_mounted_capital_command_route_scopes_to_the_jwt_tenant[tenant-a-tenant-b-False]",
+        "services/control-plane/bff/tests/test_tenant_fallback_audit.py::test_mounted_capital_command_route_scopes_to_the_jwt_tenant[tenant-b-tenant-foreign-False]"
+      ]
+    },
+    "with_admission_check": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py",
+      "exit_code": 0,
+      "summary": "140 passed, 1 skipped"
+    },
+    "branch_ci_smoke_acceptance_execution": {
+      "pr_number": 6969,
+      "workflow_run_id": 42078866338,
+      "smoke_job_id": 127426480963,
+      "step_number": 8,
+      "step_name": "BFF tenant fallback audit gate",
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py",
+      "conclusion": "success",
+      "completed_at": "2026-11-05T17:55:17Z"
+    }
+  },
+  "out_of_scope_preexisting_failures_verified": {
+    "services/control-plane/bff/tests/test_receipt_owner_routes.py": {
+      "summary": "1 failed, 21 passed",
+      "preexisting_failure": "test_same_operator_cannot_replay_another_tenant_receipt (idempotency lookup in CommandStore is keyed by operator_id without tenant; documented in task brief as out of scope and not added to CI)"
+    }
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "179 passed, 1 skipped (140 passed, 1 skipped in test_tenant_fallback_audit.py; 39 passed in test_bff_test_architecture.py)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts.test_branch_ci_gate_selection",
+      "result": "Ran 14 tests in 0.159s - OK"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_evolution_owner_write_service_auth.py services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py services/control-plane/bff/tests/test_persona_lifecycle_forward.py",
+      "result": "859 passed, 1 skipped in 549.55s"
+    }
+  ],
+  "diff_stat": {
+    "services/control-plane/bff/command_adapters/service.py": "+22 / -0 (net +22)",
+    "services/control-plane/bff/models.py": "+1 / -0 (net +1)",
+    "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md": "+2 / -0",
+    "services/control-plane/bff/tests/test_tenant_fallback_audit.py": "+270 / -0",
+    ".github/workflows/branch-ci.yml": "+4 / -0",
+    "scripts/test_branch_ci_gate_selection.py": "+20 / -0",
+    "production_net": 23
+  }
+}

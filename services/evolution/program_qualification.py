@@ -183,11 +183,10 @@ class QualificationOwnerReader:
 
     @classmethod
     def from_env(cls, *, http: Any = None) -> "QualificationOwnerReader":
-        def token(name: str) -> str:
-            try:
-                return configured_service_token(name)
-            except RuntimeError:
-                return ""
+        # File-backed credentials rotate on disk (24h TTL, renewed in place), so
+        # resolve them at each read instead of once at import.
+        def token(name: str) -> Callable[[], str]:
+            return lambda: configured_service_token(name)
 
         return cls(
             drift_url=os.getenv("RECONCILIATION_DRIFT_URL", ""),
@@ -214,7 +213,11 @@ class QualificationOwnerReader:
         timeout: float,
         params: Optional[Mapping[str, Any]] = None,
     ) -> Any:
-        base, token, variables = self._targets[owner]
+        base, token_source, variables = self._targets[owner]
+        try:
+            token = token_source() if callable(token_source) else token_source
+        except RuntimeError as exc:
+            raise OwnerReadError(f"{owner} owner credential is unreadable ({variables})") from exc
         if not base or not token:
             raise OwnerReadError(f"{owner} owner read is not configured ({variables})")
         headers = {
@@ -637,10 +640,22 @@ class ProgramQualifier:
             return _result("real_target", FAILED, observed=target_id, threshold=threshold, reason=f"target_unverifiable: {exc}")
         entry = view["entry"]
         artifact_type = str(_enum_value(entry.get("artifact_type")) or "")
-        stage = str(_enum_value(view.get("deployment_stage")) or "")
-        observed = {"target_id": target_id, "artifact_type": artifact_type, "deployment_stage": stage}
+        observed = {"target_id": target_id, "artifact_type": artifact_type}
         if artifact_type not in policy.allowed_artifact_types:
             return _result("real_target", FAILED, observed=observed, threshold=threshold, reason=f"artifact_type {artifact_type} is not allowed")
+        # The registry does not carry the authoritative stage; the target
+        # runtime's current telemetry summary does.
+        _binding_id, runtime_id = self._binding_identity(decision)
+        if not runtime_id:
+            return _result("real_target", FAILED, observed=observed, threshold=threshold, reason="target_unverifiable: decision names no runtime")
+        try:
+            summary = self._reader.get_runtime_summary(runtime_id, tenant_id=tenant_id, timeout=timeout)
+        except OwnerReadError as exc:
+            return _result("real_target", FAILED, observed=observed, threshold=threshold, reason=f"target_unverifiable: runtime summary unreadable: {exc}")
+        if str(summary.get("artifact_id") or "") != target_id:
+            return _result("real_target", FAILED, observed={**observed, "runtime_id": runtime_id}, threshold=threshold, reason="target_unverifiable: runtime summary names another artifact")
+        stage = str(_enum_value(summary.get("deployment_stage")) or "")
+        observed = {**observed, "runtime_id": runtime_id, "deployment_stage": stage}
         if stage not in policy.allowed_target_stages:
             return _result("real_target", FAILED, observed=observed, threshold=threshold, reason=f"deployment_stage {stage} is not allowed")
         persona_id = decision.persona_id or (entry.get("metadata") or {}).get("persona_id")

@@ -222,3 +222,17 @@ def test_distillation_and_alpha_replication_worker_rotation_and_revocation(tmp_p
 
     with pytest.raises(RuntimeError):
         configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN", {"ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE": str(alpha_file)})
+
+
+def test_evolution_owner_read_files_rotate_and_are_removed_on_withdrawal(tmp_path):
+    env = configured()
+    names = ("EVOLUTION_REGISTRY_SERVICE_TOKEN", "EVOLUTION_PERSONA_SERVICE_TOKEN")
+    refresh_files(tmp_path, env, now=NOW)
+    before = {n: (tmp_path / "evolution" / n).read_text() for n in names}
+    refresh_files(tmp_path, env, now=NOW + REFRESH_SECONDS)
+    for name in names:
+        renewed = (tmp_path / "evolution" / name).read_text()
+        assert renewed != before[name]
+        assert verify(renewed, now=NOW + REFRESH_SECONDS + 1)["sub"].startswith("pantheon-dev-evolution-")
+    revoke_files(tmp_path, {**env, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
+    assert not any((tmp_path / "evolution" / n).exists() for n in names)

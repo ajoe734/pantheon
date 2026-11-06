@@ -356,6 +356,13 @@ class ExecuteRequest(BaseModel):
     execution_receipt: Optional["ExecutionReceiptIn"] = None
 
 
+class ExecutionApprovalRequestIn(BaseModel):
+    """Ask the owner to file the Governance ``evolution_execute`` request."""
+
+    tenant_id: Optional[str] = None
+    actor_id: Optional[str] = None
+
+
 class CancelRequest(BaseModel):
     actor_role: str
     actor_id: str

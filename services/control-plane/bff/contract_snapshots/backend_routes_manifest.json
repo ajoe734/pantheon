@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-11-04",
+    "snapshot_date": "2026-11-05",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 623,
+    "total_routes": 626,
     "status_values": [
       "implemented",
       "alias",
@@ -3211,7 +3211,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/management/evidence/{ref_id}",
+      "path": "/bff/management/evidence/{param}",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3693,6 +3693,12 @@
     {
       "method": "POST",
       "path": "/bff/assistant/tools/validate",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/evolution-decisions/{param}/execution-approval-request",
       "family": "unknown",
       "status": "implemented"
     },
