@@ -193,9 +193,26 @@ def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
         cmd.action = "AdvanceLifecycle"
         cmd.params = params
     if cmd.command == CommandType.EVOLUTION_PROGRAM_ACTION:
-        raw_act = cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId")
-        if raw_act:
-            norm_act = re.sub(r"[^a-z0-9]", "", str(raw_act).lower())
+        sub_params = cmd.params.get("payload") if isinstance(cmd.params.get("payload"), dict) else {}
+        raw_carriers = [
+            cmd.action,
+            *(cmd.params.get(k) for k in ("action_id", "actionId", "action", "verb")),
+            *(sub_params.get(k) for k in ("action_id", "actionId", "action", "verb")),
+        ]
+        resolved_actions = []
+        for raw_act in raw_carriers:
+            if raw_act is None or (isinstance(raw_act, str) and not raw_act.strip()):
+                continue
+            if not isinstance(raw_act, str):
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "Invalid evolution program action",
+                    "Evolution action carrier must be a string",
+                )
+            norm_act = re.sub(r"[^a-z0-9]", "", raw_act.lower())
+            if norm_act == "evolutionprogramaction":
+                continue
             canonical_act = _EVOLUTION_ACTION_ALIASES.get(norm_act)
             if canonical_act is None:
                 raise _bff_error(
@@ -204,11 +221,29 @@ def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
                     f"Invalid evolution program action: {raw_act}",
                     f"Unsupported evolution action {raw_act}",
                 )
+            if canonical_act not in resolved_actions:
+                resolved_actions.append(canonical_act)
+        if len(resolved_actions) > 1:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Conflicting evolution program action",
+                "EvolutionProgramAction carriers contain conflicting actions",
+            )
+        if resolved_actions:
+            canonical_act = resolved_actions[0]
             cmd.action = canonical_act
             params = dict(cmd.params)
             params["action_id"] = canonical_act
-            if "actionId" in params:
-                params["actionId"] = canonical_act
+            for k in ("actionId", "action", "verb"):
+                if k in params:
+                    params[k] = canonical_act
+            if isinstance(params.get("payload"), dict):
+                sub_cleaned = dict(params["payload"])
+                for k in ("action_id", "actionId", "action", "verb"):
+                    if k in sub_cleaned:
+                        sub_cleaned[k] = canonical_act
+                params["payload"] = sub_cleaned
             cmd.params = params
     return normalize_human_gate_command(cmd)
 
@@ -433,6 +468,12 @@ _EVOLUTION_ACTION_ALIASES: Dict[str, str] = {
     "promote_candidate_live": "promote_candidate_live",
     "promoteevolutioncandidatelive": "promote_candidate_live",
     "promote_evolution_candidate_live": "promote_candidate_live",
+    "createconstraint": "create_constraint",
+    "create_constraint": "create_constraint",
+    "createfitnessformula": "create_fitness_formula",
+    "create_fitness_formula": "create_fitness_formula",
+    "createmutationrule": "create_mutation_rule",
+    "create_mutation_rule": "create_mutation_rule",
 }
 
 
@@ -499,15 +540,49 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
     if norm_c == "evolutionprogramaction" or (norm_c in _EVOLUTION_ACTION_ALIASES and norm_c != "evolutionprogramaction"):
-        target_verb = verb or (_EVOLUTION_ACTION_ALIASES.get(norm_c) if norm_c in _EVOLUTION_ACTION_ALIASES else None)
-        if target_verb:
-            canonical_act = _EVOLUTION_ACTION_ALIASES.get(target_verb)
-            if canonical_act is None:
-                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Unknown evolution program action: {target_verb}", f"Carrier contains unsupported or unknown action: {target_verb}")
+        sub_params = action_params.get("payload") if isinstance(action_params.get("payload"), dict) else {}
+        for k in ("action_id", "actionId", "action", "verb"):
+            v = sub_params.get(k)
+            if v is not None and not isinstance(v, str):
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Invalid {k} carrier type", f"Carrier {k} must be a string")
+        evo_carriers = []
+        if norm_c in _EVOLUTION_ACTION_ALIASES and norm_c != "evolutionprogramaction":
+            evo_carriers.append((command, norm_c))
+        for src in (payload, action_params):
+            for k in ("action", "action_id", "actionId", "verb", "decision", "outcome"):
+                raw_v = src.get(k)
+                if isinstance(raw_v, str) and raw_v.strip():
+                    norm_v = re.sub(r"[^a-z0-9]", "", raw_v.lower())
+                    if norm_v and norm_v != "evolutionprogramaction":
+                        evo_carriers.append((raw_v, norm_v))
+        for k in ("action_id", "actionId", "action", "verb"):
+            raw_v = sub_params.get(k)
+            if isinstance(raw_v, str) and raw_v.strip():
+                norm_v = re.sub(r"[^a-z0-9]", "", raw_v.lower())
+                if norm_v and norm_v != "evolutionprogramaction":
+                    evo_carriers.append((raw_v, norm_v))
+        if evo_carriers:
+            resolved_actions = []
+            for raw_v, norm_v in evo_carriers:
+                mapped = _EVOLUTION_ACTION_ALIASES.get(norm_v)
+                if mapped is None:
+                    raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Unknown evolution program action: {norm_v}", f"Carrier contains unsupported or unknown action: {raw_v}")
+                if mapped not in resolved_actions:
+                    resolved_actions.append(mapped)
+            if len(resolved_actions) > 1:
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting evolution program action", f"{command} carriers contain conflicting evolution program actions")
+            canonical_act = resolved_actions[0]
             cleaned = dict(params) if isinstance(params, dict) else {}
             cleaned["action_id"] = canonical_act
-            if "actionId" in cleaned:
-                cleaned["actionId"] = canonical_act
+            for k in ("actionId", "action", "verb"):
+                if k in cleaned:
+                    cleaned[k] = canonical_act
+            if isinstance(cleaned.get("payload"), dict):
+                sub_cleaned = dict(cleaned["payload"])
+                for k in ("action_id", "actionId", "action", "verb"):
+                    if k in sub_cleaned:
+                        sub_cleaned[k] = canonical_act
+                cleaned["payload"] = sub_cleaned
             return {**payload, "command": "EvolutionProgramAction", "action": canonical_act, "params": cleaned}
     canonical = "AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"} else (command if norm_c in {"approvedecision", "rejectdecision"} else _WRAPPER_VERB_ALIASES.get((command, verb)))
     if canonical is not None:
