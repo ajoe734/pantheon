@@ -30,6 +30,21 @@ class FakeDocker:
 
     def call(self, *args):
         self.calls.append(args)
+        # Whole-stack primitives: project-wide listing, stack rows, env, tag.
+        if args[0] == "ps" and len(args) == 5:
+            return "".join(f"{index + 1:064x}\n" for index in range(len(artifacts.SERVICES)))
+        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT:
+            service = artifacts.SERVICES[int(args[-1], 16) - 1]
+            row = self.containers[service]
+            return json.dumps({"service": service, "oneoff": "False", "image_id": row["image_id"],
+                               "status": row["status"], "exit_code": 0, "health_test": ["CMD", "true"],
+                               "health": row["health"]})
+        if args[0] == "inspect" and args[2] == artifacts.STACK_ENV_FORMAT:
+            return json.dumps("GIT_SHA=" + SOURCE) + "\n"
+        if args[0] == "tag":
+            self.tags = getattr(self, "tags", {})
+            self.tags[args[2]] = args[1]
+            return ""
         if args[0] == "ps":
             service = args[-1].rsplit("=", 1)[1]
             index = artifacts.SERVICES.index(service) + 1
