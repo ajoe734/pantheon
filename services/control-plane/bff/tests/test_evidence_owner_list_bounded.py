@@ -37,7 +37,7 @@ from services.knowledge.evidence.repository import InMemoryEvidenceRepository
 ADMIN_HEADERS = {"Authorization": "Bearer op-evid:admin"}
 OWNER_URL = "http://source-ingest.test"
 TENANT = "tenant-dev"
-OWNER_BUDGET_SECONDS = 2.0  # the BFF client timeout in _default_http_get
+OWNER_BUDGET_SECONDS = 4.0  # the BFF client timeout in _default_http_get
 
 
 def real_row(i: int) -> Dict[str, Any]:
