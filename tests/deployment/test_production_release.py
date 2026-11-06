@@ -1493,7 +1493,7 @@ class SwitchTests(SwitchHarness):
         self.assertEqual(restored["configSha256"], self._digest(restored))
 
     def test_public_real_writes_malformed_value_rejected_before_traffic(self):
-        for bad in ("TRUE", "1", "yes", "True ", "on"):
+        for bad in ("TRUE", "1", "yes", "True ", "on", " true ", "true\n", " false ", "false\n"):
             with self.subTest(bad=bad):
                 self.setUp()
                 self._prepare()

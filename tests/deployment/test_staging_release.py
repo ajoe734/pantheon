@@ -2554,7 +2554,7 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self.assertEqual(base["configSha256"], self._cfg_digest(base))
 
     def test_public_real_writes_malformed_value_rejected(self) -> None:
-        for bad in ("TRUE", "1", "yes", "on"):
+        for bad in ("TRUE", "1", "yes", "on", " true ", "true\n", " false ", "false\n"):
             with self.subTest(bad=bad):
                 self.setUp()
                 env = self._base_env(RELEASE_ID="pantheon-20261024-001", VITE_BFF_REAL_WRITES=bad)

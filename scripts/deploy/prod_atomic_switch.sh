@@ -126,7 +126,7 @@ cfg = {
     },
 }
 # Absent/empty/"false" keeps the legacy key ABSENT (old canonical bytes/digest); explicit "true" only on candidate.
-rw = os.environ.get("VITE_BFF_REAL_WRITES", "").strip()
+rw = os.environ.get("VITE_BFF_REAL_WRITES", "")
 if rw not in ("", "true", "false"):
     print(json.dumps({"status": "error", "error_code": "PUBLIC_REAL_WRITES_INVALID",
                       "message": "VITE_BFF_REAL_WRITES must be exactly true or false"}), file=sys.stderr)

@@ -704,7 +704,7 @@ cfg = {
 }
 # Optional public write posture. Absent/empty/"false" keeps the legacy key ABSENT (old canonical bytes/digest);
 # only an explicit "true" on the candidate renders it. Baseline never inherits it. Anything else is rejected.
-rw = os.environ.get("VITE_BFF_REAL_WRITES", "").strip()
+rw = os.environ.get("VITE_BFF_REAL_WRITES", "")
 if rw not in ("", "true", "false"):
     print(json.dumps({"status": "error", "step": "bootstrap", "error_code": "PUBLIC_REAL_WRITES_INVALID",
                       "message": "VITE_BFF_REAL_WRITES must be exactly true or false"}), file=sys.stderr)
