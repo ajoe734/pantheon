@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -1315,6 +1316,14 @@ def _model_backtest_config(
         for control in controls
         if control["current_value"] != control["baseline_value"]
     }
+    if not updates:
+        # A baseline evaluation (controls equal their baselines) evaluates the
+        # original artifact itself; there is nothing to derive.
+        return BacktestConfig(
+            requested_by=requested_by,
+            strategy_params=dict(base["parameters"]),
+            strategy_artifact=copy.deepcopy(base),
+        )
     digest = stable_json_sha256({"base": model["strategy_artifact_checksum"], "updates": updates})[:12]
     major, minor, patch = (int(part) for part in str(base["version"]).split("."))
     try:

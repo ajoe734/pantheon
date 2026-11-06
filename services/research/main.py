@@ -1985,31 +1985,54 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     # 7. Register the candidate child through the existing Registry mutate route.
     suffix = hashlib.sha256(decision_id.encode("utf-8")).hexdigest()[:10]
     new_artifact_id = f"{target_artifact_id}-retrain-{suffix}"
-    parent_version = [int(part) for part in str(parent_artifact.get("version") or "1.0.0").split(".")]
-    new_version = f"{parent_version[0]}.{parent_version[1] + 1}.0"
-    try:
-        child_view = _retrain_call(
-            step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
-            url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
-            tenant_id=tenant_id,
-            body={
-                "new_artifact_id": new_artifact_id,
-                "new_version": new_version,
-                "parameter_updates": proposed,
-                "source_run_ids": [decision_id, session_id, proof_ref],
-            },
-        )
-    except _OwnerRejection as exc:
-        if exc.status != 409:
-            raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
-        try:  # an earlier attempt registered it: adopt, never duplicate
-            child_view = _retrain_call(
-                step="register_candidate", service="registry", method="GET", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
-                url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(new_artifact_id, safe='')}",
-                tenant_id=tenant_id,
+    child_url = f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(new_artifact_id, safe='')}"
+
+    def read_child() -> Optional[Dict[str, Any]]:
+        try:
+            return _retrain_call(
+                step="register_candidate", service="registry", method="GET",
+                token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", url=child_url, tenant_id=tenant_id,
             )
         except _OwnerRejection:
-            raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
+            return None
+
+    child_view = read_child()  # an earlier attempt of this decision already registered it: adopt, never duplicate
+    if child_view is None:
+        def semver(value: Any) -> tuple:
+            try:
+                parts = tuple(int(part) for part in str(value).split("."))
+            except ValueError:
+                return (0, 0, 0)
+            return parts if len(parts) == 3 else (0, 0, 0)
+
+        highest = semver(parent_artifact.get("version") or "1.0.0")
+        try:
+            family = _retrain_call(
+                step="register_candidate", service="registry", method="GET",
+                token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
+                url=f"{registry_url}/api/registry/strategies/{urllib.parse.quote(str(parent_artifact.get('strategy_id') or ''), safe='')}/strategy-artifacts",
+            )
+        except _OwnerRejection:
+            family = []
+        for view in family if isinstance(family, list) else []:
+            highest = max(highest, semver(((view or {}).get("entry") or {}).get("version")))
+        new_version = f"{highest[0]}.{highest[1] + 1}.0"
+        try:
+            child_view = _retrain_call(
+                step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+                url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
+                tenant_id=tenant_id,
+                body={
+                    "new_artifact_id": new_artifact_id,
+                    "new_version": new_version,
+                    "parameter_updates": proposed,
+                    "source_run_ids": [decision_id, session_id, proof_ref],
+                },
+            )
+        except _OwnerRejection as exc:
+            child_view = read_child() if exc.status == 409 else None
+            if child_view is None:
+                raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
     child_entry = child_view.get("entry") if isinstance(child_view, dict) else {}
     child_id = str((child_entry or {}).get("registry_id") or new_artifact_id)
     if str((child_entry or {}).get("artifact_state") or "") != "candidate":

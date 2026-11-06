@@ -429,6 +429,9 @@ def _request_json_object(
             json_body=json_body,
             timeout_seconds=timeout_seconds,
         )
+    except PersonaTargetError:
+        # Already a sanitized, header-free owner verdict (e.g. "returned HTTP 404").
+        raise
     except Exception:  # noqa: BLE001 - every authority transport failure is closed.
         # A transport exception can contain request headers.  Suppress its
         # context so a service token can never escape through this boundary.
