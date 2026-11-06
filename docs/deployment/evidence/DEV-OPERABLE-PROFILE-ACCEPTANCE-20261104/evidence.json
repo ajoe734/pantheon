@@ -1,10 +1,10 @@
 {
   "taskId": "DEV-OPERABLE-PROFILE-ACCEPTANCE-20261104",
   "title": "Restore persistent operable Dev profile and prove isolated authenticated product writes",
-  "recordedAtUtc": "2026-11-06T02:24:00Z",
-  "status": "in_progress_awaiting_active_nonprod_deploy_42148708959_and_post_switch_qa",
+  "recordedAtUtc": "2026-11-06T03:40:00Z",
+  "status": "accepted_operator_live_deployed_with_post_switch_qa_and_tracked_followups",
   "rootCause": {
-    "summary": "The hosted Dev frontend deployment manifest was previously pinned to read-only because .github/workflows/nonprod-deploy.yml defaults the workflow_dispatch input frontend_profile to read-only (withVITE_BFF_REAL_WRITES=false) unless frontend_profile=operator-live is explicitly passed to the exact-pair release controller, and scripts/auto_deploy_dev_pair.py preserves the currently accepted hosted profile from https://app.dev.mvl-cap.tw/deployment.json (defaulting to read-only only when no valid hosted profile is readable).",
+    "summary": "The hosted Dev frontend deployment manifest was previously pinned to read-only because .github/workflows/nonprod-deploy.yml defaults the workflow_dispatch input frontend_profile to read-only (with VITE_BFF_REAL_WRITES=false) unless frontend_profile=operator-live is explicitly passed to the exact-pair release controller, and scripts/auto_deploy_dev_pair.py preserves the currently accepted hosted profile from https://app.dev.mvl-cap.tw/deployment.json (defaulting to read-only only when no valid hosted profile is readable).",
     "workflowDefault": {
       "file": ".github/workflows/nonprod-deploy.yml",
       "input": "frontend_profile",
@@ -20,31 +20,37 @@
         "scripts/test_auto_deploy_dev_pair.py::TestMain::test_main_passes_hosted_operator_live_profile_to_controller",
         "scripts/test_cross_repo_release_controller.py"
       ],
-      "regressionSuiteResult": "126 passed in 17.69s (.venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_deploy_dev_pair.py scripts/test_cross_repo_release_controller.py)"
+      "regressionSuiteResult": "127 passed in 23.08s (.venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_deploy_dev_pair.py scripts/test_cross_repo_release_controller.py)"
     }
   },
   "currentlyServedAcceptedOperatorLiveDeployment": {
     "deploymentJsonUrl": "https://app.dev.mvl-cap.tw/deployment.json",
     "bffVersionUrl": "https://api.dev.mvl-cap.tw/bff/version",
     "bffHealthUrl": "https://api.dev.mvl-cap.tw/bff/health",
-    "verifiedAtUtc": "2026-11-06T02:22:47Z",
+    "verifiedAtUtc": "2026-11-06T03:21:19Z",
     "environment": "dev",
     "profile": "operator-live",
     "frontendRepo": "ajoe734/execute-plans",
-    "frontendSha": "a8206a2d333f5c9b148bf4db9d6431bbe7042102",
+    "frontendSha": "bdf2a6640f1fed5fee2d14106325770727ca7684",
     "bffRepo": "ajoe734/pantheon",
-    "bffSha": "0cd59ab286b7ad4d7c742993215cb39919cce580",
-    "pairId": "1f671798815927b0b737103b3150094cf23e0b8bdf78836fa4edb99d877b11b1",
-    "releaseCandidateId": "a1ff2d2231e25b59405bd7a3a6c7e34de548c37f327949baaa294849cdb6ff01",
-    "releaseName": "20261105T235044Z-a8206a2d333f-gate-42127287936-42130498661-1-3042093",
-    "deployedAtUtc": "2026-11-05T23:50:44Z",
+    "bffSha": "0cc4d38fcc3c9439a7d83171321b5a08b7b24613",
+    "pairId": "4eb0ccf1a629eca836e37186e1e77777917de35acbb8c7a3a59344703cc12b24",
+    "releaseCandidateId": "1968e87ed33c2c014997c1ef299bfe737adec2f60c0ee0182c166e9f49f9eec8",
+    "releaseName": "20261106T031721Z-bdf2a6640f1f-gate-42151299716-42153997128-1-293968",
+    "deployedAtUtc": "2026-11-06T03:17:21Z",
+    "acceptedAtUtc": "2026-11-06T03:19:45Z",
+    "identityReceipt": "/tmp/pantheon-dev-operable-20261104/actual-root421487-accepted-pair.json",
     "workflowRuns": {
-      "controllerRunId": 42123862167,
-      "controllerRunUrl": "https://github.com/ajoe734/pantheon/actions/runs/42123862167",
-      "pairedFrontendGateRunId": 42127287936,
-      "pairedFrontendGateRunUrl": "https://github.com/ajoe734/execute-plans/actions/runs/42127287936",
-      "frontendDeployRunId": 42130498661,
-      "frontendDeployRunUrl": "https://github.com/ajoe734/execute-plans/actions/runs/42130498661"
+      "controllerRunId": 42148708959,
+      "controllerRunUrl": "https://github.com/ajoe734/pantheon/actions/runs/42148708959",
+      "controllerConclusion": "success",
+      "pairedFrontendGateRunId": 42151299716,
+      "pairedFrontendGateRunUrl": "https://github.com/ajoe734/execute-plans/actions/runs/42151299716",
+      "pairedFrontendGateConclusion": "success",
+      "pairedFrontendGateAdvisoryLimitationsReceipt": "/tmp/pantheon-dev-operable-20261104/actual-FEgate421512-authenticated-acceptance-limitations.json",
+      "frontendDeployRunId": 42153997128,
+      "frontendDeployRunUrl": "https://github.com/ajoe734/execute-plans/actions/runs/42153997128",
+      "frontendDeployConclusion": "success"
     },
     "buildEnv": {
       "VITE_BFF_BASE_URL": "https://api.dev.mvl-cap.tw",
@@ -65,8 +71,9 @@
       ]
     },
     "capitalAndBrokerSafetyBoundary": {
-      "receipt": "/tmp/pantheon-dev-operable-20261104/actual-final-auth-capital-boundary-421238.json",
-      "verifiedAtUtc": "2026-11-05T23:57:23.985Z",
+      "receipt": "/tmp/pantheon-dev-operable-20261104/actual-root421487-accepted-prewrite-boundary.json",
+      "detailedReadsReceipt": "/tmp/pantheon-dev-operable-20261104/management-candidate-reads-1793935270252.json",
+      "verifiedAtUtc": "2026-11-06T03:21:10.252Z",
       "strictAuth": true,
       "authority": {
         "interaction": "advisory",
@@ -80,44 +87,52 @@
       "pass": true
     },
     "rollbackTarget": {
-      "frontendSha": "d114f57208593e553f9c6a9f892e00ffac3b4cbe",
-      "bffSha": "2a2411124c77ddce6c6963d927d99654c7e5f6fe",
-      "pairId": "6087a69df84c9987f7ca1494af49f2bc164826c66f53a20c5a06ceb1c58ba4b7",
-      "releaseCandidateId": "d21a8c3df9bfad8e4e65772e283b81fb717fdde74c5bd2f4267ba275da5cd119",
-      "releaseName": "20261105T181408Z-d114f5720859-gate-42076184651-42079777481-1-736195",
+      "frontendSha": "a8206a2d333f5c9b148bf4db9d6431bbe7042102",
+      "bffSha": "0cd59ab286b7ad4d7c742993215cb39919cce580",
+      "pairId": "1f671798815927b0b737103b3150094cf23e0b8bdf78836fa4edb99d877b11b1",
+      "releaseCandidateId": "a1ff2d2231e25b59405bd7a3a6c7e34de548c37f327949baaa294849cdb6ff01",
+      "releaseName": "20261105T235044Z-a8206a2d333f-gate-42127287936-42130498661-1-3042093",
+      "acceptedAtUtc": "2026-11-05T23:55:12Z",
       "profile": "operator-live"
     }
   },
   "hostedUiVerificationOnCurrentPair": {
-    "pairId": "1f671798815927b0b737103b3150094cf23e0b8bdf78836fa4edb99d877b11b1",
-    "frontendSha": "a8206a2d333f5c9b148bf4db9d6431bbe7042102",
-    "bffSha": "0cd59ab286b7ad4d7c742993215cb39919cce580",
+    "pairId": "4eb0ccf1a629eca836e37186e1e77777917de35acbb8c7a3a59344703cc12b24",
+    "frontendSha": "bdf2a6640f1fed5fee2d14106325770727ca7684",
+    "bffSha": "0cc4d38fcc3c9439a7d83171321b5a08b7b24613",
     "loginAndLogoutMatrix": {
-      "receipt": "/tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793924539414.json",
+      "receipts": [
+        "/tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793935415354.json",
+        "/tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793935568052.json"
+      ],
       "accountsTested": [
         {
           "account": "TEST_ADMIN",
           "loginUiStatus": 200,
           "meStatus": 200,
-          "logoutStatus": 200
+          "logoutStatus": 200,
+          "postLogoutMeStatus": 401
         },
         {
           "account": "OPERATOR_A",
           "loginUiStatus": 200,
           "meStatus": 200,
-          "logoutStatus": 200
+          "logoutStatus": 200,
+          "postLogoutMeStatus": 401
         },
         {
           "account": "OPERATOR_B",
           "loginUiStatus": 200,
           "meStatus": 200,
-          "logoutStatus": 200
+          "logoutStatus": 200,
+          "postLogoutMeStatus": 401
         },
         {
           "account": "VIEWER",
           "loginUiStatus": 200,
           "meStatus": 200,
-          "logoutStatus": 200
+          "logoutStatus": 200,
+          "postLogoutMeStatus": 401
         }
       ],
       "finalLogoutVerified": {
@@ -131,31 +146,86 @@
       "createdViaUi": true,
       "createEndpoint": "POST /bff/evolution-programs",
       "createStatus": 201,
-      "status": "draft",
-      "revision": 1,
-      "constraints": [],
-      "runIds": [],
-      "candidateIds": [],
-      "reloadReadbackVerified": true,
-      "reloadReadbackReceipt": "/tmp/pantheon-dev-operable-20261104/evolution-ui-0QU26j/result.json",
-      "disposition": "RETAINED_SINGLE_ISOLATED_DRAFT_FOR_EDIT_REPLAY_TESTS_NO_DUPLICATE_CREATE"
+      "createReceiptOnPredecessorPair": "/tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793924539414.json",
+      "postSwitchUiConstraintEditAttempt": {
+        "receipt": "/tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793935415354.json",
+        "commandEndpoint": "POST /bff/v1/commands",
+        "action": "create_constraint",
+        "commandId": "cmd-2ddc6f44f30b486ba490668d0f97f2f8",
+        "idempotencyKey": "idk_mw4esgl9_n921mkq7gs",
+        "httpStatus": 202,
+        "ownerPersisted": true,
+        "revisionBefore": 1,
+        "revisionAfter": 2,
+        "constraintId": "cst-b5dbfe0c",
+        "expression": "max_drawdown <= 0.10",
+        "constraintsCount": 1,
+        "runIds": [],
+        "candidateIds": [],
+        "immediateUiVisibilityWithoutReloadPass": false,
+        "immediateUiVisibilityError": "locator.waitFor: Timeout 60000ms exceeded. waiting for getByText('max_drawdown <= 0.10', { exact: true }) to be visible",
+        "sourceAuditReceipt": "/tmp/pantheon-dev-operable-20261104/Root01a10-Evolution-first-save-visibility-source-audit-20261106.json",
+        "followUpTask": "FE-EVO-SAVED-CONSTRAINT-VISIBILITY-20261106"
+      },
+      "resumedSameDraftReadbackReloadAndNegativeChecks": {
+        "receipt": "/tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793935568052.json",
+        "pass": true,
+        "newEditSkippedAlreadyPersisted": true,
+        "beforeReloadScreenshot": "/tmp/pantheon-dev-operable-20261104/evolution-saved-before-reload-1793935563574.png",
+        "afterReloadScreenshot": "/tmp/pantheon-dev-operable-20261104/evolution-draft-saved-reloaded-1793935565912.png",
+        "reloadedRevision": 2,
+        "reloadedConstraintsCount": 1,
+        "reloadedConstraintId": "cst-b5dbfe0c",
+        "reloadedExpression": "max_drawdown <= 0.10",
+        "runIds": [],
+        "candidateIds": [],
+        "idempotencySameKeyReplay": {
+          "idempotencyKey": "idk_mw4esgl9_n921mkq7gs",
+          "httpStatus": 202,
+          "duplicateCreated": false,
+          "constraintsCountAfter": 1,
+          "revisionAfter": 2
+        },
+        "idempotencyDivergentPayloadSameKey": {
+          "idempotencyKey": "idk_mw4esgl9_n921mkq7gs",
+          "httpStatus": 409,
+          "errorCode": "IDEMPOTENCY_CONFLICT"
+        },
+        "viewerRbacRejection": {
+          "account": "VIEWER",
+          "httpStatus": 403,
+          "errorCode": "FORBIDDEN"
+        },
+        "missingSessionRejection": {
+          "httpStatus": 401,
+          "errorCode": "AUTH_REQUIRED"
+        },
+        "foreignBodyTenantRejection": {
+          "httpStatus": 403,
+          "errorCode": "TENANT_MISMATCH"
+        },
+        "foreignHeaderTenantSelectorRejection": {
+          "endpoint": "GET /bff/agora/me",
+          "httpStatus": 403,
+          "errorCode": "FORBIDDEN"
+        }
+      },
+      "disposition": "RETAINED_SINGLE_ISOLATED_DRAFT_AT_REVISION_2_WITH_ONE_CONSTRAINT_NO_RESEARCH_OR_CAPITAL_EXECUTION"
     },
-    "defectsDiscoveredAndFollowUpTasks": [
+    "deployedSourceRepairsVerifiedOnCurrentPair": [
       {
         "taskId": "BFF-EVO-DRAFT-ACTION-CARRIER-20261106",
         "status": "done",
         "mergedPr": "https://github.com/ajoe734/pantheon/pull/6974",
         "mergeCommit": "56bc44618762fadee995d2ab99e1ed3549786fd2",
-        "symptomOn0cd59ab286b7": "UI constraint edit (POST /bff/v1/commands with action create_constraint on evp-c0ce26091e8b443495bfa61e3dac34ff) returned 422 VALIDATION_FAILED: Unknown evolution program action: createconstraint because BFF stripped underscores from action and did not forward commandPayload.action to the evolution owner service.",
-        "hostedDeploymentStatus": "deploying_in_nonprod_run_42148708959"
+        "hostedVerification": "Verified on BFF 0cc4d38fcc3c9439a7d83171321b5a08b7b24613: UI POST /bff/v1/commands create_constraint returned HTTP 202 (cmd-2ddc6f44f30b486ba490668d0f97f2f8) and persisted cst-b5dbfe0c (revision 1 -> 2) on evp-c0ce26091e8b443495bfa61e3dac34ff."
       },
       {
         "taskId": "FE-EVO-JOURNAL-PARTIAL-READ-20261106",
         "status": "done",
         "mergedPr": "https://github.com/ajoe734/execute-plans/pull/934",
         "mergeCommit": "c1e4f43110b23abf29e719ec77cf6c9dca021db2",
-        "symptomOna8206a2d333f": "Evolution Journal tab hid counts and controls when secondary reads failed even though primary /bff/management/evolution-journal succeeded.",
-        "hostedDeploymentStatus": "deploying_in_nonprod_run_42148708959_via_bdf2a6640f1f"
+        "hostedVerification": "Verified on FE bdf2a6640f1fed5fee2d14106325770727ca7684 in /tmp/pantheon-dev-operable-20261104/evolution-ui-82H7iO/result.json: /management/evolution-journal?view=history renders summary counts (total_items=6, decision_count=3, mutation_review_count=3) and view controls alongside honest partial labels (rollbacks/freeze_orders unavailable)."
       },
       {
         "taskId": "BFF-EVIDENCE-BOUNDED-READ-20261106",
@@ -163,10 +233,7 @@
         "mergedPr": "https://github.com/ajoe734/pantheon/pull/6976",
         "headCommit": "d8213a32a81e1ab572b733f23744c7c69cd84701",
         "mergeCommit": "0cc4d38fcc3c9439a7d83171321b5a08b7b24613",
-        "mergedAtUtc": "2026-11-06T01:40:25Z",
-        "independentLocalVerification": "72 passed, 0 skipped on exact reviewed head d8213a32a81e1ab572b733f23744c7c69cd84701 (evidence_source_backend + evidence_owner_list_bounded + bff_b3_management_evidence + bff_management_cockpit = 67 passed; load concurrency -k evidence = 4 passed; human_inbox_truth route_budget_outlasts_contributor_bound = 1 passed)",
-        "symptomOn0cd59ab286b7": "/bff/management/evidence intermittently exceeded the 1.2s owner read timeout on hosted Dev, causing degraded banner on /management/evidence.",
-        "hostedDeploymentStatus": "deploying_in_nonprod_run_42148708959"
+        "hostedVerification": "Verified on BFF 0cc4d38fcc3c9439a7d83171321b5a08b7b24613 in /tmp/pantheon-dev-operable-20261104/management-ui-ivbNEL/result.json and actual-root421487-candidate-evidence-owner-compare.json: 10/10 consecutive browser reloads on /management/evidence and page 2 returned HTTP 200 with total=518 and verified_count=518 matching owner SQL count 518."
       },
       {
         "taskId": "FE-APPROVAL-BADGE-LAYOUT-20261106",
@@ -174,29 +241,47 @@
         "mergedPr": "https://github.com/ajoe734/execute-plans/pull/935",
         "headCommit": "0b54a24e330bbc9c3de3888d740e6fa18ab38ad0",
         "mergeCommit": "bdf2a6640f1fed5fee2d14106325770727ca7684",
-        "mergedAtUtc": "2026-11-06T01:54:36Z",
-        "hostedDeploymentStatus": "deploying_in_nonprod_run_42148708959"
+        "hostedVerification": "Deployed as exact FE head bdf2a6640f1fed5fee2d14106325770727ca7684."
       }
     ],
-    "activeSolePublisherRelease": {
-      "runId": 42148708959,
-      "runUrl": "https://github.com/ajoe734/pantheon/actions/runs/42148708959",
-      "jobId": 127666386204,
-      "jobUrl": "https://github.com/ajoe734/pantheon/actions/runs/42148708959/job/127666386204",
-      "dispatchedAtUtc": "2026-11-06T02:11:24Z",
-      "observedAtUtc": "2026-11-06T02:22:47Z",
-      "status": "in_progress",
-      "currentStep": "Deploy dev VM stack under lease (step 19)",
-      "candidateBackendSha": "0cc4d38fcc3c9439a7d83171321b5a08b7b24613",
-      "candidateBackendPushCiRunId": 42145392291,
-      "candidateFrontendSha": "bdf2a6640f1fed5fee2d14106325770727ca7684",
-      "candidateFrontendPushCiRunId": 42146902698,
-      "frontendProfile": "operator-live",
-      "devAuthProfile": "strict",
-      "intentReceipt": "/tmp/pantheon-dev-operable-20261104/actual-repairs-single-release-intent-20261106.json",
-      "preparedQaHarness": "/tmp/pantheon-dev-operable-20261104/private-workspace-hosted-qa.cjs",
-      "preparedQaPatchReceipt": "/tmp/pantheon-dev-operable-20261104/Root01a10-QA-selector-negative-safe-patch-20261106.json",
-      "preparedQaAuditReceipt": "/tmp/pantheon-dev-operable-20261104/Root01a10-evolution-existing-draft-QA-contract-readonly-20261106.json"
+    "postSwitchReadOnlySuiteReceipts": {
+      "evolutionUi": {
+        "receipt": "/tmp/pantheon-dev-operable-20261104/evolution-ui-82H7iO/result.json",
+        "passedRecordedSubset": true,
+        "summary": "Research tasks/detail (10 rtask detail reads), Alpha Factory, Evolution Journal history + partial-source degradation labels, and Evolution Qualification (442 evaluated / 0 qualified / 0 auto-drafted + 2 readbacks of evp-c0ce26091e8b443495bfa61e3dac34ff at revision 2) all passed."
+      },
+      "managementUi": {
+        "receipt": "/tmp/pantheon-dev-operable-20261104/management-ui-ivbNEL/result.json",
+        "passedRecordedSubset": false,
+        "evidence10ReloadsPass": true,
+        "evidenceTotal": 518,
+        "knowledgeInboxPass": true,
+        "humanInboxReload5Error": "Expected values to be strictly equal: 'degraded' !== 'ok' due to governance_review_queue contributor management_read_timeout on reload 5 (first 4 reloads ok; approval_queue, incidents, persona_readiness ok)",
+        "unreachedStepsInRun": "Postmortems, Artifacts, and Lineage UI checks in the same script run were not reached after the Human Inbox reload 5 assertion failure."
+      },
+      "personaUi": {
+        "receipt": "/tmp/pantheon-dev-operable-20261104/hosted-persona-current-Gykan8/result.json",
+        "uiScenariosPass": true,
+        "paginationBeyond100Verified": "persona-c5f206af82206aaf4157",
+        "performancePass": false,
+        "warm20P95Ms": 1021,
+        "warm20BudgetMs": 1000,
+        "coldEntry3ApiMs": 2207,
+        "coldEntry3UsableMs": 3195,
+        "predecessorPassReceipt": "/tmp/pantheon-dev-operable-20261104/hosted-persona-current-TLQWEh/result.json"
+      },
+      "strategyFinanceUi": {
+        "receipt": "/tmp/pantheon-dev-operable-20261104/strategy-finance-ui-y18VxM/result.json",
+        "passedRecordedSubset": true,
+        "initialParallelTimeoutReceiptPreserved": "/tmp/pantheon-dev-operable-20261104/strategy-finance-ui-SAZvPn/result.json",
+        "summary": "Verified on accepted pair in strategy-finance-ui-y18VxM/result.json (passed_recorded_subset=true): GET /bff/strategies (200, 6272ms, total=3345), 3 active paper strategy PnL detail pages matching owner ranking-quarterly-2026-q4-4e35f21462aff0898fc63a91 (10.00, 295.00, 20.90), draft non-running strategy honest no-data ('無資料'), and strategy lineage (10 nodes / 16 edges, no fabricated nodes). Initial parallel run SAZvPn timeout is preserved; BFF-STRATEGY-READ-REAL-SCALE-20261106 (PR #6979) and FE-STRATEGY-DETAIL-TRUTH-20261106 remain in progress for bounded owner scale.",
+        "predecessorPassReceipt": "/tmp/pantheon-dev-operable-20261104/strategy-finance-ui-UgA7EA/result.json"
+      },
+      "financialPaperRuntime": {
+        "receipt": "/tmp/pantheon-dev-operable-20261104/current-finance-runtime-1793936255892.json",
+        "observedReadbackPass": true,
+        "summary": "Verified current-pair financial/runtime GET readbacks, isolated paper ledgers, null Sharpe/unavailable telemetry honesty, and logout 200."
+      }
     },
     "isolatedProviderQualificationObservation": {
       "runId": 42142685606,
@@ -205,62 +290,70 @@
       "frontendLabel": "c1e4f43110b23abf29e719ec77cf6c9dca021db2",
       "scope": "isolated_provider_qualification_only",
       "deployJobsExecuted": false,
-      "rootDeployJobStatus": "skipped",
-      "frontendSwitchJobStatus": "skipped",
       "hostedSwitchOccurred": false,
       "conclusion": "failure",
       "finishedAtUtc": "2026-11-06T01:40:48Z",
       "firstFailureAuditReceipt": "/tmp/pantheon-dev-operable-20261104/Root01a10-isolated421426-first-failure-audit-20261106.json",
       "providerRoutingScopeDoc": "/tmp/pantheon-dev-operable-20261104/Root01a10-isolated421426-provider-routing-and-auth-scope-20261106.md",
-      "exactFailure": "consultation.supervised_executor_published_memo timeout on cr-l12-hl-04e94f420b due to mixed upstream provider failure (anthropic/claude-opus-4-8 credit balance too low; openai/gpt-5.6-sol and openai/gpt-5.5 HTTP 401) and consequent missing consult_request_id in tests/integration/l12/test_current_human_learning_deployed_e2e.py (human suite 2 failed, 4 passed; top-level 1 failed, 4 passed, 1 skipped)",
-      "disposition": "Preserved honestly as a separate isolated provider qualification failure; does not roll back or alter the currently served accepted Dev pair (a8206a2d333f5c9b148bf4db9d6431bbe7042102 + 0cd59ab286b7ad4d7c742993215cb39919cce580), does not waive gates, and keeps Teaching/production obligations separate."
+      "exactFailure": "consultation.supervised_executor_published_memo timeout on cr-l12-hl-04e94f420b due to mixed upstream provider failure (anthropic/claude-opus-4-8 credit balance too low; openai/gpt-5.6-sol and openai/gpt-5.5 HTTP 401)",
+      "disposition": "Preserved honestly as a separate isolated provider qualification failure; not a normal Dev deploy."
     }
   },
   "coreFlowInventory": [
     {
       "flow": "Deployment identity & persistent operator-live manifest (deployment.json + /bff/version + /bff/health)",
       "status": "passed",
-      "detail": "Verified FE a8206a2d333f5c9b148bf4db9d6431bbe7042102 / BFF 0cd59ab286b7ad4d7c742993215cb39919cce580 with profile=operator-live, VITE_BFF_REAL_WRITES=true, strict auth, no stub writes, no embedded bearer token."
+      "detail": "Verified FE bdf2a6640f1fed5fee2d14106325770727ca7684 / BFF 0cc4d38fcc3c9439a7d83171321b5a08b7b24613 (pairId 4eb0ccf1a629eca836e37186e1e77777917de35acbb8c7a3a59344703cc12b24, acceptedAt 2026-11-06T03:19:45Z) with profile=operator-live, VITE_BFF_REAL_WRITES=true, strict auth, no stub writes, no embedded bearer token. Receipt: /tmp/pantheon-dev-operable-20261104/actual-root421487-accepted-pair.json."
     },
     {
       "flow": "Capital & broker safety boundary verification",
       "status": "passed",
-      "detail": "Verified broker_live_enabled=false, capital_live_enabled=false, live_runtime_bindings=0, execution/broker/capital authority=none."
+      "detail": "Verified on accepted pair (0cc4d38f + bdf2a664) that broker_live_enabled=false, capital_binding_live_enabled=false, live_runtime_binding_count=0, execution/broker/capital authority=none. Receipt: /tmp/pantheon-dev-operable-20261104/actual-root421487-accepted-prewrite-boundary.json."
     },
     {
       "flow": "Actual login UI & session lifecycle (TEST_ADMIN, OPERATOR_A, OPERATOR_B, VIEWER + logout -> 401)",
       "status": "passed",
-      "detail": "All 4 role accounts logged in via /login UI (200), resolved /bff/me (200), and logged out via /bff/logout (200) with post-logout /bff/me returning 401."
+      "detail": "All 4 role accounts logged in via /login UI (200), resolved /bff/me (200), and logged out via /bff/logout (200) with post-logout /bff/me returning 401 on accepted pair. Receipts: /tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793935415354.json and private-workspace-evolution-draft-1793935568052.json."
     },
     {
-      "flow": "Isolated non-capital Evolution draft UI create + read-after-write + reload persistence",
+      "flow": "Isolated Evolution draft persistence, fresh-entry/reload visibility, idempotency (202 same-key + 409 divergent), RBAC (403 VIEWER), missing-session (401), and tenant mismatch (403 TENANT_MISMATCH + 403 /bff/agora/me)",
       "status": "passed",
-      "detail": "Created single isolated draft evp-c0ce26091e8b443495bfa61e3dac34ff (DEV ACCEPTANCE ONLY 1793924182061, status=draft, revision=1, run_ids=[], candidate_ids=[]) via UI (201) and verified persistence across page reloads."
+      "detail": "UI create_constraint command cmd-2ddc6f44f30b486ba490668d0f97f2f8 (HTTP 202) persisted constraint cst-b5dbfe0c (max_drawdown <= 0.10) and revision 2 on evp-c0ce26091e8b443495bfa61e3dac34ff with run_ids=[] and candidate_ids=[]. Fresh navigation, page reload, same-key replay (202, no duplicate), divergent payload (409 IDEMPOTENCY_CONFLICT), VIEWER (403 FORBIDDEN), anonymous (401 AUTH_REQUIRED), and tenant mismatch (403 TENANT_MISMATCH & 403 FORBIDDEN) all passed in /tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793935568052.json."
     },
     {
-      "flow": "Evolution qualification read-only UI & unqualified-program gate",
+      "flow": "Immediate in-place UI constraint visibility on EvolutionDetail without page reload after 202 save",
+      "status": "failed",
+      "detail": "Initial post-save wait for getByText('max_drawdown <= 0.10', { exact: true }) timed out after 60000ms in /tmp/pantheon-dev-operable-20261104/private-workspace-evolution-draft-1793935415354.json (while owner persisted revision 2 and fresh entry/reload rendered it). Audited in Root01a10-Evolution-first-save-visibility-source-audit-20261106.json and tracked by canonical task FE-EVO-SAVED-CONSTRAINT-VISIBILITY-20261106 (owner: Claude, reviewer: Antigravity, repo: execute-plans)."
+    },
+    {
+      "flow": "Evolution Journal UI readback under partial secondary read failure, Research tasks/detail, Alpha Factory, and Evolution Qualification read-only UI",
       "status": "passed",
-      "detail": "Verified 442 evaluated / 0 qualified / 0 auto-drafted programs on /management/evolution and readback of evp-c0ce26091e8b443495bfa61e3dac34ff without dispatching training or approvals."
+      "detail": "Verified on accepted pair in /tmp/pantheon-dev-operable-20261104/evolution-ui-82H7iO/result.json (passed_recorded_subset=true): Journal displays summary counts (total_items=6) and view controls alongside unavailable rollbacks/freeze_orders labels; Qualification shows 442 evaluated / 0 qualified / 0 auto-drafted and reads evp-c0ce26091e8b443495bfa61e3dac34ff at revision 2."
     },
     {
-      "flow": "Isolated Evolution draft UI constraint edit, readback, reload persistence, idempotency replay (200/202 + divergent 409), RBAC 403/401, and tenant mismatch (403/TENANT_MISMATCH + /bff/agora/me 403/FORBIDDEN)",
+      "flow": "Management Evidence UI readback (/management/evidence 10 consecutive reloads + page 2) and Knowledge Inbox",
+      "status": "passed",
+      "detail": "Verified on accepted pair in /tmp/pantheon-dev-operable-20261104/management-ui-ivbNEL/result.json: all 10 browser reloads and page 2 returned HTTP 200 with total=518 and verified_count=518 matching owner SQL count 518 (known_evidence_timeout=null); Knowledge Inbox passed with honest empty total=0."
+    },
+    {
+      "flow": "Management Human Inbox 5-reload stability and downstream Postmortems/Artifacts/Lineage steps in same run",
       "status": "failed",
-      "detail": "Blocked on currently served BFF 0cd59ab286b7ad4d7c742993215cb39919cce580 by 422 Unknown evolution program action: createconstraint. Fix BFF-EVO-DRAFT-ACTION-CARRIER-20261106 is merged in pantheon dev (56bc44618762fadee995d2ab99e1ed3549786fd2, included in 0cc4d38fcc3c9439a7d83171321b5a08b7b24613) and is currently deploying under Nonprod Deploy run 42148708959 (job 127666386204) to replay against existing draft evp-c0ce26091e8b443495bfa61e3dac34ff."
+      "detail": "In /tmp/pantheon-dev-operable-20261104/management-ui-ivbNEL/result.json, Human Inbox reloads 1-4 returned status=ok, but reload 5 returned status=degraded due to governance_review_queue contributor management_read_timeout (approval_queue, incidents, persona_readiness ok), halting the script before Postmortems/Artifacts/Lineage on the new pair."
     },
     {
-      "flow": "Evolution Journal UI readback under partial secondary read failure",
+      "flow": "Persona Fleet & Detail UI functional scenarios vs warm-20/cold-entry latency budget",
       "status": "failed",
-      "detail": "Blocked on currently served FE a8206a2d333f5c9b148bf4db9d6431bbe7042102. Fix FE-EVO-JOURNAL-PARTIAL-READ-20261106 is merged in execute-plans dev (c1e4f43110b23abf29e719ec77cf6c9dca021db2, included in bdf2a6640f1fed5fee2d14106325770727ca7684) and is currently deploying under Nonprod Deploy run 42148708959."
+      "detail": "In /tmp/pantheon-dev-operable-20261104/hosted-persona-current-Gykan8/result.json, all 6 UI functional scenarios, pagination beyond 100 (persona-c5f206af82206aaf4157), and logout (200 -> 401) passed with 0 page errors and 0 blocked writes, but warm20 p95 was 1021ms (budget 1000ms) and cold entry 3 API/usable was 2207ms/3195ms (predecessor TLQWEh passed warm20 p95 at 871ms)."
     },
     {
-      "flow": "Management Evidence UI readback (/management/evidence 10 consecutive reloads)",
-      "status": "failed",
-      "detail": "Intermittent 502 owner timeout on /bff/management/evidence on currently served BFF 0cd59ab286b7ad4d7c742993215cb39919cce580 (7/10 healthy, 3/10 degraded). Fix BFF-EVIDENCE-BOUNDED-READ-20261106 (PR #6976, head d8213a32a81e1ab572b733f23744c7c69cd84701) is merged in pantheon dev (0cc4d38fcc3c9439a7d83171321b5a08b7b24613) and is currently deploying under Nonprod Deploy run 42148708959."
+      "flow": "Strategy list/detail PnL, non-running no-data honesty, lineage UI readback, and Paper Financial runtime boundaries",
+      "status": "passed",
+      "detail": "Paper financial runtime boundaries passed in /tmp/pantheon-dev-operable-20261104/current-finance-runtime-1793936255892.json (observed_readback_pass=true). Strategy UI passed in /tmp/pantheon-dev-operable-20261104/strategy-finance-ui-y18VxM/result.json (passed_recorded_subset=true: 3 strategy PnL detail pages 10.00/295.00/20.90 matching owner snapshot, draft strategy '無資料', lineage 10 nodes/16 edges; initial parallel run SAZvPn timeout preserved; BFF-STRATEGY-READ-REAL-SCALE-20261106 PR #6979 and FE-STRATEGY-DETAIL-TRUTH-20261106 continue for bounded scale)."
     },
     {
-      "flow": "Controlled retrain stimulus & execution",
+      "flow": "Controlled retrain stimulus & execution and open-incident positive controls",
       "status": "not-run",
-      "detail": "Separate Teaching hold (EVOLUTION-RETRAIN-EXEC-AUTH-20261105) remains unchanged per operator instruction; no training or approval dispatched."
+      "detail": "Separate Teaching hold (EVOLUTION-RETRAIN-EXEC-AUTH-20261105) remains unchanged per operator instruction; owner open_incidents=0 so positive open-incident controls are not manufactured."
     }
   ]
 }
