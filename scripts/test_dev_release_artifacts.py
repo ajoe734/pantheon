@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -833,3 +834,81 @@ def test_stack_validation_rejects_tampering(stack_case, change):
         value["services"]["svc-01"]["env"]["EXTRA"] = "x"
     with pytest.raises(artifacts.ArtifactError):
         artifacts.validate_stack(value, bundle=bundle)
+
+
+def test_unlabeled_third_party_services_are_recorded_and_restored_without_invented_env(stack_case):
+    root, docker, lease, _, _, compose, _ = stack_case
+    third_party = ("svc-10", ONE_SHOT)
+    for service in third_party:
+        docker.containers[service]["env"] = {}
+        docker.compose_defaults[service] = {}
+        docker.images[docker.containers[service]["image_id"]]["revision"] = None
+    stack = artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lease)
+    for service in third_party:
+        assert stack["services"][service]["env"] == {"PANTHEON_TENANT_ID": None, "GIT_SHA": None}
+    artifacts.validate_stack(stack)
+    case = (root, docker, lease, stack_case[3], stack, compose, None)
+    docker.mutate_to_candidate()
+    for service in third_party:
+        docker.containers[service]["env"] = {}
+    restore_stack(case)
+    for service in third_party:
+        assert docker.containers[service]["image_id"] == stack["services"][service]["image_id"]
+        assert docker.containers[service]["env"] == {}
+        for call in docker.up_calls:
+            if service in call["override"]:
+                assert "environment" not in call["override"][service]
+
+
+def _docker_daemon():
+    if not shutil.which("docker"):
+        return None
+    try:
+        out = subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"], capture_output=True,
+                             text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
+
+
+def test_importing_module_makes_no_docker_call(tmp_path):
+    stub = tmp_path / "bin" / "docker"
+    stub.parent.mkdir()
+    log = tmp_path / "calls.log"
+    stub.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 1\n')
+    stub.chmod(0o755)
+    env = dict(os.environ, PATH=f"{stub.parent}:{os.environ['PATH']}")
+    root = Path(__file__).resolve().parent.parent
+    out = subprocess.run([sys.executable, "-c", "import scripts.test_dev_release_artifacts"],
+                         cwd=root, env=env, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert not log.exists()
+
+
+def test_image_format_against_real_docker_for_all_label_shapes(tmp_path):
+    # Probe lazily: a module-level skipif would run `docker` at import time, and
+    # other suites (restore chain) import this module with a stub docker on PATH.
+    if _docker_daemon() is None:
+        pytest.skip("no reachable Docker daemon")
+    tag = "pantheon-imgfmt-test-" + os.urandom(4).hex()
+    names = {"nolabels": f"{tag}:nolabels", "other": f"{tag}:other", "rev": f"{tag}:rev"}
+    revision = "b" * 40
+    try:
+        empty = subprocess.run(["tar", "cf", "-", "--files-from", "/dev/null"], capture_output=True, check=True).stdout
+        subprocess.run(["docker", "import", "-", names["nolabels"]], input=empty, capture_output=True, check=True)
+        subprocess.run(["docker", "import", "--change", 'LABEL some.other="x"', "-", names["other"]],
+                       input=empty, capture_output=True, check=True)
+        subprocess.run(["docker", "import", "--change", f'LABEL org.opencontainers.image.revision="{revision}"',
+                        "-", names["rev"]], input=empty, capture_output=True, check=True)
+        rows = {}
+        for key, name in names.items():
+            raw = subprocess.run(["docker", "image", "inspect", "--format", artifacts.IMAGE_FORMAT, name],
+                                 capture_output=True, text=True, check=True).stdout
+            rows[key] = json.loads(raw)
+        assert rows["nolabels"]["revision"] is None
+        assert rows["other"]["revision"] is None
+        assert rows["rev"]["revision"] == revision
+        assert all(artifacts.IMAGE.fullmatch(row["id"]) for row in rows.values())
+    finally:
+        for name in names.values():
+            subprocess.run(["docker", "image", "rm", "-f", name], capture_output=True)

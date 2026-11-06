@@ -1,0 +1,22 @@
+{
+  "task_id": "DEV-STACK-CAPTURE-R2-20261106",
+  "replaces": {
+    "pr": 6988,
+    "commit": "cd9c203f67da35c8c4c92e5e77f68325d1d068ff",
+    "why": "PR #6988 head carries commit 5568da016 with a wrong Task-ID trailer, which blocks the trailer check; clearing it requires rewriting history, so the identical change is re-applied on a clean branch from origin/dev. No existing branch or commit is rewritten."
+  },
+  "base": "a78252e0fe9820e7d4ba4bf27bc19bf190c32e99",
+  "applied_via": "git diff origin/dev...cd9c203f6 -- <two source files> | git apply --index (applied cleanly; no dev drift conflicts)",
+  "source_files": ["scripts/dev_release_artifacts.py", "scripts/test_dev_release_artifacts.py"],
+  "prior_green_check": "run 42172969986 job 127744844117 on cd9c203f6",
+  "local_verification": {
+    "commands": "python3 -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py -q -rs",
+    "result": "368 passed, 1 skipped (skip: FE digest helper/Node not present, unrelated)",
+    "docker_cli": {
+      "server_version": "29.7.2",
+      "test": "test_image_format_against_real_docker_for_all_label_shapes ran for real (not skipped) and passed: no Labels key, labels without revision, and revision label all yield valid rows"
+    },
+    "import_no_docker_call": "test_importing_module_makes_no_docker_call passed"
+  },
+  "ci_check_pending": "Persona provisioning owner contracts must be green on the PR head; to be confirmed on the PR"
+}
