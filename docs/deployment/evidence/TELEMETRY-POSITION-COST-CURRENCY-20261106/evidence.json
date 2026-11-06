@@ -1,0 +1,92 @@
+{
+  "task_id": "TELEMETRY-POSITION-COST-CURRENCY-20261106",
+  "title": "Holding rows have no average cost or unrealized PnL or currency though every fill records them",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "base_branch": "dev",
+  "scope": "source_only_telemetry_runtime_summary_position_cost_currency_broker_and_startup_backfill",
+  "hosted_deployment_claimed": false,
+  "hosted_note": "Source-level projection, startup backfill, and BFF contract verification only; no hosted VM deployment, SSH probe, or hosted runtime behaviour is claimed in this evidence.",
+  "artifacts": [
+    "services/telemetry/runtime_summary.py",
+    "services/telemetry/trade_episode_projection.py",
+    "services/telemetry/main.py",
+    "services/telemetry/ingest_svc.py",
+    "services/telemetry/test_runtime_summary_projection.py",
+    "services/telemetry/test_trade_episode_projection.py",
+    "services/telemetry/test_main_routes.py",
+    "services/telemetry/test_paper_runtime_ingest_contract.py",
+    "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+    "docs/deployment/evidence/TELEMETRY-POSITION-COST-CURRENCY-20261106/evidence.json"
+  ],
+  "root_cause": "RuntimeSummaryProjectionStore.project_event summed metrics.fill_quantity on paper_fill_simulated into _positions_by_symbol[symbol] and discarded metrics.fill_price, metadata.currency, metadata.broker, and metadata.ledger_fill_count. _rebuild_positions built each position row from symbol, quantity, and _marks_by_symbol without average_price, realized_pnl, unrealized_pnl, fill currency fallback, or broker_id.",
+  "remediation": {
+    "summary": [
+      "RuntimeSummaryProjectionStore folds paper_fill_simulated events in per-binding metadata.ledger_fill_count order per symbol using unrounded moving-average cost and realized PnL state (_cost_by_symbol), ignoring repeated ledger_fill_count, buffering out-of-order fills in bounded _cost_pending_fills (max 64) while withholding cost until contiguous from 1, and permanently withholding cost for the binding generation (_cost_withheld = True) on missing/invalid ledger_fill_count or non-positive/non-finite fill_price.",
+      "_rebuild_positions populates average_price and realized_pnl on every position row when cost is available, populates unrealized_pnl = quantity * (mark_price - unrounded_average_price) only on accepted non-stale mark rows, rounds to 6 decimals from unrounded state without negative zero (0.0 if rounded == 0.0 else rounded), sets currency from mark quote_currency when present and otherwise from fill metadata.currency, and sets broker_id from fill metadata.broker across all row branches.",
+      "Binding rollover clears _cost_by_symbol, _cost_applied_fill_count, _cost_pending_fills, _cost_withheld, _currency_by_symbol, and _broker_by_symbol through keys_to_clear.",
+      "TradeEpisodeProjectionStore.retained_paper_fill_events exposes an in-memory deduplicated read of paper_fill_simulated events (deduplicating reversal fills by event_id), and RuntimeSummaryProjectionStore.backfill_open_position_costs runs once at telemetry startup (wired in services/telemetry/main.py and TelemetryIngestService.__init__) for non-retired summaries with open positions and no cost state."
+    ],
+    "replayed_hosted_fill_sequences_verification": [
+      {
+        "runtime_id": "rt-535a82a3",
+        "binding_id": "rb-a1c3ada3d5894d57bc2e012f337753be",
+        "symbol": "2330.TWSE",
+        "quantity": -5.0,
+        "mark_price": 2240.0,
+        "average_price": 2299.0,
+        "unrealized_pnl": 295.0,
+        "realized_pnl": 0.0,
+        "hosted_pnl": 295.0
+      },
+      {
+        "runtime_id": "rt-8b0d8649",
+        "binding_id": "rb-fd733d7c192f45898bbe0e90c8555878",
+        "symbol": "0050.TWSE",
+        "quantity": -5.0,
+        "mark_price": 97.15,
+        "average_price": 101.33,
+        "unrealized_pnl": 20.9,
+        "realized_pnl": 0.0,
+        "hosted_pnl": 20.90000000000873
+      },
+      {
+        "runtime_id": "rt-c98e4223",
+        "binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+        "symbol": "2317.TWSE",
+        "quantity": -3.0,
+        "mark_price": 235.0,
+        "average_price": 240.166667,
+        "unrealized_pnl": 15.5,
+        "realized_pnl": -5.5,
+        "hosted_pnl": 10.0
+      },
+      {
+        "runtime_id": "rt-342d76ff",
+        "binding_id": "rb-73cafebb37064f039751a7a64d0cf04c",
+        "symbol": "2330.TW",
+        "quantity": -1.0,
+        "mark_price": 2240.0,
+        "average_price": 2240.0,
+        "unrealized_pnl": 0.0,
+        "realized_pnl": 0.0,
+        "hosted_pnl": 0.0
+      }
+    ],
+    "existing_test_notes": "No existing test assertions were weakened or deleted. In test_portfolio_holdings_reproduces_h12_76062_owner_dto_and_governed_calendar_projection, paper_runtime._iso_now and value_portfolio's default now were pinned to the test's existing now_oct25 (2026-10-25T21:41:44Z) and executed_trade_count=2 was included on the pre-seeded 2-fill fixture so it remains deterministic on calendar dates after 2026-10-28 with all original assertions intact."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/telemetry-position-cost-currency-20261106/.venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_runtime_summary_projection.py services/telemetry/test_trade_episode_projection.py services/telemetry/test_paper_runtime_ingest_contract.py",
+        "exit_code": 0,
+        "result": "115 passed, 19 subtests passed in 27.11s"
+      },
+      {
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/telemetry-position-cost-currency-20261106/.venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_main_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+        "exit_code": 0,
+        "result": "115 passed, 1 warning, 15 subtests passed in 82.12s (0:01:22)"
+      }
+    ]
+  }
+}

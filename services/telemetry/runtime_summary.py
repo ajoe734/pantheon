@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 import threading
 import uuid
@@ -16,7 +18,10 @@ from services.execution.lean_runtime.performance_telemetry import (
 from services.execution.market_snapshot_admission import is_taiwan_symbol
 
 
+log = logging.getLogger(__name__)
+
 RUNTIME_RETIRED_EVENT_TYPE = "runtime_retired"
+_MAX_PENDING_COST_FILLS = 64
 
 _LIFECYCLE_IDENTITY_EVENT_TYPES = frozenset(
     {
@@ -231,6 +236,97 @@ def _extract_mark_ref_provenance(
     return obs_text, obs_dt, lineage_obj, calendar_obj, has_malformed
 
 
+def _round6(val: float) -> float:
+    rounded = round(float(val), 6)
+    return 0.0 if rounded == 0.0 else rounded
+
+
+def _fold_symbol_cost(
+    entry: Optional[dict[str, Any]],
+    fill_qty: float,
+    fill_price: float,
+) -> dict[str, Any]:
+    """Fold one symbol fill into unrounded moving-average cost and realized PnL."""
+    old_qty = float((entry or {}).get("quantity") or 0.0)
+    raw_old_avg = (entry or {}).get("average_price")
+    old_avg = (
+        float(raw_old_avg)
+        if isinstance(raw_old_avg, (int, float)) and not isinstance(raw_old_avg, bool)
+        else None
+    )
+    realized = float((entry or {}).get("realized_pnl") or 0.0)
+    qty = float(fill_qty)
+    price = float(fill_price)
+
+    if abs(old_qty) <= 1e-12 or old_avg is None:
+        new_qty = qty
+        new_avg: Optional[float] = price if abs(new_qty) > 1e-12 else None
+        return {
+            "quantity": new_qty,
+            "average_price": new_avg,
+            "realized_pnl": realized,
+        }
+
+    if (old_qty > 0.0 and qty > 0.0) or (old_qty < 0.0 and qty < 0.0):
+        new_qty = old_qty + qty
+        new_avg = (abs(old_qty) * old_avg + abs(qty) * price) / abs(new_qty)
+        return {
+            "quantity": new_qty,
+            "average_price": new_avg,
+            "realized_pnl": realized,
+        }
+
+    position_sign = 1.0 if old_qty > 0.0 else -1.0
+    closed_quantity = min(abs(old_qty), abs(qty))
+    new_realized = realized + closed_quantity * (price - old_avg) * position_sign
+    raw_new_qty = old_qty + qty
+    if abs(raw_new_qty) <= 1e-12 or abs(qty) == abs(old_qty):
+        return {
+            "quantity": 0.0,
+            "average_price": None,
+            "realized_pnl": new_realized,
+        }
+    if abs(qty) < abs(old_qty):
+        return {
+            "quantity": raw_new_qty,
+            "average_price": old_avg,
+            "realized_pnl": new_realized,
+        }
+    return {
+        "quantity": raw_new_qty,
+        "average_price": price,
+        "realized_pnl": new_realized,
+    }
+
+
+def _withhold_cost(current: dict[str, Any]) -> None:
+    current["_cost_withheld"] = True
+    current.pop("_cost_by_symbol", None)
+    current.pop("_cost_applied_fill_count", None)
+    current.pop("_cost_pending_fills", None)
+
+
+def _cost_is_available(current: dict[str, Any]) -> bool:
+    if current.get("_cost_withheld"):
+        return False
+    if current.get("_cost_pending_fills"):
+        return False
+    if not isinstance(current.get("_cost_by_symbol"), dict):
+        return False
+    applied_fills = int(current.get("_cost_applied_fill_count") or 0)
+    executed_fills = int(current.get("executed_trade_count") or 0)
+    if applied_fills <= 0 or applied_fills != executed_fills:
+        return False
+    ledger_fill_count = current.get("ledger_fill_count")
+    if (
+        isinstance(ledger_fill_count, int)
+        and not isinstance(ledger_fill_count, bool)
+        and ledger_fill_count > applied_fills
+    ):
+        return False
+    return True
+
+
 def _rebuild_positions(
     current: dict[str, Any],
     *,
@@ -268,6 +364,22 @@ def _rebuild_positions(
         positions = {}
     if not isinstance(marks, dict):
         marks = {}
+    cost_available = _cost_is_available(current)
+    cost_by_symbol = (
+        current.get("_cost_by_symbol")
+        if cost_available and isinstance(current.get("_cost_by_symbol"), dict)
+        else {}
+    )
+    currency_by_symbol = (
+        current.get("_currency_by_symbol")
+        if isinstance(current.get("_currency_by_symbol"), dict)
+        else {}
+    )
+    broker_by_symbol = (
+        current.get("_broker_by_symbol")
+        if isinstance(current.get("_broker_by_symbol"), dict)
+        else {}
+    )
     binding_id = str(current.get("binding_id") or "")
     failure = current.get("_valuation_failure")
     latest_event_at = reference_at or _parse_rfc3339(
@@ -278,6 +390,26 @@ def _rebuild_positions(
         if not quantity:
             continue
         row: dict[str, Any] = {"symbol": symbol, "quantity": quantity}
+        fill_currency = currency_by_symbol.get(symbol)
+        if isinstance(fill_currency, str) and fill_currency.strip():
+            row["currency"] = fill_currency.strip()
+        fill_broker = broker_by_symbol.get(symbol)
+        if isinstance(fill_broker, str) and fill_broker.strip():
+            row["broker_id"] = fill_broker.strip()
+        sym_cost = cost_by_symbol.get(symbol) if isinstance(cost_by_symbol, dict) else None
+        raw_avg = sym_cost.get("average_price") if isinstance(sym_cost, dict) else None
+        unrounded_avg: Optional[float] = (
+            float(raw_avg)
+            if isinstance(raw_avg, (int, float))
+            and not isinstance(raw_avg, bool)
+            and math.isfinite(float(raw_avg))
+            and float(raw_avg) > 0.0
+            else None
+        )
+        if unrounded_avg is not None and isinstance(sym_cost, dict):
+            unrounded_realized = float(sym_cost.get("realized_pnl") or 0.0)
+            row["average_price"] = _round6(unrounded_avg)
+            row["realized_pnl"] = _round6(unrounded_realized)
         mark = marks.get(symbol)
         if isinstance(mark, dict) and str(mark.get("binding_id") or "") == binding_id:
             failed_symbols = failure.get("symbols") if isinstance(failure, dict) else None
@@ -347,6 +479,10 @@ def _rebuild_positions(
             row["mark_as_of"] = mark["as_of"]
             row["mark_source_ref"] = mark["source_ref"]
             row["market_value"] = round(float(quantity) * float(mark["price"]), 6)
+            if unrounded_avg is not None:
+                row["unrealized_pnl"] = _round6(
+                    float(quantity) * (float(mark["price"]) - unrounded_avg)
+                )
             if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
                 row["mark_observed_at"] = mark["observed_at"]
             if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
@@ -561,6 +697,8 @@ class RuntimeSummaryProjectionStore:
                     "last_fill",
                     "_positions_by_symbol", "_marks_by_symbol", "_valuation_failure", "_valuation_attempt_at", "positions", "position_count",
                     "ledger_fill_count", "positions_status", "positions_unavailable_reason",
+                    "_cost_by_symbol", "_cost_applied_fill_count", "_cost_pending_fills", "_cost_withheld",
+                    "_currency_by_symbol", "_broker_by_symbol",
                     "last_heartbeat_at", "last_heartbeat_event_id",
                     "state", "connectivity_status", "broker_status",
                     "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
@@ -794,27 +932,136 @@ class RuntimeSummaryProjectionStore:
                 symbol = metadata.get("symbol") or metrics.get("symbol")
                 fill_qty = metrics.get("fill_quantity")
                 fill_price = metrics.get("fill_price")
-                trade_count = int(current.get("executed_trade_count") or 0) + 1
-                current["executed_trade_count"] = trade_count
-                # total_trades may also arrive via metrics; the executed counter is
-                # authoritative for paper fills and must not regress below it.
-                current["total_trades"] = max(int(current.get("total_trades") or 0), trade_count)
-                if symbol is not None:
-                    current["last_fill"] = {
-                        "symbol": symbol,
-                        "quantity": fill_qty,
-                        "fill_price": fill_price,
-                        "action": metrics.get("action"),
-                        "submitted_to_broker": bool(metrics.get("submitted_to_broker")),
-                        "at": event_time,
-                    }
-                    positions = current.get("_positions_by_symbol")
-                    if not isinstance(positions, dict):
-                        positions = {}
-                    if isinstance(fill_qty, (int, float)):
-                        positions[symbol] = float(positions.get(symbol, 0.0)) + float(fill_qty)
-                    current["_positions_by_symbol"] = positions
-                    _rebuild_positions(current)
+                raw_lfc = metadata.get("ledger_fill_count")
+                usable_lfc = (
+                    isinstance(raw_lfc, int)
+                    and not isinstance(raw_lfc, bool)
+                    and raw_lfc >= 1
+                )
+                applied_lfc = int(current.get("_cost_applied_fill_count") or 0)
+                raw_pending = current.get("_cost_pending_fills")
+                pending_fills: dict[str, dict[str, Any]] = (
+                    dict(raw_pending) if isinstance(raw_pending, dict) else {}
+                )
+                is_duplicate_lfc = (
+                    usable_lfc
+                    and not current.get("_cost_withheld")
+                    and (raw_lfc <= applied_lfc or str(raw_lfc) in pending_fills)
+                )
+                if not is_duplicate_lfc:
+                    trade_count = int(current.get("executed_trade_count") or 0) + 1
+                    current["executed_trade_count"] = trade_count
+                    # total_trades may also arrive via metrics; the executed counter is
+                    # authoritative for paper fills and must not regress below it.
+                    current["total_trades"] = max(
+                        int(current.get("total_trades") or 0), trade_count
+                    )
+                    usable_symbol = isinstance(symbol, str) and bool(symbol.strip())
+                    usable_qty = (
+                        isinstance(fill_qty, (int, float))
+                        and not isinstance(fill_qty, bool)
+                        and math.isfinite(float(fill_qty))
+                        and float(fill_qty) != 0.0
+                    )
+                    usable_price = (
+                        isinstance(fill_price, (int, float))
+                        and not isinstance(fill_price, bool)
+                        and math.isfinite(float(fill_price))
+                        and float(fill_price) > 0.0
+                    )
+                    if symbol is not None:
+                        max_pending_lfc = max(
+                            (int(k) for k in pending_fills if str(k).isdigit()),
+                            default=0,
+                        )
+                        if not usable_lfc or raw_lfc >= max(applied_lfc, max_pending_lfc):
+                            current["last_fill"] = {
+                                "symbol": symbol,
+                                "quantity": fill_qty,
+                                "fill_price": fill_price,
+                                "action": metrics.get("action"),
+                                "submitted_to_broker": bool(
+                                    metrics.get("submitted_to_broker")
+                                ),
+                                "at": event_time,
+                            }
+                        if usable_symbol:
+                            raw_currency = metadata.get("currency")
+                            if isinstance(raw_currency, str) and raw_currency.strip():
+                                currency_by_symbol = current.get("_currency_by_symbol")
+                                if not isinstance(currency_by_symbol, dict):
+                                    currency_by_symbol = {}
+                                currency_by_symbol[symbol] = raw_currency.strip()
+                                current["_currency_by_symbol"] = currency_by_symbol
+                            raw_broker = metadata.get("broker")
+                            if isinstance(raw_broker, str) and raw_broker.strip():
+                                broker_by_symbol = current.get("_broker_by_symbol")
+                                if not isinstance(broker_by_symbol, dict):
+                                    broker_by_symbol = {}
+                                broker_by_symbol[symbol] = raw_broker.strip()
+                                current["_broker_by_symbol"] = broker_by_symbol
+                        positions = current.get("_positions_by_symbol")
+                        if not isinstance(positions, dict):
+                            positions = {}
+                        if isinstance(fill_qty, (int, float)) and not isinstance(
+                            fill_qty, bool
+                        ):
+                            positions[symbol] = float(
+                                positions.get(symbol, 0.0)
+                            ) + float(fill_qty)
+                        current["_positions_by_symbol"] = positions
+
+                    if (
+                        not current.get("_cost_withheld")
+                        and usable_lfc
+                        and usable_symbol
+                        and usable_qty
+                        and usable_price
+                    ):
+                        cost_by_symbol = current.get("_cost_by_symbol")
+                        if not isinstance(cost_by_symbol, dict):
+                            cost_by_symbol = {}
+                        else:
+                            cost_by_symbol = dict(cost_by_symbol)
+                        if raw_lfc == applied_lfc + 1:
+                            cost_by_symbol[symbol] = _fold_symbol_cost(
+                                cost_by_symbol.get(symbol),
+                                float(fill_qty),
+                                float(fill_price),
+                            )
+                            applied_lfc += 1
+                            while str(applied_lfc + 1) in pending_fills:
+                                next_fill = pending_fills.pop(str(applied_lfc + 1))
+                                next_sym = str(next_fill["symbol"])
+                                cost_by_symbol[next_sym] = _fold_symbol_cost(
+                                    cost_by_symbol.get(next_sym),
+                                    float(next_fill["quantity"]),
+                                    float(next_fill["price"]),
+                                )
+                                applied_lfc += 1
+                            current["_cost_by_symbol"] = cost_by_symbol
+                            current["_cost_applied_fill_count"] = applied_lfc
+                            if pending_fills:
+                                current["_cost_pending_fills"] = pending_fills
+                            else:
+                                current.pop("_cost_pending_fills", None)
+                        else:
+                            if len(pending_fills) >= _MAX_PENDING_COST_FILLS:
+                                _withhold_cost(current)
+                            else:
+                                pending_fills[str(raw_lfc)] = {
+                                    "symbol": symbol,
+                                    "quantity": float(fill_qty),
+                                    "price": float(fill_price),
+                                }
+                                current["_cost_pending_fills"] = pending_fills
+                                current["_cost_by_symbol"] = cost_by_symbol
+                                current["_cost_applied_fill_count"] = applied_lfc
+                    else:
+                        _withhold_cost(current)
+
+                    if symbol is not None:
+                        _rebuild_positions(current)
 
             # The producer reports a failed/expired valuation attempt through its
             # heartbeat performance_telemetry. Only its own attempt time orders
@@ -1205,6 +1452,202 @@ class RuntimeSummaryProjectionStore:
         self._summaries[summary_key] = current
         self._persist()
         return json.loads(json.dumps(current))
+
+    def backfill_open_position_costs(self, trade_episode_store: Any) -> int:
+        """Rebuild missing cost, currency, and broker state once at startup.
+
+        Candidate summaries are non-retired summaries with open positions in
+        ``_positions_by_symbol`` and no prior cost state. Retained
+        ``paper_fill_simulated`` events are read in-memory from
+        ``trade_episode_store.retained_paper_fill_events`` for the exact
+        ``(tenant_id, runtime_id, binding_id)`` identity.
+        """
+        if trade_episode_store is None or not hasattr(
+            trade_episode_store, "retained_paper_fill_events"
+        ):
+            return 0
+
+        updated_count = 0
+        with self._lock:
+            for summary_key, current in list(self._summaries.items()):
+                if not isinstance(current, dict):
+                    continue
+                if current.get("retired") is True or str(current.get("state") or "") == "retired":
+                    continue
+                positions = current.get("_positions_by_symbol")
+                if not isinstance(positions, dict) or not any(
+                    isinstance(qty, (int, float))
+                    and not isinstance(qty, bool)
+                    and float(qty) != 0.0
+                    for qty in positions.values()
+                ):
+                    continue
+                if (
+                    "_cost_by_symbol" in current
+                    or "_cost_withheld" in current
+                    or "_cost_applied_fill_count" in current
+                    or "_cost_pending_fills" in current
+                ):
+                    continue
+
+                identity = _summary_identity(current)
+                if identity is None:
+                    continue
+                tenant_id, runtime_id = identity
+                binding_id = str(
+                    current.get("binding_id") or current.get("runtime_binding_id") or ""
+                ).strip()
+                if not binding_id:
+                    continue
+
+                retained_events = trade_episode_store.retained_paper_fill_events(
+                    tenant_id=tenant_id,
+                    runtime_id=runtime_id,
+                    binding_id=binding_id,
+                )
+
+                currency_by_symbol: dict[str, str] = (
+                    dict(current.get("_currency_by_symbol"))
+                    if isinstance(current.get("_currency_by_symbol"), dict)
+                    else {}
+                )
+                broker_by_symbol: dict[str, str] = (
+                    dict(current.get("_broker_by_symbol"))
+                    if isinstance(current.get("_broker_by_symbol"), dict)
+                    else {}
+                )
+
+                fills_by_lfc: dict[int, dict[str, Any]] = {}
+                has_invalid_fill = False
+
+                def _sort_key(ev: dict[str, Any]) -> tuple[int, str, str]:
+                    meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+                    lfc = meta.get("ledger_fill_count")
+                    lfc_key = (
+                        lfc
+                        if isinstance(lfc, int) and not isinstance(lfc, bool) and lfc >= 1
+                        else 10**12
+                    )
+                    return (
+                        lfc_key,
+                        str(ev.get("created_at") or ""),
+                        str(ev.get("event_id") or ""),
+                    )
+
+                for ev in sorted(retained_events, key=_sort_key):
+                    meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+                    metrics = ev.get("metrics") if isinstance(ev.get("metrics"), dict) else {}
+                    sym = meta.get("symbol") or metrics.get("symbol")
+                    usable_sym = isinstance(sym, str) and bool(sym.strip())
+                    if usable_sym:
+                        raw_curr = meta.get("currency")
+                        if isinstance(raw_curr, str) and raw_curr.strip():
+                            currency_by_symbol[sym] = raw_curr.strip()
+                        raw_broker = meta.get("broker")
+                        if isinstance(raw_broker, str) and raw_broker.strip():
+                            broker_by_symbol[sym] = raw_broker.strip()
+
+                    raw_lfc = meta.get("ledger_fill_count")
+                    if (
+                        isinstance(raw_lfc, int)
+                        and not isinstance(raw_lfc, bool)
+                        and raw_lfc >= 1
+                    ):
+                        if raw_lfc not in fills_by_lfc:
+                            fills_by_lfc[raw_lfc] = ev
+                    else:
+                        has_invalid_fill = True
+
+                raw_expected = current.get("ledger_fill_count")
+                expected_valid = (
+                    isinstance(raw_expected, int)
+                    and not isinstance(raw_expected, bool)
+                    and raw_expected >= 1
+                )
+                found_fill_counts = sorted(fills_by_lfc.keys())
+                cost_by_symbol: dict[str, dict[str, Any]] = {}
+                replayed_positions: dict[str, float] = {}
+                fold_ok = (
+                    expected_valid
+                    and not has_invalid_fill
+                    and found_fill_counts == list(range(1, int(raw_expected) + 1))
+                )
+                if fold_ok:
+                    for lfc in range(1, int(raw_expected) + 1):
+                        ev = fills_by_lfc[lfc]
+                        meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+                        metrics = ev.get("metrics") if isinstance(ev.get("metrics"), dict) else {}
+                        sym = meta.get("symbol") or metrics.get("symbol")
+                        qty = metrics.get("fill_quantity")
+                        price = metrics.get("fill_price")
+                        if (
+                            not isinstance(sym, str)
+                            or not sym.strip()
+                            or not isinstance(qty, (int, float))
+                            or isinstance(qty, bool)
+                            or not math.isfinite(float(qty))
+                            or float(qty) == 0.0
+                            or not isinstance(price, (int, float))
+                            or isinstance(price, bool)
+                            or not math.isfinite(float(price))
+                            or float(price) <= 0.0
+                        ):
+                            fold_ok = False
+                            break
+                        replayed_positions[sym] = float(
+                            replayed_positions.get(sym, 0.0)
+                        ) + float(qty)
+                        cost_by_symbol[sym] = _fold_symbol_cost(
+                            cost_by_symbol.get(sym),
+                            float(qty),
+                            float(price),
+                        )
+
+                if fold_ok:
+                    all_symbols = set(positions.keys()) | set(replayed_positions.keys())
+                    for sym in all_symbols:
+                        raw_pos_qty = positions.get(sym, 0.0)
+                        pos_qty = (
+                            float(raw_pos_qty)
+                            if isinstance(raw_pos_qty, (int, float))
+                            and not isinstance(raw_pos_qty, bool)
+                            else 0.0
+                        )
+                        rep_qty = float(replayed_positions.get(sym, 0.0))
+                        if abs(pos_qty - rep_qty) > 1e-9:
+                            fold_ok = False
+                            break
+
+                if currency_by_symbol:
+                    current["_currency_by_symbol"] = currency_by_symbol
+                if broker_by_symbol:
+                    current["_broker_by_symbol"] = broker_by_symbol
+
+                if fold_ok:
+                    expected_int = int(raw_expected)
+                    current["_cost_by_symbol"] = cost_by_symbol
+                    current["_cost_applied_fill_count"] = expected_int
+                    current["executed_trade_count"] = max(
+                        int(current.get("executed_trade_count") or 0), expected_int
+                    )
+                else:
+                    _withhold_cost(current)
+                    log.warning(
+                        "Withholding runtime summary position cost during startup backfill "
+                        "for runtime_id=%s binding_id=%s expected_fill_count=%s found_fill_counts=%s",
+                        runtime_id,
+                        binding_id,
+                        raw_expected,
+                        found_fill_counts,
+                    )
+
+                _rebuild_positions(current)
+                self._summaries[summary_key] = current
+                updated_count += 1
+
+            if updated_count > 0:
+                self._persist()
+        return updated_count
 
     def get(
         self,
