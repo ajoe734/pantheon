@@ -474,3 +474,257 @@ def test_default_deployment_plan_port_failure_never_returns_healthy_empty_govern
     assert gov_surface["status"] == "degraded"
     assert gov_surface["reason"] == "contributor_read_error"
     assert body["meta"]["surfaces"]["human_inbox"]["status"] == "degraded"
+
+
+def test_real_http_owner_readers_propagate_deadline_dedupe_sources_and_preserve_nonmanagement_defaults() -> None:
+    """Exercises default create_read_surface_ports() HTTP owner readers end-to-end:
+    - approval_records -> approval_owner.list_decisions -> approval_owner.call_owner
+    - DeploymentPlanPort -> read_records -> base.http_request_json -> command_executor._get_json
+    - EvolutionProjectionPort -> read_evolution_records -> base.evolution_owner_request
+    Verifies:
+    1. Concurrent delayed HTTP GETs finish within 1.0s surface budget with 1 HTTP GET
+       per source per reload (approval_decisions shared between approval_queue and
+       governance_review_queue) and preserve caller Authorization + X-Tenant-Id.
+    2. Real HTTP transport timeouts in any of the 3 owners bound urllib.request.urlopen
+       to remaining_management_read_budget (not 15s/30s defaults) and degrade with
+       read_timeout.
+    3. Real HTTP 503 from default DeploymentPlanPort degrades governance_review_queue
+       with contributor_read_error rather than returning a healthy empty queue.
+    4. Default non-management / write calls without management_read_deadline keep
+       their original 15s / 30s timeouts unchanged.
+    """
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import json
+    import urllib.request
+    import pytest
+
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core.owner_reads import management_read_deadline
+    from services.control_plane.bff.governance import approval_owner
+
+    state: Dict[str, Any] = {
+        "delays": {"/api/governance/approvals": 0.35, "/api/deployment/plans": 0.35, "/api/evolution/proposals": 0.35},
+        "status_codes": {},
+        "counts": {"/api/governance/approvals": 0, "/api/deployment/plans": 0, "/api/evolution/proposals": 0, "/api/incidents": 0},
+        "headers": [],
+    }
+    state_lock = threading.Lock()
+    hosted_approvals = _hosted_terminal_approvals(540, 3)
+
+    class _OwnerHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            with state_lock:
+                state["counts"][path] = state["counts"].get(path, 0) + 1
+                state["headers"].append(
+                    (
+                        path,
+                        self.headers.get("Authorization"),
+                        self.headers.get("X-Tenant-Id"),
+                    )
+                )
+                delay = float(state["delays"].get(path, 0.0))
+                code = int(state["status_codes"].get(path, 200))
+            if delay > 0:
+                time.sleep(delay)
+            if code != 200:
+                payload = json.dumps({"error": "owner failure"}).encode("utf-8")
+            elif path == "/api/governance/approvals":
+                payload = json.dumps(hosted_approvals).encode("utf-8")
+            elif path == "/api/deployment/plans":
+                payload = json.dumps(
+                    [
+                        {
+                            "plan_id": "plan-http-1",
+                            "status": "pending_review",
+                            "target_stage": "paper",
+                            "approval_decision_id": "apv-decided-0000",
+                            "submitted_at": "2026-11-05T11:00:00Z",
+                            "risk_summary": "HTTP plan",
+                        }
+                    ]
+                ).encode("utf-8")
+            elif path == "/api/evolution/proposals":
+                payload = json.dumps(
+                    [
+                        {
+                            "decision_id": "evo-http-1",
+                            "status": "under_review",
+                            "risk_level": "medium",
+                            "created_at": "2026-11-05T12:00:00Z",
+                            "rationale": "HTTP evolution decision",
+                        }
+                    ]
+                ).encode("utf-8")
+            else:
+                payload = b"[]"
+            try:
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except BrokenPipeError:
+                pass
+
+        def log_message(self, *_args: Any) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _OwnerHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+
+    try:
+        env = {
+            "PANTHEON_GOVERNANCE_APPROVAL_API_URL": base_url,
+            "PANTHEON_DEPLOYMENT_API_URL": base_url,
+            "PANTHEON_EVOLUTION_API_URL": base_url,
+            "PANTHEON_INCIDENTS_API_URL": base_url,
+            "EVOLUTION_AUTH_TOKEN": "evo-service-secret",
+        }
+        with patch.dict(os.environ, env):
+            store = create_read_surface_ports()
+            store.list_personas = lambda **_k: []  # type: ignore[method-assign]
+            app = FastAPI()
+            app.add_middleware(OwnerReadContextMiddleware)
+            app.include_router(
+                create_management_router(
+                    get_read_store=lambda: store,
+                    service=ManagementService(get_read_store=lambda: store),
+                    run_management_read=run_management_read,
+                )
+            )
+            client = TestClient(app)
+
+            http_headers = {
+                "Authorization": "Bearer op-mgmt-cap-001:operator,admin,governance_reviewer:mfa::tenant-a",
+                "X-Tenant-Id": "tenant-a",
+            }
+
+            # 1. Three 0.35s real HTTP GETs (1.05s serial > 1.0s surface budget) complete concurrently
+            # within the 1.0s surface budget with 1 HTTP GET per owner per reload.
+            for reload_idx in (1, 2):
+                started = time.monotonic()
+                resp = client.get("/bff/management/human-inbox", headers=http_headers, params={"page_size": 50})
+                elapsed = time.monotonic() - started
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                assert not body["meta"].get("partial"), body["meta"]
+                surfaces = body["meta"]["surfaces"]
+                assert surfaces["governance_review_queue"]["status"] == "ok"
+                assert surfaces["approval_queue"]["status"] == "ok"
+                assert elapsed < 0.95, f"reload {reload_idx} took {elapsed:.3f}s"
+                ids = {i["item_id"] for i in body["data"]["items"]}
+                assert ids == {"review-plan-http-1", "review-evo-http-1"}
+                assert state["counts"]["/api/governance/approvals"] == reload_idx
+                assert state["counts"]["/api/deployment/plans"] == reload_idx
+                assert state["counts"]["/api/evolution/proposals"] == reload_idx
+
+            # Verify headers forwarded to each owner HTTP endpoint.
+            seen_by_path = {path: (auth, tid) for path, auth, tid in state["headers"]}
+            assert seen_by_path["/api/governance/approvals"][0] == http_headers["Authorization"]
+            assert seen_by_path["/api/deployment/plans"] == (http_headers["Authorization"], http_headers["X-Tenant-Id"])
+            assert seen_by_path["/api/evolution/proposals"] == ("Bearer evo-service-secret", http_headers["X-Tenant-Id"])
+
+            # 2. Real transport timeouts on each of the 3 HTTP owners (Deployment, Evolution, Approval)
+            # cut off at the surface budget (~0.12s, not 15s/30s) and report read_timeout.
+            for slow_path in ("/api/deployment/plans", "/api/evolution/proposals", "/api/governance/approvals"):
+                with state_lock:
+                    state["delays"] = {
+                        "/api/governance/approvals": 0.01,
+                        "/api/deployment/plans": 0.01,
+                        "/api/evolution/proposals": 0.01,
+                        slow_path: 0.6,
+                    }
+                    before_slow_count = state["counts"][slow_path]
+                with patch.dict(os.environ, {"PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS": "0.12"}):
+                    started = time.monotonic()
+                    resp_timeout = client.get("/bff/management/human-inbox", headers=http_headers)
+                    elapsed_timeout = time.monotonic() - started
+                assert resp_timeout.status_code == 200
+                assert elapsed_timeout < 0.48, f"{slow_path} expected ~0.12s transport cutoff, took {elapsed_timeout:.3f}s"
+                timeout_body = resp_timeout.json()
+                assert timeout_body["meta"]["partial"] is True
+                gov_timeout_surface = timeout_body["meta"]["surfaces"]["governance_review_queue"]
+                assert gov_timeout_surface["status"] == "degraded"
+                assert gov_timeout_surface["source"] == "management_read_timeout"
+                assert gov_timeout_surface["reason"] == "read_timeout"
+                if slow_path == "/api/governance/approvals":
+                    apv_timeout_surface = timeout_body["meta"]["surfaces"]["approval_queue"]
+                    assert apv_timeout_surface["status"] == "degraded"
+                    assert apv_timeout_surface["reason"] == "read_timeout"
+                    assert state["counts"][slow_path] - before_slow_count == 1
+                else:
+                    assert timeout_body["meta"]["surfaces"]["approval_queue"]["status"] == "ok"
+
+            # 3. Real HTTP 503 on Deployment GET via default DeploymentPlanPort stays degraded (not healthy empty).
+            with state_lock:
+                state["delays"] = {
+                    "/api/governance/approvals": 0.01,
+                    "/api/deployment/plans": 0.01,
+                    "/api/evolution/proposals": 0.01,
+                }
+                state["status_codes"] = {"/api/deployment/plans": 503}
+            resp_503 = client.get("/bff/management/human-inbox", headers=http_headers)
+            assert resp_503.status_code == 200
+            body_503 = resp_503.json()
+            assert body_503["meta"]["partial"] is True
+            gov_503_surface = body_503["meta"]["surfaces"]["governance_review_queue"]
+            assert gov_503_surface["status"] == "degraded"
+            assert gov_503_surface["reason"] == "contributor_read_error"
+
+            # 4. Non-management / write calls without management_read_deadline preserve default timeouts,
+            # while exhausted management_read_deadline (0.0) fails fast with TimeoutError.
+            observed_timeouts: List[Any] = []
+            orig_urlopen = urllib.request.urlopen
+
+            def _spy_urlopen(req: Any, timeout: Any = None, *a: Any, **kw: Any) -> Any:
+                observed_timeouts.append(timeout)
+                return orig_urlopen(req, timeout=timeout, *a, **kw)
+
+            with state_lock:
+                state["status_codes"] = {}
+            with patch("urllib.request.urlopen", side_effect=_spy_urlopen):
+                assert management_read_deadline.get() is None
+                adapter_base.http_request_json(
+                    f"{base_url}/api/deployment/plans",
+                    auth_token=http_headers["Authorization"],
+                    tenant_id=http_headers["X-Tenant-Id"],
+                )
+                adapter_base.evolution_owner_request(
+                    f"{base_url}/api/evolution/proposals",
+                    caller_token=http_headers["Authorization"],
+                    tenant_id=http_headers["X-Tenant-Id"],
+                )
+                approval_owner.list_decisions(http_headers["Authorization"])
+                assert observed_timeouts == [
+                    command_executor._REQUEST_TIMEOUT,
+                    adapter_base._DEFAULT_REQUEST_TIMEOUT,
+                    approval_owner._TIMEOUT,
+                ]
+
+                tok = management_read_deadline.set(time.monotonic() - 0.01)
+                try:
+                    with pytest.raises(TimeoutError):
+                        adapter_base.http_request_json(
+                            f"{base_url}/api/deployment/plans",
+                            auth_token=http_headers["Authorization"],
+                            tenant_id=http_headers["X-Tenant-Id"],
+                            timeout=0.0,
+                        )
+                    with pytest.raises(TimeoutError):
+                        adapter_base.evolution_owner_request(
+                            f"{base_url}/api/evolution/proposals",
+                            caller_token=http_headers["Authorization"],
+                            tenant_id=http_headers["X-Tenant-Id"],
+                            timeout=0.0,
+                        )
+                    with pytest.raises(TimeoutError):
+                        approval_owner.list_decisions(http_headers["Authorization"])
+                finally:
+                    management_read_deadline.reset(tok)
+    finally:
+        server.shutdown()
+        server.server_close()

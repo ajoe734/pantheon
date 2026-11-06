@@ -231,6 +231,7 @@ def _get_json(
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    timeout: Optional[float] = None,
 ) -> Any:
     """GET JSON from an owner API for post-error receipt reconciliation."""
     headers: Dict[str, str] = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
@@ -241,9 +242,12 @@ def _get_json(
         headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
         headers["X-MFA-Token"] = mfa_token
+    effective_timeout = _REQUEST_TIMEOUT if timeout is None else min(float(_REQUEST_TIMEOUT), float(timeout))
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+        if effective_timeout <= 0.0:
+            raise TimeoutError("Owner GET request read budget exhausted")
+        with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
             status_code = int(resp.status)
             body = json.loads(resp.read().decode("utf-8"))
             _record_outcome_for_target(url, ok=True, status_code=status_code)

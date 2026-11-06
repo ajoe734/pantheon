@@ -3,7 +3,7 @@
   "title": "Bound actual governance contributor reads in Human Inbox",
   "owner": "Antigravity",
   "reviewer": "Claude",
-  "recorded_at": "2026-11-06T04:33:00Z",
+  "recorded_at": "2026-11-06T05:13:00Z",
   "verification_scope": "source_only_local_reproduction_and_regression_hosted_deployment_and_ten_browser_reloads_owned_by_root_sole_publisher",
   "inspected_pair": {
     "bff_sha": "0cc4d38fcc3c9439a7d83171321b5a08b7b24613",
@@ -76,19 +76,45 @@
       "markdown_path": "/tmp/pantheon-dev-operable-20261104/Root01a10-HumanInbox-governance-budget-source-audit-20261106.md",
       "markdown_sha256": "e0f5aec9a53238cd8b42cbd1b21f300042f0484d02b22e4edb0306628c9549d0",
       "json_path": "/tmp/pantheon-dev-operable-20261104/Root01a10-HumanInbox-governance-budget-source-audit-20261106.json",
-      "json_sha256": "7d527094db8266d1c084a472156913c756420ad71587867b78adf86b86363f38"
+      "json_sha256": "7d527094db8266d1c084a472156913c756420ad71587867b78adf86b86363f38",
+      "unknown_physical_trigger_note": "Original physical trigger of the 5th reload timeout at 2026-11-06T03:33:17Z (per-owner SQL/HTTP timings/HAR not captured in browser audit) remains unknown; source proof is limited to the proven deadline propagation gap, default DeploymentPlanPort failure-swallowing gap, and reproduced slow/failing owner reads."
     }
   },
   "admitted_scope_repairs": [
     {
+      "file": "services/control-plane/bff/core/owner_reads.py",
+      "symbol": "cached_owner_call / read_records / _evolution_http_get",
+      "change": "Make cached_owner_call budget-aware using remaining_management_read_budget() on per-key lock acquisition and pre-invocation checks while preserving request/caller/tenant failure caching; forward remaining_management_read_budget() as timeout to http_request_json and evolution_owner_request when a management_read_deadline is active without altering default non-management calls."
+    },
+    {
+      "file": "services/control-plane/bff/governance/approval_owner.py",
+      "symbol": "call_owner / list_decisions",
+      "change": "Accept optional timeout in call_owner and list_decisions, bounding GET /api/governance/approvals to remaining_management_read_budget() when management_read_deadline is active (failing fast with TimeoutError when <= 0.0) while preserving the 15s default for non-management and write calls."
+    },
+    {
+      "file": "services/control-plane/bff/command_adapters/base.py",
+      "symbol": "http_request_json / evolution_owner_request",
+      "change": "Forward explicit timeout from http_request_json GET calls to command_executor._get_json when provided, and bound urllib.request.urlopen in http_request_json and evolution_owner_request to effective_timeout (raising TimeoutError when <= 0.0) while keeping 30s default for non-management and write calls."
+    },
+    {
+      "file": "services/control-plane/bff/command_executor.py",
+      "symbol": "_get_json",
+      "change": "Accept optional timeout in _get_json and bound urllib.request.urlopen to min(_REQUEST_TIMEOUT, timeout) (raising TimeoutError when <= 0.0) while keeping the 30s default when timeout is None."
+    },
+    {
+      "file": "services/control-plane/bff/ports/persona_capital_runtime.py",
+      "symbol": "_cached_port_records_with_error / DeploymentPlanPort.list_deployment_plans",
+      "change": "Preserve the underlying provider/store exception in request-scoped port cache alongside ('unavailable', []) and add raise_on_error: bool = False to DeploymentPlanPort.list_deployment_plans so governance review queue reads propagate real DeploymentPlanPort timeouts and errors instead of returning a false healthy empty list."
+    },
+    {
       "file": "services/control-plane/bff/ports/ooda_management.py",
-      "symbol": "ManagementReviewQueuePort._wrap_request_scoped_reader / _read_source / list_governance_review_queue_items / list_approval_queue_items",
-      "change": "Wrap approval_decisions_reader, deployment_plans_reader, and evolution_decisions_reader in request-scoped per-key locked memoization (keyed by reader identity, caller authorization, and selected_tenant) with management_read_deadline-bounded lock acquisition. Deduplicates approval_decisions across approval_queue, governance_review_queue, and dataset_source('approval_queue_items') while preserving all linked terminal approval outcomes for DeploymentPlan allowedActions."
+      "symbol": "ManagementReviewQueuePort._wrap_request_scoped_reader / _read_source",
+      "change": "Reuse core.owner_reads.cached_owner_call for request/caller/tenant-scoped memoization of approval_decisions, deployment_plans, and evolution_decisions readers, invoking DeploymentPlanPort with raise_on_error=True while preserving all linked terminal approval outcomes for DeploymentPlan allowedActions."
     },
     {
       "file": "services/control-plane/bff/management_read_models/service.py",
       "symbol": "ManagementService.get_human_inbox / _human_inbox_contributor_readers / _is_contributor_timeout_error",
-      "change": "Tighten management_read_deadline inside get_human_inbox to the contributor surface budget (min(human_inbox_surface_timeout_seconds(), outer_remaining), default 1.0s) rather than leaving contributors on the 2.5s outer route deadline; prewarm review_queue's three readers (_approval_decisions_reader, _deployment_plans_reader, _evolution_decisions_reader) concurrently on the existing 16-slot _HEALTH_OWNER_READ_EXECUTOR via submit_owner_read; classify contributor deadline/socket timeouts as read_timeout; and fail closed when dataset_source('deployment_plans') reports 'unavailable' so default DeploymentPlanPort provider failures never produce a false healthy empty governance_review_queue."
+      "change": "Tighten management_read_deadline inside get_human_inbox to the contributor surface budget (min(human_inbox_surface_timeout_seconds(), outer_remaining), default 1.0s); prewarm review_queue readers on _HEALTH_OWNER_READ_EXECUTOR via submit_owner_read; classify contributor deadline/socket timeouts as read_timeout; and check rem is not None and rem <= 0.0 when classifying unavailable deployment_plans."
     },
     {
       "file": "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
@@ -97,8 +123,8 @@
     }
   ],
   "local_validation": {
-    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_human_inbox_governance_latency.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_ooda_management_ports.py && .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_mgmt_load_005_read_concurrency.py -k human_inbox",
-    "passed_count": 38,
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_human_inbox_governance_latency.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_ooda_management_ports.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_receipt_default_reads.py services/control-plane/bff/tests/test_bff_management_cockpit.py && .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_mgmt_load_005_read_concurrency.py -k human_inbox",
+    "passed_count": 106,
     "budgets_preserved": {
       "human_inbox_surface_timeout_seconds": 1.0,
       "route_outer_deadline_seconds": 2.5

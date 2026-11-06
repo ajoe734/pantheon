@@ -4276,7 +4276,8 @@ class ManagementService:
                 except Exception:
                     plans_source = "read_store"
                 if plans_source == "unavailable":
-                    if (remaining_management_read_budget() or 1.0) <= 0.0:
+                    rem = remaining_management_read_budget()
+                    if rem is not None and rem <= 0.0:
                         raise TimeoutError("deployment_plans exceeded management read budget")
                     raise RuntimeError("Deployment plan owner read unavailable")
             return [r for r in records if isinstance(r, dict)], {

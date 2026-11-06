@@ -15,10 +15,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple, Union
 
 from services.control_plane.bff.core.owner_reads import (
-    _key_lock,
     authorization,
-    remaining_management_read_budget,
-    request_read_cache,
+    cached_owner_call,
     selected_tenant,
 )
 
@@ -453,55 +451,44 @@ class ManagementReviewQueuePort:
     def _wrap_request_scoped_reader(
         self,
         name: str,
-        reader: Optional[Callable[[], List[Dict[str, Any]]]],
+        reader: Optional[Callable[..., List[Dict[str, Any]]]],
     ) -> Optional[Callable[[], List[Dict[str, Any]]]]:
         if reader is None or getattr(reader, "_is_request_scoped_review_reader", False):
             return reader
+        bound_self = getattr(reader, "__self__", None)
+        deploy_port = (
+            bound_self
+            if hasattr(bound_self, "_get_raw_plans_with_error")
+            else getattr(bound_self, "deployment", None)
+        )
+        supports_raise_on_error = name == "deployment_plans" and hasattr(deploy_port, "_get_raw_plans_with_error")
+
+        def _call_reader() -> List[Dict[str, Any]]:
+            if supports_raise_on_error:
+                provider = getattr(deploy_port, "_plans_provider", None)
+                if (
+                    authorization.get() is not None
+                    or getattr(deploy_port, "_store", None) is not None
+                    or (provider is not None and getattr(provider, "__module__", "") != "services.control_plane.bff.core.owner_reads")
+                ):
+                    return reader(raise_on_error=True)
+            return reader()
 
         def _read() -> List[Dict[str, Any]]:
-            cache = request_read_cache.get()
-            if cache is None:
-                return reader()
-            key = (
-                "management_review_queue_reader",
-                name,
-                id(self),
-                id(reader),
-                authorization.get(),
-                selected_tenant.get(),
+            return (
+                cached_owner_call(
+                    (
+                        "management_review_queue_reader",
+                        name,
+                        id(self),
+                        id(reader),
+                        authorization.get(),
+                        selected_tenant.get(),
+                    ),
+                    _call_reader,
+                )
+                or []
             )
-            if key not in cache:
-                lock = _key_lock(cache, key)
-                remaining = remaining_management_read_budget()
-                if remaining is not None:
-                    if remaining <= 0.0:
-                        raise TimeoutError(
-                            f"governance review source {name} exceeded management read budget"
-                        )
-                    acquired = lock.acquire(timeout=remaining)
-                    if not acquired:
-                        raise TimeoutError(
-                            f"governance review source {name} timed out waiting for in-flight read"
-                        )
-                else:
-                    lock.acquire()
-                try:
-                    if key not in cache:
-                        rem_inner = remaining_management_read_budget()
-                        if rem_inner is not None and rem_inner <= 0.0:
-                            raise TimeoutError(
-                                f"governance review source {name} exceeded management read budget"
-                            )
-                        try:
-                            cache[key] = (True, reader())
-                        except Exception as exc:
-                            cache[key] = (False, exc)
-                finally:
-                    lock.release()
-            ok, val = cache[key]
-            if not ok:
-                raise val
-            return val
 
         setattr(_read, "_raw_reader", reader)
         setattr(_read, "_is_request_scoped_review_reader", True)
