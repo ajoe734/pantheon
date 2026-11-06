@@ -160,8 +160,32 @@ class Stack:
         )
 
 
+def _training_owner(method: str, path: str, body) -> dict:
+    """Canned Training owner answers for the retrain executor's evaluation calls."""
+    payload = json.loads(body) if body else {}
+    if method == "POST" and path.endswith("/sessions"):
+        return {"session_id": "ts-e2e-1", "status": "active"}
+    if method == "POST" and path.endswith("/preview-jobs"):
+        kind = "base" if payload.get("mode") == "baseline" else "cand"
+        return {"job_id": f"job-{kind}", "eval_id": f"eval-{kind}", "status": "queued"}
+    if method == "GET" and "/preview-jobs/" in path:
+        kind = path.rsplit("/", 1)[1].removeprefix("job-")
+        sharpe = 0.5 if kind == "base" else 1.5
+        return {"job_id": f"job-{kind}", "eval_id": f"eval-{kind}", "status": "completed", "preview": {
+            "evaluation_proof": {"status": "passed", "governance_gate_state": "passed", "proof_ref": f"proof-{kind}",
+                                 "metrics": {"sharpe_ratio": sharpe, "total_return": 0.1, "max_drawdown": 0.01},
+                                 "validation_errors": []}}}
+    if method == "GET" and "/api/training/controls/" in path:
+        return {"controls": [{"parameter_key": "lookback_bars", "current_value": 2}]}
+    if method == "POST" and path.endswith("/controls"):
+        return {"status": "accepted"}
+    return {}
+
+
 @pytest.fixture
 def stack(monkeypatch, tmp_path):
+    monkeypatch.setenv("RESEARCH_REGISTRY_SERVICE_TOKEN", "e2e-registry-token")
+    monkeypatch.setenv("RESEARCH_TRAINING_SERVICE_TOKEN", "e2e-training-token")
     for key, value in JWT_ENV.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_SECRET", JWT_ENV["PANTHEON_BFF_JWT_SECRET"])
@@ -221,15 +245,19 @@ def stack(monkeypatch, tmp_path):
             resp = governance.request(method, path, headers=headers, content=body)
         elif host == "training.test":
             boundary.append(("training", method, path))
-            payload = {"session_id": "ts-e2e-1"} if method == "POST" and path.endswith("/sessions") else {}
-            return _Resp(200, json.dumps(payload).encode())
+            return _Resp(200, json.dumps(_training_owner(method, path, body)).encode())
         elif host == "registry.test":
             boundary.append(("registry", method, path))
+            if method == "GET" and "-retrain-" in path:
+                raise urllib.error.HTTPError(url, 404, "missing", {}, io.BytesIO(b'{"detail":"not found"}'))
+            if method == "GET" and path.startswith("/api/registry/strategies/"):
+                return _Resp(200, b"[]")
             if method == "GET":
-                payload = {"entry": {"metadata": {"strategy_artifact": {
-                    "parameters": {"lookback_bars": 2}, "version": "1.0.0"}}}}
+                payload = {"entry": {"registry_id": "art-e2e-v1", "metadata": {
+                    "persona_id": "persona-e2e",
+                    "strategy_artifact": {"parameters": {"lookback_bars": 2}, "version": "1.0.0", "strategy_id": "s-e2e"}}}}
             else:
-                payload = {"registry_id": "art-e2e-v2"}
+                payload = {"entry": {"registry_id": "art-e2e-v1-retrain-child", "artifact_state": "candidate"}}
             return _Resp(200, json.dumps(payload).encode())
         else:  # pragma: no cover
             raise AssertionError(f"unexpected host {host}")
@@ -390,7 +418,12 @@ def test_human_approved_program_runs_a_real_retrain_through_the_existing_chain(s
     run = _wait_for_run(run_id)
     assert stack.retrain_calls == [run_id]
     assert run["status"] == "completed"
-    assert [b[0] for b in stack.boundary] == ["training", "registry", "registry", "training"]
+    assert stack.boundary[0] == ("registry", "GET", "/api/registry/strategy-artifacts/art-e2e-v1")
+    assert ("training", "POST", "/api/training/sessions") in stack.boundary
+    assert ("registry", "POST", "/api/registry/strategy-artifacts/art-e2e-v1/mutate") in stack.boundary
+    # The Teaching commit path is never part of an approved retrain.
+    assert not [b for b in stack.boundary if b[2].endswith(("/complete", "/commit", "/discard"))]
+    assert run["outcome"] == "candidate_created" and run["candidate_artifact_id"] == "art-e2e-v1-retrain-child"
 
     # 5. Only the terminal receipt the worker reads back from the orchestrator
     #    converges the decision.  The retrain executor runs in a thread, so the
@@ -408,6 +441,15 @@ def test_human_approved_program_runs_a_real_retrain_through_the_existing_chain(s
     runs = stack.evolution.get(f"/api/evolution/programs/{program_id}/runs", headers=_service_headers()).json()
     assert [(r["run_id"], r["status"], r["source"]) for r in runs["items"]] == [
         (run_id, "success", "orchestrator_readback")]
+    # The retrain outcome recorded on the run is returned, here and through the BFF.
+    item = runs["items"][0]
+    assert item["outcome"] == "candidate_created" and item["candidate_artifact_id"] == "art-e2e-v1-retrain-child"
+    assert item["session_id"] == "ts-e2e-1" and item["baseline_job_id"] == "job-base"
+    assert item["candidate_metrics"]["sharpe_ratio"] > item["baseline_metrics"]["sharpe_ratio"]
+    bff_runs = stack.client.get(f"/bff/evolution-programs/{program_id}/runs", headers={"Authorization": f"Bearer {HUMAN}"})
+    assert bff_runs.status_code == 200, bff_runs.text
+    assert bff_runs.json()["items"][0]["outcome"] == "candidate_created"
+    assert bff_runs.json()["items"][0]["candidate_artifact_id"] == "art-e2e-v1-retrain-child"
 
     # Auth: every call that reached Evolution carried the service credential, never the operator JWT.
     for call in stack.seen:

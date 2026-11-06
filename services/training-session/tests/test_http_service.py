@@ -1638,3 +1638,83 @@ def test_stored_preview_failure_for_baseline_job_is_exempt_but_other_modes_degra
     assert health["failure_count"] == 1
     assert health["failures"][0]["operation"] == "preview_evaluation"
     assert client.get("/readyz").status_code == 503
+
+
+def _queue_and_run_purpose(client, session_id: str, mode: str, key: str, purpose: str | None) -> dict:
+    body = {"mode": mode, "requested_by": "operator-baseline"}
+    if purpose:
+        body["purpose"] = purpose
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs", json=body, headers={"Idempotency-Key": key}
+    )
+    assert queued.status_code == 201, queued.text
+    run = client.post(f"/api/training/preview-jobs/{queued.json()['job_id']}/run", json={})
+    assert run.status_code == 200, run.text
+    return run.json()
+
+
+def test_rejected_retrain_evaluation_is_recorded_under_its_own_operation_and_keeps_readyz_200() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = _new_session(client)
+    _unchanged_controls(module, session_id)  # a refresh with no effective change is rejected
+
+    job = _queue_and_run_purpose(client, session_id, "refresh", "retrain-reject-1", "retrain")
+    assert job["status"] == "failed"
+    assert job["error_code"] == "evaluation_admission_rejected"
+    assert job["purpose"] == "retrain"
+
+    ops = _functional_ops(module)
+    assert "preview_evaluation" not in ops
+    assert ops["retrain_evaluation"]["status"] == "failed"
+    assert ops["retrain_evaluation"]["detail"]["job_id"] == job["job_id"]
+
+    ready = client.get("/readyz")
+    assert ready.status_code == 200
+    functional = ready.json()["dependencies"]["functional"]
+    assert functional["status"] == "ok" and functional["failure_count"] == 0
+    # ... and the failure stays visible.
+    assert functional["retrain_evaluation_failure_count"] == 1
+    assert functional["retrain_evaluation_failures"][0]["detail"]["job_id"] == job["job_id"]
+
+
+def test_rejected_ordinary_refresh_evaluation_still_returns_503() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = _new_session(client)
+    _unchanged_controls(module, session_id)
+
+    job = _queue_and_run_purpose(client, session_id, "refresh", "refresh-reject-1", None)
+    assert job["status"] == "failed" and job.get("purpose") is None
+    assert _functional_ops(module)["preview_evaluation"]["status"] == "failed"
+    ready = client.get("/readyz")
+    assert ready.status_code == 503
+    assert ready.json()["dependencies"]["functional"]["failure_count"] == 1
+
+
+def test_retrain_purpose_is_bound_into_the_idempotency_hash_and_validated() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = _new_session(client)
+    url = f"/api/training/sessions/{session_id}/preview-jobs"
+    first = client.post(url, json={"mode": "baseline", "purpose": "retrain"}, headers={"Idempotency-Key": "p-1"})
+    assert first.status_code == 201 and first.json()["purpose"] == "retrain"
+    replay = client.post(url, json={"mode": "baseline", "purpose": "retrain"}, headers={"Idempotency-Key": "p-1"})
+    assert replay.status_code == 201 and replay.json()["job_id"] == first.json()["job_id"]
+    conflict = client.post(url, json={"mode": "baseline"}, headers={"Idempotency-Key": "p-1"})
+    assert conflict.status_code == 409
+    assert client.post(url, json={"mode": "baseline", "purpose": "other"}).status_code == 422
+
+
+def test_retrain_evaluation_does_not_open_a_consultation_request() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = _new_session(client)
+    seed_changed_supported_controls(module, session_id)
+    module.run_vectorbt_workflow = make_fake_real_vectorbt_workflow(total_return=-0.5, sharpe_ratio=-1.0, max_drawdown=0.9)
+    # No Consultation owner is running: an ordinary failed evaluation would fail closed on the handoff.
+    job = _queue_and_run_purpose(client, session_id, "refresh", "retrain-no-consult", "retrain")
+    assert job["status"] == "completed", job
+    proof = job["preview"]["evaluation_proof"]
+    assert proof["status"] == "failed" and job["governance_gate_state"] == "failed"
+    assert job["preview"]["evaluation_result"]["consultation_required"] is False
