@@ -250,6 +250,62 @@ class TradeEpisodeProjectionStore:
                 return json.loads(json.dumps(summary))
             return None
 
+    def retained_paper_fill_events(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Return deduplicated in-memory ``paper_fill_simulated`` events.
+
+        Reversal fills are appended to both the closed episode and the newly
+        opened episode in ``project_event``; deduplicating by ``event_id``
+        ensures a reversal fill is never returned twice.
+        """
+        with self._lock:
+            episode_lists = [list(events) for events in self._events.values()]
+
+        results: list[dict[str, Any]] = []
+        seen_event_ids: set[str] = set()
+        for events in episode_lists:
+            for ev in events:
+                if not isinstance(ev, dict):
+                    continue
+                if ev.get("event_type") != "paper_fill_simulated":
+                    continue
+                ev_id = str(ev.get("event_id") or "").strip()
+                if ev_id:
+                    if ev_id in seen_event_ids:
+                        continue
+                    seen_event_ids.add(ev_id)
+                if tenant_id is not None:
+                    direct_tenant = str(ev.get("tenant_id") or "").strip()
+                    env = ev.get("correlation_envelope")
+                    env_tenant = (
+                        str(env.get("tenant_id") or "").strip()
+                        if isinstance(env, dict)
+                        else ""
+                    )
+                    if direct_tenant and env_tenant and direct_tenant != env_tenant:
+                        continue
+                    ev_tenant = direct_tenant or env_tenant
+                    if ev_tenant != tenant_id:
+                        continue
+                if (
+                    runtime_id is not None
+                    and str(ev.get("runtime_id") or "").strip() != runtime_id
+                ):
+                    continue
+                if binding_id is not None:
+                    ev_binding = str(
+                        ev.get("binding_id") or ev.get("runtime_binding_id") or ""
+                    ).strip()
+                    if ev_binding != binding_id:
+                        continue
+                results.append(json.loads(json.dumps(ev)))
+        return results
+
     def list(
         self,
         *,

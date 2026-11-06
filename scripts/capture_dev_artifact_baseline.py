@@ -230,10 +230,15 @@ def seal_result(raw: bytes, identity: dict[str, str], *, expected_lease_id=None)
     result = json.loads(raw, object_pairs_hook=unique_object)
     exact_keys(result, ("manifest_path", "manifest_sha256", "manifest"))
     manifest = result["manifest"]
-    exact_keys(manifest, ("schema_version", "environment", "project_id", "vm", "identity",
-                          "capture_lease_id", "captured_at", "image_bundle", "image_bundle_sha256",
-                          "frontend", "compose_sha256", "baseline_nonsecret_config"))
-    if (manifest.get("schema_version") != "pantheon.dev-release-artifact-baseline.v1" or
+    base_keys = ("schema_version", "environment", "project_id", "vm", "identity",
+                 "capture_lease_id", "captured_at", "image_bundle", "image_bundle_sha256",
+                 "frontend", "compose_sha256", "baseline_nonsecret_config")
+    # v2 adds exactly one field, the whole-stack image record. The v1 field set
+    # (and the sealed three-image bundle schema) is unchanged and still accepted.
+    is_v2 = isinstance(manifest, dict) and manifest.get("schema_version") == "pantheon.dev-release-artifact-baseline.v2"
+    exact_keys(manifest, (*base_keys, "stack_baseline") if is_v2 else base_keys)
+    if (manifest.get("schema_version") not in ("pantheon.dev-release-artifact-baseline.v1",
+                                              "pantheon.dev-release-artifact-baseline.v2") or
         manifest.get("environment") != "dev" or manifest.get("project_id") != "pantheon-dev-20260902" or
         manifest.get("vm") != "pantheon-dev-deploy" or manifest.get("identity") != identity):
         raise CaptureError("capture result does not match admitted dev candidate")
@@ -289,6 +294,12 @@ def seal_result(raw: bytes, identity: dict[str, str], *, expected_lease_id=None)
         if (archive["name"] != image_id.removeprefix("sha256:") + "-" + archive["sha256"] + ".tar" or
             type(archive["size"]) is not int or archive["size"] <= 0):
             raise CaptureError("capture archive identity is invalid")
+    if is_v2:
+        try:
+            artifacts.validate_stack(manifest["stack_baseline"], bundle=bundle,
+                                     source_sha=identity["previous_backend_sha"])
+        except artifacts.ArtifactError as exc:
+            raise CaptureError(str(exc)) from exc
     manifest_raw = encoded(manifest)
     if digest(manifest_raw) != result["manifest_sha256"]:
         raise CaptureError("capture manifest seal mismatch")

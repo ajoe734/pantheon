@@ -1,0 +1,107 @@
+{
+  "task_id": "SOURCE-DISTILL-NO-MARKET-REGISTRY-DRAFTS-20261106",
+  "title": "Every market price bar becomes a strategy draft in the registry",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "branch": "task/SOURCE-DISTILL-NO-MARKET-REGISTRY-DRAFTS-20261106",
+  "root_cause": {
+    "summary": "Normalized market sources (source_type=market) such as TWSE/TPEX daily price bars were routed through Registry draft creation in DistillationWorker._distill_one and _make_registry_sync, registering one versioned StrategySpec draft row per price bar in the Registry.",
+    "changed_files": [
+      "services/source_ingestion/distillation_worker.py",
+      "services/source_ingestion/distillation_controller.py",
+      "services/source_ingestion/tests/test_distillation_worker.py",
+      "services/source_ingestion/tests/test_distillation_controller.py",
+      "services/source_ingestion/tests/test_distillation_queue_lifetime.py",
+      "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+      "docs/deployment/evidence/SOURCE-DISTILL-NO-MARKET-REGISTRY-DRAFTS-20261106/evidence.json"
+    ],
+    "fix": [
+      "Defined MARKET_SOURCE_SKIP_REASON = \"source_type=market does not produce Registry strategy drafts\" in services/source_ingestion/distillation_worker.py.",
+      "In DistillationWorker._distill_one, after evidence item/bundle synthesis and local StrategySpecSeedStore materialization succeed, sources with source.source_type == SourceType.MARKET mark the distillation job skipped with MARKET_SOURCE_SKIP_REASON and seed_id populated, without calling _registry_sync.",
+      "In services/source_ingestion/distillation_controller.py, guarded _make_registry_sync so source_type == SourceType.MARKET immediately returns RegistrySyncResult(registry_id=\"\", status=\"skipped\", reason=MARKET_SOURCE_SKIP_REASON) with zero Registry reads or writes, and excluded skipped market jobs from terminal_drafts accounting while preserving healthy controller loop status."
+    ]
+  },
+  "acceptance_criteria": {
+    "ac_1_market_source_zero_registry_io_and_skipped": {
+      "status": "passed",
+      "skip_reason": "source_type=market does not produce Registry strategy drafts",
+      "tests": [
+        "services/source_ingestion/tests/test_distillation_worker.py::TestMarketSourceNoRegistryDrafts::test_market_source_skips_registry_with_zero_registry_calls_and_never_retries_or_dead_letters",
+        "services/source_ingestion/tests/test_distillation_controller.py::test_controller_tick_with_only_market_sources_skips_registry_and_records_healthy_success",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestMarketSourceTransactionalExclusion::test_market_source_makes_zero_registry_reads_or_writes_while_internal_note_syncs",
+        "services/source_ingestion/tests/test_distillation_queue_lifetime.py::test_controller_reuses_queue_across_ticks_with_market_sources_and_zero_registry_io"
+      ]
+    },
+    "ac_2_non_market_sources_produce_and_read_back_registry_drafts": {
+      "status": "passed",
+      "tests": [
+        "services/source_ingestion/tests/test_distillation_worker.py::TestMarketSourceNoRegistryDrafts::test_non_market_internal_note_source_produces_and_reads_back_registry_draft",
+        "services/source_ingestion/tests/test_distillation_controller.py::test_controller_tick_internal_note_syncs_while_market_skips_and_approved_row_is_untouched",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestMarketSourceTransactionalExclusion::test_market_source_makes_zero_registry_reads_or_writes_while_internal_note_syncs"
+      ]
+    },
+    "ac_3_existing_registry_rows_untouched": {
+      "status": "passed",
+      "preserved_approved_registry_id_prefix": "reg-strategy-spec-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+      "notes": "No Registry delete, retire, or migration code was added; existing Registry entries including reg-strategy-spec-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-da7cb8297afb remain untouched.",
+      "tests": [
+        "services/source_ingestion/tests/test_distillation_controller.py::test_controller_tick_internal_note_syncs_while_market_skips_and_approved_row_is_untouched",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestMarketSourceTransactionalExclusion::test_market_source_makes_zero_registry_reads_or_writes_while_internal_note_syncs"
+      ]
+    },
+    "ac_4_controller_tick_market_only_healthy_and_terminal_drafts_excluded": {
+      "status": "passed",
+      "desired_state_source": "source-ingest.normalized_source_records",
+      "downstream_actual_state_status": "ready",
+      "downstream_actual_state_source": "registry.distillation_job_queue",
+      "downstream_actual_state_summary": "0 terminal drafts; 0 dead letters",
+      "tests": [
+        "services/source_ingestion/tests/test_distillation_controller.py::test_controller_tick_with_only_market_sources_skips_registry_and_records_healthy_success",
+        "services/source_ingestion/tests/test_distillation_queue_lifetime.py::test_controller_reuses_queue_across_ticks_with_market_sources_and_zero_registry_io"
+      ]
+    },
+    "ac_5_market_snapshots_calendar_evidence_and_replay_terminal": {
+      "status": "passed",
+      "tests": [
+        "services/source_ingestion/tests/test_distillation_worker.py::TestMarketSourceNoRegistryDrafts::test_market_source_skips_registry_with_zero_registry_calls_and_never_retries_or_dead_letters",
+        "services/source_ingestion/tests/test_distillation_worker.py::TestMarketSourceNoRegistryDrafts::test_replaying_market_job_that_already_produced_draft_stays_terminal_and_does_not_fail",
+        "services/source_ingestion/tests/test_distillation_controller.py::test_controller_tick_internal_note_syncs_while_market_skips_and_approved_row_is_untouched",
+        "services/source_ingestion/tests/test_latest_market_snapshot.py"
+      ]
+    },
+    "ac_6_existing_distillation_and_alpha_replication_tests_green": {
+      "status": "passed",
+      "changed_assertion_justification": [
+        {
+          "test": "services/source_ingestion/tests/test_distillation_worker.py::TestBatchRawStorageRefsIdentity::test_reingest_of_previous_projection_ledger_row_resolves_to_existing_version_and_job",
+          "reason": "This test uses _tw_market_source (source_type='market') to verify that re-ingesting a market source with new batch raw_storage_refs resolves to the existing versioned job rather than creating a duplicate version row. Because source_type='market' jobs now end in status SKIPPED with MARKET_SOURCE_SKIP_REASON after seed materialization instead of status DONE, the terminal job outcome assertions at the end of that test were updated from created==1 / status==DONE to created==0 / skipped==1 / status==SKIPPED / skip_reason==MARKET_SOURCE_SKIP_REASON while additionally asserting that the seed is materialized in StrategySpecSeedStore and registry_id is None."
+        }
+      ],
+      "hosted_growth_verification": "Not claimed here; hosted growth is verified later by the coordinator after deployment."
+    }
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_latest_market_snapshot.py",
+        "result": "63 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_distillation_controller.py services/research/alpha_replication/test_replication_entries_read.py",
+        "result": "18 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_distillation_queue_lifetime.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py",
+        "result": "18 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+        "result": "32 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/alpha_replication",
+        "result": "69 passed"
+      }
+    ]
+  }
+}

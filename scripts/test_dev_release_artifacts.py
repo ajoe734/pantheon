@@ -30,6 +30,21 @@ class FakeDocker:
 
     def call(self, *args):
         self.calls.append(args)
+        # Whole-stack primitives: project-wide listing, stack rows, env, tag.
+        if args[0] == "ps" and len(args) == 5:
+            return "".join(f"{index + 1:064x}\n" for index in range(len(artifacts.SERVICES)))
+        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT:
+            service = artifacts.SERVICES[int(args[-1], 16) - 1]
+            row = self.containers[service]
+            return json.dumps({"service": service, "oneoff": "False", "image_id": row["image_id"],
+                               "status": row["status"], "exit_code": 0, "health_test": ["CMD", "true"],
+                               "health": row["health"]})
+        if args[0] == "inspect" and args[2] == artifacts.STACK_ENV_FORMAT:
+            return json.dumps("GIT_SHA=" + SOURCE) + "\n"
+        if args[0] == "tag":
+            self.tags = getattr(self, "tags", {})
+            self.tags[args[2]] = args[1]
+            return ""
         if args[0] == "ps":
             service = args[-1].rsplit("=", 1)[1]
             index = artifacts.SERVICES.index(service) + 1
@@ -479,3 +494,342 @@ def test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite(tm
         artifacts.save_image(docker=EmptyDocker(), archive_root=root, image_id="sha256:" + "9" * 64, check_lease=lease)
 
 
+
+
+# --- Whole-stack compensation (fake Docker at the real hosted scale) --------
+
+STACK_SIZE = 54
+SEALED = artifacts.SERVICES
+OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 1)) + ("source-ingest",)
+ONE_SHOT = "minio-init"
+TENANT = "tenant-recorded-at-baseline"
+
+
+def _sid(prefix: str, index: int) -> str:
+    return "sha256:" + f"{prefix}{index:02x}".ljust(64, "0")
+
+
+class StackDocker:
+    """54 Compose services, a one-shot init container, shared-image semantics."""
+
+    def __init__(self):
+        self.calls = []
+        self.names = (*SEALED, *OTHERS, ONE_SHOT)
+        assert len(self.names) == STACK_SIZE
+        self.images = {}
+        self.tags = {}
+        self.containers = {}
+        self.compose_defaults = {}
+        self.stuck = set()          # services a compose "up" fails to move
+        self.unhealthy = set()      # services that never become healthy
+        self.no_stop = set()        # services that ignore "docker stop"
+        self.up_calls = []
+        for index, service in enumerate(self.names):
+            image = _sid("a", index)
+            self.add_image(image)
+            one_shot = service == ONE_SHOT
+            self.containers[service] = {
+                "cid": f"{index + 1:064x}", "image_id": image,
+                "status": "exited" if one_shot else "running", "exit_code": 0,
+                "health_test": None if one_shot else ["CMD", "true"],
+                "health": None if one_shot else "healthy",
+                "env": {"PANTHEON_TENANT_ID": TENANT if service == "source-ingest" else "tenant-" + service,
+                        "GIT_SHA": SOURCE}}
+            # What Compose would apply without the override: the failure mode
+            # seen on source-ingest (tenant reset by a default).
+            self.compose_defaults[service] = {"PANTHEON_TENANT_ID": "compose-default", "GIT_SHA": "f" * 40}
+
+    def add_image(self, image):
+        self.images[image] = {"id": image, "revision": SOURCE, "repo_digests": None}
+
+    def by_cid(self, cid):
+        return next((s, c) for s, c in self.containers.items() if c["cid"] == cid)
+
+    def mutate_to_candidate(self, keep=("grafana-like",)):
+        """Whole stack on the rejected candidate except services in ``keep``."""
+        for index, (service, row) in enumerate(self.containers.items()):
+            if service in keep:
+                continue
+            image = _sid("c", index)
+            self.add_image(image)
+            row.update(image_id=image, status="running" if service != ONE_SHOT else "exited",
+                       health=None if service == ONE_SHOT else "healthy",
+                       env={"PANTHEON_TENANT_ID": "compose-default", "GIT_SHA": "f" * 40})
+        index = len(self.containers)
+        self.containers["candidate-only"] = {
+            "cid": f"{index + 1:064x}", "image_id": _sid("c", 99), "status": "running", "exit_code": 0,
+            "health_test": ["CMD", "true"], "health": "healthy", "env": {"PANTHEON_TENANT_ID": "x", "GIT_SHA": "f" * 40}}
+        self.add_image(_sid("c", 99))
+
+    def call(self, *args):
+        self.calls.append(args)
+        if args[0] == "ps":
+            rows = list(self.containers.items())
+            if len(args) > 5:
+                service = args[-1].rsplit("=", 1)[1]
+                rows = [item for item in rows if item[0] == service]
+            return "".join(row["cid"] + "\n" for _, row in rows)
+        if args[0] == "inspect":
+            service, row = self.by_cid(args[-1])
+            if args[2] == artifacts.STACK_FORMAT:
+                return json.dumps({"service": service, "oneoff": "False", "image_id": row["image_id"],
+                                   "status": row["status"], "exit_code": row["exit_code"],
+                                   "health_test": row["health_test"], "health": row["health"]})
+            if args[2] == artifacts.STACK_ENV_FORMAT:
+                return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row["env"].items())
+            if args[2] == artifacts.CONTAINER_FORMAT:
+                return json.dumps({"image_id": row["image_id"], "status": row["status"], "health": row["health"]})
+        if args[:2] == ("image", "inspect"):
+            if args[-1] not in self.images:
+                raise artifacts.ArtifactError("fixture image missing")
+            return json.dumps(self.images[args[-1]])
+        if args[:2] == ("image", "save"):
+            Path(args[3]).write_text(json.dumps(self.images[args[-1]]))
+            return ""
+        if args[:2] == ("image", "load"):
+            row = json.loads(Path(args[-1]).read_text())
+            self.images[row["id"]] = row
+            return ""
+        if args[0] == "tag":
+            self.tags[args[2]] = args[1]
+            return ""
+        if args[0] == "stop":
+            service, row = self.by_cid(args[1])
+            if service not in self.no_stop:
+                row["status"], row["health"] = "exited", None
+            return ""
+        if args[0] == "start":
+            service, row = self.by_cid(args[1])
+            row["status"], row["health"] = "running", "healthy"
+            return ""
+        if args[0] == "compose":
+            paths = [args[i + 1] for i, value in enumerate(args) if value == "-f"]
+            override = json.loads(Path(paths[-1]).read_text())["services"]
+            names = [n for n in args[args.index("up") + 1:] if n in self.containers]
+            self.up_calls.append({"names": names, "wait": "--wait" in args, "override": override})
+            for name in names:
+                if name in self.stuck:
+                    continue
+                row = self.containers[name]
+                env = dict(self.compose_defaults[name])
+                env.update(override[name].get("environment", {}))
+                row.update(image_id=override[name]["image"], env=env,
+                           status="exited" if name == ONE_SHOT else "running",
+                           health=None if name == ONE_SHOT else ("unhealthy" if name in self.unhealthy else "healthy"))
+            return ""
+        raise AssertionError(args)
+
+
+class Clock:
+    def __init__(self):
+        self.now, self.sleeps = 0.0, 0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+        self.sleeps += 1
+
+
+@pytest.fixture
+def stack_case(tmp_path):
+    root = tmp_path / "archives"
+    root.mkdir(mode=0o700)
+    docker = StackDocker()
+    lease = lambda: None
+    bundle = artifacts.capture_images(docker=docker, archive_root=root, source_sha=SOURCE, check_lease=lease)
+    stack = artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lease)
+    compose = tmp_path / "compose.json"
+    compose.write_text(json.dumps({"services": {s: {"build": "."} for s in docker.names}}))
+    baseline = {service: dict(row) for service, row in docker.containers.items()}
+    return root, docker, lease, bundle, stack, compose, baseline
+
+
+def restore_stack(case, **overrides):
+    root, docker, lease, bundle, stack, compose, _ = case
+    raw = artifacts.manifest_bytes(bundle)
+    clock = Clock()
+    params = dict(expected_sha256=hashlib.sha256(raw).hexdigest(), expected_source_sha=SOURCE,
+                  archive_root=root, compose_files=((compose, hashlib.sha256(compose.read_bytes()).hexdigest()),),
+                  docker=docker, check_lease=lease, environment="dev", stack=stack,
+                  sleep=clock.sleep, monotonic=clock.monotonic)
+    params.update(overrides)
+    return artifacts.restore_images(raw, **params), clock
+
+
+def test_stack_baseline_records_every_service_and_adds_no_archive(stack_case):
+    root, docker, _, bundle, stack, _, baseline = stack_case
+    assert set(stack["services"]) == set(docker.names) and len(stack["services"]) == STACK_SIZE
+    assert stack["schema_version"] == artifacts.STACK_SCHEMA
+    assert stack["services"][ONE_SHOT]["state"] == "completed"
+    assert stack["services"]["source-ingest"]["env"]["PANTHEON_TENANT_ID"] == TENANT
+    # The sealed bundle is unchanged: three services, three archives, original schema.
+    assert bundle["schema_version"] == artifacts.SCHEMA and set(bundle["services"]) == set(SEALED)
+    assert len(list(root.glob("*.tar"))) == len(bundle["archives"]) == 3
+    assert not [call for call in docker.calls if call[:2] == ("image", "save")][3:]
+    # Every recorded image is held under the tag the deploy prune step maintains.
+    for service, row in stack["services"].items():
+        assert docker.tags[f"pantheon-protect/{service}:{row['image_id'][7:19]}"] == row["image_id"]
+    assert artifacts.validate_stack(stack, bundle=bundle) == stack
+
+
+def test_whole_stack_success_restores_all_54_and_keeps_tenant(stack_case):
+    _, docker, _, _, stack, _, baseline = stack_case
+    docker.mutate_to_candidate(keep=("svc-03",))
+    before_kept = dict(docker.containers["svc-03"])
+    result, _ = restore_stack(stack_case)
+    for service in docker.names:
+        assert docker.containers[service]["image_id"] == baseline[service]["image_id"], service
+    # Recorded tenant and GIT_SHA survive; Compose defaults never leak back in.
+    assert docker.containers["source-ingest"]["env"]["PANTHEON_TENANT_ID"] == TENANT
+    assert all(docker.containers[s]["env"] == baseline[s]["env"] for s in docker.names if s != "svc-03")
+    recreated = {name for call in docker.up_calls for name in call["names"]}
+    # Already on its recorded image: untouched, never recreated.
+    assert "svc-03" not in recreated and docker.containers["svc-03"] == before_kept
+    assert docker.containers["candidate-only"]["status"] == "exited"
+    assert result["stack"]["candidate_only_stopped"] == ["candidate-only"]
+    assert set(result["stack"]["services"]) == set(docker.names)
+    assert all(row["baseline_image_id"] == row["observed_image_id"] == stack["services"][s]["image_id"]
+               for s, row in result["stack"]["services"].items())
+    # One-shot init: exited 0 is a pass, and it is never restored with --wait.
+    one_shot = next(call for call in docker.up_calls if ONE_SHOT in call["names"])
+    assert one_shot["wait"] is False and docker.containers[ONE_SHOT]["status"] == "exited"
+    # The sealed three keep their existing wait budget and agora healthcheck override.
+    sealed = docker.up_calls[0]
+    assert sealed["names"] == list(SEALED) and sealed["wait"] is True
+    assert sealed["override"]["agora-interaction-worker"]["healthcheck"] == {"timeout": "30s"}
+    assert sealed["override"]["operator-bff"]["environment"]["GIT_SHA"] == SOURCE
+    ingest = next(call for call in docker.up_calls if "source-ingest" in call["names"])
+    assert ingest["override"]["source-ingest"]["environment"]["PANTHEON_TENANT_ID"] == TENANT
+
+
+def test_missing_recorded_image_is_named_and_nothing_is_mutated(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    docker.mutate_to_candidate()
+    del docker.images[stack["services"]["svc-17"]["image_id"]]
+    del docker.images[stack["services"]["svc-30"]["image_id"]]
+    docker.calls.clear()
+    with pytest.raises(artifacts.StackImageMissing) as error:
+        restore_stack(stack_case)
+    assert error.value.services == ("svc-17", "svc-30")
+    assert "svc-17" in str(error.value) and "svc-30" in str(error.value)
+    assert not [c for c in docker.calls if c[0] in ("compose", "stop", "start") or c[:2] == ("image", "load")]
+
+
+def test_missing_image_at_capture_is_named(tmp_path):
+    root = tmp_path / "a"
+    root.mkdir(mode=0o700)
+    docker = StackDocker()
+    del docker.images[docker.containers["svc-05"]["image_id"]]
+    with pytest.raises(artifacts.StackImageMissing) as error:
+        artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert error.value.services == ("svc-05",)
+
+
+def test_candidate_only_service_is_stopped_and_a_survivor_fails_the_proof(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    docker.no_stop.add("candidate-only")
+    with pytest.raises(artifacts.StackMixedError) as error:
+        restore_stack(stack_case)
+    assert error.value.services == ("candidate-only",)
+    assert str(error.value) == "stack is mixed: candidate-only"
+
+
+def test_wrong_image_after_restore_fails_fast_naming_the_service(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    docker.stuck.update({"svc-09", "svc-10"})
+    with pytest.raises(artifacts.StackMixedError) as error:
+        restore_stack(stack_case)
+    assert error.value.services == ("svc-09", "svc-10")
+
+
+def test_unhealthy_service_fails_only_after_the_stated_budget(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    docker.unhealthy.add("svc-20")
+    with pytest.raises(artifacts.StackMixedError) as error:
+        _, _ = restore_stack(stack_case, readback_seconds=60)
+    assert error.value.services == ("svc-20",)
+
+
+def test_slow_service_that_becomes_healthy_within_budget_passes(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    original = docker.call
+    state = {"polls": 0}
+
+    def slow(*args):
+        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT and docker.by_cid(args[-1])[0] == "source-ingest":
+            state["polls"] += 1
+            if state["polls"] < 20:      # ~110 s at the 5 s poll interval
+                docker.containers["source-ingest"]["health"] = "starting"
+            else:
+                docker.containers["source-ingest"]["health"] = "healthy"
+        return original(*args)
+
+    docker.call = slow
+    _, clock = restore_stack(stack_case)
+    assert 0 < clock.now <= artifacts.STACK_READBACK_SECONDS and clock.sleeps >= 15
+
+
+def test_recreated_service_with_compose_default_environment_fails_the_proof(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    original = docker.call
+
+    def reset_tenant(*args):
+        result = original(*args)
+        if args[0] == "compose":
+            docker.containers["source-ingest"]["env"]["PANTHEON_TENANT_ID"] = "compose-default"
+        return result
+
+    docker.call = reset_tenant
+    with pytest.raises(artifacts.StackMixedError) as error:
+        restore_stack(stack_case)
+    assert error.value.services == ("source-ingest",)
+
+
+def test_stopped_service_on_recorded_image_is_started_not_recreated(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate(keep=("svc-04",))
+    docker.containers["svc-04"]["status"], docker.containers["svc-04"]["health"] = "exited", None
+    restore_stack(stack_case)
+    assert docker.containers["svc-04"]["status"] == "running"
+    assert not any("svc-04" in call["names"] for call in docker.up_calls)
+
+
+def test_three_image_restore_without_stack_leaves_the_rest_alone(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    others = {s: dict(r) for s, r in docker.containers.items() if s not in SEALED}
+    root, _, lease, bundle, _, compose, _ = stack_case
+    raw = artifacts.manifest_bytes(bundle)
+    result = artifacts.restore_images(
+        raw, expected_sha256=hashlib.sha256(raw).hexdigest(), expected_source_sha=SOURCE, archive_root=root,
+        compose_files=((compose, hashlib.sha256(compose.read_bytes()).hexdigest()),),
+        docker=docker, check_lease=lease, environment="dev")
+    assert set(result) == {"image_readback_verified", "services"}
+    assert [call["names"] for call in docker.up_calls] == [list(SEALED)]
+    assert {s: r for s, r in docker.containers.items() if s not in SEALED} == others
+    assert "environment" not in docker.up_calls[0]["override"]["operator-bff"]
+
+
+@pytest.mark.parametrize("change", ["extra_field", "bad_image", "sealed_mismatch", "oneshot_health", "bad_env"])
+def test_stack_validation_rejects_tampering(stack_case, change):
+    _, _, _, bundle, stack, _, _ = stack_case
+    value = copy.deepcopy(stack)
+    if change == "extra_field":
+        value["services"]["svc-01"]["extra"] = 1
+    elif change == "bad_image":
+        value["services"]["svc-01"]["image_id"] = "latest"
+    elif change == "sealed_mismatch":
+        value["services"]["operator-bff"]["image_id"] = _sid("d", 1)
+    elif change == "oneshot_health":
+        value["services"][ONE_SHOT]["has_healthcheck"] = True
+    else:
+        value["services"]["svc-01"]["env"]["EXTRA"] = "x"
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.validate_stack(value, bundle=bundle)

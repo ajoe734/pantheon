@@ -615,6 +615,9 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         trade_episode_projections_path,
         trade_episode_events_path,
     )
+    runtime_summary_store.backfill_open_position_costs(
+        trade_episode_projection_store
+    )
 
     ingest_svc = TelemetryIngestService(
         schema_path=schema_path,

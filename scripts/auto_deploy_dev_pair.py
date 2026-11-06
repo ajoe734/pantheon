@@ -21,6 +21,9 @@ DEPLOY = "nonprod-deploy.yml"
 ACTIVE = ("in_progress", "queued", "waiting", "pending", "requested")
 FAILED = ("failure", "timed_out")
 LEASE_STEP = "Acquire shared dev environment lease"
+# Runs under the held lease but before the artifact baseline, so a failure leaves the stack untouched.
+MARKET_REFRESH_STEP = "Refresh Taiwan market session under lease before stack mutation"
+PRE_MUTATION_STEPS = frozenset({LEASE_STEP, MARKET_REFRESH_STEP})
 CLOSEOUT_REPORT_PATHS = frozenset({
     "docs/deployment/latest-dev-six-area-closure.md",
     "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
@@ -100,9 +103,10 @@ def ci_passed(client, sha):
 
 
 def lost_lease_race(backend, run_id):
-    # Without the lease no later step touches the VM, so the pair was never tried.
+    # Without the lease, or when the market session cannot be proven before mutation,
+    # no later step touches the VM, so the pair was never tried.
     jobs = backend.request("GET", f"/repos/{backend.repository}/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
-    return any(step.get("name") == LEASE_STEP and step.get("conclusion") == "failure"
+    return any(step.get("name") in PRE_MUTATION_STEPS and step.get("conclusion") == "failure"
                for job in jobs for step in job.get("steps") or [])
 
 
