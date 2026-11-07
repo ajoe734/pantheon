@@ -104,6 +104,13 @@ def test_all_canonical_domain_routers_mounted() -> None:
     for sample in expected_domain_samples:
         assert sample in paths, f"Expected domain sample route {sample} to be mounted on bff_main.app"
 
+    from fastapi.testclient import TestClient
+
+    client = TestClient(bff_main.app)
+    retired_list = client.get("/api/v1/deployment-plans")
+    assert retired_list.status_code == 410
+    assert retired_list.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
+
 
 def test_training_v3_router_is_mounted_on_the_composed_app() -> None:
     """Verify the real training endpoint is served by the composed application."""
