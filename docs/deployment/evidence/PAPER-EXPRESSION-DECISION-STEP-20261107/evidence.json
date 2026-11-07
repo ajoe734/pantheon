@@ -7,7 +7,7 @@
   "commands": [
     {
       "command": "/tmp/civenv/bin/python -m pytest services/execution/lean_runtime/test_expression_policy.py -q",
-      "result": "13 passed",
+      "result": "15 passed (incl. forged/no-position/wrong-side/oversized close_leg rejection and opposite-holding scan in both position orders)",
       "covers": "acceptance 1-4: pure decide, dev plan 4.4 worked outcomes on Date=20261106 fixtures (2330 SHORT gross_limit; 0050 SHORT chooses ssf:SRF:202611 sell 1; 2317 SHORT no_feasible; 2330 LONG 0.2 eq:2330 buy 1; 0050 LONG 0.9 chooses ssf:SRF:202611 x2 over eq:0050 x1081 and ssf:NYF:202611), 1000-call and cross-process determinism, absent strength, close_leg, already_at_target, malformed decider rejected with instrument_not_in_candidates"
     },
     {
@@ -15,6 +15,10 @@
       "result": "518 passed, 49 subtests passed",
       "covers": "acceptance 5-7: flag off/legacy artifact/non-Taiwan symbol keep today's decision_id and signal_id and dict; flag on chooses cash or future with the envelope (instrument_id, kind, units, multiplier, reason_code, decision_id); NoTrade becomes HOLD noop (paper_order_simulated noop_count 1 with the record) and a restart does not retry the bar; decision persisted before enqueue; restart after persistence before fill reuses stored instrument and units; chosen stock_future rejected with instrument_not_supported_by_ledger and no fill; signal_generation carries strength/momentum/view_direction, trade_decision carries the record; compose default PANTHEON_PAPER_EXPRESSION_LAYER off"
     }
+  ],
+  "review_fixes": [
+    "enforce() validates close_leg against trusted book holdings (same instrument, reducing side, units <= held); otherwise rejected with instrument_not_in_candidates; producer end-to-end regression added (TestExpressionDecisionStep.test_forged_close_leg_without_a_holding_cannot_place_an_order)",
+    "decide() scans opposite-direction holdings before the same-direction already_at_target no-op; tested in both orderings"
   ],
   "design_notes": [
     "Producer inputs persona_book and risk_budget are read from binding metadata expression_inputs (or an injected provider); absent inputs fail closed to a NoTrade. No ledger reader exists in the producer yet, so production wiring of these inputs is left to the later ledger/gate task.",
