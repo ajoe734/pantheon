@@ -2398,5 +2398,164 @@ def test_natural_probe_taiwan_negatives_preserved():
     assert exc_info.value.code == "case_identity_mismatch"
 
 
+def _sell_without_holdings_rejection_rows(
+    *,
+    reason: str = "sell_without_holdings",
+) -> list[dict]:
+    full_rows = _natural_lifecycle_rows()
+    signal_row = json.loads(json.dumps(full_rows[0]))
+    decision_row = json.loads(json.dumps(full_rows[1]))
+    rejection_row = json.loads(json.dumps(full_rows[3]))
+    rejection_event_id = "00000000-0000-0000-0000-000000000999"
+    rejection_row["ingested_seq"] = 3
+    rejection_row["event_id"] = rejection_event_id
+    rejection_row["event_type"] = "order_rejection"
+    event = rejection_row["payload"]
+    event["event_id"] = rejection_event_id
+    event["event_type"] = "order_rejection"
+    event["sequence_no"] = 3
+    event["causal_parent_id"] = decision_row["event_id"]
+    event["broker_submission_status"] = reason
+    event["submitted_to_broker"] = False
+    event["metadata"] = {
+        **dict(event.get("metadata") or {}),
+        "sequence_no": 3,
+        "causal_parent_id": decision_row["event_id"],
+        "source_mode": "live",
+        "reason": reason,
+        "broker_submission_status": reason,
+        "requested_quantity": 1.0,
+        "holding_quantity": 0.0,
+        "correlation_envelope": json.loads(
+            json.dumps(decision_row["payload"]["correlation_envelope"])
+        ),
+    }
+    for key in (
+        "client_order_id",
+        "order_id",
+        "broker_order_id",
+        "broker_trade_id",
+        "ledger_entry_id",
+        "reconciliation_id",
+    ):
+        event.pop(key, None)
+        event["metadata"].pop(key, None)
+    event["correlation_envelope"].update(
+        {
+            "event_id": rejection_event_id,
+            "causation_event_id": decision_row["event_id"],
+            "producer": "execution.paper_runtime",
+            "producer_revision": 1,
+        }
+    )
+    return [signal_row, decision_row, rejection_row]
+
+
+def test_lifecycle_projector_classifies_sell_without_holdings_as_terminal_non_fill_with_no_unreconciled_order():
+    from datetime import timedelta
+    from services.trade_journey.materializer import TERMINAL_STATUSES
+    from services.trade_journey.test_lifecycle_projector import _RecordingRelationalStore
+
+    rows = _sell_without_holdings_rejection_rows(reason="sell_without_holdings")
+    store = _RecordingRelationalStore()
+    projector = LifecycleProjector(
+        store,
+        deployment_sha="deployed-sha",
+        clock=lambda: "2026-08-22T00:00:00Z",
+    )
+    result = projector.project_records(
+        rows,
+        mode="live",
+        source_high_watermark=len(rows),
+    )
+    assert result.accepted == 3
+    assert result.quarantined == 0
+    assert len(store.mutations) == 1
+    mutation = store.mutations[-1]
+    assert len(mutation.journeys) == 1
+    journey_row = mutation.journeys[0]
+    assert journey_row.is_terminal is True
+    assert journey_row.status in TERMINAL_STATUSES
+    assert journey_row.status == "failed"
+    assert journey_row.status != "unreconciled"
+
+    assert len(mutation.loop_runs) == 1
+    loop_row = mutation.loop_runs[0]
+    loop = loop_row.contract_payload
+    assert loop_row.status == "failed"
+    assert loop["status"] == "failed"
+    assert loop["status"] != "unreconciled"
+    assert loop["fill_event_count"] == 0
+    assert loop["activePeriod"]["end"] is not None
+    assert journey_row.stage_coverage["order_submission"]["status"] == "failed"
+
+    rejection_stages = [
+        stage.contract_fields
+        for stage in mutation.stages
+        if stage.stage_name == "order_submission"
+    ]
+    assert len(rejection_stages) == 1
+    assert rejection_stages[0]["stage_status"] == "failed"
+    assert rejection_stages[0]["reason_code"] == "sell_without_holdings"
+
+    # Past the reconciliation deadline,JourneyMaterializer still keeps it terminal non-fill, never 'unreconciled'
+    late_materializer = JourneyMaterializer(
+        as_of=datetime(2026, 8, 22, tzinfo=timezone.utc) + timedelta(days=10)
+    )
+    late_materializer.rebuild([s.contract_fields for s in mutation.stages])
+    late_proj = late_materializer.get(
+        journey_row.journey_id,
+        tenant_id=journey_row.tenant_id,
+        environment=journey_row.environment,
+    )
+    assert late_proj is not None
+    assert late_proj.snapshot["status"] == "failed"
+    assert late_proj.snapshot["status"] != "unreconciled"
+
+
+def test_probe_accepts_sell_without_holdings_order_rejection_chain(tmp_path):
+    rows = _sell_without_holdings_rejection_rows(reason="sell_without_holdings")
+    root, _ = _publish(tmp_path, rows=rows)
+    gen_dir = (root / "current").resolve(strict=True)
+    journeys = json.loads((gen_dir / "trade_journey_events.json").read_text(encoding="utf-8"))
+    for ev in journeys["events"]:
+        if ev.get("stage") == "order_submission":
+            ev["stage_status"] = "rejected"
+            ev["reason_code"] = "sell_without_holdings"
+    loops = json.loads((gen_dir / "loop_runs.json").read_text(encoding="utf-8"))
+    for rec in loops["records"].values():
+        rec["status"] = "failed"
+        rec["is_terminal"] = True
+        rec["fill_event_count"] = 0
+    manifest = json.loads((gen_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest["journey_sha256"] = _fingerprint(journeys)
+    manifest["loop_runs_sha256"] = _fingerprint(loops)
+    (gen_dir / "trade_journey_events.json").write_text(json.dumps(journeys), encoding="utf-8")
+    (gen_dir / "loop_runs.json").write_text(json.dumps(loops), encoding="utf-8")
+    (gen_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    code, artifact = _execute(tmp_path, root=root, rows=rows)
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert [ev["event_type"] for ev in artifact["proof"]["events"]] == [
+        "signal_generation",
+        "trade_decision",
+        "order_rejection",
+    ]
+    assert artifact["proof"]["projection"]["loop_status"] == "failed"
+
+
+def test_probe_rejects_other_order_rejection_reasons(tmp_path):
+    rows = _sell_without_holdings_rejection_rows(reason="tw_broker_error")
+    root, _ = _publish(tmp_path, rows=rows)
+
+    code, artifact = _execute(tmp_path, root=root, rows=rows)
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "no_complete_paper_aggregate"
+
+
+
 
 

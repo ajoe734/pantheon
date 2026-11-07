@@ -279,7 +279,17 @@ def _committed_lifecycle_identity_from_row(row: Mapping[str, Any]) -> dict[str, 
             or metadata.get("deployment_stage")
             or metadata.get("environment")
         ),
+        "reason": _clean(metadata.get("reason") or event.get("reason")),
+        "metadata": dict(metadata),
     }
+
+
+def _is_sell_without_holdings_identity(identity: Mapping[str, Any]) -> bool:
+    if _clean(identity.get("event_type")) != "order_rejection":
+        return False
+    metadata = identity.get("metadata") if isinstance(identity.get("metadata"), Mapping) else {}
+    reason = _clean(identity.get("reason") or metadata.get("reason"))
+    return reason == "sell_without_holdings"
 
 
 def _identity_is_target_position(
@@ -299,10 +309,14 @@ def _identity_is_target_position(
             return False
         if runtime_id and _clean(identity.get("runtime_id")) != runtime_id:
             return False
+    event_type = _clean(identity.get("event_type"))
+    is_valid_terminal = (
+        (event_type == "position_snapshot" and sequence_no >= 5)
+        or (_is_sell_without_holdings_identity(identity) and sequence_no >= 3)
+    )
     return (
         _clean(identity.get("run_id")) == run_id
-        and _clean(identity.get("event_type")) == "position_snapshot"
-        and sequence_no >= 5
+        and is_valid_terminal
         and _clean(identity.get("environment")).lower() == "paper"
         and _clean(identity.get("execution_mode")).lower() == "paper"
         and _clean(identity.get("deployment_stage")).lower() == "paper"
@@ -316,7 +330,7 @@ def fetch_committed_lifecycle_identity(
     binding: Mapping[str, Any],
     run_id: str,
 ) -> Mapping[str, Any] | None:
-    """Read the exact stimulus position snapshot from committed telemetry."""
+    """Read the exact stimulus terminal lifecycle event from committed telemetry."""
     binding_id = _clean(binding.get("binding_id"))
     runtime_id = _clean(binding.get("runtime_id"))
     if not _clean(telemetry_db_dsn) or not binding_id or not run_id:
@@ -332,7 +346,16 @@ def fetch_committed_lifecycle_identity(
                     """
                     SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload
                     FROM telemetry_events
-                    WHERE event_type = 'position_snapshot'
+                    WHERE (
+                        event_type = 'position_snapshot'
+                        OR (
+                          event_type = 'order_rejection'
+                          AND (
+                            payload::jsonb -> 'metadata' ->> 'reason' = 'sell_without_holdings'
+                            OR payload::jsonb ->> 'reason' = 'sell_without_holdings'
+                          )
+                        )
+                      )
                       AND (
                         payload::jsonb ->> 'run_id' = $1
                         OR payload::jsonb -> 'metadata' ->> 'run_id' = $1
@@ -859,6 +882,10 @@ def trigger_reconciliation(
             continue
         if _clean(receipt.get("status")) == "accepted" and _clean(receipt.get("event_id")):
             return dict(receipt)
+        if _clean(receipt.get("status")) in {"skipped", "noop"} and _clean(
+            receipt.get("reason")
+        ) in {"lifecycle_noop_order_closed", "sell_without_holdings"}:
+            return dict(receipt)
         if allow_timeout and _is_ambiguous_reconciliation_receipt(receipt):
             ambiguous_receipt = dict(receipt)
             ambiguous_receipt["ambiguous"] = True
@@ -972,15 +999,22 @@ def run_stimulus(
             ) from exc
         raise
     tick_id = f"loop-prod-tel-002-{enqueued['run_id']}"
-    receipt = trigger_reconciliation(
-        reconciliation_url=reconciliation_url,
-        binding_id=_clean(binding.get("binding_id")),
-        tick_id=tick_id,
-        timeout_seconds=reconciliation_timeout_seconds,
-        allow_timeout=allow_ambiguous_reconciliation,
-        headers=_headers(reconciliation_token, tenant_id),
-        http_post_json=http_post_json,
-    )
+    if _is_sell_without_holdings_identity(identity):
+        receipt: Mapping[str, Any] = {
+            "binding_id": _clean(binding.get("binding_id")),
+            "event_id": "",
+            "status": "skipped_sell_without_holdings",
+        }
+    else:
+        receipt = trigger_reconciliation(
+            reconciliation_url=reconciliation_url,
+            binding_id=_clean(binding.get("binding_id")),
+            tick_id=tick_id,
+            timeout_seconds=reconciliation_timeout_seconds,
+            allow_timeout=allow_ambiguous_reconciliation,
+            headers=_headers(reconciliation_token, tenant_id),
+            http_post_json=http_post_json,
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "task_id": TASK_ID,

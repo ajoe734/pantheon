@@ -1,0 +1,91 @@
+{
+  "task_id": "PAPER-LEDGER-NO-NEGATIVE-SHARES-20261107",
+  "title": "Paper ledger must not sell shares it does not hold",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "date": "2026-11-07",
+  "status": "ready_for_review",
+  "hosted_verification": {
+    "executed": false,
+    "statement": "Hosted verification was not run. Per task brief, no VM/SSH access, no workflow dispatches, and no hosted verification are permitted in this task."
+  },
+  "acceptance_summary": {
+    "ac1_zero_or_negative_sell_rejected": {
+      "status": "verified",
+      "implementation": "services/execution/lean_runtime/paper_runtime.py::PaperExecutionAlgorithm.SubmitTaiwanBrokerOrder checks normalised underlying holding via _taiwan_underlying_holding_quantity(native, exchange); when holding_quantity <= 0 on a sell order, publishes order_rejection with broker_submission_status='sell_without_holdings' and metadata reason='sell_without_holdings', requested_quantity, and holding_quantity, with no broker post, no fill, no cash change, and no position change.",
+      "tests": [
+        "services/execution/lean_runtime/test_paper_runtime.py::TestTaiwanPaperLedgerNoNegativeShares::test_sell_with_zero_or_negative_holdings_rejects_without_fill_cash_or_position_change",
+        "services/execution/lean_runtime/test_paper_runtime.py::TestTaiwanPaperLedgerNoNegativeShares::test_ledger_never_holds_negative_shares_across_any_buy_sell_sequence"
+      ]
+    },
+    "ac2_partial_clamp_to_held_quantity": {
+      "status": "verified",
+      "implementation": "services/execution/lean_runtime/paper_runtime.py::PaperExecutionAlgorithm.SubmitTaiwanBrokerOrder clamps requested sell qty > holding_quantity to holding_quantity before broker submission (and clamps broker fill_qty if larger), sets fill metadata paper_order_partial_clamped=True, requested_quantity, and clamped_quantity, and ends the position at 0.0 (never negative).",
+      "tests": [
+        "services/execution/lean_runtime/test_paper_runtime.py::TestTaiwanPaperLedgerNoNegativeShares::test_sell_larger_than_holding_clamps_to_held_quantity_and_ends_at_zero"
+      ]
+    },
+    "ac3_taiwan_symbol_suffix_normalization": {
+      "status": "verified",
+      "implementation": "services/execution/lean_runtime/paper_runtime.py::PaperExecutionAlgorithm._taiwan_underlying_key, _resolve_holding_symbol, and _taiwan_underlying_holding_quantity resolve 2330.TW and 2330.TWSE to one underlying (2330, TSE) through normalize_taiwan_symbol.",
+      "tests": [
+        "services/execution/lean_runtime/test_paper_runtime.py::TestTaiwanPaperLedgerNoNegativeShares::test_tw_and_twse_aliases_resolve_to_one_underlying_holding"
+      ]
+    },
+    "ac4_non_taiwan_and_buy_orders_unchanged": {
+      "status": "verified",
+      "implementation": "Non-Taiwan paths and buy orders in paper_runtime.py and executor.py remain unchanged; authorized zero-holding Taiwan cash-share SELL test setups in test_performance_telemetry.py and test_paper_runtime.py seed positive holdings via BUY first per [OPERATOR-T1-TEST-SETUP-AUTHORIZED-20261107].",
+      "tests": [
+        "services/execution/lean_runtime/test_paper_runtime.py",
+        "services/execution/lean_runtime/test_paper_runtime_smoke.py",
+        "services/execution/lean_runtime/test_executor.py",
+        "services/execution/lean_runtime/test_performance_telemetry.py"
+      ]
+    },
+    "ac5_probes_accept_sell_without_holdings_terminal": {
+      "status": "verified",
+      "implementation": "scripts/probe_dev_runtime_paper_lifecycle.py, services/trade_journey/hosted_lifecycle_probe.py, and services/trade_journey/hosted_lifecycle_stimulus.py accept order_rejection with metadata.reason == 'sell_without_holdings' as a valid terminal outcome while still rejecting other order_rejection reasons.",
+      "tests": [
+        "scripts/test_probe_dev_runtime_paper_lifecycle.py::test_paper_lifecycle_accepts_sell_without_holdings_rejection_terminal",
+        "scripts/test_probe_dev_runtime_paper_lifecycle.py::test_paper_lifecycle_rejects_other_order_rejection_reasons",
+        "services/trade_journey/test_hosted_lifecycle_probe.py::test_probe_accepts_sell_without_holdings_order_rejection_chain",
+        "services/trade_journey/test_hosted_lifecycle_probe.py::test_probe_rejects_other_order_rejection_reasons",
+        "services/trade_journey/test_hosted_lifecycle_stimulus.py::test_stimulus_accepts_sell_without_holdings_rejection_terminal",
+        "services/trade_journey/test_hosted_lifecycle_stimulus.py::test_committed_identity_accepts_sell_without_holdings_rejection_row"
+      ]
+    },
+    "ac6_projector_terminal_non_fill_no_unreconciled_order": {
+      "status": "verified",
+      "implementation": "services/trade_journey/lifecycle_noop_order.py::is_sell_without_holdings_rejection and services/trade_journey/lifecycle_projector.py classify order_rejection with reason=sell_without_holdings as a terminal non-fill state (status='failed', is_terminal=True, fill_event_count=0) with order identifiers stripped so JourneyMaterializer never marks it 'unreconciled'.",
+      "tests": [
+        "services/trade_journey/test_hosted_lifecycle_probe.py::test_lifecycle_projector_classifies_sell_without_holdings_as_terminal_non_fill_with_no_unreconciled_order"
+      ]
+    },
+    "ac7_evidence_recorded": {
+      "status": "verified",
+      "implementation": "docs/deployment/evidence/PAPER-LEDGER-NO-NEGATIVE-SHARES-20261107/evidence.json records exact commands and results and states plainly that hosted verification was not run."
+    }
+  },
+  "commands_and_results": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_performance_telemetry.py services/execution/lean_runtime/test_paper_runtime_smoke.py services/execution/lean_runtime/test_executor.py",
+      "exit_code": 0,
+      "summary": "86 passed, 16 subtests passed in 20.90s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_runtime.py -k \"TestSubmitTaiwanBrokerOrder or TestCommittedCloseLifecycleRecovery or TestTaiwanPaperLedgerNoNegativeShares\"",
+      "exit_code": 0,
+      "summary": "19 passed, 79 deselected, 7 subtests passed in 19.12s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_probe_dev_runtime_paper_lifecycle.py services/trade_journey/test_hosted_lifecycle_probe.py services/trade_journey/test_hosted_lifecycle_stimulus.py",
+      "exit_code": 0,
+      "summary": "198 passed, 1 skipped in 49.44s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_runtime.py",
+      "exit_code": 0,
+      "summary": "98 passed, 27 subtests passed in 33.89s"
+    }
+  ]
+}
