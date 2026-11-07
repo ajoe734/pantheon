@@ -727,6 +727,159 @@ def test_memory_auth_persona_store_tenant_forgery_rejected(memory_client, monkey
     assert "Payload tenant does not match verified token tenant" in resp.text
 
 
+def test_memory_auth_env_forwards_oidc_and_role_map(memory_client, monkeypatch, tmp_path):
+    import base64
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    from services.runtime_auth_inbound import _JWKS_CACHE
+
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWKS_URI", "https://idp.example/jwks")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_ISSUER", "https://idp.example/issuer")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_AUDIENCE", "pantheon-stage")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_CLAIMS", "roles,groups,realm_access.roles")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP", "pantheon-operator=operator;pantheon-viewer=viewer")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP_MODE", "strict")
+
+    env = main._memory_auth_env()
+    assert env["PANTHEON_RUNTIME_JWKS_URI"] == "https://idp.example/jwks"
+    assert env["PANTHEON_RUNTIME_OIDC_ISSUER"] == "https://idp.example/issuer"
+    assert env["PANTHEON_RUNTIME_OIDC_AUDIENCE"] == "pantheon-stage"
+    assert env["PANTHEON_RUNTIME_ROLE_CLAIMS"] == "roles,groups,realm_access.roles"
+    assert env["PANTHEON_RUNTIME_ROLE_MAP"] == "pantheon-operator=operator;pantheon-viewer=viewer"
+    assert env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] == "strict"
+
+    _JWKS_CACHE.clear()
+    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub_nums = rsa_key.public_key().public_numbers()
+    b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    int_b64 = lambda val: b64(val.to_bytes((val.bit_length() + 7) // 8, "big"))
+    kid = "memory-oidc-key-1"
+    jwks_path = tmp_path / "jwks.json"
+    jwks_path.write_text(
+        json.dumps(
+            {
+                "keys": [
+                    {
+                        "kty": "RSA",
+                        "kid": kid,
+                        "use": "sig",
+                        "alg": "RS256",
+                        "n": int_b64(pub_nums.n),
+                        "e": int_b64(pub_nums.e),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _mint_rs256(payload: dict) -> str:
+        hdr_b64 = b64(json.dumps({"alg": "RS256", "typ": "JWT", "kid": kid}).encode("utf-8"))
+        pay_b64 = b64(json.dumps(payload).encode("utf-8"))
+        sig = rsa_key.sign(f"{hdr_b64}.{pay_b64}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+        return f"{hdr_b64}.{pay_b64}.{b64(sig)}"
+
+    monkeypatch.setenv("PANTHEON_BFF_JWKS_URI", jwks_path.as_uri())
+    monkeypatch.setenv("PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED", "true")
+    now = int(time.time())
+
+    # Positive RS256 with mapped `groups` claim
+    rs256_group_op = _mint_rs256(
+        {
+            "iss": "https://idp.example/issuer",
+            "aud": "pantheon-stage",
+            "sub": "memory-operator-1",
+            "tenant_id": "tenant-alpha",
+            "email_verified": True,
+            "groups": ["pantheon-operator"],
+            "iat": now,
+            "exp": now + 600,
+        }
+    )
+    store_resp = memory_client.post(
+        "/api/memory/entries",
+        json=_institutional_auth_payload(tenant_id="tenant-alpha"),
+        headers={"Authorization": f"Bearer {rs256_group_op}"},
+    )
+    assert store_resp.status_code == 201, store_resp.text
+
+    # Positive RS256 with mapped dot-path `realm_access.roles` claim
+    rs256_dot_op = _mint_rs256(
+        {
+            "iss": "https://idp.example/issuer",
+            "aud": "pantheon-stage",
+            "sub": "memory-operator-1",
+            "tenant_id": "tenant-alpha",
+            "email_verified": True,
+            "realm_access": {"roles": ["pantheon-operator"]},
+            "iat": now,
+            "exp": now + 600,
+        }
+    )
+    resp = memory_client.get(
+        "/api/memory/retrieve",
+        params=_retrieve_auth_params(actor_roles=["operator"]),
+        headers={"Authorization": f"Bearer {rs256_dot_op}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Negative RS256 with unmapped group claim
+    rs256_unmapped = _mint_rs256(
+        {
+            "iss": "https://idp.example/issuer",
+            "aud": "pantheon-stage",
+            "sub": "memory-operator-1",
+            "tenant_id": "tenant-alpha",
+            "email_verified": True,
+            "groups": ["unmapped-idp-group"],
+            "iat": now,
+            "exp": now + 600,
+        }
+    )
+    unmapped_resp = memory_client.get(
+        "/api/memory/retrieve",
+        params=_retrieve_auth_params(actor_roles=["operator"]),
+        headers={"Authorization": f"Bearer {rs256_unmapped}"},
+    )
+    assert unmapped_resp.status_code == 403
+
+    # Negative RS256 omitting all role claims must fail closed even if DEFAULT_ROLE=operator
+    monkeypatch.setenv("PANTHEON_MEMORY_DEFAULT_ROLE", "operator")
+    rs256_missing_role = _mint_rs256(
+        {
+            "iss": "https://idp.example/issuer",
+            "aud": "pantheon-stage",
+            "sub": "memory-operator-1",
+            "tenant_id": "tenant-alpha",
+            "email_verified": True,
+            "iat": now,
+            "exp": now + 600,
+        }
+    )
+    for method, path, kwargs in (
+        (
+            "get",
+            "/api/memory/retrieve",
+            {"params": _retrieve_auth_params(actor_roles=["operator"])},
+        ),
+        (
+            "post",
+            "/api/memory/entries",
+            {"json": _institutional_auth_payload(tenant_id="tenant-alpha")},
+        ),
+    ):
+        missing_resp = getattr(memory_client, method)(
+            path,
+            headers={"Authorization": f"Bearer {rs256_missing_role}"},
+            **kwargs,
+        )
+        assert missing_resp.status_code == 403, f"{method} {path}: {missing_resp.text}"
+    _JWKS_CACHE.clear()
+
+
+
 if __name__ == "__main__":
     unittest.main()
 

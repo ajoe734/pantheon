@@ -27,7 +27,16 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
+from services.runtime_auth_inbound import (
+    AuthContext,
+    AuthError,
+    _DEFAULT_ROLE_CLAIMS,
+    _claim_path_exists,
+    _claim_path_value,
+    _claim_values,
+    _split_csv,
+    validate_request_auth,
+)
 
 from .models import (
     ArtifactType,
@@ -234,9 +243,48 @@ def _registry_auth_env() -> dict[str, str]:
         "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_REGISTRY_JWT_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", ""),
         "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_REGISTRY_DEFAULT_ROLE") or os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "operator"),
         "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_REGISTRY_MFA_REQUIRED") or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false"),
-        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_REGISTRY_ROLE_CLAIMS") or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", ""),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": (
+            os.getenv("PANTHEON_REGISTRY_ROLE_CLAIMS")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS")
+            or os.getenv("PANTHEON_BFF_ROLE_CLAIMS", "")
+        ),
         "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_REGISTRY_MFA_CLAIMS") or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", ""),
         "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_REGISTRY_MFA_VALUES") or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", ""),
+        "PANTHEON_RUNTIME_JWKS_URI": (
+            os.getenv("PANTHEON_REGISTRY_JWKS_URI")
+            or os.getenv("PANTHEON_RUNTIME_JWKS_URI")
+            or os.getenv("PANTHEON_BFF_JWKS_URI", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": (
+            os.getenv("PANTHEON_REGISTRY_OIDC_DISCOVERY_URL")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL")
+            or os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_ISSUER": (
+            os.getenv("PANTHEON_REGISTRY_OIDC_ISSUER")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_ISSUER")
+            or os.getenv("PANTHEON_BFF_OIDC_ISSUER", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": (
+            os.getenv("PANTHEON_REGISTRY_OIDC_AUDIENCE")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_AUDIENCE")
+            or os.getenv("PANTHEON_BFF_OIDC_AUDIENCE", "")
+        ),
+        "PANTHEON_RUNTIME_ROLE_MAP": (
+            os.getenv("PANTHEON_REGISTRY_ROLE_MAP")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_MAP")
+            or os.getenv("PANTHEON_BFF_ROLE_MAP", "")
+        ),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": (
+            os.getenv("PANTHEON_REGISTRY_ROLE_MAP_MODE")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE")
+            or os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", "")
+        ),
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": (
+            os.getenv("PANTHEON_REGISTRY_REQUIRE_EMAIL_VERIFIED")
+            or os.getenv("PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED")
+            or os.getenv("PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED", "")
+        ),
     }
 
 
@@ -244,7 +292,24 @@ _REQUIRED_JWT_CLAIMS = ("sub", "exp")
 _TENANT_CLAIM_NAMES = ("tenant", "tenant_id")
 
 
-def _require_verified_identity(ctx: AuthContext) -> None:
+def _has_verified_role_claim(
+    ctx: AuthContext, env: Optional[dict[str, str]] = None
+) -> bool:
+    resolved_env = env if env is not None else _registry_auth_env()
+    role_claims = _split_csv(str(resolved_env.get("PANTHEON_RUNTIME_ROLE_CLAIMS", "")))
+    if not role_claims:
+        role_claims = list(_DEFAULT_ROLE_CLAIMS)
+    for claim_path in role_claims:
+        if _claim_path_exists(ctx.claims, claim_path) and _claim_values(
+            _claim_path_value(ctx.claims, claim_path)
+        ):
+            return True
+    return False
+
+
+def _require_verified_identity(
+    ctx: AuthContext, *, env: Optional[dict[str, str]] = None
+) -> None:
     """Enforce the full verified-identity claim set for a JWT caller.
 
     A signature-valid JWT that omits subject/tenant/role/expiry claims is
@@ -260,11 +325,11 @@ def _require_verified_identity(ctx: AuthContext) -> None:
     missing = [claim for claim in _REQUIRED_JWT_CLAIMS if not ctx.claims.get(claim)]
     if not any(str(ctx.claims.get(name) or "").strip() for name in _TENANT_CLAIM_NAMES):
         missing.append("tenant")
-    # Checked directly against the raw claims (not the resolved ctx.roles),
-    # because validate_request_auth assigns PANTHEON_RUNTIME_DEFAULT_ROLE when
-    # no role claim is present at all — that default-role fallback would
-    # otherwise mask a JWT that never carried a role claim in the first place.
-    if not (ctx.claims.get("roles") or ctx.claims.get("role")):
+    # Checked directly against the configured role claim paths in raw claims
+    # (plus a non-empty resolved role set), because validate_request_auth may
+    # assign PANTHEON_RUNTIME_DEFAULT_ROLE when no role claim is present —
+    # default-role fallback must never mask a JWT that omitted role claims.
+    if not _has_verified_role_claim(ctx, env) or not ctx.roles:
         missing.append("role")
     if missing:
         raise HTTPException(
@@ -377,7 +442,7 @@ def _authenticate_registry(
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     _reject_malformed_identity_claims(ctx)
-    _require_verified_identity(ctx)
+    _require_verified_identity(ctx, env=env)
     _reject_reserved_tenant_claim(ctx)
     return ctx
 
