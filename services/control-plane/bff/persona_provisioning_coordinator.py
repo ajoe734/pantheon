@@ -1697,6 +1697,16 @@ class PersonaProvisioningCoordinator:
                 "persona_id": record.persona_id,
                 "requested_by": self._requested_by(record),
                 "provisioning_request_hash": record.request_hash,
+                "risk_policy": {
+                    "risk_policy_id": f"rp-{ids.capital_pool_id}",
+                    "version": "1.0",
+                    "status": "active",
+                    "allowed_stages": ["paper"],
+                    "gross_limit": 2.0,
+                    "net_limit": 2.0,
+                    "max_leverage": 2.0,
+                    "allowed_asset_classes": ["equity", "future"],
+                },
             },
         }
         payload = {
@@ -1856,7 +1866,7 @@ class PersonaProvisioningCoordinator:
             "lifecycle_state": "candidate",
             "market_scope": {
                 "symbols": symbols,
-                "asset_classes": ["equity"],
+                "asset_classes": ["equity"] if baseline else ["equity", "future"],
                 "frequency": bar_frequency,
             },
             "data_dependencies": [{"ref": data_source, "kind": "dataset"}],
@@ -2160,6 +2170,14 @@ class PersonaProvisioningCoordinator:
                 "order_quantity": 0 if baseline else 1,
                 "quantity_type": "SHARES",
                 "zero_momentum_action": non_positive_action,
+                **(
+                    {
+                        "strength_scale_k": 1.0,
+                        "strength_floor_momentum": 0.01,
+                    }
+                    if not baseline
+                    else {}
+                ),
                 **({"market": explicit_market} if explicit_market is not None else {}),
             },
             "mutation_surface": {
@@ -2178,6 +2196,40 @@ class PersonaProvisioningCoordinator:
                         "allowed_range": {"min": 0.0, "max": 0.05},
                         "step": 0.001,
                     },
+                    *(
+                        [
+                            {
+                                "parameter_key": "strength_scale_k",
+                                "value_type": "number",
+                                "current_value": 1.0,
+                                "allowed_range": {"min": 0.25, "max": 4.0},
+                                "step": 0.05,
+                            },
+                            {
+                                "parameter_key": "strength_floor_momentum",
+                                "value_type": "number",
+                                "current_value": 0.01,
+                                "allowed_range": {"min": 0.002, "max": 0.05},
+                                "step": 0.001,
+                            },
+                            {
+                                "parameter_key": "lever_min_strength",
+                                "value_type": "number",
+                                "current_value": 0.5,
+                                "allowed_range": {"min": 0.0, "max": 1.0},
+                                "step": 0.05,
+                            },
+                            {
+                                "parameter_key": "notional_fraction_at_full_strength",
+                                "value_type": "number",
+                                "current_value": 1.0,
+                                "allowed_range": {"min": 0.1, "max": 1.0},
+                                "step": 0.05,
+                            },
+                        ]
+                        if not baseline
+                        else []
+                    ),
                 ],
                 "immutable_parameters": [
                     "symbols",
@@ -2208,6 +2260,16 @@ class PersonaProvisioningCoordinator:
         }
         if not baseline:
             artifact["lineage"]["parent_registry_ids"] = [ids.baseline_strategy_artifact_id]
+            artifact["expression_policy"] = {
+                "version": "1.0",
+                "kind": "notional_target_v1",
+                "parameters": {
+                    "lever_min_strength": 0.5,
+                    "notional_fraction_at_full_strength": 1.0,
+                    "allow_pyramiding": False,
+                    "close_before_reverse": True,
+                },
+            }
         return {
             "registry_id": artifact_id,
             "artifact_state": "candidate",
