@@ -1598,6 +1598,94 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
             == "partial"
         )
 
+    for snap, sub_ev in (
+        (
+            persisted_no_order_snapshot,
+            _event(
+                "up-o-noop",
+                "tj_up_contra",
+                "order_submission",
+                "skipped",
+                3,
+                tenant="tenant-dev",
+                event_type="paper_order_simulated",
+                decision_status="no_order",
+                order_status="not_submitted",
+                reason_code="hold_signal",
+                quantity=0.0,
+                submitted_to_broker=False,
+                broker_order_id=None,
+                client_order_id=None,
+            ),
+        ),
+        (
+            empty_timeline_snapshot,
+            _event(
+                "up-o-rej",
+                "tj_up_contra",
+                "order_submission",
+                "failed",
+                3,
+                tenant="tenant-dev",
+                event_type="order_rejection",
+                reason_code="sell_without_holdings",
+                quantity=0.0,
+                submitted_to_broker=False,
+                broker_order_id=None,
+                client_order_id=None,
+            ),
+        ),
+    ):
+        for upstream_stage in ("signal_generation", "trade_decision"):
+            for extra_fill in (
+                {"fill_quantity": 5},
+                {"filled_quantity": 5},
+                {"metadata": {"fill_quantity": 5}},
+                {"metadata": {"filled_quantity": 5}},
+                {"metrics": {"fill_quantity": 5}},
+                {"metrics": {"filled_quantity": 5}},
+            ):
+                sig_ev = {
+                    **_event(
+                        "up-s",
+                        "tj_up_contra",
+                        "signal_generation",
+                        "succeeded",
+                        1,
+                        tenant="tenant-dev",
+                        quantity=10,
+                        requested_quantity=10,
+                        broker_order_id=None,
+                        client_order_id=None,
+                    ),
+                    **(extra_fill if upstream_stage == "signal_generation" else {}),
+                }
+                dec_ev = {
+                    **_event(
+                        "up-d",
+                        "tj_up_contra",
+                        "trade_decision",
+                        snap["stages"]["trade_decision"]["status"],
+                        2,
+                        tenant="tenant-dev",
+                        quantity=10,
+                        requested_quantity=10,
+                        broker_order_id=None,
+                        client_order_id=None,
+                    ),
+                    **(extra_fill if upstream_stage == "trade_decision" else {}),
+                }
+                up_tl = [sig_ev, dec_ev, sub_ev]
+                eff_snap, _ = tj._effective_snapshot_and_diagnostics(
+                    snap,
+                    empty_timeline_diagnostics,
+                    up_tl,
+                )
+                assert "risk_evaluation" not in eff_snap["stages"]
+                assert "risk_evaluation" in eff_snap["completeness"]["missing_stages"]
+                assert tj._read_state(snap, empty_timeline_diagnostics, up_tl) == "partial"
+
+
 
 
 

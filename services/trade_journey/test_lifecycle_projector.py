@@ -2221,5 +2221,210 @@ def test_projector_preserves_contradictory_nonfill_identifiers_and_quantities(
     assert read_state == "partial"
 
 
+@pytest.mark.parametrize("terminal_kind", ["sell_without_holdings", "no_trade"])
+@pytest.mark.parametrize("upstream_index", [0, 1])
+@pytest.mark.parametrize("location", ["top", "metadata", "metrics"])
+@pytest.mark.parametrize("qty_field", ["fill_quantity", "filled_quantity"])
+@pytest.mark.parametrize("with_generic_qty", [False, True])
+def test_projector_preserves_upstream_nonzero_fill_quantities_and_keeps_bff_partial(
+    terminal_kind: str,
+    upstream_index: int,
+    location: str,
+    qty_field: str,
+    with_generic_qty: bool,
+) -> None:
+    from services.control_plane.bff import trade_journeys as tj
+
+    rows = lifecycle_rows()[:3]
+    for row in rows:
+        for key in ("client_order_id", "order_id", "reconciliation_id"):
+            row["payload"]["metadata"].pop(key, None)
+    payload = rows[2]["payload"]
+    if terminal_kind == "sell_without_holdings":
+        rows[2]["event_type"] = payload["event_type"] = "order_rejection"
+        payload["metadata"].update(
+            reason="sell_without_holdings",
+            submitted_to_broker=False,
+        )
+    else:
+        rows[1]["payload"]["metadata"]["decision_status"] = "no_order"
+        rows[2]["event_type"] = payload["event_type"] = "paper_order_simulated"
+        payload["metadata"].update(
+            order_status="not_submitted",
+            decision_status="no_order",
+            noop_reason="hold_signal",
+        )
+    payload["metrics"] = {"fill_quantity": 0, "submitted_to_broker": False}
+
+    upstream = rows[upstream_index]["payload"]
+    if with_generic_qty:
+        upstream["metadata"]["quantity"] = 10
+        upstream["metadata"]["requested_quantity"] = 10
+    container = upstream if location == "top" else upstream[location]
+    container[qty_field] = 5
+
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store,
+        deployment_sha="independent-review",
+        clock=lambda: "2026-07-15T00:00:10Z",
+    )
+    result = projector.project_records(rows, mode="live", source_high_watermark=3)
+    assert result.accepted == 3
+    mutation = store.mutations[-1]
+    assert "risk_evaluation" not in mutation.journeys[0].stage_coverage
+
+    events = [s.contract_fields for s in mutation.stages]
+    upstream_event = events[upstream_index]
+    assert upstream_event.get(qty_field) == 5
+    if with_generic_qty:
+        assert upstream_event.get("quantity") == 10
+        assert upstream_event.get("requested_quantity") == 10
+    else:
+        assert upstream_event.get("quantity") is None
+
+    materializer = JourneyMaterializer()
+    materializer.rebuild(events)
+    projection = materializer.get(
+        "tj-paper-001", tenant_id="tenant-a", environment="paper"
+    )
+    assert projection is not None
+    assert "risk_evaluation" not in projection.snapshot["stages"]
+    assert "risk_evaluation" in projection.snapshot["completeness"]["missing_stages"]
+    assert (
+        tj._read_state(projection.snapshot, projection.diagnostics, projection.timeline)
+        == "partial"
+    )
+
+    persisted_snapshot = {
+        "status": mutation.journeys[0].status,
+        "stages": dict(mutation.journeys[0].stage_coverage),
+        "identifiers": projection.snapshot["identifiers"],
+        "completeness": {
+            "complete": False,
+            "missing_stages": ["risk_evaluation"],
+        },
+    }
+    persisted_diagnostics = list(
+        mutation.journeys[0].diagnostic_summary.get("diagnostics") or []
+    )
+    eff_snap, _ = tj._effective_snapshot_and_diagnostics(
+        persisted_snapshot, persisted_diagnostics, events
+    )
+    assert "risk_evaluation" not in eff_snap["stages"]
+    assert "risk_evaluation" in eff_snap["completeness"]["missing_stages"]
+    assert tj._read_state(persisted_snapshot, persisted_diagnostics, events) == "partial"
+
+
+def test_projector_retains_valid_requested_quantities_and_partial_fills() -> None:
+    from services.control_plane.bff import trade_journeys as tj
+
+    for idx, terminal_kind in enumerate(["sell_without_holdings", "no_trade"], start=1):
+        rows = _retry_rows(
+            lifecycle_rows(),
+            f"tj-valid-req-{idx}",
+            first_seq=idx * 10,
+            count=3,
+        )
+        for row in rows:
+            row["payload"]["run_id"] = f"run-valid-req-{idx}"
+            row["payload"]["signal_id"] = f"sig-valid-req-{idx}"
+            for key in ("client_order_id", "order_id", "reconciliation_id"):
+                row["payload"]["metadata"].pop(key, None)
+            row["payload"]["metadata"].update(
+                run_id=f"run-valid-req-{idx}",
+                signal_id=f"sig-valid-req-{idx}",
+                decision_id=f"dec-valid-req-{idx}",
+                quantity=10,
+                requested_quantity=10,
+            )
+        payload = rows[2]["payload"]
+        if terminal_kind == "sell_without_holdings":
+            rows[2]["event_type"] = payload["event_type"] = "order_rejection"
+            payload["metadata"].update(
+                reason="sell_without_holdings",
+                submitted_to_broker=False,
+                quantity=0.0,
+                requested_quantity=10,
+                holding_quantity=0.0,
+            )
+            expected_risk = "rejected"
+        else:
+            rows[1]["payload"]["metadata"]["decision_status"] = "no_order"
+            rows[2]["event_type"] = payload["event_type"] = "paper_order_simulated"
+            payload["metadata"].update(
+                order_status="not_submitted",
+                decision_status="no_order",
+                noop_reason="hold_signal",
+                submitted_to_broker=False,
+                quantity=0.0,
+                requested_quantity=10,
+            )
+            expected_risk = "skipped"
+        payload["metrics"] = {"fill_quantity": 0.0, "submitted_to_broker": False}
+
+        store = _RecordingRelationalStore()
+        projector = RelationalLifecycleProjector(
+            store,
+            deployment_sha="independent-review",
+            clock=lambda: "2026-07-15T00:00:10Z",
+        )
+        result = projector.project_records(
+            rows, mode="live", source_high_watermark=idx * 10 + 2
+        )
+        assert result.accepted == 3
+        mutation = store.mutations[-1]
+        assert mutation.journeys[0].stage_coverage["risk_evaluation"]["status"] == expected_risk
+        events = [s.contract_fields for s in mutation.stages]
+        assert events[0]["quantity"] == 10
+        assert events[0]["requested_quantity"] == 10
+        assert events[1]["quantity"] == 10
+        assert events[1]["requested_quantity"] == 10
+        assert events[2]["quantity"] == 0.0
+        assert events[2]["requested_quantity"] == 10
+
+        materializer = JourneyMaterializer()
+        materializer.rebuild(events)
+        proj = materializer.get(
+            f"tj-valid-req-{idx}", tenant_id="tenant-a", environment="paper"
+        )
+        assert proj is not None
+        assert proj.snapshot["stages"]["risk_evaluation"]["status"] == expected_risk
+        assert tj._read_state(proj.snapshot, proj.diagnostics, proj.timeline) == "formal"
+
+    partial_rows = _retry_rows(
+        lifecycle_rows(), "tj-partial-fill-001", first_seq=100, count=6
+    )
+    partial_rows[5]["event_type"] = partial_rows[5]["payload"]["event_type"] = (
+        "order_partially_filled"
+    )
+    partial_rows[5]["payload"]["metadata"].update(
+        quantity=10,
+        requested_quantity=10,
+        filled_quantity=4,
+    )
+    partial_rows[5]["payload"]["metrics"] = {"fill_quantity": 4, "fill_price": 101.5}
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store,
+        deployment_sha="independent-review",
+        clock=lambda: "2026-07-15T00:00:10Z",
+    )
+    res = projector.project_records(
+        partial_rows, mode="live", source_high_watermark=105
+    )
+    assert res.accepted == 6
+    mutation = store.mutations[-1]
+    assert mutation.journeys[0].status == "partially_filled"
+    fill_stage = next(
+        s.contract_fields for s in mutation.stages if s.stage_name == "fill_management"
+    )
+    assert fill_stage["quantity"] == 10
+    assert fill_stage["requested_quantity"] == 10
+    assert fill_stage["fill_quantity"] == 4
+    assert fill_stage["filled_quantity"] == 4
+
+
+
 
 

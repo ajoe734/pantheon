@@ -107,9 +107,9 @@
   },
   "repair_summary": {
     "paper_runtime": "Stamps truthful risk_status=rejected, risk_reason=sell_without_holdings, risk_decision_id, requested_quantity, and holding_quantity only on bounded pre-broker sell_without_holdings guard rejections and risk_status=skipped on explicit no-trade paper_order_simulated events without fabricating risk evaluations for malformed input, non-finite broker fills, or transport errors.",
-    "lifecycle_projector": "Propagates bounded sell_without_holdings rejection facts (reason_code=sell_without_holdings, risk_status=rejected, submitted_to_broker=false, quantity=0.0, requested_quantity, holding_quantity) and trusted explicit NoTrade facts (decision_status=no_order, order_status=not_submitted, risk_status=skipped, reason_code, submitted_to_broker=false) while preserving all contradictory broker_order_id/fill_id/broker_trade_id/ledger_entry_id/reconciliation_id identifiers, broker submission flags, non-zero fill quantities, and invalid quantities across all projected stage events without stripping identifiers or inferring risk denial/skip on contradictory, transport, or bare rejections.",
-    "materializer": "Enforces universal no-fill, no-broker, and zero-quantity guards across all journey events (including nested metadata/metrics) before either skipped-decision or explicit-terminal inference, recording truthful risk_evaluation stage coverage (rejected only for bounded pre-broker sell_without_holdings guard rejections with zero fill quantity and no broker submission; skipped only for verified paper_order_simulated NoTrade skips with zero fill quantity and no broker submission) when required upstream signal_generation and trade_decision stages are present and no post-submission stages, invalid quantities, or broker/fill/ledger/reconciliation identifiers exist.",
-    "bff_trade_journeys": "Enforces universal no-fill, no-broker, and zero-quantity guards across all timeline events (including nested metadata/metrics) before either skipped-decision or explicit-terminal normalization across detail, list, timeline, graph, and evidence surfaces (including already-persisted journeys rows); contradictory non-zero or invalid quantities, broker/fill/ledger/reconciliation identifiers, broker-submitted flags, empty timelines, missing upstream decisions, transport failures, and unverified order failures remain partial."
+    "lifecycle_projector": "Propagates bounded sell_without_holdings rejection facts (reason_code=sell_without_holdings, risk_status=rejected, submitted_to_broker=false, quantity=0.0, requested_quantity, holding_quantity) and trusted explicit NoTrade facts (decision_status=no_order, order_status=not_submitted, risk_status=skipped, reason_code, submitted_to_broker=false) while preserving all contradictory broker_order_id/fill_id/broker_trade_id/ledger_entry_id/reconciliation_id identifiers, broker submission flags, non-zero fill_quantity/filled_quantity fields across every source container (top-level, metadata, metrics) on every projected stage independently of intended/requested generic quantity, and invalid quantities without stripping identifiers or inferring risk denial/skip on contradictory, transport, or bare rejections.",
+    "materializer": "Enforces universal no-fill, no-broker, and zero-quantity guards across all journey events (including nested metadata/metrics and upstream signal_generation/trade_decision fill_quantity/filled_quantity fields) before either skipped-decision or explicit-terminal inference, recording truthful risk_evaluation stage coverage (rejected only for bounded pre-broker sell_without_holdings guard rejections with zero fill quantity and no broker submission; skipped only for verified paper_order_simulated NoTrade skips with zero fill quantity and no broker submission) when required upstream signal_generation and trade_decision stages are present and no post-submission stages, invalid quantities, or broker/fill/ledger/reconciliation identifiers exist.",
+    "bff_trade_journeys": "Enforces universal no-fill, no-broker, and zero-quantity guards across all timeline events (including nested metadata/metrics and upstream signal_generation/trade_decision fill_quantity/filled_quantity fields) before either skipped-decision or explicit-terminal normalization across detail, list, timeline, graph, and evidence surfaces (including already-persisted journeys rows); contradictory non-zero or invalid quantities, broker/fill/ledger/reconciliation identifiers, broker-submitted flags, empty timelines, missing upstream decisions, transport failures, and unverified order failures remain partial."
   },
   "constraints_verified": {
     "hosted_bff_readback_production_assertions_untouched": true,
@@ -126,10 +126,10 @@
       "services/execution/lean_runtime/test_paper_runtime.py"
     ],
     "results": {
-      "trade_journey_and_bff_suites": "171 passed, 2 skipped",
+      "trade_journey_and_bff_suites": "220 passed, 2 skipped",
       "paper_runtime_suite": "98 passed, 27 subtests passed",
-      "independent_review_negative_probes": "15 passed",
-      "total_passed": 284
+      "independent_review_negative_probes": "24 passed",
+      "total_passed": 318
     },
     "status": "passed"
   }

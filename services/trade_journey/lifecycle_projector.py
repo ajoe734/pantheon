@@ -926,9 +926,10 @@ class RelationalLifecycleProjector:
             else:
                 submitted_to_broker = None
             nonzero_fill_qty: Any = None
+            nonzero_generic_qty: Any = None
             has_invalid_qty = False
             invalid_qty_fields: dict[str, Any] = {}
-            nonzero_qty_fields: dict[str, Any] = {}
+            nonzero_fill_fields: dict[str, Any] = {}
             for qty_field in ("fill_quantity", "filled_quantity", "quantity"):
                 for container in (metrics_map, source, metadata):
                     raw_qty = container.get(qty_field)
@@ -954,9 +955,12 @@ class RelationalLifecycleProjector:
                             if isinstance(raw_qty, (int, float))
                             else parsed_qty
                         )
-                        nonzero_qty_fields.setdefault(qty_field, normalized_qty)
-                        if nonzero_fill_qty is None:
-                            nonzero_fill_qty = normalized_qty
+                        if qty_field in ("fill_quantity", "filled_quantity"):
+                            nonzero_fill_fields.setdefault(qty_field, normalized_qty)
+                            if nonzero_fill_qty is None:
+                                nonzero_fill_qty = normalized_qty
+                        elif nonzero_generic_qty is None:
+                            nonzero_generic_qty = normalized_qty
             contradictory_identifiers = {
                 id_field: id_val
                 for id_field in (
@@ -983,10 +987,12 @@ class RelationalLifecycleProjector:
             )
             is_no_holdings_reject = (
                 not has_contradictory_fill_or_broker
+                and nonzero_generic_qty is None
                 and is_sell_without_holdings_rejection(source, metadata)
             )
             is_noop = (
                 not has_contradictory_fill_or_broker
+                and nonzero_generic_qty is None
                 and is_noop_order(source, metadata)
             )
             reject_reason = _first(
@@ -1047,25 +1053,25 @@ class RelationalLifecycleProjector:
                 event.update(contradictory_identifiers)
             if submitted_to_broker is not None:
                 event["submitted_to_broker"] = submitted_to_broker
+            requested_qty = _first(
+                source.get("requested_quantity"),
+                metadata.get("requested_quantity"),
+                metrics_map.get("requested_quantity"),
+            )
+            if requested_qty is not None:
+                event["requested_quantity"] = requested_qty
+            holding_qty = _first(
+                source.get("holding_quantity"),
+                metadata.get("holding_quantity"),
+                metrics_map.get("holding_quantity"),
+            )
+            if holding_qty is not None:
+                event["holding_quantity"] = holding_qty
             if is_no_holdings_reject:
                 event["reason_code"] = "sell_without_holdings"
                 event["risk_status"] = "rejected"
                 event["submitted_to_broker"] = False
                 event["quantity"] = 0.0
-                requested_qty = _first(
-                    source.get("requested_quantity"),
-                    metadata.get("requested_quantity"),
-                    metrics_map.get("requested_quantity"),
-                )
-                if requested_qty is not None:
-                    event["requested_quantity"] = requested_qty
-                holding_qty = _first(
-                    source.get("holding_quantity"),
-                    metadata.get("holding_quantity"),
-                    metrics_map.get("holding_quantity"),
-                )
-                if holding_qty is not None:
-                    event["holding_quantity"] = holding_qty
             elif source.get("event_type") in {"order_rejection", "order_rejection_simulated"}:
                 if reject_reason is not None:
                     event["reason_code"] = str(reject_reason)
@@ -1099,16 +1105,27 @@ class RelationalLifecycleProjector:
                     if value not in (None, "", [], {}):
                         event[field] = value
             metrics = source.get("metrics") if isinstance(source.get("metrics"), Mapping) else {}
-            if "quantity" not in event:
+            if "quantity" not in event and stage not in {"signal_generation", "trade_decision"}:
                 quantity = _first(metrics.get("fill_quantity"), source.get("position_qty"))
                 if quantity is not None:
                     event["quantity"] = abs(quantity) if isinstance(quantity, (int, float)) else quantity
             if (
                 not (is_no_holdings_reject or is_explicit_no_trade)
-                and nonzero_fill_qty is not None
                 and event.get("quantity") in (None, 0, 0.0)
             ):
-                event["quantity"] = nonzero_fill_qty
+                fallback_qty = (
+                    nonzero_generic_qty
+                    if stage in {"signal_generation", "trade_decision"}
+                    else (
+                        nonzero_generic_qty
+                        if nonzero_generic_qty is not None
+                        else nonzero_fill_qty
+                    )
+                )
+                if fallback_qty is not None:
+                    event["quantity"] = fallback_qty
+            if nonzero_fill_fields:
+                event.update(nonzero_fill_fields)
             if invalid_qty_fields:
                 event.update(invalid_qty_fields)
             if "price" not in event and _clean(metrics.get("fill_price")) is not None:

@@ -351,6 +351,73 @@ def test_missing_upstream_decision_or_unverified_submission_keeps_risk_missing()
             assert "risk_evaluation" not in c_proj.snapshot["stages"]
             assert "risk_evaluation" in c_proj.snapshot["completeness"]["missing_stages"]
 
+    for upstream_stage in ("signal_generation", "trade_decision"):
+        for extra_fill in (
+            {"fill_quantity": 5},
+            {"filled_quantity": 5},
+            {"metadata": {"fill_quantity": 5}},
+            {"metadata": {"filled_quantity": 5}},
+            {"metrics": {"fill_quantity": 5}},
+            {"metrics": {"filled_quantity": 5}},
+        ):
+            for mode_name, sub_event in (
+                (
+                    "noop",
+                    event(
+                        "o",
+                        "order_submission",
+                        "skipped",
+                        3,
+                        event_type="paper_order_simulated",
+                        decision_status="no_order",
+                        order_status="not_submitted",
+                        reason_code="hold_signal",
+                        quantity=0.0,
+                        submitted_to_broker=False,
+                    ),
+                ),
+                (
+                    "reject",
+                    event(
+                        "o",
+                        "order_submission",
+                        "failed",
+                        3,
+                        event_type="order_rejection",
+                        reason_code="sell_without_holdings",
+                        quantity=0.0,
+                        submitted_to_broker=False,
+                    ),
+                ),
+            ):
+                sig_ev = event(
+                    "s",
+                    "signal_generation",
+                    "succeeded",
+                    1,
+                    signal_id="sig-up",
+                    quantity=10,
+                    requested_quantity=10,
+                    **(extra_fill if upstream_stage == "signal_generation" else {}),
+                )
+                dec_ev = event(
+                    "d",
+                    "trade_decision",
+                    "skipped" if mode_name == "noop" else "succeeded",
+                    2,
+                    decision_id="dec-up",
+                    decision_status="no_order" if mode_name == "noop" else "succeeded",
+                    quantity=10,
+                    requested_quantity=10,
+                    **(extra_fill if upstream_stage == "trade_decision" else {}),
+                )
+                up_mat = JourneyMaterializer()
+                up_mat.rebuild([sig_ev, dec_ev, sub_event])
+                up_proj = up_mat.get("tj_1", tenant_id="tenant-a", environment="paper")
+                assert "risk_evaluation" not in up_proj.snapshot["stages"]
+                assert "risk_evaluation" in up_proj.snapshot["completeness"]["missing_stages"]
+
+
 
 
 
