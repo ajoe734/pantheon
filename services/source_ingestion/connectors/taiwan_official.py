@@ -1933,6 +1933,193 @@ def _matches_taifex_contract(raw_contract: str, target_contracts: Sequence[str] 
     return False
 
 
+TAIFEX_SSF_DATASET = "taifex_ssf_contracts"
+TAIFEX_SSF_SCHEMA_HASH = "tw_taifex_ssf_contracts.v1"
+TAIFEX_SSF_OPENAPI_ENDPOINTS: Mapping[str, str] = {
+    "SingleStockFuturesMargining": f"{TAIFEX_OPENAPI_BASE_URL}/SingleStockFuturesMargining",
+    "SingleStockFuturesETFMargining": f"{TAIFEX_OPENAPI_BASE_URL}/SingleStockFuturesETFMargining",
+    "DailyMarketReportFut": f"{TAIFEX_OPENAPI_BASE_URL}/DailyMarketReportFut",
+    "FinalSettlementPriceSSF": f"{TAIFEX_OPENAPI_BASE_URL}/FinalSettlementPriceSSF",
+}
+TAIFEX_SSF_STOCK_LISTS_URL = "https://www.taifex.com.tw/cht/2/stockLists"
+TAIFEX_SSF_MAX_RECORDS = 5000
+_SSF_CONTRACT_CODE = re.compile(r"^[A-Z]{2}F$")
+_SSF_CONTRACT_MONTH = re.compile(r"^\d{6}$")
+
+
+def _decode_taifex_bytes(raw_bytes: bytes) -> str:
+    """Decode a TAIFEX body; ``utf-8-sig`` drops the BOM the CSV responses carry."""
+    return raw_bytes.decode("utf-8-sig")
+
+
+def _taifex_text_rows(value: Any) -> tuple[dict[str, Any], ...]:
+    """Rows of one TAIFEX response given as rows, JSON text, or CSV text (BOM tolerated)."""
+    if value is None:
+        return tuple()
+    if isinstance(value, (bytes, bytearray)):
+        value = _decode_taifex_bytes(bytes(value))
+    if isinstance(value, str):
+        text = value.lstrip("﻿")
+        if not text.strip():
+            return tuple()
+        try:
+            return _taifex_text_rows(json.loads(text))
+        except json.JSONDecodeError:
+            reader = csv.DictReader(io.StringIO(text))
+            return tuple({str(k).lstrip("﻿"): v for k, v in row.items()} for row in reader)
+    if isinstance(value, Mapping):
+        return (dict(value),)
+    return tuple(dict(item) for item in value if isinstance(item, Mapping))
+
+
+def parse_taifex_stock_lists_units(page: str) -> dict[str, dict[str, Any]]:
+    """Map contract family (``QF``) to underlying code, name, unit and ETF flag.
+
+    The unit is the last numeric column of the ``stockLists`` table (standard
+    shares or beneficiary units per contract).
+    """
+    families: dict[str, dict[str, Any]] = {}
+    for row_html in re.findall(r"<tr>(.*?)</tr>", page, re.S):
+        cells = [
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cell)).strip()
+            for cell in re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.S)
+        ]
+        if len(cells) < 14 or not re.fullmatch(r"[A-Z]{2}", cells[0]):
+            continue
+        unit = _int(cells[11])
+        if unit is None or unit <= 0:
+            continue
+        families[cells[0]] = {
+            "family": cells[0],
+            "underlying_name": cells[1],
+            "underlying_code": cells[2],
+            "unit": unit,
+            "is_etf": "ETF" in (cells[9] + cells[10]),
+        }
+    return families
+
+
+def _ssf_percent_to_fraction(value: Any) -> float | None:
+    number = _float(value)
+    return None if number is None else round(number / 100.0, 10)
+
+
+def _third_wednesday_iso(contract_month: str) -> str:
+    year, month = int(contract_month[:4]), int(contract_month[4:6])
+    first = datetime(year, month, 1)
+    return (first + timedelta(days=(2 - first.weekday()) % 7 + 14)).date().isoformat()
+
+
+def taifex_ssf_normalized_rows(
+    payload: Mapping[str, Any],
+    *,
+    underlying_codes: Sequence[str] | None = None,
+    api_endpoint: str = "",
+    available_time: str | None = None,
+    max_records: int | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Join the five official SSF sources into one row per contract and month.
+
+    Rows exist only for contracts present in a margin table, whose family is in
+    ``stockLists``, and whose code matches ``^[A-Z]{2}F$``. Regular-session
+    market rows with a numeric month and a numeric settlement price are used;
+    after-hours and spread rows are not.
+    """
+    scope = {str(code).strip() for code in (underlying_codes or ()) if str(code).strip()}
+    margins: dict[str, dict[str, Any]] = {}
+    for row in _taifex_text_rows(payload.get("SingleStockFuturesMargining")):
+        code = _text(row.get("Contract"))
+        if _SSF_CONTRACT_CODE.match(code):
+            margins[code] = {
+                "underlying_code": _text(row.get("UnderlyingSecurityCode")),
+                "contract_name": _text(row.get("ContractName")),
+                "margin_mode": "rate",
+                "margin_tier": _text(row.get("GroupLevel")),
+                "clearing_margin_rate": _ssf_percent_to_fraction(row.get("ClearingMarginRate")),
+                "maintenance_margin_rate": _ssf_percent_to_fraction(row.get("MaintenanceMarginRate")),
+                "initial_margin_rate": _ssf_percent_to_fraction(row.get("InitialMarginRate")),
+                "margin_date": _roc_date_to_iso(row.get("Date")),
+                "raw_margin_row": dict(row),
+            }
+    for row in _taifex_text_rows(payload.get("SingleStockFuturesETFMargining")):
+        code = _text(row.get("Contract"))
+        if _SSF_CONTRACT_CODE.match(code):
+            margins[code] = {
+                "underlying_code": _text(row.get("UnderlyingSecurityCode")),
+                "contract_name": _text(row.get("ContractName")),
+                "margin_mode": "fixed",
+                "margin_tier": "",
+                "clearing_margin_amount": _float(row.get("ClearingMargin")),
+                "maintenance_margin_amount": _float(row.get("MaintenanceMargin")),
+                "initial_margin_amount": _float(row.get("InitialMargin")),
+                "margin_date": _roc_date_to_iso(row.get("Date")),
+                "raw_margin_row": dict(row),
+            }
+    stock_lists = payload.get("stockLists")
+    units = parse_taifex_stock_lists_units(stock_lists) if isinstance(stock_lists, str) else dict(stock_lists or {})
+    last_final: dict[str, dict[str, Any]] = {}
+    for row in _taifex_text_rows(payload.get("FinalSettlementPriceSSF")):
+        code = _text(row.get("Contract"))
+        day = _roc_date_to_iso(row.get("TheFinalSettlementDay"))
+        if code and day and (code not in last_final or day > last_final[code]["day"]):
+            last_final[code] = {
+                "day": day,
+                "contract_month": _text(row.get("ContractDeliveryMonth")),
+                "price": _float(row.get("TheFinalSettlementPrice")),
+            }
+    stamp = available_time or ""
+    results: list[dict[str, Any]] = []
+    limit = max_records or TAIFEX_SSF_MAX_RECORDS
+    for row in _taifex_text_rows(payload.get("DailyMarketReportFut")):
+        code = _text(row.get("Contract"))
+        month = _text(_first(row, "ContractMonth(Week)", "ContractMonth"))
+        if code not in margins or not _SSF_CONTRACT_MONTH.match(month) or _text(row.get("TradingSession")) != "一般":
+            continue
+        settlement = _float(row.get("SettlementPrice"))
+        if settlement is None:
+            continue
+        margin = margins[code]
+        unit_row = units.get(code[:2])
+        if unit_row is None or (scope and margin["underlying_code"] not in scope):
+            continue
+        price_date = _roc_date_to_iso(row.get("Date"))
+        if not price_date:
+            continue
+        normalized = {
+            "dataset": TAIFEX_SSF_DATASET,
+            "date": price_date,
+            "event_time": f"{price_date}T00:00:00Z",
+            "available_time": _validate_or_convert_rfc3339(stamp or f"{price_date}T16:30:00Z", name="available_time"),
+            "ingest_time": _utc_now(),
+            "contract": code,
+            "contract_family": code[:2],
+            "contract_month": month,
+            "contract_id": f"ssf:{code}:{month}",
+            "underlying_code": margin["underlying_code"],
+            "contract_name": margin["contract_name"],
+            "kind": "stock_future",
+            "underlying_kind": "etf" if unit_row.get("is_etf") else "stock",
+            "unit": int(unit_row["unit"]),
+            "market": "TW",
+            "venue": "TAIFEX",
+            "settlement_price": settlement,
+            "price_date": price_date,
+            "volume": _int(row.get("Volume")) or 0,
+            "open_interest": _int(row.get("OpenInterest")) or 0,
+            "last_trading_day": _third_wednesday_iso(month),
+            "last_trading_day_basis": "third_wednesday_no_holiday_shift",
+            "last_final_settlement": last_final.get(code),
+            "source_dataset": TAIFEX_SSF_DATASET,
+            "api_endpoint": api_endpoint or TAIFEX_SSF_STOCK_LISTS_URL,
+            "raw_market_row": dict(row),
+        }
+        normalized.update({k: v for k, v in margin.items() if k != "underlying_code" and k != "contract_name"})
+        results.append(normalized)
+        if len(results) >= limit:
+            break
+    return tuple(results)
+
+
 @dataclass(frozen=True)
 class TaifexDerivativesChipAdapter(SourceConnectorProvider):
     """TAIFEX official daily futures and options chip-context adapter (SD-SRCM-05 §7.3)."""
@@ -1979,9 +2166,9 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 "source_class": "taiwan_chip",
                 "official_reference_truth": True,
                 "dataset_schema_hash": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
-                "normalized_datasets": ["taifex_futures_chip", "taifex_options_chip"],
+                "normalized_datasets": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET],
                 "tier_policy": {
-                    "core_universe": ["taifex_futures_chip", "taifex_options_chip"],
+                    "core_universe": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET],
                     "candidate_universe": ["taifex_futures_chip", "taifex_options_chip"],
                 },
                 **dict(self.connector_metadata),
@@ -2014,6 +2201,8 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
     ) -> Any:
         """Fetch live open data payload from TAIFEX OpenAPI endpoint."""
         resolved_ds = str(dataset or self.dataset or "taifex_futures_chip")
+        if resolved_ds == TAIFEX_SSF_DATASET:
+            return self._fetch_ssf_payload(timeout_seconds=timeout_seconds)
         if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
             raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         url = _taifex_endpoint(resolved_ds)
@@ -2035,6 +2224,35 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             limit = max_records or self.max_records
             return parsed[:limit]
         return parsed
+
+    def _fetch_ssf_payload(self, *, timeout_seconds: float = 20.0) -> dict[str, Any]:
+        """Fetch the four OpenAPI tables and the ``stockLists`` page for taifex_ssf_contracts."""
+        payload: dict[str, Any] = {}
+        for name, url in TAIFEX_SSF_OPENAPI_ENDPOINTS.items():
+            request = urllib.request.Request(
+                url,
+                headers={"Accept": "application/json", "User-Agent": "pantheon-source-ingest/0.1"},
+            )
+            payload[name] = _fetch_official(
+                request,
+                caller="source_ingest.taifex_ssf_contracts",
+                timeout_seconds=timeout_seconds,
+                max_bytes=2097152,
+                # The ETF margin table is served as CSV with a BOM on some reads.
+                parse=lambda raw_bytes: _taifex_text_rows(_decode_taifex_bytes(raw_bytes)),
+            )
+        request = urllib.request.Request(
+            TAIFEX_SSF_STOCK_LISTS_URL,
+            headers={"Accept": "text/html", "User-Agent": "pantheon-source-ingest/0.1"},
+        )
+        payload["stockLists"] = _fetch_official(
+            request,
+            caller="source_ingest.taifex_ssf_contracts",
+            timeout_seconds=timeout_seconds,
+            max_bytes=2097152,
+            parse=_decode_taifex_bytes,
+        )
+        return payload
 
     @staticmethod
     def is_contract_roll_day(trade_date: str) -> bool:
@@ -2084,6 +2302,17 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
         resolved_ds = str(dataset or self.dataset or "taifex_futures_chip")
+        if resolved_ds == TAIFEX_SSF_DATASET:
+            return self._ssf_records_from_payload(
+                payload,
+                source_dataset=source_dataset,
+                api_endpoint=api_endpoint,
+                available_time=available_time,
+                universe_tier=universe_tier,
+                contracts=contracts,
+                max_records=max_records,
+                trace_id=trace_id,
+            )
         if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
             raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         resolved_endpoint = api_endpoint or _taifex_endpoint(resolved_ds)
@@ -2143,6 +2372,70 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             )
         return tuple(records)
 
+    def _ssf_records_from_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        source_dataset: str | None,
+        api_endpoint: str | None,
+        available_time: str | None,
+        universe_tier: str,
+        contracts: Sequence[str] | None,
+        max_records: int | None,
+        trace_id: str,
+    ) -> tuple[SourceRecord, ...]:
+        rows = self.normalized_rows_from_payload(
+            payload,
+            dataset=TAIFEX_SSF_DATASET,
+            api_endpoint=api_endpoint or "",
+            available_time=available_time,
+            contracts=contracts,
+            max_records=max_records,
+        )
+        records: list[SourceRecord] = []
+        for row in rows:
+            row_hash = _stable_hash({"dataset": TAIFEX_SSF_DATASET, "row": row})
+            contract = _text(row.get("contract"))
+            month = _text(row.get("contract_month"))
+            as_of_date = _text(row.get("date"), row_hash)
+            records.append(
+                SourceRecord(
+                    source_id=f"tw-taifex:{TAIFEX_SSF_DATASET}:{contract}:{month}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"TAIFEX {TAIFEX_SSF_DATASET} {contract} {month} {as_of_date}",
+                    content_ref=f"tw-taifex://{TAIFEX_SSF_DATASET}/{contract}/{month}/{as_of_date}/{row_hash}",
+                    metadata={
+                        "source_class": "taiwan_chip",
+                        "provider": "TAIFEX",
+                        "dataset": TAIFEX_SSF_DATASET,
+                        "source_dataset": source_dataset or TAIFEX_SSF_DATASET,
+                        "venue": "TAIFEX",
+                        "contract": contract,
+                        "contract_month": month,
+                        "underlying_code": row.get("underlying_code"),
+                        "date": row.get("date"),
+                        "event_time": row.get("event_time"),
+                        "available_time": row.get("available_time"),
+                        "ingest_time": row.get("ingest_time"),
+                        "api_endpoint": row.get("api_endpoint"),
+                        "cadence": "daily_after_taifex_publication",
+                        "universe_tier": _tier_name(universe_tier),
+                        "normalized_row": dict(row),
+                        "raw_row": {
+                            "margin": dict(row.get("raw_margin_row") or {}),
+                            "market": dict(row.get("raw_market_row") or {}),
+                        },
+                        "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                        "access_scope": ["public", "research"],
+                        "license_scope": "official_reference",
+                        "schema_hash": TAIFEX_SSF_SCHEMA_HASH,
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
+
     def normalized_rows_from_payload(
         self,
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
@@ -2156,6 +2449,18 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         max_records: int | None = None,
     ) -> tuple[dict[str, Any], ...]:
         resolved_ds = str(dataset or self.dataset or "taifex_futures_chip")
+        if resolved_ds == TAIFEX_SSF_DATASET:
+            if not isinstance(payload, Mapping):
+                raise SourceEvidenceError("taifex_ssf_contracts payload must map source names to responses")
+            # ``contracts`` carries underlying security codes for this dataset (symbol scope).
+            resolved_codes = contracts if contracts is not None else self.contracts
+            return taifex_ssf_normalized_rows(
+                payload,
+                underlying_codes=resolved_codes,
+                api_endpoint=api_endpoint,
+                available_time=available_time,
+                max_records=max_records,
+            )
         if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
             raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         rows = _rows_from_payload(payload)

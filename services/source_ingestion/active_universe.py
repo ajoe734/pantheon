@@ -325,6 +325,31 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         },
     ),
     SourceUpdateRule(
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_ssf_contracts",
+        eligible_tiers=(UniverseTier.CORE,),
+        cadence="daily_after_taifex_publication",
+        priority=47,
+        reason="TAIFEX single stock and ETF futures margin, settlement and unit tables feed the instrument candidate list for active Taiwan paper personas",
+        metadata={
+            "detail_level": "daily_single_stock_futures_contract_master",
+            "source_role": "official_reference",
+            "normalized_target": "taifex_ssf_contracts",
+            "symbol_scope": "active_tw_paper_persona_underlyings",
+            "storage_targets": [
+                "raw/taifex/ssf",
+                "normalized/taifex_ssf_contracts",
+            ],
+            "raw_storage_policy": {
+                "compression": "gzip",
+                "retention_days": 2555,
+                "partition": "raw/taifex/ssf/date=YYYY-MM-DD/",
+            },
+            "archive_behavior": "skip_symbol_archive_detail",
+            "repair_override_required": True,
+        },
+    ),
+    SourceUpdateRule(
         connector_id="tw-finmind-broker-bulk-parquet",
         dataset="tw_broker_trading_daily_backfill",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),

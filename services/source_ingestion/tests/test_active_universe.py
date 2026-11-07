@@ -162,12 +162,38 @@ def test_active_universe_fanout_keeps_taifex_market_context_unsymbolized() -> No
         job
         for job in fanout["jobs"]
         if job["connector_id"] == "tw-taifex-futures-options-chip"
+        and job["dataset"] != "taifex_ssf_contracts"
     ]
 
     assert {job["dataset"] for job in taifex_jobs} == {"taifex_futures_chip", "taifex_options_chip"}
     assert all(job["symbols"] == [] for job in taifex_jobs)
     assert all(job["symbol_count"] == 0 for job in taifex_jobs)
     assert all(job["metadata"]["symbol_scope"] == "market_context_no_symbol_filter" for job in taifex_jobs)
+
+
+def test_active_universe_fanout_scopes_taifex_ssf_contracts_to_core_underlyings() -> None:
+    fanout = build_active_universe_job_fanout(
+        [
+            {"symbol": "2330", "tier": "core_universe"},
+            {"symbol": "2317", "tier": "candidate_universe"},
+            {"symbol": "6488", "tier": "archive_universe"},
+        ],
+        run_date="2026-11-09",
+    )
+
+    [job] = [job for job in fanout["jobs"] if job["dataset"] == "taifex_ssf_contracts"]
+
+    assert job["connector_id"] == "tw-taifex-futures-options-chip"
+    assert job["symbols"] == ["2330"]
+    assert job["eligible_tiers"] == ["core_universe"]
+    assert job["metadata"]["symbol_scope"] == "active_tw_paper_persona_underlyings"
+    assert job["metadata"]["normalized_target"] == "taifex_ssf_contracts"
+    assert job["metadata"]["raw_storage_policy"] == {
+        "compression": "gzip",
+        "retention_days": 2555,
+        "partition": "raw/taifex/ssf/date=YYYY-MM-DD/",
+    }
+    assert job["cadence"] == "daily_after_taifex_publication"
 
 
 def test_active_universe_fanout_routes_crypto_symbols_to_coingecko() -> None:
