@@ -1,0 +1,159 @@
+{
+  "task_id": "OPS-REVIEW-GATE-QUIET-20261107",
+  "title": "Stop publishing the canonical review gate status while the review bridge policy is off and correct the documents that misstate review enforcement",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "recorded_at_utc": "2026-11-07T08:06:00Z",
+  "operator_decision_context": {
+    "removed_github_review_requirement_on": "2026-09-08",
+    "reason": "Every Pantheon worker shares one GitHub account and GitHub refuses self-review; OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001 configured TaskStore-only exact-head review mode with review_gate.github_review_bridge_required=false.",
+    "confirmed_on": "2026-11-07",
+    "merged_pr_audit": "99 of the last 100 merged pull requests had an exact-head TaskStore approval before merge and 1 was an explicit operator-authorized direct delivery.",
+    "residual_risk": "While workers share one GitHub account, review_gate.github_review_bridge_required is false, and GitHub branch protection requires 0 approvals (with no pull-request review rule on dev), any holder of the shared GitHub credential can merge without review via the GitHub API or web UI.",
+    "restore_steps": [
+      "Obtain a GitHub identity for review separate from the worker GitHub identity.",
+      "Set review_gate.github_review_bridge_required to true and add 'Pantheon canonical review gate' to branch_workflow.task_pr.required_status_checks in .orchestrator/config.json as required by common.validate_review_bridge_policy.",
+      "Add 'Pantheon canonical review gate' back to GitHub branch protection required_status_checks on protected target branches."
+    ]
+  },
+  "changes": [
+    "scripts/git/canonical_review_gate_ci.py: added CONFIG_PATH and _github_review_bridge_required() reading .orchestrator/config.json from the script path via common.github_review_bridge_required(), catching OSError/ValueError/TypeError with a ::warning:: and defaulting to True; in main(), when not --dry-run and policy is false, prints a ::notice:: naming review_gate.github_review_bridge_required and returns 0 before build_status_payload or any gh API call.",
+    "scripts/git/test_canonical_review_gate_workflow.py: injected true policy into existing MainDryRunTests posting tests (assertions unchanged) and added tests covering policy=false non-dry-run (both product and tooling delivery classes), policy=true config publishing, missing/unreadable/contradictory config warnings and fallback publishing, and --dry-run output/exit-code invariance across both policy values.",
+    ".github/workflows/canonical-review-gate.yml: updated only the header comment to state that the status is published only when review_gate.github_review_bridge_required is true; triggers, job name, permissions, concurrency, and status context remain byte-identical.",
+    "docs/conventions/GIT_WORKFLOW.md: updated sections 7.1 and 7.2 to match the 2026-11-07 GitHub branch protection read-back (4 required checks on dev including Service suites with strict=false, no PR review rule, 0 approvals, enforce_admins=true; 3 required checks on master with strict=true, PR required with 0 approvals, enforce_admins=false), recorded the 2026-09-08 and 2026-11-07 operator decisions, the shared-credential residual risk, and the 3-step restoration procedure while preserving historical lines.",
+    "docs/operations/review-publication-recovery.md: stated at the top that the procedure applies only when review_gate.github_review_bridge_required is true.",
+    "docs/04/pantheon_environment_closure_sa_sd_2026-09/AUTHORITY_AND_THREAT_MODEL.md: removed the stale claim of mandatory GitHub PR review under Threat 4, documented the actual control (4 checks on dev, 3 on master, canonical TaskStore exact-head approval and auto_integrator.py as sole task merge entry point), and recorded the shared-credential residual risk.",
+    "AI_COLLABORATION_GUIDE.md: updated the topology section to state the current required checks on master (3) and dev (4, including Service suites) and that task PRs merge into dev through the canonical integrator only after exact-head TaskStore approval."
+  ],
+  "unchanged_boundaries": [
+    "No changes to scripts/git/auto_integrator.py, scripts/git/github_review_bridge.py, or any file under .orchestrator/.",
+    "No changes to GitHub branch protection or any configuration value in .orchestrator/config.json.",
+    "No review-proof tags created."
+  ],
+  "branch_protection_readback_2026_11_07": {
+    "ajoe734/pantheon": {
+      "dev": {
+        "command": "gh api repos/ajoe734/pantheon/branches/dev/protection",
+        "required_status_checks": {
+          "strict": false,
+          "contexts": [
+            "Commit trailers",
+            "Runtime mirror guard",
+            "Smoke acceptance",
+            "Service suites"
+          ]
+        },
+        "required_pull_request_reviews": null,
+        "required_approving_review_count": 0,
+        "enforce_admins": true,
+        "allow_force_pushes": false,
+        "allow_deletions": false
+      },
+      "master": {
+        "command": "gh api repos/ajoe734/pantheon/branches/master/protection",
+        "required_status_checks": {
+          "strict": true,
+          "contexts": [
+            "Commit trailers",
+            "Runtime mirror guard",
+            "Smoke acceptance"
+          ]
+        },
+        "required_pull_request_reviews": {
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "enforce_admins": false,
+        "allow_force_pushes": false,
+        "allow_deletions": false
+      }
+    },
+    "ajoe734/execute-plans": {
+      "dev": {
+        "command": "gh api repos/ajoe734/execute-plans/branches/dev/protection",
+        "required_status_checks": {
+          "strict": true,
+          "contexts": [
+            "Commit trailers",
+            "Generated files guard",
+            "Component merge gate"
+          ]
+        },
+        "required_pull_request_reviews": {
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "enforce_admins": false,
+        "allow_force_pushes": false,
+        "allow_deletions": false
+      },
+      "main": {
+        "command": "gh api repos/ajoe734/execute-plans/branches/main/protection",
+        "required_status_checks": {
+          "strict": true,
+          "contexts": [
+            "Commit trailers",
+            "Generated files guard",
+            "Smoke acceptance"
+          ]
+        },
+        "required_pull_request_reviews": {
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "enforce_admins": false,
+        "allow_force_pushes": false,
+        "allow_deletions": false
+      }
+    }
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_canonical_review_gate_workflow.py",
+      "exit_code": 0,
+      "result": "55 passed, 15 subtests passed in 6.92s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_canonical_review_check.py",
+      "exit_code": 0,
+      "result": "39 passed in 5.21s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_github_review_bridge.py",
+      "exit_code": 0,
+      "result": "66 passed, 5 subtests passed in 8.06s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py -k \"canonical or gate or diagnostic\"",
+      "exit_code": 0,
+      "result": "23 passed, 149 deselected, 4 subtests passed in 3.71s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "172 passed, 662 subtests passed in 25.39s"
+    },
+    {
+      "command": "env -i PATH=/nonexistent /usr/bin/python3 -S scripts/git/canonical_review_gate_ci.py --repo ajoe734/pantheon --head-ref task/OPS-REVIEW-GATE-QUIET-20261107 --head-sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "exit_code": 0,
+      "result": "::notice::review_gate.github_review_bridge_required is false; skipping 'Pantheon canonical review gate' status publication"
+    },
+    {
+      "command": "(cd /tmp && env -i PATH=/nonexistent /usr/bin/python3 -S /tmp/pantheon-worker-worktrees/pantheon/ops-review-gate-quiet-20261107/scripts/git/canonical_review_gate_ci.py --repo ajoe734/pantheon --head-ref task/OPS-REVIEW-GATE-QUIET-20261107 --head-sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --delivery-class tooling)",
+      "exit_code": 0,
+      "result": "::notice::review_gate.github_review_bridge_required is false; skipping 'Pantheon canonical review gate' status publication"
+    },
+    {
+      "command": "env -i PATH=/nonexistent /usr/bin/python3 -S -c '<temp config with review_gate.github_review_bridge_required=true and Pantheon canonical review gate in required_status_checks>'",
+      "exit_code": 0,
+      "result": "Evaluated build_status_payload and reached the gh subprocess call (FileNotFoundError: [Errno 2] No such file or directory: 'gh' when PATH=/nonexistent; exit_code=2 after 4 POST retry attempts when /usr/bin/gh is on PATH without GH_TOKEN)."
+    }
+  ],
+  "post_merge_observation": "Observing a real pull request after merge was not done during pre-merge implementation; the coordinator will observe the next real pull requests in pantheon and execute-plans after this PR merges into dev."
+}
