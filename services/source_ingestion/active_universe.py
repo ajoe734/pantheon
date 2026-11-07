@@ -554,25 +554,28 @@ def build_active_universe_update_plan(
         symbol_scope = str(rule.metadata.get("symbol_scope") or "").strip()
         if symbol_scope in {"global_no_symbol_filter", "market_context_no_symbol_filter"}:
             symbols = []
+        elif symbol_scope == "active_tw_paper_persona_underlyings":
+            symbols = _unique_underlying_codes(symbols)
         if rule.max_symbols_per_run is not None:
             symbols = symbols[: int(rule.max_symbols_per_run)]
         for member in normalized_members:
             if member.market == rule.market and member.tier == UniverseTier.ARCHIVE:
                 skipped_archives.add(member.symbol)
-        connector_updates.append(
-            {
-                "connector_id": rule.connector_id,
-                "dataset": rule.dataset,
-                "cadence": rule.cadence,
-                "market": rule.market,
-                "eligible_tiers": [tier.value for tier in rule.eligible_tiers],
-                "symbols": symbols,
-                "symbol_count": len(symbols),
-                "priority": rule.priority,
-                "reason": rule.reason,
-                "metadata": dict(rule.metadata),
-            }
-        )
+        update_entry: dict[str, Any] = {
+            "connector_id": rule.connector_id,
+            "dataset": rule.dataset,
+            "cadence": rule.cadence,
+            "market": rule.market,
+            "eligible_tiers": [tier.value for tier in rule.eligible_tiers],
+            "symbols": symbols,
+            "symbol_count": len(symbols),
+            "priority": rule.priority,
+            "reason": rule.reason,
+            "metadata": dict(rule.metadata),
+        }
+        if symbol_scope == "active_tw_paper_persona_underlyings":
+            update_entry["contracts"] = list(symbols)
+        connector_updates.append(update_entry)
 
     return {
         "schema_version": "active_universe_update_plan.v1",
@@ -629,6 +632,13 @@ def build_active_universe_job_fanout(
         if symbol_scope in {"global_no_symbol_filter", "market_context_no_symbol_filter"}:
             symbols = []
             batches = [[]]
+        elif symbol_scope == "active_tw_paper_persona_underlyings":
+            symbols = _unique_underlying_codes(symbols)
+            if symbols:
+                batch_size = int(rule.max_symbols_per_run or default_max_symbols_per_job)
+                batches = [symbols[index : index + batch_size] for index in range(0, len(symbols), batch_size)]
+            else:
+                batches = []
         elif symbols:
             batch_size = int(rule.max_symbols_per_run or default_max_symbols_per_job)
             batches = [symbols[index : index + batch_size] for index in range(0, len(symbols), batch_size)]
@@ -636,23 +646,24 @@ def build_active_universe_job_fanout(
             batches = []
 
         for batch_index, batch in enumerate(batches, start=1):
-            jobs.append(
-                {
-                    "schema_version": "active_universe_ingest_job.v1",
-                    "connector_id": rule.connector_id,
-                    "dataset": rule.dataset,
-                    "run_date": run_date,
-                    "market": rule.market,
-                    "cadence": rule.cadence,
-                    "priority": rule.priority,
-                    "symbols": list(batch),
-                    "symbol_count": len(batch),
-                    "batch_index": batch_index,
-                    "batch_count": len(batches),
-                    "eligible_tiers": [tier.value for tier in rule.eligible_tiers],
-                    "metadata": dict(rule.metadata),
-                }
-            )
+            job_entry: dict[str, Any] = {
+                "schema_version": "active_universe_ingest_job.v1",
+                "connector_id": rule.connector_id,
+                "dataset": rule.dataset,
+                "run_date": run_date,
+                "market": rule.market,
+                "cadence": rule.cadence,
+                "priority": rule.priority,
+                "symbols": list(batch),
+                "symbol_count": len(batch),
+                "batch_index": batch_index,
+                "batch_count": len(batches),
+                "eligible_tiers": [tier.value for tier in rule.eligible_tiers],
+                "metadata": dict(rule.metadata),
+            }
+            if symbol_scope == "active_tw_paper_persona_underlyings":
+                job_entry["contracts"] = list(batch)
+            jobs.append(job_entry)
 
     return {
         "schema_version": "active_universe_ingest_fanout.v1",
@@ -705,3 +716,21 @@ def _unique_symbols(symbols: Sequence[str] | Any) -> list[str]:
         if text and text not in result:
             result.append(text)
     return result
+
+
+_TW_UNDERLYING_VENUE_SUFFIXES = {"TW", "TWSE", "TSE", "TWO", "TPEX", "OTC"}
+
+
+def _normalize_tw_underlying_code(symbol: Any) -> str:
+    text = str(symbol or "").strip().upper()
+    if text.startswith("EQ:"):
+        text = text[3:].strip()
+    if "." in text:
+        base, suffix = text.rsplit(".", 1)
+        if suffix in _TW_UNDERLYING_VENUE_SUFFIXES and base:
+            return base
+    return text
+
+
+def _unique_underlying_codes(symbols: Sequence[str] | Any) -> list[str]:
+    return _unique_symbols(_normalize_tw_underlying_code(symbol) for symbol in symbols)

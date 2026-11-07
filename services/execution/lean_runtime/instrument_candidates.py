@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any, Callable, Collection, Mapping, Sequence
@@ -40,7 +40,10 @@ RowsReader = Callable[[], "Sequence[Mapping[str, Any]] | None"]
 
 def normalize_underlying_code(symbol: str) -> str:
     """``2330``, ``2330.TW`` and ``2330.TWSE`` all normalise to ``2330``."""
-    native, _venue = normalize_taiwan_symbol(symbol)
+    cleaned = str(symbol or "").strip()
+    if cleaned.upper().startswith("EQ:"):
+        cleaned = cleaned[3:].strip()
+    native, _venue = normalize_taiwan_symbol(cleaned)
     return native
 
 
@@ -67,30 +70,34 @@ def read_normalized_ssf_rows(
         key=lambda path: path.name,
         reverse=True,
     )[:max_partitions]
-    rows: list[dict[str, Any]] = []
+    rows_newest_first: list[dict[str, Any]] = []
     files_read = 0
     for partition in partitions:
-        for file_path in sorted(partition.glob("*.jsonl")):
-            if files_read >= max_files or len(rows) >= max_rows:
-                return rows
+        for file_path in sorted(partition.glob("*.jsonl"), reverse=True):
+            if files_read >= max_files or len(rows_newest_first) >= max_rows:
+                rows_newest_first.reverse()
+                return rows_newest_first
             files_read += 1
             if file_path.stat().st_size > max_file_bytes:
                 continue
             with file_path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    if len(rows) >= max_rows:
-                        return rows
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    row = (record.get("metadata") or {}).get("normalized_row")
-                    if isinstance(row, Mapping):
-                        rows.append(dict(row))
-    return rows
+                lines = handle.readlines()
+            for line in reversed(lines):
+                if len(rows_newest_first) >= max_rows:
+                    rows_newest_first.reverse()
+                    return rows_newest_first
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                row = (record.get("metadata") or {}).get("normalized_row")
+                if isinstance(row, Mapping):
+                    rows_newest_first.append(dict(row))
+    rows_newest_first.reverse()
+    return rows_newest_first
 
 
 def _as_date(value: Any) -> date:
@@ -99,7 +106,82 @@ def _as_date(value: Any) -> date:
     if isinstance(value, date):
         return value
     text = str(value).strip()
-    return date.fromisoformat(f"{text[:4]}-{text[4:6]}-{text[6:8]}" if re.fullmatch(r"\d{8}", text) else text)
+    if re.fullmatch(r"\d{7}", text):
+        text = f"{int(text[:3]) + 1911:04d}-{text[3:5]}-{text[5:7]}"
+    elif re.fullmatch(r"\d{8}", text):
+        text = f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    return date.fromisoformat(text)
+
+
+def _optional_date(value: Any) -> date | None:
+    if value in (None, ""):
+        return None
+    try:
+        return _as_date(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _optional_timestamp(value: Any) -> tuple[float, str]:
+    text = str(value or "").strip()
+    if not text:
+        return float("-inf"), ""
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp(), text
+    except ValueError:
+        parsed_date = _optional_date(text)
+        if parsed_date is not None:
+            return datetime(parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=timezone.utc).timestamp(), text
+        return float("-inf"), text
+
+
+def _snapshot_market_date(row: Mapping[str, Any]) -> date | None:
+    raw_market = row.get("raw_market_row")
+    return (
+        _optional_date(row.get("price_date"))
+        or _optional_date(row.get("date"))
+        or _optional_date(row.get("Date"))
+        or (_optional_date(raw_market.get("Date")) if isinstance(raw_market, Mapping) else None)
+    )
+
+
+def _snapshot_margin_date(row: Mapping[str, Any]) -> date | None:
+    raw_margin = row.get("raw_margin_row")
+    return _optional_date(row.get("margin_date")) or (
+        _optional_date(raw_margin.get("Date")) if isinstance(raw_margin, Mapping) else None
+    )
+
+
+def _is_applicable_on_decision_day(row: Mapping[str, Any], decision_day: date) -> bool:
+    for candidate in (_snapshot_market_date(row), _snapshot_margin_date(row)):
+        if candidate is not None and candidate > decision_day:
+            return False
+    return True
+
+
+def _snapshot_sort_key(
+    row: Mapping[str, Any],
+    order_index: int,
+) -> tuple[date, date, float, str, float, str, int]:
+    market_date = _snapshot_market_date(row)
+    margin_date = _snapshot_margin_date(row)
+    effective_market_date = market_date or margin_date or date.min
+    effective_margin_date = margin_date or effective_market_date
+    avail_epoch, avail_raw = _optional_timestamp(row.get("available_time"))
+    ingest_epoch, ingest_raw = _optional_timestamp(row.get("ingest_time"))
+    return (
+        effective_market_date,
+        effective_margin_date,
+        avail_epoch,
+        avail_raw,
+        ingest_epoch,
+        ingest_raw,
+        order_index,
+    )
 
 
 def _is_trading_day(day: date, holidays: Collection[date]) -> bool:
@@ -271,21 +353,46 @@ def _eligible_rows(
 ) -> list[tuple[Mapping[str, Any], date]]:
     """Apply the generation rules; one row (nearest month) per contract code at most."""
     newest_allowed = previous_trading_day(decision_day, holidays)
-    by_contract: dict[str, list[tuple[Mapping[str, Any], date]]] = {}
-    for row in rows:
+    latest_by_contract_month: dict[
+        tuple[str, str],
+        tuple[tuple[date, date, float, str, float, str, int], Mapping[str, Any], date],
+    ] = {}
+    for order_index, row in enumerate(rows):
         contract = str(row.get("contract") or "")
         month = str(row.get("contract_month") or "")
-        if str(row.get("underlying_code") or "") != code:
+        raw_underlying = str(row.get("underlying_code") or "").strip()
+        if not raw_underlying:
+            continue
+        try:
+            row_code = normalize_underlying_code(raw_underlying)
+        except ValueError:
+            row_code = raw_underlying
+        if row_code != code:
             continue
         # Adjusted codes and spread rows (``202611/202612``) are never candidates.
         if not CONTRACT_CODE.match(contract) or not CONTRACT_MONTH.match(month):
             continue
         last_day = last_trading_day(month, holidays)
-        if last_day > decision_day:
-            by_contract.setdefault(contract, []).append((row, last_day))
+        if last_day <= decision_day:
+            continue
+        if not _is_applicable_on_decision_day(row, decision_day):
+            continue
+        sort_key = _snapshot_sort_key(row, order_index)
+        cm_key = (contract, month)
+        existing = latest_by_contract_month.get(cm_key)
+        if existing is None or sort_key >= existing[0]:
+            latest_by_contract_month[cm_key] = (sort_key, row, last_day)
+
+    by_contract: dict[str, list[tuple[Mapping[str, Any], date]]] = {}
+    for (contract, _month), (_sort_key, row, last_day) in latest_by_contract_month.items():
+        by_contract.setdefault(contract, []).append((row, last_day))
+
     selected: list[tuple[Mapping[str, Any], date]] = []
     for contract_rows in by_contract.values():
-        row, last_day = min(contract_rows, key=lambda item: item[1])
+        row, last_day = min(
+            contract_rows,
+            key=lambda item: (item[1], str(item[0].get("contract_month") or "")),
+        )
         try:
             fresh = all(
                 _as_date(row[key]) >= newest_allowed for key in ("price_date", "margin_date") if row.get(key)

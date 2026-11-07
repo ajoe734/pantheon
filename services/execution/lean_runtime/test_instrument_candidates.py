@@ -257,6 +257,70 @@ def test_candidates_from_the_normalized_dataset_on_disk(rows: list[dict[str, Any
     assert {c["instrument_id"] for c in candidates} == {"eq:2330", "ssf:QFF:202611", "ssf:CDF:202611"}
 
 
+def test_on_disk_multi_run_deduplicates_to_newest_snapshot_without_fallback(
+    rows: list[dict[str, Any]], tmp_path: Path
+) -> None:
+    newer_quiet = [dict(row) for row in rows]
+    for row in newer_quiet:
+        if row["contract"] == "QFF" and row["contract_month"] == "202611":
+            row["volume"], row["open_interest"] = 0, 0
+    _write_partition(tmp_path, "2026-11-06", "a-old", rows)
+    _write_partition(tmp_path, "2026-11-06", "b-new", newer_quiet)
+
+    candidates = _by_id(
+        ic.build_candidates(
+            "2330", DECISION_DAY, {}, BUDGET, cash_price=2200.0, cash_price_date="2026-11-06", normalized_root=tmp_path
+        )
+    )
+    assert set(candidates) == {"eq:2330", "ssf:CDF:202611"}
+
+    newer_repriced = [dict(row) for row in rows]
+    for row in newer_repriced:
+        if row["contract"] == "QFF" and row["contract_month"] == "202611":
+            row["settlement_price"] = 2150.0
+            row["volume"], row["open_interest"] = 12, 34
+    _write_partition(tmp_path, "2026-11-06", "c-newest", newer_repriced)
+    repriced = _by_id(
+        ic.build_candidates(
+            "2330", DECISION_DAY, {}, BUDGET, cash_price=2200.0, cash_price_date="2026-11-06", normalized_root=tmp_path
+        )
+    )
+    assert set(repriced) == {"eq:2330", "ssf:QFF:202611", "ssf:CDF:202611"}
+    assert repriced["ssf:QFF:202611"]["price"] == 2150.0
+    assert repriced["ssf:QFF:202611"]["liquidity"] == {"volume": 12, "open_interest": 34}
+
+
+def test_snapshot_deduplication_is_order_independent(rows: list[dict[str, Any]]) -> None:
+    stale = _shifted(rows, "2026-11-05")
+    for row in stale:
+        if row["contract"] == "QFF" and row["contract_month"] == "202611":
+            row["settlement_price"] = 1999.0
+    for combined in ([*stale, *rows], [*rows, *stale]):
+        built = _by_id(_build(combined, "2330"))
+        assert set(built) == {"eq:2330", "ssf:QFF:202611", "ssf:CDF:202611"}
+        assert built["ssf:QFF:202611"]["price"] == 2133.0
+
+    older_avail = [dict(row, available_time="2026-11-06T16:30:00Z", ingest_time="2026-11-06T16:31:00Z") for row in rows]
+    newer_avail_quiet = [
+        dict(row, available_time="2026-11-06T17:00:00Z", ingest_time="2026-11-06T16:31:00Z") for row in rows
+    ]
+    for row in newer_avail_quiet:
+        if row["contract"] == "QFF" and row["contract_month"] == "202611":
+            row["volume"], row["open_interest"] = 0, 0
+    for combined in ([*older_avail, *newer_avail_quiet], [*newer_avail_quiet, *older_avail]):
+        assert {c["instrument_id"] for c in _build(combined, "2330")} == {"eq:2330", "ssf:CDF:202611"}
+
+    older_ingest = [dict(row, available_time="2026-11-06T16:30:00Z", ingest_time="2026-11-07T01:00:00Z") for row in rows]
+    newer_ingest_no_margin = [
+        dict(row, available_time="2026-11-06T16:30:00Z", ingest_time="2026-11-07T02:00:00Z") for row in rows
+    ]
+    for row in newer_ingest_no_margin:
+        if row["contract"] == "QFF" and row["contract_month"] == "202611":
+            row["margin_date"] = ""
+    for combined in ([*older_ingest, *newer_ingest_no_margin], [*newer_ingest_no_margin, *older_ingest]):
+        assert {c["instrument_id"] for c in _build(combined, "2330")} == {"eq:2330", "ssf:CDF:202611"}
+
+
 def test_reader_is_bounded(rows: list[dict[str, Any]], tmp_path: Path) -> None:
     for index in range(5):
         _write_partition(tmp_path, f"2026-11-0{index + 1}", "run", rows)

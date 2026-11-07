@@ -1945,6 +1945,19 @@ TAIFEX_SSF_STOCK_LISTS_URL = "https://www.taifex.com.tw/cht/2/stockLists"
 TAIFEX_SSF_MAX_RECORDS = 5000
 _SSF_CONTRACT_CODE = re.compile(r"^[A-Z]{2}F$")
 _SSF_CONTRACT_MONTH = re.compile(r"^\d{6}$")
+_SSF_UNDERLYING_VENUE_SUFFIXES = {"TW", "TWSE", "TSE", "TWO", "TPEX", "OTC"}
+
+
+def _normalize_ssf_underlying_code(value: Any) -> str:
+    """Normalize ``2330``, ``2330.TW``, ``2330.TWSE`` or ``eq:2330`` to ``2330``."""
+    text = _text(value).upper()
+    if text.startswith("EQ:"):
+        text = text[3:].strip()
+    if "." in text:
+        base, suffix = text.rsplit(".", 1)
+        if suffix in _SSF_UNDERLYING_VENUE_SUFFIXES and base:
+            return base
+    return text
 
 
 def _decode_taifex_bytes(raw_bytes: bytes) -> str:
@@ -2025,13 +2038,17 @@ def taifex_ssf_normalized_rows(
     market rows with a numeric month and a numeric settlement price are used;
     after-hours and spread rows are not.
     """
-    scope = {str(code).strip() for code in (underlying_codes or ()) if str(code).strip()}
+    scope = {
+        _normalize_ssf_underlying_code(code)
+        for code in (underlying_codes or ())
+        if _normalize_ssf_underlying_code(code)
+    }
     margins: dict[str, dict[str, Any]] = {}
     for row in _taifex_text_rows(payload.get("SingleStockFuturesMargining")):
         code = _text(row.get("Contract"))
         if _SSF_CONTRACT_CODE.match(code):
             margins[code] = {
-                "underlying_code": _text(row.get("UnderlyingSecurityCode")),
+                "underlying_code": _normalize_ssf_underlying_code(row.get("UnderlyingSecurityCode")),
                 "contract_name": _text(row.get("ContractName")),
                 "margin_mode": "rate",
                 "margin_tier": _text(row.get("GroupLevel")),
@@ -2045,7 +2062,7 @@ def taifex_ssf_normalized_rows(
         code = _text(row.get("Contract"))
         if _SSF_CONTRACT_CODE.match(code):
             margins[code] = {
-                "underlying_code": _text(row.get("UnderlyingSecurityCode")),
+                "underlying_code": _normalize_ssf_underlying_code(row.get("UnderlyingSecurityCode")),
                 "contract_name": _text(row.get("ContractName")),
                 "margin_mode": "fixed",
                 "margin_tier": "",
@@ -2176,17 +2193,23 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         )
 
     def fetch_config(self) -> Mapping[str, Any]:
+        default_contracts = None if self.dataset == TAIFEX_SSF_DATASET else ["TX", "MTX"]
+        resolved_contracts = (
+            [_normalize_ssf_underlying_code(c) for c in self.contracts if _normalize_ssf_underlying_code(c)]
+            if self.dataset == TAIFEX_SSF_DATASET and self.contracts
+            else (list(self.contracts) if self.contracts else None)
+        )
         return {
             "mode": "provider_owned_adapter",
             "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
             "adapter_config": {
                 "dataset": self.dataset,
-                "contracts": list(self.contracts) if self.contracts else None,
+                "contracts": resolved_contracts,
                 "max_records": self.max_records,
             },
             "request": {
                 "dataset": self.dataset,
-                "contracts": list(self.contracts) if self.contracts else ["TX", "MTX"],
+                "contracts": resolved_contracts if resolved_contracts is not None else default_contracts,
             },
             "next_watermark": None,
             "max_records": self.max_records,

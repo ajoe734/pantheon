@@ -387,8 +387,14 @@ class TestContractMasterFromSsfDataset(unittest.TestCase):
     def test_latest_price_date_wins_per_contract(self):
         newer = dict(next(r for r in self.rows if r["contract"] == "QFF" and r["contract_month"] == "202611"))
         newer["price_date"], newer["settlement_price"] = "2026-11-09", 2150.0
-        masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows([*self.rows, newer])}
-        self.assertEqual(masters["ssf:QFF:202611"].metadata_json["settlement_price"], 2150.0)
+        for ordered in ([*self.rows, newer], [newer, *self.rows]):
+            masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(ordered)}
+            self.assertEqual(masters["ssf:QFF:202611"].metadata_json["settlement_price"], 2150.0)
+        newer_avail = dict(next(r for r in self.rows if r["contract"] == "QFF" and r["contract_month"] == "202611"))
+        newer_avail["available_time"], newer_avail["settlement_price"] = "2026-11-06T17:00:00Z", 2145.0
+        for ordered in ([*self.rows, newer_avail], [newer_avail, *self.rows]):
+            masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(ordered)}
+            self.assertEqual(masters["ssf:QFF:202611"].metadata_json["settlement_price"], 2145.0)
 
     def test_no_second_contract_model_exists(self):
         models = Path(__file__).resolve().parents[1] / "models"

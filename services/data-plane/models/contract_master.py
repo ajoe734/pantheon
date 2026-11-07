@@ -237,13 +237,18 @@ class ContractMaster:
 
     @classmethod
     def from_ssf_normalized_rows(cls, rows: Any) -> list["ContractMaster"]:
-        """Latest record per ``contract_id`` (newest ``price_date`` wins)."""
-        latest: dict[str, dict[str, Any]] = {}
-        for row in rows:
+        """Latest record per ``contract_id`` (newest ``price_date``/``available_time``/``ingest_time`` wins)."""
+        latest: dict[str, tuple[tuple[str, str, str, str, int], dict[str, Any]]] = {}
+        for index, row in enumerate(rows):
             key = f"ssf:{row['contract']}:{row['contract_month']}"
-            if key not in latest or str(row.get("price_date") or "") >= str(latest[key].get("price_date") or ""):
-                latest[key] = row
-        return [cls.from_ssf_normalized_row(latest[key]) for key in sorted(latest)]
+            price_date = str(row.get("price_date") or row.get("date") or "")
+            margin_date = str(row.get("margin_date") or price_date)
+            avail = str(row.get("available_time") or "")
+            ingest = str(row.get("ingest_time") or "")
+            sort_key = (price_date, margin_date, avail, ingest, index)
+            if key not in latest or sort_key >= latest[key][0]:
+                latest[key] = (sort_key, row)
+        return [cls.from_ssf_normalized_row(latest[key][1]) for key in sorted(latest)]
 
     @staticmethod
     def validate(contract: "ContractMaster") -> tuple[bool, list[str]]:

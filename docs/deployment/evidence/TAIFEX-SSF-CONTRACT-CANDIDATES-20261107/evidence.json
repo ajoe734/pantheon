@@ -2,7 +2,7 @@
   "task_id": "TAIFEX-SSF-CONTRACT-CANDIDATES-20261107",
   "kind": "functional_source_evidence",
   "read_date": "2026-11-07",
-  "repo_base": "origin/dev e9a1a1968",
+  "repo_base": "origin/dev f6d40b77d",
   "hosted_behavior_claimed": false,
   "scope_statement": "Functional source and test evidence only. Hosted behaviour was NOT exercised: no hosted workflow, VM, SSH, broker, broker sandbox, futures smoke, model provider call or real capital was used. Hosted acceptance belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
   "official_sources_read": [
@@ -18,16 +18,16 @@
   "commands": [
     "curl -sS -m 30 -H 'accept: application/json' https://openapi.taifex.com.tw/v1/{SingleStockFuturesMargining,SingleStockFuturesETFMargining,DailyMarketReportFut,FinalSettlementPriceSSF}",
     "curl -sS -m 30 https://www.taifex.com.tw/cht/2/stockLists ; curl -sS -m 30 https://www.taifex.com.tw/cht/4/feeSchedules ; curl -sS -m 30 https://www.taifex.com.tw/cht/2/sTF",
-    "python -m pytest services/source_ingestion/tests/{test_active_universe,test_connector_framework,test_financial_source_catalog,test_market_data_foundation,test_provider_management_coverage,test_taiwan_official_connectors,test_taiwan_official_fetch_retry,test_taiwan_market_connectors,test_scheduled_connector,test_scheduler,test_external_source_connectors}.py services/data-plane/tests services/execution/lean_runtime/test_instrument_candidates.py services/execution/lean_runtime/test_taifex_fee_schedule.py -q  => 266 passed, 1 skipped",
-    "python -m pytest services/execution/lean_runtime -q  => 431 passed, 13 skipped, 49 subtests passed",
+    "python -m pytest services/source_ingestion/tests/{test_active_universe,test_connector_framework,test_financial_source_catalog,test_market_data_foundation,test_provider_management_coverage,test_taiwan_official_connectors,test_taiwan_official_fetch_retry,test_taiwan_market_connectors,test_scheduled_connector,test_scheduler,test_external_source_connectors}.py services/data-plane/tests services/execution/lean_runtime/test_instrument_candidates.py services/execution/lean_runtime/test_taifex_fee_schedule.py -q  => 269 passed, 1 skipped",
+    "python -m pytest services/execution/lean_runtime -q  => 433 passed, 13 skipped, 49 subtests passed",
     "python scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge --delivery-class auto"
   ],
   "acceptance_mapping": {
-    "1_connector_dataset": "TaifexDerivativesChipAdapter handles taifex_ssf_contracts (taifex_ssf_normalized_rows, parse_taifex_stock_lists_units, _decode_taifex_bytes utf-8-sig); connector definition and catalog list the dataset; tests in test_taiwan_official_connectors.py use the committed fixtures",
-    "2_active_universe_rule": "SourceUpdateRule taifex_ssf_contracts (core tier, symbol_scope active_tw_paper_persona_underlyings, partition raw/taifex/ssf/date=YYYY-MM-DD/, normalized/taifex_ssf_contracts, 2555 days); existing two TAIFEX rules unchanged; test_active_universe.py",
+    "1_connector_dataset": "TaifexDerivativesChipAdapter handles taifex_ssf_contracts (taifex_ssf_normalized_rows, parse_taifex_stock_lists_units, _decode_taifex_bytes utf-8-sig, _normalize_ssf_underlying_code); connector definition and catalog list the dataset; tests in test_taiwan_official_connectors.py use the committed fixtures",
+    "2_active_universe_rule": "SourceUpdateRule taifex_ssf_contracts (core tier, symbol_scope active_tw_paper_persona_underlyings, partition raw/taifex/ssf/date=YYYY-MM-DD/, normalized/taifex_ssf_contracts, 2555 days) normalizes underlying codes and populates contracts for provider_adapters._taifex while leaving the existing two TAIFEX chip rules unchanged; test_active_universe.py includes fanout-to-provider regression covering all three TAIFEX datasets",
     "3_contract_master": "ContractMaster.from_ssf_normalized_row(s) and ssf_tick_size in services/data-plane/models/contract_master.py derive real tick_size from underlying_kind and settlement_price per https://www.taifex.com.tw/cht/2/sTF (amended by 台期交字第1150001529號函 effective 2026-07-06: 2330 QFF/CDF at 2133 -> 1.0, 2317 DHF at 225 -> 0.5, 0050 SRF/NYF ETF at 92.35 -> 0.05) and record the official source in metadata_json.tick_size_source; no second model; test_data_plane_schemas.py::TestContractMasterFromSsfDataset",
     "4_candidate_lists": "test_instrument_candidates.py: 2330 -> eq:2330, ssf:QFF:202611 (unit 100, margin 28795.5), ssf:CDF:202611 (unit 2000, margin 575910), price 2133; 2317 -> eq:2317, ssf:DHF:202611 (2000, 225, 60750); 0050 -> eq:0050, ssf:SRF:202611 (8700), ssf:NYF:202611 (87000)",
-    "5_exclusion_rules": "stale Date, missing margin, zero volume and open interest, non-nearest month, adjusted codes, spread rows each tested; cash share stays",
+    "5_exclusion_rules": "contract/month snapshots are deduplicated to the newest applicable Date/available_time/ingest_time/run before freshness, margin and liquidity checks (preserving nearest-month rejection without fallback); stale Date, missing margin, zero volume and open interest, non-nearest month, adjusted codes, spread rows, on-disk multi-run and order-independence regressions each tested; cash share stays",
     "6_record_fields": "test_fee_and_required_fields_on_every_candidate",
     "7_fee_schedule": "taifex_fee_schedule.py + test_taifex_fee_schedule.py drift test against feeSchedules.txt",
     "8_no_network_and_missing_dataset": "test_generator_makes_no_network_call and test_missing_dataset_yields_only_the_cash_share_with_reason"

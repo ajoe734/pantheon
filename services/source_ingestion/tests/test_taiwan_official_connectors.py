@@ -1605,8 +1605,11 @@ def test_taifex_ssf_normalization_joins_margin_market_unit_and_final_settlement(
 
 def test_taifex_ssf_symbol_scope_limits_underlyings() -> None:
     adapter = _tw_official.TaifexDerivativesChipAdapter()
-    rows = adapter.normalized_rows_from_payload(_ssf_payload(), dataset="taifex_ssf_contracts", contracts=["2317"])
-    assert {row["underlying_code"] for row in rows} == {"2317"}
+    for raw_code in ("2317", "2317.TW", "2317.TWSE", "eq:2317"):
+        rows = adapter.normalized_rows_from_payload(
+            _ssf_payload(), dataset="taifex_ssf_contracts", contracts=[raw_code]
+        )
+        assert {row["underlying_code"] for row in rows} == {"2317"}
 
 
 def test_taifex_ssf_csv_with_bom_decodes_as_utf8_sig() -> None:

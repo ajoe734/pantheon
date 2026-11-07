@@ -174,17 +174,23 @@ def test_active_universe_fanout_keeps_taifex_market_context_unsymbolized() -> No
 def test_active_universe_fanout_scopes_taifex_ssf_contracts_to_core_underlyings() -> None:
     fanout = build_active_universe_job_fanout(
         [
-            {"symbol": "2330", "tier": "core_universe"},
-            {"symbol": "2317", "tier": "candidate_universe"},
-            {"symbol": "6488", "tier": "archive_universe"},
+            {"symbol": "2330.TW", "tier": "core_universe"},
+            {"symbol": "2317.TWSE", "tier": "candidate_universe"},
+            {"symbol": "6488.TWO", "tier": "archive_universe"},
         ],
         run_date="2026-11-09",
     )
 
     [job] = [job for job in fanout["jobs"] if job["dataset"] == "taifex_ssf_contracts"]
+    ssf_plan = next(
+        update for update in fanout["plan"]["connector_updates"] if update["dataset"] == "taifex_ssf_contracts"
+    )
 
     assert job["connector_id"] == "tw-taifex-futures-options-chip"
     assert job["symbols"] == ["2330"]
+    assert job["contracts"] == ["2330"]
+    assert ssf_plan["symbols"] == ["2330"]
+    assert ssf_plan["contracts"] == ["2330"]
     assert job["eligible_tiers"] == ["core_universe"]
     assert job["metadata"]["symbol_scope"] == "active_tw_paper_persona_underlyings"
     assert job["metadata"]["normalized_target"] == "taifex_ssf_contracts"
@@ -194,6 +200,104 @@ def test_active_universe_fanout_scopes_taifex_ssf_contracts_to_core_underlyings(
         "partition": "raw/taifex/ssf/date=YYYY-MM-DD/",
     }
     assert job["cadence"] == "daily_after_taifex_publication"
+
+
+def test_active_universe_fanout_to_taifex_provider_scopes_ssf_and_preserves_chip_datasets() -> None:
+    import json
+    from pathlib import Path
+
+    from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    fixtures = Path(__file__).resolve().parents[2] / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
+    ssf_payload = {
+        name: json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
+        for name in (
+            "SingleStockFuturesMargining",
+            "SingleStockFuturesETFMargining",
+            "DailyMarketReportFut",
+            "FinalSettlementPriceSSF",
+        )
+    }
+    ssf_payload["stockLists"] = (fixtures / "stockLists.html").read_text(encoding="utf-8")
+    futures_payload = [
+        {
+            "日期": "2026-11-06",
+            "契約名稱": "TX",
+            "身份別": "foreign_investors",
+            "多方交易口數": "15000",
+            "空方交易口數": "12000",
+            "多空交易口數淨額": "3000",
+            "多方未平倉口數": "45000",
+            "空方未平倉口數": "50000",
+            "多空未平倉口數淨額": "-5000",
+        }
+    ]
+    options_payload = [
+        {
+            "Date": "1151106",
+            "Contract": "TXO",
+            "買權成交量": "100000",
+            "賣權成交量": "110000",
+            "買權未平倉量": "150000",
+            "賣權未平倉量": "180000",
+            "買賣權未平倉量比率%": "120.00",
+        }
+    ]
+
+    fanout = build_active_universe_job_fanout(
+        [
+            {"symbol": "2317.TW", "tier": "core_universe"},
+            {"symbol": "2330.TWSE", "tier": "candidate_universe"},
+            {"symbol": "0050.TW", "tier": "archive_universe"},
+        ],
+        run_date="2026-11-09",
+    )
+    jobs_by_dataset = {
+        job["dataset"]: job
+        for job in fanout["jobs"]
+        if job["connector_id"] == "tw-taifex-futures-options-chip"
+    }
+    assert set(jobs_by_dataset) == {"taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts"}
+    assert "contracts" not in jobs_by_dataset["taifex_futures_chip"]
+    assert "contracts" not in jobs_by_dataset["taifex_options_chip"]
+    assert jobs_by_dataset["taifex_ssf_contracts"]["symbols"] == ["2317"]
+    assert jobs_by_dataset["taifex_ssf_contracts"]["contracts"] == ["2317"]
+
+    adapter = TaifexDerivativesChipAdapter()
+    ssf_records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "request": {"payload": ssf_payload},
+        },
+        trace_id="trace-fanout-ssf",
+        job_parameters=jobs_by_dataset["taifex_ssf_contracts"],
+    )
+    assert ssf_records
+    assert {r.metadata["underlying_code"] for r in ssf_records} == {"2317"}
+    assert {r.metadata["contract"] for r in ssf_records} == {"DHF"}
+
+    fut_records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "request": {"payload": futures_payload},
+        },
+        trace_id="trace-fanout-fut",
+        job_parameters=jobs_by_dataset["taifex_futures_chip"],
+    )
+    opt_records = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "request": {"payload": options_payload},
+        },
+        trace_id="trace-fanout-opt",
+        job_parameters=jobs_by_dataset["taifex_options_chip"],
+    )
+    assert len(fut_records) == 1 and fut_records[0].metadata["dataset"] == "taifex_futures_chip"
+    assert len(opt_records) == 1 and opt_records[0].metadata["dataset"] == "taifex_options_chip"
 
 
 def test_active_universe_fanout_routes_crypto_symbols_to_coingecko() -> None:
