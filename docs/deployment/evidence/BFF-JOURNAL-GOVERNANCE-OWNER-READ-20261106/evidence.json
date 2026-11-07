@@ -23,8 +23,14 @@
     "runs": "123 passed (three admitted files + management context observations)"
   },
   "ae800_original_ac5_fix": {
-    "strict_rollbacks": "read_rollbacks_strict no longer raises on a global unresolved count: runtime-matched verified rows are returned with record-level provenance (status/source_kind=unavailable, owner=governance, degradation_reason) that the existing ManagementService record-provenance seam reports as non-healthy; actual rollback state preserved as owner_status. Raises only when no verified row matches (all-unresolved never looks like healthy zero); healthy empty stays []/ok; foreign/unbound rows stay hidden.",
+    "strict_rollbacks": "SUPERSEDED by review_fix_v4: record-level status rewrite removed.",
     "seam": "no file outside the 6 admitted artifacts edited",
     "runs": "124 passed (three files + management context observations) plus ManagementService end-to-end assertion in cutover test"
+  },
+  "review_fix_v4": {
+    "ac3": "read_rollbacks_strict returns verified own rows with canonical status/fields unchanged (no status/owner_status rewrite); runtime latest_rollback.status stays e.g. completed; list_all_rollbacks and get_rollbacks agree. Raises only when no verified row matches.",
+    "partial_provenance": "reported separately via dataset_source('all_rollbacks') == 'unavailable' (Journal/dataset path). Domain status is not changed to signal partial provenance.",
+    "known_limit": "ManagementService.get_context_rollbacks record-provenance seam keys off record 'status', so it cannot express partial provenance for canonical-status rows without editing management_read_models/service.py (not admitted; minimal admission required if reviewer wants that observation to flag partial).",
+    "runs": "124 passed (three admitted files + management context observations); regression asserts runtime projection status and dataset_source together"
   }
 }
