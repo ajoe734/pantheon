@@ -47,6 +47,15 @@ def normalize_underlying_code(symbol: str) -> str:
     return native
 
 
+def _finalize_disk_rows(rows_newest_first: list[dict[str, Any]], total_files: int) -> list[dict[str, Any]]:
+    rows_newest_first.reverse()
+    for row in rows_newest_first:
+        rev_idx = int(row.pop("_reverse_file_idx", 0) or 0)
+        if rev_idx > 0 and "_file_run_seq" not in row:
+            row["_file_run_seq"] = total_files - rev_idx + 1
+    return rows_newest_first
+
+
 def read_normalized_ssf_rows(
     root: str | Path,
     *,
@@ -75,17 +84,14 @@ def read_normalized_ssf_rows(
     for partition in partitions:
         for file_path in sorted(partition.glob("*.jsonl"), reverse=True):
             if files_read >= max_files or len(rows_newest_first) >= max_rows:
-                rows_newest_first.reverse()
-                return rows_newest_first
+                return _finalize_disk_rows(rows_newest_first, files_read)
             files_read += 1
             if file_path.stat().st_size > max_file_bytes:
                 continue
             with file_path.open("r", encoding="utf-8") as handle:
                 lines = handle.readlines()
+            parsed_file_rows: list[dict[str, Any]] = []
             for line in reversed(lines):
-                if len(rows_newest_first) >= max_rows:
-                    rows_newest_first.reverse()
-                    return rows_newest_first
                 line = line.strip()
                 if not line:
                     continue
@@ -95,9 +101,15 @@ def read_normalized_ssf_rows(
                     continue
                 row = (record.get("metadata") or {}).get("normalized_row")
                 if isinstance(row, Mapping):
-                    rows_newest_first.append(dict(row))
-    rows_newest_first.reverse()
-    return rows_newest_first
+                    parsed_file_rows.append(dict(row))
+            file_contracts = sorted({str(r.get("contract") or "") for r in parsed_file_rows if r.get("contract")})
+            for item in parsed_file_rows:
+                if len(rows_newest_first) >= max_rows:
+                    return _finalize_disk_rows(rows_newest_first, files_read)
+                item["_reverse_file_idx"] = files_read
+                item.setdefault("_file_contracts", file_contracts)
+                rows_newest_first.append(item)
+    return _finalize_disk_rows(rows_newest_first, files_read)
 
 
 def _as_date(value: Any) -> date:
@@ -163,10 +175,58 @@ def _is_applicable_on_decision_day(row: Mapping[str, Any], decision_day: date) -
     return True
 
 
+def _snapshot_run_key(
+    row: Mapping[str, Any],
+) -> tuple[date, float, str, float, str, int]:
+    market_date = _snapshot_market_date(row)
+    margin_date = _snapshot_margin_date(row)
+    effective_market_date = market_date or margin_date or date.min
+    avail_epoch, avail_raw = _optional_timestamp(row.get("available_time"))
+    ingest_epoch, ingest_raw = _optional_timestamp(row.get("ingest_time"))
+    return (
+        effective_market_date,
+        avail_epoch,
+        avail_raw,
+        ingest_epoch,
+        ingest_raw,
+        int(row.get("_file_run_seq") or 0),
+    )
+
+
+def _row_underlying_code(row: Mapping[str, Any]) -> str:
+    raw_underlying = str(row.get("underlying_code") or "").strip()
+    if not raw_underlying:
+        return ""
+    try:
+        return normalize_underlying_code(raw_underlying)
+    except ValueError:
+        return raw_underlying
+
+
+def _row_covers_underlying(row: Mapping[str, Any], code: str) -> bool:
+    if _row_underlying_code(row) == code:
+        return True
+    scope_mode = str(row.get("snapshot_scope_mode") or "").strip()
+    if scope_mode == "all":
+        return True
+    if scope_mode == "scoped":
+        for item in row.get("snapshot_scope") or ():
+            text = str(item or "").strip()
+            if not text:
+                continue
+            try:
+                if normalize_underlying_code(text) == code:
+                    return True
+            except ValueError:
+                if text == code:
+                    return True
+    return False
+
+
 def _snapshot_sort_key(
     row: Mapping[str, Any],
     order_index: int,
-) -> tuple[date, date, float, str, float, str, int]:
+) -> tuple[date, date, float, str, float, str, int, int]:
     market_date = _snapshot_market_date(row)
     margin_date = _snapshot_margin_date(row)
     effective_market_date = market_date or margin_date or date.min
@@ -180,6 +240,7 @@ def _snapshot_sort_key(
         avail_raw,
         ingest_epoch,
         ingest_raw,
+        int(row.get("_file_run_seq") or 0),
         order_index,
     )
 
@@ -353,29 +414,43 @@ def _eligible_rows(
 ) -> list[tuple[Mapping[str, Any], date]]:
     """Apply the generation rules; one row (nearest month) per contract code at most."""
     newest_allowed = previous_trading_day(decision_day, holidays)
+    covering_rows = [
+        row
+        for row in rows
+        if _is_applicable_on_decision_day(row, decision_day) and _row_covers_underlying(row, code)
+    ]
+    if not covering_rows:
+        return []
+    latest_run_key = max(_snapshot_run_key(row) for row in covering_rows)
+    newest_covering_rows = [row for row in covering_rows if _snapshot_run_key(row) == latest_run_key]
+    newest_absent_contracts = {
+        str(contract)
+        for row in newest_covering_rows
+        for contract in (row.get("snapshot_absent_contracts") or ())
+        if contract
+    }
     latest_by_contract_month: dict[
         tuple[str, str],
-        tuple[tuple[date, date, float, str, float, str, int], Mapping[str, Any], date],
+        tuple[tuple[date, date, float, str, float, str, int, int], Mapping[str, Any], date],
     ] = {}
     for order_index, row in enumerate(rows):
+        if row.get("tombstone"):
+            continue
         contract = str(row.get("contract") or "")
         month = str(row.get("contract_month") or "")
-        raw_underlying = str(row.get("underlying_code") or "").strip()
-        if not raw_underlying:
-            continue
-        try:
-            row_code = normalize_underlying_code(raw_underlying)
-        except ValueError:
-            row_code = raw_underlying
-        if row_code != code:
+        if _row_underlying_code(row) != code:
             continue
         # Adjusted codes and spread rows (``202611/202612``) are never candidates.
         if not CONTRACT_CODE.match(contract) or not CONTRACT_MONTH.match(month):
+            continue
+        if contract in newest_absent_contracts:
             continue
         last_day = last_trading_day(month, holidays)
         if last_day <= decision_day:
             continue
         if not _is_applicable_on_decision_day(row, decision_day):
+            continue
+        if _snapshot_run_key(row) != latest_run_key:
             continue
         sort_key = _snapshot_sort_key(row, order_index)
         cm_key = (contract, month)

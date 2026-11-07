@@ -237,15 +237,80 @@ class ContractMaster:
 
     @classmethod
     def from_ssf_normalized_rows(cls, rows: Any) -> list["ContractMaster"]:
-        """Latest record per ``contract_id`` (newest ``price_date``/``available_time``/``ingest_time`` wins)."""
-        latest: dict[str, tuple[tuple[str, str, str, str, int], dict[str, Any]]] = {}
-        for index, row in enumerate(rows):
-            key = f"ssf:{row['contract']}:{row['contract_month']}"
+        """Latest record per ``contract_id`` (newest snapshot wins; removed contracts are evicted)."""
+        row_list = [dict(row) for row in rows]
+        underlyings = {
+            str(row.get("underlying_code") or "").strip()
+            for row in row_list
+            if str(row.get("underlying_code") or "").strip()
+        }
+        latest_run_by_underlying: dict[str, tuple[str, str, str, int]] = {}
+        newest_rows_by_underlying: dict[str, list[dict[str, Any]]] = {}
+        for row in row_list:
+            price_date = str(row.get("price_date") or row.get("date") or "")
+            avail = str(row.get("available_time") or "")
+            ingest = str(row.get("ingest_time") or "")
+            file_seq = int(row.get("_file_run_seq") or 0)
+            run_key = (price_date, avail, ingest, file_seq)
+            row_underlying = str(row.get("underlying_code") or "").strip()
+            scope_mode = str(row.get("snapshot_scope_mode") or "").strip()
+            scope_set = {str(item).strip() for item in (row.get("snapshot_scope") or ()) if str(item).strip()}
+            for code in underlyings:
+                covers = (
+                    row_underlying == code
+                    or scope_mode == "all"
+                    or (scope_mode == "scoped" and code in scope_set)
+                )
+                if not covers:
+                    continue
+                prev = latest_run_by_underlying.get(code)
+                if prev is None or run_key > prev:
+                    latest_run_by_underlying[code] = run_key
+                    newest_rows_by_underlying[code] = [row]
+                elif run_key == prev:
+                    newest_rows_by_underlying.setdefault(code, []).append(row)
+
+        allowed_contracts_by_underlying: dict[str, set[str] | None] = {}
+        absent_contracts_by_underlying: dict[str, set[str]] = {}
+        for code, newest_rows in newest_rows_by_underlying.items():
+            absent_contracts_by_underlying[code] = {
+                str(c)
+                for r in newest_rows
+                for c in (r.get("snapshot_absent_contracts") or ())
+                if c
+            }
+            if any(r.get("tombstone") for r in newest_rows):
+                allowed_contracts_by_underlying[code] = set()
+            elif any("snapshot_contracts" in r or "_file_contracts" in r for r in newest_rows):
+                allowed: set[str] = set()
+                for r in newest_rows:
+                    if r.get("contract"):
+                        allowed.add(str(r["contract"]))
+                    for c in r.get("snapshot_contracts") or r.get("_file_contracts") or ():
+                        if c:
+                            allowed.add(str(c))
+                allowed_contracts_by_underlying[code] = allowed
+            else:
+                allowed_contracts_by_underlying[code] = None
+
+        latest: dict[str, tuple[tuple[str, str, str, str, int, int], dict[str, Any]]] = {}
+        for index, row in enumerate(row_list):
+            if row.get("tombstone") or not row.get("contract") or not row.get("contract_month"):
+                continue
+            contract = str(row["contract"])
+            code = str(row.get("underlying_code") or "").strip()
+            if contract in absent_contracts_by_underlying.get(code, set()):
+                continue
+            allowed = allowed_contracts_by_underlying.get(code)
+            if allowed is not None and contract not in allowed:
+                continue
+            key = f"ssf:{contract}:{row['contract_month']}"
             price_date = str(row.get("price_date") or row.get("date") or "")
             margin_date = str(row.get("margin_date") or price_date)
             avail = str(row.get("available_time") or "")
             ingest = str(row.get("ingest_time") or "")
-            sort_key = (price_date, margin_date, avail, ingest, index)
+            file_seq = int(row.get("_file_run_seq") or 0)
+            sort_key = (price_date, margin_date, avail, ingest, file_seq, index)
             if key not in latest or sort_key >= latest[key][0]:
                 latest[key] = (sort_key, row)
         return [cls.from_ssf_normalized_row(latest[key][1]) for key in sorted(latest)]

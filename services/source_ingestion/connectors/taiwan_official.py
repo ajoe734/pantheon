@@ -2017,6 +2017,19 @@ def _ssf_percent_to_fraction(value: Any) -> float | None:
     return None if number is None else round(number / 100.0, 10)
 
 
+_LAST_SSF_INGEST_US = 0
+
+
+def _ssf_ingest_now() -> str:
+    global _LAST_SSF_INGEST_US
+    now_us = int(datetime.now(timezone.utc).timestamp() * 1_000_000)
+    if now_us <= _LAST_SSF_INGEST_US:
+        now_us = _LAST_SSF_INGEST_US + 1
+    _LAST_SSF_INGEST_US = now_us
+    dt = datetime.fromtimestamp(now_us / 1_000_000, tz=timezone.utc)
+    return dt.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
 def _third_wednesday_iso(contract_month: str) -> str:
     year, month = int(contract_month[:4]), int(contract_month[4:6])
     first = datetime(year, month, 1)
@@ -2036,13 +2049,18 @@ def taifex_ssf_normalized_rows(
     Rows exist only for contracts present in a margin table, whose family is in
     ``stockLists``, and whose code matches ``^[A-Z]{2}F$``. Regular-session
     market rows with a numeric month and a numeric settlement price are used;
-    after-hours and spread rows are not.
+    after-hours and spread rows are not. Each emitted row carries scope-aware
+    snapshot metadata (and a tombstone row is emitted when all in-scope contracts
+    with valid market/unit rows are absent from the margin tables) so downstream
+    consumers never resurrect contracts removed in a newer snapshot.
     """
     scope = {
         _normalize_ssf_underlying_code(code)
         for code in (underlying_codes or ())
         if _normalize_ssf_underlying_code(code)
     }
+    scope_mode = "scoped" if scope else "all"
+    scope_list = sorted(scope)
     margins: dict[str, dict[str, Any]] = {}
     for row in _taifex_text_rows(payload.get("SingleStockFuturesMargining")):
         code = _text(row.get("Contract"))
@@ -2085,29 +2103,44 @@ def taifex_ssf_normalized_rows(
                 "price": _float(row.get("TheFinalSettlementPrice")),
             }
     stamp = available_time or ""
+    ingest_time = _ssf_ingest_now()
     results: list[dict[str, Any]] = []
+    absent_contracts: set[str] = set()
+    absent_underlyings: set[str] = set()
+    latest_market_date = ""
     limit = max_records or TAIFEX_SSF_MAX_RECORDS
     for row in _taifex_text_rows(payload.get("DailyMarketReportFut")):
         code = _text(row.get("Contract"))
         month = _text(_first(row, "ContractMonth(Week)", "ContractMonth"))
-        if code not in margins or not _SSF_CONTRACT_MONTH.match(month) or _text(row.get("TradingSession")) != "一般":
+        if not _SSF_CONTRACT_CODE.match(code) or not _SSF_CONTRACT_MONTH.match(month) or _text(row.get("TradingSession")) != "一般":
             continue
         settlement = _float(row.get("SettlementPrice"))
         if settlement is None:
             continue
-        margin = margins[code]
         unit_row = units.get(code[:2])
-        if unit_row is None or (scope and margin["underlying_code"] not in scope):
+        if unit_row is None:
             continue
         price_date = _roc_date_to_iso(row.get("Date"))
         if not price_date:
+            continue
+        if price_date > latest_market_date:
+            latest_market_date = price_date
+        unit_underlying = _normalize_ssf_underlying_code(unit_row.get("underlying_code"))
+        if code not in margins:
+            if not scope or (unit_underlying and unit_underlying in scope):
+                absent_contracts.add(code)
+                if unit_underlying:
+                    absent_underlyings.add(unit_underlying)
+            continue
+        margin = margins[code]
+        if scope and margin["underlying_code"] not in scope:
             continue
         normalized = {
             "dataset": TAIFEX_SSF_DATASET,
             "date": price_date,
             "event_time": f"{price_date}T00:00:00Z",
             "available_time": _validate_or_convert_rfc3339(stamp or f"{price_date}T16:30:00Z", name="available_time"),
-            "ingest_time": _utc_now(),
+            "ingest_time": ingest_time,
             "contract": code,
             "contract_family": code[:2],
             "contract_month": month,
@@ -2134,6 +2167,65 @@ def taifex_ssf_normalized_rows(
         results.append(normalized)
         if len(results) >= limit:
             break
+    snapshot_contracts = sorted({r["contract"] for r in results if r.get("contract")})
+    snapshot_contract_ids = sorted({r["contract_id"] for r in results if r.get("contract_id")})
+    snapshot_underlyings = sorted(
+        scope
+        if scope
+        else (
+            {
+                _normalize_ssf_underlying_code(u.get("underlying_code"))
+                for u in units.values()
+                if isinstance(u, Mapping) and _normalize_ssf_underlying_code(u.get("underlying_code"))
+            }
+            | {m["underlying_code"] for m in margins.values() if m.get("underlying_code")}
+            | {r["underlying_code"] for r in results if r.get("underlying_code")}
+            | absent_underlyings
+        )
+    )
+    snapshot_absent = sorted(absent_contracts)
+    if results:
+        for item in results:
+            item["snapshot_scope_mode"] = scope_mode
+            item["snapshot_scope"] = scope_list
+            item["snapshot_underlyings"] = snapshot_underlyings
+            item["snapshot_contracts"] = snapshot_contracts
+            item["snapshot_contract_ids"] = snapshot_contract_ids
+            item["snapshot_absent_contracts"] = snapshot_absent
+    elif absent_contracts:
+        tombstone_date = latest_market_date or ingest_time[:10]
+        tombstone_avail = _validate_or_convert_rfc3339(
+            stamp or f"{tombstone_date}T16:30:00Z",
+            name="available_time",
+        )
+        results.append(
+            {
+                "dataset": TAIFEX_SSF_DATASET,
+                "date": tombstone_date,
+                "price_date": tombstone_date,
+                "margin_date": tombstone_date,
+                "event_time": f"{tombstone_date}T00:00:00Z",
+                "available_time": tombstone_avail,
+                "ingest_time": ingest_time,
+                "contract": "",
+                "contract_family": "",
+                "contract_month": "",
+                "contract_id": "",
+                "underlying_code": scope_list[0] if len(scope_list) == 1 else "",
+                "kind": "stock_future_tombstone",
+                "market": "TW",
+                "venue": "TAIFEX",
+                "tombstone": True,
+                "source_dataset": TAIFEX_SSF_DATASET,
+                "api_endpoint": api_endpoint or TAIFEX_SSF_STOCK_LISTS_URL,
+                "snapshot_scope_mode": scope_mode,
+                "snapshot_scope": scope_list,
+                "snapshot_underlyings": snapshot_underlyings,
+                "snapshot_contracts": [],
+                "snapshot_contract_ids": [],
+                "snapshot_absent_contracts": snapshot_absent,
+            }
+        )
     return tuple(results)
 
 

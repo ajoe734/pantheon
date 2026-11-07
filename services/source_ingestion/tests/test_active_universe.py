@@ -300,6 +300,78 @@ def test_active_universe_fanout_to_taifex_provider_scopes_ssf_and_preserves_chip
     assert len(opt_records) == 1 and opt_records[0].metadata["dataset"] == "taifex_options_chip"
 
 
+def test_taifex_ssf_contracts_selects_only_active_tw_paper_persona_underlyings_and_excludes_research_live_inactive() -> None:
+    members = [
+        {"symbol": "2330.TWSE", "tier": "core_universe", "mode": "paper", "status": "active", "reason": "paper-active"},
+        {"symbol": "2317.TWSE", "tier": "core_universe", "mode": "research", "reason": "research-only"},
+        {"symbol": "0050.TW", "tier": "core_universe", "mode": "live", "reason": "live"},
+        {"symbol": "2454.TW", "tier": "core_universe", "mode": "paper", "status": "inactive", "reason": "paused"},
+        {"symbol": "2881.TW", "tier": "core_universe", "metadata": {"personas": [{"mode": "research", "status": "active"}]}},
+        {"symbol": "2308.TW", "tier": "candidate_universe", "mode": "paper", "status": "active"},
+    ]
+
+    plan = build_active_universe_update_plan(members)
+    fanout = build_active_universe_job_fanout(members, run_date="2026-11-09")
+
+    ssf_update = next(u for u in plan["connector_updates"] if u["dataset"] == "taifex_ssf_contracts")
+    assert ssf_update["symbols"] == ["2330"]
+    assert ssf_update["contracts"] == ["2330"]
+
+    taifex_jobs = {
+        job["dataset"]: job
+        for job in fanout["jobs"]
+        if job["connector_id"] == "tw-taifex-futures-options-chip"
+    }
+    assert set(taifex_jobs) == {"taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts"}
+    assert taifex_jobs["taifex_ssf_contracts"]["symbols"] == ["2330"]
+    assert taifex_jobs["taifex_ssf_contracts"]["contracts"] == ["2330"]
+    assert taifex_jobs["taifex_futures_chip"]["symbols"] == []
+    assert "contracts" not in taifex_jobs["taifex_futures_chip"]
+    assert taifex_jobs["taifex_options_chip"]["symbols"] == []
+    assert "contracts" not in taifex_jobs["taifex_options_chip"]
+
+
+def test_taifex_ssf_contracts_resolves_governed_persona_and_binding_inputs() -> None:
+    bare_core_members = [
+        {"symbol": "2330.TW", "tier": "core_universe"},
+        {"symbol": "2317.TWSE", "tier": "core_universe"},
+        {"symbol": "0050.TW", "tier": "core_universe"},
+        {"symbol": "2454.TW", "tier": "core_universe"},
+    ]
+    personas = [
+        {"persona_id": "qinghe-2330", "symbol": "2330.TWSE", "market": "TW", "mode": "paper", "status": "active"},
+        {"persona_id": "research-2317", "symbol": "2317.TWSE", "market": "TW", "mode": "research", "status": "active"},
+        {"persona_id": "live-0050", "symbol": "0050.TWSE", "market": "TW", "mode": "live", "status": "active"},
+        {"persona_id": "inactive-2454", "symbol": "2454.TW", "market": "TW", "mode": "paper", "status": "inactive"},
+        {"persona_id": "us-paper", "symbol": "AAPL", "market": "US", "mode": "paper", "status": "active"},
+    ]
+
+    fanout = build_active_universe_job_fanout(
+        bare_core_members,
+        run_date="2026-11-09",
+        personas=personas,
+    )
+    [ssf_job] = [j for j in fanout["jobs"] if j["dataset"] == "taifex_ssf_contracts"]
+    assert ssf_job["symbols"] == ["2330"]
+    assert ssf_job["contracts"] == ["2330"]
+
+    # When all core members are non-paper or inactive, no taifex_ssf_contracts job is emitted,
+    # while both TAIFEX market-context chip rules still emit their unsymbolized jobs.
+    non_paper_fanout = build_active_universe_job_fanout(
+        [
+            {"symbol": "2317.TWSE", "tier": "core_universe", "mode": "research"},
+            {"symbol": "0050.TW", "tier": "core_universe", "mode": "live"},
+            {"symbol": "2330.TW", "tier": "core_universe", "mode": "paper", "status": "retired"},
+        ],
+        run_date="2026-11-09",
+    )
+    assert [j for j in non_paper_fanout["jobs"] if j["dataset"] == "taifex_ssf_contracts"] == []
+    chip_datasets = {
+        j["dataset"] for j in non_paper_fanout["jobs"] if j["connector_id"] == "tw-taifex-futures-options-chip"
+    }
+    assert chip_datasets == {"taifex_futures_chip", "taifex_options_chip"}
+
+
 def test_active_universe_fanout_routes_crypto_symbols_to_coingecko() -> None:
     fanout = build_active_universe_job_fanout(
         [

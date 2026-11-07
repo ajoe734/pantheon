@@ -7,6 +7,8 @@ cheap baseline maintenance elsewhere.
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping, Sequence
@@ -535,6 +537,9 @@ def build_active_universe_update_plan(
     members: Sequence[ActiveUniverseMember | Mapping[str, Any]],
     *,
     rules: Sequence[SourceUpdateRule | Mapping[str, Any]] = DEFAULT_SOURCE_UPDATE_RULES,
+    personas: Sequence[Mapping[str, Any] | str] | None = None,
+    runtime_bindings: Sequence[Mapping[str, Any]] | None = None,
+    active_paper_symbols: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     normalized_members = tuple(_member(member) for member in members)
     normalized_rules = tuple(_rule(rule) for rule in rules)
@@ -555,7 +560,13 @@ def build_active_universe_update_plan(
         if symbol_scope in {"global_no_symbol_filter", "market_context_no_symbol_filter"}:
             symbols = []
         elif symbol_scope == "active_tw_paper_persona_underlyings":
-            symbols = _unique_underlying_codes(symbols)
+            symbols = resolve_active_tw_paper_persona_underlyings(
+                eligible,
+                personas=personas,
+                runtime_bindings=runtime_bindings,
+                active_paper_symbols=active_paper_symbols,
+                rule_metadata=rule.metadata,
+            )
         if rule.max_symbols_per_run is not None:
             symbols = symbols[: int(rule.max_symbols_per_run)]
         for member in normalized_members:
@@ -600,12 +611,21 @@ def build_active_universe_job_fanout(
     rules: Sequence[SourceUpdateRule | Mapping[str, Any]] = DEFAULT_SOURCE_UPDATE_RULES,
     run_date: str,
     default_max_symbols_per_job: int = 50,
+    personas: Sequence[Mapping[str, Any] | str] | None = None,
+    runtime_bindings: Sequence[Mapping[str, Any]] | None = None,
+    active_paper_symbols: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     if default_max_symbols_per_job < 1:
         raise ValueError("default_max_symbols_per_job must be >= 1")
     normalized_members = tuple(_member(member) for member in members)
     normalized_rules = tuple(_rule(rule) for rule in rules)
-    plan = build_active_universe_update_plan(normalized_members, rules=normalized_rules)
+    plan = build_active_universe_update_plan(
+        normalized_members,
+        rules=normalized_rules,
+        personas=personas,
+        runtime_bindings=runtime_bindings,
+        active_paper_symbols=active_paper_symbols,
+    )
 
     jobs: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -633,7 +653,13 @@ def build_active_universe_job_fanout(
             symbols = []
             batches = [[]]
         elif symbol_scope == "active_tw_paper_persona_underlyings":
-            symbols = _unique_underlying_codes(symbols)
+            symbols = resolve_active_tw_paper_persona_underlyings(
+                eligible,
+                personas=personas,
+                runtime_bindings=runtime_bindings,
+                active_paper_symbols=active_paper_symbols,
+                rule_metadata=rule.metadata,
+            )
             if symbols:
                 batch_size = int(rule.max_symbols_per_run or default_max_symbols_per_job)
                 batches = [symbols[index : index + batch_size] for index in range(0, len(symbols), batch_size)]
@@ -680,16 +706,22 @@ def build_active_universe_job_fanout(
     }
 
 
+_MEMBER_RESERVED_KEYS = {"symbol", "tier", "market", "venue", "reason", "metadata"}
+
+
 def _member(value: ActiveUniverseMember | Mapping[str, Any]) -> ActiveUniverseMember:
     if isinstance(value, ActiveUniverseMember):
         return value
+    extra_meta = {str(k): v for k, v in value.items() if str(k) not in _MEMBER_RESERVED_KEYS}
+    explicit_meta = dict(value.get("metadata") or {})
+    merged_meta = {**extra_meta, **explicit_meta}
     return ActiveUniverseMember(
         symbol=str(value["symbol"]),
         tier=value.get("tier", UniverseTier.CANDIDATE.value),
         market=str(value.get("market") or "TW"),
         venue=value.get("venue"),
         reason=value.get("reason"),
-        metadata=dict(value.get("metadata") or {}),
+        metadata=merged_meta,
     )
 
 
@@ -719,6 +751,405 @@ def _unique_symbols(symbols: Sequence[str] | Any) -> list[str]:
 
 
 _TW_UNDERLYING_VENUE_SUFFIXES = {"TW", "TWSE", "TSE", "TWO", "TPEX", "OTC"}
+
+# Governed active Taiwan paper personas (PAPER-PERSONA-BASELINES-20261105 /
+# PAPER-DRAWDOWN-CURRENT0040-CONFIG-20261021 in threshold_sweep_baselines.json).
+GOVERNED_ACTIVE_TW_PAPER_PERSONAS: tuple[dict[str, str], ...] = (
+    {
+        "persona_id": "persona-be19a1fac471247f2b2a",
+        "artifact_id": "artifact-persona-paper-298e138c136c9840b0e4",
+        "binding_id": "rb-a1c3ada3d5894d57bc2e012f337753be",
+        "symbol": "2330.TWSE",
+        "market": "TW",
+        "mode": "paper",
+        "status": "active",
+    },
+    {
+        "persona_id": "persona-9d4fb3f44cbc5e7cb84f",
+        "artifact_id": "artifact-persona-paper-01390a4b72713295b001",
+        "binding_id": "rb-fd733d7c192f45898bbe0e90c8555878",
+        "symbol": "0050.TWSE",
+        "market": "TW",
+        "mode": "paper",
+        "status": "active",
+    },
+    {
+        "persona_id": "persona-d9363cffc0efbbbcbeb9",
+        "artifact_id": "artifact-persona-paper-8ae996980eeccb80d928",
+        "binding_id": "rb-eda9b9a3379d4fb5a09f0e8432c84f20",
+        "symbol": "2317.TWSE",
+        "market": "TW",
+        "mode": "paper",
+        "status": "active",
+    },
+    {
+        "persona_id": "persona-current0040",
+        "artifact_id": "artifact-persona-paper-00400aa279b49774cde4",
+        "binding_id": "rb-2eebe2b7",
+        "symbol": "2330.TW",
+        "market": "TW",
+        "mode": "paper",
+        "status": "active",
+    },
+)
+
+_PAPER_MODE_TOKENS = {
+    "paper",
+    "paper_active",
+    "active_paper",
+    "paper_persona",
+    "active_paper_persona",
+    "paper_trading",
+    "sim",
+    "simulation",
+}
+_NON_PAPER_MODE_TOKENS = {
+    "research",
+    "research_only",
+    "backtest",
+    "backtest_only",
+    "live",
+    "live_only",
+    "production",
+    "prod",
+    "real",
+    "canary",
+    "shadow",
+    "holding",
+    "watchlist",
+    "observation",
+}
+_INACTIVE_STATUS_TOKENS = {
+    "inactive",
+    "paused",
+    "retired",
+    "archived",
+    "disabled",
+    "stopped",
+    "suspended",
+    "draft",
+    "pending",
+    "superseded",
+    "terminated",
+    "closed",
+    "halted",
+    "deactivated",
+    "rejected",
+    "removed",
+}
+_ACTIVE_STATUS_TOKENS = {
+    "active",
+    "enabled",
+    "running",
+    "ready",
+    "paper_active",
+    "active_paper",
+    "active_paper_persona",
+}
+_MODE_KEYS = (
+    "mode",
+    "execution_mode",
+    "deployment_mode",
+    "observed_deployment_mode",
+    "trading_mode",
+    "persona_mode",
+    "runtime_mode",
+    "stage",
+    "deployment_stage",
+    "lifecycle_stage",
+    "environment",
+    "env",
+    "scope",
+    "usage",
+    "role",
+    "target_mode",
+    "expression_mode",
+)
+_STATUS_KEYS = (
+    "status",
+    "state",
+    "lifecycle_state",
+    "persona_status",
+    "persona_state",
+    "binding_status",
+    "observed_binding_status",
+    "binding_state",
+    "runtime_status",
+    "activation_status",
+    "artifact_state",
+)
+_NESTED_PERSONA_KEYS = (
+    "persona",
+    "personas",
+    "active_personas",
+    "paper_personas",
+    "active_paper_personas",
+    "binding",
+    "bindings",
+    "runtime_bindings",
+    "persona_bindings",
+)
+
+
+def _norm_token(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    return re.sub(r"[\s\-]+", "_", text)
+
+
+def _reason_tokens(reason: Any) -> set[str]:
+    text = str(reason or "").strip().lower()
+    if not text:
+        return set()
+    normalized = _norm_token(text)
+    parts = {
+        _norm_token(part)
+        for part in re.split(r"[,;/|\s]+", text)
+        if _norm_token(part)
+    }
+    parts.add(normalized)
+    return parts
+
+
+def _mapping_is_inactive(data: Mapping[str, Any]) -> bool:
+    for false_key in ("active", "is_active", "enabled", "paper_active", "active_paper_persona", "is_active_paper_persona"):
+        if data.get(false_key) is False:
+            return True
+    for true_key in ("inactive", "paused", "retired", "archived", "disabled"):
+        if data.get(true_key) is True:
+            return True
+    for key in _STATUS_KEYS:
+        val = data.get(key)
+        if val is None or isinstance(val, (Mapping, list, tuple, set)):
+            continue
+        tok = _norm_token(val)
+        if tok in _INACTIVE_STATUS_TOKENS:
+            return True
+    return False
+
+
+def _mapping_is_non_paper(data: Mapping[str, Any]) -> bool:
+    for true_key in ("research_only", "is_research_only", "research", "live", "live_only", "is_live"):
+        if data.get(true_key) is True:
+            return True
+    for false_key in ("paper", "paper_active", "active_paper_persona", "is_active_paper_persona", "paper_enabled"):
+        if data.get(false_key) is False:
+            return True
+    for key in _MODE_KEYS:
+        val = data.get(key)
+        if val is None or isinstance(val, (Mapping, list, tuple, set)):
+            continue
+        tok = _norm_token(val)
+        if tok in _NON_PAPER_MODE_TOKENS:
+            return True
+    for list_key in ("modes", "allowed_modes", "execution_modes", "stages"):
+        seq = data.get(list_key)
+        if isinstance(seq, (list, tuple, set)) and not isinstance(seq, (str, bytes)):
+            tokens = {_norm_token(item) for item in seq if _norm_token(item)}
+            if tokens and tokens.isdisjoint(_PAPER_MODE_TOKENS):
+                return True
+    return False
+
+
+def _mapping_is_positive_paper(data: Mapping[str, Any], *, default_paper: bool = False) -> bool:
+    if _mapping_is_inactive(data) or _mapping_is_non_paper(data):
+        return False
+    market = str(data.get("market") or "").strip().upper()
+    if market and market != "TW":
+        return False
+    for true_key in ("paper_active", "active_paper_persona", "is_active_paper_persona", "paper_persona", "paper_enabled", "paper"):
+        if data.get(true_key) is True:
+            return True
+    for key in (*_MODE_KEYS, *_STATUS_KEYS):
+        val = data.get(key)
+        if val is None or isinstance(val, (Mapping, list, tuple, set)):
+            continue
+        if _norm_token(val) in _PAPER_MODE_TOKENS:
+            return True
+    for list_key in ("modes", "allowed_modes", "execution_modes", "stages"):
+        seq = data.get(list_key)
+        if isinstance(seq, (list, tuple, set)) and not isinstance(seq, (str, bytes)):
+            if any(_norm_token(item) in _PAPER_MODE_TOKENS for item in seq):
+                return True
+    return default_paper
+
+
+def _extract_symbols_from_persona_entry(entry: Any) -> list[str]:
+    if isinstance(entry, str):
+        code = _normalize_tw_underlying_code(entry)
+        return [code] if code else []
+    if not isinstance(entry, Mapping):
+        return []
+    nested_intent = entry.get("binding_intent")
+    check_obj = dict(entry)
+    if isinstance(nested_intent, Mapping):
+        for k, v in nested_intent.items():
+            check_obj.setdefault(k, v)
+    if not _mapping_is_positive_paper(check_obj):
+        return []
+    raw_symbols: list[Any] = []
+    for single_key in ("symbol", "underlying", "underlying_code", "underlying_id", "security_id"):
+        if check_obj.get(single_key):
+            raw_symbols.append(check_obj[single_key])
+    for multi_key in ("symbols", "underlyings", "underlying_codes"):
+        seq = check_obj.get(multi_key)
+        if isinstance(seq, (list, tuple, set)) and not isinstance(seq, (str, bytes)):
+            raw_symbols.extend(seq)
+    for nested_key in ("parameters", "market_scope", "strategy_artifact"):
+        nested = check_obj.get(nested_key)
+        if isinstance(nested, Mapping):
+            if nested.get("symbol"):
+                raw_symbols.append(nested["symbol"])
+            seq = nested.get("symbols")
+            if isinstance(seq, (list, tuple, set)) and not isinstance(seq, (str, bytes)):
+                raw_symbols.extend(seq)
+            inner_params = nested.get("parameters")
+            if isinstance(inner_params, Mapping) and isinstance(inner_params.get("symbols"), (list, tuple, set)):
+                raw_symbols.extend(inner_params["symbols"])
+    return _unique_underlying_codes(raw_symbols)
+
+
+def _member_nested_persona_state(metadata: Mapping[str, Any]) -> tuple[bool, bool]:
+    """Return (has_nested_spec, has_active_paper_nested)."""
+    has_spec = False
+    has_active_paper = False
+    for key in _NESTED_PERSONA_KEYS:
+        if key not in metadata:
+            continue
+        has_spec = True
+        val = metadata.get(key)
+        default_paper = key in {"paper_personas", "active_paper_personas"}
+        if isinstance(val, Mapping):
+            if _mapping_is_positive_paper(val, default_paper=default_paper):
+                has_active_paper = True
+        elif isinstance(val, (list, tuple, set)) and not isinstance(val, (str, bytes)):
+            for item in val:
+                if isinstance(item, Mapping):
+                    if _mapping_is_positive_paper(item, default_paper=default_paper):
+                        has_active_paper = True
+                elif isinstance(item, str) and item.strip():
+                    if default_paper or _norm_token(item) in _PAPER_MODE_TOKENS:
+                        has_active_paper = True
+        elif isinstance(val, str) and val.strip():
+            if default_paper or _norm_token(val) in _PAPER_MODE_TOKENS:
+                has_active_paper = True
+    return has_spec, has_active_paper
+
+
+def _is_excluded_member(member: ActiveUniverseMember) -> bool:
+    if member.market != "TW":
+        return True
+    r_tokens = _reason_tokens(member.reason)
+    if r_tokens & (_NON_PAPER_MODE_TOKENS | _INACTIVE_STATUS_TOKENS):
+        return True
+    meta = member.metadata or {}
+    if _mapping_is_inactive(meta) or _mapping_is_non_paper(meta):
+        return True
+    has_nested, has_active_paper_nested = _member_nested_persona_state(meta)
+    if has_nested and not has_active_paper_nested:
+        return True
+    return False
+
+
+def _is_explicit_active_paper_member(member: ActiveUniverseMember) -> bool:
+    if _is_excluded_member(member):
+        return False
+    r_tokens = _reason_tokens(member.reason)
+    if r_tokens & _PAPER_MODE_TOKENS:
+        return True
+    meta = member.metadata or {}
+    if _mapping_is_positive_paper(meta):
+        return True
+    _has_nested, has_active_paper_nested = _member_nested_persona_state(meta)
+    return has_active_paper_nested
+
+
+def resolve_active_tw_paper_persona_underlyings(
+    members: Sequence[ActiveUniverseMember | Mapping[str, Any]],
+    *,
+    personas: Sequence[Mapping[str, Any] | str] | None = None,
+    runtime_bindings: Sequence[Mapping[str, Any]] | None = None,
+    active_paper_symbols: Sequence[str] | None = None,
+    rule_metadata: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Resolve normalized TW underlying codes for active Taiwan paper personas.
+
+    Excludes ``research``/``research_only``, ``live``, and ``inactive``/``paused``/
+    ``retired`` members or persona bindings while preserving governed active paper
+    persona underlyings.
+    """
+    normalized_members = tuple(_member(m) for m in members)
+    eligible_core = [
+        m
+        for m in normalized_members
+        if m.market == "TW" and m.tier == UniverseTier.CORE and not _is_excluded_member(m)
+    ]
+    if not eligible_core:
+        return []
+
+    rule_meta = dict(rule_metadata or {})
+    explicit_governed_codes: list[str] = []
+    has_explicit_governed_input = False
+
+    for symbol_seq in (
+        active_paper_symbols,
+        rule_meta.get("active_paper_symbols"),
+        rule_meta.get("active_paper_underlyings"),
+        rule_meta.get("paper_persona_underlyings"),
+    ):
+        if symbol_seq is not None:
+            has_explicit_governed_input = True
+            if isinstance(symbol_seq, str):
+                explicit_governed_codes.extend(
+                    _unique_underlying_codes(part for part in re.split(r"[,;\s]+", symbol_seq) if part)
+                )
+            elif isinstance(symbol_seq, (list, tuple, set)):
+                explicit_governed_codes.extend(_unique_underlying_codes(symbol_seq))
+
+    env_symbols = os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").strip()
+    if env_symbols:
+        has_explicit_governed_input = True
+        explicit_governed_codes.extend(
+            _unique_underlying_codes(part for part in re.split(r"[,;\s]+", env_symbols) if part)
+        )
+
+    for persona_seq in (
+        personas,
+        runtime_bindings,
+        rule_meta.get("personas"),
+        rule_meta.get("active_paper_personas"),
+        rule_meta.get("runtime_bindings"),
+        rule_meta.get("persona_bindings"),
+    ):
+        if persona_seq is not None:
+            has_explicit_governed_input = True
+            if isinstance(persona_seq, Mapping):
+                explicit_governed_codes.extend(_extract_symbols_from_persona_entry(persona_seq))
+            elif isinstance(persona_seq, (list, tuple, set)):
+                for entry in persona_seq:
+                    explicit_governed_codes.extend(_extract_symbols_from_persona_entry(entry))
+
+    if has_explicit_governed_input:
+        allowed_codes = set(_unique_underlying_codes(explicit_governed_codes))
+        return _unique_underlying_codes(
+            m.symbol for m in eligible_core if _normalize_tw_underlying_code(m.symbol) in allowed_codes
+        )
+
+    explicit_paper_members = [m for m in eligible_core if _is_explicit_active_paper_member(m)]
+    if explicit_paper_members:
+        return _unique_underlying_codes(m.symbol for m in explicit_paper_members)
+
+    default_governed_codes = set(
+        _unique_underlying_codes(
+            code
+            for entry in GOVERNED_ACTIVE_TW_PAPER_PERSONAS
+            for code in _extract_symbols_from_persona_entry(entry)
+        )
+    )
+    return _unique_underlying_codes(
+        m.symbol for m in eligible_core if _normalize_tw_underlying_code(m.symbol) in default_governed_codes
+    )
 
 
 def _normalize_tw_underlying_code(symbol: Any) -> str:

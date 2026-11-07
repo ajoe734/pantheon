@@ -342,3 +342,110 @@ def test_generator_makes_no_network_call(rows: list[dict[str, Any]], monkeypatch
     monkeypatch.setattr(socket, "create_connection", _deny)
     monkeypatch.setattr(socket, "getaddrinfo", _deny)
     assert len(_build(rows, "2330")) == 3
+
+
+def test_normalization_to_disk_snapshot_removal_does_not_resurrect_removed_contract(
+    payload: dict[str, Any], tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    adapter = TaifexDerivativesChipAdapter()
+    writer = MarketDataStorageWriter(tmp_path)
+
+    old_records = adapter.records_from_payload(
+        payload,
+        dataset="taifex_ssf_contracts",
+        available_time="2026-11-06T16:30:00Z",
+    )
+    writer.write_run(
+        result=SimpleNamespace(records=old_records, run=SimpleNamespace(ingest_run_id="run-1630")),
+        connector=adapter.connector(),
+    )
+
+    trimmed = dict(
+        payload,
+        SingleStockFuturesMargining=[r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "QFF"],
+    )
+    new_records = adapter.records_from_payload(
+        trimmed,
+        dataset="taifex_ssf_contracts",
+        available_time="2026-11-06T17:00:00Z",
+    )
+    assert "QFF" not in {r.metadata["contract"] for r in new_records}
+    writer.write_run(
+        result=SimpleNamespace(records=new_records, run=SimpleNamespace(ingest_run_id="run-1700")),
+        connector=adapter.connector(),
+    )
+
+    candidates = ic.build_candidates(
+        "2330", DECISION_DAY, {}, BUDGET, cash_price=2200.0, cash_price_date="2026-11-06", normalized_root=tmp_path
+    )
+    assert {c["instrument_id"] for c in candidates} == {"eq:2330", "ssf:CDF:202611"}
+
+
+def test_scoped_normalization_to_disk_removes_absent_margin_without_clobbering_other_underlyings(
+    payload: dict[str, Any], tmp_path: Path
+) -> None:
+    old_rows = list(taifex_ssf_normalized_rows(payload, available_time="2026-11-06T16:30:00Z"))
+    _write_partition(tmp_path, "2026-11-06", "01-unscoped-1630", old_rows)
+
+    # Scoped 17:00Z run for 2330 with QFF removed from SingleStockFuturesMargining.
+    trimmed_2330 = dict(
+        payload,
+        SingleStockFuturesMargining=[r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "QFF"],
+    )
+    scoped_2330_rows = list(
+        taifex_ssf_normalized_rows(
+            trimmed_2330,
+            underlying_codes=["2330"],
+            available_time="2026-11-06T17:00:00Z",
+        )
+    )
+    assert {r["contract"] for r in scoped_2330_rows} == {"CDF"}
+    _write_partition(tmp_path, "2026-11-06", "02-scoped-2330-1700", scoped_2330_rows)
+
+    # 2330 drops QFF (not resurrected from 16:30Z) while keeping CDF.
+    candidates_2330 = ic.build_candidates(
+        "2330", DECISION_DAY, {}, BUDGET, cash_price=2200.0, cash_price_date="2026-11-06", normalized_root=tmp_path
+    )
+    assert {c["instrument_id"] for c in candidates_2330} == {"eq:2330", "ssf:CDF:202611"}
+
+    # Other underlyings (2317, 0050) were outside the 17:00Z scope and remain intact from 16:30Z.
+    candidates_2317 = ic.build_candidates(
+        "2317", DECISION_DAY, {}, BUDGET, cash_price=230.0, cash_price_date="2026-11-06", normalized_root=tmp_path
+    )
+    assert {c["instrument_id"] for c in candidates_2317} == {"eq:2317", "ssf:DHF:202611"}
+    candidates_0050 = ic.build_candidates(
+        "0050", DECISION_DAY, {}, BUDGET, cash_price=92.0, cash_price_date="2026-11-06", normalized_root=tmp_path
+    )
+    assert {c["instrument_id"] for c in candidates_0050} == {"eq:0050", "ssf:SRF:202611", "ssf:NYF:202611"}
+
+    # Scoped 17:30Z run for 2317 where DHF (the only 2317 contract) is removed from margins emits a tombstone.
+    trimmed_2317 = dict(
+        payload,
+        SingleStockFuturesMargining=[r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "DHF"],
+    )
+    scoped_2317_rows = list(
+        taifex_ssf_normalized_rows(
+            trimmed_2317,
+            underlying_codes=["2317"],
+            available_time="2026-11-06T17:30:00Z",
+        )
+    )
+    assert len(scoped_2317_rows) == 1 and scoped_2317_rows[0].get("tombstone") is True
+    _write_partition(tmp_path, "2026-11-06", "03-scoped-2317-1730", scoped_2317_rows)
+
+    after_2317_removal = ic.build_candidates(
+        "2317", DECISION_DAY, {}, BUDGET, cash_price=230.0, cash_price_date="2026-11-06", normalized_root=tmp_path
+    )
+    assert {c["instrument_id"] for c in after_2317_removal} == {"eq:2317"}
+    # 2330 and 0050 remain unaffected by the 2317 tombstone.
+    assert {
+        c["instrument_id"]
+        for c in ic.build_candidates(
+            "2330", DECISION_DAY, {}, BUDGET, cash_price=2200.0, cash_price_date="2026-11-06", normalized_root=tmp_path
+        )
+    } == {"eq:2330", "ssf:CDF:202611"}

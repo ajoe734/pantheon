@@ -396,6 +396,35 @@ class TestContractMasterFromSsfDataset(unittest.TestCase):
             masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(ordered)}
             self.assertEqual(masters["ssf:QFF:202611"].metadata_json["settlement_price"], 2145.0)
 
+    def test_newer_snapshot_evicts_contract_removed_from_margin_table(self):
+        from services.source_ingestion.connectors.taiwan_official import taifex_ssf_normalized_rows
+
+        fixtures = Path(__file__).resolve().parents[2] / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
+
+        def load(name):
+            return json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
+
+        payload = {
+            "SingleStockFuturesMargining": load("SingleStockFuturesMargining"),
+            "SingleStockFuturesETFMargining": load("SingleStockFuturesETFMargining"),
+            "DailyMarketReportFut": load("DailyMarketReportFut"),
+            "FinalSettlementPriceSSF": load("FinalSettlementPriceSSF"),
+            "stockLists": (fixtures / "stockLists.html").read_text(encoding="utf-8"),
+        }
+        old_rows = taifex_ssf_normalized_rows(payload, available_time="2026-11-06T16:30:00Z")
+        trimmed = dict(
+            payload,
+            SingleStockFuturesMargining=[r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "QFF"],
+        )
+        new_rows = taifex_ssf_normalized_rows(
+            trimmed, underlying_codes=["2330"], available_time="2026-11-06T17:00:00Z"
+        )
+        for ordered in ([*old_rows, *new_rows], [*new_rows, *old_rows]):
+            masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(ordered)}
+            self.assertNotIn("ssf:QFF:202611", masters)
+            self.assertIn("ssf:CDF:202611", masters)
+            self.assertIn("ssf:DHF:202611", masters)
+
     def test_no_second_contract_model_exists(self):
         models = Path(__file__).resolve().parents[1] / "models"
         self.assertEqual([p.name for p in models.glob("*contract*.py")], ["contract_master.py"])
