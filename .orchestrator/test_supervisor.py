@@ -21978,63 +21978,81 @@ class QueueRecordReconciliationUnsettledWorkerTests(unittest.TestCase):
 
 
 class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
-    """Guard the shipped reviewer-fallback policy the whole fleet plans from.
+    """Guard the shipped Codex-only reviewer-fallback policy (OPS-REVIEWER-FALLBACK-CODEX-ONLY-20261107).
 
-    ``plan_task_assignment_pair`` will not assign a task without a reviewer, so
-    ``reviewer_fallbacks`` is the list that decides whether any work can be
-    dispatched at all.  When every lane listed only ``Codex``/``Codex2`` and
-    both Codex accounts went ``quota_terminal``, no open task could be paired
-    and the fleet sat at zero dispatch for hours with a healthy supervisor --
-    the outage looked like a scheduler fault because nothing reported that the
-    reviewer side of every candidate pair was simply unreachable.
+    Operator standing policy designates Claude/Antigravity as implementation
+    lanes and Codex/Codex2 (``review_only_agents``) as reviewer candidates,
+    removing implementation-only identities from ``reviewer_fallbacks``.
+    In ``.orchestrator/config.json``, implementation identities fall back to
+    ``["Codex", "Codex2"]`` while ``Codex`` and ``Codex2`` remain distinct
+    independent reviewer identities (``Codex -> ["Codex2"]``,
+    ``Codex2 -> ["Codex"]``).  In ``.orchestrator/config.example.json``,
+    non-Codex roots fall back to ``["Codex"]`` and ``Codex`` has ``[]`` so it
+    fails closed when no independent configured reviewer exists.
     """
-
-    CODEX_ACCOUNTS = frozenset({"codex1", "codex2"})
 
     @classmethod
     def setUpClass(cls) -> None:
-        config_path = Path(__file__).resolve().parent / "config.json"
-        cls.config = json.loads(config_path.read_text(encoding="utf-8"))
+        base_dir = Path(__file__).resolve().parent
+        cls.config = json.loads((base_dir / "config.json").read_text(encoding="utf-8"))
+        cls.example_config = json.loads((base_dir / "config.example.json").read_text(encoding="utf-8"))
+        supervisor.validate_provider_accounts(cls.config)
+        supervisor.validate_provider_accounts(cls.example_config)
         cls.fallbacks = cls.config["worker_reassignment"]["reviewer_fallbacks"]
-        providers = cls.config.get("providers") or {}
-        cls.account_of = {}
-        for agent in (cls.config.get("agents") or {}).values():
-            lane = str(agent.get("display_name") or "")
-            provider = providers.get(str(agent.get("provider") or "")) or {}
-            account = str(provider.get("account") or "")
-            if lane and account:
-                cls.account_of.setdefault(lane, account)
+        cls.example_fallbacks = cls.example_config["worker_reassignment"]["reviewer_fallbacks"]
 
-    def test_every_lane_offers_a_reviewer_outside_the_codex_accounts(self) -> None:
-        # The regression itself: a Codex-only chain makes the two Codex
-        # accounts a single point of failure for the entire fleet.
+    def test_unavailable_designated_reviewers_fail_closed_without_promoting_implementation_lanes(self) -> None:
+        review_only = set(self.config["worker_reassignment"]["review_only_agents"])
+        state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
         for lane, chain in self.fallbacks.items():
-            with self.subTest(lane=lane):
-                outside = [
-                    name
-                    for name in chain
-                    if self.account_of.get(name) not in self.CODEX_ACCOUNTS
-                ]
+            with self.subTest(config="config.json", lane=lane):
                 self.assertTrue(
-                    outside,
-                    f"lane {lane} can only be reviewed by the Codex accounts; "
-                    "a Codex quota exhaustion would stop all dispatch",
+                    set(chain).issubset(review_only),
+                    f"lane {lane} fallback chain {chain} contains non-review-only identity",
+                )
+                task = task_fixture(owner=lane, reviewer="Codex" if lane != "Codex" else "Codex2")
+                self.assertIsNone(
+                    supervisor.plan_task_assignment_pair(
+                        self.config,
+                        task,
+                        state=state,
+                        owner_candidates=[lane],
+                        excluded_reviewers=review_only,
+                    ),
+                    f"lane {lane} promoted an implementation lane when designated reviewers were unavailable",
+                )
+
+        example_designated_reviewers = {"Codex"}
+        example_state = with_healthy_delivery_health(
+            self.example_config, {"workers": {}, "queue": {"events": {}}}
+        )
+        for lane, chain in self.example_fallbacks.items():
+            with self.subTest(config="config.example.json", lane=lane):
+                self.assertTrue(
+                    set(chain).issubset(example_designated_reviewers),
+                    f"example lane {lane} fallback chain {chain} contains non-Codex identity",
+                )
+                task = task_fixture(owner=lane, reviewer="Codex")
+                self.assertIsNone(
+                    supervisor.plan_task_assignment_pair(
+                        self.example_config,
+                        task,
+                        state=example_state,
+                        owner_candidates=[lane],
+                        excluded_reviewers=example_designated_reviewers,
+                    ),
+                    f"example lane {lane} must fail closed when Codex is unavailable",
                 )
 
     def test_codex_reviewer_fallbacks_are_review_only_with_capacity(self) -> None:
-        # The operator stopped the Codex lanes on 2026-10-06 and restored them
-        # on 2026-10-24 only as last-resort reviewers for when the Antigravity
-        # account runs out of quota. A zero-capacity reviewer in a chain is
-        # only reassigned away again, and the lanes must never take owner work.
         review_only = set(self.config["worker_reassignment"]["review_only_agents"])
         capacity: dict[str, int] = {}
         for agent in (self.config.get("agents") or {}).values():
             lane = str(agent.get("display_name") or "")
             capacity[lane] = max(capacity.get(lane, 0), int(agent.get("max_parallel") or 0))
         for lane, chain in self.fallbacks.items():
-            if self.account_of.get(lane) in self.CODEX_ACCOUNTS:
-                continue
-            for name in {"Codex", "Codex2"} & set(chain):
+            self.assertTrue(chain, f"lane {lane} must have at least one designated reviewer fallback")
+            for name in chain:
                 with self.subTest(lane=lane, reviewer=name):
                     self.assertIn(name, review_only)
                     self.assertGreater(
@@ -22042,41 +22060,107 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                         0,
                         f"lane {lane} falls back to a stopped Codex reviewer",
                     )
+            if lane not in review_only:
+                with self.subTest(lane=lane, chain=chain):
                     self.assertEqual(
-                        chain[-2:],
+                        chain,
                         ["Codex", "Codex2"],
-                        f"lane {lane} must try its other reviewers before Codex",
+                        f"implementation lane {lane} must fall back only to [Codex, Codex2]",
                     )
 
     def test_every_fallback_reviewer_has_its_own_chain(self) -> None:
-        # Replacing an unavailable reviewer reads only that reviewer's own
-        # chain. PiAstra was listed as a fallback reviewer without one, so
-        # once the operator stopped it on 2026-10-07 its reviews sat
-        # unassigned for hours.
         named = {name for chain in self.fallbacks.values() for name in chain}
         for name in sorted(named):
-            with self.subTest(reviewer=name):
+            with self.subTest(config="config.json", reviewer=name):
                 self.assertIn(
                     name,
                     self.fallbacks,
                     f"reviewer {name} has no fallback chain of its own",
                 )
+        example_named = {name for chain in self.example_fallbacks.values() for name in chain}
+        for name in sorted(example_named):
+            with self.subTest(config="config.example.json", reviewer=name):
+                self.assertIn(
+                    name,
+                    self.example_fallbacks,
+                    f"example reviewer {name} has no fallback chain of its own",
+                )
 
-    def test_no_lane_falls_back_to_a_reviewer_on_its_own_account(self) -> None:
-        # Independence here is about upstream account, not display name:
-        # Claude/Claude2 and Antigravity/Antigravity2 are one account each, so
-        # pairing siblings would buy availability with a self-review.
+    def test_designated_reviewers_form_distinct_independent_pairs_and_reject_self_review(self) -> None:
         for lane, chain in self.fallbacks.items():
-            lane_account = self.account_of.get(lane)
-            self.assertIsNotNone(lane_account, f"lane {lane} has no account")
             for name in chain:
-                with self.subTest(lane=lane, reviewer=name):
-                    self.assertNotEqual(
-                        self.account_of.get(name),
-                        lane_account,
-                        f"lane {lane} may fall back to {name} on the same "
-                        f"account {lane_account}",
-                    )
+                with self.subTest(config="config.json", lane=lane, reviewer=name):
+                    self.assertNotEqual(name, lane, f"lane {lane} must not fall back to itself")
+
+        state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
+        for owner in ("Claude", "Antigravity", "Antigravity2"):
+            with self.subTest(owner=owner):
+                task = task_fixture(owner=owner, reviewer="Codex")
+                self.assertEqual(
+                    supervisor.plan_task_assignment_pair(
+                        self.config, task, state=state, owner_candidates=[owner]
+                    ),
+                    (owner, "Codex"),
+                )
+                self.assertEqual(
+                    supervisor.plan_task_assignment_pair(
+                        self.config,
+                        task,
+                        state=state,
+                        owner_candidates=[owner],
+                        excluded_reviewers={"Codex"},
+                    ),
+                    (owner, "Codex2"),
+                )
+
+        # Codex and Codex2 remain distinct valid independent identities in the main config.
+        probe_cfg = copy.deepcopy(self.config)
+        probe_cfg["worker_reassignment"]["review_only_agents"] = []
+        probe_state = with_healthy_delivery_health(probe_cfg, {"workers": {}, "queue": {"events": {}}})
+        self.assertEqual(
+            supervisor.plan_task_assignment_pair(
+                probe_cfg,
+                task_fixture(owner="Codex", reviewer="Codex"),
+                state=probe_state,
+                owner_candidates=["Codex"],
+            ),
+            ("Codex", "Codex2"),
+        )
+        self.assertEqual(
+            supervisor.plan_task_assignment_pair(
+                probe_cfg,
+                task_fixture(owner="Codex2", reviewer="Codex2"),
+                state=probe_state,
+                owner_candidates=["Codex2"],
+            ),
+            ("Codex2", "Codex"),
+        )
+
+        # In the single-reviewer example config, non-Codex lanes pair with Codex
+        # while Codex has an empty fallback chain and rejects self-review.
+        example_state = with_healthy_delivery_health(
+            self.example_config, {"workers": {}, "queue": {"events": {}}}
+        )
+        for owner in ("Claude", "Copilot"):
+            with self.subTest(example_owner=owner):
+                self.assertEqual(
+                    supervisor.plan_task_assignment_pair(
+                        self.example_config,
+                        task_fixture(owner=owner, reviewer="Codex"),
+                        state=example_state,
+                        owner_candidates=[owner],
+                    ),
+                    (owner, "Codex"),
+                )
+        self.assertEqual(self.example_fallbacks["Codex"], [])
+        self.assertIsNone(
+            supervisor.plan_task_assignment_pair(
+                self.example_config,
+                task_fixture(owner="Codex", reviewer="Codex"),
+                state=example_state,
+                owner_candidates=["Codex"],
+            )
+        )
 
 
 if __name__ == "__main__":

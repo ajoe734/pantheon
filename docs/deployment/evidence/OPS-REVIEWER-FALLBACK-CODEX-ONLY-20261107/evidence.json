@@ -6,11 +6,12 @@
   "reviewer": "Codex",
   "change_class": "cleanup",
   "net_prod_line_budget": 0,
-  "recorded_at": "2026-11-07T19:50:00Z",
+  "recorded_at": "2026-11-07T20:25:00Z",
   "source_identities": {
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
-    "base_commit_sha": "6bf3a5156ff9cf6430289474a717987eadf9b14f",
+    "initial_base_commit_sha": "6bf3a5156ff9cf6430289474a717987eadf9b14f",
+    "base_commit_sha": "9325fb31cfd73db096818e3625280ebd64b3dee1",
     "task_branch": "task/OPS-REVIEWER-FALLBACK-CODEX-ONLY-20261107",
     "plan_source_path": "/tmp/pantheon-goal-continue-20261105/reviewer-fallback-policy-20261107/PLAN.md",
     "plan_committed_path": "docs/operations/reviewer-fallback-policy-20261107.md",
@@ -29,10 +30,25 @@
       "before_sha256": "075a592a5bcd9de5db55a671b108f98b504f550e8339d0a2575262d9fae57d6a",
       "after_git_blob_sha": "7cbc9b918c302c48253657d12761b1ad2af40300",
       "after_sha256": "6ecfb931b1706f5da53b03faba4e5bb6950595f9af28ef5034cf3a80d3834aa3"
+    },
+    "test_supervisor_py": {
+      "path": ".orchestrator/test_supervisor.py",
+      "before_git_blob_sha": "8250ce441c02710ed4d020380e2cda1826af25ac",
+      "before_sha256": "7445fa0fb2e36b7a6b3040d56c9fa8b7ad8957cdd3715b58a705d66c89a05c92",
+      "after_git_blob_sha": "870a44afc2c57c5c31e87dfd7957741072e8516c",
+      "after_sha256": "90476c16554ebb0b2b5b7dfd1fc92ea106dec9ca0365718e4ece100ac6fca1f2"
     }
   },
+  "contract_reconciliation": {
+    "event_id": "ai-status-event-ba5c76c4ed8ab12823430c148db1c6a45b83241da81f2a7e59bd24c6e16653fa",
+    "updated_by": "Human/Ops",
+    "updated_at": "2026-11-07T20:13:53Z",
+    "added_artifact": ".orchestrator/test_supervisor.py",
+    "reason": "Reconcile authorized task artifact scope after Codex review of PR #7045 (482b784914fe6be3d2b1e2942abd6872fe9159b4) so ShippedReviewerFallbackPolicyTests matches the Codex-only/identity-independent/fail-closed reviewer fallback policy in required Smoke acceptance."
+  },
   "changes": {
-    "only_modified_field": "worker_reassignment.reviewer_fallbacks",
+    "only_modified_config_field": "worker_reassignment.reviewer_fallbacks",
+    "updated_policy_test_class": ".orchestrator/test_supervisor.py::ShippedReviewerFallbackPolicyTests",
     "preserved_invariants": [
       "All map roots preserved in both .orchestrator/config.json and .orchestrator/config.example.json",
       "All other config keys/values byte-for-byte and structurally unchanged (owner_fallbacks, review_only_agents, agents, providers, accounts, models, capacities, credentials, health, watchdog, ready_dispatcher, branch_workflow)",
@@ -81,10 +97,16 @@
         "Structural diff check verified zero changes outside worker_reassignment.reviewer_fallbacks in both files"
       ]
     },
+    "shipped_reviewer_fallback_policy_tests": {
+      "pytest_command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -v .orchestrator/test_supervisor.py::ShippedReviewerFallbackPolicyTests",
+      "pytest_summary": "4 passed, 47 subtests passed in 2.49s",
+      "unittest_command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest -v test_supervisor.ShippedReviewerFallbackPolicyTests",
+      "unittest_summary": "Ran 4 tests in 0.034s - OK"
+    },
     "existing_behavior_and_provisioning_tests": {
-      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::ReviewOnlyAgentTests .orchestrator/test_supervisor.py::RuntimeConfigurationContractTests .orchestrator/test_supervisor.py::AccountHealthAndRecoveryContractTests .orchestrator/test_supervisor.py::LoadBalanceReassignmentTests .orchestrator/test_supervisor.py::CanonicalReassignmentGovernanceTests .orchestrator/test_supervisor.py::DurableWorkerRecoveryTests scripts/test_supervisor.py scripts/test_check_config_drift.py scripts/test_provision_live_supervisor_config.py scripts/test_explain_dispatch.py",
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::ShippedReviewerFallbackPolicyTests .orchestrator/test_supervisor.py::ReviewOnlyAgentTests .orchestrator/test_supervisor.py::RuntimeConfigurationContractTests .orchestrator/test_supervisor.py::AccountHealthAndRecoveryContractTests .orchestrator/test_supervisor.py::LoadBalanceReassignmentTests .orchestrator/test_supervisor.py::CanonicalReassignmentGovernanceTests .orchestrator/test_supervisor.py::DurableWorkerRecoveryTests scripts/test_supervisor.py scripts/test_check_config_drift.py scripts/test_provision_live_supervisor_config.py scripts/test_explain_dispatch.py",
       "exit_code": 0,
-      "summary": "220 passed, 36 subtests passed in 81.49s"
+      "summary": "224 passed, 83 subtests passed"
     },
     "bounded_actual_planner_probes": {
       "status": "passed",
@@ -112,9 +134,17 @@
         "Claude_when_Codex_unavailable_fails_closed": null
       }
     },
-    "out_of_scope_legacy_test_observation": {
-      "test_class": ".orchestrator/test_supervisor.py::ShippedReviewerFallbackPolicyTests",
-      "note": "ShippedReviewerFallbackPolicyTests (added under 2026-10-06/2026-10-24 non-Codex fallback policy) asserts test_every_lane_offers_a_reviewer_outside_the_codex_accounts and test_no_lane_falls_back_to_a_reviewer_on_its_own_account against .orchestrator/config.json. Under the operator's Codex/Codex2-only reviewer policy, those two legacy assertions fail as expected; .orchestrator/test_supervisor.py is outside this task's granted 4-file artifact scope."
+    "diff_budget": {
+      "production": {
+        "added": 8,
+        "deleted": 27,
+        "net": -19
+      },
+      "test": {
+        "added": 145,
+        "deleted": 61,
+        "net": 84
+      }
     }
   },
   "runtime_adoption_and_live_status": {
