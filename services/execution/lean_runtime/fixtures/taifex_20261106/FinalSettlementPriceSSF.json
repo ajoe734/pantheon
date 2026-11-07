@@ -1,0 +1,44 @@
+[
+ {
+  "TheFinalSettlementDay": "20261021",
+  "Contract": "CAF",
+  "ContractName": "南亞期貨",
+  "ContractDeliveryMonth": "202610",
+  "TheFinalSettlementPrice": "319.3"
+ },
+ {
+  "TheFinalSettlementDay": "20261021",
+  "Contract": "CDF",
+  "ContractName": "台積電期貨",
+  "ContractDeliveryMonth": "202610",
+  "TheFinalSettlementPrice": "2405.59"
+ },
+ {
+  "TheFinalSettlementDay": "20261021",
+  "Contract": "DHF",
+  "ContractName": "鴻海期貨",
+  "ContractDeliveryMonth": "202610",
+  "TheFinalSettlementPrice": "248.07"
+ },
+ {
+  "TheFinalSettlementDay": "20261021",
+  "Contract": "NYF",
+  "ContractName": "元大台灣50ETF期貨",
+  "ContractDeliveryMonth": "202610",
+  "TheFinalSettlementPrice": "107.91"
+ },
+ {
+  "TheFinalSettlementDay": "20261021",
+  "Contract": "QFF",
+  "ContractName": "小型台積電期貨",
+  "ContractDeliveryMonth": "202610",
+  "TheFinalSettlementPrice": "2405.59"
+ },
+ {
+  "TheFinalSettlementDay": "20261021",
+  "Contract": "SRF",
+  "ContractName": "小型元大台灣50ETF期貨",
+  "ContractDeliveryMonth": "202610",
+  "TheFinalSettlementPrice": "107.91"
+ }
+]
