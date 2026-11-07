@@ -94,6 +94,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 
 _DEFAULT_ROLE = "operator"
+_UNPRIVILEGED_DEFAULT_ROLES = frozenset({"viewer", "view_only"})
 _MFA_PATTERN = re.compile(r"\d{6}")
 _VALID_AUTH_MODES = frozenset({"strict", "permissive"})
 
@@ -677,7 +678,8 @@ def _claims_to_context(
         role_values.extend(_claim_values(_claim_path_value(claims, claim_path)))
 
     mapping = role_map or {}
-    strict_mapping = bool(mapping) and role_map_mode.strip().lower() == "strict"
+    strict_mode = role_map_mode.strip().lower() == "strict"
+    strict_mapping = bool(mapping) and strict_mode
     mapped_roles: list[str] = []
     for role_value in role_values:
         mapped = mapping.get(role_value)
@@ -688,11 +690,19 @@ def _claims_to_context(
 
     roles = frozenset(role.strip() for role in mapped_roles if role and str(role).strip())
     if not roles:
-        roles = (
-            frozenset()
-            if role_claim_seen or (strict_mapping and role_values)
-            else frozenset({default_role})
-        )
+        normalized_default = default_role.strip() if default_role else ""
+        if role_claim_seen or (strict_mapping and role_values):
+            roles = frozenset()
+        elif strict_mode:
+            roles = (
+                frozenset({normalized_default})
+                if normalized_default in _UNPRIVILEGED_DEFAULT_ROLES
+                else frozenset()
+            )
+        elif normalized_default:
+            roles = frozenset({normalized_default})
+        else:
+            roles = frozenset()
 
     mfa_verified = any(
         _claim_indicates_mfa(_claim_path_value(claims, claim_path), mfa_values)
@@ -755,7 +765,8 @@ def validate_request_auth(
     secret = _env(env, "PANTHEON_RUNTIME_JWT_SECRET")
     issuer = _env(env, "PANTHEON_RUNTIME_JWT_ISSUER") or None
     audience = _env(env, "PANTHEON_RUNTIME_JWT_AUDIENCE") or None
-    default_role = _env(env, "PANTHEON_RUNTIME_DEFAULT_ROLE") or _DEFAULT_ROLE
+    explicit_default_role = _env(env, "PANTHEON_RUNTIME_DEFAULT_ROLE")
+    default_role = explicit_default_role or _DEFAULT_ROLE
     role_claims = _split_csv(_env(env, "PANTHEON_RUNTIME_ROLE_CLAIMS", ",".join(_DEFAULT_ROLE_CLAIMS)))
     if not role_claims:
         role_claims = list(_DEFAULT_ROLE_CLAIMS)
@@ -798,7 +809,7 @@ def validate_request_auth(
             _enforce_verified_claim_requirements(claims, env=env)
             ctx = _claims_to_context(
                 claims,
-                default_role=default_role,
+                default_role=explicit_default_role,
                 role_claims=role_claims,
                 role_map=role_map,
                 role_map_mode=role_map_mode,
@@ -818,7 +829,7 @@ def validate_request_auth(
             _enforce_verified_claim_requirements(claims, env=env)
             ctx = _claims_to_context(
                 claims,
-                default_role=default_role,
+                default_role=explicit_default_role,
                 role_claims=role_claims,
                 role_map=role_map,
                 role_map_mode=role_map_mode,
@@ -832,19 +843,21 @@ def validate_request_auth(
                 500,
             )
         elif secret:
+            hs256_dual_path = bool(jwks_uri or oidc_discovery_url) and allow_shared_secret
             claims = _verify_jwt_hs256(
                 token,
                 secret=secret,
                 issuer=issuer,
                 audience=audience,
             )
-            _enforce_verified_claim_requirements(claims, env=env)
+            if not hs256_dual_path:
+                _enforce_verified_claim_requirements(claims, env=env)
             ctx = _claims_to_context(
                 claims,
                 default_role=default_role,
-                role_claims=role_claims,
-                role_map=role_map,
-                role_map_mode=role_map_mode,
+                role_claims=_DEFAULT_ROLE_CLAIMS if hs256_dual_path else role_claims,
+                role_map=None if hs256_dual_path else role_map,
+                role_map_mode="passthrough" if hs256_dual_path else role_map_mode,
                 mfa_claims=mfa_claims,
                 mfa_values=mfa_values,
             )
@@ -911,6 +924,7 @@ def validate_request_auth(
 def require_authn(
     roles: Optional[Sequence[str]] = None,
     mfa_required: bool = False,
+    allow_shared_secret: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Flask decorator: validate Authorization/MFA headers and stash context.
 
@@ -930,6 +944,7 @@ def require_authn(
                     mfa_header=request.headers.get("X-MFA-Token", ""),
                     required_roles=roles,
                     mfa_required=mfa_required,
+                    allow_shared_secret=allow_shared_secret,
                 )
             except AuthError as exc:
                 payload, status = exc.as_response()
