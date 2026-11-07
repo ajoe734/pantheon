@@ -9,6 +9,18 @@ from typing import Any, Optional
 from datetime import datetime, timezone
 from enum import Enum
 import json
+import math
+
+
+TAIFEX_STF_SPEC_URL = "https://www.taifex.com.tw/cht/2/sTF"
+TAIFEX_STF_TICK_AMENDMENT = "台期交字第1150001529號函 (issued 2026-05-26, effective 2026-07-06)"
+TAIFEX_STF_TICK_AMENDMENT_URL = (
+    "https://www.taifex.com.tw/file/taifex/CHINESE/11/attach/"
+    "%E5%8F%B0%E6%9C%9F%E4%BA%A4%E5%AD%97%E7%AC%AC1150001529%E8%99%9F%E5%87%BD.pdf"
+)
+TAIFEX_STF_TICK_SIZE_SOURCE = (
+    f"{TAIFEX_STF_SPEC_URL} ; {TAIFEX_STF_TICK_AMENDMENT} {TAIFEX_STF_TICK_AMENDMENT_URL}"
+)
 
 
 class ContractType(str, Enum):
@@ -124,6 +136,43 @@ class ContractMaster:
             updated_at=data.get("updated_at") or _utc_now_iso(),
         )
 
+    @staticmethod
+    def ssf_tick_size(underlying_kind: Any, price: Any) -> float:
+        """Minimum price fluctuation for TAIFEX single-stock / ETF futures (sTF).
+
+        Official specification: https://www.taifex.com.tw/cht/2/sTF (amended by
+        台期交字第1150001529號函, issued 2026-05-26, effective 2026-07-06).
+        Stock underlying:
+          < 10 -> 0.01; 10 <= p < 50 -> 0.05; 50 <= p < 100 -> 0.1;
+          100 <= p < 500 -> 0.5; 500 <= p < 2500 -> 1.0; >= 2500 -> 5.0.
+        ETF underlying:
+          < 50 -> 0.01; >= 50 -> 0.05.
+        """
+        if price is None or isinstance(price, bool):
+            raise ValueError("settlement_price is required to derive TAIFEX SSF tick_size")
+        try:
+            numeric_price = float(price)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid settlement_price for TAIFEX SSF tick_size: {price!r}") from exc
+        if not math.isfinite(numeric_price) or numeric_price <= 0:
+            raise ValueError(f"settlement_price must be positive to derive TAIFEX SSF tick_size: {price!r}")
+        kind = str(underlying_kind or "").strip().lower()
+        if kind == "etf":
+            return 0.01 if numeric_price < 50.0 else 0.05
+        if kind == "stock":
+            if numeric_price < 10.0:
+                return 0.01
+            if numeric_price < 50.0:
+                return 0.05
+            if numeric_price < 100.0:
+                return 0.1
+            if numeric_price < 500.0:
+                return 0.5
+            if numeric_price < 2500.0:
+                return 1.0
+            return 5.0
+        raise ValueError(f"Unsupported underlying_kind for TAIFEX SSF tick_size: {underlying_kind!r}")
+
     @classmethod
     def from_ssf_normalized_row(cls, row: dict[str, Any]) -> "ContractMaster":
         """Build the master record for one ``taifex_ssf_contracts`` normalized row.
@@ -132,9 +181,10 @@ class ContractMaster:
         normalised security code; ``multiplier`` is the contract unit. Rate-based
         margins are ``portfolio`` margin type, fixed amounts are ``fixed``. The
         margin figures, the latest regular session settlement price and its date
-        go to ``metadata_json``. ``tick_size`` is not provided by any of the five
-        official sources read, so the placeholder 0.01 is recorded with
-        ``tick_size_source = "not_sourced"``.
+        go to ``metadata_json``. ``tick_size`` is derived from ``underlying_kind``
+        and ``settlement_price`` per the official TAIFEX ``sTF`` price-tier rules
+        (``https://www.taifex.com.tw/cht/2/sTF``, amended by 台期交字第1150001529號函
+        issued 2026-05-26 / effective 2026-07-06) and recorded in ``tick_size_source``.
         """
         fixed = row.get("margin_mode") == "fixed"
         margin = (
@@ -152,6 +202,7 @@ class ContractMaster:
             }
         )
         stamp = row.get("available_time") or _utc_now_iso()
+        tick_size = cls.ssf_tick_size(row.get("underlying_kind"), row.get("settlement_price"))
         return cls(
             contract_id=f"ssf:{row['contract']}:{row['contract_month']}",
             underlying_id=str(row["underlying_code"]),
@@ -160,7 +211,7 @@ class ContractMaster:
             contract_type=ContractType.FUTURE.value,
             expiry=str(row["last_trading_day"]),
             multiplier=float(row["unit"]),
-            tick_size=0.01,
+            tick_size=tick_size,
             settlement_type=SettlementType.CASH.value,
             margin_type=MarginType.FIXED.value if fixed else MarginType.PORTFOLIO.value,
             metadata_json={
@@ -178,7 +229,7 @@ class ContractMaster:
                 "volume": row.get("volume"),
                 "open_interest": row.get("open_interest"),
                 "last_trading_day_basis": row.get("last_trading_day_basis"),
-                "tick_size_source": "not_sourced",
+                "tick_size_source": TAIFEX_STF_TICK_SIZE_SOURCE,
             },
             created_at=stamp,
             updated_at=stamp,
@@ -213,8 +264,28 @@ class ContractMaster:
             errors.append("Missing expiry")
         if contract.multiplier is None or contract.multiplier <= 0:
             errors.append("Invalid multiplier: must be positive")
-        if contract.tick_size is None or contract.tick_size <= 0:
+        if (
+            contract.tick_size is None
+            or isinstance(contract.tick_size, bool)
+            or not math.isfinite(contract.tick_size)
+            or contract.tick_size <= 0
+        ):
             errors.append("Invalid tick_size: must be positive")
+        elif isinstance(contract.metadata_json, dict) and contract.metadata_json.get("dataset") == "taifex_ssf_contracts":
+            if contract.metadata_json.get("tick_size_source") in (None, "", "not_sourced"):
+                errors.append("Invalid tick_size_source for TAIFEX SSF contract: official source required")
+            try:
+                expected_tick = ContractMaster.ssf_tick_size(
+                    contract.metadata_json.get("underlying_kind"),
+                    contract.metadata_json.get("settlement_price"),
+                )
+            except ValueError as exc:
+                errors.append(f"Invalid TAIFEX SSF tick_size inputs: {exc}")
+            else:
+                if contract.tick_size != expected_tick:
+                    errors.append(
+                        f"Invalid tick_size for TAIFEX SSF contract: got {contract.tick_size}, expected {expected_tick}"
+                    )
         if contract.option_right is not None and contract.option_right not in {item.value for item in OptionRight}:
             errors.append(f"Invalid option_right: {contract.option_right}")
         if contract.settlement_type not in {item.value for item in SettlementType}:

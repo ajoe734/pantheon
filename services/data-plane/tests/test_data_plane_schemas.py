@@ -298,19 +298,83 @@ class TestContractMasterFromSsfDataset(unittest.TestCase):
         con = self.masters["ssf:QFF:202611"]
         self.assertEqual((con.underlying_id, con.market, con.venue), ("2330", "TW", "TAIFEX"))
         self.assertEqual((con.contract_type, con.settlement_type, con.margin_type), ("future", "cash", "portfolio"))
-        self.assertEqual((con.multiplier, con.expiry), (100.0, "2026-11-18"))
+        self.assertEqual((con.multiplier, con.expiry, con.tick_size), (100.0, "2026-11-18", 1.0))
+        self.assertEqual(self.masters["ssf:CDF:202611"].tick_size, 1.0)
+        self.assertEqual(self.masters["ssf:DHF:202611"].tick_size, 0.5)
         meta = con.metadata_json
         self.assertEqual(meta["initial_margin_rate"], 0.135)
         self.assertEqual(meta["maintenance_margin_rate"], 0.1035)
         self.assertEqual((meta["settlement_price"], meta["settlement_price_date"]), (2133.0, "2026-11-06"))
-        self.assertEqual(meta["tick_size_source"], "not_sourced")
+        self.assertEqual(meta["tick_size_source"], contract_master_mod.TAIFEX_STF_TICK_SIZE_SOURCE)
+        self.assertIn("https://www.taifex.com.tw/cht/2/sTF", meta["tick_size_source"])
+        self.assertIn("1150001529", meta["tick_size_source"])
+        self.assertIn("2026-07-06", meta["tick_size_source"])
 
     def test_fixed_margin_contract(self):
         con = self.masters["ssf:SRF:202611"]
-        self.assertEqual((con.underlying_id, con.multiplier, con.margin_type), ("0050", 1000.0, "fixed"))
+        self.assertEqual((con.underlying_id, con.multiplier, con.margin_type, con.tick_size), ("0050", 1000.0, "fixed", 0.05))
         self.assertEqual(con.metadata_json["initial_margin_amount"], 8700.0)
-        self.assertEqual(self.masters["ssf:NYF:202611"].multiplier, 10000.0)
-        self.assertEqual(self.masters["ssf:CDF:202611"].multiplier, 2000.0)
+        self.assertEqual((self.masters["ssf:NYF:202611"].multiplier, self.masters["ssf:NYF:202611"].tick_size), (10000.0, 0.05))
+        self.assertEqual((self.masters["ssf:CDF:202611"].multiplier, self.masters["ssf:CDF:202611"].tick_size), (2000.0, 1.0))
+
+    def test_ssf_tick_size_price_tiers_and_validation(self):
+        base_stock = dict(next(r for r in self.rows if r["contract"] == "QFF" and r["contract_month"] == "202611"))
+        stock_cases = (
+            (0.01, 0.01),
+            (9.99, 0.01),
+            (10.0, 0.05),
+            (49.95, 0.05),
+            (50.0, 0.1),
+            (99.9, 0.1),
+            (100.0, 0.5),
+            (225.0, 0.5),
+            (499.5, 0.5),
+            (500.0, 1.0),
+            (2133.0, 1.0),
+            (2499.0, 1.0),
+            (2500.0, 5.0),
+            (3000.0, 5.0),
+        )
+        for price, expected_tick in stock_cases:
+            self.assertEqual(ContractMaster.ssf_tick_size("stock", price), expected_tick)
+            con = ContractMaster.from_ssf_normalized_row({**base_stock, "settlement_price": price})
+            self.assertEqual(con.tick_size, expected_tick)
+            valid, errors = ContractMaster.validate(con)
+            self.assertTrue(valid, errors)
+
+        base_etf = dict(next(r for r in self.rows if r["contract"] == "SRF" and r["contract_month"] == "202611"))
+        etf_cases = (
+            (0.01, 0.01),
+            (49.99, 0.01),
+            (50.0, 0.05),
+            (92.35, 0.05),
+            (200.0, 0.05),
+        )
+        for price, expected_tick in etf_cases:
+            self.assertEqual(ContractMaster.ssf_tick_size("etf", price), expected_tick)
+            con = ContractMaster.from_ssf_normalized_row({**base_etf, "settlement_price": price})
+            self.assertEqual(con.tick_size, expected_tick)
+            valid, errors = ContractMaster.validate(con)
+            self.assertTrue(valid, errors)
+
+        for bad_kind, bad_price in (("stock", None), ("stock", 0), ("stock", -10), ("stock", True), ("option", 100.0), ("", 100.0)):
+            with self.assertRaises(ValueError):
+                ContractMaster.ssf_tick_size(bad_kind, bad_price)
+
+        wrong_tick = ContractMaster.from_dict({**self.masters["ssf:QFF:202611"].to_dict(), "tick_size": 0.01})
+        valid, errors = ContractMaster.validate(wrong_tick)
+        self.assertFalse(valid)
+        self.assertTrue(any("expected 1.0" in e for e in errors), errors)
+
+        unsourced = ContractMaster.from_dict(
+            {
+                **self.masters["ssf:QFF:202611"].to_dict(),
+                "metadata_json": {**self.masters["ssf:QFF:202611"].metadata_json, "tick_size_source": "not_sourced"},
+            }
+        )
+        valid, errors = ContractMaster.validate(unsourced)
+        self.assertFalse(valid)
+        self.assertTrue(any("tick_size_source" in e for e in errors), errors)
 
     def test_every_record_validates_and_matches_the_schema(self):
         self.assertGreater(len(self.masters), 10)
