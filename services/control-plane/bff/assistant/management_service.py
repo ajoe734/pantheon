@@ -1229,6 +1229,8 @@ _extract_identity = auth_policy.extract_identity
 _require_read_role = auth_policy.require_read_role
 _bff_error = auth_policy.bff_error
 from ..command_adapters.contracts import resolve_final_idempotency_key as _resolve_final_idempotency_key  # noqa: E402,F401  re-export for existing callers
+
+
 _first_nonblank = auth_policy.first_nonblank
 _capabilities_for_identity = auth_policy.capabilities_for_identity
 from ..models import redact_evidence_refs
@@ -1295,11 +1297,23 @@ def set_read_store(store: Optional[Any]) -> None:
     global _MANAGEMENT_AI_CONTEXT_SERVICE
     if _MANAGEMENT_AI_CONTEXT_SERVICE is not None and hasattr(_MANAGEMENT_AI_CONTEXT_SERVICE, "_get_read_store"):
         _MANAGEMENT_AI_CONTEXT_SERVICE._get_read_store = (lambda: store) if store is not None else get_read_store
+    if _CONTROL_LOOPS_SERVICE is not None and hasattr(_CONTROL_LOOPS_SERVICE, "read_store"):
+        _CONTROL_LOOPS_SERVICE.read_store = (
+            store
+            if store is not None
+            else (_CONTROL_LOOPS_SERVICE_ORIG_READ_STORE if _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE is not None else read_store)
+        )
 
 
 def reset_read_store() -> None:
     global _READ_STORE
     _READ_STORE = None
+    if _CONTROL_LOOPS_SERVICE is not None and hasattr(_CONTROL_LOOPS_SERVICE, "read_store"):
+        _CONTROL_LOOPS_SERVICE.read_store = (
+            _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE
+            if _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE is not None
+            else read_store
+        )
 
 
 class _ReadStoreProxy:
@@ -1762,12 +1776,22 @@ _REMAINING_MAIN_HELPERS = [
 ]
 
 
-_MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
+_MGMT_NL_VALID_FOCUS = {
+    "cockpit",
+    "trading_pulse",
+    "portfolio",
+    "persona_fleet",
+    "loop_health",
+    "all",
+}
 _MGMT_NL_FOCUS_ALIASES = {
     "persona": "persona_fleet",
     "personas": "persona_fleet",
     "runtime": "trading_pulse",
     "runtimes": "trading_pulse",
+    "loop": "loop_health",
+    "loops": "loop_health",
+    "loop-health": "loop_health",
 }
 _MGMT_NL_MAX_QUESTION_BYTES = 2048
 _MGMT_NL_MAX_RECENT_TURNS = 12
@@ -2108,6 +2132,41 @@ def reset_assistant_control_mode_store() -> None:
 
 def _mgmt_nl_control_store() -> Optional[Any]:
     return get_assistant_control_mode_store()
+
+
+_CONTROL_LOOPS_SERVICE: Optional[Any] = None
+_CONTROL_LOOPS_SERVICE_ORIG_READ_STORE: Optional[Any] = None
+
+
+def get_control_loops_service() -> Any:
+    if _CONTROL_LOOPS_SERVICE is not None:
+        return _CONTROL_LOOPS_SERVICE
+    from ..control_loops.service import ControlLoopsService
+
+    return ControlLoopsService(
+        read_store=get_read_store(),
+        utc_now_fn=utc_now,
+        bff_error_fn=_bff_error,
+    )
+
+
+def set_control_loops_service(service: Optional[Any]) -> None:
+    global _CONTROL_LOOPS_SERVICE, _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE
+    _CONTROL_LOOPS_SERVICE = service
+    _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE = getattr(service, "read_store", None) if service is not None else None
+    if _READ_STORE is not None and service is not None and hasattr(service, "read_store"):
+        service.read_store = _READ_STORE
+
+
+def reset_control_loops_service() -> None:
+    global _CONTROL_LOOPS_SERVICE, _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE
+    if _CONTROL_LOOPS_SERVICE is not None and _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE is not None:
+        try:
+            _CONTROL_LOOPS_SERVICE.read_store = _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE
+        except Exception:
+            pass
+    _CONTROL_LOOPS_SERVICE = None
+    _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE = None
 
 
 _MANAGEMENT_AI_CONTEXT_SERVICE: Optional[Any] = None
@@ -2987,6 +3046,7 @@ def wire_management_runtime_projections(
     assistant_collect_source: Optional[Callable[..., Any]] = None,
     agora_audit_store: Optional[Any] = None,
     assistant_control_mode_store: Optional[Any] = None,
+    control_loops_service: Optional[Any] = None,
     sse_buffers: Optional[Dict[str, deque]] = None,
     sse_subscribers: Optional[Dict[str, list]] = None,
 ) -> None:
@@ -3029,6 +3089,8 @@ def wire_management_runtime_projections(
         set_agora_audit_store(agora_audit_store)
     if assistant_control_mode_store is not None:
         set_assistant_control_mode_store(assistant_control_mode_store)
+    if control_loops_service is not None:
+        set_control_loops_service(control_loops_service)
     if sse_buffers is not None:
         register_sse_buffers(sse_buffers, sse_subscribers)
 
@@ -4376,7 +4438,278 @@ def _mgmt_nl_merge_owner_observations(
     merged["degradation_reason"] = "; ".join(dict.fromkeys(degradation_reasons)) or worst.get("degradation_reason")
     merged["contributing_observations"] = present
     return merged
-def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+
+
+_MGMT_NL_LOOP_HEALTH_TIMEOUT_DEFAULT_SECONDS = 2.0
+_MGMT_NL_LOOP_HEALTH_PREFETCH: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "mgmt_nl_loop_health_prefetch",
+    default=None,
+)
+
+
+def _mgmt_nl_loop_health_timeout_seconds() -> float:
+    for env_name in (
+        "PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_LOOP_HEALTH_READ_TIMEOUT_SECONDS",
+    ):
+        raw = os.getenv(env_name)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        return min(10.0, max(0.02, value))
+    return _MGMT_NL_LOOP_HEALTH_TIMEOUT_DEFAULT_SECONDS
+
+
+def _mgmt_nl_requested_environment(payload: Optional[Mapping[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, Mapping):
+        return None
+    direct = str(payload.get("environment") or "").strip()
+    if direct:
+        return direct
+    ui = payload.get("ui")
+    if isinstance(ui, Mapping):
+        filters = ui.get("filters")
+        if isinstance(filters, Mapping):
+            filtered = str(filters.get("environment") or "").strip()
+            if filtered:
+                return filtered
+    return None
+
+
+def _mgmt_nl_loop_health_unavailable(
+    reason: str,
+    *,
+    message: Optional[str] = None,
+    compact_rows: Optional[List[Dict[str, Any]]] = None,
+    by_live_status: Optional[Dict[str, int]] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    rows = [dict(row) for row in (compact_rows or []) if isinstance(row, Mapping)]
+    counts = dict(by_live_status or {})
+    surface: Dict[str, Any] = {
+        "status": "unavailable",
+        "source": "control_loops_service",
+        "reason": reason,
+    }
+    if message:
+        surface["message"] = message
+    snippet: Dict[str, Any] = {
+        "status": "unavailable",
+        "total": len(rows),
+        "accepted": 0,
+        "by_live_status": counts,
+        "items": rows,
+    }
+    if rows and len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) > 8192:
+        orig_summaries = [str(row.get("summary") or "") for row in rows]
+        low, high = 0, 200
+        while low < high:
+            mid = (low + high + 1) // 2
+            for row, orig in zip(rows, orig_summaries):
+                row["summary"] = orig[:mid]
+            if len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) <= 8192:
+                low = mid
+            else:
+                high = mid - 1
+        for row, orig in zip(rows, orig_summaries):
+            row["summary"] = orig[:low]
+    return snippet, surface
+
+
+def _mgmt_nl_compact_loop_health_row(item: Mapping[str, Any]) -> Dict[str, Any]:
+    controller_health = (
+        item.get("controller_health")
+        if isinstance(item.get("controller_health"), Mapping)
+        else {}
+    )
+    downstream = (
+        item.get("downstream_actual_state")
+        if isinstance(item.get("downstream_actual_state"), Mapping)
+        else {}
+    )
+    accepted = bool(controller_health.get("current_record_accepted"))
+    downstream_status = str(downstream.get("status") or "unobserved").strip() or "unobserved"
+    controller_status = str(controller_health.get("status") or "unobserved").strip() or "unobserved"
+    raw_live_status = item.get("live_status")
+    if isinstance(raw_live_status, str) and raw_live_status.strip():
+        live_status = raw_live_status.strip()
+    elif accepted:
+        live_status = (
+            downstream_status
+            if downstream_status not in {"", "unobserved", "unknown"}
+            else controller_status
+        )
+    else:
+        live_status = (
+            controller_status
+            if controller_status not in {"", "healthy", "ok", "ready"}
+            else "unobserved"
+        )
+    raw_summary = downstream.get("summary")
+    summary = str(raw_summary)[:200] if raw_summary is not None else ""
+    return {
+        "loop_id": str(item.get("loop_id") or item.get("id") or ""),
+        "live_status": live_status,
+        "current_record_accepted": accepted,
+        "status": downstream_status,
+        "summary": summary,
+    }
+
+
+def _mgmt_nl_project_loop_health_outcome(outcome: Mapping[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    kind = str(outcome.get("kind") or "error")
+    if kind != "ok":
+        return _mgmt_nl_loop_health_unavailable(
+            str(outcome.get("reason") or "read_error"),
+            message=str(outcome.get("message") or "") or None,
+        )
+    payload = outcome.get("payload")
+    if not isinstance(payload, Mapping):
+        return _mgmt_nl_loop_health_unavailable("read_error", message="Loop health payload is invalid.")
+    meta = payload.get("meta") if isinstance(payload.get("meta"), Mapping) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), Mapping) else {}
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        raw_items = data.get("items") if isinstance(data.get("items"), list) else []
+    compact_rows = [
+        _mgmt_nl_compact_loop_health_row(item)
+        for item in raw_items
+        if isinstance(item, Mapping)
+    ]
+    by_live_status: Dict[str, int] = {}
+    accepted_count = 0
+    for row in compact_rows:
+        status_key = str(row.get("live_status") or "unobserved").strip() or "unobserved"
+        by_live_status[status_key] = by_live_status.get(status_key, 0) + 1
+        if row.get("current_record_accepted") is True:
+            accepted_count += 1
+    total = len(compact_rows)
+    coverage = meta.get("coverage") if isinstance(meta.get("coverage"), Mapping) else {}
+    meta_surfaces = meta.get("surfaces") if isinstance(meta.get("surfaces"), Mapping) else {}
+    route_surface = (
+        meta_surfaces.get("loop_health")
+        if isinstance(meta_surfaces.get("loop_health"), Mapping)
+        else {}
+    )
+    if "controller_health_records_available" in coverage:
+        records_available = bool(coverage.get("controller_health_records_available"))
+    elif "controller_health_records_available" in meta:
+        records_available = bool(meta.get("controller_health_records_available"))
+    else:
+        records_available = str(route_surface.get("source") or "") not in {"", "missing"}
+    if (
+        not records_available
+        or str(route_surface.get("status") or "") == "unavailable"
+        or str(route_surface.get("source") or "") == "missing"
+    ):
+        return _mgmt_nl_loop_health_unavailable(
+            "controller_health_store_unavailable",
+            message=str(route_surface.get("note") or "") or None,
+            compact_rows=compact_rows,
+            by_live_status=by_live_status,
+        )
+    if "accepted_live" in route_surface:
+        accepted_live = bool(route_surface.get("accepted_live"))
+    else:
+        live_status_block = data.get("live_status") if isinstance(data.get("live_status"), Mapping) else {}
+        accepted_live = bool(live_status_block.get("accepted_live"))
+    if accepted_live and total > 0 and accepted_count == total:
+        surface_status = "ok"
+    else:
+        surface_status = "degraded"
+    surface: Dict[str, Any] = {
+        "status": surface_status,
+        "source": str(route_surface.get("source") or "controller_store"),
+        "accepted_live": accepted_live,
+    }
+    if route_surface.get("note"):
+        surface["note"] = route_surface.get("note")
+    snippet: Dict[str, Any] = {
+        "status": surface_status,
+        "total": total,
+        "accepted": accepted_count,
+        "by_live_status": by_live_status,
+        "items": compact_rows,
+    }
+    if compact_rows and len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) > 8192:
+        orig_summaries = [str(row.get("summary") or "") for row in compact_rows]
+        low, high = 0, 200
+        while low < high:
+            mid = (low + high + 1) // 2
+            for row, orig in zip(compact_rows, orig_summaries):
+                row["summary"] = orig[:mid]
+            if len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) <= 8192:
+                low = mid
+            else:
+                high = mid - 1
+        for row, orig in zip(compact_rows, orig_summaries):
+            row["summary"] = orig[:low]
+    return snippet, surface
+
+
+async def _mgmt_nl_prefetch_loop_health(
+    identity: Any,
+    *,
+    requested_tenant: Optional[str] = None,
+    requested_environment: Optional[str] = None,
+) -> Dict[str, Any]:
+    timeout_s = _mgmt_nl_loop_health_timeout_seconds()
+    try:
+        service = get_control_loops_service()
+        coro = service.loop_health(
+            identity,
+            requested_tenant=requested_tenant,
+            requested_environment=requested_environment,
+        )
+        payload = await asyncio.wait_for(coro, timeout=timeout_s)
+        return {"kind": "ok", "payload": payload}
+    except asyncio.TimeoutError:
+        return {
+            "kind": "error",
+            "reason": "read_timeout",
+            "message": f"Loop health read timed out after {timeout_s:.2f}s.",
+        }
+    except HTTPException as exc:
+        reason = "caller_out_of_scope" if int(getattr(exc, "status_code", 500) or 500) in {401, 403} else "read_error"
+        return {
+            "kind": "error",
+            "reason": reason,
+            "message": str(getattr(exc, "detail", exc)),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "kind": "error",
+            "reason": "read_error",
+            "message": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _mgmt_nl_collect_loop_health(
+    *,
+    loop_health_outcome: Optional[Mapping[str, Any]] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    outcome = (
+        loop_health_outcome
+        if loop_health_outcome is not None
+        else _MGMT_NL_LOOP_HEALTH_PREFETCH.get()
+    )
+    if not isinstance(outcome, Mapping):
+        return _mgmt_nl_loop_health_unavailable(
+            "missing_prefetched_loop_health",
+            message="Loop health requires an authenticated prefetched outcome from ControlLoopsService.loop_health.",
+        )
+    return _mgmt_nl_project_loop_health_outcome(outcome)
+
+
+def _mgmt_nl_collect_context(
+    focus: str,
+    snapshot_at: str,
+    tenant_id: Optional[str] = None,
+    *,
+    loop_health_outcome: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
     """Collect management summary context for the requested focus surface(s).
 
     BFF-B6-001-SEC-FIX: accepts optional tenant_id to scope retrieved data.
@@ -4686,6 +5019,25 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
         except Exception:
             surfaces["persona_fleet"] = {"status": "unavailable", "source": "error"}
 
+    if use_all or focus == "loop_health":
+        loop_health_collector = globals().get("_mgmt_nl_collect_loop_health")
+        if callable(loop_health_collector):
+            try:
+                loop_snippet, loop_surface = loop_health_collector(
+                    loop_health_outcome=loop_health_outcome,
+                )
+            except Exception as exc:  # noqa: BLE001
+                loop_snippet, loop_surface = _mgmt_nl_loop_health_unavailable(
+                    "read_error",
+                    message=f"{type(exc).__name__}: {exc}",
+                )
+            snippets["loop_health"] = loop_snippet
+            surfaces["loop_health"] = loop_surface
+            for row in loop_snippet.get("items") or []:
+                if isinstance(row, dict) and row.get("loop_id"):
+                    _mgmt_nl_add_entity(evidence_entities, "control_loop", row.get("loop_id"))
+            evidence_source_types.add("loop_health")
+
     return {
         "snippets": snippets,
         "surfaces": surfaces,
@@ -4703,6 +5055,7 @@ def _mgmt_nl_synthesize_answer(question: str, snippets: Dict[str, Any], focus: s
     pulse = snippets.get("trading_pulse") or {}
     portfolio = snippets.get("portfolio") or {}
     fleet = snippets.get("persona_fleet") or {}
+    loop_health = snippets.get("loop_health")
 
     if cockpit:
         alerts = cockpit.get("alerts_summary") or {}
@@ -4743,6 +5096,17 @@ def _mgmt_nl_synthesize_answer(question: str, snippets: Dict[str, Any], focus: s
         total = fleet.get("total")
         if total is not None:
             parts.append(f"Persona fleet size: {total}.")
+
+    if isinstance(loop_health, dict):
+        if loop_health.get("status") == "unavailable":
+            parts.append("Loop health cannot be determined because the loop health surface is unavailable.")
+        elif loop_health.get("total") is not None and loop_health.get("accepted") is not None:
+            parts.append(
+                f"Loop health: {int(loop_health['accepted'])}/{int(loop_health['total'])} "
+                f"canonical loops accepted ({int(loop_health['accepted'])} of {int(loop_health['total'])})."
+            )
+    elif focus == "loop_health":
+        parts.append("Loop health cannot be determined because the loop health surface is unavailable.")
 
     if not parts:
         return (
@@ -6539,9 +6903,26 @@ async def _bff_management_nl_ask_impl(
     # the single-worker BFF that blocks the event loop for seconds per request;
     # run it in a worker thread so concurrent requests (and the FE-BFF gate's
     # nl/ask burst) are not starved.
-    context_bundle = await asyncio.to_thread(
-        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
-    )
+    prefetch_token = None
+    if focus in ("all", "", "loop_health"):
+        prefetched_loop_health = await _mgmt_nl_prefetch_loop_health(
+            identity,
+            requested_tenant=_first_nonblank(
+                payload.get("tenant_id"),
+                payload.get("tenantId"),
+                x_tenant_id,
+                x_pantheon_tenant,
+            ),
+            requested_environment=_mgmt_nl_requested_environment(payload),
+        )
+        prefetch_token = _MGMT_NL_LOOP_HEALTH_PREFETCH.set(prefetched_loop_health)
+    try:
+        context_bundle = await asyncio.to_thread(
+            _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
+        )
+    finally:
+        if prefetch_token is not None:
+            _MGMT_NL_LOOP_HEALTH_PREFETCH.reset(prefetch_token)
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
     evidence_entities = context_bundle.get("evidence_entities") or set()
@@ -6993,9 +7374,26 @@ async def _bff_management_nl_ask_stream_impl(
         session_id=session_id,
         client_hint=_mgmt_nl_normalize_conversation_context(payload.get("conversation")),
     )
-    context_bundle = await asyncio.to_thread(
-        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
-    )
+    prefetch_token = None
+    if focus in ("all", "", "loop_health"):
+        prefetched_loop_health = await _mgmt_nl_prefetch_loop_health(
+            identity,
+            requested_tenant=_first_nonblank(
+                payload.get("tenant_id"),
+                payload.get("tenantId"),
+                x_tenant_id,
+                x_pantheon_tenant,
+            ),
+            requested_environment=_mgmt_nl_requested_environment(payload),
+        )
+        prefetch_token = _MGMT_NL_LOOP_HEALTH_PREFETCH.set(prefetched_loop_health)
+    try:
+        context_bundle = await asyncio.to_thread(
+            _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
+        )
+    finally:
+        if prefetch_token is not None:
+            _MGMT_NL_LOOP_HEALTH_PREFETCH.reset(prefetch_token)
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
     confidence = _mgmt_nl_surface_confidence(surfaces)
