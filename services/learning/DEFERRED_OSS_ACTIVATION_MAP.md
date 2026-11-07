@@ -308,7 +308,8 @@ RLlib/Tune activation lane.
   online sync smoke container.
 - `services/registry/experiments/config.py` now defines `EXPERIMENT_BACKEND` as an env-var
   selector (default `"mlflow"`). `"wandb"` offline/dryrun mode is accepted only when
-  `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` is set. Online mode requires
+  `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` is set (legacy
+  `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` remains a compatibility alias). Online mode requires
   `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1` plus a test W&B project and `WANDB_API_KEY`.
 - `services/registry/experiments/adapter.py` exposes `RegistryExperimentAdapter` with an
   `ExperimentBackend` protocol, backend factory wiring, an offline `OfflineWandbLocalBackend`,
