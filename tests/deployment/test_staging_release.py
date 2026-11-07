@@ -4077,6 +4077,34 @@ class StagingControllerLifecycleTests(unittest.TestCase):
         self._unlock_vm_env_dir()
         baseline_dep.write_text(json.dumps(original_dep, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    def test_baseline_fe_verify_keeps_dotfile_member_names(self) -> None:
+        # "./.prepared-receipt.json" must map to ".prepared-receipt.json", not "prepared-receipt.json"
+        # (str.lstrip("./") strips a character set rather than a prefix).
+        import importlib.machinery
+        import importlib.util
+
+        loader = importlib.machinery.SourceFileLoader("collector_mod_dotfile", str(COLLECTOR_SCRIPT))
+        spec = importlib.util.spec_from_loader("collector_mod_dotfile", loader)
+        assert spec is not None
+        collector_mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(collector_mod)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            target = tmp_path / "release"
+            target.mkdir()
+            files = {"./.prepared-receipt.json": b"{}\n", "./index.html": b"<html></html>\n"}
+            tarball = tmp_path / "fe.tar.gz"
+            with tarfile.open(tarball, "w:gz") as tf:
+                for name, data in files.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    tf.addfile(info, io.BytesIO(data))
+                    (target / name[2:]).write_bytes(data)
+            collector_mod._verify_unpacked_tarball_matches_dir(tarball, target)
+            (target / ".prepared-receipt.json").unlink()
+            with self.assertRaises(SystemExit):
+                collector_mod._verify_unpacked_tarball_matches_dir(tarball, target)
+
     def test_deploy_host_renders_and_ships_migration_material_and_fails_closed_on_manifest_mismatch(self) -> None:
         # 2. staging_ops.sh renders migration-spec.json + migrations/*.sql via prod_preflight.py
         # migration render into the bundle and bootstrap.sh installs them under
