@@ -1008,7 +1008,7 @@ class DomainGovernancePort:
         assigned a tenant); rows bound to another tenant are hidden. Raises on
         unconfigured owner, missing caller auth, transport error or bad payload.
         """
-        from services.control_plane.bff.command_adapters.base import governance_url, http_request_json
+        from services.control_plane.bff.command_adapters.base import governance_approval_url, http_request_json
         from services.control_plane.bff.core.owner_reads import (
             authorization,
             remaining_management_read_budget,
@@ -1020,7 +1020,8 @@ class DomainGovernancePort:
             raise RuntimeError("Governance owner read requires caller authorization")
         token = auth.removeprefix("Bearer ").strip()
         tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
-        url = governance_url(self._OWNER_PATHS[dataset])
+        # Same canonical owner resolver as the approval/Freeze writer.
+        url = governance_approval_url(self._OWNER_PATHS[dataset])
 
         def _load() -> Tuple[List[Dict[str, Any]], int]:
             rem = remaining_management_read_budget()
@@ -1044,6 +1045,13 @@ class DomainGovernancePort:
 
         return cached_owner_call(("governance_owner_records", dataset, url, token, tenant), _load)
 
+    def read_rollbacks_strict(self, runtime_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Canonical rollback rows; raises when the owner read fails (never a false-healthy empty)."""
+        if not self._rollback_owner_reads:
+            return self.list_all_rollbacks(runtime_id=runtime_id)
+        rows = list(self._owner_scoped_records("all_rollbacks")[0])
+        return [r for r in rows if not runtime_id or r.get("runtime_id") == runtime_id]
+
     def _owner_rows_or_empty(self, dataset: str) -> List[Dict[str, Any]]:
         # Journal callers cannot tolerate a raise; the failure is cached for the
         # request and reported by dataset_source, never as a healthy zero.
@@ -1061,7 +1069,7 @@ class DomainGovernancePort:
         from services.control_plane.bff.command_adapters.base import get_base_url
 
         try:
-            get_base_url("PANTHEON_GOVERNANCE_API_URL", "PANTHEON_GOVERNANCE_APPROVAL_API_URL")
+            get_base_url("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "PANTHEON_GOVERNANCE_SERVICE_URL")
         except RuntimeError:
             return "missing"
         try:

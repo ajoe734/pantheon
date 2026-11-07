@@ -886,7 +886,7 @@ class _GovOwner:
         from services.control_plane.bff.core import owner_reads
 
         self.calls: List[Dict[str, Any]] = []
-        monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://governance.test")
+        monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
         monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: tenant)
 
         def _get_json(url, auth_token=None, mfa_token=None, tenant_id=None, timeout=None):
@@ -946,8 +946,8 @@ def test_default_port_healthy_empty_vs_error_vs_unconfigured(monkeypatch):
     port = _journal_port()
     token, authorization, scope = _with_caller()
     try:
-        monkeypatch.delenv("PANTHEON_GOVERNANCE_API_URL", raising=False)
-        monkeypatch.delenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", raising=False)
+        for env in ("PANTHEON_GOVERNANCE_API_URL", "PANTHEON_GOVERNANCE_APPROVAL_API_URL", "PANTHEON_GOVERNANCE_SERVICE_URL"):
+            monkeypatch.delenv(env, raising=False)
         assert port.list_freeze_orders() == []
         assert port.dataset_source("freeze_orders") == "missing"
 
@@ -976,3 +976,35 @@ def test_default_port_requires_caller_authorization(monkeypatch):
 def test_injected_store_mode_unchanged():
     port = DomainGovernancePort(freeze_orders={"f": {"freeze_order_id": "f"}})
     assert [o["freeze_order_id"] for o in port.list_freeze_orders()] == ["f"]
+
+
+def test_default_port_uses_canonical_owner_url_not_legacy_alias(monkeypatch):
+    owner = _GovOwner(monkeypatch, {
+        "freeze-orders": [{"freeze_order_id": "f-own", "tenant_id": "t-own"}],
+        "rollbacks": [{"rollback_id": "r-own", "tenant_id": "t-own", "runtime_id": "rt1"}],
+    })
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://evolution.test")
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            assert [o["freeze_order_id"] for o in port.list_freeze_orders()] == ["f-own"]
+            assert port.dataset_source("freeze_orders") == "service"
+    finally:
+        authorization.reset(token)
+    assert owner.calls and all(c["url"].startswith("http://governance.test/") for c in owner.calls)
+
+
+def test_default_port_service_url_only_is_configured(monkeypatch):
+    owner = _GovOwner(monkeypatch, {"freeze-orders": [{"freeze_order_id": "f", "tenant_id": "t-own"}], "rollbacks": []})
+    monkeypatch.delenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_SERVICE_URL", "http://svc.test")
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            assert [o["freeze_order_id"] for o in port.list_freeze_orders()] == ["f"]
+            assert port.dataset_source("freeze_orders") == "service"
+    finally:
+        authorization.reset(token)
+    assert owner.calls[0]["url"].startswith("http://svc.test/")

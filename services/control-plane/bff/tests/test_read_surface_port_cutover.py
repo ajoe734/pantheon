@@ -562,7 +562,7 @@ def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
     from services.control_plane.bff import command_executor
     from services.control_plane.bff.core import owner_reads
 
-    monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://governance.test")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
     monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: "t-own")
     monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: calls.append(url) or rows)
     token = owner_reads.authorization.set("Bearer tok")
@@ -578,3 +578,35 @@ def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
     finally:
         owner_reads.authorization.reset(token)
     assert any(u.endswith("/api/governance/rollbacks") for u in calls)
+
+
+def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(monkeypatch):
+    import pytest
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    rows = [
+        {"rollback_id": "r1", "tenant_id": "t-own", "runtime_id": "rt1", "status": "completed"},
+        {"rollback_id": "r2", "tenant_id": "t-own", "runtime_id": "rt2"},
+        {"rollback_id": "r3", "tenant_id": "t-x", "runtime_id": "rt1"},
+        {"rollback_id": "r4", "runtime_id": "rt1"},
+    ]
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
+    monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: "t-own")
+    monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: rows)
+    token = owner_reads.authorization.set("Bearer tok")
+    try:
+        rsp = ReadSurfacePorts()
+        assert [r["rollback_id"] for r in rsp.get_rollbacks("rt1")] == ["r1"]
+        assert sorted(r["rollback_id"] for r in rsp.get_rollbacks()) == ["r1", "r2"]
+
+        def _boom(url, **kw):
+            raise TimeoutError("owner timeout")
+
+        monkeypatch.setattr(command_executor, "_get_json", _boom)
+        with owner_reads.request_read_scope():
+            with pytest.raises(Exception):
+                rsp.get_rollbacks()
+    finally:
+        owner_reads.authorization.reset(token)
