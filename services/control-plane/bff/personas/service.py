@@ -4250,15 +4250,36 @@ def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Di
     items = []
     for raw in raw_personas:
         persona_id = str(raw.get("persona_id") or raw.get("id") or "")
-        items.append(
-            _project_persona_dto(
-                raw,
-                overlay=None,
-                routed_strategies=int(routed_counts.get(persona_id, 0)),
-                evaluate_provisioning=False,
-            )
+        dto = _project_persona_dto(
+            raw,
+            overlay=None,
+            routed_strategies=int(routed_counts.get(persona_id, 0)),
+            evaluate_provisioning=False,
         )
+        _strip_persona_list_source_health_detail(dto)
+        items.append(dto)
     return items
+
+
+# Source-health detail that is ~270 KB per row (connector receipts) and is only
+# served by the Persona detail route; list rows keep the scalar status fields.
+_PERSONA_LIST_OMITTED_ROW_KEYS = ("sourceHealthBindings", "source_health_bindings")
+_PERSONA_LIST_OMITTED_STATUS_KEYS = ("required_source_health", "requiredSourceHealth")
+
+
+def _strip_persona_list_source_health_detail(dto: Dict[str, Any]) -> None:
+    """Drop heavy source-health detail from one list row (list projection only).
+
+    The shared ``_project_persona_dto`` is untouched so detail keeps the full
+    shape. The DTO is a fresh copy, so mutating it cannot affect stored records.
+    """
+    for key in _PERSONA_LIST_OMITTED_ROW_KEYS:
+        dto.pop(key, None)
+    for status_key in ("dataSourceStatus", "data_source_status"):
+        status = dto.get(status_key)
+        if isinstance(status, dict):
+            for key in _PERSONA_LIST_OMITTED_STATUS_KEYS:
+                status.pop(key, None)
 
 
 # --- _persona_record_tenant_id ---

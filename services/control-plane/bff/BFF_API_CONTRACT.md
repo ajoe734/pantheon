@@ -1000,3 +1000,9 @@ resumed in place at startup, so the same item reaches a terminal state.
 - Ordering, filters, paging and `page_info.total` are unchanged; ordering is computed before `detail` is dropped, so the `detail` timestamp fallback still applies.
 - Assistant context collectors read jobs from `read_store.list_jobs_bff()` directly, not from this route, and are unaffected.
 
+
+### Persona list compact rows (BFF-PERSONA-LIST-COMPACT-ROWS-20261106)
+
+- `GET /bff/personas` rows omit `sourceHealthBindings` / `source_health_bindings` and the `required_source_health` / `requiredSourceHealth` parts of `dataSourceStatus` (about 270 KB each per row on hosted data, three copies per row). Scalar `dataSourceStatus` fields (state, source_health_source, live_ingestion_enabled, live/static connector ids), `dataSources`, `dataSourceRefs` and `requiredDataSources` are unchanged. The `items`/`data` envelope is unchanged.
+- `GET /bff/personas/{persona_id}` and `GET /bff/management/persona-fleet` keep their current fields; the shared `_project_persona_dto` is unchanged, only the list projection strips.
+- `total`, filters, paging and tenant isolation are unchanged.

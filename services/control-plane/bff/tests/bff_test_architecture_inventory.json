@@ -2040,6 +2040,13 @@
       "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): builds its own app via core.app_factory.compose_bff_app(), the real standalone full-app composition root added by BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001. _deprecated_bff_path_response is passed explicitly as an injected keyword dependency, sourced directly from its real, already-extracted production owner (personas.service._deprecated_bff_path_response), instead of relying on core.app_factory._dep()'s fallback to a loaded main module. No main.py reference (static or dynamic) remains in this file."
     },
     {
+      "file": "tests/test_bff_persona_list_compact_rows.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Calls personas.service list projection directly; no main composition globals"
+    },
+    {
       "file": "tests/test_bff_persona_create_paper_bundle.py",
       "layer": "application",
       "imports_main": false,
