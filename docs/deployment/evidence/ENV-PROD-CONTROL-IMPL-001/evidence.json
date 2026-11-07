@@ -4,6 +4,57 @@
     "evidence_sha256": "sha256:08029feda84a4c2a7f2c800bb0d4a3f8b807d1b055a757ef4491e299ea8ab8c9",
     "post_delete_readback_verified": true
   },
+  "additional_release_declarations_20261107": {
+    "accepted_cohort": {
+      "backend_commit": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
+      "compatibility_manifest_sha256": "sha256:2db118076e70598cd1709c0e05ab14a4612624fcceb030d747545e4e039cb7db",
+      "dev_verification_workflow_run": "ajoe734/pantheon/actions/runs/42416671176",
+      "fe_deployment_manifest_sha256": "sha256:278d42c06a17f877ac56bd81ab3bc6cf4694fdce83f8307fde0d75f7412a39a9",
+      "frontend_artifact_sha256": "sha256:51a7eb55c144b7dfe299d2bd13cf3b641a310454044ad97ffce27cd67aed92c6",
+      "frontend_commit": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+      "migration_set_sha256": "sha256:b54198cc799fa126b955f9ea383969152ac45e59ed18d94849ed04342d2d22e2",
+      "owners": 24,
+      "unique_images": 22
+    },
+    "declarations": [
+      {
+        "canonical_manifest_sha256": "sha256:3ab522f049f5578a7f9028e78775830a8a0228334e8a3046bf4163db8c344e8e",
+        "file_sha256": "0725e7d4785b6d77a4fc1cf0237e3ec2405c457ee193f64890bbc55ef10e087b",
+        "path": "deploy/staging/releases/pantheon-20261107-107.json",
+        "release_id": "pantheon-20261107-107",
+        "role": "new Dev-qualified artifact baseline metadata only, NOT historical Stage/Prod healthy",
+        "rollback_previous_release_id": "pantheon-20261107-106"
+      },
+      {
+        "canonical_manifest_sha256": "sha256:e3af58d76c355eb2748fb4349c1639557969d58513545e1cb0766e7ec67c4020",
+        "file_sha256": "524b7b523d1498b5787b0a426449d6c4ea52833a30988daaaa3b5ade41702fa9",
+        "path": "deploy/staging/releases/pantheon-20261107-108.json",
+        "release_id": "pantheon-20261107-108",
+        "role": "original two Stage candidate A",
+        "rollback_previous_release_id": "pantheon-20261107-107"
+      },
+      {
+        "canonical_manifest_sha256": "sha256:29b27c462d1265e70da3813f05de2170033fcb9c5a3095574c6412490cfd98e1",
+        "file_sha256": "b1b4c1c7c4bf40b3dd3d829badf71ef6b6e1782a93618c2bc4d54a4fa7c390c3",
+        "path": "deploy/staging/releases/pantheon-20261107-109.json",
+        "release_id": "pantheon-20261107-109",
+        "role": "original two Stage candidate B / later Prod candidate",
+        "rollback_previous_release_id": "pantheon-20261107-108"
+      }
+    ],
+    "hosted_acceptance": "external_wait",
+    "old_declarations_immutable": [
+      "deploy/staging/releases/pantheon-20261107-103.json",
+      "deploy/staging/releases/pantheon-20261107-104.json",
+      "deploy/staging/releases/pantheon-20261107-105.json",
+      "deploy/staging/releases/pantheon-20261107-106.json"
+    ],
+    "only_two_new_stage_runs_planned": true,
+    "prepared_closure_proof": "/tmp/pantheon-stage-owner-auth-9a46-code-artifacts-20261107/actual-new24-owner-immutable-map-and-auth-package-proof.json",
+    "prepared_receipt": "/tmp/pantheon-stage-owner-auth-9a46-code-artifacts-20261107/prepared-declarations-receipt.json",
+    "same_bytes_limit": "No new D77-vs-9a46 cross-version/full-owner compatibility claim; 107 is pure Dev-qualified artifact baseline metadata with no claimed historical Stage/Prod health; 108 rolls back to 107 and 109 rolls back to 108; no retarget to 21cbd9987 or future latest.",
+    "stage_or_prod_dispatched": false
+  },
   "dry_run": false,
   "evidence_kind": "local_source_validation",
   "final_head_verification": {
@@ -228,6 +279,10 @@
     {
       "id": "owner_oidc_jwks_crypto_closure_and_runtime_manager_dual_path_20261107",
       "summary": "Stage and Prod compose/bootstrap propagate OIDC/JWKS and role-map env (OIDC_ISSUER, OIDC_DISCOVERY_URL, OIDC_AUDIENCE, JWKS_URI, ROLE_CLAIMS, ROLE_MAP, ROLE_MAP_MODE, REQUIRE_EMAIL_VERIFIED) to PANTHEON_RUNTIME_*, PANTHEON_TELEMETRY_*, and POLICY_LEARNING_*; registry and memory forward full OIDC/JWKS/role-claims/role-map keys in _registry_auth_env() and _memory_auth_env() and honor configured PANTHEON_RUNTIME_ROLE_CLAIMS paths (including groups and realm_access.roles) in _require_verified_identity without allowing missing-role default escalation; all 12 packaged owner requirement/lock pairs pin cryptography==50.0.1, cffi==2.1.1, and pycparser==3.0 for RS256 JWKS verification; runtime_auth_inbound fails closed on roleless external OIDC/JWKS tokens and forbids privileged default-role fallback under ROLE_MAP_MODE=strict while runtime-manager enables allow_shared_secret=True for internal HS256 Paper/RuntimeBinding callers and enforces strict viewer tenancy for any non-operator caller. Local source validation only; hosted qualification remains external_wait."
+    },
+    {
+      "id": "additional_release_declarations_107_108_109_20261107",
+      "summary": "Copied exact prepared release declarations deploy/staging/releases/pantheon-20261107-107.json, 108.json, and 109.json for accepted Dev cohort 9a46cd1883c5441ef9fe17bced5df23a8a09a96c / FE 4759795f3e58f4e51ce33fce5af0ab3591650b8f (Root run 42416671176, FE artifact sha256:51a7eb55c144b7dfe299d2bd13cf3b641a310454044ad97ffce27cd67aed92c6, 24 owner image keys across 22 unique published digests, migration_set_sha256 sha256:b54198cc799fa126b955f9ea383969152ac45e59ed18d94849ed04342d2d22e2). Verified byte-identical file SHA-256 and canonical manifest SHA-256 against prepared-declarations-receipt.json, actual-new24-owner-immutable-map-and-auth-package-proof.json, and release_manifest.py validate --require-dev-verified. 107 is Dev-qualified artifact baseline metadata only (no historical Stage/Prod health claim); 108 rolls back to 107; 109 rolls back to 108; 103-106 remain immutable and untouched. Source-only; Stage/Prod hosted acceptance remains external_wait."
     }
   ],
   "scope_limits": {
@@ -282,10 +337,10 @@
   "task_id": "ENV-PROD-CONTROL-IMPL-001",
   "track": "functional",
   "validation": {
-    "command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py",
-    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/runtime-manager/test_runtime_hardening.py services/test_runtime_auth_inbound_attack_matrix.py services/registry/test_registry_auth_wiring.py services/memory/test_main.py scripts/test_check_service_lock_shared_deps.py && .venv-pantheon/bin/python3 scripts/check_service_lock_shared_deps.py",
-    "result": "Bounded batch 1: 204 passed across owner/BFF auth and lock suites (test_runtime_hardening 33 OK, test_runtime_auth_inbound_attack_matrix 46 OK, test_registry_auth_wiring 14 OK, test_main 18 OK, test_bff_auth_facade 85 OK, test_check_service_lock_shared_deps 8 OK) + check_service_lock_shared_deps.py exit 0; Bounded batch 2: test_production_release 98 OK + test_staging_release focused manifest/sanitize/workflow/bootstrap suites 22 OK (script/source behavior only; not hosted drill evidence)",
-    "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree plus owner RS256 OIDC/JWKS + HS256 auth and lock suites; script/source behavior only, not hosted drill evidence"
+    "command": ".venv-pantheon/bin/python3 scripts/deploy/release_manifest.py validate --manifest deploy/staging/releases/pantheon-20261107-107.json --require-dev-verified --expected-sha256 sha256:3ab522f049f5578a7f9028e78775830a8a0228334e8a3046bf4163db8c344e8e && .venv-pantheon/bin/python3 scripts/deploy/release_manifest.py validate --manifest deploy/staging/releases/pantheon-20261107-108.json --require-dev-verified --expected-sha256 sha256:e3af58d76c355eb2748fb4349c1639557969d58513545e1cb0766e7ec67c4020 && .venv-pantheon/bin/python3 scripts/deploy/release_manifest.py validate --manifest deploy/staging/releases/pantheon-20261107-109.json --require-dev-verified --expected-sha256 sha256:29b27c462d1265e70da3813f05de2170033fcb9c5a3095574c6412490cfd98e1",
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_staging_release.py -k 'Manifest or Workflow or Sanitize' && .venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py",
+    "result": "Manifest validation & promotion eligibility: 107/108/109 exit 0 with exact file SHA-256 and canonical manifest SHA-256 matching prepared-declarations-receipt.json and actual-new24-owner-immutable-map-and-auth-package-proof.json; Deployment suites: test_staging_release (24 passed, 22 subtests passed in 224.20s) + test_production_release (98 passed, 20 subtests passed in 248.17s) (script/source behavior only; not hosted drill evidence)",
+    "scope": "exact prepared release declarations 107/108/109 validated via release_manifest.py and real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh/staging_ops.sh suites; script/source behavior only, not hosted drill evidence"
   },
   "workflow_run_id": "41581135775"
 }
