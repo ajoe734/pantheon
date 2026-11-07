@@ -1063,6 +1063,52 @@ class DomainGovernancePort:
         ids = [i for i in ids if i]
         return bool(target) and bool(ids) and all(i == target for i in ids)
 
+    @staticmethod
+    def _runtime_binding_index() -> List[Dict[str, Any]]:
+        """Caller-tenant Runtime binding owner list (existing tenant-scoped GET, request-cached)."""
+        from services.control_plane.bff.command_adapters.base import get_base_url
+        from services.control_plane.bff.core.owner_reads import read_records
+
+        return read_records(
+            lambda path: get_base_url("PANTHEON_RUNTIME_MANAGER_URL") + path,
+            "/api/runtime-bindings",
+            "bindings",
+        )
+
+    def _rollback_runtime_ownership(self, row: Dict[str, Any], tenant: str) -> bool:
+        """True only when every runtime identity on the row resolves to one binding
+        visible in the verified caller tenant's owner-scoped Runtime binding list.
+
+        The row's tenant/actor/metadata are never proof. Missing, ambiguous,
+        contradictory or failed lookups return False (unresolved).
+        """
+
+        def _s(value: Any) -> str:
+            return str(value or "").strip()
+
+        ids = {_s(row.get(f)) for f in ("runtime_id", "runtime_binding_id")} - {""}
+        if not ids:
+            return False
+        try:
+            bindings = self._runtime_binding_index()
+        except Exception:
+            return False
+        matched: List[Dict[str, Any]] = []
+        for ident in ids:
+            hits = [
+                b
+                for b in bindings
+                if ident in {_s(b.get(f)) for f in ("binding_id", "runtime_binding_id", "runtime_id", "id")}
+            ]
+            if len(hits) != 1:
+                return False
+            matched.append(hits[0])
+        first = matched[0]
+        if any(m is not first and m != first for m in matched):
+            return False
+        claimed = _s(first.get("tenant_id"))
+        return not claimed or claimed == tenant
+
     def _owner_scoped_records(self, dataset: str) -> Tuple[List[Dict[str, Any]], int]:
         """Read one canonical Governance collection; return (visible rows, unresolved count).
 
@@ -1108,6 +1154,14 @@ class DomainGovernancePort:
                 # independently so one failure never discards verified rows.
                 decision_id = str(row.get("evolution_decision_id") or "").strip()
                 if not decision_id:
+                    # The canonical rollback writer emits no decision binding; its
+                    # own resource ownership is proven by the tenant-scoped Runtime
+                    # binding owner read instead. Anything else stays unresolved.
+                    if dataset == "all_rollbacks":
+                        claimed = str(row.get("tenant_id") or "").strip()
+                        if (not claimed or claimed == tenant) and self._rollback_runtime_ownership(row, tenant):
+                            visible.append(dict(row))
+                            continue
                     unresolved += 1
                     continue
                 try:

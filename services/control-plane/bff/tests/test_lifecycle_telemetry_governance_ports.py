@@ -1247,3 +1247,56 @@ def test_strict_rollback_facade_raises_on_unresolved_but_empty_is_healthy(monkey
             assert port.dataset_source("all_rollbacks") == "service"
     finally:
         authorization.reset(token)
+
+
+def _runtime_bindings(monkeypatch, bindings):
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime.test")
+    calls: List[Dict[str, Any]] = []
+
+    def _http(url, auth_token=None, tenant_id=None, **_kw):
+        calls.append({"url": url, "tenant": tenant_id})
+        if isinstance(bindings, Exception):
+            raise bindings
+        return {"bindings": bindings}
+
+    monkeypatch.setattr(owner_reads, "http_request_json", _http)
+    return calls
+
+
+def test_real_producer_rollback_payload_resolves_via_runtime_binding_owner(monkeypatch):
+    # Shape written by command_executor (no evolution_decision_id, no tenant_id).
+    own = {"rollback_id": "r-own", "id": "r-own", "runtime_id": "rt1", "runtime_binding_id": "rt1",
+           "action_type": "replace", "status": "completed", "target_artifact_id": "a0", "actor": "admin"}
+    foreign = dict(own, rollback_id="r-foreign", id="r-foreign", runtime_id="rt-foreign", runtime_binding_id="rt-foreign")
+    conflict = dict(own, rollback_id="r-conflict", id="r-conflict", runtime_id="rt1", runtime_binding_id="rt-foreign")
+    _GovOwner(monkeypatch, {"freeze-orders": [], "rollbacks": [own, foreign, conflict]}, decisions=_DECISIONS)
+    calls = _runtime_bindings(monkeypatch, [{"binding_id": "rt1", "tenant_id": "t-own"}])
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            got = port.governance.read_rollbacks_strict("rt1")
+            assert [r["rollback_id"] for r in got] == ["r-own"]
+            assert got[0]["status"] == "completed"
+            assert [r["rollback_id"] for r in port.list_all_rollbacks()] == ["r-own"]
+            assert port.governance.dataset_source("all_rollbacks") == "unavailable"  # foreign/ambiguous stay unresolved
+            assert len(calls) == 1 and calls[0]["url"].endswith("/api/runtime-bindings")
+    finally:
+        authorization.reset(token)
+
+
+def test_rollback_without_decision_stays_unresolved_when_runtime_owner_fails_or_claims_foreign(monkeypatch):
+    row = {"rollback_id": "r", "runtime_id": "rt1", "status": "completed"}
+    for bindings in (RuntimeError("down"), [{"binding_id": "rt1", "tenant_id": "t-other"}], []):
+        _GovOwner(monkeypatch, {"freeze-orders": [], "rollbacks": [row]}, decisions=_DECISIONS)
+        _runtime_bindings(monkeypatch, bindings)
+        port = _journal_port()
+        token, authorization, scope = _with_caller()
+        try:
+            with scope():
+                assert port.list_all_rollbacks() == []
+                assert port.governance.dataset_source("all_rollbacks") == "unavailable"
+        finally:
+            authorization.reset(token)
