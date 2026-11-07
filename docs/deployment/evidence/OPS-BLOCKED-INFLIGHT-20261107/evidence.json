@@ -1,0 +1,20 @@
+{
+  "task": "OPS-BLOCKED-INFLIGHT-20261107",
+  "commands": [
+    {
+      "cmd": "python3 -m unittest scripts.git.test_auto_integrator.BlockedWithInflightCheckTests",
+      "result": "Ran 2 tests OK"
+    },
+    {
+      "cmd": "python3 -m unittest scripts.git.test_auto_integrator",
+      "result": "Ran 172 tests OK"
+    }
+  ],
+  "red_proof": {
+    "method": "temporarily replaced `if merge_state == \"BLOCKED\":` with `if False:` (not committed)",
+    "cmd": "python3 -m unittest scripts.git.test_auto_integrator.BlockedWithInflightCheckTests",
+    "output_tail": "AssertionError: 'blocked' != 'waiting'\n- blocked\n+ waiting\n\n\n----------------------------------------------------------------------\nRan 2 tests in 0.560s\n\nFAILED (failures=1)\n",
+    "result": "FAILED (failures=1): 'blocked' != 'waiting'"
+  },
+  "note": "Live effect needs runtime promotion by coordinator."
+}

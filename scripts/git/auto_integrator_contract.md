@@ -294,3 +294,14 @@ through the existing content-addressed unblock inbox with dedicated reason
   excluded from routing and reported as waiting for an operator.
 - Branch protection and the strict requirement are unchanged. Takes effect only
   after a runtime promotion.
+
+## BLOCKED with in-flight checks waits
+
+When `mergeStateStatus` is `BLOCKED`, the integrator first scans the raw
+`statusCheckRollup` (not `latest_check_runs`) for any entry whose conclusion,
+state or status is in `PENDING_VALUES`. If one exists it returns `waiting`,
+names the incomplete checks in the detail, and opens no `merge-state-blocked`
+unblock task. A same-name run superseded by a later-started one (for example
+the duplicate push/pull_request `Branch CI Gate` runs) can still be running
+while GitHub reports `BLOCKED`. When every rollup entry is complete, `BLOCKED`
+still opens the `merge-state-blocked` task. Other merge states are unchanged.
