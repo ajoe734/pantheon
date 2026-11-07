@@ -7,7 +7,8 @@
     "governance_owner": {
       "services/governance/pg_store.py": "PostgresApprovalDecisionStore.list_all accepts optional keyword filters (tenant_id, decision_states, decision_ids, target_type, target_id, risk_level) and pushes them into SQL via PostgresJsonOwnerStore.list_all_selected before constructing any ApprovalDecision object.",
       "services/control-plane/governance/approval_decision.py": "ApprovalDecisionStore.list_all accepts the same optional keyword filters so the JSON/in-memory store applies identical filtering.",
-      "services/governance/main.py": "GET /api/governance/approvals accepts comma-separated decision_state and decision_id query parameters and delegates filtering to store.list_all before serializing decisions."
+      "services/governance/main.py": "GET /api/governance/approvals accepts comma-separated decision_state and decision_id query parameters and delegates filtering to store.list_all before serializing decisions.",
+      "services/governance/test_governance_api.py": "test_list_filter_by_multiple_pending_states_and_decision_ids_in_postgres_and_json_store imports ApprovalDecision and ApprovalDecisionStore via canonical package path services.governance.pg_store so root conftest transient-module cleanup across full-directory pytest collection never raises ModuleNotFoundError."
     },
     "evolution_owner": {
       "services/control-plane/governance/evolution_decision.py": "EvolutionDecisionStore.list_all accepts optional keyword filters (tenant_id, target_id, target_type, decision_states, risk_level, active_only) and filters inside _select (and via list_all_selected on _postgres_store when backed by Postgres) before _copy_for_caller is called.",
@@ -135,28 +136,20 @@
   },
   "verification_commands": [
     {
-      "cmd": "GOV_APPROVAL_TEST_DSN=postgresql://postgres:t@127.0.0.1:55432/gov_approval_test .venv-pantheon/bin/python3 -m pytest services/governance/test_governance_api.py services/governance/test_approval_authority_postgres.py -q",
-      "result": "55 passed"
+      "cmd": "GOV_APPROVAL_TEST_DSN=postgresql://postgres:t@127.0.0.1:55432/gov_approval_test .venv-pantheon/bin/python3 -m pytest -q services/governance",
+      "result": "535 passed, 3 skipped"
     },
     {
-      "cmd": ".venv-pantheon/bin/python3 -m pytest services/evolution/test_evolution_service.py -q",
-      "result": "30 passed"
+      "cmd": ".venv-pantheon/bin/python3 -m pytest services/evolution/test_evolution_service.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_governance_latency.py services/control-plane/bff/tests/test_ooda_management_ports.py -q",
+      "result": "186 passed"
     },
     {
-      "cmd": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_governance_latency.py services/control-plane/bff/tests/test_ooda_management_ports.py -q",
-      "result": "24 passed"
-    },
-    {
-      "cmd": ".venv-pantheon/bin/python3 -m pytest --noconftest services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py -q",
-      "result": "52 passed"
+      "cmd": ".venv-pantheon/bin/python3 -m pytest --noconftest services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py services/control-plane/bff/tests/test_bff_test_architecture.py -q",
+      "result": "91 passed"
     },
     {
       "cmd": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_management_cockpit.py -q",
       "result": "33 passed"
-    },
-    {
-      "cmd": ".venv-pantheon/bin/python3 -m pytest --noconftest services/control-plane/bff/tests/test_bff_test_architecture.py -q",
-      "result": "39 passed"
     }
   ]
 }

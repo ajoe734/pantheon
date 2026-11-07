@@ -298,7 +298,7 @@ def test_list_filter_by_state():
 
 
 def test_list_filter_by_multiple_pending_states_and_decision_ids_in_postgres_and_json_store(monkeypatch, tmp_path):
-    from approval_decision import ApprovalDecision, ApprovalDecisionStore, DecisionOutcome
+    from services.governance.pg_store import ApprovalDecision, ApprovalDecisionStore
 
     prop_id = uid()
     rev_id = uid()
