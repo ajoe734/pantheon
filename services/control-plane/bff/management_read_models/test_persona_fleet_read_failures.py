@@ -1,5 +1,6 @@
 """Exercise the real fleet collector and projector with independent owner faults."""
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,6 +41,7 @@ def _get_fleet_collector(store, personas, service=None, utc_now=None):
             "_mgmt_nl_add_entity",
             "_project_persona_fleet_item",
             "_project_persona_fleet_item_impl",
+            "_mgmt_nl_unavailable_fleet_item",
             "get_project_persona_fleet_item",
             "get_management_ai_context_service",
             "_project_persona_dto",
@@ -69,6 +71,7 @@ def _get_fleet_collector(store, personas, service=None, utc_now=None):
         "__package__": "services.control_plane.bff.assistant",
         "re": re,
         "json": json,
+        "logging": logging,
         "read_store": store,
         "_management_ai_context_service": context_service,
         "_MANAGEMENT_AI_CONTEXT_SERVICE": context_service,

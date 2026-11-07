@@ -1025,3 +1025,10 @@ resumed in place at startup, so the same item reaches a terminal state.
 - Alerts, incidents, anomalies and human inbox rows have no tenant key. For a caller with a tenant scope these rows are treated as deployment scoped (the same caller reads them through `GET /bff/alerts`, `/bff/incidents`, `/bff/management/human-inbox`; the NL route requires the same read role), in `_mgmt_nl_collect_context` and in the assistant `alerts` source collector. A row naming another tenant is still removed, a caller with no tenant scope gets none, and every other source keeps the strict `_mgmt_nl_record_matches_tenant` rule.
 - `get_context_incidents` reads with `open_only=True`, so resolved incident history adds no evidence entity and persona `active_incidents` come from open rows.
 - Rollback reads are unchanged (owned by BFF-JOURNAL-GOVERNANCE-OWNER-READ-20261106).
+
+### Management NL persona_fleet and human inbox context (BFF-AI-FLEET-INBOX-20261107)
+
+- `POST /bff/management/nl/ask` and `POST /bff/management/nl/ask/stream` run `_mgmt_nl_collect_context` in a worker thread with the authenticated caller identity; both routes receive the same persona_fleet and inbox context.
+- persona_fleet projects each persona with the app-scoped `PersonaService` bound as the current service (bound by the `project_persona_fleet_item` callback that `main.py` passes to `wire_management_runtime_projections`), the same binding `PersonaService.build_persona_health_items` uses. No module global or second persona projection is added.
+- A persona whose projection raises is reported as an unavailable item with an owner observation `degradation_reason=persona_projection_failed:<ExceptionClass>`; other personas still project. The persona_fleet error branch logs one warning with the exception class.
+- The cockpit human inbox count reads `data.items` of the wired human inbox payload and passes the caller identity, so `human_inbox_summary.total` and the `approval_queue` surface follow the inbox read for the same caller.
