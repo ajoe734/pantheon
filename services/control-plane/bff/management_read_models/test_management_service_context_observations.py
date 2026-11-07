@@ -48,7 +48,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.control_plane.bff.management_read_models.service import ManagementService
+from services.control_plane.bff.management_read_models.service import (
+    ManagementService,
+    _trading_pulse_binding_is_retired,
+)
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports, create_read_surface_ports
 from services.control_plane.bff.ports.persona_capital_runtime import RuntimePort
 
@@ -67,15 +70,21 @@ def _collect_context(store: SimpleNamespace, tenant_id: str = "tenant-a", focus:
         "_mgmt_nl_record_tenant_ids",
         "_mgmt_nl_scope_values",
         "_mgmt_nl_merge_owner_observations",
+        "_mgmt_nl_filter_deployment_scoped_records",
+        "_mgmt_nl_runtime_is_retired",
+        "_mgmt_nl_persona_state",
+        "_mgmt_nl_persona_is_operational",
+        "_management_count_by",
     }
     nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
     namespace = dict(__import__("typing").__dict__)
     namespace.update(
+        __package__="services.control_plane.bff.assistant",
         re=re,
         _management_ai_context_service=ManagementService(read_store=store, utc_now=lambda: NOW),
         _mgmt_nl_add_record_entities=lambda *args: None,
         _management_telemetry_rollup=lambda *args: {},
-        _mgmt_nl_trading_pulse_snippet=lambda *args: {"summary": {}, "cards": []},
+        _mgmt_nl_trading_pulse_snippet=lambda *args, **kwargs: {"summary": {}, "cards": []},
     )
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "main.py", "exec"), namespace)
     return namespace["_mgmt_nl_collect_context"](focus, NOW, tenant_id)
@@ -149,6 +158,8 @@ def test_telemetry_failure_remains_explicit_in_portfolio_context() -> None:
     namespace.update(
         _management_ai_context_service=ManagementService(read_store=store),
         _mgmt_nl_filter_tenant_records=lambda rows, tenant: rows,
+        _mgmt_nl_filter_deployment_scoped_records=lambda rows, tenant: rows,
+        _mgmt_nl_runtime_is_retired=_trading_pulse_binding_is_retired,
         _mgmt_nl_add_record_entities=lambda *args: None,
         _management_telemetry_rollup=lambda *args: {},
     )

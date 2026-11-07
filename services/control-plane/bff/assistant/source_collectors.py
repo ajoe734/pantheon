@@ -116,6 +116,11 @@ class AssistantSourceCollectorDeps:
     read_roles: Optional[FrozenSet[str]] = None
     repo_root: Optional[Callable[[], Path]] = None
     utc_now: Optional[Callable[[], str]] = None
+    # Tenant filter for owners whose rows have no tenant dimension (operator
+    # alerts). Defaults to the management filter so the rule has one owner.
+    filter_deployment_scoped_records_fn: Optional[
+        Callable[[List[Dict[str, Any]], Optional[str]], List[Dict[str, Any]]]
+    ] = None
     docs_allowlist: Tuple[Tuple[str, str, str], ...] = field(default_factory=lambda: _ASSISTANT_DOCS_RAG_ALLOWLIST)
 
     def __post_init__(self) -> None:
@@ -139,6 +144,10 @@ class AssistantSourceCollectorDeps:
             self.repo_root = _default_repo_root
         if self.utc_now is None:
             self.utc_now = _default_utc_now
+        if self.filter_deployment_scoped_records_fn is None:
+            from .management_service import _mgmt_nl_filter_deployment_scoped_records
+
+            self.filter_deployment_scoped_records_fn = _mgmt_nl_filter_deployment_scoped_records
 
 
 def _assistant_focus_entity(request: Any) -> Tuple[Optional[str], Optional[str]]:
@@ -246,11 +255,29 @@ def _assistant_filter_tenant_records(
     )
 
 
+def _assistant_filter_deployment_scoped_records(
+    records: List[Dict[str, Any]],
+    identity: Optional[OperatorIdentity],
+    *,
+    deps: AssistantSourceCollectorDeps,
+) -> List[Dict[str, Any]]:
+    """Like _assistant_filter_tenant_records, but a row with no tenant key is
+    deployment scoped and kept. Only for owners that have no tenant dimension."""
+    tenant = _assistant_tenant_scope(identity, deps=deps)
+    if tenant.get("scope") == "global":
+        return [record for record in records if isinstance(record, dict)]
+    return deps.filter_deployment_scoped_records_fn(
+        [record for record in records if isinstance(record, dict)],
+        str(tenant.get("tenant_id") or ""),
+    )
+
+
 def _assistant_filter_payload_tenant(
     payload: Any,
     identity: Optional[OperatorIdentity],
     *,
     deps: AssistantSourceCollectorDeps,
+    deployment_scoped: bool = False,
 ) -> Any:
     if not isinstance(payload, dict):
         return payload
@@ -258,7 +285,10 @@ def _assistant_filter_payload_tenant(
     for key in ("items", "alerts", "events", "data"):
         value = result.get(key)
         if isinstance(value, list):
-            result[key] = _assistant_filter_tenant_records(value, identity, deps=deps)
+            if deployment_scoped:
+                result[key] = _assistant_filter_deployment_scoped_records(value, identity, deps=deps)
+            else:
+                result[key] = _assistant_filter_tenant_records(value, identity, deps=deps)
     return result
 
 
@@ -672,7 +702,10 @@ def collect_assistant_context_source(
         return _assistant_collect_jobs_source(request, snapshot_at, identity, deps=deps)
     if source_id == "alerts":
         payload = _assistant_filter_payload_tenant(
-            deps.build_operator_alerts_payload(snapshot_at), identity, deps=deps
+            deps.build_operator_alerts_payload(snapshot_at),
+            identity,
+            deps=deps,
+            deployment_scoped=True,
         )
         return AssistantCollectedSource(
             source_id=source_id,
