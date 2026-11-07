@@ -235,6 +235,12 @@
     "production_acceptance_verified": false,
     "three_account_hosted_QA": "not_executed"
   },
+  "snapshot_name_source_correction_20261107": {
+    "change": "production-release.yml pre-switch snapshot name is pantheon-prod-pre-<release_id>-r<GITHUB_RUN_ID>-a<GITHUB_RUN_ATTEMPT>; fixed name collided on the second 106 forward",
+    "hosted_pass_claimed": false,
+    "local_validation": "python3 -m unittest tests.deployment.test_production_release (96 OK); script/workflow behavior only, not hosted drill evidence",
+    "release_complete_claimed": false
+  },
   "staging_verification_runs": [
     {
       "artifact_id": 13205541547,
