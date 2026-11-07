@@ -1,0 +1,40 @@
+{
+  "task_id": "SD-INSTRUMENT-EXPRESSION-DEV-PLAN-20261107",
+  "kind": "design_document_evidence",
+  "read_date": "2026-11-07",
+  "document": "docs/04/pantheon_persona_instrument_decision_2026-11-07/DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER_2026-11-07.md",
+  "design_document_changed": "docs/04/pantheon_persona_instrument_decision_2026-11-07/SD_PERSONA_INSTRUMENT_DECISION_2026-11-07.md (decision notice only)",
+  "hosted_behavior_claimed": false,
+  "scope_statement": "dev plan only; no source/test/workflow/config change; no VM, SSH, broker, broker sandbox, futures smoke, model provider call or hosted workflow used",
+  "repo_base": "origin/dev 63d124fcd",
+  "operator_decisions": {
+    "Q1": "deterministic per-persona expression policy (design option B); no model call on the trade path",
+    "Q2": "cash shares + listed single-stock and ETF futures + recorded no-trade",
+    "Q3": "per-persona gross-notional multiple 2.0x of pool equity in the pool risk policy (max_leverage, gross_limit)",
+    "Q4": "later; expression layer ships against the current provisioned view"
+  },
+  "coordinator_commit": "initial draft written by the coordinator; the task owner verifies every code reference and reproduces the worked outcomes before delivery",
+  "repository_commands": [
+    "git show origin/dev:services/research/vectorbt/adapter/vectorbt_adapter.py (lines 513-585, _artifact_order_sizes SHARES only)",
+    "git show origin/dev:services/capital/risk_policy.py (RiskPolicyTargetType.RUNTIME_ACTION line 48; RiskPolicyEvaluator.evaluate line 348)",
+    "git show origin/dev:services/execution/lean_runtime/paper_runtime.py (SubmitTaiwanBrokerOrder lines 414-580; sec_type equity line 443; risk label line 3443; order_rejection lifecycle line 3384)",
+    "git show origin/dev:services/execution/lean_runtime/paper_signal_producer.py (lines 360-470)",
+    "git show origin/dev:services/control-plane/bff/persona_provisioning_coordinator.py (lines 1845-1900, 2100-2200)",
+    "git show origin/dev:services/control-plane/bff/agora/decision_projection/producer.py (lines 165-185)",
+    "git show origin/dev:scripts/probe_dev_runtime_paper_lifecycle.py (lines 1270-1330)",
+    "git show origin/dev:services/trade_journey/hosted_lifecycle_probe.py (lines 55-80, 440-475)",
+    "git show origin/dev:services/source_ingestion/connector_definitions.py (lines 870-930); active_universe.py (lines 255-320)",
+    "git show origin/dev:services/evolution/config/threshold_sweep_baselines.json; threshold_sweep_thresholds.json"
+  ],
+  "external_references_read": [
+    "https://www.quantconnect.com/docs/v2/writing-algorithms/algorithm-framework/alpha/key-concepts",
+    "https://quantconnect.com/docs/v2/writing-algorithms/algorithm-framework/portfolio-construction/supported-models",
+    "https://codeclimate.com/github/freqtrade/freqtrade/docs/leverage.md/source",
+    "https://docs.nautilustrader.io/concepts/overview.html"
+  ],
+  "verification_pending_for_owner": [
+    "re-verify every file path and line area against the delivery base",
+    "recompute section 4.4 worked outcomes from the Date=20261106 numbers",
+    "confirm section 9 task ids exist in the live task store"
+  ]
+}
