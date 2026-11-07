@@ -1042,17 +1042,22 @@ def mount_bff_routers(
         )
     )
     from ..console_gap.alpha_factory import create_alpha_factory_router
-    # The strategies router (mounted below) owns the registry strategy reader;
-    # the alpha factory reads strategy state through that same service.
-    _alpha_strategy_reader: dict = {}
+    # The alpha factory reads strategy state through StrategiesService, the same
+    # registry strategy reader GET /bff/strategies/{id} uses, over the same read
+    # surface (no second registry client).
+    from ..strategies.service import StrategiesService as _AlphaStrategiesService
+    _alpha_strategies_service = _AlphaStrategiesService(
+        read_surface=app_deps.read_surface,
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+        normalize_lifecycle_state=_dep("_normalize_lifecycle_state"),
+    )
     app.include_router(
         create_alpha_factory_router(
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             utc_now=_dep("utc_now"),
-            read_strategy_state=lambda strategy_id: _alpha_strategy_reader["service"].get_strategy_registry_state(
-                strategy_id
-            ),
+            read_strategy_state=lambda strategy_id: _alpha_strategies_service.get_strategy_registry_state(strategy_id),
         )
     )
 
@@ -1334,7 +1339,8 @@ def mount_bff_routers(
 
     # 25: Strategies
     from ..strategies.router import create_strategies_router
-    _strategies_router = create_strategies_router(
+    app.include_router(
+        create_strategies_router(
             read_surface=app_deps.read_surface,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
@@ -1365,9 +1371,8 @@ def mount_bff_routers(
             persona_operational_states=_dep("_PERSONA_OPERATIONAL_LIFECYCLE_STATES"),
             list_strategy_summaries=_dep("_list_strategy_summaries"),
             strategy_write_owner=lambda: _dep("strategy_write_owner"),
+        )
     )
-    _alpha_strategy_reader["service"] = _strategies_router.strategies_service
-    app.include_router(_strategies_router)
 
     # 26: Incidents
     from ..incidents.router import create_incident_router
