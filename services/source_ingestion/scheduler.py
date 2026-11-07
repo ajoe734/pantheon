@@ -289,11 +289,31 @@ class JsonlIngestScheduleStore:
         self._watermarks: dict[str, SourceWatermark] = {}
         self._frontier: dict[str, CrawlFrontierItem] = {}
         self._receipts: dict[str, IngestReceipt] = {}
+        self._read_key: tuple[int, int, int] | None = (-1, -1, -1)
         self.reload()
 
     def reload(self) -> None:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked(recover_incomplete=True)
+
+    def _stat_key(self) -> tuple[int, int, int] | None:
+        try:
+            stat = self.path.stat()
+            return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return None
+
+    def _reload_if_changed_unlocked(self) -> None:
+        """Skip the full journal replay while the journal is byte-for-byte what
+        the last replay read (same inode, size and mtime). Any append, from
+        this or another process, or replacing the file with a new inode changes
+        that key and forces a fresh replay.
+        """
+        key = self._stat_key()
+        if key != getattr(self, "_read_key", (-1, -1, -1)):
+            self._reload_unlocked(recover_incomplete=False)
+            self._read_key = key
+            self._page_read_key = key
 
     def _reload_unlocked(self, *, recover_incomplete: bool) -> None:
         self._runs = {}
@@ -301,6 +321,8 @@ class JsonlIngestScheduleStore:
         self._frontier = {}
         self._receipts = {}
         if not self.path.exists():
+            self._read_key = None
+            self._page_read_key = None
             return
         for line_no, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
@@ -329,6 +351,9 @@ class JsonlIngestScheduleStore:
                 raise SourceEvidenceError(f"Unsupported ingest schedule record: {record_type or '<missing>'}")
         if recover_incomplete:
             self._recover_incomplete_receipts()
+        key = self._stat_key()
+        self._read_key = key
+        self._page_read_key = key
 
     def _recover_incomplete_receipts(self) -> list[IngestReceipt]:
         """Durably terminalize receipts stranded by a post-processing crash.
@@ -393,12 +418,20 @@ class JsonlIngestScheduleStore:
 
     def get_run(self, ingest_run_id: str) -> IngestRun | None:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             return self._runs.get(ingest_run_id)
+
+    def get_job(self, ingest_run_id: str) -> tuple[IngestRun | None, IngestReceipt | None]:
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_if_changed_unlocked()
+            run = self._runs.get(ingest_run_id)
+            if run is None:
+                return None, None
+            return run, self._receipts.get(ingest_run_id)
 
     def list_runs(self) -> list[IngestRun]:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             return list(self._runs.values())
 
     def list_runs_page(
@@ -414,18 +447,7 @@ class JsonlIngestScheduleStore:
         caller never has to materialise every run and receipt.
         """
         with exclusive_file_lock(self._lock_path, self._lock):
-            # Read-only paging path: skip the full journal replay while the
-            # journal is byte-for-byte what the last page read replayed
-            # (same inode, size and mtime). Any append, from this or another
-            # process, changes that key and forces a fresh replay.
-            try:
-                stat = self.path.stat()
-                key: tuple[int, int, int] | None = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
-            except OSError:
-                key = None
-            if key is None or key != getattr(self, "_page_read_key", None):
-                self._reload_unlocked(recover_incomplete=False)
-                self._page_read_key = key
+            self._reload_if_changed_unlocked()
             runs = list(self._runs.values())
             if statuses:
                 runs = [run for run in runs if str(getattr(run.status, "value", run.status)).lower() in statuses]
@@ -444,12 +466,12 @@ class JsonlIngestScheduleStore:
 
     def get_receipt(self, ingest_run_id: str) -> IngestReceipt | None:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             return self._receipts.get(ingest_run_id)
 
     def list_receipts(self, *, connector_id: str | None = None) -> list[IngestReceipt]:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             receipts = list(self._receipts.values())
             if connector_id is not None:
                 receipts = [receipt for receipt in receipts if receipt.connector_id == connector_id]
@@ -469,7 +491,7 @@ class JsonlIngestScheduleStore:
         """
 
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             receipts = sorted(
                 self._receipts.values(),
                 key=lambda receipt: (
@@ -485,7 +507,7 @@ class JsonlIngestScheduleStore:
 
     def get_watermark(self, connector_id: str) -> SourceWatermark | None:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             return self._watermarks.get(connector_id)
 
     def enqueue_frontier(
@@ -521,7 +543,7 @@ class JsonlIngestScheduleStore:
 
     def list_frontier(self, status: str | None = None) -> list[CrawlFrontierItem]:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             return self._list_frontier_unlocked(status=status)
 
     def _list_frontier_unlocked(self, status: str | None = None) -> list[CrawlFrontierItem]:
@@ -532,7 +554,7 @@ class JsonlIngestScheduleStore:
 
     def get_frontier(self, frontier_id: str) -> CrawlFrontierItem | None:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             return self._frontier.get(frontier_id)
 
     def claim_due_frontier(
