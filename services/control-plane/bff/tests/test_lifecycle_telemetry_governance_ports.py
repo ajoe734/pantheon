@@ -921,6 +921,8 @@ class _GovOwner:
         monkeypatch.setattr(owner_reads, "evolution_owner_request", _evolution)
         monkeypatch.setattr(owner_reads, "bound_tenant", lambda payload=None, tenant_id=None, auth_token=None: tenant)
         monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "svc-token")
+        # Rollback resource ownership comes from the tenant-scoped Runtime binding owner.
+        _runtime_bindings(monkeypatch, [{"binding_id": "rt1", "tenant_id": tenant}])
 
 
 _DECISIONS = {
@@ -975,7 +977,7 @@ def test_default_port_reads_governance_owner_scoped_to_verified_tenant(monkeypat
     assert [o["freeze_order_id"] for o in orders] == ["f-own"]
     assert [r["rollback_id"] for r in rollbacks] == ["r-own"]
     assert rollbacks[0]["status"] == "completed"
-    assert {c["id"] for c in owner.decision_calls} == {"d-own", "d-foreign", "d-rb", "d-rb-foreign"}  # one read per decision
+    assert {c["id"] for c in owner.decision_calls} == {"d-own", "d-foreign"}  # freeze decisions only; rollbacks never use Evolution
     assert all(c["tenant"] == "t-own" and c["auth"] == "caller-token" for c in owner.decision_calls)
     # Unresolved legacy row never fabricated into the tenant; source stays unverified.
     assert src_freeze == "unavailable"
@@ -1227,7 +1229,7 @@ def test_strict_rollback_facade_keeps_own_rows_with_partial_provenance(monkeypat
 
 
 def test_strict_rollback_facade_raises_on_unresolved_but_empty_is_healthy(monkeypatch):
-    legacy = [{"rollback_id": "r-legacy", "runtime_id": "rt1"}]
+    legacy = [{"rollback_id": "r-legacy", "runtime_id": "rt-legacy"}]
     _GovOwner(monkeypatch, {"freeze-orders": [], "rollbacks": legacy}, decisions=_DECISIONS)
     port = _journal_port()
     token, authorization, scope = _with_caller()
@@ -1300,3 +1302,18 @@ def test_rollback_without_decision_stays_unresolved_when_runtime_owner_fails_or_
                 assert port.governance.dataset_source("all_rollbacks") == "unavailable"
         finally:
             authorization.reset(token)
+
+
+def test_rollback_optional_evolution_metadata_never_changes_resource_authority(monkeypatch):
+    # Same runtime resource; decision binding / execution ref / target are irrelevant.
+    dec = {"d-rb": {**_DECISIONS["d-rb"], "execution_result": {"execution_ref_id": "r-meta"}},
+           "d-own": {**_DECISIONS["d-own"], "target_id": "rt-foreign"}}
+    rows = [
+        {"rollback_id": "r-meta", "runtime_id": "rt1", "evolution_decision_id": "d-rb"},
+        {"rollback_id": "r-plain", "runtime_id": "rt1"},
+        {"rollback_id": "r-foreign-meta", "runtime_id": "rt-foreign", "evolution_decision_id": "d-rb"},
+        {"rollback_id": "r-foreign-target", "runtime_id": "rt-foreign", "target_id": "rt-foreign", "evolution_decision_id": "d-own"},
+        {"rollback_id": "r-foreign-404", "runtime_id": "rt-foreign", "evolution_decision_id": "nope"},
+    ]
+    (_, rb, _, srb), _o = _run(monkeypatch, {"freeze-orders": [], "rollbacks": rows}, dec)
+    assert rb == ["r-meta", "r-plain"] and srb == "unavailable"

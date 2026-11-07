@@ -575,6 +575,17 @@ def _patch_evolution_decisions(monkeypatch, tenant="t-own"):
     monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "svc-token")
 
 
+def _patch_runtime_bindings(monkeypatch, ids=("rt1",), tenant="t-own"):
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime.test")
+    monkeypatch.setattr(
+        owner_reads,
+        "http_request_json",
+        lambda url, **kw: {"bindings": [{"binding_id": i, "tenant_id": tenant} for i in ids]},
+    )
+
+
 def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
     from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
     from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
@@ -582,8 +593,9 @@ def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
         DomainGovernancePort,
     )
 
-    rows = [{"rollback_id": "r1", "evolution_decision_id": "d-own", "runtime_id": "rt1", "status": "completed"}, {"rollback_id": "r2", "evolution_decision_id": "d-x", "runtime_id": "rt1", "tenant_id": "t-own"}]
+    rows = [{"rollback_id": "r1", "evolution_decision_id": "d-own", "runtime_id": "rt1", "status": "completed"}, {"rollback_id": "r2", "evolution_decision_id": "d-x", "runtime_id": "rt-legacy", "tenant_id": "t-own"}]
     _patch_evolution_decisions(monkeypatch)
+    _patch_runtime_bindings(monkeypatch)
     calls = []
     from services.control_plane.bff import command_executor
     from services.control_plane.bff.core import owner_reads
@@ -615,10 +627,11 @@ def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(mon
     rows = [
         {"rollback_id": "r1", "evolution_decision_id": "d-own", "runtime_id": "rt1", "status": "completed"},
         {"rollback_id": "r2", "evolution_decision_id": "d-own2", "runtime_id": "rt2"},
-        {"rollback_id": "r3", "evolution_decision_id": "d-x", "runtime_id": "rt1"},
-        {"rollback_id": "r4", "tenant_id": "t-own", "runtime_id": "rt1"},
+        {"rollback_id": "r3", "evolution_decision_id": "d-x", "runtime_id": "rt-legacy"},
+        {"rollback_id": "r4", "tenant_id": "t-own", "runtime_id": "rt-legacy"},
     ]
     _patch_evolution_decisions(monkeypatch)
+    _patch_runtime_bindings(monkeypatch, ("rt1", "rt2"))
     monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
     monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: "t-own")
     monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: rows)

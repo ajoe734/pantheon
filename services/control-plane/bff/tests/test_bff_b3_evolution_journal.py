@@ -2743,6 +2743,7 @@ def _mounted_owner_journal(monkeypatch, governance: dict, decisions: dict) -> di
     monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
     monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.test")
     monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "svc-token")
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime.test")
     monkeypatch.setenv("BFF_READ_SURFACE_STATE", "fresh")
     claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "t-own"}).encode()).decode().rstrip("=")
     auth = f"Bearer test.{claims}.test"
@@ -2755,6 +2756,8 @@ def _mounted_owner_journal(monkeypatch, governance: dict, decisions: dict) -> di
         tenant = req.get_header("X-tenant-id")
         calls.append({"url": req.full_url, "tenant": tenant})
         tail = req.full_url.rsplit("/", 1)[-1]
+        if req.full_url.startswith("http://runtime.test/"):
+            return _Resp(json.dumps({"bindings": [{"binding_id": "rt1", "tenant_id": "t-own"}]}).encode())
         if req.full_url.startswith("http://evolution.test/"):
             d = decisions.get(tail)
             if d is None or d.get("tenant_id") != tenant:

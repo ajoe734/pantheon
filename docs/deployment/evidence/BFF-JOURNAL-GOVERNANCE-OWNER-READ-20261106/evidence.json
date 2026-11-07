@@ -3,7 +3,7 @@
   "scope": "source only; no hosted acceptance, no Freeze/Rollback writes",
   "change": {
     "DomainGovernancePort": "owner_reads=True default reads GET /api/governance/freeze-orders and /rollbacks via governance_approval_url with caller auth, remaining management deadline and request-scoped cached_owner_call (unchanged).",
-    "tenant_policy": "row.tenant_id / actor / metadata are never tenant proof. Rows carrying evolution_decision_id are visible only when the tenant-guarded Evolution owner GET /api/evolution/proposals/{id} resolves to a decision in the verified caller tenant (freeze rows also match target id/version; rollback rows per binding_v2). Rows WITHOUT evolution_decision_id: freeze rows stay unresolved; the normal producer-written rollback row (no decision binding) is proven by a server-scoped Runtime resource READ: every runtime_id/runtime_binding_id on the row must resolve to exactly one binding in the caller-tenant GET {PANTHEON_RUNTIME_MANAGER_URL}/api/runtime-bindings list (core.owner_reads.read_records, request-cached), with no contradictory row tenant claim. Missing/ambiguous/contradictory/failed lookup => unresolved (never shown, never assigned a tenant). No writer, backfill, new Evolution field or mandatory Plan GET. Commit d75994960.",
+    "tenant_policy": "row.tenant_id / actor / metadata are never tenant proof. FREEZE rows are visible only when the tenant-guarded Evolution owner GET /api/evolution/proposals/{id} resolves their evolution_decision_id to a decision in the verified caller tenant (action_type freeze, target id/version match, execution_ref_id if stored equals freeze_order_id); freeze rows without a decision stay unresolved. ROLLBACK rows (ALL of them, regardless of optional evolution_decision_id / execution_ref_id / target metadata) are proven only by the server-scoped Runtime resource READ: every runtime_id/runtime_binding_id on the row must resolve to exactly one binding in the caller-tenant GET {PANTHEON_RUNTIME_MANAGER_URL}/api/runtime-bindings list (core.owner_reads.read_records, request-cached), with no contradictory row tenant claim. Missing/ambiguous/contradictory/failed lookup => unresolved (never shown, never assigned a tenant). No Evolution read is issued for rollback rows. No writer, backfill, new field or Plan GET.",
     "ReadSurfacePorts": "get_rollbacks (raises on owner failure) and list_all_rollbacks now reads the canonical Governance ledger (no loop_runs pseudo-rollbacks, no swallow-to-empty); dataset_source(freeze_orders|all_rollbacks) reports the real owner outcome",
     "dataset_source": {
       "service": "owner read ok, all rows tenant-resolved (incl. healthy empty)",
@@ -13,10 +13,9 @@
     "status_semantics": "Canonical row status/fields preserved unchanged; partial provenance surfaces as ManagementObservation degraded via same-request dataset_source (consumer_v5), not by rewriting status.",
     "retired": "ReadSurfacePorts.get_rollbacks list_loop_runs fallback retired (regression test_rsp_get_rollbacks_has_no_loop_runs_fallback_on_narrow_port)."
   },
-  "known_limit": "CURRENT: unresolved provenance (freeze rows without a decision binding, rollback rows whose Runtime binding cannot be proven in the caller tenant, Evolution/Runtime read failures) is reported source=unavailable / partial ManagementObservation while verified own rows remain visible with canonical status; unresolved rows are never shown or assigned a tenant. Hosted readback and operator Freeze test are not part of this source task. Earlier statements that normal command_executor rollback rows stay unknown until the owner records a binding, or that no Runtime read was added, are HISTORICAL and superseded by d75994960.",
+  "known_limit": "CURRENT: unresolved provenance (freeze rows without a decision binding, rollback rows whose Runtime binding cannot be proven in the caller tenant, Evolution/Runtime read failures) is reported source=unavailable / partial ManagementObservation while verified own rows remain visible with canonical status; unresolved rows are never shown or assigned a tenant. Hosted readback and operator Freeze test are not part of this source task.",
   "tests": {
-    "current_validation": "At head 31cc71cf1 (production code identical to d75994960): /tmp/civenv pytest test_read_surface_port_cutover.py test_lifecycle_telemetry_governance_ports.py test_bff_b3_evolution_journal.py test_bff_management_cockpit.py test_mgmt_read_001_persona_fleet_owner_observations.py = 133 passed (re-run 2026-11-07 for this doc-only change).",
-    "recorded_independent_runs": "Reviewer/native runs recorded outside this file: 166 and 132 (source-only), independent 14 — valid for the unchanged production tree.",
+    "current_validation": "2026-11-07 after review_fix_v6: cutover+governance ports+b3 journal 98 passed; cockpit+persona_fleet 36 passed (/tmp/civenv).",
     "files": {
       "test_lifecycle_telemetry_governance_ports.py": "default configured transport: own/foreign/forged tenant/claim-only/legacy, decision-read error, target mismatch, healthy empty, error/timeout/invalid, no auth, URL aliases, real-producer rollback via Runtime binding owner, unresolved when runtime owner fails/claims foreign",
       "test_read_surface_port_cutover.py": "rollback facade reads canonical owner",
@@ -29,9 +28,9 @@
     "per_item": "each decision resolves independently; non-404 failure/malformed/exhausted budget marks only that item unresolved, verified rows stay visible",
     "reuse": "core.owner_reads.read_evolution_object (existing tenant-bound, service-credential, request-cached, per-GET budget recompute); no parallel URL/timeout helper; no HTTP once remaining budget <= 0",
     "freeze_binding": "decision tenant==caller, action_type==freeze, target_id/version match, stored execution_result.execution_ref_id (if any) must equal the row's freeze_order_id; no executed-only gate, no receipt-binding GET",
-    "rollback_binding": "decision tenant==caller, action_type in {freeze, force_risk_off} (existing follow-through; EvolutionActionType has no rollback); stored execution_ref_id (if any) must equal rollback_id, else every runtime identity on the row (runtime_id/runtime_binding_id/target_id) must equal decision target_id - a free-form target_id cannot override a contradictory runtime_id",
+    "rollback_binding": "CURRENT: none via Evolution. Rollback rows no longer bind to Evolution decisions (execution_ref_id / target_id shortcut removed: freeze receipts bind FreezeOrder ids and decision targets are artifact/persona/capital resources, not runtime bindings); resource authority is the tenant-scoped Runtime binding owner read only.",
     "404": "foreign/unknown indistinguishable: always unresolved (row tenant claim is never proof); decision object with missing/malformed tenant_id is unresolved, only positively foreign decisions are hidden",
-    "status_note": "HISTORICAL (v2); rollback rule extended by d75994960: decision-less rollback rows resolve via Runtime binding owner read."
+    "status_note": "Freeze rule current. Rollback rule superseded by review_fix_v6."
   },
   "review_fix_v3": {
     "tenant_claim": "a row tenant_id that contradicts the verified caller tenant is unresolved (not visible), verified siblings preserved",
@@ -61,5 +60,11 @@
     "services/control-plane/bff/tests/test_read_surface_port_cutover.py",
     "docs/deployment/evidence/BFF-JOURNAL-GOVERNANCE-OWNER-READ-20261106/evidence.json",
     "services/control-plane/bff/management_read_models/service.py"
-  ]
+  ],
+  "review_fix_v6": {
+    "change": "Rollback tenant authority applied uniformly via Runtime binding ownership for all Governance rollback rows; Evolution rollback shortcut removed from _decision_binds_row.",
+    "tests": "New regression test_rollback_optional_evolution_metadata_never_changes_resource_authority; positive rollback fixtures adapted to Runtime owner contract.",
+    "validation": "/tmp/civenv pytest: cutover + governance ports + b3 journal = 98 passed; cockpit + persona_fleet owner observations = 36 passed (2026-11-07).",
+    "scope": "source only; no hosted acceptance, no writes"
+  }
 }

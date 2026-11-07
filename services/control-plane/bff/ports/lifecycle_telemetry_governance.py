@@ -1048,20 +1048,9 @@ class DomainGovernancePort:
             if ref and ref != _s(row.get("freeze_order_id") or row.get("id")):
                 return False
             return all(_s(row.get(f)) == _s(decision.get(f)) for f in ("target_id", "target_version"))
-        # Existing canonical follow-through for a rollback is a freeze/force_risk_off
-        # decision (EvolutionActionType has no "rollback").
-        if _s(decision.get("action_type")) not in {"freeze", "force_risk_off"}:
-            return False
-        rollback_id = _s(row.get("rollback_id") or row.get("id"))
-        if ref:
-            return bool(rollback_id) and ref == rollback_id
-        # No stored execution reference: require one consistent runtime identity.
-        # Every runtime identity the row carries must agree with the decision target;
-        # a free-form target_id can never override a contradictory runtime_id.
-        target = _s(decision.get("target_id"))
-        ids = [_s(row.get(f)) for f in ("runtime_id", "runtime_binding_id", "target_id")]
-        ids = [i for i in ids if i]
-        return bool(target) and bool(ids) and all(i == target for i in ids)
+        # Rollback resource ownership is never derived from Evolution metadata; it is
+        # proven only by the tenant-scoped Runtime binding owner read.
+        return False
 
     @staticmethod
     def _runtime_binding_index() -> List[Dict[str, Any]]:
@@ -1152,16 +1141,18 @@ class DomainGovernancePort:
                 # Tenant is proven only by the Evolution owner's tenant-guarded
                 # read of the decision the row is bound to; each item resolves
                 # independently so one failure never discards verified rows.
+                if dataset == "all_rollbacks":
+                    # Rollback resource authority is the tenant-scoped Runtime binding
+                    # owner read for every row; optional Evolution metadata never
+                    # changes it.
+                    claimed = str(row.get("tenant_id") or "").strip()
+                    if (not claimed or claimed == tenant) and self._rollback_runtime_ownership(row, tenant):
+                        visible.append(dict(row))
+                    else:
+                        unresolved += 1
+                    continue
                 decision_id = str(row.get("evolution_decision_id") or "").strip()
                 if not decision_id:
-                    # The canonical rollback writer emits no decision binding; its
-                    # own resource ownership is proven by the tenant-scoped Runtime
-                    # binding owner read instead. Anything else stays unresolved.
-                    if dataset == "all_rollbacks":
-                        claimed = str(row.get("tenant_id") or "").strip()
-                        if (not claimed or claimed == tenant) and self._rollback_runtime_ownership(row, tenant):
-                            visible.append(dict(row))
-                            continue
                     unresolved += 1
                     continue
                 try:
