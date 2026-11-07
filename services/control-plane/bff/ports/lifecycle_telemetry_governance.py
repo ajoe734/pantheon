@@ -908,7 +908,13 @@ class DomainGovernancePort:
         all_rollbacks: Optional[Union[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]] = None,
         rollback_reviews: Optional[Dict[str, Dict[str, Any]]] = None,
         governance_audit_events: Optional[List[Dict[str, Any]]] = None,
+        owner_reads: bool = False,
     ) -> None:
+        # owner_reads: freeze orders / rollbacks come from the canonical
+        # Governance owner GETs (caller auth, verified tenant) unless a store
+        # was explicitly injected for that dataset.
+        self._freeze_owner_reads = owner_reads and freeze_orders is None
+        self._rollback_owner_reads = owner_reads and all_rollbacks is None
         self._evolution_decisions = dict(evolution_decisions or {})
         self._freeze_orders = dict(freeze_orders or {})
         if isinstance(all_rollbacks, dict):
@@ -989,12 +995,91 @@ class DomainGovernancePort:
     def get_evolution_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
         return self.get_evolution_decision_by_id(decision_id)
 
+    _OWNER_PATHS = {
+        "freeze_orders": "/api/governance/freeze-orders",
+        "all_rollbacks": "/api/governance/rollbacks",
+    }
+
+    def _owner_scoped_records(self, dataset: str) -> Tuple[List[Dict[str, Any]], int]:
+        """Read one canonical Governance collection; return (visible rows, unresolved count).
+
+        Visible rows carry a ``tenant_id`` equal to the verified caller tenant.
+        Rows with no tenant binding are unresolved (never shown, never
+        assigned a tenant); rows bound to another tenant are hidden. Raises on
+        unconfigured owner, missing caller auth, transport error or bad payload.
+        """
+        from services.control_plane.bff.command_adapters.base import governance_url, http_request_json
+        from services.control_plane.bff.core.owner_reads import (
+            authorization,
+            remaining_management_read_budget,
+            verified_caller_tenant,
+        )
+
+        auth = authorization.get()
+        if not auth:
+            raise RuntimeError("Governance owner read requires caller authorization")
+        token = auth.removeprefix("Bearer ").strip()
+        tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+        url = governance_url(self._OWNER_PATHS[dataset])
+
+        def _load() -> Tuple[List[Dict[str, Any]], int]:
+            rem = remaining_management_read_budget()
+            body = http_request_json(
+                url,
+                auth_token=token,
+                tenant_id=tenant,
+                **({"timeout": rem} if rem is not None else {}),
+            )
+            if not isinstance(body, list) or any(not isinstance(r, dict) for r in body):
+                raise RuntimeError(f"Invalid Governance owner collection for {dataset}")
+            visible: List[Dict[str, Any]] = []
+            unresolved = 0
+            for row in body:
+                row_tenant = str(row.get("tenant_id") or "").strip()
+                if not row_tenant:
+                    unresolved += 1
+                elif row_tenant == tenant:
+                    visible.append(dict(row))
+            return visible, unresolved
+
+        return cached_owner_call(("governance_owner_records", dataset, url, token, tenant), _load)
+
+    def _owner_rows_or_empty(self, dataset: str) -> List[Dict[str, Any]]:
+        # Journal callers cannot tolerate a raise; the failure is cached for the
+        # request and reported by dataset_source, never as a healthy zero.
+        try:
+            return list(self._owner_scoped_records(dataset)[0])
+        except Exception:
+            return []
+
+    def dataset_source(self, dataset: str = "freeze_orders") -> str:
+        owner = {"freeze_orders": self._freeze_owner_reads, "all_rollbacks": self._rollback_owner_reads}
+        if dataset not in owner:
+            return "typed_store"
+        if not owner[dataset]:
+            return "typed_store"
+        from services.control_plane.bff.command_adapters.base import get_base_url
+
+        try:
+            get_base_url("PANTHEON_GOVERNANCE_API_URL", "PANTHEON_GOVERNANCE_APPROVAL_API_URL")
+        except RuntimeError:
+            return "missing"
+        try:
+            _, unresolved = self._owner_scoped_records(dataset)
+        except Exception:
+            return "unavailable"
+        # Rows whose tenant provenance cannot be verified stay unverified, not healthy.
+        return "unavailable" if unresolved else "service"
+
     def list_freeze_orders(
         self,
         status: Optional[str] = None,
         scope: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        orders = list(self._freeze_orders.values())
+        if self._freeze_owner_reads:
+            orders = self._owner_rows_or_empty("freeze_orders")
+        else:
+            orders = list(self._freeze_orders.values())
         if status:
             orders = [o for o in orders if o.get("status") == status]
         if scope:
@@ -1011,7 +1096,10 @@ class DomainGovernancePort:
         action_type: Optional[str] = None,
         time_range: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        rollbacks = list(self._all_rollbacks)
+        if self._rollback_owner_reads:
+            rollbacks = self._owner_rows_or_empty("all_rollbacks")
+        else:
+            rollbacks = list(self._all_rollbacks)
         if runtime_id:
             rollbacks = [r for r in rollbacks if r.get("runtime_id") == runtime_id]
         if action_type:
@@ -1732,7 +1820,7 @@ class CompositeLifecycleTelemetryGovernancePort:
     ) -> None:
         self.incidents = incident_port or DomainIncidentPort()
         self.lifecycle = lifecycle_port or DomainLifecyclePort()
-        self.governance = governance_port or DomainGovernancePort()
+        self.governance = governance_port or DomainGovernancePort(owner_reads=True)
         self.lineage = lineage_port or DomainLineagePort()
         self.telemetry = telemetry_port or DomainTelemetryPort()
 
@@ -1795,6 +1883,10 @@ class CompositeLifecycleTelemetryGovernancePort:
                         return ds_fn()
         if dataset == "lineage_edges":
             ds_fn = getattr(self.lineage, "dataset_source", None)
+            if callable(ds_fn):
+                return ds_fn(dataset)
+        if dataset in ("freeze_orders", "all_rollbacks"):
+            ds_fn = getattr(self.governance, "dataset_source", None)
             if callable(ds_fn):
                 return ds_fn(dataset)
         return "typed_store"

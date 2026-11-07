@@ -872,3 +872,107 @@ def test_helpers():
     assert _is_fixture_pack_record({"meta": {"fixture_pack": True}}) is True
     assert _is_fixture_pack_record({"normal": "record"}) is False
     assert _is_fixture_pack_record(None) is False
+
+
+# ---------------------------------------------------------------------------
+# Journal freeze / rollback reads from the canonical Governance owner
+# ---------------------------------------------------------------------------
+
+class _GovOwner:
+    """Fake Governance owner behind the real configured transport (command_executor._get_json)."""
+
+    def __init__(self, monkeypatch, payloads: Dict[str, Any], tenant: str = "t-own") -> None:
+        from services.control_plane.bff import command_executor
+        from services.control_plane.bff.core import owner_reads
+
+        self.calls: List[Dict[str, Any]] = []
+        monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://governance.test")
+        monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: tenant)
+
+        def _get_json(url, auth_token=None, mfa_token=None, tenant_id=None, timeout=None):
+            self.calls.append({"url": url, "auth": auth_token, "tenant": tenant_id})
+            value = payloads[url.rsplit("/api/governance/", 1)[1]]
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        monkeypatch.setattr(command_executor, "_get_json", _get_json)
+
+
+def _journal_port():
+    return create_lifecycle_telemetry_governance_port()
+
+
+def _with_caller():
+    from services.control_plane.bff.core.owner_reads import authorization, request_read_scope
+
+    token = authorization.set("Bearer caller-token")
+    return token, authorization, request_read_scope
+
+
+def test_default_port_reads_governance_owner_scoped_to_verified_tenant(monkeypatch):
+    owner = _GovOwner(monkeypatch, {
+        "freeze-orders": [
+            {"freeze_order_id": "f-own", "status": "active", "tenant_id": "t-own", "created_at": "2026-11-02T00:00:00Z"},
+            {"freeze_order_id": "f-foreign", "status": "active", "tenant_id": "t-other"},
+            {"freeze_order_id": "f-legacy", "status": "active"},
+        ],
+        "rollbacks": [
+            {"rollback_id": "r-own", "runtime_id": "rt1", "status": "completed", "tenant_id": "t-own"},
+            {"rollback_id": "r-foreign", "runtime_id": "rt1", "tenant_id": "t-other"},
+        ],
+    })
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            orders = port.list_freeze_orders()
+            rollbacks = port.list_all_rollbacks(runtime_id="rt1")
+            src_freeze = port.dataset_source("freeze_orders")
+            src_rb = port.dataset_source("all_rollbacks")
+            assert len(owner.calls) == 2  # rows + source share one read per dataset
+    finally:
+        authorization.reset(token)
+    assert [o["freeze_order_id"] for o in orders] == ["f-own"]
+    assert [r["rollback_id"] for r in rollbacks] == ["r-own"]
+    assert rollbacks[0]["status"] == "completed"
+    # Unresolved legacy row never fabricated into the tenant; source stays unverified.
+    assert src_freeze == "unavailable"
+    assert src_rb == "service"
+    assert all(c["auth"] == "caller-token" and c["tenant"] == "t-own" for c in owner.calls)
+
+
+def test_default_port_healthy_empty_vs_error_vs_unconfigured(monkeypatch):
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        monkeypatch.delenv("PANTHEON_GOVERNANCE_API_URL", raising=False)
+        monkeypatch.delenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", raising=False)
+        assert port.list_freeze_orders() == []
+        assert port.dataset_source("freeze_orders") == "missing"
+
+        _GovOwner(monkeypatch, {"freeze-orders": [], "rollbacks": TimeoutError("owner timeout")})
+        with scope():
+            assert port.list_freeze_orders() == []
+            assert port.dataset_source("freeze_orders") == "service"  # healthy empty
+            assert port.list_all_rollbacks() == []
+            assert port.dataset_source("all_rollbacks") == "unavailable"  # error is not zero
+
+        _GovOwner(monkeypatch, {"freeze-orders": {"not": "a list"}, "rollbacks": []})
+        with scope():
+            assert port.list_freeze_orders() == []
+            assert port.dataset_source("freeze_orders") == "unavailable"
+    finally:
+        authorization.reset(token)
+
+
+def test_default_port_requires_caller_authorization(monkeypatch):
+    _GovOwner(monkeypatch, {"freeze-orders": [{"freeze_order_id": "f", "tenant_id": "t-own"}], "rollbacks": []})
+    port = _journal_port()
+    assert port.list_freeze_orders() == []
+    assert port.dataset_source("freeze_orders") == "unavailable"
+
+
+def test_injected_store_mode_unchanged():
+    port = DomainGovernancePort(freeze_orders={"f": {"freeze_order_id": "f"}})
+    assert [o["freeze_order_id"] for o in port.list_freeze_orders()] == ["f"]

@@ -548,3 +548,33 @@ class TestUnifiedReadSurfacePorts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
+        CompositeLifecycleTelemetryGovernancePort,
+        DomainGovernancePort,
+    )
+
+    rows = [{"rollback_id": "r1", "tenant_id": "t-own", "status": "completed"}, {"rollback_id": "r2", "tenant_id": "t-x"}]
+    calls = []
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://governance.test")
+    monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: "t-own")
+    monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: calls.append(url) or rows)
+    token = owner_reads.authorization.set("Bearer tok")
+    try:
+        rsp = ReadSurfacePorts(
+            lifecycle_telemetry_governance=CompositeLifecycleTelemetryGovernancePort(
+                governance_port=DomainGovernancePort(owner_reads=True)
+            )
+        )
+        assert [r["rollback_id"] for r in rsp.list_all_rollbacks()] == ["r1"]
+        assert rsp.dataset_source("all_rollbacks") == "service"
+        assert rsp.dataset_source("freeze_orders") == "service"
+    finally:
+        owner_reads.authorization.reset(token)
+    assert any(u.endswith("/api/governance/rollbacks") for u in calls)

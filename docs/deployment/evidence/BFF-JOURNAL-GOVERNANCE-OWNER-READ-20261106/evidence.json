@@ -1,0 +1,17 @@
+{
+  "task_id": "BFF-JOURNAL-GOVERNANCE-OWNER-READ-20261106",
+  "scope": "source only; no hosted acceptance, no Freeze/Rollback writes",
+  "change": {
+    "DomainGovernancePort": "owner_reads=True (Composite default) reads GET /api/governance/freeze-orders and /rollbacks via governance_url + http_request_json with caller auth, remaining management deadline and request-scoped cached_owner_call",
+    "tenant_policy": "rows visible only when row.tenant_id == verified_caller_tenant; foreign hidden; rows without tenant_id never shown/never assigned a tenant and mark the dataset source unverified",
+    "ReadSurfacePorts": "list_all_rollbacks now reads the canonical Governance ledger (no loop_runs pseudo-rollbacks, no swallow-to-empty); dataset_source(freeze_orders|all_rollbacks) reports the real owner outcome",
+    "dataset_source": {"service": "owner read ok, all rows tenant-resolved (incl. healthy empty)", "missing": "governance URL not configured", "unavailable": "transport error/timeout/bad payload/no caller auth, or unresolved-provenance rows present"}
+  },
+  "known_limit": "unresolved-provenance is reported as source=unavailable (the shared dataset formatter has no degraded source value; adding one needs admission of research/routes/common.py). Verified visible rows are still returned.",
+  "tests": {
+    "test_lifecycle_telemetry_governance_ports.py": "4 new tests (scoped own/foreign/legacy, healthy empty, error/timeout/invalid, no auth, injected-store unchanged)",
+    "test_read_surface_port_cutover.py": "1 new test",
+    "runs": "46 passed (two files); 70 passed (incl. test_bff_b3_evolution_journal.py, before new tests); 29 passed related evolution/freeze/rollback suites"
+  },
+  "hosted_acceptance": "unchanged, owned by EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104"
+}

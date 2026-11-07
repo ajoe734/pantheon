@@ -512,6 +512,9 @@ class ReadSurfacePorts:
         if dataset == "lineage_edges":
             # Real registry-owner read outcome (service_client / unavailable), never a constant.
             return self.lifecycle_telemetry_governance.dataset_source(dataset)
+        if dataset in ("freeze_orders", "all_rollbacks"):
+            # Real Governance owner read outcome (service / unavailable / missing).
+            return self.lifecycle_telemetry_governance.dataset_source(dataset)
         if dataset in ("incidents", "postmortems"):
             # The incident/postmortem owners can be down while list_*() swallows
             # the outage and returns []; surface their real availability.
@@ -1259,14 +1262,10 @@ class ReadSurfacePorts:
         return runs
 
     def list_all_rollbacks(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        # Preserves its long-standing best-effort empty-list contract for
-        # generic evolution-journal/rollback-listing callers that are not
-        # owner-observation aware; get_rollbacks() itself raises on a
-        # genuinely unavailable owner for callers that need that signal.
-        try:
-            return self.get_rollbacks()
-        except Exception:
-            return []
+        # Canonical Governance rollback ledger (not loop_runs / incident-derived
+        # pseudo-rollbacks). Owner failures are reported through
+        # dataset_source("all_rollbacks"), not as a healthy zero.
+        return self.lifecycle_telemetry_governance.list_all_rollbacks(**kwargs)
 
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
         return cached_owner_call(("rsp_paper_monitoring", id(self), selected_tenant.get()), self._load_paper_runtime_monitoring_sessions)
