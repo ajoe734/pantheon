@@ -3981,7 +3981,14 @@ class ManagementService:
             int(block.get("eligible_item_count") or 0)
             for block in blocks
         )
-        if missing_metric_item_count and surfaces["management_trading_pulse_rankings"].get("status") == "ok":
+        # Sharpe is an accumulating metric for new runtimes (needs 10 daily
+        # returns); only its absence must not degrade the surface.
+        degrading_missing_metric_count = sum(
+            int(block.get("missing_metric_count") or 0)
+            for block in blocks
+            if block.get("block_id") != "sharpe-leaders"
+        )
+        if degrading_missing_metric_count and surfaces["management_trading_pulse_rankings"].get("status") == "ok":
             surfaces["management_trading_pulse_rankings"]["status"] = "degraded"
             surfaces["management_trading_pulse_rankings"]["message"] = (
                 "Trading pulse rankings are degraded because one or more ranking metrics are missing."
