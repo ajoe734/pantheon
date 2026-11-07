@@ -41,6 +41,11 @@ def _get_fleet_collector(store, personas=None, service=None, utc_now=None):
     if _FLEET_FUNCS is None:
         target_names = {
             "_mgmt_nl_collect_context",
+            "_mgmt_nl_filter_deployment_scoped_records",
+            "_mgmt_nl_runtime_is_retired",
+            "_mgmt_nl_persona_state",
+            "_mgmt_nl_persona_is_operational",
+            "_management_count_by",
             "_mgmt_nl_filter_tenant_records",
             "_mgmt_nl_record_matches_tenant",
             "_mgmt_nl_record_tenant_ids",

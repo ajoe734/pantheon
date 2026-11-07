@@ -26,6 +26,11 @@ def _get_fleet_collector(store, personas, service=None, utc_now=None):
     if _FLEET_FUNCS is None:
         target_names = {
             "_mgmt_nl_collect_context",
+            "_mgmt_nl_filter_deployment_scoped_records",
+            "_mgmt_nl_runtime_is_retired",
+            "_mgmt_nl_persona_state",
+            "_mgmt_nl_persona_is_operational",
+            "_management_count_by",
             "_mgmt_nl_filter_tenant_records",
             "_mgmt_nl_record_matches_tenant",
             "_mgmt_nl_record_tenant_ids",
@@ -117,7 +122,7 @@ def fleet(monkeypatch):
     runtime = owner_row("runtime", runtime_id="r1", binding_id="b1", persona_capital_binding_id="b1")
     store = SimpleNamespace(
         list_runtime_bindings=lambda: [runtime],
-        list_incidents=lambda: [owner_row("incident", incident_id="i1")],
+        list_incidents=lambda **_kw: [owner_row("incident", incident_id="i1")],
         list_evolution_decisions=lambda: [owner_row("evolution", decision_id="e1")],
         list_strategy_specs=lambda **kw: [owner_row("strategy", id="s1")],
         get_bindings_for_persona=lambda _: [owner_row("binding", id="b1", capital_pool_id="pool1")],
