@@ -866,9 +866,59 @@ class ApprovalDecisionStore:
         candidates.sort(key=lambda d: d.decided_at, reverse=True)
         return candidates[0]
 
-    def list_all(self) -> List[ApprovalDecision]:
-        """Return all decisions."""
-        return list(self._decisions.values())
+    def list_all(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        decision_states: Optional[ List[DecisionState | str] | tuple[DecisionState | str, ...] ] = None,
+        decision_ids: Optional[ List[str] | tuple[str, ...] ] = None,
+        target_type: Optional[TargetType | str] = None,
+        target_id: Optional[str] = None,
+        risk_level: Optional[RiskLevel | str] = None,
+    ) -> List[ApprovalDecision]:
+        """Return all decisions matching optional filters."""
+        state_values: Optional[set[str]] = None
+        if decision_states is not None:
+            state_values = {
+                s.value if isinstance(s, DecisionState) else str(s)
+                for s in decision_states
+            }
+            if not state_values:
+                return []
+        id_values: Optional[set[str]] = None
+        if decision_ids is not None:
+            id_values = {str(did).strip() for did in decision_ids if str(did).strip()}
+            if not id_values:
+                return []
+        tt_value = (
+            target_type.value if isinstance(target_type, TargetType) else str(target_type)
+        ) if target_type is not None else None
+        rl_value = (
+            risk_level.value if isinstance(risk_level, RiskLevel) else str(risk_level)
+        ) if risk_level is not None else None
+
+        results: List[ApprovalDecision] = []
+        for d in self._decisions.values():
+            if tenant_id is not None and (d.tenant_id or DEFAULT_TENANT_ID) != str(tenant_id):
+                continue
+            if state_values is not None:
+                d_state = d.decision_state.value if isinstance(d.decision_state, DecisionState) else str(d.decision_state)
+                if d_state not in state_values:
+                    continue
+            if id_values is not None and d.decision_id not in id_values:
+                continue
+            if tt_value is not None:
+                d_tt = d.target_type.value if isinstance(d.target_type, TargetType) else str(d.target_type)
+                if d_tt != tt_value:
+                    continue
+            if target_id is not None and d.target_id != str(target_id):
+                continue
+            if rl_value is not None:
+                d_rl = d.risk_level.value if isinstance(d.risk_level, RiskLevel) else str(d.risk_level)
+                if d_rl != rl_value:
+                    continue
+            results.append(d)
+        return results
 
     def _save(self) -> None:
         if not self._storage_path:
