@@ -602,3 +602,226 @@ def test_empty_scoped_snapshot_when_contract_removed_from_margin_and_market_tabl
         normalized_root=tmp_path,
     )
     assert [c["instrument_id"] for c in candidates_2330] == ["eq:2330", "ssf:CDF:202611", "ssf:QFF:202611"]
+
+
+def test_more_than_six_random_ingest_runs_preserve_latest_removal_and_unpriced_snapshots(
+    payload: dict[str, Any], tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    assert ic.MAX_FILES == 6
+    adapter = TaifexDerivativesChipAdapter()
+    old_run_ids = (
+        "ingest-ffffffffffff",
+        "ingest-eeeeeeeeeeee",
+        "ingest-dddddddddddd",
+        "ingest-cccccccccccc",
+        "ingest-bbbbbbbbbbbb",
+        "ingest-aaaaaaaaaaaa",
+        "ingest-999999999999",
+    )
+
+    # 1. Margin removal in newest snapshot named ingest-000000000000 after >6 lexicographically larger runs.
+    removal_root = tmp_path / "margin_removal"
+    removal_writer = MarketDataStorageWriter(removal_root)
+    for run_id in old_run_ids:
+        old_records = adapter.records_from_payload(
+            payload,
+            dataset="taifex_ssf_contracts",
+            contracts=["2330"],
+            available_time="2026-11-06T16:30:00Z",
+        )
+        removal_writer.write_run(
+            result=SimpleNamespace(records=old_records, run=SimpleNamespace(ingest_run_id=run_id)),
+            connector=adapter.connector(),
+        )
+    trimmed_qff = {
+        **payload,
+        "SingleStockFuturesMargining": [
+            row for row in payload["SingleStockFuturesMargining"] if row["Contract"] != "QFF"
+        ],
+    }
+    newest_removed = adapter.records_from_payload(
+        trimmed_qff,
+        dataset="taifex_ssf_contracts",
+        contracts=["2330"],
+        available_time="2026-11-06T17:00:00Z",
+    )
+    removal_writer.write_run(
+        result=SimpleNamespace(records=newest_removed, run=SimpleNamespace(ingest_run_id="ingest-000000000000")),
+        connector=adapter.connector(),
+    )
+    assert [
+        c["instrument_id"]
+        for c in ic.build_candidates(
+            "2330",
+            DECISION_DAY,
+            {},
+            BUDGET,
+            cash_price=2200.0,
+            cash_price_date="2026-11-06",
+            normalized_root=removal_root,
+        )
+    ] == ["eq:2330", "ssf:CDF:202611"]
+    default_disk_rows = ic.read_normalized_ssf_rows(removal_root)
+    assert default_disk_rows is not None
+    assert [
+        c["instrument_id"]
+        for c in ic.build_candidates(
+            "2330",
+            DECISION_DAY,
+            {},
+            BUDGET,
+            cash_price=2200.0,
+            cash_price_date="2026-11-06",
+            rows_reader=lambda: default_disk_rows,
+        )
+    ] == ["eq:2330", "ssf:CDF:202611"]
+
+    # 2. Unpriced front-month in newest snapshot named ingest-000000000000 (even with same available_time)
+    #    plus >6 scoped 2317 runs with tombstone in ingest-000000000001.
+    mixed_root = tmp_path / "unpriced_and_tombstone"
+    mixed_writer = MarketDataStorageWriter(mixed_root)
+    for run_id in old_run_ids:
+        old_2330 = adapter.records_from_payload(
+            payload,
+            dataset="taifex_ssf_contracts",
+            contracts=["2330"],
+            available_time="2026-11-06T16:30:00Z",
+        )
+        mixed_writer.write_run(
+            result=SimpleNamespace(records=old_2330, run=SimpleNamespace(ingest_run_id=f"{run_id[:15]}a")),
+            connector=adapter.connector(),
+        )
+        old_2317 = adapter.records_from_payload(
+            payload,
+            dataset="taifex_ssf_contracts",
+            contracts=["2317"],
+            available_time="2026-11-06T16:30:00Z",
+        )
+        mixed_writer.write_run(
+            result=SimpleNamespace(records=old_2317, run=SimpleNamespace(ingest_run_id=f"{run_id[:15]}b")),
+            connector=adapter.connector(),
+        )
+
+    unpriced_qff_front = {
+        **payload,
+        "DailyMarketReportFut": [
+            {**row, "SettlementPrice": "-"}
+            if (
+                row.get("Contract") == "QFF"
+                and str(row.get("ContractMonth(Week)")).strip() == "202611"
+                and row.get("TradingSession") == "一般"
+            )
+            else row
+            for row in payload["DailyMarketReportFut"]
+        ],
+    }
+    newest_unpriced_2330 = adapter.records_from_payload(
+        unpriced_qff_front,
+        dataset="taifex_ssf_contracts",
+        contracts=["2330"],
+        available_time="2026-11-06T16:30:00Z",
+    )
+    mixed_writer.write_run(
+        result=SimpleNamespace(records=newest_unpriced_2330, run=SimpleNamespace(ingest_run_id="ingest-000000000000")),
+        connector=adapter.connector(),
+    )
+
+    no_dhf = {
+        **payload,
+        "SingleStockFuturesMargining": [
+            row for row in payload["SingleStockFuturesMargining"] if row["Contract"] != "DHF"
+        ],
+        "DailyMarketReportFut": [
+            row for row in payload["DailyMarketReportFut"] if row["Contract"] != "DHF"
+        ],
+    }
+    newest_tombstone_2317 = adapter.records_from_payload(
+        no_dhf,
+        dataset="taifex_ssf_contracts",
+        contracts=["2317"],
+        available_time="2026-11-06T17:05:00Z",
+    )
+    mixed_writer.write_run(
+        result=SimpleNamespace(records=newest_tombstone_2317, run=SimpleNamespace(ingest_run_id="ingest-000000000001")),
+        connector=adapter.connector(),
+    )
+
+    assert [
+        c["instrument_id"]
+        for c in ic.build_candidates(
+            "2330",
+            DECISION_DAY,
+            {},
+            BUDGET,
+            cash_price=2200.0,
+            cash_price_date="2026-11-06",
+            normalized_root=mixed_root,
+        )
+    ] == ["eq:2330", "ssf:CDF:202611"]
+    assert [
+        c["instrument_id"]
+        for c in ic.build_candidates(
+            "2317",
+            DECISION_DAY,
+            {},
+            BUDGET,
+            cash_price=230.0,
+            cash_price_date="2026-11-06",
+            normalized_root=mixed_root,
+        )
+    ] == ["eq:2317"]
+
+
+def test_bounded_reader_fails_closed_when_latest_coverage_cannot_be_established(
+    rows: list[dict[str, Any]], tmp_path: Path
+) -> None:
+    # 1. Row-truncated newest snapshot fails closed in build_candidates.
+    trunc_root = tmp_path / "truncated"
+    _write_partition(trunc_root, "2026-11-06", "ingest-aaaaaaaaaaaa", rows)
+    partial_rows = ic.read_normalized_ssf_rows(trunc_root, max_rows=2)
+    assert partial_rows is not None and len(partial_rows) == 2
+    candidates_trunc = ic.build_candidates(
+        "2330",
+        DECISION_DAY,
+        {},
+        BUDGET,
+        cash_price=2200.0,
+        cash_price_date="2026-11-06",
+        rows_reader=lambda: partial_rows,
+    )
+    assert [c["instrument_id"] for c in candidates_trunc] == ["eq:2330"]
+    assert {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"} in candidates_trunc[0]["source_refs"]
+
+    # 2. Ambiguous tied random-UUID snapshots with identical timestamps and conflicting rows fail closed.
+    ambig_root = tmp_path / "ambiguous"
+    same_stamp_full = [
+        dict(r, available_time="2026-11-06T17:00:00Z", ingest_time="2026-11-06T17:00:01Z")
+        for r in rows
+        if r["underlying_code"] == "2330"
+    ]
+    same_stamp_removed = [
+        dict(r, snapshot_contracts=["CDF"], snapshot_absent_contracts=["QFF"])
+        for r in same_stamp_full
+        if r["contract"] != "QFF"
+    ]
+    _write_partition(ambig_root, "2026-11-06", "ingest-ffffffffffff", same_stamp_full)
+    _write_partition(ambig_root, "2026-11-06", "ingest-000000000000", same_stamp_removed)
+    candidates_ambig = ic.build_candidates(
+        "2330",
+        DECISION_DAY,
+        {},
+        BUDGET,
+        cash_price=2200.0,
+        cash_price_date="2026-11-06",
+        normalized_root=ambig_root,
+    )
+    assert [c["instrument_id"] for c in candidates_ambig] == ["eq:2330"]
+    assert {"reason": "candidates_unavailable", "dataset": "taifex_ssf_contracts"} in candidates_ambig[0]["source_refs"]
+
+    # 3. Scan limit exceeded fails closed.
+    assert ic.read_normalized_ssf_rows(ambig_root, max_scan_files=1) == []

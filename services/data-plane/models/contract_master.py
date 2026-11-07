@@ -300,7 +300,7 @@ class ContractMaster:
                 for c in (r.get("snapshot_absent_contracts") or ())
                 if c
             }
-            if any(r.get("tombstone") for r in newest_rows):
+            if any(r.get("tombstone") or r.get("_snapshot_truncated") for r in newest_rows):
                 allowed_contracts_by_underlying[code] = set()
             elif any("snapshot_contracts" in r or "_file_contracts" in r for r in newest_rows):
                 allowed: set[str] = set()
@@ -316,7 +316,7 @@ class ContractMaster:
 
         latest: dict[str, tuple[tuple[float, str, float, str, int, str, str, int], dict[str, Any]]] = {}
         for index, row in enumerate(row_list):
-            if row.get("tombstone") or not row.get("contract") or not row.get("contract_month"):
+            if row.get("tombstone") or row.get("_snapshot_truncated") or not row.get("contract") or not row.get("contract_month"):
                 continue
             contract = str(row["contract"])
             code = str(row.get("underlying_code") or "").strip()

@@ -508,6 +508,41 @@ class TestContractMasterFromSsfDataset(unittest.TestCase):
             disk_rows = read_normalized_ssf_rows(tmp_path)
             self.assertEqual(ContractMaster.from_ssf_normalized_rows(disk_rows), [])
 
+        with tempfile.TemporaryDirectory() as tmp_dir2:
+            tmp_path2 = Path(tmp_dir2)
+            writer2 = MarketDataStorageWriter(tmp_path2)
+            for suffix in ("ffffffffffff", "eeeeeeeeeeee", "dddddddddddd", "cccccccccccc", "bbbbbbbbbbbb", "aaaaaaaaaaaa"):
+                old_2330 = adapter.records_from_payload(
+                    payload,
+                    dataset="taifex_ssf_contracts",
+                    contracts=["2330"],
+                    available_time="2026-11-06T16:30:00Z",
+                )
+                writer2.write_run(
+                    result=SimpleNamespace(records=old_2330, run=SimpleNamespace(ingest_run_id=f"ingest-{suffix}")),
+                    connector=adapter.connector(),
+                )
+            trimmed_qff = {
+                **payload,
+                "SingleStockFuturesMargining": [
+                    r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "QFF"
+                ],
+            }
+            newest_2330 = adapter.records_from_payload(
+                trimmed_qff,
+                dataset="taifex_ssf_contracts",
+                contracts=["2330"],
+                available_time="2026-11-06T17:00:00Z",
+            )
+            writer2.write_run(
+                result=SimpleNamespace(records=newest_2330, run=SimpleNamespace(ingest_run_id="ingest-000000000000")),
+                connector=adapter.connector(),
+            )
+            disk_rows2 = read_normalized_ssf_rows(tmp_path2)
+            masters2 = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(disk_rows2)}
+            self.assertNotIn("ssf:QFF:202611", masters2)
+            self.assertIn("ssf:CDF:202611", masters2)
+
     def test_no_second_contract_model_exists(self):
         models = Path(__file__).resolve().parents[1] / "models"
         self.assertEqual([p.name for p in models.glob("*contract*.py")], ["contract_master.py"])

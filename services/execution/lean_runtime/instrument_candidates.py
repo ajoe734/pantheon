@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -30,12 +31,30 @@ SSF_DATASET = "taifex_ssf_contracts"
 NORMALIZED_DATASET_PATH = "normalized/taifex_ssf_contracts"
 CONTRACT_CODE = re.compile(r"^[A-Z]{2}F$")
 CONTRACT_MONTH = re.compile(r"^\d{6}$")
+RANDOM_INGEST_RUN_STEM = re.compile(r"^ingest-[0-9a-f]{8,}$", re.IGNORECASE)
 MAX_PARTITIONS = 3
 MAX_FILES = 6
+MAX_SCAN_FILES = 64
 MAX_ROWS = 20000
 MAX_FILE_BYTES = 16 * 1024 * 1024
 
 RowsReader = Callable[[], "Sequence[Mapping[str, Any]] | None"]
+
+
+@dataclass
+class _CandidateDiskFile:
+    file_path: Path
+    part_date: date
+    part_name: str
+    file_name: str
+    is_random_ingest_stem: bool
+    file_time_key: tuple[date, date, float, str, float, str]
+    parsed_file_rows: list[dict[str, Any]]
+    relevant_rows: list[dict[str, Any]]
+    file_contracts: list[str]
+    file_truncated: bool
+    discovered_codes: set[str]
+    has_all_scope: bool
 
 
 def normalize_underlying_code(symbol: str) -> str:
@@ -56,41 +75,120 @@ def _finalize_disk_rows(rows_newest_first: list[dict[str, Any]], total_files: in
     return rows_newest_first
 
 
+def _row_snapshot_time_key(row: Mapping[str, Any]) -> tuple[date, date, float, str, float, str]:
+    market_date = _snapshot_market_date(row)
+    margin_date = _snapshot_margin_date(row)
+    effective_market_date = market_date or margin_date or date.min
+    effective_margin_date = margin_date or effective_market_date
+    avail_epoch, avail_raw = _optional_timestamp(row.get("available_time"))
+    ingest_epoch, ingest_raw = _optional_timestamp(row.get("ingest_time"))
+    return (
+        effective_market_date,
+        effective_margin_date,
+        avail_epoch,
+        avail_raw,
+        ingest_epoch,
+        ingest_raw,
+    )
+
+
+def _discovered_codes_in_row(row: Mapping[str, Any]) -> set[str]:
+    codes: set[str] = set()
+    direct = _row_underlying_code(row)
+    if direct:
+        codes.add(direct)
+    for key in ("snapshot_scope", "snapshot_underlyings"):
+        for item in row.get(key) or ():
+            text = str(item or "").strip()
+            if not text:
+                continue
+            try:
+                norm = normalize_underlying_code(text)
+            except ValueError:
+                norm = text
+            if norm:
+                codes.add(norm)
+    return codes
+
+
+def _rows_digest_for_code(rows: Sequence[Mapping[str, Any]], code: str) -> tuple[str, ...]:
+    items: list[str] = []
+    for row in rows:
+        if not _row_covers_underlying(row, code):
+            continue
+        cleaned = {
+            str(k): v
+            for k, v in row.items()
+            if not str(k).startswith("_") and str(k) != "ingest_time"
+        }
+        items.append(json.dumps(cleaned, ensure_ascii=False, sort_keys=True, default=str))
+    items.sort()
+    return tuple(items)
+
+
+def _file_time_key_for_code(cand: _CandidateDiskFile, code: str) -> tuple[date, date, float, str, float, str] | None:
+    keys = [_row_snapshot_time_key(r) for r in cand.relevant_rows if _row_covers_underlying(r, code)]
+    return max(keys) if keys else None
+
+
 def read_normalized_ssf_rows(
     root: str | Path,
     *,
+    underlying: str | None = None,
+    as_of_trading_day: str | date | None = None,
     max_partitions: int = MAX_PARTITIONS,
     max_files: int = MAX_FILES,
     max_rows: int = MAX_ROWS,
     max_file_bytes: int = MAX_FILE_BYTES,
+    max_scan_files: int = MAX_SCAN_FILES,
 ) -> list[dict[str, Any]] | None:
     """Read the newest normalized partitions of ``taifex_ssf_contracts``.
 
     Layout is the one ``MarketDataStorageWriter`` writes:
     ``<root>/normalized/taifex_ssf_contracts/date=YYYY-MM-DD/<run>.jsonl`` with
     the row under ``metadata.normalized_row``. Returns ``None`` when the dataset
-    directory does not exist; reading stops at the file and row limits.
+    directory does not exist; candidate files are ranked by their authoritative
+    snapshot chronology before selecting ``max_files``, and reading fails closed
+    when latest coverage cannot be established within the bounded limits.
     """
     base = Path(root) / NORMALIZED_DATASET_PATH
     if not base.is_dir():
         return None
-    partitions = sorted(
-        (path for path in base.iterdir() if path.is_dir() and path.name.startswith("date=")),
-        key=lambda path: path.name,
-        reverse=True,
-    )[:max_partitions]
-    rows_newest_first: list[dict[str, Any]] = []
-    files_read = 0
-    for partition in partitions:
-        for file_path in sorted(partition.glob("*.jsonl"), reverse=True):
-            if files_read >= max_files or len(rows_newest_first) >= max_rows:
-                return _finalize_disk_rows(rows_newest_first, files_read)
-            files_read += 1
-            if file_path.stat().st_size > max_file_bytes:
-                continue
-            with file_path.open("r", encoding="utf-8") as handle:
-                lines = handle.readlines()
+    if max_partitions <= 0 or max_files <= 0 or max_rows <= 0 or max_file_bytes <= 0 or max_scan_files <= 0:
+        return []
+    target_code = normalize_underlying_code(underlying) if underlying else None
+    target_day = _as_date(as_of_trading_day) if as_of_trading_day is not None else None
+    partition_dirs: list[tuple[date, str, Path]] = []
+    for path in base.iterdir():
+        if not path.is_dir() or not path.name.startswith("date="):
+            continue
+        part_date = _optional_date(path.name[5:])
+        if target_day is not None and part_date is not None and part_date > target_day:
+            continue
+        partition_dirs.append((part_date or date.min, path.name, path))
+    partition_dirs.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    partitions = partition_dirs[:max_partitions]
+
+    candidate_files: list[_CandidateDiskFile] = []
+    scanned_files = 0
+    for part_date, part_name, partition in partitions:
+        for file_path in sorted(partition.glob("*.jsonl")):
+            scanned_files += 1
+            if scanned_files > max_scan_files:
+                return []
+            try:
+                stat = file_path.stat()
+            except OSError:
+                return []
+            if stat.st_size <= 0 or stat.st_size > max_file_bytes:
+                return []
+            try:
+                with file_path.open("r", encoding="utf-8") as handle:
+                    lines = handle.readlines()
+            except OSError:
+                return []
             parsed_file_rows: list[dict[str, Any]] = []
+            file_truncated = False
             for line in reversed(lines):
                 line = line.strip()
                 if not line:
@@ -98,18 +196,129 @@ def read_normalized_ssf_rows(
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError:
-                    continue
+                    return []
+                if not isinstance(record, Mapping):
+                    return []
                 row = (record.get("metadata") or {}).get("normalized_row")
-                if isinstance(row, Mapping):
-                    parsed_file_rows.append(dict(row))
+                if not isinstance(row, Mapping):
+                    return []
+                if len(parsed_file_rows) >= max_rows:
+                    file_truncated = True
+                    break
+                parsed_file_rows.append(dict(row))
+            if not parsed_file_rows:
+                return []
+            applicable_rows = (
+                [r for r in parsed_file_rows if _is_applicable_on_decision_day(r, target_day)]
+                if target_day is not None
+                else parsed_file_rows
+            )
+            if not applicable_rows:
+                continue
+            relevant_rows = (
+                [r for r in applicable_rows if _row_covers_underlying(r, target_code)]
+                if target_code is not None
+                else applicable_rows
+            )
+            if not relevant_rows:
+                continue
             file_contracts = sorted({str(r.get("contract") or "") for r in parsed_file_rows if r.get("contract")})
-            for item in parsed_file_rows:
-                if len(rows_newest_first) >= max_rows:
-                    return _finalize_disk_rows(rows_newest_first, files_read)
-                item["_reverse_file_idx"] = files_read
-                item.setdefault("_file_contracts", file_contracts)
-                rows_newest_first.append(item)
-    return _finalize_disk_rows(rows_newest_first, files_read)
+            discovered_codes: set[str] = set()
+            has_all_scope = False
+            for r in relevant_rows:
+                discovered_codes |= _discovered_codes_in_row(r)
+                if str(r.get("snapshot_scope_mode") or "").strip() == "all":
+                    has_all_scope = True
+            candidate_files.append(
+                _CandidateDiskFile(
+                    file_path=file_path,
+                    part_date=part_date,
+                    part_name=part_name,
+                    file_name=file_path.name,
+                    is_random_ingest_stem=bool(RANDOM_INGEST_RUN_STEM.match(file_path.stem)),
+                    file_time_key=max(_row_snapshot_time_key(r) for r in relevant_rows),
+                    parsed_file_rows=parsed_file_rows,
+                    relevant_rows=relevant_rows,
+                    file_contracts=file_contracts,
+                    file_truncated=file_truncated,
+                    discovered_codes=discovered_codes,
+                    has_all_scope=has_all_scope,
+                )
+            )
+    if not candidate_files:
+        return []
+
+    all_codes = (
+        {target_code}
+        if target_code is not None
+        else set().union(*(c.discovered_codes for c in candidate_files))
+    )
+    authoritative_latest_key: dict[str, tuple[date, date, float, str, float, str]] = {}
+    incomplete_codes: set[str] = set()
+    for code in all_codes:
+        key_and_cand = [
+            (key, cand)
+            for cand in candidate_files
+            for key in (_file_time_key_for_code(cand, code),)
+            if key is not None
+        ]
+        if not key_and_cand:
+            continue
+        latest_key = max(item[0] for item in key_and_cand)
+        authoritative_latest_key[code] = latest_key
+        tied_at_latest = [cand for key, cand in key_and_cand if key == latest_key]
+        if any(cand.file_truncated for cand in tied_at_latest):
+            incomplete_codes.add(code)
+        elif len(tied_at_latest) > 1 and any(cand.is_random_ingest_stem for cand in tied_at_latest):
+            if len({_rows_digest_for_code(cand.relevant_rows, code) for cand in tied_at_latest}) > 1:
+                incomplete_codes.add(code)
+
+    candidate_files.sort(
+        key=lambda cand: (cand.file_time_key, cand.part_date, cand.part_name, cand.file_name),
+        reverse=True,
+    )
+    selected_indices: list[int] = []
+    covered_latest_for_code: set[str] = set()
+    for idx, cand in enumerate(candidate_files):
+        if len(selected_indices) >= max_files:
+            break
+        newly_covered = {
+            code
+            for code, latest_key in authoritative_latest_key.items()
+            if code not in covered_latest_for_code and _file_time_key_for_code(cand, code) == latest_key
+        }
+        if newly_covered or not selected_indices:
+            selected_indices.append(idx)
+            covered_latest_for_code |= newly_covered
+    for idx, cand in enumerate(candidate_files):
+        if len(selected_indices) >= max_files:
+            break
+        if idx not in selected_indices:
+            selected_indices.append(idx)
+            for code, latest_key in authoritative_latest_key.items():
+                if code not in covered_latest_for_code and _file_time_key_for_code(cand, code) == latest_key:
+                    covered_latest_for_code.add(code)
+    selected_indices.sort()
+    selected_files = [candidate_files[idx] for idx in selected_indices]
+    for code in authoritative_latest_key:
+        if code not in covered_latest_for_code:
+            incomplete_codes.add(code)
+
+    rows_newest_first: list[dict[str, Any]] = []
+    for file_rank, cand in enumerate(selected_files, start=1):
+        start_pos = len(rows_newest_first)
+        for item in cand.parsed_file_rows:
+            if len(rows_newest_first) >= max_rows:
+                for partial in rows_newest_first[start_pos:]:
+                    partial["_snapshot_truncated"] = True
+                return _finalize_disk_rows(rows_newest_first, file_rank)
+            row_copy = dict(item)
+            if cand.file_truncated or any(_row_covers_underlying(row_copy, code) for code in incomplete_codes):
+                row_copy["_snapshot_truncated"] = True
+            row_copy["_reverse_file_idx"] = file_rank
+            row_copy.setdefault("_file_contracts", cand.file_contracts)
+            rows_newest_first.append(row_copy)
+    return _finalize_disk_rows(rows_newest_first, len(selected_files))
 
 
 def _as_date(value: Any) -> date:
@@ -406,6 +615,26 @@ def _future_candidate(
     }
 
 
+def _has_incomplete_latest_coverage(
+    rows: Sequence[Mapping[str, Any]],
+    code: str,
+    decision_day: date,
+) -> bool:
+    covering_rows = [
+        row
+        for row in rows
+        if _is_applicable_on_decision_day(row, decision_day) and _row_covers_underlying(row, code)
+    ]
+    if not covering_rows:
+        return False
+    latest_run_key = max(_snapshot_run_key(row) for row in covering_rows)
+    return any(
+        bool(row.get("_snapshot_truncated"))
+        for row in covering_rows
+        if _snapshot_run_key(row) == latest_run_key
+    )
+
+
 def _eligible_rows(
     rows: Sequence[Mapping[str, Any]],
     code: str,
@@ -423,7 +652,7 @@ def _eligible_rows(
         return []
     latest_run_key = max(_snapshot_run_key(row) for row in covering_rows)
     newest_covering_rows = [row for row in covering_rows if _snapshot_run_key(row) == latest_run_key]
-    if any(row.get("tombstone") for row in newest_covering_rows):
+    if any(row.get("tombstone") or row.get("_snapshot_truncated") for row in newest_covering_rows):
         return []
     newest_absent_contracts = {
         str(contract)
@@ -431,12 +660,24 @@ def _eligible_rows(
         for contract in (row.get("snapshot_absent_contracts") or ())
         if contract
     }
+    newest_present_contracts: set[str] | None = None
+    if any("snapshot_contracts" in row or "_file_contracts" in row for row in newest_covering_rows):
+        newest_present_contracts = {
+            str(contract)
+            for row in newest_covering_rows
+            for contract in (
+                row.get("snapshot_contracts")
+                or row.get("_file_contracts")
+                or ([row["contract"]] if row.get("contract") else ())
+            )
+            if contract
+        }
     latest_by_contract_month: dict[
         tuple[str, str],
         tuple[tuple[date, date, float, str, float, str, int, int], Mapping[str, Any], date],
     ] = {}
     for order_index, row in enumerate(rows):
-        if row.get("tombstone"):
+        if row.get("tombstone") or row.get("_snapshot_truncated"):
             continue
         contract = str(row.get("contract") or "")
         month = str(row.get("contract_month") or "")
@@ -446,6 +687,8 @@ def _eligible_rows(
         if not CONTRACT_CODE.match(contract) or not CONTRACT_MONTH.match(month):
             continue
         if contract in newest_absent_contracts:
+            continue
+        if newest_present_contracts is not None and contract not in newest_present_contracts:
             continue
         last_day = last_trading_day(month, holidays)
         if last_day <= decision_day:
@@ -521,10 +764,14 @@ def build_candidates(
     reader = rows_reader
     if reader is None and normalized_root is not None:
         root = normalized_root
-        reader = lambda: read_normalized_ssf_rows(root)  # noqa: E731
+        reader = lambda: read_normalized_ssf_rows(  # noqa: E731
+            root,
+            underlying=code,
+            as_of_trading_day=decision_day,
+        )
     rows = reader() if reader is not None else None
     cash_refs: list[dict[str, Any]] = []
-    if not rows:
+    if not rows or _has_incomplete_latest_coverage(rows, code, decision_day):
         cash_refs.append({"reason": "candidates_unavailable", "dataset": SSF_DATASET})
     candidates = [
         _cash_candidate(
