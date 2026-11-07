@@ -911,6 +911,7 @@ def validate_request_auth(
 def require_authn(
     roles: Optional[Sequence[str]] = None,
     mfa_required: bool = False,
+    allow_shared_secret: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Flask decorator: validate Authorization/MFA headers and stash context.
 
@@ -930,6 +931,7 @@ def require_authn(
                     mfa_header=request.headers.get("X-MFA-Token", ""),
                     required_roles=roles,
                     mfa_required=mfa_required,
+                    allow_shared_secret=allow_shared_secret,
                 )
             except AuthError as exc:
                 payload, status = exc.as_response()

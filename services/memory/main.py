@@ -108,6 +108,34 @@ def _memory_auth_env() -> dict[str, str]:
             os.getenv("PANTHEON_MEMORY_MFA_VALUES")
             or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", "")
         ),
+        "PANTHEON_RUNTIME_JWKS_URI": (
+            os.getenv("PANTHEON_MEMORY_JWKS_URI")
+            or os.getenv("PANTHEON_RUNTIME_JWKS_URI", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": (
+            os.getenv("PANTHEON_MEMORY_OIDC_DISCOVERY_URL")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_ISSUER": (
+            os.getenv("PANTHEON_MEMORY_OIDC_ISSUER")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_ISSUER", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": (
+            os.getenv("PANTHEON_MEMORY_OIDC_AUDIENCE")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_AUDIENCE", "")
+        ),
+        "PANTHEON_RUNTIME_ROLE_MAP": (
+            os.getenv("PANTHEON_MEMORY_ROLE_MAP")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_MAP", "")
+        ),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": (
+            os.getenv("PANTHEON_MEMORY_ROLE_MAP_MODE")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", "")
+        ),
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": (
+            os.getenv("PANTHEON_MEMORY_REQUIRE_EMAIL_VERIFIED")
+            or os.getenv("PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED", "")
+        ),
     }
 
 

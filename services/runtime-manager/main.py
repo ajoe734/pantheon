@@ -141,6 +141,14 @@ from services.runtime_auth_inbound import (  # noqa: E402
     require_authn,
 )
 from services.foundation.health import register_flask_health_routes  # noqa: E402
+import functools as _functools  # noqa: E402
+
+# Verified external-IdP JWTs (RS256/ES256 via JWKS) and genuine internal
+# service-to-service HS256 callers (e.g. the Paper producer reading bindings)
+# both reach this service. HS256 is still only accepted when the configured
+# shared secret verifies with issuer/audience/expiry; other owners keep the
+# helper default (JWKS-exclusive once JWKS is configured).
+require_authn = _functools.partial(require_authn, allow_shared_secret=True)  # noqa: F811
 
 # ---------------------------------------------------------------------------
 # App and service bootstrap

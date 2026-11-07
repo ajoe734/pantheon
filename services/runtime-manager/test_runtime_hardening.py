@@ -77,6 +77,7 @@ class HardeningEnvScope:
         "PANTHEON_RUNTIME_JWT_AUDIENCE",
         "PANTHEON_RUNTIME_MFA_REQUIRED",
         "PANTHEON_RUNTIME_DEFAULT_ROLE",
+        "PANTHEON_RUNTIME_JWKS_URI",
         "PANTHEON_DEPLOYMENT_API_URL",
         "PANTHEON_DEPLOYMENT_SERVICE_URL",
     )
@@ -217,6 +218,48 @@ class AuthAndRbacTests(unittest.TestCase):
             json=_valid_deploy_request(),
         )
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+
+    def _jwks_env(self):
+        os.environ["PANTHEON_RUNTIME_AUTH_MODE"] = "strict"
+        os.environ["PANTHEON_RUNTIME_JWKS_URI"] = "https://idp.invalid/jwks.json"
+        os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = "test-secret"
+        os.environ["PANTHEON_RUNTIME_JWT_ISSUER"] = "pantheon-control-plane"
+        os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"] = "runtime-manager"
+
+    def _internal_token(self, secret="test-secret", **overrides):
+        claims = {
+            "sub": "paper-producer",
+            "roles": ["operator"],
+            "iss": "pantheon-control-plane",
+            "aud": "runtime-manager",
+            "exp": int(time.time()) + 600,
+        }
+        claims.update(overrides)
+        return encode_jwt_hs256(claims, secret=secret)
+
+    def test_jwks_configured_still_accepts_verified_internal_hs256(self):
+        self._jwks_env()
+        response = self.client.post(
+            "/api/runtimes/deploy",
+            headers={"Authorization": f"Bearer {self._internal_token()}"},
+            json=_valid_deploy_request(),
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+
+    def test_jwks_configured_rejects_unverified_internal_hs256(self):
+        self._jwks_env()
+        for token in (
+            self._internal_token(secret="wrong-secret"),
+            self._internal_token(exp=int(time.time()) - 5),
+            self._internal_token(iss="other"),
+            self._internal_token(aud="other"),
+        ):
+            response = self.client.post(
+                "/api/runtimes/deploy",
+                headers={"Authorization": f"Bearer {token}"},
+                json=_valid_deploy_request(),
+            )
+            self.assertEqual(response.status_code, 401, response.get_data(as_text=True))
 
     # --- MFA gating ------------------------------------------------------ #
 
