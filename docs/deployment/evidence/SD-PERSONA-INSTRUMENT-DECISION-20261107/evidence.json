@@ -1,0 +1,107 @@
+{
+  "task_id": "SD-PERSONA-INSTRUMENT-DECISION-20261107",
+  "kind": "design_document_evidence",
+  "read_date": "2026-11-07",
+  "document": "docs/04/pantheon_persona_instrument_decision_2026-11-07/SD_PERSONA_INSTRUMENT_DECISION_2026-11-07.md",
+  "earlier_document_changed": "docs/04/pantheon_tw_paper_stock_futures_2026-11-06/SD_TW_PAPER_STOCK_FUTURES_2026-11-06.md (status notice only)",
+  "hosted_behavior_claimed": false,
+  "scope_statement": "design only; no source/test/workflow/config change; no VM, SSH, broker, broker sandbox, futures smoke, model provider call or hosted workflow used",
+  "repo_base": "origin/dev d77e03a05e03930689923beaaf79ac3329b15b65",
+  "official_sources_read": [
+    {
+      "url": "https://www.taifex.com.tw/cht/2/stockLists"
+    },
+    {
+      "url": "https://www.taifex.com.tw/cht/2/tX"
+    },
+    {
+      "url": "https://www.taifex.com.tw/cht/2/mTX"
+    },
+    {
+      "url": "https://www.taifex.com.tw/cht/2/tXO"
+    },
+    {
+      "url": "https://www.taifex.com.tw/cht/2/sSO"
+    },
+    {
+      "url": "https://www.taifex.com.tw/cht/5/indexMarging",
+      "page_update_date": "2026/08/12"
+    },
+    {
+      "url": "https://www.taifex.com.tw/cht/5/stockMargining",
+      "options_table_update_date": "2026/10/16"
+    },
+    {
+      "url": "https://www.taifex.com.tw/cht/4/feeSchedules"
+    },
+    {
+      "url": "https://openapi.taifex.com.tw/v1/SingleStockFuturesMargining",
+      "date": "20261106"
+    },
+    {
+      "url": "https://openapi.taifex.com.tw/v1/SingleStockFuturesETFMargining",
+      "date": "20261106"
+    },
+    {
+      "url": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut",
+      "date": "20261106"
+    },
+    {
+      "url": "https://openapi.taifex.com.tw/v1/DailyMarketReportOpt",
+      "date": "20261106"
+    },
+    {
+      "url": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+      "date": "1151106"
+    },
+    {
+      "url": "https://openapi.twse.com.tw/v1/opendata/t187ap37_L",
+      "date": "1151106"
+    }
+  ],
+  "sources_not_readable": [
+    "www.twse.com.tw warrant and inverse ETF pages: maintenance page, 752 bytes",
+    "www.taifex.com.tw/cht/2/mfTX: no spec row"
+  ],
+  "repository_commands": [
+    "git fetch origin dev; git rev-parse origin/dev",
+    "grep -n on persona_provisioning_coordinator.py, paper_signal_producer.py, signal_producer.py, risk_policy.py, bootstrap_contract.py, paper_runtime.py, persona/main.py, ooda_loop_packet.py, strategy_artifact.py, decision_projection/producer.py",
+    "git grep -l \"paper_fill_simulated\\|position_quantity\\|fill_quantity\" -- '*.py' '*.ts' '*.tsx' ':!*test*'",
+    "grep -rIl \"anthropic\\|openai\" services/execution/lean_runtime --include=*.py"
+  ],
+  "consumer_files": [
+    "integrations/lean/pantheon_algo/base.py",
+    "scripts/probe_dev_runtime_paper_lifecycle.py",
+    "services/control-plane/bff/agora/performance/service.py",
+    "services/control-plane/bff/pm12/service.py",
+    "services/execution/lean_runtime/executor.py",
+    "services/execution/lean_runtime/paper_runtime.py",
+    "services/persona/agent_usability_validation.py",
+    "services/persona/remaining_gap_validation.py",
+    "services/reconciliation-drift/main.py",
+    "services/telemetry/backpressure.py",
+    "services/telemetry/capture.py",
+    "services/telemetry/feedback_adapter.py",
+    "services/telemetry/runtime_summary.py",
+    "services/telemetry/trade_episode_projection.py",
+    "services/trade_journey/hosted_lifecycle_probe.py",
+    "services/trade_journey/incremental_materializer.py",
+    "services/trade_journey/lifecycle_noop_order.py",
+    "services/trade_journey/lifecycle_projector.py",
+    "services/trade_journey/lifecycle_projector_capacity.py",
+    "services/trade_journey/telemetry_bridge.py"
+  ],
+  "replay": "scratch replay.py arithmetic on 100000 capital; results table in document section 8",
+  "brief_corrections": [
+    "decision_projection producer path is services/control-plane/bff/agora/decision_projection/producer.py",
+    "threshold_sweep_baselines.json has 8 expected_drawdown keys including _example"
+  ],
+  "unverified": [
+    "TWSE warrant/inverse ETF/odd-lot rules pages",
+    "stock option short margin formula and premium multiplier",
+    "TMF spec",
+    "index futures margin currency of 2026/08/12 page",
+    "token cost of decider A",
+    "hosted behaviour"
+  ]
+}
