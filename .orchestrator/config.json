@@ -205,46 +205,30 @@
     },
     "reviewer_fallbacks": {
       "Claude": [
-        "Antigravity",
-        "Antigravity2",
         "Codex",
         "Codex2"
       ],
       "Claude2": [
-        "Antigravity",
-        "Antigravity2"
+        "Codex",
+        "Codex2"
       ],
       "Antigravity": [
-        "Claude",
-        "Claude2",
-        "PiAstra",
         "Codex",
         "Codex2"
       ],
       "Antigravity2": [
-        "Claude",
-        "Claude2",
-        "PiAstra",
         "Codex",
         "Codex2"
       ],
       "Codex": [
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
+        "Codex2"
       ],
       "Codex2": [
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
+        "Codex"
       ],
       "PiAstra": [
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
+        "Codex",
+        "Codex2"
       ]
     },
     "max_reassignments_per_cycle": 4,
