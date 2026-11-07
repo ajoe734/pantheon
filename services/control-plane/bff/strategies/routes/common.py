@@ -1,12 +1,20 @@
 """Common context and helpers for Strategies domain subrouters."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
 
 from fastapi import HTTPException
 
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+from ..service import (
+    ROLE_ROLLBACK_BASELINE,
+    ROLE_TRADING,
+    StrategiesService,
+    project_strategy_rules,
+)
+
 
 try:
     from services.control_plane.bff.ports.strategy_write_owner import StrategyWriteOwnerPort
@@ -26,6 +34,125 @@ def default_utc_now() -> str:
 
 
 _UNSET = object()
+
+log = logging.getLogger(__name__)
+
+# --- Strategy operational truth ------------------------------------------------
+# The only place that derives ``operationalStatus`` and ``personaStates``. Persona
+# state is never recomputed here: the caller hands in the Persona directory read
+# and the Persona route's own projection, so the Strategy pages and
+# ``GET /bff/personas`` agree by construction. Read-only.
+
+STATUS_RUNNING = "running"
+STATUS_IDLE = "idle"
+STATUS_RETIRED = "retired"
+STATUS_UNBOUND = "unbound"
+STATUS_UNKNOWN = "unknown"
+
+OPERATIONAL_STATUSES = (
+    STATUS_RUNNING,
+    STATUS_IDLE,
+    STATUS_RETIRED,
+    STATUS_UNBOUND,
+    STATUS_UNKNOWN,
+)
+
+PERSONA_STATE_MISSING = "missing"
+PERSONA_STATE_UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class PersonaStateLookup:
+    """One request's view of Persona states, read from the directory once."""
+
+    available: bool
+    states_by_id: Mapping[str, str] = field(default_factory=dict)
+    operational_states: FrozenSet[str] = frozenset()
+    failure: Optional[str] = None
+
+    def persona_states(self, persona_ids: Iterable[str]) -> List[Dict[str, str]]:
+        rows: List[Dict[str, str]] = []
+        for persona_id in persona_ids:
+            if not self.available:
+                state = PERSONA_STATE_UNKNOWN
+            else:
+                state = self.states_by_id.get(persona_id, PERSONA_STATE_MISSING)
+            rows.append({"personaId": persona_id, "state": state})
+        return rows
+
+    def operational_status(self, persona_ids: Iterable[str]) -> str:
+        ids = list(persona_ids)
+        if not self.available:
+            return STATUS_UNKNOWN
+        if not ids:
+            return STATUS_UNBOUND
+        states = [self.states_by_id.get(pid, PERSONA_STATE_MISSING) for pid in ids]
+        if any(state in self.operational_states for state in states):
+            return STATUS_RUNNING
+        if all(state == STATUS_RETIRED for state in states):
+            return STATUS_RETIRED
+        return STATUS_IDLE
+
+    def surface(self) -> Dict[str, Any]:
+        if self.available:
+            return {"status": "ok", "source": "persona_directory"}
+        return {
+            "status": "unavailable",
+            "source": "persona_directory",
+            "reason": self.failure or "persona directory read failed",
+        }
+
+
+def unavailable_lookup(reason: str) -> PersonaStateLookup:
+    return PersonaStateLookup(available=False, failure=reason)
+
+
+def read_persona_state_lookup(
+    *,
+    directory_snapshot: Optional[Callable[..., Any]],
+    projected_state: Optional[Callable[[Mapping[str, Any]], str]],
+    operational_states: Optional[Iterable[str]],
+    tenant_id: str,
+    snapshot_at: str,
+) -> PersonaStateLookup:
+    """Read the Persona directory once and project each record's state.
+
+    ``directory_snapshot`` and ``projected_state`` are the same callables the
+    Persona list route uses. Any failure yields an unavailable lookup so the
+    caller reports ``unknown`` instead of hiding rows.
+    """
+    if directory_snapshot is None or projected_state is None or operational_states is None:
+        return unavailable_lookup("persona directory is not wired for strategy reads")
+    try:
+        directory = directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+        states = {
+            str(persona_id): str(projected_state(record))
+            for persona_id, record in directory.records_by_id.items()
+        }
+    except Exception as exc:  # noqa: BLE001 - any owner failure degrades, never hides rows
+        log.warning("strategy persona state read failed: %s", exc)
+        return unavailable_lookup(f"persona directory read failed: {type(exc).__name__}")
+    return PersonaStateLookup(
+        available=True,
+        states_by_id=states,
+        operational_states=frozenset(str(s) for s in operational_states),
+    )
+
+
+def summary_persona_ids(row: Mapping[str, Any]) -> List[str]:
+    raw = row.get("persona_ids")
+    if not isinstance(raw, list):
+        raw = row.get("personaIds")
+    if not isinstance(raw, list):
+        return []
+    return [str(p) for p in raw if str(p).strip()]
+
+
+def operational_counts(statuses: Iterable[str]) -> Dict[str, int]:
+    counts = {name: 0 for name in OPERATIONAL_STATUSES}
+    for status in statuses:
+        counts[status] = counts.get(status, 0) + 1
+    return counts
 
 
 def _build_ranking_strategy_index(
@@ -217,9 +344,18 @@ def _project_strategy_spec_detail(source: Optional[Dict[str, Any]]) -> Optional[
     if traits_out:
         meta_out["traits"] = traits_out
 
+    def _spec_text(key: str) -> Optional[str]:
+        for candidate in (source.get(key), nested_spec.get(key)):
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return None
+
     return {
         "spec_version_id": spec_version_id,
         "spec_version": spec_version,
+        "title": _spec_text("title"),
+        "hypothesis": _spec_text("hypothesis"),
+        "objective": _spec_text("objective"),
         "market_scope": ms_out or None,
         "execution_profile": ep_out or None,
         "evaluation_plan": ev_out or None,
@@ -349,6 +485,11 @@ class StrategyRouteContext:
     deprecated_bff_path_response: Optional[Callable[..., Any]] = None
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None
+    # The Persona list route's own directory read and state projection, so the
+    # Strategy pages report exactly the state GET /bff/personas reports.
+    persona_directory_snapshot: Optional[Callable[..., Any]] = None
+    persona_record_projected_state: Optional[Callable[[Any], str]] = None
+    persona_operational_states: Optional[Any] = None
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None
     strategy_write_owner: Optional[Union[StrategyWriteOwnerPort, Callable[[], StrategyWriteOwnerPort]]] = None
     get_strategy_write_owner: Optional[Callable[[], StrategyWriteOwnerPort]] = None
@@ -382,6 +523,20 @@ class StrategyRouteContext:
         if self.bff_me_tenant_payload is None:
             raise NotImplementedError("bff_me_tenant_payload dependency was not supplied")
         return str(self.bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+
+    def read_persona_state_lookup(self, identity: Any, snapshot_at: str) -> PersonaStateLookup:
+        """Read the Persona directory once for this request (tenant of the caller)."""
+        try:
+            tenant_id = self.bff_tenant_id(identity)
+        except Exception as exc:  # noqa: BLE001 - no tenant means no persona truth
+            return unavailable_lookup(f"persona tenant unresolved: {type(exc).__name__}")
+        return read_persona_state_lookup(
+            directory_snapshot=self.persona_directory_snapshot,
+            projected_state=self.persona_record_projected_state,
+            operational_states=self.persona_operational_states,
+            tenant_id=tenant_id,
+            snapshot_at=snapshot_at,
+        )
 
     def write_principal(self, identity: Any) -> Dict[str, Any]:
         """Bind writes to the authenticated identity, never request-body fields."""
@@ -443,6 +598,7 @@ class StrategyRouteContext:
         ranking_read_failed: bool = False,
         ranking_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         include_spec: bool = False,
+        persona_lookup: Optional[PersonaStateLookup] = None,
     ) -> Dict[str, Any]:
         if overlay is not None:
             raise AttributeError("strategy overlay is retired; process-local state overlays are deleted")
@@ -537,7 +693,11 @@ class StrategyRouteContext:
             "availableActions": available_actions,
             "labelKey": f"strategy.{strategy_id}" if strategy_id else None,
             "lifecycleStatus": str(lifecycle_raw or ""),
+            "symbols": _clean_str_list(market_scope.get("symbols")),
         }
+        if persona_lookup is not None:
+            dto["personaStates"] = persona_lookup.persona_states(persona_ids)
+            dto["operationalStatus"] = persona_lookup.operational_status(persona_ids)
         if include_spec:
             spec_source = detail if (isinstance(detail, dict) and detail) else summary
             dto["spec"] = _project_strategy_spec_detail(spec_source)

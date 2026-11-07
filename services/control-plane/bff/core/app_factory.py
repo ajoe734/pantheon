@@ -709,6 +709,12 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name == "_get_persona_directory_snapshot":
         from ..personas.service import _get_persona_directory_snapshot
         return _get_persona_directory_snapshot
+    if name == "_persona_record_projected_state":
+        from ..personas.service import _persona_record_projected_state
+        return _persona_record_projected_state
+    if name == "_PERSONA_OPERATIONAL_LIFECYCLE_STATES":
+        from ..personas.service import _PERSONA_OPERATIONAL_LIFECYCLE_STATES
+        return _PERSONA_OPERATIONAL_LIFECYCLE_STATES
     if name == "_persona_record_tenant_id":
         from ..personas.service import _persona_record_tenant_id
         return _persona_record_tenant_id
@@ -1349,6 +1355,9 @@ def mount_bff_routers(
             deprecated_bff_path_response=_dep("_deprecated_bff_path_response"),
             bff_me_tenant_payload=_dep("_bff_me_tenant_payload"),
             list_persona_records=_dep("_list_persona_records"),
+            persona_directory_snapshot=_dep("_get_persona_directory_snapshot"),
+            persona_record_projected_state=_dep("_persona_record_projected_state"),
+            persona_operational_states=_dep("_PERSONA_OPERATIONAL_LIFECYCLE_STATES"),
             list_strategy_summaries=_dep("_list_strategy_summaries"),
             strategy_write_owner=lambda: _dep("strategy_write_owner"),
         )
@@ -1547,22 +1556,21 @@ def mount_bff_routers(
 
     # 35: Control loops
     from ..control_loops.router import create_control_loops_router
-    app.include_router(
-        create_control_loops_router(
-            read_surface=app_deps.read_surface,
-            loop_truth_adapter=_dep("loop_truth"),
-            downstream_health_monitor=_dep("downstream_health_monitor"),
-            submit_sem_command=command_adapter_service.sem_command_response,
-            reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
-            extract_identity=_dep("_extract_identity"),
-            require_read_role=_dep("_require_read_role"),
-            require_operator_role=_dep("_require_operator_role"),
-            bff_error=_dep("_bff_error"),
-            utc_now_fn=_dep("utc_now"),
-            redact_evidence_refs=_dep("redact_evidence_refs"),
-            capabilities_for_identity=_dep("_capabilities_for_identity"),
-        )
+    control_loops_router = create_control_loops_router(
+        read_surface=app_deps.read_surface,
+        loop_truth_adapter=_dep("loop_truth"),
+        downstream_health_monitor=_dep("downstream_health_monitor"),
+        submit_sem_command=command_adapter_service.sem_command_response,
+        reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_operator_role=_dep("_require_operator_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now_fn=_dep("utc_now"),
+        redact_evidence_refs=_dep("redact_evidence_refs"),
+        capabilities_for_identity=_dep("_capabilities_for_identity"),
     )
+    app.include_router(control_loops_router)
 
     # 36: Tools integrations
     from ..tools_integrations.router import create_integrations_router
@@ -1647,8 +1655,14 @@ def mount_bff_routers(
     app.state.assistant_session_store = asst_session_store
     app.state.assistant_transcript_store = asst_transcript_store
     app.state.assistant_control_mode_store = asst_control_mode_store
-    from ..assistant.management_service import set_assistant_control_mode_store
+    app.state.control_loops_router = control_loops_router
+    app.state.control_loops_service = getattr(control_loops_router, "control_loops_service", None)
+    from ..assistant.management_service import (
+        set_assistant_control_mode_store,
+        set_control_loops_service,
+    )
     set_assistant_control_mode_store(asst_control_mode_store)
+    set_control_loops_service(app.state.control_loops_service)
     app.state.source_management_client = src_mgmt_client
     app.state.persona_service = persona_service
     app.state.command_adapter_service = command_adapter_service

@@ -77,3 +77,59 @@ def test_strategies_router_client_execution():
     resp = client.get("/bff/strategies/strat-1/specs", headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert len(resp.json()["data"]) == 1
+
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "service",
+        "routes",
+        "routes.common",
+        "routes.collection",
+        "routes.detail",
+        "routes.seeds",
+        "router",
+    ],
+)
+def test_strategies_modules_cold_import_in_any_entry_order(module):
+    """Each module must import first in a fresh interpreter (no service<->routes cycle)."""
+    result = subprocess.run(
+        [sys.executable, "-c", f"import services.control_plane.bff.strategies.{module}"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=str(Path(__file__).resolve().parents[4]),
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_strategies_service_has_no_routes_import_dependency():
+    """service.py must import and execute get_strategy_rules without importing routes.*."""
+    script = (
+        "import sys; "
+        "from types import SimpleNamespace; "
+        "from services.control_plane.bff.strategies.service import StrategiesService; "
+        "assert 'services.control_plane.bff.strategies.routes' not in sys.modules; "
+        "svc = StrategiesService(read_surface=SimpleNamespace("
+        "read_registry_strategy_artifacts_for_strategy=lambda sid: SimpleNamespace("
+        "status='ok', items=[{'registry_id': 'art-1', 'artifact_type': 'execution_bundle', "
+        "'artifact_state': 'approved', 'strategy_id': sid, 'version': '1.0.0'}]))); "
+        "rules, status = svc.get_strategy_rules('strat-1'); "
+        "assert status == 'ok' and len(rules) == 1 and rules[0]['registryId'] == 'art-1'; "
+        "assert 'services.control_plane.bff.strategies.routes' not in sys.modules"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=str(Path(__file__).resolve().parents[4]),
+    )
+    assert result.returncode == 0, result.stderr

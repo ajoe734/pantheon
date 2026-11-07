@@ -21,6 +21,7 @@ from typing import Any, Dict
 
 import ast
 import json
+import logging
 import re
 from services.control_plane.bff.management_read_models.service import ManagementService
 from services.control_plane.bff.personas.service import (
@@ -41,6 +42,11 @@ def _get_fleet_collector(store, personas=None, service=None, utc_now=None):
     if _FLEET_FUNCS is None:
         target_names = {
             "_mgmt_nl_collect_context",
+            "_mgmt_nl_filter_deployment_scoped_records",
+            "_mgmt_nl_runtime_is_retired",
+            "_mgmt_nl_persona_state",
+            "_mgmt_nl_persona_is_operational",
+            "_management_count_by",
             "_mgmt_nl_filter_tenant_records",
             "_mgmt_nl_record_matches_tenant",
             "_mgmt_nl_record_tenant_ids",
@@ -50,6 +56,7 @@ def _get_fleet_collector(store, personas=None, service=None, utc_now=None):
             "_mgmt_nl_add_entity",
             "_project_persona_fleet_item",
             "_project_persona_fleet_item_impl",
+            "_mgmt_nl_unavailable_fleet_item",
             "get_project_persona_fleet_item",
             "get_management_ai_context_service",
             "_project_persona_dto",
@@ -80,6 +87,7 @@ def _get_fleet_collector(store, personas=None, service=None, utc_now=None):
         "__package__": "services.control_plane.bff.assistant",
         "re": re,
         "json": json,
+        "logging": logging,
         "read_store": store,
         "_management_ai_context_service": context_service,
         "_MANAGEMENT_AI_CONTEXT_SERVICE": context_service,

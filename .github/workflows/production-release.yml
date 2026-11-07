@@ -176,7 +176,10 @@ jobs:
         run: |
           mkdir -p "${RUNNER_TEMP}/bundle"
           gcloud storage cp "${FE_ARTIFACT_URI}" "${RUNNER_TEMP}/bundle/fe.tar.gz"
-          snap="pantheon-prod-pre-${RELEASE_ID}"
+          # Unique per workflow run/attempt: the planned 105->106 repeat forwards (and re-runs) of the
+          # same release_id must each take their own real pre-switch snapshot; a retained earlier
+          # snapshot is never reused, deleted or relabeled. Max length stays well under 63 chars.
+          snap="pantheon-prod-pre-${RELEASE_ID}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
           gcloud compute disks snapshot "${PROD_DATA_DISK}" --project "${PROD_GCP_PROJECT_ID}" \
             --zone "${PROD_GCP_ZONE}" --snapshot-names "${snap}"
           status="$(gcloud compute snapshots describe "${snap}" --project "${PROD_GCP_PROJECT_ID}" --format='value(status)')"

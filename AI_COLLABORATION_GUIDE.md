@@ -276,10 +276,16 @@ multi-step closeouts). Read it once at start of session.
 Topology (2026-05-17 redesign, per-task PR model):
 
 - `master`: canonical / production source. PR-only with branch protection
-  (3 required status checks: Commit trailers / Runtime mirror guard /
-  Smoke acceptance). Receives `promote/<v>` and `hotfix/<topic>` PRs.
-- `dev`: integration line. PR-only (same 3 status checks). Every
-  `task/<TASK-ID>` PR auto-merges into `dev` once CI is green.
+  (3 required status checks: `Commit trailers` / `Runtime mirror guard` /
+  `Smoke acceptance`; strict up-to-date base required; 0 GitHub approvals).
+  Receives `promote/<v>` and `hotfix/<topic>` PRs.
+- `dev`: integration line with 4 required status checks (`Commit trailers` /
+  `Runtime mirror guard` / `Smoke acceptance` / `Service suites`; strict
+  up-to-date base not enforced; 0 GitHub approvals and no PR review rule on
+  GitHub). Task pull requests do not use GitHub auto-merge; every
+  `task/<TASK-ID>` PR merges into `dev` through the canonical supervisor
+  integrator (`scripts/git/auto_integrator.py`) only after exact-head
+  TaskStore `review_approved` by the assigned independent reviewer.
 - `task/<TASK-ID>`: ephemeral per-task branch. One branch per task,
   pushed by one worker, auto-deleted by GitHub when its PR merges.
   Replaces the retired `worker/<name>` permanent branches.
@@ -290,7 +296,7 @@ Topology (2026-05-17 redesign, per-task PR model):
 
 Cadence:
 
-- **Continuous** per-task PR → `dev` auto-merge (no weekly wave gate).
+- **Continuous** per-task PR → `dev` merge via the canonical integrator after exact-head approval (no weekly wave gate).
 - **Nightly** publish cut from `dev` if `dev` advanced since the last
   `release/v*` tag.
 - Publish snapshots auto-promote to `master` after **1-day soak** via

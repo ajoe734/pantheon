@@ -1,0 +1,15 @@
+{
+  "task": "RESEARCH-RETRAIN-RUN-TRUTH-20261107",
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used; hosted verification belongs to EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104.",
+  "change": {
+    "identity": "dispatch_run sets adapter=training_session_evaluation, requested_mode=dispatch_mode=training_evaluation for a non-rejected retrain action and a retrain-specific run_queued summary; other runs unchanged.",
+    "terminal_transition": "complete_run's tail was factored into _finish_run (+ _set_task_terminal); complete_run and the retrain executor (_RetrainFinished, _RetrainFailure, crash) both call it. No second copy.",
+    "startup_repair": "repair_retrain_tasks_left_running: a running task whose latest retrain run is completed/failed and that has no active run is set to that status; the run is not written, nothing is created.",
+    "unchanged": "outcome, outcome_reason, candidate rule, resume behaviour; no runtime binding, deployment plan or capital write."
+  },
+  "tests": {
+    "services/research/tests/test_retrain_executor_real_auth.py": "20 passed (13 existing unchanged + 7 new). Real Registry and Training apps with strict JWT auth, real vectorbt; research routes driven over TestClient. New: candidate_created, no_candidate, failed (wrong tenant) assert adapter/requested_mode/dispatch_mode, queued event, run_completed event and task status; non-retrain keeps stub; startup repair of a task left running with the pre-fix hosted shape (stub/stub/stub, only queued event) leaves run unchanged and creates no run/session; repair skips a task with an active run.",
+    "services/research/tests/test_research_orchestrator_http_service.py + services/evolution/test_program_approval_dispatch.py": "60 passed, 2 failed. The 2 failures (test_execute_research_stage_derivatives_pricing_risk_provenance[True/False]) fail identically on the unmodified branch: QuantLib is not installed in the test venv (/tmp/civenv). Not caused by this change.",
+    "changed_assertions": "none; no existing test was weakened or deleted."
+  }
+}

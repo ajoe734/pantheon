@@ -29,6 +29,10 @@ def _get_cockpit_funcs():
         tree_main = ast.parse(Path("services/control-plane/bff/main.py").read_text(encoding="utf-8"))
         target_names = {
             "_mgmt_nl_collect_context",
+            "_mgmt_nl_filter_deployment_scoped_records",
+            "_mgmt_nl_runtime_is_retired",
+            "_mgmt_nl_persona_state",
+            "_mgmt_nl_persona_is_operational",
             "_mgmt_nl_filter_tenant_records",
             "_mgmt_nl_record_matches_tenant",
             "_mgmt_nl_record_tenant_ids",
@@ -82,6 +86,7 @@ class _MockContextHost:
         ns.update({
             "re": re,
             "json": json,
+            "__package__": "services.control_plane.bff.assistant",
             "read_store": self.store,
             "_ALERT_SEVERITY_ORDER": {"critical": 4, "high": 3, "medium": 2, "low": 1},
             "_ALERT_CATEGORY_ORDER": {"incident": 4, "kill_switch": 3, "governance": 2, "runtime": 1},
@@ -1074,7 +1079,7 @@ def test_operator_health_status_distinguishes_timeout_from_error() -> None:
     def _timeout_telemetry() -> list[dict[str, Any]]:
         raise TimeoutError("owner telemetry timed out")
 
-    def _boom_incidents() -> list[dict[str, Any]]:
+    def _boom_incidents(**_kw: Any) -> list[dict[str, Any]]:
         raise RuntimeError("owner incident failure")
 
     mixed_store.list_runtime_bindings = _hanging_runtime
@@ -1257,7 +1262,7 @@ def test_operator_health_successful_empty_reads_are_genuine_zero() -> None:
     store = create_in_memory_read_surface_ports()
     store.list_runtime_bindings = lambda: []
     store.list_telemetry_summaries = lambda: []
-    store.list_incidents = lambda: []
+    store.list_incidents = lambda **_kw: []
     store.list_approval_queue_items = lambda: []
     store.get_kill_switch_status = lambda: {"status": "armed", "safe_mode_status": "off", "active": False}
     health = ManagementService(read_store=store).get_operator_health_status()
@@ -1276,7 +1281,7 @@ def test_operator_health_overall_and_counts_match_returned_groups() -> None:
     store = create_in_memory_read_surface_ports()
     store.list_runtime_bindings = lambda: [{"runtime_id": "r1", "status": "active"}]
     store.list_telemetry_summaries = lambda: [{"runtime_id": "r1"}]
-    store.list_incidents = lambda: [{"incident_id": "i1", "status": "open"}]
+    store.list_incidents = lambda **_kw: [{"incident_id": "i1", "status": "open"}]
     store.list_approval_queue_items = lambda: [{"id": "a1", "status": "pending"}]
     store.get_kill_switch_status = lambda: {"status": "armed", "safe_mode_status": "off", "active": False}
     health = ManagementService(read_store=store).get_operator_health_status()
@@ -1304,7 +1309,7 @@ def test_operator_health_triggered_kill_switch_or_hard_safe_mode_is_not_healthy(
         store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: []
         store.list_telemetry_summaries = lambda: []
-        store.list_incidents = lambda: []
+        store.list_incidents = lambda **_kw: []
         store.list_approval_queue_items = lambda: []
         store.get_kill_switch_status = lambda state=state: dict(state)
         health = ManagementService(read_store=store).get_operator_health_status()
@@ -1321,7 +1326,7 @@ def test_operator_health_empty_kill_switch_read_is_unknown_not_armed() -> None:
     store = create_in_memory_read_surface_ports()
     store.list_runtime_bindings = lambda: []
     store.list_telemetry_summaries = lambda: []
-    store.list_incidents = lambda: []
+    store.list_incidents = lambda **_kw: []
     store.list_approval_queue_items = lambda: []
     store.get_kill_switch_status = lambda: {}
     health = ManagementService(read_store=store).get_operator_health_status()

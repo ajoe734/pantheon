@@ -908,7 +908,13 @@ class DomainGovernancePort:
         all_rollbacks: Optional[Union[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]] = None,
         rollback_reviews: Optional[Dict[str, Dict[str, Any]]] = None,
         governance_audit_events: Optional[List[Dict[str, Any]]] = None,
+        owner_reads: bool = False,
     ) -> None:
+        # owner_reads: freeze orders / rollbacks come from the canonical
+        # Governance owner GETs (caller auth, verified tenant) unless a store
+        # was explicitly injected for that dataset.
+        self._freeze_owner_reads = owner_reads and freeze_orders is None
+        self._rollback_owner_reads = owner_reads and all_rollbacks is None
         self._evolution_decisions = dict(evolution_decisions or {})
         self._freeze_orders = dict(freeze_orders or {})
         if isinstance(all_rollbacks, dict):
@@ -989,12 +995,252 @@ class DomainGovernancePort:
     def get_evolution_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
         return self.get_evolution_decision_by_id(decision_id)
 
+    _OWNER_PATHS = {
+        "freeze_orders": "/api/governance/freeze-orders",
+        "all_rollbacks": "/api/governance/rollbacks",
+    }
+
+    @staticmethod
+    def _owner_decision(decision_id: str) -> Optional[Dict[str, Any]]:
+        """Historical Evolution decision via the existing tenant-bound owner object read.
+
+        Returns None for 404 (foreign and unknown are indistinguishable). Any other
+        failure, a malformed payload, or an exhausted request budget raises so the
+        caller can mark only that item unresolved. Every GET recomputes the remaining
+        request budget; no HTTP is issued once it is exhausted.
+        """
+        from urllib.parse import quote
+
+        from services.control_plane.bff.command_adapters.base import evolution_url
+        from services.control_plane.bff.core.owner_reads import (
+            read_evolution_object,
+            remaining_management_read_budget,
+        )
+
+        rem = remaining_management_read_budget()
+        if rem is not None and rem <= 0.0:
+            raise TimeoutError("owner read budget exhausted")
+        try:
+            return read_evolution_object(evolution_url, f"/api/evolution/proposals/{quote(decision_id, safe='')}")
+        except Exception as exc:
+            cause = getattr(exc, "__cause__", None)
+            if isinstance(cause, urllib.error.HTTPError) and cause.code == 404:
+                return None
+            raise
+
+    @staticmethod
+    def _decision_binds_row(dataset: str, row: Dict[str, Any], decision: Dict[str, Any]) -> bool:
+        """Canonical action/record/target identity between a row and its decision.
+
+        Pure comparison of owner-provided decision fields; no execution-state gate
+        (requested/history rows are legitimate). A stored execution reference that
+        names a different record contradicts the binding.
+        """
+
+        def _s(value: Any) -> str:
+            return str(value or "").strip()
+
+        result = decision.get("execution_result")
+        ref = _s(result.get("execution_ref_id")) if isinstance(result, dict) else ""
+        if dataset == "freeze_orders":
+            if _s(decision.get("action_type")) != "freeze":
+                return False
+            if ref and ref != _s(row.get("freeze_order_id") or row.get("id")):
+                return False
+            return all(_s(row.get(f)) == _s(decision.get(f)) for f in ("target_id", "target_version"))
+        # Rollback resource ownership is never derived from Evolution metadata; it is
+        # proven only by the tenant-scoped Runtime binding owner read.
+        return False
+
+    @staticmethod
+    def _runtime_binding_index() -> List[Dict[str, Any]]:
+        """Caller-tenant Runtime binding owner list (existing tenant-scoped GET, request-cached)."""
+        from services.control_plane.bff.command_adapters.base import get_base_url
+        from services.control_plane.bff.core.owner_reads import read_records
+
+        return read_records(
+            lambda path: get_base_url("PANTHEON_RUNTIME_MANAGER_URL") + path,
+            "/api/runtime-bindings",
+            "bindings",
+        )
+
+    def _rollback_runtime_ownership(self, row: Dict[str, Any], tenant: str) -> bool:
+        """True only when every runtime identity on the row resolves to one binding
+        visible in the verified caller tenant's owner-scoped Runtime binding list.
+
+        The row's tenant/actor/metadata are never proof. Missing, ambiguous,
+        contradictory or failed lookups return False (unresolved).
+        """
+
+        def _s(value: Any) -> str:
+            return str(value or "").strip()
+
+        ids = {_s(row.get(f)) for f in ("runtime_id", "runtime_binding_id")} - {""}
+        if not ids:
+            return False
+        try:
+            bindings = self._runtime_binding_index()
+        except Exception:
+            return False
+        matched: List[Dict[str, Any]] = []
+        for ident in ids:
+            hits = [
+                b
+                for b in bindings
+                if ident in {_s(b.get(f)) for f in ("binding_id", "runtime_binding_id", "runtime_id", "id")}
+            ]
+            if len(hits) != 1:
+                return False
+            matched.append(hits[0])
+        first = matched[0]
+        if any(m is not first and m != first for m in matched):
+            return False
+        claimed = _s(first.get("tenant_id"))
+        return not claimed or claimed == tenant
+
+    def _owner_scoped_records(self, dataset: str) -> Tuple[List[Dict[str, Any]], int]:
+        """Read one canonical Governance collection; return (visible rows, unresolved count).
+
+        A row is visible only when its ``evolution_decision_id`` resolves, via the
+        Evolution owner's tenant-guarded read with the caller's tenant, to a
+        decision of the verified caller tenant (freeze rows must also match that
+        decision's target). The row's own ``tenant_id`` is client-writable and is
+        never proof. Rows without a decision binding are unresolved (never shown,
+        never assigned a tenant); rows bound to another tenant are hidden. Raises on
+        unconfigured owner, missing caller auth, transport error or bad payload.
+        """
+        from services.control_plane.bff.command_adapters.base import governance_approval_url, http_request_json
+        from services.control_plane.bff.core.owner_reads import (
+            authorization,
+            remaining_management_read_budget,
+            verified_caller_tenant,
+        )
+
+        auth = authorization.get()
+        if not auth:
+            raise RuntimeError("Governance owner read requires caller authorization")
+        token = auth.removeprefix("Bearer ").strip()
+        tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+        # Same canonical owner resolver as the approval/Freeze writer.
+        url = governance_approval_url(self._OWNER_PATHS[dataset])
+
+        def _load() -> Tuple[List[Dict[str, Any]], int]:
+            rem = remaining_management_read_budget()
+            body = http_request_json(
+                url,
+                auth_token=token,
+                tenant_id=tenant,
+                **({"timeout": rem} if rem is not None else {}),
+            )
+            if not isinstance(body, list) or any(not isinstance(r, dict) for r in body):
+                raise RuntimeError(f"Invalid Governance owner collection for {dataset}")
+            visible: List[Dict[str, Any]] = []
+            unresolved = 0
+            for row in body:
+                # A row's own tenant_id is client-writable body data, never proof.
+                # Tenant is proven only by the Evolution owner's tenant-guarded
+                # read of the decision the row is bound to; each item resolves
+                # independently so one failure never discards verified rows.
+                if dataset == "all_rollbacks":
+                    # Rollback resource authority is the tenant-scoped Runtime binding
+                    # owner read for every row; optional Evolution metadata never
+                    # changes it.
+                    claimed = str(row.get("tenant_id") or "").strip()
+                    if (not claimed or claimed == tenant) and self._rollback_runtime_ownership(row, tenant):
+                        visible.append(dict(row))
+                    else:
+                        unresolved += 1
+                    continue
+                decision_id = str(row.get("evolution_decision_id") or "").strip()
+                if not decision_id:
+                    unresolved += 1
+                    continue
+                try:
+                    decision = self._owner_decision(decision_id)
+                except Exception:
+                    unresolved += 1
+                    continue
+                if decision is None:
+                    # 404 is foreign-or-unknown and indistinguishable; the row's own
+                    # tenant claim is not proof, so stay conservatively unresolved.
+                    unresolved += 1
+                    continue
+                decision_tenant = str(decision.get("tenant_id") or "").strip() if isinstance(decision, dict) else ""
+                if not decision_tenant:
+                    # Missing/malformed owner object cannot prove foreign ownership.
+                    unresolved += 1
+                    continue
+                if decision_tenant != tenant:
+                    continue
+                if not self._decision_binds_row(dataset, row, decision):
+                    unresolved += 1
+                    continue
+                # A contradictory tenant claim on the row is never accepted as proof
+                # and cannot be reconciled with the verified decision tenant.
+                claimed = str(row.get("tenant_id") or "").strip()
+                if claimed and claimed != tenant:
+                    unresolved += 1
+                    continue
+                visible.append(dict(row))
+            return visible, unresolved
+
+        return cached_owner_call(("governance_owner_records", dataset, url, token, tenant), _load)
+
+    def read_rollbacks_strict(self, runtime_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Canonical rollback rows; raises when the owner read fails (never a false-healthy empty)."""
+        if not self._rollback_owner_reads:
+            return self.list_all_rollbacks(runtime_id=runtime_id)
+        rows, unresolved = self._owner_scoped_records("all_rollbacks")
+        matched = [r for r in rows if not runtime_id or r.get("runtime_id") == runtime_id]
+        if not unresolved:
+            return matched
+        reason = f"Governance rollback owner has {unresolved} row(s) with unverifiable tenant provenance"
+        if not matched:
+            # Nothing verified to show: unresolved siblings may hide this runtime's
+            # rows, so this must not look like a healthy zero.
+            raise RuntimeError(reason)
+        # Verified own rows stay visible with their canonical status/fields intact
+        # (existing facade consumers read "status" as the rollback state). The
+        # unresolved siblings are reported separately and honestly as partial
+        # provenance via dataset_source("all_rollbacks") == "unavailable".
+        return matched
+
+    def _owner_rows_or_empty(self, dataset: str) -> List[Dict[str, Any]]:
+        # Journal callers cannot tolerate a raise; the failure is cached for the
+        # request and reported by dataset_source, never as a healthy zero.
+        try:
+            return list(self._owner_scoped_records(dataset)[0])
+        except Exception:
+            return []
+
+    def dataset_source(self, dataset: str = "freeze_orders") -> str:
+        owner = {"freeze_orders": self._freeze_owner_reads, "all_rollbacks": self._rollback_owner_reads}
+        if dataset not in owner:
+            return "typed_store"
+        if not owner[dataset]:
+            return "typed_store"
+        from services.control_plane.bff.command_adapters.base import get_base_url
+
+        try:
+            get_base_url("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "PANTHEON_GOVERNANCE_SERVICE_URL")
+        except RuntimeError:
+            return "missing"
+        try:
+            _, unresolved = self._owner_scoped_records(dataset)
+        except Exception:
+            return "unavailable"
+        # Rows whose tenant provenance cannot be verified stay unverified, not healthy.
+        return "unavailable" if unresolved else "service"
+
     def list_freeze_orders(
         self,
         status: Optional[str] = None,
         scope: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        orders = list(self._freeze_orders.values())
+        if self._freeze_owner_reads:
+            orders = self._owner_rows_or_empty("freeze_orders")
+        else:
+            orders = list(self._freeze_orders.values())
         if status:
             orders = [o for o in orders if o.get("status") == status]
         if scope:
@@ -1011,7 +1257,10 @@ class DomainGovernancePort:
         action_type: Optional[str] = None,
         time_range: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        rollbacks = list(self._all_rollbacks)
+        if self._rollback_owner_reads:
+            rollbacks = self._owner_rows_or_empty("all_rollbacks")
+        else:
+            rollbacks = list(self._all_rollbacks)
         if runtime_id:
             rollbacks = [r for r in rollbacks if r.get("runtime_id") == runtime_id]
         if action_type:
@@ -1732,7 +1981,7 @@ class CompositeLifecycleTelemetryGovernancePort:
     ) -> None:
         self.incidents = incident_port or DomainIncidentPort()
         self.lifecycle = lifecycle_port or DomainLifecyclePort()
-        self.governance = governance_port or DomainGovernancePort()
+        self.governance = governance_port or DomainGovernancePort(owner_reads=True)
         self.lineage = lineage_port or DomainLineagePort()
         self.telemetry = telemetry_port or DomainTelemetryPort()
 
@@ -1795,6 +2044,10 @@ class CompositeLifecycleTelemetryGovernancePort:
                         return ds_fn()
         if dataset == "lineage_edges":
             ds_fn = getattr(self.lineage, "dataset_source", None)
+            if callable(ds_fn):
+                return ds_fn(dataset)
+        if dataset in ("freeze_orders", "all_rollbacks"):
+            ds_fn = getattr(self.governance, "dataset_source", None)
             if callable(ds_fn):
                 return ds_fn(dataset)
         return "typed_store"

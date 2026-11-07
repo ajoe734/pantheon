@@ -1335,12 +1335,26 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         management_context = call["context_pack"]["backend"]["management_nl"]["data"]
         assert management_context["tenant_id"] == "tenant-alpha"
         assert management_context["summary_context"]["portfolio"]["total_pnl"] == 2.5
-        persona_health = call["context_pack"]["backend"]["persona_health"]
-        persona_ids = {item["persona_id"] for item in persona_health["items"]}
-        assert "persona-alpha" in persona_ids
-        assert "persona-beta" not in persona_ids
+        # The Management AI context no longer carries a second, hardcoded
+        # persona_health source: persona health reaches the provider only
+        # through persona_fleet, which keeps the same foreign tenant exclusion.
+        assert call["context_pack"]["backend"].get("persona_health") is None
         source_ids = {source["source_id"] for source in call["context_pack"]["sources"]}
-        assert "persona_health" in source_ids
+        assert "persona_health" not in source_ids
+
+        fleet_resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "How is the persona fleet?", "focus": "persona_fleet"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-enabled-fleet"},
+        )
+        assert fleet_resp.status_code == 202, fleet_resp.text
+        fleet_context = fake.calls[1]["context_pack"]["backend"]["management_nl"]["data"][
+            "summary_context"
+        ]["persona_fleet"]
+        fleet_persona_ids = {item["persona_id"] for item in fleet_context["items"]}
+        assert "persona-alpha" in fleet_persona_ids
+        assert "persona-beta" not in fleet_persona_ids
+        assert "persona-beta" not in json.dumps(fleet_context)
     finally:
         set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
@@ -3770,7 +3784,7 @@ def test_management_nl_large_fleet_context_stays_within_provider_bound(tmp_path,
         client = _seeded_client(tmp_path, monkeypatch)
         monkeypatch.setattr(
             bff_main, "_mgmt_nl_collect_context",
-            lambda focus, now, tenant_id=None: {"snippets": snippets, "surfaces": surfaces},
+            lambda focus, now, tenant_id=None, **_kw: {"snippets": snippets, "surfaces": surfaces},
         )
         resp = client.post(
             "/bff/management/nl/ask",
@@ -3872,7 +3886,7 @@ def test_management_nl_residual_repeated_rows_and_merged_observations_stay_withi
         client = _seeded_client(tmp_path, monkeypatch)
         monkeypatch.setattr(
             bff_main, "_mgmt_nl_collect_context",
-            lambda focus, now, tenant_id=None: {"snippets": snippets, "surfaces": surfaces},
+            lambda focus, now, tenant_id=None, **_kw: {"snippets": snippets, "surfaces": surfaces},
         )
         resp = client.post(
             "/bff/management/nl/ask",
@@ -3922,3 +3936,655 @@ def test_management_nl_residual_repeated_rows_and_merged_observations_stay_withi
     finally:
         set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_mgmt_nl_ask_and_stream_deliver_loop_health_in_provider_prompt_summary_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both POST /bff/management/nl/ask and POST /bff/management/nl/ask/stream
+    deliver the loop_health snippet to the provider inside
+    backend.management_nl.data.summary_context and inside the provider prompt."""
+    import importlib
+    import sys
+    from copy import deepcopy
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import MagicMock
+    from services.control_plane.bff import loop_inventory as loop_inventory_model
+
+    original_store = get_management_nl_read_store()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    scoped_headers = {
+        "Authorization": "Bearer asst-bff-002:operator:tenant-alpha",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+
+    registry = loop_inventory_model._load_registry()
+    controller_rows: List[Dict[str, Any]] = []
+    for idx, loop in enumerate(registry.get("loops") or []):
+        loop_id = str(loop["loop_id"])
+        contract = loop.get("controller_contract") or {}
+        controller_name = str(contract.get("controller_name") or f"{loop_id}-controller")
+        downstream_status = "ready" if idx % 2 == 0 else "ok"
+        controller_rows.append(
+            {
+                "loop_id": loop_id,
+                "tenant_id": "tenant-alpha",
+                "environment": "dev",
+                "controller_id": f"{loop_id}-controller-1",
+                "controller_name": controller_name,
+                "deployment_sha": "deadbeefcafe",
+                "desired_state_query": f"desired state for {loop_id}",
+                "actual_state_query": f"actual state for {loop_id}",
+                "desired_state": {
+                    "present": True,
+                    "source": f"{loop_id}-desired-authority",
+                    "checked_at": now,
+                },
+                "downstream_actual_state": {
+                    "status": downstream_status,
+                    "source": f"{loop_id}-terminal-store",
+                    "summary": f"{loop_id} is {downstream_status}: " + ("漢" * 200),
+                    "checked_at": now,
+                },
+                "last_heartbeat_at": now,
+                "last_tick_at": now,
+                "last_success_at": now,
+                "last_failure_at": now - timedelta(minutes=5),
+                "last_failure_reason": f"{loop_id} downstream timeout",
+                "last_repair_at": now - timedelta(minutes=4),
+                "last_repair_reason": f"{loop_id} drift repaired",
+                "backlog": 0,
+                "lag": 0,
+                "dlq_count": 0,
+                "evidence_refs": [
+                    f"docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/{loop_id}.json"
+                ],
+                "truth_level": "reconciled_live_proof",
+                "lease_token": f"{loop_id}-fence-1",
+                "lease_expires_at": now + timedelta(seconds=60),
+                "payload": {"last_success_summary": f"{loop_id} reconciled desired and actual"},
+            }
+        )
+
+    fake = FakeProviderClient(
+        stream_events=[
+            {"type": "delta", "text": "All 12 canonical control loops "},
+            {"type": "done", "text": "All 12 canonical control loops are accepted and healthy."},
+        ],
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "openclaw")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        monkeypatch.setenv("PANTHEON_ENV", "dev")
+        monkeypatch.setenv(
+            "DATABASE_URL",
+            "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db",
+        )
+        monkeypatch.setitem(sys.modules, "asyncpg", MagicMock())
+        loop_control = importlib.import_module("services.loop-control")
+
+        async def mock_list_records(self, tenant_id: str, environment: str):
+            return deepcopy(controller_rows)
+
+        monkeypatch.setattr(loop_control.LoopControllerStore, "list_records", mock_list_records)
+
+        ask_resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "Are the 12 loops healthy?", "focus": "all"},
+            headers={**scoped_headers, "Idempotency-Key": "ik-provider-loop-health-ask"},
+        )
+        assert ask_resp.status_code == 202, ask_resp.text
+        assert len(fake.calls) == 1
+        ask_call = fake.calls[0]
+        ask_pack = ask_call["context_pack"]
+        ask_loop_snippet = ask_pack["backend"]["management_nl"]["data"]["summary_context"]["loop_health"]
+        assert ask_loop_snippet["status"] == "ok"
+        assert ask_loop_snippet["total"] == 12
+        assert ask_loop_snippet["accepted"] == 12
+        assert ask_loop_snippet["by_live_status"] == {"ready": 6, "ok": 6}
+        assert len(ask_loop_snippet["items"]) == 12
+        assert (
+            len(json.dumps(ask_loop_snippet, sort_keys=True, ensure_ascii=True).encode("utf-8"))
+            <= 8192
+        )
+        assert (
+            len(json.dumps(ask_loop_snippet, ensure_ascii=False).encode("utf-8"))
+            <= 8192
+        )
+        assert '"loop_health":' in ask_call["prompt"]
+        assert '"source_ingestion"' in ask_call["prompt"]
+
+        stream_resp = client.post(
+            "/bff/management/nl/ask/stream",
+            json={"question": "Are the 12 loops healthy?", "focus": "loop_health"},
+            headers={**scoped_headers, "Idempotency-Key": "ik-provider-loop-health-stream"},
+        )
+        assert stream_resp.status_code == 200, stream_resp.text
+        _ = stream_resp.text
+        stream_calls = [c for c in fake.calls if c.get("stream")]
+        assert len(stream_calls) == 1
+        stream_call = stream_calls[0]
+        stream_pack = stream_call["context_pack"]
+        stream_loop_snippet = stream_pack["backend"]["management_nl"]["data"]["summary_context"]["loop_health"]
+        assert stream_loop_snippet == ask_loop_snippet
+        assert '"loop_health":' in stream_call["prompt"]
+        assert '"source_ingestion"' in stream_call["prompt"]
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()
+
+
+
+# ---------------------------------------------------------------------------
+# BFF-AI-CURRENT-STATE-20261107: the Management AI context reports current
+# state. Rows below use the real owner shapes read on 2026-11-07, not
+# synthetic rows that carry fields the real rows lack.
+# ---------------------------------------------------------------------------
+
+_CS_NOW = "2026-11-07T00:00:00Z"
+_CS_TENANT = "tenant-a"
+_CS_INCIDENT_KEYS = (
+    "artifact_id", "artifact_version", "binding_id", "capital_pool_id", "created_at",
+    "deployment_plan_id", "deployment_stage", "evidence_summary", "incident_cluster_id",
+    "incident_id", "lineage_ref", "persona_capital_binding_id", "reconciliation_ids",
+    "resolved_at", "runtime_id", "severity", "status", "telemetry_event_ids", "title",
+    "trace_id",
+)
+
+
+def _cs_incident(incident_id: str, status: str, **overrides: Any) -> dict[str, Any]:
+    """An incident owner row: exactly the 20 keys, and no tenant key."""
+    row: dict[str, Any] = {key: None for key in _CS_INCIDENT_KEYS}
+    row.update(
+        incident_id=incident_id,
+        status=status,
+        severity="critical" if status == "open" else "low",
+        title=f"incident {incident_id}",
+        created_at="2026-11-07T00:00:00Z",
+        resolved_at=None if status == "open" else "2026-11-06T00:00:00Z",
+        reconciliation_ids=[],
+        telemetry_event_ids=[],
+    )
+    row.update(overrides)
+    assert set(row) == set(_CS_INCIDENT_KEYS)
+    return row
+
+
+def _cs_alert(incident_id: str) -> dict[str, Any]:
+    """An alert row as main.py builds it: no tenant key anywhere, including target_ref."""
+    return {
+        "alert_id": f"alert-{incident_id}",
+        "severity": "critical",
+        "category": "incident",
+        "raised_at": "2026-11-07T00:00:00Z",
+        "summary": f"incident {incident_id}",
+        "target_ref": {
+            "surface_id": "OC-02",
+            "label": "Open incident",
+            "href": f"/management/incidents/{incident_id}",
+            "target_id": incident_id,
+        },
+    }
+
+
+def _cs_anomaly(incident_id: str) -> dict[str, Any]:
+    """An anomaly row built from an open incident, as _build_management_anomalies_payload does."""
+    return {
+        "id": incident_id,
+        "kind": "incident",
+        "severity": "critical",
+        "status": "open",
+        "summary": f"incident {incident_id}",
+        "created_at": "2026-11-07T00:00:00Z",
+        "triggered_at": None,
+        "target_ref": {
+            "label": "Open incident",
+            "href": f"/management/incidents/{incident_id}",
+            "target_id": incident_id,
+        },
+    }
+
+
+def _cs_scenario(monkeypatch, *, runtime_count: int, current_runtime_count: int,
+                 persona_count: int, current_persona_count: int, incidents=None):
+    """Install a counting owner store. Returns (module, counts, store).
+
+    The first `current_persona_count` personas are current; the rest are
+    retired and are listed FIRST so the pre-fix 20 row cap would take them.
+    Persona p-current-0 is paper_running with one active runtime and older
+    retired runtimes. Persona p-current-1 is paper_running and only has
+    retired runtimes.
+    """
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.assistant import management_service as ms
+    from services.control_plane.bff.management_read_models.service import ManagementService
+
+    counts: dict[str, int] = {}
+
+    def counted(name, fn):
+        def wrapper(*args, **kwargs):
+            counts[name] = counts.get(name, 0) + 1
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    states = ["paper_running", "paper_running", "draft", "research_only", "live_running"]
+    current = [
+        {"persona_id": f"p-current-{i}", "name": f"current {i}",
+         "lifecycle_state": states[i % len(states)] if i > 1 else "paper_running",
+         "tenant_id": _CS_TENANT}
+        for i in range(current_persona_count)
+    ]
+    retired = [
+        {"persona_id": f"p-retired-{i}", "name": f"retired {i}",
+         "lifecycle_state": "retired", "tenant_id": _CS_TENANT}
+        for i in range(persona_count - current_persona_count)
+    ]
+    personas = retired + current
+
+    def runtime(runtime_id, binding, *, retired_runtime):
+        return {
+            "runtime_id": runtime_id, "binding_id": runtime_id,
+            "persona_capital_binding_id": binding,
+            "status": "retired" if retired_runtime else "active",
+            "retired_at": "2026-10-13T14:02:00Z" if retired_runtime else None,
+            "deployment_stage": "paper", "tenant_id": _CS_TENANT,
+        }
+
+    runtimes = [runtime(f"rt-live-{i}", f"b-p-current-{i}" if i != 1 else "b-none", retired_runtime=False)
+                for i in range(current_runtime_count)]
+    # p-current-1 has no active runtime: its only runtime is retired.
+    runtimes[1:2] = [runtime("rt-live-1", "b-unbound", retired_runtime=False)] if current_runtime_count > 1 else []
+    n_retired = runtime_count - len(runtimes)
+    runtimes += [
+        runtime(f"rt-old-{i}", "b-p-current-0" if i % 2 == 0 else "b-p-current-1", retired_runtime=True)
+        for i in range(n_retired)
+    ]
+    incident_rows = list(incidents or [])
+
+    def list_incidents(**kwargs):
+        rows = list(incident_rows)
+        if kwargs.get("open_only"):
+            rows = [r for r in rows if r["status"] in {"open", "investigating"}]
+        return rows
+
+    def telemetry(runtime_id):
+        if not runtime_id.startswith("rt-live"):
+            return None
+        return {"runtime_id": runtime_id, "pnl": 0.01, "drawdown": 0.0,
+                "collected_at": _CS_NOW, "tenant_id": _CS_TENANT,
+                "metrics": {"pnl": 0.01, "fill_rate": 0.9, "total_trades": 3}}
+
+    def bindings_for(persona_id):
+        return [{"id": f"b-{persona_id}", "binding_id": f"b-{persona_id}",
+                 "capital_pool_id": f"pool-{persona_id}", "tenant_id": _CS_TENANT}]
+
+    store = SimpleNamespace(
+        list_runtime_bindings=counted("list_runtime_bindings", lambda: list(runtimes)),
+        list_incidents=counted("list_incidents", list_incidents),
+        list_evolution_decisions=counted("list_evolution_decisions", lambda: []),
+        list_strategy_specs=counted("list_strategy_specs", lambda **kw: []),
+        get_bindings_for_persona=counted("get_bindings_for_persona", bindings_for),
+        get_sessions_for_persona=counted("get_sessions_for_persona", lambda _p: []),
+        get_teaching_sessions_for_persona=counted("get_teaching_sessions_for_persona", lambda _p: []),
+        get_capital_pool=counted("get_capital_pool", lambda pool_id: {"pool_id": pool_id, "tenant_id": _CS_TENANT}),
+        get_persona_allowed_actions=counted("get_persona_allowed_actions", lambda _p: {"tenant_id": _CS_TENANT}),
+        get_telemetry_summary=counted("get_telemetry_summary", telemetry),
+        get_rollbacks=counted("get_rollbacks", lambda _rid: []),
+    )
+    service = ManagementService(read_store=store, utc_now=lambda: _CS_NOW)
+    monkeypatch.setattr(ms, "_MANAGEMENT_AI_CONTEXT_SERVICE", service)
+    monkeypatch.setattr(ms, "_list_persona_records", lambda *a, **k: list(personas))
+    monkeypatch.setattr(ms, "_build_operator_alerts_payload",
+                        lambda _s: {"alerts": [], "meta": {"surfaces": {}}})
+    monkeypatch.setattr(ms, "_human_inbox_payload",
+                        lambda *a, **k: {"data": {"items": []}, "meta": {"surfaces": {}}})
+    monkeypatch.setattr(ms, "_build_management_anomalies_payload",
+                        lambda _s: {"items": [], "meta": {"surfaces": {}}})
+    return ms, counts, store
+
+
+def test_ai_context_open_incident_without_tenant_key_reaches_every_summary(monkeypatch) -> None:
+    open_incident = _cs_incident("inc-open-1", "open", persona_capital_binding_id="b-p-current-0",
+                                 runtime_id="rt-live-0")
+    history = [_cs_incident(f"inc-old-{i}", "resolved") for i in range(3)]
+    ms, counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=7, current_runtime_count=2, persona_count=6,
+        current_persona_count=3, incidents=[open_incident, *history],
+    )
+    monkeypatch.setattr(ms, "_build_operator_alerts_payload",
+                        lambda _s: {"alerts": [_cs_alert("inc-open-1")], "meta": {"surfaces": {}}})
+    monkeypatch.setattr(ms, "_build_management_anomalies_payload",
+                        lambda _s: {"items": [_cs_anomaly("inc-open-1")], "meta": {"surfaces": {}}})
+
+    cockpit = ms._mgmt_nl_collect_context("cockpit", _CS_NOW, tenant_id=_CS_TENANT)
+    assert cockpit["snippets"]["cockpit"]["alerts_summary"]["total_active"] == 1
+    assert cockpit["snippets"]["cockpit"]["anomalies_summary"]["total"] == 1
+
+    fleet = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    items = {item["persona_id"]: item for item in fleet["snippets"]["persona_fleet"]["items"]}
+    assert [i["incident_id"] for i in items["p-current-0"]["active_incidents"]] == ["inc-open-1"]
+    assert items["p-current-0"]["health"]["status"] == "critical"
+    # The incident read asks the owner for open rows only, so resolved history
+    # adds no incident entity to the evidence entities.
+    incident_entities = {ref for kind, ref in fleet["evidence_entities"] if kind == "incident"}
+    assert incident_entities == {"inc-open-1"}
+
+    # A resolved-only fleet reports no incident at all.
+    ms2, _c2, _s2 = _cs_scenario(
+        monkeypatch, runtime_count=7, current_runtime_count=2, persona_count=6,
+        current_persona_count=3, incidents=history,
+    )
+    resolved_only = ms2._mgmt_nl_collect_context("persona_fleet", _CS_TENANT and _CS_NOW, tenant_id=_CS_TENANT)
+    assert all(not i["active_incidents"] for i in resolved_only["snippets"]["persona_fleet"]["items"])
+    assert not {r for k, r in resolved_only["evidence_entities"] if k == "incident"}
+
+
+def test_ai_context_deployment_scope_keeps_foreign_tenant_and_no_tenant_scope_closed(monkeypatch) -> None:
+    ms, _counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=3, current_runtime_count=2, persona_count=3,
+        current_persona_count=3, incidents=[],
+    )
+    foreign_alert = {**_cs_alert("inc-foreign"), "tenant_id": "tenant-b"}
+    own_alert = {**_cs_alert("inc-own"), "tenant_id": _CS_TENANT}
+    keyless_alert = _cs_alert("inc-keyless")
+    monkeypatch.setattr(
+        ms, "_build_operator_alerts_payload",
+        lambda _s: {"alerts": [foreign_alert, own_alert, keyless_alert], "meta": {"surfaces": {}}},
+    )
+    scoped = ms._mgmt_nl_collect_context("cockpit", _CS_NOW, tenant_id=_CS_TENANT)
+    assert scoped["snippets"]["cockpit"]["alerts_summary"]["total_active"] == 2
+    assert ("alert", "alert-inc-foreign") not in scoped["evidence_entities"]
+    unscoped = ms._mgmt_nl_collect_context("cockpit", _CS_NOW, tenant_id=None)
+    assert unscoped["snippets"]["cockpit"]["alerts_summary"]["total_active"] == 0
+    # The global matcher is unchanged: it still rejects a row with no tenant key.
+    assert ms._mgmt_nl_record_matches_tenant(keyless_alert, _CS_TENANT) is False
+
+
+def test_ai_context_assistant_alerts_collector_keeps_deployment_scoped_rows() -> None:
+    from services.control_plane.bff.assistant import source_collectors as sc
+
+    class _Deps:
+        def __init__(self):
+            self.tenant_payload_fn = lambda identity, requested_tenant=None: {
+                "id": _CS_TENANT, "allowed_ids": [_CS_TENANT], "scope": "tenant"}
+            self.read_roles = frozenset({"viewer"})
+            self.filter_tenant_records_fn = lambda rows, tenant: [
+                r for r in rows if r.get("tenant_id") == tenant]
+            self.filter_deployment_scoped_records_fn = None
+
+    from services.control_plane.bff.assistant.management_service import (
+        _mgmt_nl_filter_deployment_scoped_records,
+    )
+
+    deps = _Deps()
+    deps.filter_deployment_scoped_records_fn = _mgmt_nl_filter_deployment_scoped_records
+    identity = OperatorIdentity(operator_id="viewer-1", roles=["viewer"])
+    rows = [_cs_alert("inc-keyless"), {**_cs_alert("inc-foreign"), "tenant_id": "tenant-b"}]
+    payload = sc._assistant_filter_payload_tenant(
+        {"alerts": rows}, identity, deps=deps, deployment_scoped=True)
+    assert [r["alert_id"] for r in payload["alerts"]] == ["alert-inc-keyless"]
+    # Any other source keeps the strict filter and drops the same keyless row.
+    strict = sc._assistant_filter_payload_tenant({"items": rows}, identity, deps=deps)
+    assert strict["items"] == []
+
+
+def test_ai_context_current_state_excludes_retired_and_projects_healthy(monkeypatch) -> None:
+    ms, counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=12, current_runtime_count=2, persona_count=30,
+        current_persona_count=5, incidents=[],
+    )
+    context = ms._mgmt_nl_collect_context("all", _CS_NOW, tenant_id=_CS_TENANT)
+    summary = context["snippets"]["trading_pulse"]["summary"]
+    assert summary["runtime_count"] == 2 and summary["retired_runtime_count"] == 10
+    assert context["snippets"]["portfolio"]["runtime_count"] == 2
+    assert context["snippets"]["portfolio"]["retired_runtime_count"] == 10
+    # Retired runtimes cause no telemetry or rollback read.
+    assert counts["get_telemetry_summary"] <= 2 and counts.get("get_rollbacks", 0) <= 2
+
+    fleet = context["snippets"]["persona_fleet"]
+    assert fleet["summary"]["retired_persona_count"] == 25
+    assert fleet["summary"]["retired_runtime_count"] == 10
+    assert fleet["summary"]["total_personas"] == 5
+    assert not [i for i in fleet["items"] if i["persona_id"].startswith("p-retired")]
+    items = {i["persona_id"]: i for i in fleet["items"]}
+    # paper_running persona, one active runtime, older retired runtimes, no incident.
+    assert items["p-current-0"]["health"]["status"] == "healthy"
+    assert items["p-current-0"]["health"]["reasons"] == []
+    # paper_running persona whose only runtimes are retired.
+    assert "no_runtime_binding" in items["p-current-1"]["health"]["reasons"]
+    by_state = fleet["summary"]["by_lifecycle_state"]
+    assert by_state["paper_running"] == 2 and by_state["draft"] == 1 and by_state["research_only"] == 1
+    # draft and research_only personas are not counted as degraded.
+    degraded_ids = {i["persona_id"] for i in fleet["items"] if i["health"]["status"] == "degraded"}
+    assert degraded_ids == {"p-current-1", "p-current-2", "p-current-3", "p-current-4"}
+    assert fleet["summary"]["degraded_personas"] == 2  # p-current-2 draft, p-current-3 research_only excluded
+
+
+def test_ai_context_operational_personas_survive_the_row_cap(monkeypatch) -> None:
+    ms, _counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=5, current_runtime_count=2, persona_count=60,
+        current_persona_count=3, incidents=[],
+    )
+    fleet = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)["snippets"]["persona_fleet"]
+    ids = [i["persona_id"] for i in fleet["items"]]
+    assert ids[0].startswith("p-current-") and "p-current-0" in ids
+    assert fleet["summary"]["retired_persona_count"] == 57
+    provider = ms._mgmt_nl_provider_summary_context({"persona_fleet": fleet})["persona_fleet"]
+    # population_scope describes the non-retired population, so it is not partial.
+    assert provider["population_scope"]["total_population"] == 3
+    assert provider["population_scope"]["partial"] is False
+
+
+def test_ai_context_133_runtimes_143_personas_reads_and_size_drop(monkeypatch) -> None:
+    import os
+
+    ms, counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=133, current_runtime_count=5, persona_count=143,
+        current_persona_count=12, incidents=[],
+    )
+    context = ms._mgmt_nl_collect_context("all", _CS_NOW, tenant_id=_CS_TENANT)
+    provider_summary = ms._mgmt_nl_provider_summary_context(context["snippets"])
+    size = len(json.dumps(provider_summary, default=list, ensure_ascii=True))
+    owner_reads = sum(counts.values())
+    path = os.environ.get("PANTHEON_AI_CURRENT_STATE_METRICS_PATH")
+    if path:
+        Path(path).write_text(json.dumps(
+            {"provider_summary_bytes": size, "owner_reads": owner_reads, "counts": counts}, sort_keys=True))
+    # Before this change all 133 runtimes and all 143 personas were read and
+    # projected; the recorded "before" numbers are in the task evidence.
+    assert counts["get_telemetry_summary"] <= 5
+    assert counts["get_bindings_for_persona"] == 12
+    assert context["snippets"]["persona_fleet"]["summary"]["retired_persona_count"] == 131
+    assert context["snippets"]["trading_pulse"]["summary"]["runtime_count"] == 5
+    assert context["snippets"]["trading_pulse"]["summary"]["retired_runtime_count"] == 128
+    assert owner_reads < 133 + 143
+    assert size < 34970  # provider summary size before this change, see evidence
+
+
+def test_ai_context_current_runtime_rollback_unavailable_is_still_reported(monkeypatch) -> None:
+    ms, counts, store = _cs_scenario(
+        monkeypatch, runtime_count=4, current_runtime_count=2, persona_count=3,
+        current_persona_count=3, incidents=[],
+    )
+    store.get_rollbacks = lambda _rid: [{
+        "runtime_id": "rt-live-0", "id": "rb-1", "owner": "rollback-owner",
+        "status": "unavailable", "source_kind": "unavailable",
+        "degradation_reason": "rollback owner offline", "tenant_id": _CS_TENANT}]
+    context = ms._mgmt_nl_collect_context("trading_pulse", _CS_NOW, tenant_id=_CS_TENANT)
+    surface = context["surfaces"]["management_trading_pulse"]
+    assert surface["status"] == "unavailable"
+    assert "rollback owner offline" in json.dumps(surface)
+
+
+# BFF-AI-FLEET-INBOX-20261107: the AI persona_fleet projection must run through
+# the app-scoped PersonaService, and the AI inbox read must use the wired
+# payload's data.items layer with the caller identity.
+def _fleet_inbox_real_persona_service():
+    from services.control_plane.bff.personas.service import (
+        PersonaService,
+        create_persona_registry_write_owner,
+    )
+
+    class _SourceHealthStore:
+        def get_source_connector_registry(self):
+            return {"connectors": []}
+
+        def get_source_health_usage_snapshot(self):
+            return {"sources": []}
+
+    return PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        ranking_write_owner=object(),
+        read_store=_SourceHealthStore(),
+        command_store=object(),
+    )
+
+
+def _fleet_inbox_source_health_persona(persona_id: str) -> dict:
+    return {
+        "persona_id": persona_id,
+        "name": persona_id,
+        "lifecycle_state": "paper_running",
+        "tenant_id": _CS_TENANT,
+        "required_data_sources": [{"provider_key": "shioaji"}],
+    }
+
+
+def _fleet_inbox_scenario(monkeypatch, personas):
+    ms, _counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=1, current_runtime_count=1, persona_count=1,
+        current_persona_count=1, incidents=[],
+    )
+    monkeypatch.setattr(ms, "_list_persona_records", lambda *a, **k: list(personas))
+    return ms
+
+
+def test_ai_persona_fleet_projects_source_health_personas_through_app_persona_service(monkeypatch) -> None:
+    ms = _fleet_inbox_scenario(
+        monkeypatch, [_fleet_inbox_source_health_persona("p-src-0")]
+    )
+    unbound = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    item = unbound["snippets"]["persona_fleet"]["items"][0]
+    # Without the app-scoped service the projection raises; the persona is an
+    # unavailable owner observation naming the exception class.
+    assert item["health"]["status"] == "unavailable"
+    assert any(
+        "RuntimeError" in str(o.get("degradation_reason"))
+        for o in unbound["surfaces"]["persona_fleet"]["owner_observations"]
+    )
+
+    from services.control_plane.bff.assistant.management_service import (
+        bind_persona_service_projection as _bind_persona_service_projection,
+    )
+
+    monkeypatch.setattr(
+        ms,
+        "_PROJECT_PERSONA_FLEET_ITEM_FN",
+        _bind_persona_service_projection(_fleet_inbox_real_persona_service()),
+    )
+    bound = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    bound_item = bound["snippets"]["persona_fleet"]["items"][0]
+    assert bound_item["health"]["status"] != "unavailable"
+    assert not any(
+        "persona_projection_failed" in str(o.get("degradation_reason"))
+        for o in bound["surfaces"]["persona_fleet"]["owner_observations"]
+    )
+
+
+def test_ai_persona_fleet_has_no_module_global_persona_service() -> None:
+    from services.control_plane.bff.assistant import management_service as ms
+
+    for name in ("_PERSONA_SERVICE", "set_persona_service", "get_persona_service", "reset_persona_service"):
+        assert not hasattr(ms, name), name
+
+
+def test_ai_persona_fleet_one_persona_failure_keeps_the_others_and_logs(monkeypatch, caplog) -> None:
+    ms = _fleet_inbox_scenario(
+        monkeypatch,
+        [_fleet_inbox_source_health_persona("p-bad"), _fleet_inbox_source_health_persona("p-good")],
+    )
+    from services.control_plane.bff.assistant.management_service import (
+        bind_persona_service_projection as _bind_persona_service_projection,
+    )
+
+    real_impl = _bind_persona_service_projection(_fleet_inbox_real_persona_service())
+
+    def flaky(persona, **kwargs):
+        if persona["persona_id"] == "p-bad":
+            raise KeyError("boom")
+        return real_impl(persona, **kwargs)
+
+    monkeypatch.setattr(ms, "_PROJECT_PERSONA_FLEET_ITEM_FN", flaky)
+    with caplog.at_level("WARNING"):
+        context = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    items = {i["persona_id"]: i for i in context["snippets"]["persona_fleet"]["items"]}
+    assert items["p-bad"]["health"]["status"] == "unavailable"
+    assert items["p-good"]["health"]["status"] != "unavailable"
+    bad_obs = [
+        o for o in context["surfaces"]["persona_fleet"]["owner_observations"]
+        if o.get("subject_id") == "p-bad"
+    ]
+    assert bad_obs and bad_obs[0]["status"] == "unavailable"
+    assert "KeyError" in bad_obs[0]["degradation_reason"]
+    assert any("KeyError" in r.getMessage() for r in caplog.records)
+
+
+def test_ai_persona_fleet_error_branch_logs_exception_class(monkeypatch, caplog) -> None:
+    ms = _fleet_inbox_scenario(monkeypatch, [_fleet_inbox_source_health_persona("p-x")])
+
+    def boom(*_a, **_k):
+        raise ValueError("owner list failed")
+
+    monkeypatch.setattr(ms, "_mgmt_nl_persona_state", boom)
+    with caplog.at_level("WARNING"):
+        context = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    assert any("ValueError" in r.getMessage() for r in caplog.records)
+    assert context["surfaces"]["persona_fleet"]["status"] == "unavailable"
+
+
+def test_ai_cockpit_counts_wired_human_inbox_data_items_with_caller_identity(monkeypatch) -> None:
+    ms, _counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=1, current_runtime_count=1, persona_count=1,
+        current_persona_count=1, incidents=[],
+    )
+    seen: dict = {}
+    incident_item = {
+        "id": "agent-2e0cc89b4ea8-0001",
+        "source_type": "incident",
+        "status": "open",
+        "title": "Control loop cannot fetch runtime summaries",
+        "tenant_id": _CS_TENANT,
+    }
+
+    def wired_payload(snapshot_at, **kwargs):
+        seen.update(kwargs)
+        ok = {"status": "ok", "source": "service"}
+        return {
+            "data": {"id": "management-human-inbox", "items": [incident_item], "summary": {}},
+            "page_info": {"next_page_token": None, "total": 1, "page_size": 1},
+            "meta": {"surfaces": {
+                "approval_queue": ok, "governance_review_queue": ok,
+                "incidents": ok, "persona_readiness": ok,
+            }},
+        }
+
+    monkeypatch.setattr(ms, "_human_inbox_payload", wired_payload)
+    caller = object()
+    context = ms._mgmt_nl_collect_context(
+        "cockpit", _CS_NOW, tenant_id=_CS_TENANT, identity=caller
+    )
+    assert context["snippets"]["cockpit"]["human_inbox_summary"]["total"] == 1
+    assert seen["identity"] is caller
+    observations = {
+        o["subject_type"]: o
+        for o in context["surfaces"]["management_cockpit"]["owner_observation"][
+            "contributing_observations"
+        ]
+    }
+    assert observations["approval_queue"]["status"] == "ok"
