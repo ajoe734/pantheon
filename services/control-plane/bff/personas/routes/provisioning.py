@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from services.control_plane.bff.models import ErrorCode
 from ..service import (
+    PersonaAdvisoryAdmissionError,
     PersonaProvisioningCoordinationError,
     ensure_chain_paper_capital,
     retire_chain_paper_capital,
@@ -127,6 +128,39 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
                 "authoritative_readback": authoritative_meta,
             },
         }
+
+    @router.post("/bff/personas/{persona_id}/provisioning/advisory-admission")
+    async def bff_ensure_persona_paper_advisory_admission(
+        persona_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """Idempotent persona_opinion-only snapshot + explicit paper ceiling.
+
+        Tenant comes from the caller's identity; no order, capital or runtime
+        authority is granted and ineligible Personas are refused (409).
+        """
+
+        identity = _extract_identity(authorization)
+        _require_operator_role(identity)
+        caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+        raw = _service.get_persona(persona_id)
+        if raw is None or _persona_record_tenant_id(raw) != caller_tenant:
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Persona not found",
+                f"Persona {persona_id} does not exist",
+            )
+        try:
+            data = await asyncio.to_thread(_service.ensure_paper_advisory_admission, persona_id, raw)
+        except PersonaAdvisoryAdmissionError as exc:
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Advisory admission precondition failed",
+                exc.reason,
+            ) from exc
+        return {"data": data, "meta": {"snapshot_at": utc_now()}}
 
     def _chain_capital_persona(identity: Any, persona_id: str) -> str:
         """Caller tenant for a Persona the caller's tenant owns; 404 otherwise."""
