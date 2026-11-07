@@ -16,5 +16,10 @@
     "freeze_binding": "decision tenant==caller, action_type==freeze, target_id/version match, stored execution_result.execution_ref_id (if any) must equal the row's freeze_order_id; no executed-only gate, no receipt-binding GET",
     "rollback_binding": "decision tenant==caller, action_type in {freeze, force_risk_off} (existing follow-through; EvolutionActionType has no rollback); stored execution_ref_id (if any) must equal rollback_id, else every runtime identity on the row (runtime_id/runtime_binding_id/target_id) must equal decision target_id - a free-form target_id cannot override a contradictory runtime_id",
     "404": "foreign/unknown indistinguishable: always unresolved (row tenant claim is never proof); decision object with missing/malformed tenant_id is unresolved, only positively foreign decisions are hidden"
+  },
+  "review_fix_v3": {
+    "tenant_claim": "a row tenant_id that contradicts the verified caller tenant is unresolved (not visible), verified siblings preserved",
+    "strict_rollbacks": "read_rollbacks_strict raises when any row is unresolved so ReadSurfacePorts.get_rollbacks/ManagementService.get_context_rollbacks report unavailable, never healthy zero; Journal list path keeps verified partial rows; healthy empty stays service/ok",
+    "runs": "123 passed (three admitted files + management context observations)"
   }
 }

@@ -1193,3 +1193,37 @@ def test_each_decision_get_recomputes_budget_and_stops_after_deadline(monkeypatc
         authorization.reset(token)
     assert f == ["f1"] and src == "unavailable"
     assert timeouts == [1.0]  # second decision GET never issued past the deadline
+
+
+def test_contradictory_row_tenant_claim_is_unresolved_siblings_kept(monkeypatch):
+    fr = [_frz("f-ok"), _frz("f-conflicting-tenant", tenant_id="t-other")]
+    rb = [
+        {"rollback_id": "r-ok", "runtime_id": "rt1", "tenant_id": "t-own", "evolution_decision_id": "d-rb"},
+        {"rollback_id": "r-conflicting-tenant", "runtime_id": "rt1", "tenant_id": "t-other", "evolution_decision_id": "d-rb"},
+    ]
+    (f, r, sf, srb), _o = _run(monkeypatch, {"freeze-orders": fr, "rollbacks": rb}, _DECISIONS)
+    assert f == ["f-ok"] and r == ["r-ok"]
+    assert sf == "unavailable" and srb == "unavailable"
+
+
+def test_strict_rollback_facade_raises_on_unresolved_but_empty_is_healthy(monkeypatch):
+    legacy = [{"rollback_id": "r-legacy", "runtime_id": "rt1"}]
+    _GovOwner(monkeypatch, {"freeze-orders": [], "rollbacks": legacy}, decisions=_DECISIONS)
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            with pytest.raises(RuntimeError):
+                port.governance.read_rollbacks_strict("rt1")
+            assert [r["rollback_id"] for r in port.list_all_rollbacks()] == []  # Journal path stays partial
+    finally:
+        authorization.reset(token)
+    _GovOwner(monkeypatch, {"freeze-orders": [], "rollbacks": []}, decisions=_DECISIONS)
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            assert port.governance.read_rollbacks_strict("rt1") == []
+            assert port.dataset_source("all_rollbacks") == "service"
+    finally:
+        authorization.reset(token)

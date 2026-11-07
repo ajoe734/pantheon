@@ -1130,6 +1130,12 @@ class DomainGovernancePort:
                 if not self._decision_binds_row(dataset, row, decision):
                     unresolved += 1
                     continue
+                # A contradictory tenant claim on the row is never accepted as proof
+                # and cannot be reconciled with the verified decision tenant.
+                claimed = str(row.get("tenant_id") or "").strip()
+                if claimed and claimed != tenant:
+                    unresolved += 1
+                    continue
                 visible.append(dict(row))
             return visible, unresolved
 
@@ -1139,7 +1145,13 @@ class DomainGovernancePort:
         """Canonical rollback rows; raises when the owner read fails (never a false-healthy empty)."""
         if not self._rollback_owner_reads:
             return self.list_all_rollbacks(runtime_id=runtime_id)
-        rows = list(self._owner_scoped_records("all_rollbacks")[0])
+        rows, unresolved = self._owner_scoped_records("all_rollbacks")
+        if unresolved:
+            # Existing strict consumers cannot carry partial provenance; surface it
+            # as an owner failure rather than a healthy zero / silently short list.
+            raise RuntimeError(
+                f"Governance rollback owner has {unresolved} row(s) with unverifiable tenant provenance"
+            )
         return [r for r in rows if not runtime_id or r.get("runtime_id") == runtime_id]
 
     def _owner_rows_or_empty(self, dataset: str) -> List[Dict[str, Any]]:
