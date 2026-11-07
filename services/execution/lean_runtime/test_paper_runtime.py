@@ -336,6 +336,110 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         )
         return signal
 
+    def _expression_signal(self, binding, suffix, *, action, direction, metadata):
+        from services.execution.lean_runtime.signal_producer import build_decision_signals
+
+        [signal] = build_decision_signals(
+            {
+                "decision_id": f"decision-{suffix}",
+                "signal_id": f"signal-{suffix}",
+                "strategy_id": "strategy-paper",
+                "timestamp": self._signal()["timestamp"],
+                "tenant_id": "tenant-paper",
+                "environment": "paper",
+                "symbol": "0050.TW",
+                "action": action,
+                "direction": direction,
+                "quantity": 1,
+                "quantity_type": "SHARES",
+                "run_id": f"run-{suffix}",
+                "metadata": metadata,
+            },
+            binding_id=binding["binding_id"],
+            runtime_id=binding["runtime_id"],
+        )
+        return signal
+
+    def _run_expression_signal(self, signal, binding):
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+        service.drain_once()
+        service._consumer.flush_rebalance(signal["run_id"], service._algo)
+        return {event["event_type"]: event for event in telemetry.events}
+
+    def test_no_trade_expression_is_a_noop_with_view_and_record_metadata(self):
+        binding = self._binding()
+        record = {
+            "decision_id": "decision-nt",
+            "reason_code": "no_feasible_instrument",
+            "detail": "gross_limit",
+            "candidates_considered": ["eq:0050"],
+        }
+        signal = self._expression_signal(
+            binding,
+            "nt",
+            action="HOLD",
+            direction="SHORT",
+            metadata={
+                "strength": 0.6,
+                "momentum": -0.006,
+                "view_direction": "SHORT",
+                "expression_decision": record,
+                "reason_code": "no_feasible_instrument",
+            },
+        )
+        events = self._run_expression_signal(signal, binding)
+        generation = events["signal_generation"]["metadata"]
+        self.assertEqual(
+            (generation["strength"], generation["momentum"], generation["view_direction"]),
+            (0.6, -0.006, "SHORT"),
+        )
+        self.assertNotIn("expression_decision", generation)
+        self.assertEqual(events["trade_decision"]["metadata"]["expression_decision"], record)
+        noop = events["paper_order_simulated"]
+        self.assertEqual(noop["metrics"]["noop_count"], 1)
+        self.assertEqual(noop["metadata"]["expression_decision"], record)
+        self.assertNotIn("paper_fill_simulated", events)
+
+    def test_chosen_stock_future_is_rejected_without_a_fill(self):
+        binding = self._binding()
+        record = {
+            "decision_id": "decision-sf",
+            "instrument_id": "ssf:SRF:202611",
+            "side": "sell",
+            "units": 1,
+            "reason_code": "short_via_future",
+        }
+        signal = self._expression_signal(
+            binding,
+            "sf",
+            action="SELL",
+            direction="SHORT",
+            metadata={
+                "instrument_id": "ssf:SRF:202611",
+                "kind": "stock_future",
+                "units": 1,
+                "multiplier": 1000,
+                "reason_code": "short_via_future",
+                "expression_decision": record,
+            },
+        )
+        events = self._run_expression_signal(signal, binding)
+        self.assertEqual(events["trade_decision"]["metadata"]["expression_decision"], record)
+        rejection = events["order_rejection"]["metadata"]
+        self.assertEqual(rejection["reject_reason"], "instrument_not_supported_by_ledger")
+        self.assertEqual(rejection["instrument_id"], "ssf:SRF:202611")
+        self.assertEqual(rejection["multiplier"], 1000)
+        self.assertNotIn("paper_fill_simulated", events)
+        self.assertNotIn("position_snapshot", events)
+
     def test_binding_resolver_prefers_exact_worker_binding_for_shared_runtime(self):
         runtime_id = "paper-runtime-shared"
         other = self._binding()

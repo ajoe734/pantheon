@@ -3425,6 +3425,10 @@ class PaperRuntimeService:
             signal_metadata.setdefault("symbol", event.symbol)
             signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
             occurred_at = str(event.metadata.get("timestamp") or event.created_at)
+            # The view fields belong to signal_generation; the instrument
+            # decision record belongs to trade_decision.
+            decision_metadata = dict(signal_metadata)
+            signal_metadata.pop("expression_decision", None)
             try:
                 signal_payload = self._emit_lifecycle_telemetry(
                     "signal_generation",
@@ -3460,7 +3464,7 @@ class PaperRuntimeService:
                 self._emit_lifecycle_telemetry(
                     "trade_decision",
                     {"action": "trade_decision_recorded"},
-                    signal_metadata,
+                    decision_metadata,
                     event_id=decision_event_id,
                     created_at=occurred_at,
                 )

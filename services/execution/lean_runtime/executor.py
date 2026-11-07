@@ -52,6 +52,22 @@ def _is_taiwan_venue_symbol(symbol_str: str) -> bool:
         return False
     return s.rsplit(".", 1)[1] in _TAIWAN_VENUE_SUFFIXES
 
+# Layer C decision envelope: carried into every event the order produces.
+_EXPRESSION_CONTEXT_KEYS = (
+    "instrument_id",
+    "kind",
+    "units",
+    "multiplier",
+    "reason_code",
+    "strength",
+    "momentum",
+    "view_direction",
+    "expression_decision",
+)
+
+# Instrument kinds the paper ledger can fill today.
+_LEDGER_SUPPORTED_KINDS = frozenset({"cash_share"})
+
 _ORDER_ADAPTER_CONTEXT_KEYS = (
     "correlation_envelope",
     "adapter",
@@ -341,6 +357,13 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
         value = metadata.get(key)
         if value not in (None, ""):
             context[key] = value
+    for key in _EXPRESSION_CONTEXT_KEYS:
+        value = metadata.get(key)
+        if value not in (None, "", [], {}):
+            context[key] = value
+    decision_id = signal.get("decision_id") or metadata.get("decision_id")
+    if decision_id not in (None, ""):
+        context["decision_id"] = decision_id
     for key in _ORDER_ADAPTER_CONTEXT_KEYS:
         value = metadata.get(key)
         if value not in (None, "", [], {}):
@@ -1167,6 +1190,33 @@ def _execute_taiwan(
         finally:
             _clear_signal_context(algo)
         log.info("[%s] HOLD signal — no TW order placed (symbol=%s)", signal_id, signal["symbol"])
+        return
+
+    signal_metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    chosen_kind = signal_metadata.get("kind")
+    if chosen_kind not in (None, "") and chosen_kind not in _LEDGER_SUPPORTED_KINDS:
+        # The ledger has no futures position yet (PAPER-FUTURES-LEDGER-RISK-GATE):
+        # reject before any broker call or fill so nothing is silently filled as shares.
+        _set_signal_context(algo, signal_context)
+        try:
+            _record_order_rejection(
+                algo,
+                signal["symbol"],
+                signal_id,
+                reject_reason="instrument_not_supported_by_ledger",
+                requested_quantity=quantity,
+                computed_quantity=0.0,
+                quantity_type=quantity_type,
+                order_type=order_type,
+            )
+        finally:
+            _clear_signal_context(algo)
+        log.warning(
+            "[%s] %s instrument %s not supported by the paper ledger — order rejected",
+            signal_id,
+            chosen_kind,
+            signal_metadata.get("instrument_id"),
+        )
         return
 
     if action == "BUY" and direction == "LONG":
