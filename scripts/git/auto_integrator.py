@@ -874,6 +874,31 @@ def summarize_status_rollup(
     return CheckSummary("green", len(rollup), (), (), tuple(ignored_diagnostic))
 
 
+def incomplete_rollup_checks(rollup: Any) -> list[str]:
+    """Names of raw rollup entries still pending, ignoring latest_check_runs.
+
+    A same-name run superseded by a later-started one can still be running
+    while GitHub reports BLOCKED, so this reads every raw entry.
+    """
+
+    if not isinstance(rollup, list):
+        return []
+    names: list[str] = []
+    for item in rollup:
+        if not isinstance(item, Mapping):
+            continue
+        values = (
+            normalize_state(item.get("conclusion")),
+            normalize_state(item.get("state")),
+            normalize_state(item.get("status")),
+        )
+        if any(value in PENDING_VALUES for value in values if value):
+            name = check_name(item)
+            if name not in names:
+                names.append(name)
+    return names
+
+
 def is_canonical_review_gate_green(rollup: Any) -> bool:
     if not isinstance(rollup, list) or not rollup:
         return False
@@ -3258,6 +3283,22 @@ def integrate_candidate(
         )
 
     merge_state = normalize_state(pr.get("mergeStateStatus"))
+    if merge_state == "BLOCKED":
+        incomplete = incomplete_rollup_checks(pr.get("statusCheckRollup"))
+        if incomplete:
+            detail = (
+                f"PR #{number} mergeStateStatus=BLOCKED while checks are still "
+                f"incomplete ({', '.join(incomplete)}); waiting."
+            )
+            return IntegrationResult(
+                candidate.task_id,
+                "waiting",
+                detail,
+                number,
+                url,
+                dry_run=not execute,
+                commands=runner.commands[:],
+            )
     if merge_state and merge_state not in ALLOWED_PRE_REBASE_MERGE_STATES:
         detail = f"PR #{number} is not eligible: mergeStateStatus={merge_state}."
         unblock = (
