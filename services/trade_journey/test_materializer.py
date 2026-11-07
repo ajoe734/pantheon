@@ -259,4 +259,31 @@ def test_missing_upstream_decision_or_unverified_submission_keeps_risk_missing()
         unv_proj = unverified.get("tj_1", tenant_id="tenant-a", environment="paper")
         assert "risk_evaluation" in unv_proj.snapshot["completeness"]["missing_stages"]
 
+    for idx, (fill_qty, submitted) in enumerate([(5, False), (0, True)], start=1):
+        contradictory = JourneyMaterializer()
+        contradictory.rebuild([
+            event("s", "signal_generation", "succeeded", 1, signal_id=f"sig-contra-{idx}"),
+            event(
+                "d",
+                "trade_decision",
+                "skipped",
+                2,
+                decision_id=f"dec-contra-{idx}",
+                decision_status="no_order",
+            ),
+            event(
+                "o",
+                "order_submission",
+                "skipped",
+                3,
+                event_type="paper_order_simulated",
+                quantity=fill_qty,
+                submitted_to_broker=submitted,
+            ),
+        ])
+        contra_proj = contradictory.get("tj_1", tenant_id="tenant-a", environment="paper")
+        assert "risk_evaluation" not in contra_proj.snapshot["stages"]
+        assert "risk_evaluation" in contra_proj.snapshot["completeness"]["missing_stages"]
+
+
 

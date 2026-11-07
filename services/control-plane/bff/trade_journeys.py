@@ -406,6 +406,46 @@ def _projection_reader_meta(
     }
 
 
+def _is_nonfill_unsubmitted_event(item: Mapping[str, Any]) -> bool:
+    metrics = item.get("metrics") if isinstance(item.get("metrics"), Mapping) else {}
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+    if (
+        item.get("submitted_to_broker") is True
+        or metrics.get("submitted_to_broker") is True
+        or metadata.get("submitted_to_broker") is True
+    ):
+        return False
+    for field in (
+        "broker_order_id",
+        "fill_id",
+        "broker_trade_id",
+        "ledger_entry_id",
+        "reconciliation_id",
+    ):
+        if item.get(field) or metadata.get(field) or metrics.get(field):
+            return False
+    for raw_qty in (
+        item.get("quantity"),
+        item.get("fill_quantity"),
+        item.get("filled_quantity"),
+        metrics.get("fill_quantity"),
+        metrics.get("filled_quantity"),
+        metadata.get("fill_quantity"),
+        metadata.get("filled_quantity"),
+    ):
+        if raw_qty is None:
+            continue
+        if isinstance(raw_qty, bool):
+            return False
+        try:
+            parsed_qty = float(raw_qty)
+        except (TypeError, ValueError):
+            return False
+        if parsed_qty != 0.0 or parsed_qty != parsed_qty or parsed_qty in (float("inf"), float("-inf")):
+            return False
+    return True
+
+
 def _effective_snapshot_and_diagnostics(
     snapshot: Mapping[str, Any],
     diagnostics: Sequence[Mapping[str, Any]],
@@ -432,10 +472,25 @@ def _effective_snapshot_and_diagnostics(
     if any(
         identifiers.get(field)
         for field in (
+            "broker_order_id",
             "fill_id",
             "broker_trade_id",
             "ledger_entry_id",
+            "reconciliation_id",
         )
+    ):
+        return dict(snapshot), diag_list
+    if any(
+        isinstance(item, Mapping)
+        and (
+            item.get("submitted_to_broker") is True
+            or item.get("broker_order_id")
+            or item.get("fill_id")
+            or item.get("broker_trade_id")
+            or item.get("ledger_entry_id")
+            or item.get("reconciliation_id")
+        )
+        for item in (timeline or ())
     ):
         return dict(snapshot), diag_list
     order_stage = stages.get("order_submission")
@@ -450,34 +505,26 @@ def _effective_snapshot_and_diagnostics(
         if isinstance(item, Mapping) and item.get("stage") == "order_submission"
     ]
     inferred_status: Optional[str] = None
-    if submission_events and not any(
-        item.get("submitted_to_broker") is True
-        or item.get("broker_order_id")
-        or item.get("fill_id")
-        or item.get("broker_trade_id")
-        or item.get("ledger_entry_id")
-        for item in submission_events
+    if submission_events and all(
+        _is_nonfill_unsubmitted_event(item) for item in submission_events
     ):
-        if order_status == "skipped" and (
-            stages.get("trade_decision", {}).get("status") == "skipped"
-            or any(
-                item.get("event_type") == "paper_order_simulated"
-                and item.get("submitted_to_broker") is not True
-                and item.get("quantity") in (None, 0, 0.0)
-                and (
+        if (
+            order_status == "skipped"
+            and all(item.get("event_type") == "paper_order_simulated" for item in submission_events)
+            and (
+                stages.get("trade_decision", {}).get("status") == "skipped"
+                or any(
                     str(item.get("decision_status") or "").strip().lower() == "no_order"
                     or str(item.get("order_status") or "").strip().lower() == "not_submitted"
                     or str(item.get("risk_status") or "").strip().lower() == "skipped"
                     or bool(item.get("noop_reason") or item.get("reason_code"))
+                    for item in submission_events
                 )
-                for item in submission_events
             )
         ):
             inferred_status = "skipped"
         elif order_status in {"failed", "rejected"} and any(
             item.get("event_type") in {"order_rejection", "order_rejection_simulated"}
-            and item.get("submitted_to_broker") is not True
-            and item.get("quantity") in (None, 0, 0.0)
             and str(
                 item.get("reason_code")
                 or item.get("reject_reason")

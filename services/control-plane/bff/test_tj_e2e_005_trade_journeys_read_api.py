@@ -1505,4 +1505,47 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
     empty_timeline_diagnostics = [{"code": "missing_stages", "stages": ["risk_evaluation"]}]
     assert tj._read_state(empty_timeline_snapshot, empty_timeline_diagnostics, []) == "partial"
 
+    persisted_no_order_snapshot = {
+        "status": "no_order",
+        "stages": {
+            "signal_generation": {"status": "succeeded"},
+            "trade_decision": {"status": "skipped"},
+            "order_submission": {"status": "skipped"},
+        },
+        "identifiers": {},
+        "completeness": {"complete": False, "missing_stages": ["risk_evaluation"]},
+    }
+    for fill_qty, submitted in ((5, False), (0, True)):
+        contradictory_timeline = [
+            _event(
+                "contra-o",
+                "tj_contra",
+                "order_submission",
+                "skipped",
+                3,
+                tenant="tenant-dev",
+                event_type="paper_order_simulated",
+                quantity=fill_qty,
+                submitted_to_broker=submitted,
+                broker_order_id=None,
+                client_order_id=None,
+            )
+        ]
+        eff_snap, _ = tj._effective_snapshot_and_diagnostics(
+            persisted_no_order_snapshot,
+            empty_timeline_diagnostics,
+            contradictory_timeline,
+        )
+        assert "risk_evaluation" not in eff_snap["stages"]
+        assert "risk_evaluation" in eff_snap["completeness"]["missing_stages"]
+        assert (
+            tj._read_state(
+                persisted_no_order_snapshot,
+                empty_timeline_diagnostics,
+                contradictory_timeline,
+            )
+            == "partial"
+        )
+
+
 

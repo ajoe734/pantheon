@@ -2107,4 +2107,47 @@ def test_retained_root42397678868_sell_without_holdings_and_no_order_project_com
     transport_journey = store.mutations[-1].journeys[0]
     assert "risk_evaluation" not in transport_journey.stage_coverage
 
+    # Negative check: contradictory non-zero fill_quantity or submitted_to_broker=True
+    # on a skipped paper_order_simulated after a no_order trade_decision must be
+    # preserved through projection and must NOT infer risk_evaluation=skipped.
+    for idx, (fill_qty, submitted) in enumerate([(5, False), (0, True)], start=1):
+        contra_seq = 11210641 + idx * 3
+        contra_rows = _retry_rows(
+            lifecycle_rows(), f"tj-paper-contra-{idx}", first_seq=contra_seq - 2, count=3
+        )
+        for row in contra_rows:
+            row["payload"]["run_id"] = f"run-paper-contra-{idx}"
+            row["payload"]["signal_id"] = f"sig-paper-contra-{idx}"
+            for field in ("client_order_id", "order_id", "reconciliation_id"):
+                row["payload"]["metadata"].pop(field, None)
+            row["payload"]["metadata"].update(
+                run_id=f"run-paper-contra-{idx}",
+                signal_id=f"sig-paper-contra-{idx}",
+                decision_id=f"dec-paper-contra-{idx}",
+            )
+        contra_rows[1]["payload"]["metadata"]["decision_status"] = "no_order"
+        contra_rows[2]["event_type"] = contra_rows[2]["payload"]["event_type"] = (
+            "paper_order_simulated"
+        )
+        contra_rows[2]["payload"]["metadata"]["order_status"] = "skipped"
+        contra_rows[2]["payload"]["metrics"] = {
+            "fill_quantity": fill_qty,
+            "submitted_to_broker": submitted,
+        }
+        contra_res = projector.project_records(
+            contra_rows, mode="live", source_high_watermark=contra_seq
+        )
+        assert contra_res.accepted == 3
+        contra_mutation = store.mutations[-1]
+        contra_journey = contra_mutation.journeys[0]
+        assert "risk_evaluation" not in contra_journey.stage_coverage
+        contra_sub_stage = next(
+            s.contract_fields
+            for s in contra_mutation.stages
+            if s.stage_name == "order_submission"
+        )
+        assert contra_sub_stage["quantity"] == fill_qty
+        assert contra_sub_stage["submitted_to_broker"] is submitted
+
+
 
