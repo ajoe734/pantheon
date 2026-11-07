@@ -6,13 +6,13 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 _CP_GOV = Path(__file__).resolve().parent.parent / "control-plane" / "governance"
 if str(_CP_GOV) not in sys.path:
     sys.path.insert(0, str(_CP_GOV))
 
-from approval_decision import ApprovalDecision, ApprovalDecisionStore, DecisionOutcome, DecisionState, TargetType  # type: ignore
+from approval_decision import ApprovalDecision, ApprovalDecisionStore, DecisionOutcome, DecisionState, RiskLevel, TargetType  # type: ignore
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
@@ -115,8 +115,54 @@ class PostgresApprovalDecisionStore:
         payload = self._records.get(decision_id)
         return ApprovalDecision.from_dict(payload) if payload else None
 
-    def list_all(self) -> list[ApprovalDecision]:
-        return [ApprovalDecision.from_dict(record) for record in self._records.list_all()]
+    def list_all(
+        self,
+        *,
+        tenant_id: str | None = None,
+        decision_states: Sequence[DecisionState | str] | None = None,
+        decision_ids: Sequence[str] | None = None,
+        target_type: TargetType | str | None = None,
+        target_id: str | None = None,
+        risk_level: RiskLevel | str | None = None,
+    ) -> list[ApprovalDecision]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if tenant_id is not None:
+            clauses.append("coalesce(nullif(btrim(payload->>'tenant_id'), ''), 'pantheon-system') = %s")
+            params.append(str(tenant_id))
+        if decision_states is not None:
+            state_values = [
+                s.value if isinstance(s, DecisionState) else str(s)
+                for s in decision_states
+            ]
+            if not state_values:
+                return []
+            clauses.append("coalesce(payload->>'decision_state', '') = ANY(%s)")
+            params.append(state_values)
+        if decision_ids is not None:
+            id_values = [str(did).strip() for did in decision_ids if str(did).strip()]
+            if not id_values:
+                return []
+            clauses.append("coalesce(payload->>'decision_id', record_id) = ANY(%s)")
+            params.append(id_values)
+        if target_type is not None:
+            tt_value = target_type.value if isinstance(target_type, TargetType) else str(target_type)
+            clauses.append("coalesce(payload->>'target_type', '') = %s")
+            params.append(tt_value)
+        if target_id is not None:
+            clauses.append("coalesce(payload->>'target_id', '') = %s")
+            params.append(str(target_id))
+        if risk_level is not None:
+            rl_value = risk_level.value if isinstance(risk_level, RiskLevel) else str(risk_level)
+            clauses.append("coalesce(payload->>'risk_level', '') = %s")
+            params.append(rl_value)
+        visible_sql = " AND ".join(clauses) if clauses else None
+        rows = self._records.list_all_selected(
+            "payload",
+            visible_sql=visible_sql,
+            keep_params=params,
+        )
+        return [ApprovalDecision.from_dict(self._records._decode_payload(row[0])) for row in rows]
 
     def find_by_target(self, target_type: str, target_id: str) -> list[ApprovalDecision]:
         return [

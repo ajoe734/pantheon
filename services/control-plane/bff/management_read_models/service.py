@@ -85,7 +85,9 @@ from services.control_plane.bff.governance.human_inbox import (
     _human_inbox_project_items,
     _human_inbox_summary,
     _management_prune_camel_aliases,
+    read_decidable_governance_review_queue_items,
     read_open_incidents,
+    read_pending_approval_queue_items,
 )
 from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
 from services.control_plane.bff.management_read_models.models import ManagementObservation
@@ -4191,12 +4193,12 @@ class ManagementService:
                 review_queue is not None
                 and "list_governance_review_queue_items" not in raw_dict
             ):
-                for warm_name, attr_name in (
-                    ("list_approval_decisions", "_approval_decisions_reader"),
-                    ("list_deployment_plans", "_deployment_plans_reader"),
-                    ("list_evolution_decisions", "_evolution_decisions_reader"),
+                for raw_name, warm_name, attr_name in (
+                    ("list_approval_decisions", "read_pending_approval_decisions", "read_pending_approval_decisions"),
+                    ("list_deployment_plans", "list_deployment_plans", "_deployment_plans_reader"),
+                    ("list_evolution_decisions", "read_decidable_evolution_decisions", "read_decidable_evolution_decisions"),
                 ):
-                    if warm_name not in raw_dict:
+                    if raw_name not in raw_dict:
                         reader_fn = getattr(review_queue, attr_name, None)
                         if callable(reader_fn):
                             _warm = submit_owner_read(
@@ -4213,7 +4215,6 @@ class ManagementService:
             ):
                 for warm_name in (
                     "list_deployment_plans",
-                    "list_evolution_decisions",
                     "list_personas",
                     "list_bindings",
                     "list_capital_pools",
@@ -4296,11 +4297,7 @@ class ManagementService:
         def _approvals() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
             if not (hasattr(store, "list_approval_queue_items") or hasattr(store, "list_approval_records")):
                 return _unavailable("Approval queue has no readable source records.")
-            records = (
-                store.list_approval_queue_items()
-                if hasattr(store, "list_approval_queue_items")
-                else store.list_approval_records()
-            ) or []
+            records = read_pending_approval_queue_items(store)
             source = "read_store"
             if hasattr(store, "dataset_source"):
                 try:
@@ -4316,7 +4313,7 @@ class ManagementService:
         def _reviews() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
             if not hasattr(store, "list_governance_review_queue_items"):
                 return _unavailable("Governance review queue has no readable source records.")
-            records = store.list_governance_review_queue_items() or []
+            records = read_decidable_governance_review_queue_items(store)
             if (
                 _is_unpatched_port_method(store, "list_governance_review_queue_items")
                 and authorization.get() is not None

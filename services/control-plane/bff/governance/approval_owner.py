@@ -7,7 +7,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 _TIMEOUT = float(os.getenv("PANTHEON_GOVERNANCE_APPROVAL_TIMEOUT_SECONDS", "15"))
 _ACTOR_ROLES = ("governance_reviewer", "risk_owner", "governance_committee", "automated_gate")
@@ -24,6 +24,31 @@ _OUTCOMES = {
     "approvewithconditions": "approved_with_conditions",
 }
 _PENDING = {"proposed", "under_review"}
+OWNER_PENDING_DECISION_STATES: tuple[str, ...] = ("proposed", "under_review")
+OWNER_DECISION_STATES = {"proposed", "under_review", "decided", "superseded", "revoked"}
+
+
+def map_owner_decision_states(states: Iterable[str]) -> tuple[str, ...]:
+    mapped: List[str] = []
+    seen: set[str] = set()
+    for raw in states or ():
+        for part in str(raw or "").split(","):
+            val = part.strip().lower()
+            if not val:
+                continue
+            if val in ("pending", "in_review", "reviewed", "proposed", "under_review"):
+                candidates: Iterable[str] = (
+                    OWNER_PENDING_DECISION_STATES if val in ("pending", "in_review", "reviewed") else (val,)
+                )
+            elif val in OWNER_DECISION_STATES:
+                candidates = (val,)
+            else:
+                continue
+            for candidate in candidates:
+                if candidate not in seen:
+                    seen.add(candidate)
+                    mapped.append(candidate)
+    return tuple(mapped)
 
 
 class UnsupportedApprovalAction(ValueError):
@@ -60,7 +85,7 @@ def call_owner(
     timeout: Optional[float] = None,
 ) -> Any:
     params = {k: v for k, v in (query or {}).items() if v not in (None, "")}
-    url = owner_url(path) + (("?" + urllib.parse.urlencode(params)) if params else "")
+    url = owner_url(path) + (("?" + urllib.parse.urlencode(params, safe=",")) if params else "")
     headers = {"Accept": "application/json", "Authorization": bearer(authorization)}
     data = json.dumps(body).encode("utf-8") if body is not None else None
     if data is not None:
@@ -123,24 +148,59 @@ def list_decisions(
     outcome: Optional[str] = None,
     pending_only: bool = False,
     timeout: Optional[float] = None,
+    owner_decision_states: Optional[Sequence[str]] = None,
+    decision_ids: Optional[Sequence[str]] = None,
 ) -> List[Dict[str, Any]]:
     ws = {p.strip().lower() for p in str(state or "").split(",") if p.strip()}
     wo = {p.strip().lower() for p in str(outcome or "").split(",") if p.strip()}
+    clean_ids: Optional[tuple[str, ...]] = None
+    clean_id_set: Optional[set[str]] = None
+    if decision_ids is not None:
+        clean_ids = tuple(
+            dict.fromkeys(
+                clean
+                for raw in decision_ids
+                for part in str(raw or "").split(",")
+                if (clean := part.strip())
+            )
+        )
+        if not clean_ids:
+            return []
+        clean_id_set = set(clean_ids)
+    mapped_states: Optional[tuple[str, ...]] = None
+    if owner_decision_states is not None:
+        mapped_states = map_owner_decision_states(owner_decision_states)
+        if not mapped_states:
+            return []
     if timeout is None:
         from ..core.owner_reads import remaining_management_read_budget
 
         timeout = remaining_management_read_budget()
+    query: Dict[str, str] = {}
+    if mapped_states:
+        query["decision_state"] = ",".join(mapped_states)
+    if clean_ids:
+        query["decision_id"] = ",".join(clean_ids)
+    call_kwargs: Dict[str, Any] = {}
+    if timeout is not None:
+        call_kwargs["timeout"] = timeout
+    if query:
+        call_kwargs["query"] = query
     raw_decisions = call_owner(
         "GET",
         "/api/governance/approvals",
         authorization,
-        **({"timeout": timeout} if timeout is not None else {}),
+        **call_kwargs,
     )
     if not isinstance(raw_decisions, list):
         raise ValueError("Governance owner returned non-list decisions response")
     results = []
     for x in raw_decisions:
         it = project(x)
+        if clean_id_set is not None:
+            dec_id = str(x.get("decision_id") or x.get("id") or it.get("decision_id") or "").strip()
+            if dec_id not in clean_id_set:
+                continue
         raw_state = str(x.get("decision_state") or x.get("state") or it.get("decision_state") or "").lower()
         status = "pending" if raw_state in _PENDING or raw_state == "pending" else raw_state
         raw_outcome = str(x.get("decision") or x.get("outcome") or it.get("outcome") or "").lower()

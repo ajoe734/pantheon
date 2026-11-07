@@ -427,6 +427,7 @@ class ManagementReviewQueuePort:
 
     REVIEWABLE_STATUSES = {"draft", "pending_review", "proposed", "under_review", "reviewed", "in_review", "pending"}
     PENDING_DECISION_STATES = {"proposed", "under_review", "reviewed", "pending", "in_review"}
+    DECIDABLE_EVOLUTION_STATES = {"reviewed", "under_review", "in_review"}
     TERMINAL_DECISION_OUTCOMES = {"approved", "approved_with_conditions", "rejected"}
 
     def __init__(
@@ -436,6 +437,9 @@ class ManagementReviewQueuePort:
         approval_decisions_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         evolution_decisions_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         deployment_diffs_reader: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+        pending_approval_decisions_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+        approval_decisions_by_id_reader: Optional[Callable[[Sequence[str]], List[Dict[str, Any]]]] = None,
+        decidable_evolution_decisions_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     ) -> None:
         self._deployment_plans_reader = self._wrap_request_scoped_reader(
             "deployment_plans", deployment_plans_reader
@@ -446,6 +450,15 @@ class ManagementReviewQueuePort:
         self._evolution_decisions_reader = self._wrap_request_scoped_reader(
             "evolution_decisions", evolution_decisions_reader
         )
+        self._pending_approval_decisions_reader = self._wrap_request_scoped_reader(
+            "pending_approval_decisions", pending_approval_decisions_reader
+        )
+        self._approval_decisions_by_id_reader = approval_decisions_by_id_reader
+        self._decidable_evolution_decisions_reader = self._wrap_request_scoped_reader(
+            "decidable_evolution_decisions", decidable_evolution_decisions_reader
+        )
+        self._initial_approval_decisions_reader = self._approval_decisions_reader
+        self._initial_evolution_decisions_reader = self._evolution_decisions_reader
         self._deployment_diffs_reader = deployment_diffs_reader
 
     def _wrap_request_scoped_reader(
@@ -503,6 +516,94 @@ class ManagementReviewQueuePort:
             return []
         wrapped = self._wrap_request_scoped_reader(name, reader)
         return (wrapped() if wrapped else []) or []
+
+    def read_pending_approval_decisions(self) -> List[Dict[str, Any]]:
+        if (
+            self._pending_approval_decisions_reader is not None
+            and self._approval_decisions_reader is self._initial_approval_decisions_reader
+        ):
+            records = self._read_source("pending_approval_decisions", self._pending_approval_decisions_reader)
+        else:
+            records = self._read_source("approval_decisions", self._approval_decisions_reader)
+        filtered: List[Dict[str, Any]] = []
+        for raw in records:
+            state = str(raw.get("decision_state") or raw.get("state") or "").strip().lower()
+            outcome = str(raw.get("outcome") or raw.get("decision") or "").strip().lower()
+            if outcome in self.TERMINAL_DECISION_OUTCOMES:
+                continue
+            if state and state not in self.PENDING_DECISION_STATES:
+                continue
+            filtered.append(raw)
+        return filtered
+
+    def read_approval_decisions_by_id(self, decision_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        clean_ids = tuple(
+            dict.fromkeys(
+                clean
+                for raw in (decision_ids or ())
+                for part in str(raw or "").split(",")
+                if (clean := part.strip())
+            )
+        )
+        if not clean_ids:
+            return {}
+        want = set(clean_ids)
+        if (
+            self._approval_decisions_by_id_reader is not None
+            and self._approval_decisions_reader is self._initial_approval_decisions_reader
+        ):
+            records = (
+                cached_owner_call(
+                    (
+                        "management_review_queue_decisions_by_id",
+                        id(self),
+                        tuple(sorted(clean_ids)),
+                        authorization.get(),
+                        selected_tenant.get(),
+                    ),
+                    lambda: self._approval_decisions_by_id_reader(clean_ids),
+                )
+                or []
+            )
+        else:
+            records = self._read_source("approval_decisions", self._approval_decisions_reader)
+        by_id: Dict[str, Dict[str, Any]] = {}
+        for d in records:
+            d_id = str(d.get("decision_id") or d.get("id") or "").strip()
+            if d_id and d_id in want:
+                by_id[d_id] = d
+        return by_id
+
+    def read_decidable_evolution_decisions(self) -> List[Dict[str, Any]]:
+        if (
+            self._decidable_evolution_decisions_reader is not None
+            and self._evolution_decisions_reader is self._initial_evolution_decisions_reader
+        ):
+            records = self._read_source("decidable_evolution_decisions", self._decidable_evolution_decisions_reader)
+        else:
+            records = self._read_source("evolution_decisions", self._evolution_decisions_reader)
+        return [
+            d
+            for d in records
+            if str(d.get("decision_state") or d.get("status") or "").strip().lower()
+            in self.DECIDABLE_EVOLUTION_STATES
+        ]
+
+    def approval_decisions_dataset_source(self, dataset: str = "approval_decisions") -> str:
+        if self._approval_decisions_reader is None:
+            return "missing"
+        try:
+            if (
+                dataset in {"approval_queue_items", "governance_review_queue_items"}
+                and self._pending_approval_decisions_reader is not None
+                and self._approval_decisions_reader is self._initial_approval_decisions_reader
+            ):
+                self.read_pending_approval_decisions()
+            else:
+                self._approval_decisions_reader()
+            return "service"
+        except Exception:
+            return "missing"
 
     @classmethod
     def derive_can_review_deployment_plan(
@@ -579,11 +680,16 @@ class ManagementReviewQueuePort:
         item_types: Optional[List[str]] = None,
         risk_levels: Optional[List[str]] = None,
         statuses: Optional[List[str]] = None,
+        decidable_only: bool = False,
     ) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         linked_approval_decision_ids: Set[str] = set()
 
-        decisions = self._read_source("approval_decisions", self._approval_decisions_reader)
+        decisions = (
+            self.read_pending_approval_decisions()
+            if decidable_only
+            else self._read_source("approval_decisions", self._approval_decisions_reader)
+        )
         decisions_by_id: Dict[str, Dict[str, Any]] = {}
         for d in decisions:
             d_id = str(d.get("decision_id") or d.get("id") or "").strip()
@@ -592,6 +698,21 @@ class ManagementReviewQueuePort:
 
         # 1. Deployment Plans
         plans = self._read_source("deployment_plans", self._deployment_plans_reader)
+        if decidable_only:
+            missing_plan_decision_ids: List[str] = []
+            for plan in plans:
+                status = str(plan.get("status") or "").strip().lower()
+                if status and status not in self.REVIEWABLE_STATUSES:
+                    continue
+                plan_id = str(plan.get("plan_id") or plan.get("id") or "").strip()
+                if not plan_id:
+                    continue
+                dec_id = str(plan.get("approval_decision_id") or "").strip()
+                if dec_id and dec_id not in decisions_by_id:
+                    missing_plan_decision_ids.append(dec_id)
+            if missing_plan_decision_ids:
+                decisions_by_id.update(self.read_approval_decisions_by_id(missing_plan_decision_ids))
+
         for plan in plans:
             status = str(plan.get("status") or "").strip().lower()
             if status and status not in self.REVIEWABLE_STATUSES:
@@ -619,7 +740,11 @@ class ManagementReviewQueuePort:
             )
 
         # 2. Evolution Decisions
-        evo_decisions = self._read_source("evolution_decisions", self._evolution_decisions_reader)
+        evo_decisions = (
+            self.read_decidable_evolution_decisions()
+            if decidable_only
+            else self._read_source("evolution_decisions", self._evolution_decisions_reader)
+        )
         for decision in evo_decisions:
             status = str(decision.get("decision_state") or decision.get("status") or "").strip().lower()
             if status and status not in self.REVIEWABLE_STATUSES:
@@ -708,8 +833,13 @@ class ManagementReviewQueuePort:
         risk_levels: Optional[List[str]] = None,
         decision_states: Optional[List[str]] = None,
         states: Optional[List[str]] = None,
+        pending_only: bool = False,
     ) -> List[Dict[str, Any]]:
-        raw_decisions = self._read_source("approval_decisions", self._approval_decisions_reader)
+        raw_decisions = (
+            self.read_pending_approval_decisions()
+            if pending_only
+            else self._read_source("approval_decisions", self._approval_decisions_reader)
+        )
         items: List[Dict[str, Any]] = []
 
         for raw in raw_decisions:
