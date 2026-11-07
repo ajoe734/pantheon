@@ -3970,7 +3970,7 @@ def test_mgmt_nl_ask_and_stream_deliver_loop_health_in_provider_prompt_summary_c
                 "downstream_actual_state": {
                     "status": downstream_status,
                     "source": f"{loop_id}-terminal-store",
-                    "summary": f"{loop_id} is {downstream_status}",
+                    "summary": f"{loop_id} is {downstream_status}: " + ("漢" * 200),
                     "checked_at": now,
                 },
                 "last_heartbeat_at": now,
@@ -4033,6 +4033,14 @@ def test_mgmt_nl_ask_and_stream_deliver_loop_health_in_provider_prompt_summary_c
         assert ask_loop_snippet["accepted"] == 12
         assert ask_loop_snippet["by_live_status"] == {"ready": 6, "ok": 6}
         assert len(ask_loop_snippet["items"]) == 12
+        assert (
+            len(json.dumps(ask_loop_snippet, sort_keys=True, ensure_ascii=True).encode("utf-8"))
+            <= 8192
+        )
+        assert (
+            len(json.dumps(ask_loop_snippet, ensure_ascii=False).encode("utf-8"))
+            <= 8192
+        )
         assert '"loop_health":' in ask_call["prompt"]
         assert '"source_ingestion"' in ask_call["prompt"]
 

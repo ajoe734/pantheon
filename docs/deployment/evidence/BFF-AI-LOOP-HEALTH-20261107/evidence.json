@@ -10,25 +10,40 @@
   "changes": [
     "services/control-plane/bff/control_loops/router.py attaches router.control_loops_service = resolved_service so app_factory and main composition reuse the exact ControlLoopsService instance serving GET /bff/v5/loop-health",
     "services/control-plane/bff/core/app_factory.py and services/control-plane/bff/main.py wire app.state.control_loops_service into management_service via set_control_loops_service and wire_management_runtime_projections",
-    "services/control-plane/bff/assistant/management_service.py adds focus loop_health (plus aliases loop, loops, loop-health), prefetches ControlLoopsService.loop_health on the async route before asyncio.to_thread with bounded wait PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS (default 2.0s) and caller scope checked by authenticated_loop_truth_scope, projects compact rows (loop_id, live_status, current_record_accepted, status, summary[:200]) and counts (total, accepted, by_live_status) under 8 KB into snippets['loop_health'] for focus all and loop_health, sets surfaces['loop_health'] to ok only when accepted_live is True, degraded when any row is not accepted, and unavailable when the controller store is unavailable, the read raises, the caller is out of scope, or the read times out without failing the ask, includes loop_health in evidence_source_types and response sources, and updates _mgmt_nl_synthesize_answer to report accepted/total or state that loop health cannot be determined when unavailable",
-    "services/control-plane/bff/BFF_API_CONTRACT.md documents the loop_health focus, compact snippet fields, surface status rules, and timeout env var",
-    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py and services/control-plane/bff/tests/test_management_nl_assistant_provider.py cover route-matching rows from LoopControllerStore through loop_inventory._project_loop_health, 200-char summary truncation, <= 8 KB snippet bound, focus all vs loop_health vs cockpit unchanged, ok/degraded/unavailable surface states (store unavailable, read error, caller out of scope, timeout), deterministic synthesis, and provider prompt delivery on both POST /bff/management/nl/ask and POST /bff/management/nl/ask/stream"
+    "services/control-plane/bff/assistant/management_service.py (SHA256 012fc70886d02a51763acd4d889bf02db7210f83af273fae5701fad592b34d45) adds focus loop_health (plus aliases loop, loops, loop-health), prefetches ControlLoopsService.loop_health on the async ask and ask/stream routes before asyncio.to_thread with bounded wait PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS (default 2.0s) and caller scope checked by authenticated_loop_truth_scope, reports unavailable (missing_prefetched_loop_health) when _mgmt_nl_collect_context is called without an authenticated prefetched outcome (no synthetic OperatorIdentity and no alternate asyncio.run path), projects compact rows (loop_id, live_status, current_record_accepted, status, summary[:200]) and counts (total, accepted, by_live_status) into snippets['loop_health'] for focus all and loop_health while trimming summary text across all 12 retained rows when needed so the serialized snippet stays <= 8192 bytes in both provider ensure_ascii=True JSON (8146 bytes on 12 canonical rows with 200 Chinese chars per summary) and compact UTF-8 JSON (4739 bytes), sets surfaces['loop_health'] to ok only when accepted_live is True, degraded when any row is not accepted, and unavailable when the controller store is unavailable, the read raises, the caller is out of scope, the read times out, or no authenticated prefetched outcome is present without failing the ask, includes loop_health in evidence_source_types and response sources, updates _mgmt_nl_synthesize_answer to report accepted/total or state that loop health cannot be determined when unavailable, and removes the unrelated _resolve_final_idempotency_key forwarding wrapper",
+    "services/control-plane/bff/BFF_API_CONTRACT.md documents the loop_health focus, authenticated async prefetch requirement, compact snippet fields and <= 8192-byte serialized budget across both provider escaped JSON and UTF-8 JSON, surface status rules, and timeout env var",
+    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py and services/control-plane/bff/tests/test_management_nl_assistant_provider.py cover route-matching rows from LoopControllerStore through loop_inventory._project_loop_health, 200-char ASCII summary truncation, 12-loop multibyte (Chinese) summary byte-budget regression (<= 8192 bytes in both ensure_ascii=True provider JSON and UTF-8 JSON with all 12 rows retained), missing-prefetch unavailable fail-closed behavior plus direct authenticated prefetch seam, focus all vs loop_health vs cockpit unchanged, ok/degraded/unavailable surface states (store unavailable, read error, caller out of scope, timeout), deterministic synthesis, and provider prompt delivery on both POST /bff/management/nl/ask and POST /bff/management/nl/ask/stream"
   ],
+  "byte_budget_and_simplification_proof": {
+    "source_sha256": "012fc70886d02a51763acd4d889bf02db7210f83af273fae5701fad592b34d45",
+    "shape": "12 accepted canonical-shaped loop rows with 200 Chinese characters per downstream summary",
+    "rows": 12,
+    "compact_utf8_bytes": 4739,
+    "escaped_json_bytes": 8146,
+    "limit_bytes": 8192,
+    "synthetic_identity_branch_present": false,
+    "alternate_asyncio_run_branch_present": false
+  },
   "validation": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
       "exit_code": 0,
-      "result": "20 passed in 28.74s"
+      "result": "20 passed in 16.13s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
       "exit_code": 0,
-      "result": "70 passed in 40.28s"
+      "result": "70 passed in 42.24s"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py services/control-plane/bff/tests/test_management_nl_single_owner.py services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py services/control-plane/bff/management_read_models/test_management_service_context_observations.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py services/control-plane/bff/tests/test_management_nl_single_owner.py services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py services/control-plane/bff/management_read_models/test_management_service_context_observations.py",
       "exit_code": 0,
-      "result": "78 passed (4 in test_event_loop_owner_reads_guard.py, 11 in test_management_nl_single_owner.py, 7 in test_bff_b6_003_nl_high_risk_refusal.py, 17 in test_main_composition_seam_extraction_005.py, 10 in test_main_composition_seam_extraction_006.py, 29 in test_management_service_context_observations.py)"
+      "result": "61 passed in 75.09s (4 in test_event_loop_owner_reads_guard.py, 11 in test_management_nl_single_owner.py, 7 in test_bff_b6_003_nl_high_risk_refusal.py, 10 in test_main_composition_seam_extraction_006.py, 29 in test_management_service_context_observations.py)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py",
+      "exit_code": 1,
+      "result": "16 passed, 1 pre-existing failure on untouched file (test_zero_duplicate_definitions_ast_readback expecting def _resolve_final_idempotency_key in management_service.py after commit 04022457bfc deduplicated it into command_adapters/contracts.py); no compatibility shim added and no existing assertion weakened"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/test_loop_health_read_model_contract.py",

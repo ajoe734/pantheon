@@ -594,6 +594,7 @@ def _canonical_controller_store_rows(
     environment: str = LOOP_HEALTH_ENV,
     reject_loop_id: Optional[str] = None,
     long_summary: bool = False,
+    multibyte_summary: bool = False,
 ) -> List[Dict[str, Any]]:
     from datetime import datetime, timedelta, timezone
     from services.control_plane.bff import loop_inventory as loop_inventory_model
@@ -608,11 +609,12 @@ def _canonical_controller_store_rows(
         is_rejected = loop_id == reject_loop_id
         heartbeat = (now - timedelta(days=30)) if is_rejected else now
         downstream_status = "ready" if idx % 2 == 0 else "ok"
-        summary_text = (
-            f"{loop_id} downstream verified: " + ("x" * 260)
-            if long_summary
-            else f"{loop_id} downstream verified ({downstream_status})."
-        )
+        if multibyte_summary:
+            summary_text = "下游實際狀態驗證通過" * 25
+        elif long_summary:
+            summary_text = f"{loop_id} downstream verified: " + ("x" * 260)
+        else:
+            summary_text = f"{loop_id} downstream verified ({downstream_status})."
         rows.append(
             {
                 "loop_id": loop_id,
@@ -875,17 +877,48 @@ def test_loop_health_surface_degraded_and_unavailable_variants_do_not_fail_ask(
 def test_mgmt_nl_collect_context_and_synthesize_answer_loop_health_direct(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import asyncio
+    from services.control_plane.bff.models import OperatorIdentity
+
     main_mod = get_management_nl_module()
     with tempfile.TemporaryDirectory() as td:
-        with _fresh_client(td) as _client:
+        with _fresh_client(td) as client:
             _install_loop_controller_store_rows(
                 monkeypatch,
-                _canonical_controller_store_rows(long_summary=True),
+                _canonical_controller_store_rows(multibyte_summary=True),
+            )
+            # Without an authenticated prefetched outcome, _mgmt_nl_collect_context
+            # must report loop_health unavailable rather than manufacture a synthetic
+            # OperatorIdentity or run an extra event loop.
+            unprefetched_bundle = main_mod._mgmt_nl_collect_context(
+                "loop_health",
+                "2026-11-07T00:00:00Z",
+                tenant_id=LOOP_HEALTH_TENANT,
+            )
+            assert unprefetched_bundle["surfaces"]["loop_health"]["status"] == "unavailable"
+            assert (
+                unprefetched_bundle["surfaces"]["loop_health"]["reason"]
+                == "missing_prefetched_loop_health"
+            )
+            assert unprefetched_bundle["snippets"]["loop_health"]["status"] == "unavailable"
+            assert unprefetched_bundle["snippets"]["loop_health"]["accepted"] == 0
+
+            # Exercise the real authenticated prefetch seam with 12 canonical rows
+            # and multibyte (250 Chinese character) downstream summaries.
+            caller_identity = main_mod._extract_identity(
+                LOOP_HEALTH_SCOPED_HEADERS["Authorization"]
+            )
+            prefetched_outcome = asyncio.run(
+                main_mod._mgmt_nl_prefetch_loop_health(
+                    caller_identity,
+                    requested_tenant=LOOP_HEALTH_TENANT,
+                )
             )
             bundle = main_mod._mgmt_nl_collect_context(
                 "loop_health",
                 "2026-11-07T00:00:00Z",
                 tenant_id=LOOP_HEALTH_TENANT,
+                loop_health_outcome=prefetched_outcome,
             )
             assert "loop_health" in bundle["snippets"]
             assert bundle["surfaces"]["loop_health"]["status"] == "ok"
@@ -894,7 +927,41 @@ def test_mgmt_nl_collect_context_and_synthesize_answer_loop_health_direct(
             assert snippet["total"] == 12
             assert snippet["accepted"] == 12
             assert snippet["by_live_status"] == {"ready": 6, "ok": 6}
-            assert len(json.dumps(snippet).encode("utf-8")) <= 8192
+            assert len(snippet["items"]) == 12
+            for row in snippet["items"]:
+                assert set(row.keys()) == {
+                    "loop_id",
+                    "live_status",
+                    "current_record_accepted",
+                    "status",
+                    "summary",
+                }
+                assert row["current_record_accepted"] is True
+                assert 0 < len(row["summary"]) <= 200
+                assert ("下游實際狀態驗證通過" * 25).startswith(row["summary"])
+            # Serialized snippet must stay <= 8192 bytes in both provider escaped
+            # JSON (ensure_ascii=True) and UTF-8 JSON (ensure_ascii=False).
+            assert (
+                len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8"))
+                <= 8192
+            )
+            assert (
+                len(json.dumps(snippet, ensure_ascii=False).encode("utf-8"))
+                <= 8192
+            )
+
+            # Also verify route-level multibyte summary stays <= 8192 bytes.
+            ask_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "12 個 loop 健康狀況？", "focus": "loop_health"},
+                headers={
+                    **LOOP_HEALTH_SCOPED_HEADERS,
+                    "Idempotency-Key": "ik-loop-health-multibyte-001",
+                },
+            )
+            assert ask_resp.status_code == 202, ask_resp.text
+            route_snippet = ask_resp.json()["data"]["summary_context"]["loop_health"]
+            assert route_snippet == snippet
 
             synthesized = main_mod._mgmt_nl_synthesize_answer(
                 "Are the 12 loops healthy?",

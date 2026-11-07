@@ -1228,16 +1228,7 @@ from ..openclaw_ops_client import (
 _extract_identity = auth_policy.extract_identity
 _require_read_role = auth_policy.require_read_role
 _bff_error = auth_policy.bff_error
-from ..command_adapters.contracts import (  # noqa: E402
-    resolve_final_idempotency_key as _contracts_resolve_final_idempotency_key,
-)
-
-
-def _resolve_final_idempotency_key(
-    idempotency_key: Optional[str] = None,
-    x_idempotency_key: Optional[str] = None,
-) -> str:
-    return _contracts_resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+from ..command_adapters.contracts import resolve_final_idempotency_key as _resolve_final_idempotency_key  # noqa: E402,F401  re-export for existing callers
 
 
 _first_nonblank = auth_policy.first_nonblank
@@ -4495,7 +4486,7 @@ def _mgmt_nl_loop_health_unavailable(
     compact_rows: Optional[List[Dict[str, Any]]] = None,
     by_live_status: Optional[Dict[str, int]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    rows = list(compact_rows or [])
+    rows = [dict(row) for row in (compact_rows or []) if isinstance(row, Mapping)]
     counts = dict(by_live_status or {})
     surface: Dict[str, Any] = {
         "status": "unavailable",
@@ -4511,6 +4502,19 @@ def _mgmt_nl_loop_health_unavailable(
         "by_live_status": counts,
         "items": rows,
     }
+    if rows and len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) > 8192:
+        orig_summaries = [str(row.get("summary") or "") for row in rows]
+        low, high = 0, 200
+        while low < high:
+            mid = (low + high + 1) // 2
+            for row, orig in zip(rows, orig_summaries):
+                row["summary"] = orig[:mid]
+            if len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) <= 8192:
+                low = mid
+            else:
+                high = mid - 1
+        for row, orig in zip(rows, orig_summaries):
+            row["summary"] = orig[:low]
     return snippet, surface
 
 
@@ -4629,6 +4633,19 @@ def _mgmt_nl_project_loop_health_outcome(outcome: Mapping[str, Any]) -> Tuple[Di
         "by_live_status": by_live_status,
         "items": compact_rows,
     }
+    if compact_rows and len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) > 8192:
+        orig_summaries = [str(row.get("summary") or "") for row in compact_rows]
+        low, high = 0, 200
+        while low < high:
+            mid = (low + high + 1) // 2
+            for row, orig in zip(compact_rows, orig_summaries):
+                row["summary"] = orig[:mid]
+            if len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) <= 8192:
+                low = mid
+            else:
+                high = mid - 1
+        for row, orig in zip(compact_rows, orig_summaries):
+            row["summary"] = orig[:low]
     return snippet, surface
 
 
@@ -4671,55 +4688,18 @@ async def _mgmt_nl_prefetch_loop_health(
 
 def _mgmt_nl_collect_loop_health(
     *,
-    tenant_id: Optional[str] = None,
-    identity: Optional[Any] = None,
-    requested_environment: Optional[str] = None,
     loop_health_outcome: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    if loop_health_outcome is not None:
-        return _mgmt_nl_project_loop_health_outcome(loop_health_outcome)
-    prefetched = _MGMT_NL_LOOP_HEALTH_PREFETCH.get()
-    if prefetched is not None and identity is None and requested_environment is None:
-        return _mgmt_nl_project_loop_health_outcome(prefetched)
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        pass
-    else:
+    outcome = (
+        loop_health_outcome
+        if loop_health_outcome is not None
+        else _MGMT_NL_LOOP_HEALTH_PREFETCH.get()
+    )
+    if not isinstance(outcome, Mapping):
         return _mgmt_nl_loop_health_unavailable(
-            "event_loop_active",
-            message="Loop health must be prefetched on the async route before entering _mgmt_nl_collect_context.",
+            "missing_prefetched_loop_health",
+            message="Loop health requires an authenticated prefetched outcome from ControlLoopsService.loop_health.",
         )
-
-    clean_tenant = str(tenant_id or "").strip()
-    effective_identity = identity
-    if effective_identity is None:
-        claims: Dict[str, Any] = (
-            {"tenant_id": clean_tenant, "allowed_tenants": [clean_tenant]}
-            if clean_tenant
-            else {}
-        )
-        effective_identity = OperatorIdentity(
-            operator_id="management-nl-context",
-            roles=["viewer"],
-            claims=claims,
-        )
-
-    try:
-        outcome = asyncio.run(
-            _mgmt_nl_prefetch_loop_health(
-                effective_identity,
-                requested_tenant=clean_tenant or None,
-                requested_environment=requested_environment,
-            )
-        )
-    except Exception as exc:  # noqa: BLE001
-        outcome = {
-            "kind": "error",
-            "reason": "read_error",
-            "message": f"{type(exc).__name__}: {exc}",
-        }
     return _mgmt_nl_project_loop_health_outcome(outcome)
 
 
@@ -4728,8 +4708,6 @@ def _mgmt_nl_collect_context(
     snapshot_at: str,
     tenant_id: Optional[str] = None,
     *,
-    identity: Optional[Any] = None,
-    requested_environment: Optional[str] = None,
     loop_health_outcome: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Collect management summary context for the requested focus surface(s).
@@ -5046,9 +5024,6 @@ def _mgmt_nl_collect_context(
         if callable(loop_health_collector):
             try:
                 loop_snippet, loop_surface = loop_health_collector(
-                    tenant_id=tenant_id,
-                    identity=identity,
-                    requested_environment=requested_environment,
                     loop_health_outcome=loop_health_outcome,
                 )
             except Exception as exc:  # noqa: BLE001
