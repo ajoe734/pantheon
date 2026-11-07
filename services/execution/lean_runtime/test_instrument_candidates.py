@@ -449,3 +449,156 @@ def test_scoped_normalization_to_disk_removes_absent_margin_without_clobbering_o
             "2330", DECISION_DAY, {}, BUDGET, cash_price=2200.0, cash_price_date="2026-11-06", normalized_root=tmp_path
         )
     } == {"eq:2330", "ssf:CDF:202611"}
+
+
+def test_missing_nearest_settlement_does_not_fall_back_to_farther_month_or_older_snapshot(
+    payload: dict[str, Any], tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    adapter = TaifexDerivativesChipAdapter()
+    writer = MarketDataStorageWriter(tmp_path)
+
+    # First verify single-snapshot normalization -> build_candidates rejects QFF 202611 without selecting QFF 202612.
+    unpriced_front = dict(
+        payload,
+        DailyMarketReportFut=[
+            {**row, "SettlementPrice": "-"}
+            if (
+                row.get("Contract") == "QFF"
+                and str(row.get("ContractMonth(Week)")).strip() == "202611"
+                and row.get("TradingSession") == "一般"
+            )
+            else row
+            for row in payload["DailyMarketReportFut"]
+        ],
+    )
+    in_memory_rows = adapter.normalized_rows_from_payload(
+        unpriced_front,
+        dataset="taifex_ssf_contracts",
+        contracts=["2330"],
+        available_time="2026-11-06T16:30:00Z",
+    )
+    in_memory_candidates = ic.build_candidates(
+        "2330",
+        DECISION_DAY,
+        {},
+        BUDGET,
+        cash_price=2200.0,
+        cash_price_date="2026-11-06",
+        rows_reader=lambda: in_memory_rows,
+    )
+    assert [c["instrument_id"] for c in in_memory_candidates] == ["eq:2330", "ssf:CDF:202611"]
+
+    # Now verify normalization -> storage -> reader when an earlier 16:30 snapshot had priced QFF 202611.
+    old_records = adapter.records_from_payload(
+        payload,
+        dataset="taifex_ssf_contracts",
+        contracts=["2330"],
+        available_time="2026-11-06T16:30:00Z",
+    )
+    writer.write_run(
+        result=SimpleNamespace(records=old_records, run=SimpleNamespace(ingest_run_id="run-1630")),
+        connector=adapter.connector(),
+    )
+    new_records = adapter.records_from_payload(
+        unpriced_front,
+        dataset="taifex_ssf_contracts",
+        contracts=["2330"],
+        available_time="2026-11-06T17:00:00Z",
+    )
+    writer.write_run(
+        result=SimpleNamespace(records=new_records, run=SimpleNamespace(ingest_run_id="run-1700")),
+        connector=adapter.connector(),
+    )
+
+    disk_candidates = ic.build_candidates(
+        "2330",
+        DECISION_DAY,
+        {},
+        BUDGET,
+        cash_price=2200.0,
+        cash_price_date="2026-11-06",
+        normalized_root=tmp_path,
+    )
+    assert [c["instrument_id"] for c in disk_candidates] == ["eq:2330", "ssf:CDF:202611"]
+
+
+def test_empty_scoped_snapshot_when_contract_removed_from_margin_and_market_tables_evicts_old_snapshot(
+    payload: dict[str, Any], tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    adapter = TaifexDerivativesChipAdapter()
+    writer = MarketDataStorageWriter(tmp_path)
+
+    old_2330 = adapter.records_from_payload(
+        payload,
+        dataset="taifex_ssf_contracts",
+        contracts=["2330"],
+        available_time="2026-11-06T16:20:00Z",
+    )
+    writer.write_run(
+        result=SimpleNamespace(records=old_2330, run=SimpleNamespace(ingest_run_id="run-1620")),
+        connector=adapter.connector(),
+    )
+    old_2317 = adapter.records_from_payload(
+        payload,
+        dataset="taifex_ssf_contracts",
+        contracts=["2317"],
+        available_time="2026-11-06T16:30:00Z",
+    )
+    writer.write_run(
+        result=SimpleNamespace(records=old_2317, run=SimpleNamespace(ingest_run_id="run-1630")),
+        connector=adapter.connector(),
+    )
+
+    no_dhf = {
+        **payload,
+        "SingleStockFuturesMargining": [
+            row for row in payload["SingleStockFuturesMargining"] if row["Contract"] != "DHF"
+        ],
+        "DailyMarketReportFut": [
+            row for row in payload["DailyMarketReportFut"] if row["Contract"] != "DHF"
+        ],
+    }
+    new_2317 = adapter.records_from_payload(
+        no_dhf,
+        dataset="taifex_ssf_contracts",
+        contracts=["2317"],
+        available_time="2026-11-06T17:00:00Z",
+    )
+    assert len(new_2317) == 1
+    assert new_2317[0].metadata["normalized_row"]["tombstone"] is True
+    writer.write_run(
+        result=SimpleNamespace(records=new_2317, run=SimpleNamespace(ingest_run_id="run-1700")),
+        connector=adapter.connector(),
+    )
+
+    candidates_2317 = ic.build_candidates(
+        "2317",
+        DECISION_DAY,
+        {},
+        BUDGET,
+        cash_price=230.0,
+        cash_price_date="2026-11-06",
+        normalized_root=tmp_path,
+    )
+    assert [c["instrument_id"] for c in candidates_2317] == ["eq:2317"]
+
+    candidates_2330 = ic.build_candidates(
+        "2330",
+        DECISION_DAY,
+        {},
+        BUDGET,
+        cash_price=2200.0,
+        cash_price_date="2026-11-06",
+        normalized_root=tmp_path,
+    )
+    assert [c["instrument_id"] for c in candidates_2330] == ["eq:2330", "ssf:CDF:202611", "ssf:QFF:202611"]

@@ -423,6 +423,8 @@ def _eligible_rows(
         return []
     latest_run_key = max(_snapshot_run_key(row) for row in covering_rows)
     newest_covering_rows = [row for row in covering_rows if _snapshot_run_key(row) == latest_run_key]
+    if any(row.get("tombstone") for row in newest_covering_rows):
+        return []
     newest_absent_contracts = {
         str(contract)
         for row in newest_covering_rows
@@ -450,7 +452,8 @@ def _eligible_rows(
             continue
         if not _is_applicable_on_decision_day(row, decision_day):
             continue
-        if _snapshot_run_key(row) != latest_run_key:
+        row_run_key = _snapshot_run_key(row)
+        if row_run_key != latest_run_key and row_run_key[1:] != latest_run_key[1:]:
             continue
         sort_key = _snapshot_sort_key(row, order_index)
         cm_key = (contract, month)
@@ -474,7 +477,17 @@ def _eligible_rows(
             ) and bool(row.get("price_date")) and bool(row.get("margin_date"))
         except (ValueError, TypeError):
             fresh = False
-        if not fresh or row.get("settlement_price") is None or not row.get("unit"):
+        raw_price = row.get("settlement_price")
+        try:
+            valid_price = (
+                raw_price is not None
+                and not isinstance(raw_price, bool)
+                and _decimal(raw_price).is_finite()
+                and _decimal(raw_price) > 0
+            )
+        except Exception:
+            valid_price = False
+        if not fresh or not valid_price or not row.get("unit"):
             continue
         if int(row.get("volume") or 0) == 0 and int(row.get("open_interest") or 0) == 0:
             continue

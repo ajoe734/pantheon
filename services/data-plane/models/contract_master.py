@@ -57,6 +57,21 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _iso_epoch(raw: str) -> float:
+    text = str(raw or "").strip()
+    if not text:
+        return float("-inf")
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return float("-inf")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
 @dataclass
 class ContractMaster:
     """Canonical derivative contract identity.
@@ -244,14 +259,20 @@ class ContractMaster:
             for row in row_list
             if str(row.get("underlying_code") or "").strip()
         }
-        latest_run_by_underlying: dict[str, tuple[str, str, str, int]] = {}
+        for row in row_list:
+            for item in (row.get("snapshot_scope") or ()):
+                if str(item or "").strip():
+                    underlyings.add(str(item).strip())
+        latest_run_by_underlying: dict[str, tuple[float, str, float, str, int, str]] = {}
         newest_rows_by_underlying: dict[str, list[dict[str, Any]]] = {}
         for row in row_list:
             price_date = str(row.get("price_date") or row.get("date") or "")
             avail = str(row.get("available_time") or "")
+            avail_epoch = _iso_epoch(avail)
             ingest = str(row.get("ingest_time") or "")
+            ingest_epoch = _iso_epoch(ingest)
             file_seq = int(row.get("_file_run_seq") or 0)
-            run_key = (price_date, avail, ingest, file_seq)
+            run_key = (avail_epoch, avail, ingest_epoch, ingest, file_seq, price_date)
             row_underlying = str(row.get("underlying_code") or "").strip()
             scope_mode = str(row.get("snapshot_scope_mode") or "").strip()
             scope_set = {str(item).strip() for item in (row.get("snapshot_scope") or ()) if str(item).strip()}
@@ -293,7 +314,7 @@ class ContractMaster:
             else:
                 allowed_contracts_by_underlying[code] = None
 
-        latest: dict[str, tuple[tuple[str, str, str, str, int, int], dict[str, Any]]] = {}
+        latest: dict[str, tuple[tuple[float, str, float, str, int, str, str, int], dict[str, Any]]] = {}
         for index, row in enumerate(row_list):
             if row.get("tombstone") or not row.get("contract") or not row.get("contract_month"):
                 continue
@@ -308,12 +329,27 @@ class ContractMaster:
             price_date = str(row.get("price_date") or row.get("date") or "")
             margin_date = str(row.get("margin_date") or price_date)
             avail = str(row.get("available_time") or "")
+            avail_epoch = _iso_epoch(avail)
             ingest = str(row.get("ingest_time") or "")
+            ingest_epoch = _iso_epoch(ingest)
             file_seq = int(row.get("_file_run_seq") or 0)
-            sort_key = (price_date, margin_date, avail, ingest, file_seq, index)
+            sort_key = (avail_epoch, avail, ingest_epoch, ingest, file_seq, price_date, margin_date, index)
             if key not in latest or sort_key >= latest[key][0]:
                 latest[key] = (sort_key, row)
-        return [cls.from_ssf_normalized_row(latest[key][1]) for key in sorted(latest)]
+        masters: list[ContractMaster] = []
+        for key in sorted(latest):
+            winner = latest[key][1]
+            price = winner.get("settlement_price")
+            if price is None or isinstance(price, bool):
+                continue
+            try:
+                numeric_price = float(price)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(numeric_price) or numeric_price <= 0:
+                continue
+            masters.append(cls.from_ssf_normalized_row(winner))
+        return masters
 
     @staticmethod
     def validate(contract: "ContractMaster") -> tuple[bool, list[str]]:

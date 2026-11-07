@@ -425,6 +425,89 @@ class TestContractMasterFromSsfDataset(unittest.TestCase):
             self.assertIn("ssf:CDF:202611", masters)
             self.assertIn("ssf:DHF:202611", masters)
 
+    def test_missing_settlement_and_empty_scope_tombstone_evict_contract_masters(self):
+        import tempfile
+        from types import SimpleNamespace
+        from services.source_ingestion.connectors.taiwan_official import (
+            TaifexDerivativesChipAdapter,
+            taifex_ssf_normalized_rows,
+        )
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+        from services.execution.lean_runtime.instrument_candidates import read_normalized_ssf_rows
+
+        fixtures = Path(__file__).resolve().parents[2] / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
+
+        def load(name):
+            return json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
+
+        payload = {
+            "SingleStockFuturesMargining": load("SingleStockFuturesMargining"),
+            "SingleStockFuturesETFMargining": load("SingleStockFuturesETFMargining"),
+            "DailyMarketReportFut": load("DailyMarketReportFut"),
+            "FinalSettlementPriceSSF": load("FinalSettlementPriceSSF"),
+            "stockLists": (fixtures / "stockLists.html").read_text(encoding="utf-8"),
+        }
+        old_rows = taifex_ssf_normalized_rows(payload, available_time="2026-11-06T16:30:00Z")
+        missing_qff_front = dict(
+            payload,
+            DailyMarketReportFut=[
+                {**r, "SettlementPrice": "-"}
+                if (
+                    r.get("Contract") == "QFF"
+                    and str(r.get("ContractMonth(Week)")).strip() == "202611"
+                    and r.get("TradingSession") == "一般"
+                )
+                else r
+                for r in payload["DailyMarketReportFut"]
+            ],
+        )
+        new_2330_rows = taifex_ssf_normalized_rows(
+            missing_qff_front, underlying_codes=["2330"], available_time="2026-11-06T17:00:00Z"
+        )
+        masters_after_unpriced = {
+            m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows([*old_rows, *new_2330_rows])
+        }
+        self.assertNotIn("ssf:QFF:202611", masters_after_unpriced)
+        self.assertIn("ssf:QFF:202612", masters_after_unpriced)
+        self.assertIn("ssf:CDF:202611", masters_after_unpriced)
+
+        adapter = TaifexDerivativesChipAdapter()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            writer = MarketDataStorageWriter(tmp_path)
+            rec_1630 = adapter.records_from_payload(
+                payload,
+                dataset="taifex_ssf_contracts",
+                contracts=["2317"],
+                available_time="2026-11-06T16:30:00Z",
+            )
+            writer.write_run(
+                result=SimpleNamespace(records=rec_1630, run=SimpleNamespace(ingest_run_id="run-1630")),
+                connector=adapter.connector(),
+            )
+            no_dhf = {
+                **payload,
+                "SingleStockFuturesMargining": [
+                    r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "DHF"
+                ],
+                "DailyMarketReportFut": [
+                    r for r in payload["DailyMarketReportFut"] if r["Contract"] != "DHF"
+                ],
+            }
+            rec_1700 = adapter.records_from_payload(
+                no_dhf,
+                dataset="taifex_ssf_contracts",
+                contracts=["2317"],
+                available_time="2026-11-06T17:00:00Z",
+            )
+            self.assertEqual(len(rec_1700), 1)
+            writer.write_run(
+                result=SimpleNamespace(records=rec_1700, run=SimpleNamespace(ingest_run_id="run-1700")),
+                connector=adapter.connector(),
+            )
+            disk_rows = read_normalized_ssf_rows(tmp_path)
+            self.assertEqual(ContractMaster.from_ssf_normalized_rows(disk_rows), [])
+
     def test_no_second_contract_model_exists(self):
         models = Path(__file__).resolve().parents[1] / "models"
         self.assertEqual([p.name for p in models.glob("*contract*.py")], ["contract_master.py"])

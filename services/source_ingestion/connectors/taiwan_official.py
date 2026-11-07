@@ -2041,6 +2041,7 @@ def taifex_ssf_normalized_rows(
     *,
     underlying_codes: Sequence[str] | None = None,
     api_endpoint: str = "",
+    trade_date: str | None = None,
     available_time: str | None = None,
     max_records: int | None = None,
 ) -> tuple[dict[str, Any], ...]:
@@ -2048,11 +2049,13 @@ def taifex_ssf_normalized_rows(
 
     Rows exist only for contracts present in a margin table, whose family is in
     ``stockLists``, and whose code matches ``^[A-Z]{2}F$``. Regular-session
-    market rows with a numeric month and a numeric settlement price are used;
+    market rows with a numeric month are preserved (with ``settlement_price``
+    set to ``None`` when ``SettlementPrice`` is non-numeric or non-positive so
+    downstream month selection never falls through past an unpriced front month);
     after-hours and spread rows are not. Each emitted row carries scope-aware
-    snapshot metadata (and a tombstone row is emitted when all in-scope contracts
-    with valid market/unit rows are absent from the margin tables) so downstream
-    consumers never resurrect contracts removed in a newer snapshot.
+    snapshot metadata (and a tombstone row is emitted when a completed snapshot
+    produces no in-scope contract rows) so downstream consumers never resurrect
+    contracts removed in a newer snapshot.
     """
     scope = {
         _normalize_ssf_underlying_code(code)
@@ -2062,7 +2065,11 @@ def taifex_ssf_normalized_rows(
     scope_mode = "scoped" if scope else "all"
     scope_list = sorted(scope)
     margins: dict[str, dict[str, Any]] = {}
+    latest_margin_date = ""
     for row in _taifex_text_rows(payload.get("SingleStockFuturesMargining")):
+        margin_date = _roc_date_to_iso(row.get("Date"))
+        if margin_date and margin_date > latest_margin_date:
+            latest_margin_date = margin_date
         code = _text(row.get("Contract"))
         if _SSF_CONTRACT_CODE.match(code):
             margins[code] = {
@@ -2073,10 +2080,13 @@ def taifex_ssf_normalized_rows(
                 "clearing_margin_rate": _ssf_percent_to_fraction(row.get("ClearingMarginRate")),
                 "maintenance_margin_rate": _ssf_percent_to_fraction(row.get("MaintenanceMarginRate")),
                 "initial_margin_rate": _ssf_percent_to_fraction(row.get("InitialMarginRate")),
-                "margin_date": _roc_date_to_iso(row.get("Date")),
+                "margin_date": margin_date,
                 "raw_margin_row": dict(row),
             }
     for row in _taifex_text_rows(payload.get("SingleStockFuturesETFMargining")):
+        margin_date = _roc_date_to_iso(row.get("Date"))
+        if margin_date and margin_date > latest_margin_date:
+            latest_margin_date = margin_date
         code = _text(row.get("Contract"))
         if _SSF_CONTRACT_CODE.match(code):
             margins[code] = {
@@ -2087,7 +2097,7 @@ def taifex_ssf_normalized_rows(
                 "clearing_margin_amount": _float(row.get("ClearingMargin")),
                 "maintenance_margin_amount": _float(row.get("MaintenanceMargin")),
                 "initial_margin_amount": _float(row.get("InitialMargin")),
-                "margin_date": _roc_date_to_iso(row.get("Date")),
+                "margin_date": margin_date,
                 "raw_margin_row": dict(row),
             }
     stock_lists = payload.get("stockLists")
@@ -2110,21 +2120,21 @@ def taifex_ssf_normalized_rows(
     latest_market_date = ""
     limit = max_records or TAIFEX_SSF_MAX_RECORDS
     for row in _taifex_text_rows(payload.get("DailyMarketReportFut")):
+        price_date = _roc_date_to_iso(row.get("Date"))
+        if price_date and price_date > latest_market_date:
+            latest_market_date = price_date
         code = _text(row.get("Contract"))
         month = _text(_first(row, "ContractMonth(Week)", "ContractMonth"))
         if not _SSF_CONTRACT_CODE.match(code) or not _SSF_CONTRACT_MONTH.match(month) or _text(row.get("TradingSession")) != "一般":
             continue
         settlement = _float(row.get("SettlementPrice"))
-        if settlement is None:
-            continue
+        if settlement is not None and (not math.isfinite(settlement) or settlement <= 0):
+            settlement = None
         unit_row = units.get(code[:2])
         if unit_row is None:
             continue
-        price_date = _roc_date_to_iso(row.get("Date"))
         if not price_date:
             continue
-        if price_date > latest_market_date:
-            latest_market_date = price_date
         unit_underlying = _normalize_ssf_underlying_code(unit_row.get("underlying_code"))
         if code not in margins:
             if not scope or (unit_underlying and unit_underlying in scope):
@@ -2192,10 +2202,17 @@ def taifex_ssf_normalized_rows(
             item["snapshot_contracts"] = snapshot_contracts
             item["snapshot_contract_ids"] = snapshot_contract_ids
             item["snapshot_absent_contracts"] = snapshot_absent
-    elif absent_contracts:
-        tombstone_date = latest_market_date or ingest_time[:10]
-        tombstone_avail = _validate_or_convert_rfc3339(
-            stamp or f"{tombstone_date}T16:30:00Z",
+    elif scope or absent_contracts or units:
+        stamp_rfc3339 = _validate_or_convert_rfc3339(stamp, name="available_time") if stamp else ""
+        tombstone_date = (
+            latest_market_date
+            or latest_margin_date
+            or (_roc_date_to_iso(trade_date) if trade_date else "")
+            or (stamp_rfc3339[:10] if stamp_rfc3339 else "")
+            or ingest_time[:10]
+        )
+        tombstone_avail = stamp_rfc3339 or _validate_or_convert_rfc3339(
+            f"{tombstone_date}T16:30:00Z",
             name="available_time",
         )
         results.append(
@@ -2422,6 +2439,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 payload,
                 source_dataset=source_dataset,
                 api_endpoint=api_endpoint,
+                trade_date=trade_date,
                 available_time=available_time,
                 universe_tier=universe_tier,
                 contracts=contracts,
@@ -2493,6 +2511,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         *,
         source_dataset: str | None,
         api_endpoint: str | None,
+        trade_date: str | None = None,
         available_time: str | None,
         universe_tier: str,
         contracts: Sequence[str] | None,
@@ -2503,6 +2522,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             payload,
             dataset=TAIFEX_SSF_DATASET,
             api_endpoint=api_endpoint or "",
+            trade_date=trade_date,
             available_time=available_time,
             contracts=contracts,
             max_records=max_records,
@@ -2573,6 +2593,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 payload,
                 underlying_codes=resolved_codes,
                 api_endpoint=api_endpoint,
+                trade_date=trade_date,
                 available_time=available_time,
                 max_records=max_records,
             )

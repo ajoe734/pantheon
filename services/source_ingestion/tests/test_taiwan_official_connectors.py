@@ -1638,7 +1638,45 @@ def test_taifex_ssf_rows_need_a_unit_and_a_numeric_settlement() -> None:
     payload["DailyMarketReportFut"] = [
         {**row, "SettlementPrice": "NULL"} for row in payload["DailyMarketReportFut"]
     ]
-    assert _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(payload, dataset="taifex_ssf_contracts") == ()
+    rows = _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(
+        payload, dataset="taifex_ssf_contracts"
+    )
+    assert rows
+    assert all(row["settlement_price"] is None for row in rows)
+
+
+def test_taifex_ssf_empty_scoped_snapshot_emits_dated_tombstone_record() -> None:
+    adapter = _tw_official.TaifexDerivativesChipAdapter()
+    payload = _ssf_payload()
+    trimmed = {
+        **payload,
+        "SingleStockFuturesMargining": [
+            r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "DHF"
+        ],
+        "DailyMarketReportFut": [
+            r for r in payload["DailyMarketReportFut"] if r["Contract"] != "DHF"
+        ],
+    }
+    rows = adapter.normalized_rows_from_payload(
+        trimmed,
+        dataset="taifex_ssf_contracts",
+        contracts=["2317"],
+        available_time="2026-11-06T17:00:00Z",
+    )
+    assert len(rows) == 1
+    assert rows[0]["tombstone"] is True
+    assert rows[0]["snapshot_scope_mode"] == "scoped"
+    assert rows[0]["snapshot_scope"] == ["2317"]
+    assert rows[0]["date"] == "2026-11-06"
+    records = adapter.records_from_payload(
+        trimmed,
+        dataset="taifex_ssf_contracts",
+        contracts=["2317"],
+        available_time="2026-11-06T17:00:00Z",
+    )
+    assert len(records) == 1
+    assert records[0].metadata["date"] == "2026-11-06"
+    assert records[0].metadata["normalized_row"]["tombstone"] is True
 
 
 def test_taifex_ssf_rejects_a_non_mapping_payload() -> None:
