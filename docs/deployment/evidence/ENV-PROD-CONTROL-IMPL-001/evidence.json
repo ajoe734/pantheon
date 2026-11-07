@@ -241,6 +241,13 @@
     "local_validation": "python3 -m unittest tests.deployment.test_production_release (96 OK); script/workflow behavior only, not hosted drill evidence",
     "release_complete_claimed": false
   },
+  "stage105_dotfile_gate_fix": {
+    "change": "strip exactly one leading './' prefix",
+    "defect": "pantheon-staging-collect-gates lstrip('./') turned ./.prepared-receipt.json into prepared-receipt.json (Stage run 42371114734, BASELINE_FE_CONTENT_MISMATCH)",
+    "fix_commit": "e75814c23b3c8e57fb999cf8699847a6ad5982cc",
+    "note": "source/local validation only; not Stage evidence; Stage 105/106 re-dispatch remains external",
+    "regression": "test_baseline_fe_verify_keeps_dotfile_member_names (fails on old, passes on new)"
+  },
   "staging_verification_runs": [
     {
       "artifact_id": 13205541547,
