@@ -1,0 +1,111 @@
+{
+ "task_id": "BFF-STRATEGY-OPERATIONAL-TRUTH-20261107",
+ "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used and no workflow was dispatched. Hosted acceptance belongs to STRATEGY-VIEW-HOSTED-ACCEPTANCE-20261107. Everything below is functional evidence from local tests with a real RegistryService behind a stubbed HTTP boundary.",
+ "write_scope": "Reads only. No strategy, artifact or persona is retired, archived or written; no write route added; no registry or persona owner service code changed.",
+ "change": {
+  "list": "rows carry personaStates, operationalStatus, symbols; hide_retired_personas=true; meta.operational_counts; meta.hidden_retired_persona_count; meta.surfaces.persona_states",
+  "detail": "personaStates, operationalStatus, spec.title/hypothesis/objective, rules (approved execution bundles via GET /api/registry/strategies/{id}/strategy-artifacts?artifact_state=approved), meta.surfaces.persona_states and strategy_rules",
+  "single_helper": "services/control-plane/bff/strategies/operational.py (PersonaStateLookup.operational_status is the only place operationalStatus is derived)",
+  "persona_wiring": "core/app_factory.py injects _get_persona_directory_snapshot, _persona_record_projected_state and _PERSONA_OPERATIONAL_LIFECYCLE_STATES, the same callables the Persona list route uses"
+ },
+ "deviation_from_acceptance_6": "Without hide_retired_personas, operational_counts needs the whole candidate set. test_strategy_list_default_view.py (not weakened) pins one bounded owner request for a 217 row exclude_state=draft view and for the 4852 row default view. So counts are computed only when the candidate set fits one owner page (<= 200 rows; the real 141 row view does); larger sets keep the single read and return operational_counts null with meta.surfaces.operational_counts unavailable. With hide_retired_personas=true counts are always present.",
+ "rules_read_cost": "Registry route list_strategy_artifact_entries calls RegistryService.list_by_strategy, which for the Postgres store is one SQL predicate payload ->> 'strategy_id' = %s (pg_store._list_by_strategy_raw), then filters execution_bundle views in Python and, with artifact_state=approved, by state. It is the same predicate as the strategy-specs family read and does not scan the artifact catalog. Recorded, not measured on a hosted registry.",
+ "local_measurements_real_141_row_mix": {
+  "note": "stubbed owner transport, local wall time, not a hosted result; before-values are from the unchanged code: default list = 1 owner summary read and no persona read (pinned by test_strategy_list_default_view.py), detail = 1 strategy-specs owner read",
+  "after": {
+   "list_default_page20": {
+    "url": "/bff/strategies?exclude_state=draft&page_size=20",
+    "status": 200,
+    "wall_ms": 23.7,
+    "owner_summary_calls": [
+     "view=strategy_summary_page&page_size=20&exclude_state=draft",
+     "view=strategy_summary_page&page_size=200&exclude_state=draft"
+    ],
+    "persona_directory_reads": 1,
+    "bundle_reads": 0,
+    "total": 141,
+    "rows": 20,
+    "operational_counts": {
+     "running": 5,
+     "idle": 0,
+     "retired": 134,
+     "unbound": 2,
+     "unknown": 0
+    },
+    "hidden": 0
+   },
+   "list_default_page200": {
+    "url": "/bff/strategies?exclude_state=draft&page_size=200",
+    "status": 200,
+    "wall_ms": 37.9,
+    "owner_summary_calls": [
+     "view=strategy_summary_page&page_size=200&exclude_state=draft"
+    ],
+    "persona_directory_reads": 1,
+    "bundle_reads": 0,
+    "total": 141,
+    "rows": 141,
+    "operational_counts": {
+     "running": 5,
+     "idle": 0,
+     "retired": 134,
+     "unbound": 2,
+     "unknown": 0
+    },
+    "hidden": 0
+   },
+   "list_hide_page20": {
+    "url": "/bff/strategies?exclude_state=draft&hide_retired_personas=true&page_size=20",
+    "status": 200,
+    "wall_ms": 14.1,
+    "owner_summary_calls": [
+     "view=strategy_summary_page&page_size=200&exclude_state=draft"
+    ],
+    "persona_directory_reads": 1,
+    "bundle_reads": 0,
+    "total": 7,
+    "rows": 7,
+    "operational_counts": {
+     "running": 5,
+     "idle": 0,
+     "retired": 134,
+     "unbound": 2,
+     "unknown": 0
+    },
+    "hidden": 134
+   },
+   "detail": {
+    "url": "/bff/strategies/strategy-persona-0000000000000000000a",
+    "status": 200,
+    "wall_ms": 7.6,
+    "owner_summary_calls": [],
+    "persona_directory_reads": 1,
+    "bundle_reads": 1,
+    "total": null,
+    "rows": 0,
+    "operational_counts": null,
+    "hidden": null
+   }
+  }
+ },
+ "tests": {
+  "interpreter": ".venv-pantheon/bin/python3 (scripts/dev/provision_python_distribution.py)",
+  "new_file": "services/control-plane/bff/tests/test_strategy_operational_status.py (34 passed), registered in tests/bff_test_architecture_inventory.json",
+  "commands": [
+   "python -m pytest -q services/control-plane/bff/tests/test_strategy_operational_status.py -> 34 passed",
+   "python -m pytest -q tests/test_bff_test_architecture.py tests/test_strategy_list_default_view.py tests/test_strategy_list_latency.py tests/test_strategy_metrics_truth.py tests/test_bff_b2_list_detail_facade.py tests/test_bff_main_composition.py tests/test_event_loop_owner_reads_guard.py tests/test_owner_unavailable_503_consistency.py tests/test_management_session_harness.py test_bff_consol_008_fixture_pack_a.py test_bff_consol_016_detail_smoke_a.py test_execute_plans_final_live_wiring_contract.py test_kw05_strategy_spec_contract.py strategies/ -> 201 passed, 2 skipped, 1 failed"
+  ],
+  "pre_existing_failures_also_failing_on_unmodified_HEAD": [
+   "test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos (/bff/deployments empty)",
+   "test_bff_strategy_persona_contract.py::test_bff_personas_list_returns_200_and_dto_shape",
+   "test_bff_strategy_persona_contract.py::test_bff_personas_create_then_subresources_round_trip (403 TENANT_MISMATCH)"
+  ],
+  "no_existing_assertion_weakened": true
+ },
+ "out_of_scope_untouched": [
+  "frontend",
+  "risk column",
+  "retiring the 134 leftover strategies",
+  "why two release personas are paper_running"
+ ]
+}

@@ -961,6 +961,21 @@ double-counted in the additive total.
 - A strategy whose stored lifecycle value is not a known state remains visible under `GET /bff/strategies?exclude_state=draft` (with its raw value preserved in `lifecycleStatus`) and is never hidden by the DTO display fallback to `draft`.
 
 
+## Strategy operational truth (BFF-STRATEGY-OPERATIONAL-TRUTH-20261107)
+
+Read-only. No write route is added, and no Registry or Persona owner service code changes.
+
+- Every `GET /bff/strategies` row and the `GET /bff/strategies/{strategy_id}` DTO carry `personaStates` (a list of `{personaId, state}`) and `operationalStatus`. `state` is the Persona state `GET /bff/personas` reports for the same persona in the same tenant: both pages read `_get_persona_directory_snapshot(tenant)` and project each record with `_persona_record_projected_state`. The directory is read at most once per request. A persona id the directory does not contain has state `missing`.
+- `operationalStatus` comes from one helper (`strategies/operational.py`): `running` when any bound persona state is in `_PERSONA_OPERATIONAL_LIFECYCLE_STATES`; `retired` when the row has bound personas and every one is `retired`; `unbound` when the row has no persona id; `unknown` when the directory read failed; `idle` otherwise.
+- When the directory read fails (or is not wired), every row has `operationalStatus: "unknown"`, each `personaStates[].state` is `unknown`, and `meta.surfaces.persona_states.status` is `unavailable`. No row is dropped or hidden.
+- `GET /bff/strategies` accepts `hide_retired_personas=true`, which removes rows whose `operationalStatus` is `retired` before paging, so `page_info.total`, `next_page_token` and the page size describe the filtered set. It walks the owner summary pages of the candidate set with `page_size=200`. Without the parameter the rows, paging and `state_counts` are exactly what the Registry owner page returns.
+- `meta.operational_counts` (`running`, `idle`, `retired`, `unbound`, `unknown`) counts the candidate set selected by `state` / `exclude_state` / `persona_id` before the hide filter. `meta.hidden_retired_persona_count` is the number of rows the filter removed (0 without it). Without `hide_retired_personas`, counting needs the whole candidate set, so it is computed only when that set fits one owner page (at most 200 rows, one extra owner read when the requested page is smaller); a larger set keeps the single bounded owner read, reports `operational_counts: null` and `meta.surfaces.operational_counts.status: "unavailable"`. With `hide_retired_personas=true` the counts are always present.
+- Every row carries `symbols`, from `market_scope.symbols` of the Registry summary row (no extra owner read; `[]` when absent).
+- The detail `data.spec` block adds `title`, `hypothesis` and `objective` (string or `null`) from the same resolved current StrategySpec version; the projection stays an allowlist.
+- The detail DTO carries `data.rules`, read once per request from `GET /api/registry/strategies/{strategy_id}/strategy-artifacts?artifact_state=approved`: one entry per approved `execution_bundle` with `registryId`, `version`, `role`, `strategyLogic`, `parameters`, `adjustableControls` and `immutableParameters` (from `metadata.strategy_artifact`, including its `mutation_surface`). `role` is `rollback_baseline` when the registry id appears in `lineage.parent_registry_ids` of another approved bundle of the same strategy, otherwise `trading`. A strategy with no approved bundle returns `rules: []`; a failed read returns `rules: null` and `meta.surfaces.strategy_rules.status: "unavailable"` while the detail stays 200.
+- Cost of the rules read: the Registry route lists the strategy family with the same targeted SQL predicate as the `strategy-specs` family read (`payload ->> 'strategy_id' = %s`, `list_by_strategy`), then filters execution bundles in Python; it never scans the artifact catalog.
+
+
 ### `GET /bff/evolution-programs/{program_id}/runs` — retrain run outcome
 
 Each item is read back from the owning plane. For a retrain run the item's
