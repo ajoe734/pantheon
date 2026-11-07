@@ -4479,7 +4479,9 @@ def test_ai_persona_fleet_projects_source_health_personas_through_app_persona_se
         for o in unbound["surfaces"]["persona_fleet"]["owner_observations"]
     )
 
-    from services.control_plane.bff.main import _bind_persona_service_projection
+    from services.control_plane.bff.assistant.management_service import (
+        bind_persona_service_projection as _bind_persona_service_projection,
+    )
 
     monkeypatch.setattr(
         ms,
@@ -4507,7 +4509,9 @@ def test_ai_persona_fleet_one_persona_failure_keeps_the_others_and_logs(monkeypa
         monkeypatch,
         [_fleet_inbox_source_health_persona("p-bad"), _fleet_inbox_source_health_persona("p-good")],
     )
-    from services.control_plane.bff.main import _bind_persona_service_projection
+    from services.control_plane.bff.assistant.management_service import (
+        bind_persona_service_projection as _bind_persona_service_projection,
+    )
 
     real_impl = _bind_persona_service_projection(_fleet_inbox_real_persona_service())
 

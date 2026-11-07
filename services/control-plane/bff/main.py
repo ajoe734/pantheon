@@ -4301,25 +4301,9 @@ auth_facade_service = getattr(app.state, "auth_facade_service", None)
 _core_handlers = getattr(app.state, "core_handlers", None)
 
 from .assistant.management_service import (
-    _project_persona_fleet_item_impl as _mgmt_project_persona_fleet_item_impl,
+    bind_persona_service_projection as _bind_persona_service_projection,
     wire_management_runtime_projections,
 )
-
-
-def _bind_persona_service_projection(service):
-    # Same binding as PersonaService.build_persona_health_items: make the
-    # app-scoped instance the current PersonaService for the projection.
-    from .personas.service import _current_persona_service
-
-    def _project(*args, **kwargs):
-        token = _current_persona_service.set(service) if service is not None else None
-        try:
-            return _mgmt_project_persona_fleet_item_impl(*args, **kwargs)
-        finally:
-            if token is not None:
-                _current_persona_service.reset(token)
-
-    return _project
 
 
 wire_management_runtime_projections(

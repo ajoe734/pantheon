@@ -3038,6 +3038,24 @@ def register_sse_buffers(buffers: Dict[str, deque], subscribers: Optional[Dict[s
         _ACTIVE_SSE_BUFFERS.append(buffers)
 
 
+def bind_persona_service_projection(service):
+    """Bind an app-scoped PersonaService as the current one for the projection.
+
+    Same binding as PersonaService.build_persona_health_items; no module global.
+    """
+    from ..personas.service import _current_persona_service
+
+    def _project(*args, **kwargs):
+        token = _current_persona_service.set(service) if service is not None else None
+        try:
+            return _project_persona_fleet_item_impl(*args, **kwargs)
+        finally:
+            if token is not None:
+                _current_persona_service.reset(token)
+
+    return _project
+
+
 def wire_management_runtime_projections(
     read_store: Optional[Any] = None,
     *,

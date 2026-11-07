@@ -2,7 +2,7 @@
   "task_id": "BFF-AI-FLEET-INBOX-20261107",
   "hosted_verification": "NOT RUN. Hosted verification belongs to MGMT-AI-TRUTH-ACCEPTANCE-20261107; no hosted result is claimed.",
   "changes": {
-    "persona_fleet": "PR7031 return fix (original AC2): removed the process-global _PERSONA_SERVICE and its set/get/reset in management_service.py. main.py passes project_persona_fleet_item=_bind_persona_service_projection(persona_service) to wire_management_runtime_projections; the closure sets the existing _current_persona_service ContextVar to the app-scoped instance (same binding as PersonaService.build_persona_health_items) around the single production _project_persona_fleet_item_impl. No second projection. Per-persona failures become unavailable items naming the exception class; error branch logs a warning.",
+    "persona_fleet": "PR7031 return fix (original AC2): removed the process-global _PERSONA_SERVICE and its set/get/reset in management_service.py. main.py passes project_persona_fleet_item=bind_persona_service_projection(persona_service) (factory now lives in assistant/management_service.py, not main.py, so migrated tests do not import main) to wire_management_runtime_projections; the closure sets the existing _current_persona_service ContextVar to the app-scoped instance (same binding as PersonaService.build_persona_health_items) around the single production _project_persona_fleet_item_impl. No second projection. Per-persona failures become unavailable items naming the exception class; error branch logs a warning.",
     "human_inbox": "_mgmt_nl_collect_context reads data.items of the wired payload and passes the caller identity (identity kwarg threaded via asyncio.to_thread by both ask and ask/stream)."
   },
   "fix_removed_proof": {
@@ -16,7 +16,7 @@
     "test_ai_persona_fleet_one_persona_failure_keeps_the_others_and_logs",
     "test_ai_persona_fleet_error_branch_logs_exception_class",
     "test_ai_cockpit_counts_wired_human_inbox_data_items_with_caller_identity (real data.items payload shape, one open incident, approval_queue ok)",
-    "test_ai_persona_fleet_has_no_module_global_persona_service (fails if _PERSONA_SERVICE/set/get/reset_persona_service reappear); the two persona fleet tests now bind the real PersonaService through the main.py callback instead of a module global"
+    "test_ai_persona_fleet_has_no_module_global_persona_service (fails if _PERSONA_SERVICE/set/get/reset_persona_service reappear); the two persona fleet tests now bind the real PersonaService through the management_service.bind_persona_service_projection factory instead of a module global"
   ],
   "test_harness_updates": "AST-extraction harnesses in test_persona_fleet_read_failures.py and test_mgmt_read_001_persona_fleet_owner_observations.py gained the new helper names and logging; the _cs_scenario inbox stub and two collect_context lambdas now use the data.items shape / accept **_kw. No assertion weakened.",
   "regression_runs": {
