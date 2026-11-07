@@ -628,12 +628,18 @@ def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(mon
         # Unresolved siblings (r3/r4) keep verified r1 visible but non-healthy.
         partial = rsp.get_rollbacks("rt1")
         assert [r["rollback_id"] for r in partial] == ["r1"]
-        assert partial[0]["status"] == "unavailable" and partial[0]["owner_status"] == "completed"
+        assert partial[0]["status"] == "completed"
+        assert rsp.list_all_rollbacks()[0]["status"] == partial[0]["status"]
         from services.control_plane.bff.management_read_models.service import ManagementService
 
         mrows, obs = ManagementService(read_store=rsp).get_context_rollbacks("rt1")
         assert [r["rollback_id"] for r in mrows] == ["r1"]
-        assert obs["status"] == "unavailable" and obs["source_kind"] == "unavailable"
+        # Canonical status survives into the existing runtime projection too.
+        from services.control_plane.bff.management_read_models.service import _project_runtime_state_latest_rollback
+
+        assert _project_runtime_state_latest_rollback(mrows)["status"] == "completed"
+        # Partial provenance is reported by the owner dataset source, not by rewriting status.
+        assert rsp.dataset_source("all_rollbacks") == "unavailable"
         # Nothing verified for a runtime while siblings are unresolved is not a healthy zero.
         with pytest.raises(RuntimeError):
             rsp.get_rollbacks("rt-none")

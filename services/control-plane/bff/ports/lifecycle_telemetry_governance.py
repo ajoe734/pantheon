@@ -1154,22 +1154,11 @@ class DomainGovernancePort:
             # Nothing verified to show: unresolved siblings may hide this runtime's
             # rows, so this must not look like a healthy zero.
             raise RuntimeError(reason)
-        # Verified own rows stay visible; the unresolved siblings are reported as
-        # truthful non-healthy partial provenance through the record-level
-        # observation fields the existing ManagementService seam already honors.
-        return [
-            {
-                **r,
-                # The seam reads record "status" as observation status, so the
-                # owner's actual rollback state is preserved under owner_status.
-                "owner_status": r.get("status"),
-                "status": "unavailable",
-                "source_kind": "unavailable",
-                "owner": "governance",
-                "degradation_reason": reason,
-            }
-            for r in matched
-        ]
+        # Verified own rows stay visible with their canonical status/fields intact
+        # (existing facade consumers read "status" as the rollback state). The
+        # unresolved siblings are reported separately and honestly as partial
+        # provenance via dataset_source("all_rollbacks") == "unavailable".
+        return matched
 
     def _owner_rows_or_empty(self, dataset: str) -> List[Dict[str, Any]]:
         # Journal callers cannot tolerate a raise; the failure is cached for the

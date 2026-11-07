@@ -1218,8 +1218,8 @@ def test_strict_rollback_facade_keeps_own_rows_with_partial_provenance(monkeypat
         with scope():
             got = port.governance.read_rollbacks_strict("rt1")
             assert [r["rollback_id"] for r in got] == ["r-own"]
-            assert got[0]["status"] == "unavailable" and got[0]["source_kind"] == "unavailable"
-            assert got[0]["owner_status"] == "completed" and got[0]["degradation_reason"]
+            assert got[0]["status"] == "completed" and "owner_status" not in got[0]
+            assert port.governance.dataset_source("all_rollbacks") == "unavailable"
             with pytest.raises(RuntimeError):
                 port.governance.read_rollbacks_strict("rt-other")
     finally:
