@@ -2148,6 +2148,21 @@ class TestExpressionDecisionStep(unittest.TestCase):
         self.assertEqual(signal["metadata"]["expression_decision"]["reason_code"], "instrument_not_in_candidates")
         self.assertNotIn("instrument_id", signal["metadata"])
 
+    def test_forged_close_leg_without_a_holding_cannot_place_an_order(self) -> None:
+        store = InMemoryPendingSignalStore()
+        forged = lambda view, candidates, book, budget, params: {  # noqa: E731
+            "decision_id": view["decision_id"],
+            "instrument_id": "eq:0050",
+            "side": "buy",
+            "units": 1000000,
+            "reason_code": "close_leg",
+        }
+        self.assertEqual(self._producer(store, decider=forged).produce(self._binding(self._artifact()), self.NOW), 1)
+        [signal] = store.get_pending()
+        self.assertEqual(signal["action"], "HOLD")
+        self.assertEqual(signal["metadata"]["expression_decision"]["reason_code"], "instrument_not_in_candidates")
+        self.assertNotIn("instrument_id", signal["metadata"])
+
     def test_missing_inputs_fail_closed_to_a_no_trade(self) -> None:
         store = InMemoryPendingSignalStore()
         art = self._artifact(bearish=True)

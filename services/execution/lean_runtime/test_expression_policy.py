@@ -121,7 +121,7 @@ def test_opposite_open_position_yields_the_closing_leg(rows) -> None:
         "close_leg",
     )
     # closing leg is valid even above max_units_by_risk
-    assert ep.enforce(out, _candidates(rows, "0050", 92.5), _view("0050", "LONG", 0.9)) == out
+    assert ep.enforce(out, _candidates(rows, "0050", 92.5), _view("0050", "LONG", 0.9), book) == out
 
 
 def test_opposite_position_without_close_before_reverse_goes_on(rows) -> None:
@@ -183,3 +183,35 @@ def test_malformed_decider_cannot_place_an_order(rows) -> None:
         assert out["reason_code"] == "instrument_not_in_candidates"
         assert "instrument_id" not in out
     assert ep.decide_validated(view, candidates, {}, BUDGET, PARAMS) == good
+
+
+def _held(instrument_id: str, direction: str, units: int) -> dict[str, Any]:
+    return {"instrument_id": instrument_id, "underlying": "0050", "direction": direction, "units": units}
+
+
+def test_forged_close_leg_is_rejected_without_a_matching_holding(rows) -> None:
+    candidates = _candidates(rows, "0050", 92.5)
+    view = _view("0050", "LONG", 0.9)
+    forged = {**ep.decide(view, candidates, {}, BUDGET, PARAMS)}
+    forged.update(instrument_id="eq:0050", side="buy", units=1000000, reason_code="close_leg")
+    for book in ({}, {"positions": [_held("eq:0050", "LONG", 5)]}):  # none / wrong side
+        out = ep.decide_validated(view, candidates, book, BUDGET, PARAMS, decider=lambda *a: forged)
+        assert out["reason_code"] == "instrument_not_in_candidates"
+        assert "instrument_id" not in out
+    short_book = {"positions": [_held("eq:0050", "SHORT", 5)]}
+    oversized = {**forged, "units": 6}
+    out = ep.decide_validated(view, candidates, short_book, BUDGET, PARAMS, decider=lambda *a: oversized)
+    assert out["reason_code"] == "instrument_not_in_candidates"
+    legit = {**forged, "units": 5}
+    out = ep.decide_validated(view, candidates, short_book, BUDGET, PARAMS, decider=lambda *a: legit)
+    assert out["reason_code"] == "close_leg" and out["units"] == 5
+
+
+def test_opposite_holding_is_closed_regardless_of_position_order(rows) -> None:
+    candidates = _candidates(rows, "0050", 92.5)
+    view = _view("0050", "LONG", 0.9)
+    srf = next(c["instrument_id"] for c in candidates if c["instrument_id"].startswith("ssf:"))
+    a, b = _held("eq:0050", "LONG", 5), _held(srf, "SHORT", 1)
+    for positions in ([a, b], [b, a]):
+        out = ep.decide(view, candidates, {"positions": positions}, BUDGET, PARAMS)
+        assert (out["instrument_id"], out["side"], out["units"], out["reason_code"]) == (srf, "buy", 1, "close_leg")

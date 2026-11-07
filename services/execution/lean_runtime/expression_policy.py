@@ -210,7 +210,13 @@ def decide(
 
     # Step 2: reconcile with the open position on the same underlying.
     by_id = {str(c.get("instrument_id")): c for c in candidates}
-    for position in _open_positions(book, underlying):
+    # Opposite holdings are scanned first so a same-direction no-op never
+    # hides a leg that must be closed before reversing.
+    open_positions = sorted(
+        _open_positions(book, underlying),
+        key=lambda p: str(p.get("direction") or "").upper() == direction,
+    )
+    for position in open_positions:
         held_direction = str(position.get("direction") or "").upper()
         held_units = int(position["units"])
         if held_direction != direction:
@@ -336,6 +342,7 @@ def enforce(
     record: Any,
     candidates: Sequence[Mapping[str, Any]],
     view: Mapping[str, Any],
+    book: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """System validation of a decider output; return it or an ``instrument_not_in_candidates`` NoTrade.
 
@@ -368,9 +375,22 @@ def enforce(
         return reject(f"units {units!r} must be an integer >= 1")
     if record.get("reason_code") not in REASON_CODES:
         return reject(f"reason_code {record.get('reason_code')!r} is outside the vocabulary")
-    if record.get("reason_code") != "close_leg" and units > int(
-        candidate.get("max_units_by_risk") or 0
-    ):
+    if record.get("reason_code") == "close_leg":
+        # A close leg bypasses the open-risk cap only when it exactly reduces a
+        # trusted holding: same instrument, opposite side, units <= held.
+        held = [
+            p
+            for p in _open_positions(book, str(view.get("underlying") or ""))
+            if str(p.get("instrument_id")) == instrument_id
+        ]
+        reducing = {"LONG": "sell", "SHORT": "buy"}
+        if not any(
+            reducing.get(str(p.get("direction") or "").upper()) == side
+            and units <= int(p["units"])
+            for p in held
+        ):
+            return reject("close_leg does not reduce a held position")
+    elif units > int(candidate.get("max_units_by_risk") or 0):
         return reject(f"units {units} exceed max_units_by_risk")
     return dict(record)
 
@@ -385,4 +405,6 @@ def decide_validated(
     decider: Callable[..., Any] = decide,
 ) -> dict[str, Any]:
     """Run a decider and pass its output through ``enforce``."""
-    return enforce(decider(view, candidates, book, budget, parameters), candidates, view)
+    return enforce(
+        decider(view, candidates, book, budget, parameters), candidates, view, book
+    )
