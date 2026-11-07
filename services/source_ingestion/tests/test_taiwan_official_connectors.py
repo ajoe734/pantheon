@@ -1540,3 +1540,188 @@ def test_history_fetch_never_requests_months_after_current_taipei_month(monkeypa
         today_provider=lambda: "2026-10-31",
     )
     assert calls == ["2026-10-01"]
+
+
+# --- taifex_ssf_contracts (TAIFEX-SSF-CONTRACT-CANDIDATES-20261107) -------------------------------
+
+import csv as _csv
+import io as _io
+import json as _json
+from pathlib import Path as _Path
+
+from services.source_ingestion.connectors import taiwan_official as _tw_official
+
+_SSF_FIXTURES = _Path(__file__).resolve().parents[2] / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
+
+
+def _ssf_payload() -> dict:
+    def load(name: str):
+        return _json.loads((_SSF_FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+
+    return {
+        "SingleStockFuturesMargining": load("SingleStockFuturesMargining"),
+        "SingleStockFuturesETFMargining": load("SingleStockFuturesETFMargining"),
+        "DailyMarketReportFut": load("DailyMarketReportFut"),
+        "FinalSettlementPriceSSF": load("FinalSettlementPriceSSF"),
+        "stockLists": (_SSF_FIXTURES / "stockLists.html").read_text(encoding="utf-8"),
+    }
+
+
+def _ssf_row(rows, contract: str, month: str = "202611") -> dict:
+    return next(row for row in rows if row["contract"] == contract and row["contract_month"] == month)
+
+
+def test_taifex_ssf_dataset_is_declared_on_the_connector_definition() -> None:
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    definition = get_connector_definition("tw-taifex-futures-options-chip")
+    assert "taifex_ssf_contracts" in definition.datasets
+    assert {"taifex_futures_chip", "taifex_options_chip"} <= set(definition.datasets)
+    assert definition.allowed_host_patterns == ("openapi.taifex.com.tw", "www.taifex.com.tw")
+
+
+def test_taifex_ssf_normalization_joins_margin_market_unit_and_final_settlement() -> None:
+    adapter = _tw_official.TaifexDerivativesChipAdapter()
+    rows = adapter.normalized_rows_from_payload(_ssf_payload(), dataset="taifex_ssf_contracts")
+
+    qff = _ssf_row(rows, "QFF")
+    assert qff["contract_id"] == "ssf:QFF:202611"
+    assert (qff["underlying_code"], qff["unit"], qff["kind"], qff["underlying_kind"]) == ("2330", 100, "stock_future", "stock")
+    assert (qff["settlement_price"], qff["volume"], qff["open_interest"], qff["date"]) == (2133.0, 126386, 65034, "2026-11-06")
+    assert qff["margin_mode"] == "rate" and qff["margin_tier"] == "級距1"
+    assert (qff["clearing_margin_rate"], qff["maintenance_margin_rate"], qff["initial_margin_rate"]) == (0.10, 0.1035, 0.135)
+    assert qff["last_final_settlement"] == {"day": "2026-10-21", "contract_month": "202610", "price": 2405.59}
+    assert qff["last_trading_day"] == "2026-11-18"
+    assert _ssf_row(rows, "CDF")["unit"] == 2000 and _ssf_row(rows, "DHF")["settlement_price"] == 225.0
+
+    srf, nyf = _ssf_row(rows, "SRF"), _ssf_row(rows, "NYF")
+    assert (srf["margin_mode"], srf["initial_margin_amount"], srf["maintenance_margin_amount"]) == ("fixed", 8700.0, 6700.0)
+    assert (nyf["unit"], nyf["initial_margin_amount"], nyf["underlying_kind"]) == (10000, 87000.0, "etf")
+    assert srf["unit"] == 1000 and srf["underlying_code"] == "0050"
+    # Spread rows and after-hours rows never become contract rows.
+    assert all("/" not in row["contract_month"] for row in rows)
+    assert all(row["raw_market_row"]["TradingSession"] == "一般" for row in rows)
+
+
+def test_taifex_ssf_symbol_scope_limits_underlyings() -> None:
+    adapter = _tw_official.TaifexDerivativesChipAdapter()
+    for raw_code in ("2317", "2317.TW", "2317.TWSE", "eq:2317"):
+        rows = adapter.normalized_rows_from_payload(
+            _ssf_payload(), dataset="taifex_ssf_contracts", contracts=[raw_code]
+        )
+        assert {row["underlying_code"] for row in rows} == {"2317"}
+
+
+def test_taifex_ssf_csv_with_bom_decodes_as_utf8_sig() -> None:
+    payload = _ssf_payload()
+    buffer = _io.StringIO()
+    writer = _csv.DictWriter(buffer, fieldnames=list(payload["SingleStockFuturesETFMargining"][0]))
+    writer.writeheader()
+    writer.writerows(payload["SingleStockFuturesETFMargining"])
+    bom_bytes = b"\xef\xbb\xbf" + buffer.getvalue().encode("utf-8")
+
+    assert _tw_official._decode_taifex_bytes(bom_bytes)[0] == "C"
+    for variant in (bom_bytes, bom_bytes.decode("utf-8"), _tw_official._decode_taifex_bytes(bom_bytes)):
+        payload["SingleStockFuturesETFMargining"] = variant
+        rows = _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(
+            payload, dataset="taifex_ssf_contracts"
+        )
+        assert _ssf_row(rows, "SRF")["initial_margin_amount"] == 8700.0
+        assert _ssf_row(rows, "NYF")["initial_margin_amount"] == 87000.0
+
+
+def test_taifex_ssf_rows_need_a_unit_and_a_numeric_settlement() -> None:
+    payload = _ssf_payload()
+    payload["stockLists"] = {}
+    assert _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(payload, dataset="taifex_ssf_contracts") == ()
+    payload = _ssf_payload()
+    payload["DailyMarketReportFut"] = [
+        {**row, "SettlementPrice": "NULL"} for row in payload["DailyMarketReportFut"]
+    ]
+    rows = _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(
+        payload, dataset="taifex_ssf_contracts"
+    )
+    assert rows
+    assert all(row["settlement_price"] is None for row in rows)
+
+
+def test_taifex_ssf_empty_scoped_snapshot_emits_dated_tombstone_record() -> None:
+    adapter = _tw_official.TaifexDerivativesChipAdapter()
+    payload = _ssf_payload()
+    trimmed = {
+        **payload,
+        "SingleStockFuturesMargining": [
+            r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "DHF"
+        ],
+        "DailyMarketReportFut": [
+            r for r in payload["DailyMarketReportFut"] if r["Contract"] != "DHF"
+        ],
+    }
+    rows = adapter.normalized_rows_from_payload(
+        trimmed,
+        dataset="taifex_ssf_contracts",
+        contracts=["2317"],
+        available_time="2026-11-06T17:00:00Z",
+    )
+    assert len(rows) == 1
+    assert rows[0]["tombstone"] is True
+    assert rows[0]["snapshot_scope_mode"] == "scoped"
+    assert rows[0]["snapshot_scope"] == ["2317"]
+    assert rows[0]["date"] == "2026-11-06"
+    records = adapter.records_from_payload(
+        trimmed,
+        dataset="taifex_ssf_contracts",
+        contracts=["2317"],
+        available_time="2026-11-06T17:00:00Z",
+    )
+    assert len(records) == 1
+    assert records[0].metadata["date"] == "2026-11-06"
+    assert records[0].metadata["normalized_row"]["tombstone"] is True
+
+
+def test_taifex_ssf_rejects_a_non_mapping_payload() -> None:
+    with pytest.raises(SourceEvidenceError):
+        _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload([], dataset="taifex_ssf_contracts")
+
+
+def test_taifex_ssf_stock_lists_units() -> None:
+    units = _tw_official.parse_taifex_stock_lists_units((_SSF_FIXTURES / "stockLists.html").read_text(encoding="utf-8"))
+    assert {family: row["unit"] for family, row in units.items()} == {
+        "CA": 2000, "CC": 2000, "CD": 2000, "DH": 2000, "NY": 10000, "QF": 100, "SR": 1000,
+    }
+    assert units["NY"]["is_etf"] and units["SR"]["is_etf"] and not units["QF"]["is_etf"]
+    assert units["QF"]["underlying_code"] == "2330"
+
+
+def test_taifex_ssf_records_carry_partition_date_and_schema() -> None:
+    adapter = _tw_official.TaifexDerivativesChipAdapter()
+    records = adapter.records_from_payload(_ssf_payload(), dataset="taifex_ssf_contracts", trace_id="t")
+    assert records
+    record = next(r for r in records if r.metadata["contract"] == "QFF" and r.metadata["contract_month"] == "202611")
+    assert record.metadata["dataset"] == "taifex_ssf_contracts"
+    assert record.metadata["date"] == "2026-11-06"
+    assert record.metadata["schema_hash"] == "tw_taifex_ssf_contracts.v1"
+    assert record.metadata["normalized_row"]["contract_id"] == "ssf:QFF:202611"
+    assert record.metadata["raw_row"]["margin"]["Contract"] == "QFF"
+
+
+def test_taifex_ssf_fetch_reads_only_the_two_reviewed_hosts(monkeypatch) -> None:
+    payload = _ssf_payload()
+    seen: list[str] = []
+
+    def fake_fetch(request, *, caller, timeout_seconds, max_bytes, parse):
+        seen.append(request.full_url)
+        name = request.full_url.rsplit("/", 1)[-1]
+        if name == "stockLists":
+            return parse(payload["stockLists"].encode("utf-8"))
+        return parse(b"\xef\xbb\xbf" + _json.dumps(payload[name]).encode("utf-8"))
+
+    monkeypatch.setattr(_tw_official, "_fetch_official", fake_fetch)
+    fetched = _tw_official.TaifexDerivativesChipAdapter().fetch_payload("taifex_ssf_contracts")
+
+    assert sorted(fetched) == sorted(payload)
+    hosts = {url.split("/")[2] for url in seen}
+    assert hosts == {"openapi.taifex.com.tw", "www.taifex.com.tw"}
+    assert len(seen) == 5
+    rows = _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(fetched, dataset="taifex_ssf_contracts")
+    assert _ssf_row(rows, "QFF")["settlement_price"] == 2133.0
