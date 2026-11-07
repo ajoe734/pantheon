@@ -4300,7 +4300,27 @@ auth_handlers = getattr(app.state, "auth_handlers", None)
 auth_facade_service = getattr(app.state, "auth_facade_service", None)
 _core_handlers = getattr(app.state, "core_handlers", None)
 
-from .assistant.management_service import wire_management_runtime_projections
+from .assistant.management_service import (
+    _project_persona_fleet_item_impl as _mgmt_project_persona_fleet_item_impl,
+    wire_management_runtime_projections,
+)
+
+
+def _bind_persona_service_projection(service):
+    # Same binding as PersonaService.build_persona_health_items: make the
+    # app-scoped instance the current PersonaService for the projection.
+    from .personas.service import _current_persona_service
+
+    def _project(*args, **kwargs):
+        token = _current_persona_service.set(service) if service is not None else None
+        try:
+            return _mgmt_project_persona_fleet_item_impl(*args, **kwargs)
+        finally:
+            if token is not None:
+                _current_persona_service.reset(token)
+
+    return _project
+
 
 wire_management_runtime_projections(
     build_operator_alerts_payload=_build_operator_alerts_payload,
@@ -4316,7 +4336,7 @@ wire_management_runtime_projections(
     sse_buffers=_sse_buffers,
     sse_subscribers=_sse_subscribers,
     read_store=read_store,
-    persona_service=persona_service,
+    project_persona_fleet_item=_bind_persona_service_projection(persona_service),
 )
 
 from .deployment.router import create_deployment_router as _create_deployment_router

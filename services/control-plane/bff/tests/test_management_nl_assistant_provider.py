@@ -4469,7 +4469,6 @@ def test_ai_persona_fleet_projects_source_health_personas_through_app_persona_se
     ms = _fleet_inbox_scenario(
         monkeypatch, [_fleet_inbox_source_health_persona("p-src-0")]
     )
-    monkeypatch.setattr(ms, "_PERSONA_SERVICE", None)
     unbound = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
     item = unbound["snippets"]["persona_fleet"]["items"][0]
     # Without the app-scoped service the projection raises; the persona is an
@@ -4480,7 +4479,13 @@ def test_ai_persona_fleet_projects_source_health_personas_through_app_persona_se
         for o in unbound["surfaces"]["persona_fleet"]["owner_observations"]
     )
 
-    monkeypatch.setattr(ms, "_PERSONA_SERVICE", _fleet_inbox_real_persona_service())
+    from services.control_plane.bff.main import _bind_persona_service_projection
+
+    monkeypatch.setattr(
+        ms,
+        "_PROJECT_PERSONA_FLEET_ITEM_FN",
+        _bind_persona_service_projection(_fleet_inbox_real_persona_service()),
+    )
     bound = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
     bound_item = bound["snippets"]["persona_fleet"]["items"][0]
     assert bound_item["health"]["status"] != "unavailable"
@@ -4490,13 +4495,21 @@ def test_ai_persona_fleet_projects_source_health_personas_through_app_persona_se
     )
 
 
+def test_ai_persona_fleet_has_no_module_global_persona_service() -> None:
+    from services.control_plane.bff.assistant import management_service as ms
+
+    for name in ("_PERSONA_SERVICE", "set_persona_service", "get_persona_service", "reset_persona_service"):
+        assert not hasattr(ms, name), name
+
+
 def test_ai_persona_fleet_one_persona_failure_keeps_the_others_and_logs(monkeypatch, caplog) -> None:
     ms = _fleet_inbox_scenario(
         monkeypatch,
         [_fleet_inbox_source_health_persona("p-bad"), _fleet_inbox_source_health_persona("p-good")],
     )
-    monkeypatch.setattr(ms, "_PERSONA_SERVICE", _fleet_inbox_real_persona_service())
-    real_impl = ms._project_persona_fleet_item_impl
+    from services.control_plane.bff.main import _bind_persona_service_projection
+
+    real_impl = _bind_persona_service_projection(_fleet_inbox_real_persona_service())
 
     def flaky(persona, **kwargs):
         if persona["persona_id"] == "p-bad":

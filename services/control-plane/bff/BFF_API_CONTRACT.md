@@ -1029,6 +1029,6 @@ resumed in place at startup, so the same item reaches a terminal state.
 ### Management NL persona_fleet and human inbox context (BFF-AI-FLEET-INBOX-20261107)
 
 - `POST /bff/management/nl/ask` and `POST /bff/management/nl/ask/stream` run `_mgmt_nl_collect_context` in a worker thread with the authenticated caller identity; both routes receive the same persona_fleet and inbox context.
-- persona_fleet projects each persona with the app-scoped `PersonaService` bound as the current service (wired through `wire_management_runtime_projections(persona_service=...)`), the same binding `PersonaService.build_persona_health_items` uses. No module global or second persona projection is added.
+- persona_fleet projects each persona with the app-scoped `PersonaService` bound as the current service (bound by the `project_persona_fleet_item` callback that `main.py` passes to `wire_management_runtime_projections`), the same binding `PersonaService.build_persona_health_items` uses. No module global or second persona projection is added.
 - A persona whose projection raises is reported as an unavailable item with an owner observation `degradation_reason=persona_projection_failed:<ExceptionClass>`; other personas still project. The persona_fleet error branch logs one warning with the exception class.
 - The cockpit human inbox count reads `data.items` of the wired human inbox payload and passes the caller identity, so `human_inbox_summary.total` and the `approval_queue` surface follow the inbox read for the same caller.

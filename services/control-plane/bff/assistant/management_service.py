@@ -2393,23 +2393,13 @@ def _project_persona_fleet_item_impl(
     strategies, strategies_obs = ctx_svc.get_context_strategies_for_persona(
         persona_id, record_filter=record_filter
     )
-    # Same binding build_persona_health_items uses: the source-health overlay
-    # in _project_persona_dto requires the app-scoped PersonaService to be the
-    # current one.
-    from ..personas.service import _current_persona_service
-    persona_service = get_persona_service()
-    service_token = (
-        _current_persona_service.set(persona_service)
-        if persona_service is not None
-        else None
+    # The source-health overlay in _project_persona_dto reads the current
+    # PersonaService ContextVar; the wired project_persona_fleet_item callback
+    # (main.py) binds the app-scoped instance exactly as
+    # PersonaService.build_persona_health_items does.
+    persona_dto = _project_persona_dto(
+        raw_persona, overlay=None, routed_strategies=len(strategies)
     )
-    try:
-        persona_dto = _project_persona_dto(
-            raw_persona, overlay=None, routed_strategies=len(strategies)
-        )
-    finally:
-        if service_token is not None:
-            _current_persona_service.reset(service_token)
 
     bindings, bindings_obs = ctx_svc.get_context_bindings_for_persona(
         persona_id, record_filter=record_filter
@@ -2585,19 +2575,6 @@ def _project_persona_fleet_item_impl(
     item["owner_observations"] = owner_observations
     return item, owner_observations
 
-
-_PERSONA_SERVICE: Optional[Any] = None
-
-def set_persona_service(service: Optional[Any]) -> None:
-    """Hold the app-scoped PersonaService wired by the composition root."""
-    global _PERSONA_SERVICE
-    _PERSONA_SERVICE = service
-
-def reset_persona_service() -> None:
-    set_persona_service(None)
-
-def get_persona_service() -> Optional[Any]:
-    return _PERSONA_SERVICE
 
 _PROJECT_PERSONA_FLEET_ITEM_FN: Optional[Callable[..., Tuple[Dict[str, Any], List[Dict[str, Any]]]]] = None
 
@@ -3078,7 +3055,6 @@ def wire_management_runtime_projections(
     control_loops_service: Optional[Any] = None,
     sse_buffers: Optional[Dict[str, deque]] = None,
     sse_subscribers: Optional[Dict[str, list]] = None,
-    persona_service: Optional[Any] = None,
 ) -> None:
     """Wire management projections, setters, and audit/SSE stores.
 
@@ -3121,8 +3097,6 @@ def wire_management_runtime_projections(
         set_assistant_control_mode_store(assistant_control_mode_store)
     if control_loops_service is not None:
         set_control_loops_service(control_loops_service)
-    if persona_service is not None:
-        set_persona_service(persona_service)
     if sse_buffers is not None:
         register_sse_buffers(sse_buffers, sse_subscribers)
 
