@@ -1121,6 +1121,9 @@ def test_recorded_outcome_uses_one_connection_and_closes_it(tmp_path, monkeypatc
     window = monitor.record_downstream_outcome(
         target_name="telemetry", ok=False, status_code=503, detail="HTTP 503"
     )
+    # The request thread opens no connection; the monitor flush uses one.
+    assert opened == []
+    monitor.flush_outcomes_sync()
 
     assert len(opened) == 1
     assert all(_is_closed(c) for c in opened)
@@ -1289,3 +1292,200 @@ def test_durable_write_failure_still_propagates(tmp_path, monkeypatch):
     )
     with pytest.raises(RuntimeError, match="disk full"):
         _run(monitor._handle_probe_result(result))
+
+
+# --- BFF-HEALTH-OUTCOME-OFF-REQUEST-20261107 -------------------------------
+
+
+def _reg_monitor(tmp_path, **kwargs) -> DownstreamHealthMonitor:
+    monitor = _io_monitor(tmp_path, **kwargs)
+    monitor._resolve_target_registry = lambda: {"telemetry": object()}  # type: ignore[assignment]
+    return monitor
+
+
+def _hold_write_lock(path: str, seconds: float):
+    import sqlite3
+    import threading
+
+    locked = threading.Event()
+    release = threading.Event()
+
+    def _run() -> None:
+        connection = sqlite3.connect(path, isolation_level=None)
+        connection.execute("BEGIN IMMEDIATE")
+        locked.set()
+        release.wait(seconds)
+        connection.rollback()
+        connection.close()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    assert locked.wait(5)
+    return thread, release
+
+
+def test_request_thread_outcome_does_not_wait_on_health_write_lock(tmp_path):
+    import time
+
+    monitor = _reg_monitor(tmp_path)
+    thread, release = _hold_write_lock(monitor.state_path, 3.0)
+    try:
+        started = time.perf_counter()
+        for _ in range(10):
+            monitor.record_downstream_outcome(
+                target_name="telemetry", ok=True, status_code=200, latency_ms=5.0
+            )
+        per_call_ms = (time.perf_counter() - started) * 1000 / 10
+    finally:
+        release.set()
+        thread.join(5)
+    assert per_call_ms < 20
+
+
+def test_flushed_outcomes_equal_sum_of_recorded_samples(tmp_path):
+    monitor = _reg_monitor(tmp_path)
+    ts = "2026-11-07T10:00:%02dZ"
+    expected_latency = 0.0
+    for i in range(7):
+        ok = i % 3 != 0
+        latency = 10.0 + i
+        expected_latency += latency
+        monitor.record_downstream_outcome(
+            target_name="telemetry",
+            ok=ok,
+            status_code=200 if ok else 503,
+            latency_ms=latency,
+            detail=None if ok else "HTTP 503",
+            observed_at=ts % i,
+        )
+    assert monitor._store.list_probes() == {}
+    monitor.flush_outcomes_sync()
+    window = monitor._store.append_error_sample(
+        target_name="telemetry",
+        window_started_at=_window_start_for(monitor, ts % 0),
+        ok=True,
+        latency_ms=0.0,
+        status_code=200,
+        detail=None,
+        observed_at=ts % 9,
+    )
+    assert window["sample_count"] == 8
+    assert window["failure_count"] == 3
+    assert window["latency_total_ms"] == pytest.approx(expected_latency)
+    probe = monitor._store.get_probe("telemetry")
+    # Last recorded sample (i=6) was a failure.
+    assert probe is not None and probe.ok is False and probe.consecutive_failures == 1
+
+
+def _window_start_for(monitor: DownstreamHealthMonitor, ts: str) -> str:
+    from services.control_plane.bff.downstream_health_monitor import _window_start
+
+    return _window_start(ts, monitor._error_rate_window)
+
+
+def test_failure_run_counts_consecutive_failures_across_flushes(tmp_path):
+    monitor = _reg_monitor(tmp_path)
+    for _ in range(3):
+        monitor.record_downstream_outcome(
+            target_name="telemetry", ok=False, status_code=503, detail="x"
+        )
+    monitor.flush_outcomes_sync()
+    monitor.record_downstream_outcome(
+        target_name="telemetry", ok=False, status_code=503, detail="x"
+    )
+    monitor.flush_outcomes_sync()
+    assert monitor._store.get_probe("telemetry").consecutive_failures == 4
+
+
+def test_threshold_crossing_emits_once_from_flush_never_asyncio_run(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import threading
+
+    monitor = _reg_monitor(
+        tmp_path,
+        error_rate_window_seconds=300,
+        error_rate_threshold=0.5,
+        error_rate_min_samples=3,
+    )
+    emitted: List[Any] = []
+
+    async def _emit(*, target_name, window):
+        emitted.append((threading.current_thread().name, target_name, window))
+
+    monitor._emit_error_rate_window = _emit  # type: ignore[assignment]
+    runs: List[Any] = []
+    real_run = asyncio.run
+    monkeypatch.setattr(asyncio, "run", lambda *a, **k: runs.append(a) or real_run(*a, **k))
+
+    def _request_thread() -> None:
+        for _ in range(4):
+            monitor.record_downstream_outcome(
+                target_name="telemetry",
+                ok=False,
+                status_code=503,
+                detail="boom",
+                observed_at="2026-11-07T10:00:01Z",
+            )
+
+    t = threading.Thread(target=_request_thread)
+    t.start()
+    t.join()
+    assert runs == [] and emitted == []
+
+    async def _drive() -> None:
+        await monitor.flush_outcomes()
+        monitor.record_downstream_outcome(
+            target_name="telemetry",
+            ok=False,
+            status_code=503,
+            observed_at="2026-11-07T10:00:02Z",
+        )
+        await monitor.flush_outcomes()
+
+    real_run(_drive())
+    assert runs == []
+    assert len(emitted) == 1
+    assert emitted[0][2]["sample_count"] == 4
+
+
+def test_locked_flush_keeps_samples_and_pending_is_bounded(tmp_path):
+    monitor = _reg_monitor(tmp_path, pending_outcome_max=5)
+    for i in range(8):
+        monitor.record_downstream_outcome(
+            target_name="telemetry",
+            ok=False,
+            status_code=503,
+            latency_ms=2.0,
+            observed_at="2026-11-07T10:00:01Z",
+        )
+    stats = monitor.pending_outcome_stats()
+    assert stats["pending_samples"] == 5 and stats["dropped_samples"] == 3
+
+    monitor._store.flush_outcomes = lambda **kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+        __import__("sqlite3").OperationalError("database is locked")
+    )
+    assert monitor.flush_outcomes_sync() == []
+    assert monitor.pending_outcome_stats()["pending_samples"] == 5
+    assert monitor.pending_outcome_stats()["flush_failures"] == 1
+    monitor.record_downstream_outcome(
+        target_name="telemetry", ok=True, status_code=200,
+        observed_at="2026-11-07T10:00:02Z",
+    )
+    # Still at the bound: the new sample is dropped and counted, not blocked.
+    assert monitor.pending_outcome_stats()["pending_samples"] == 5
+    assert monitor.pending_outcome_stats()["dropped_samples"] == 4
+
+    del monitor._store.flush_outcomes
+    monitor.flush_outcomes_sync()
+    window = monitor._store.append_error_sample(
+        target_name="telemetry",
+        window_started_at=_window_start_for(monitor, "2026-11-07T10:00:01Z"),
+        ok=True, latency_ms=0.0, status_code=200, detail=None,
+        observed_at="2026-11-07T10:00:03Z",
+    )
+    assert window["sample_count"] == 6 and window["failure_count"] == 5
+    del monitor._resolve_target_registry
+    state = monitor.get_state()
+    assert state["pending_outcomes"]["dropped_samples"] == 4
