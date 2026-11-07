@@ -548,3 +548,150 @@ class TestUnifiedReadSurfacePorts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _patch_evolution_decisions(monkeypatch, tenant="t-own"):
+    import urllib.error
+    from services.control_plane.bff.command_adapters import base
+
+    monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.test")
+    table = {
+        "d-own": ("t-own", "rt1"),
+        "d-own2": ("t-own", "rt2"),
+        "d-x": ("t-x", "rt1"),
+    }
+
+    def _evo(url, *, tenant_id=None, **_kw):
+        owner = table.get(url.rsplit("/", 1)[1])
+        if owner is None or owner[0] != tenant_id:
+            raise urllib.error.HTTPError(url, 404, "nf", {}, None)
+        return {"tenant_id": owner[0], "action_type": "force_risk_off", "target_id": owner[1]}
+
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setattr(base, "evolution_owner_request", _evo)
+    monkeypatch.setattr(owner_reads, "evolution_owner_request", _evo)
+    monkeypatch.setattr(owner_reads, "bound_tenant", lambda payload=None, tenant_id=None, auth_token=None: tenant)
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "svc-token")
+
+
+def _patch_runtime_bindings(monkeypatch, ids=("rt1",), tenant="t-own"):
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime.test")
+    monkeypatch.setattr(
+        owner_reads,
+        "http_request_json",
+        lambda url, **kw: {"bindings": [{"binding_id": i, "tenant_id": tenant} for i in ids]},
+    )
+
+
+def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
+        CompositeLifecycleTelemetryGovernancePort,
+        DomainGovernancePort,
+    )
+
+    rows = [{"rollback_id": "r1", "evolution_decision_id": "d-own", "runtime_id": "rt1", "status": "completed"}, {"rollback_id": "r2", "evolution_decision_id": "d-x", "runtime_id": "rt-legacy", "tenant_id": "t-own"}]
+    _patch_evolution_decisions(monkeypatch)
+    _patch_runtime_bindings(monkeypatch)
+    calls = []
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
+    monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: "t-own")
+    monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: calls.append(url) or (rows if url.endswith("/rollbacks") else []))
+    token = owner_reads.authorization.set("Bearer tok")
+    try:
+        rsp = ReadSurfacePorts(
+            lifecycle_telemetry_governance=CompositeLifecycleTelemetryGovernancePort(
+                governance_port=DomainGovernancePort(owner_reads=True)
+            )
+        )
+        assert [r["rollback_id"] for r in rsp.list_all_rollbacks()] == ["r1"]
+        assert rsp.dataset_source("all_rollbacks") == "unavailable"  # foreign-or-unknown 404 with own claim stays unresolved
+        assert rsp.dataset_source("freeze_orders") == "service"
+    finally:
+        owner_reads.authorization.reset(token)
+    assert any(u.endswith("/api/governance/rollbacks") for u in calls)
+
+
+def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(monkeypatch):
+    import pytest
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    rows = [
+        {"rollback_id": "r1", "evolution_decision_id": "d-own", "runtime_id": "rt1", "status": "completed"},
+        {"rollback_id": "r2", "evolution_decision_id": "d-own2", "runtime_id": "rt2"},
+        {"rollback_id": "r3", "evolution_decision_id": "d-x", "runtime_id": "rt-legacy"},
+        {"rollback_id": "r4", "tenant_id": "t-own", "runtime_id": "rt-legacy"},
+    ]
+    _patch_evolution_decisions(monkeypatch)
+    _patch_runtime_bindings(monkeypatch, ("rt1", "rt2"))
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
+    monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: "t-own")
+    monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: rows)
+    token = owner_reads.authorization.set("Bearer tok")
+    try:
+        rsp = ReadSurfacePorts()
+        # Unresolved siblings (r3/r4) keep verified r1 visible but non-healthy.
+        partial = rsp.get_rollbacks("rt1")
+        assert [r["rollback_id"] for r in partial] == ["r1"]
+        assert partial[0]["status"] == "completed"
+        assert rsp.list_all_rollbacks()[0]["status"] == partial[0]["status"]
+        from services.control_plane.bff.management_read_models.service import ManagementService
+
+        mrows, obs = ManagementService(read_store=rsp).get_context_rollbacks("rt1")
+        assert [r["rollback_id"] for r in mrows] == ["r1"]
+        assert mrows[0]["status"] == "completed"
+        assert obs["status"] == "degraded", obs
+        assert obs["degradation_reason"]
+        # Canonical status survives into the existing runtime projection too.
+        from services.control_plane.bff.management_read_models.service import _project_runtime_state_latest_rollback
+
+        assert _project_runtime_state_latest_rollback(mrows)["status"] == "completed"
+        # Partial provenance is reported by the owner dataset source, not by rewriting status.
+        assert rsp.dataset_source("all_rollbacks") == "unavailable"
+        # Nothing verified for a runtime while siblings are unresolved is not a healthy zero.
+        with pytest.raises(RuntimeError):
+            rsp.get_rollbacks("rt-none")
+        assert [r["rollback_id"] for r in rsp.list_all_rollbacks()] == ["r1", "r2"]
+        monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: rows[:2])
+        assert [r["rollback_id"] for r in rsp.get_rollbacks("rt1")] == ["r1"]
+        assert sorted(r["rollback_id"] for r in rsp.get_rollbacks()) == ["r1", "r2"]
+        # Fully verified owner read is healthy again (rows + observation agree).
+        hrows, hobs = ManagementService(read_store=rsp).get_context_rollbacks("rt1")
+        assert [r["rollback_id"] for r in hrows] == ["r1"]
+        assert hobs["status"] == "ok", hobs
+
+        def _boom(url, **kw):
+            raise TimeoutError("owner timeout")
+
+        monkeypatch.setattr(command_executor, "_get_json", _boom)
+        with owner_reads.request_read_scope():
+            with pytest.raises(Exception):
+                rsp.get_rollbacks()
+    finally:
+        owner_reads.authorization.reset(token)
+
+
+def test_rsp_get_rollbacks_has_no_loop_runs_fallback_on_narrow_port():
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    def _legacy_loop_runs():
+        raise AssertionError("retired loop_runs rollback route must not execute")
+
+    rsp = ReadSurfacePorts.__new__(ReadSurfacePorts)
+    rsp.lifecycle_telemetry_governance = SimpleNamespace(
+        list_loop_runs=_legacy_loop_runs,
+        list_all_rollbacks=lambda runtime_id=None, **kw: [
+            {"rollback_id": "rb-1", "runtime_id": "rt1", "status": "completed"}
+        ],
+    )
+    assert [r["rollback_id"] for r in rsp.get_rollbacks("rt1")] == ["rb-1"]
