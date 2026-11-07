@@ -5,7 +5,7 @@
   "root_cause": "BFF _retrieve_canonical_persona_memory called Memory /api/memory/retrieve with no Authorization or tenant header; Memory runs PANTHEON_MEMORY_AUTH_MODE=strict and returned 401 (surfaced as memory_plane_access_denied) for all cohort personas.",
   "fix": {
     "bff": "Forward the caller's verified Bearer credential and bound tenant (X-Tenant-Id via bound_tenant) to Memory; actor_roles query is sent empty so Memory derives roles from the verified token only. Missing auth / unbound tenant yield explicit unavailable reasons without calling Memory. No empty fallback; failures stay degraded with memory_source.reason.",
-    "memory": "retrieve now drops persona entries stamped with a tenant different from the verified token tenant."
+    "memory": "No Memory source change (outside task artifact contract). Memory already enforces strict JWT, token-role subset and tenant on write; persona-entry tenant filtering on retrieve is a recommended follow-up (services/memory/main.py)."
   },
   "deployed_config_prerequisites": [
     "Memory and BFF must validate the same operator JWT: PANTHEON_MEMORY_JWT_SECRET/ISSUER/AUDIENCE default to PANTHEON_BFF_JWT_* in docker-compose.yml (already wired); no new issuer or role grants required.",
@@ -14,8 +14,7 @@
   "regression_tests": [
     "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_bff_persona_memory_reads_canonical_memory_plane",
     "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_bff_persona_memory_denied_stays_explicit",
-    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_bff_persona_memory_unbound_tenant_never_calls_memory",
-    "services/memory/test_persona_retrieve_auth.py"
+    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_bff_persona_memory_unbound_tenant_never_calls_memory"
   ],
-  "test_result": "services/memory + bff b2 facade + kw01: 147 passed, 1 skipped"
+  "test_result": "bff b2 facade + kw01 + services/memory: all passed"
 }

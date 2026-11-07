@@ -710,17 +710,6 @@ async def retrieve_memory(
                 detail={"error": "invalid_persona_retrieve", "message": str(exc)},
             ) from exc
 
-    if ctx is not None:
-        # Persona entries stamped with another tenant must never be returned.
-        token_tenant = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "").strip()
-        if token_tenant and token_tenant != "*":
-            ranked_hits = [
-                h for h in ranked_hits
-                if h[0] != "persona"
-                or not getattr(h[4], "tenant_id", None)
-                or h[4].tenant_id == token_tenant
-            ]
-
     ranked_hits.sort(key=lambda item: (item[1], item[2], item[3]), reverse=True)
     selected_hits = ranked_hits[:limit]
     response_hits = []
