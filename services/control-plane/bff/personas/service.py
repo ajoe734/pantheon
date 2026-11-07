@@ -15298,6 +15298,16 @@ class PersonaService:
         }
         return result
 
+    def ensure_paper_advisory_admission(self, persona_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
+        """Owner-backed persona_opinion-only snapshot + explicit paper ceiling."""
+        from .reconciliation import PersonaAdvisoryAdmissionError, PersonaAdvisoryAdmissionPort
+
+        if self._write_owner is None or not hasattr(self._write_owner, "update_persona"):
+            raise PersonaAdvisoryAdmissionError("persona_write_owner_unavailable")
+        return PersonaAdvisoryAdmissionPort(persona_mutation_port=self._write_owner).ensure(
+            persona_id, raw, generated_at=self._utc_now()
+        )
+
     def persist_terminal_transition(
         self,
         persona_id: str,
