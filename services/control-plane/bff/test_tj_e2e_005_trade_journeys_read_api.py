@@ -1547,5 +1547,57 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
             == "partial"
         )
 
+    for contra_extra in (
+        {"broker_order_id": "broker-real"},
+        {"broker_trade_id": "trade-real"},
+        {"ledger_entry_id": "ledger-real"},
+        {"reconciliation_id": "recon-real"},
+        {"fill_id": "fill-real"},
+        {"filled_quantity": "invalid"},
+        {"metadata": {"broker_order_id": "broker-nested"}},
+        {"metadata": {"fill_id": "fill-nested"}},
+        {"metadata": {"filled_quantity": "invalid"}},
+        {"metrics": {"reconciliation_id": "recon-nested"}},
+        {"metrics": {"fill_quantity": "invalid"}},
+        {"metrics": {"submitted_to_broker": True}},
+    ):
+        contra_tl = [
+            {
+                **_event(
+                    "contra-id-o",
+                    "tj_contra_id",
+                    "order_submission",
+                    "skipped",
+                    3,
+                    tenant="tenant-dev",
+                    event_type="paper_order_simulated",
+                    decision_status="no_order",
+                    order_status="not_submitted",
+                    reason_code="hold_signal",
+                    quantity=0.0,
+                    submitted_to_broker=False,
+                    broker_order_id=None,
+                    client_order_id=None,
+                ),
+                **contra_extra,
+            }
+        ]
+        eff_snap, _ = tj._effective_snapshot_and_diagnostics(
+            persisted_no_order_snapshot,
+            empty_timeline_diagnostics,
+            contra_tl,
+        )
+        assert "risk_evaluation" not in eff_snap["stages"]
+        assert "risk_evaluation" in eff_snap["completeness"]["missing_stages"]
+        assert (
+            tj._read_state(
+                persisted_no_order_snapshot,
+                empty_timeline_diagnostics,
+                contra_tl,
+            )
+            == "partial"
+        )
+
+
 
 

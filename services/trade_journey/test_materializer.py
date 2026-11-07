@@ -285,5 +285,72 @@ def test_missing_upstream_decision_or_unverified_submission_keeps_risk_missing()
         assert "risk_evaluation" not in contra_proj.snapshot["stages"]
         assert "risk_evaluation" in contra_proj.snapshot["completeness"]["missing_stages"]
 
+    for idx, contra_extra in enumerate(
+        [
+            {"broker_order_id": "broker-real"},
+            {"broker_trade_id": "trade-real"},
+            {"ledger_entry_id": "ledger-real"},
+            {"reconciliation_id": "recon-real"},
+            {"fill_id": "fill-real"},
+            {"filled_quantity": "invalid"},
+            {"metadata": {"broker_order_id": "broker-nested"}},
+            {"metadata": {"fill_id": "fill-nested"}},
+            {"metadata": {"filled_quantity": "invalid"}},
+            {"metrics": {"reconciliation_id": "recon-nested"}},
+            {"metrics": {"fill_quantity": "invalid"}},
+            {"metrics": {"submitted_to_broker": True}},
+        ],
+        start=1,
+    ):
+        for mode_name, sub_event in (
+            (
+                "noop",
+                event(
+                    "o",
+                    "order_submission",
+                    "skipped",
+                    3,
+                    event_type="paper_order_simulated",
+                    decision_status="no_order",
+                    order_status="not_submitted",
+                    reason_code="hold_signal",
+                    quantity=0.0,
+                    submitted_to_broker=False,
+                    **contra_extra,
+                ),
+            ),
+            (
+                "reject",
+                event(
+                    "o",
+                    "order_submission",
+                    "failed",
+                    3,
+                    event_type="order_rejection",
+                    reason_code="sell_without_holdings",
+                    quantity=0.0,
+                    submitted_to_broker=False,
+                    **contra_extra,
+                ),
+            ),
+        ):
+            contra_mat = JourneyMaterializer()
+            contra_mat.rebuild([
+                event("s", "signal_generation", "succeeded", 1, signal_id=f"sig-c-{mode_name}-{idx}"),
+                event(
+                    "d",
+                    "trade_decision",
+                    "skipped" if mode_name == "noop" else "succeeded",
+                    2,
+                    decision_id=f"dec-c-{mode_name}-{idx}",
+                    decision_status="no_order" if mode_name == "noop" else "succeeded",
+                ),
+                sub_event,
+            ])
+            c_proj = contra_mat.get("tj_1", tenant_id="tenant-a", environment="paper")
+            assert "risk_evaluation" not in c_proj.snapshot["stages"]
+            assert "risk_evaluation" in c_proj.snapshot["completeness"]["missing_stages"]
+
+
 
 

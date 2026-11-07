@@ -2150,4 +2150,76 @@ def test_retained_root42397678868_sell_without_holdings_and_no_order_project_com
         assert contra_sub_stage["submitted_to_broker"] is submitted
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"broker_order_id": "broker-real"},
+        {"broker_trade_id": "trade-real"},
+        {"ledger_entry_id": "ledger-real"},
+        {"reconciliation_id": "recon-real"},
+        {"fill_id": "fill-real"},
+        {"filled_quantity": "invalid"},
+        {"fill_quantity": "invalid"},
+        {"quantity": "invalid"},
+    ],
+)
+@pytest.mark.parametrize("location", ["metadata", "metrics"])
+@pytest.mark.parametrize("terminal_kind", ["no_trade", "sell_without_holdings"])
+def test_projector_preserves_contradictory_nonfill_identifiers_and_quantities(
+    extra: dict[str, object],
+    location: str,
+    terminal_kind: str,
+) -> None:
+    from services.control_plane.bff import trade_journeys as tj
+
+    rows = lifecycle_rows()[:3]
+    for row in rows:
+        for key in ("client_order_id", "order_id", "reconciliation_id"):
+            row["payload"]["metadata"].pop(key, None)
+    if terminal_kind == "no_trade":
+        rows[1]["payload"]["metadata"]["decision_status"] = "no_order"
+        rows[2]["event_type"] = rows[2]["payload"]["event_type"] = "paper_order_simulated"
+        rows[2]["payload"]["metadata"].update(
+            order_status="not_submitted",
+            decision_status="no_order",
+            noop_reason="hold_signal",
+        )
+    else:
+        rows[2]["event_type"] = rows[2]["payload"]["event_type"] = "order_rejection"
+        rows[2]["payload"]["metadata"].update(
+            reason="sell_without_holdings",
+            reject_reason="sell_without_holdings",
+            broker_submission_status="sell_without_holdings",
+            submitted_to_broker=False,
+        )
+    rows[2]["payload"]["metrics"] = {"fill_quantity": 0, "submitted_to_broker": False}
+    rows[2]["payload"][location].update(extra)
+
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store,
+        deployment_sha="independent-review",
+        clock=lambda: "2026-07-15T00:00:10Z",
+    )
+    result = projector.project_records(rows, mode="live", source_high_watermark=3)
+    assert result.accepted == 3
+    mutation = store.mutations[-1]
+    assert "risk_evaluation" not in mutation.journeys[0].stage_coverage
+    projected_events = [s.contract_fields for s in mutation.stages]
+    projected_submission = next(
+        e for e in projected_events if e["stage"] == "order_submission"
+    )
+    for field_name, expected_val in extra.items():
+        assert projected_submission.get(field_name) == expected_val
+    materializer = JourneyMaterializer()
+    materializer.rebuild(projected_events)
+    proj = materializer.get("tj-paper-001", tenant_id="tenant-a", environment="paper")
+    assert proj is not None
+    assert "risk_evaluation" not in proj.snapshot["stages"]
+    assert "risk_evaluation" in proj.snapshot["completeness"]["missing_stages"]
+    read_state = tj._read_state(proj.snapshot, proj.diagnostics, proj.timeline)
+    assert read_state == "partial"
+
+
+
 

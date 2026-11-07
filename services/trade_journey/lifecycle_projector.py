@@ -189,6 +189,7 @@ _PASSTHROUGH_FIELDS = (
     "client_order_id",
     "order_id",
     "broker_order_id",
+    "fill_id",
     "broker_trade_id",
     "ledger_entry_id",
     "reconciliation_id",
@@ -918,44 +919,67 @@ class RelationalLifecycleProjector:
                 metadata.get("submitted_to_broker"),
                 metrics_map.get("submitted_to_broker"),
             )
-            if any(flag is True for flag in broker_flags):
+            if any(flag is not None and flag is not False for flag in broker_flags):
                 submitted_to_broker: bool | None = True
-            elif any(flag is not None for flag in broker_flags):
-                submitted_to_broker = bool(_first(*broker_flags))
+            elif any(flag is False for flag in broker_flags):
+                submitted_to_broker = False
             else:
                 submitted_to_broker = None
             nonzero_fill_qty: Any = None
             has_invalid_qty = False
-            for raw_qty in (
-                metrics_map.get("fill_quantity"),
-                metrics_map.get("filled_quantity"),
-                source.get("quantity"),
-                metadata.get("quantity"),
-                source.get("fill_quantity"),
-                metadata.get("fill_quantity"),
-                source.get("filled_quantity"),
-                metadata.get("filled_quantity"),
-            ):
-                if raw_qty is None:
-                    continue
-                if isinstance(raw_qty, bool):
-                    has_invalid_qty = True
-                    break
-                try:
-                    parsed_qty = float(raw_qty)
-                except (TypeError, ValueError):
-                    has_invalid_qty = True
-                    break
-                if not math.isfinite(parsed_qty):
-                    has_invalid_qty = True
-                    break
-                if parsed_qty != 0.0 and nonzero_fill_qty is None:
-                    nonzero_fill_qty = abs(raw_qty) if isinstance(raw_qty, (int, float)) else parsed_qty
+            invalid_qty_fields: dict[str, Any] = {}
+            nonzero_qty_fields: dict[str, Any] = {}
+            for qty_field in ("fill_quantity", "filled_quantity", "quantity"):
+                for container in (metrics_map, source, metadata):
+                    raw_qty = container.get(qty_field)
+                    if raw_qty is None:
+                        continue
+                    if isinstance(raw_qty, bool):
+                        has_invalid_qty = True
+                        invalid_qty_fields.setdefault(qty_field, raw_qty)
+                        continue
+                    try:
+                        parsed_qty = float(raw_qty)
+                    except (TypeError, ValueError):
+                        has_invalid_qty = True
+                        invalid_qty_fields.setdefault(qty_field, raw_qty)
+                        continue
+                    if not math.isfinite(parsed_qty):
+                        has_invalid_qty = True
+                        invalid_qty_fields.setdefault(qty_field, str(raw_qty))
+                        continue
+                    if parsed_qty != 0.0:
+                        normalized_qty = (
+                            abs(raw_qty)
+                            if isinstance(raw_qty, (int, float))
+                            else parsed_qty
+                        )
+                        nonzero_qty_fields.setdefault(qty_field, normalized_qty)
+                        if nonzero_fill_qty is None:
+                            nonzero_fill_qty = normalized_qty
+            contradictory_identifiers = {
+                id_field: id_val
+                for id_field in (
+                    "broker_order_id",
+                    "fill_id",
+                    "broker_trade_id",
+                    "ledger_entry_id",
+                    "reconciliation_id",
+                )
+                if (
+                    id_val := _first(
+                        source.get(id_field),
+                        metadata.get(id_field),
+                        metrics_map.get(id_field),
+                    )
+                )
+                is not None
+            }
             has_contradictory_fill_or_broker = (
                 submitted_to_broker is True
                 or nonzero_fill_qty is not None
                 or has_invalid_qty
-                or _first(source.get("fill_id"), metadata.get("fill_id"), metrics_map.get("fill_id")) is not None
+                or bool(contradictory_identifiers)
             )
             is_no_holdings_reject = (
                 not has_contradictory_fill_or_broker
@@ -1011,20 +1035,16 @@ class RelationalLifecycleProjector:
                     or explicit_noop_reason is not None
                 )
             )
-            strip_order_identifiers = is_no_holdings_reject or is_explicit_no_trade
             for field in _PASSTHROUGH_FIELDS:
-                if strip_order_identifiers and field in {
-                    "client_order_id",
-                    "order_id",
-                    "broker_order_id",
-                    "broker_trade_id",
-                    "ledger_entry_id",
-                    "reconciliation_id",
-                }:
-                    continue
-                value = _first(source.get(field), metadata.get(field))
+                value = _first(
+                    source.get(field),
+                    metadata.get(field),
+                    metrics_map.get(field),
+                )
                 if value is not None:
                     event[field] = value
+            if contradictory_identifiers:
+                event.update(contradictory_identifiers)
             if submitted_to_broker is not None:
                 event["submitted_to_broker"] = submitted_to_broker
             if is_no_holdings_reject:
@@ -1058,6 +1078,7 @@ class RelationalLifecycleProjector:
                 event["quantity"] = 0.0
             elif (
                 source.get("event_type") == "trade_decision"
+                and not has_contradictory_fill_or_broker
                 and _stage_status(metadata.get("decision_status") or "succeeded")
                 == "skipped"
             ):
@@ -1072,8 +1093,6 @@ class RelationalLifecycleProjector:
                 )
                 if decision_reason is not None:
                     event["reason_code"] = str(decision_reason)
-            if not strip_order_identifiers and nonzero_fill_qty is not None and event.get("quantity") in (None, 0, 0.0):
-                event["quantity"] = nonzero_fill_qty
             if source.get("event_type") == FIXTURE_EVENT_TYPE:
                 for field in FIXTURE_PASSTHROUGH_FIELDS:
                     value = fixture_payload.get(field)
@@ -1084,6 +1103,14 @@ class RelationalLifecycleProjector:
                 quantity = _first(metrics.get("fill_quantity"), source.get("position_qty"))
                 if quantity is not None:
                     event["quantity"] = abs(quantity) if isinstance(quantity, (int, float)) else quantity
+            if (
+                not (is_no_holdings_reject or is_explicit_no_trade)
+                and nonzero_fill_qty is not None
+                and event.get("quantity") in (None, 0, 0.0)
+            ):
+                event["quantity"] = nonzero_fill_qty
+            if invalid_qty_fields:
+                event.update(invalid_qty_fields)
             if "price" not in event and _clean(metrics.get("fill_price")) is not None:
                 event["price"] = metrics["fill_price"]
             result.append({key: value for key, value in event.items() if value is not None})

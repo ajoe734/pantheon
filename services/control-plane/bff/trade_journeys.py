@@ -406,15 +406,18 @@ def _projection_reader_meta(
     }
 
 
-def _is_nonfill_unsubmitted_event(item: Mapping[str, Any]) -> bool:
+def _is_nonfill_unsubmitted_event(
+    item: Mapping[str, Any], *, check_quantity_zero: bool = True
+) -> bool:
     metrics = item.get("metrics") if isinstance(item.get("metrics"), Mapping) else {}
     metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
-    if (
-        item.get("submitted_to_broker") is True
-        or metrics.get("submitted_to_broker") is True
-        or metadata.get("submitted_to_broker") is True
+    for flag in (
+        item.get("submitted_to_broker"),
+        metrics.get("submitted_to_broker"),
+        metadata.get("submitted_to_broker"),
     ):
-        return False
+        if flag is not None and flag is not False:
+            return False
     for field in (
         "broker_order_id",
         "fill_id",
@@ -422,10 +425,13 @@ def _is_nonfill_unsubmitted_event(item: Mapping[str, Any]) -> bool:
         "ledger_entry_id",
         "reconciliation_id",
     ):
-        if item.get(field) or metadata.get(field) or metrics.get(field):
+        if (
+            item.get(field) not in (None, "", [], {})
+            or metadata.get(field) not in (None, "", [], {})
+            or metrics.get(field) not in (None, "", [], {})
+        ):
             return False
     for raw_qty in (
-        item.get("quantity"),
         item.get("fill_quantity"),
         item.get("filled_quantity"),
         metrics.get("fill_quantity"),
@@ -442,6 +448,23 @@ def _is_nonfill_unsubmitted_event(item: Mapping[str, Any]) -> bool:
         except (TypeError, ValueError):
             return False
         if parsed_qty != 0.0 or parsed_qty != parsed_qty or parsed_qty in (float("inf"), float("-inf")):
+            return False
+    for raw_qty in (
+        item.get("quantity"),
+        metrics.get("quantity"),
+        metadata.get("quantity"),
+    ):
+        if raw_qty is None:
+            continue
+        if isinstance(raw_qty, bool):
+            return False
+        try:
+            parsed_qty = float(raw_qty)
+        except (TypeError, ValueError):
+            return False
+        if parsed_qty != parsed_qty or parsed_qty in (float("inf"), float("-inf")):
+            return False
+        if check_quantity_zero and parsed_qty != 0.0:
             return False
     return True
 
@@ -480,15 +503,10 @@ def _effective_snapshot_and_diagnostics(
         )
     ):
         return dict(snapshot), diag_list
-    if any(
+    if not all(
         isinstance(item, Mapping)
-        and (
-            item.get("submitted_to_broker") is True
-            or item.get("broker_order_id")
-            or item.get("fill_id")
-            or item.get("broker_trade_id")
-            or item.get("ledger_entry_id")
-            or item.get("reconciliation_id")
+        and _is_nonfill_unsubmitted_event(
+            item, check_quantity_zero=(item.get("stage") == "order_submission")
         )
         for item in (timeline or ())
     ):
@@ -505,9 +523,7 @@ def _effective_snapshot_and_diagnostics(
         if isinstance(item, Mapping) and item.get("stage") == "order_submission"
     ]
     inferred_status: Optional[str] = None
-    if submission_events and all(
-        _is_nonfill_unsubmitted_event(item) for item in submission_events
-    ):
+    if submission_events:
         if (
             order_status == "skipped"
             and all(item.get("event_type") == "paper_order_simulated" for item in submission_events)

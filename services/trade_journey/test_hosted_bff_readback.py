@@ -941,7 +941,12 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
     }
 
     class RetainedStoredRowReader(StubProjectionReader):
-        def __init__(self, *, include_reason: bool = True) -> None:
+        def __init__(
+            self,
+            *,
+            include_reason: bool = True,
+            submission_extra: Optional[Dict[str, Any]] = None,
+        ) -> None:
             super().__init__(
                 identity=retained_identity,
                 events=retained_events,
@@ -949,6 +954,7 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
                 loop_status="failed",
             )
             self.include_reason = include_reason
+            self.submission_extra = dict(submission_extra or {})
 
         def get_journey(
             self,
@@ -1002,6 +1008,11 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
                     "input_refs": [],
                     "output_refs": [],
                     "policy_refs": [],
+                    **(
+                        self.submission_extra
+                        if event["event_type"] == "order_rejection"
+                        else {}
+                    ),
                 }
                 for event in self.events
             ]
@@ -1122,5 +1133,35 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
     )
     assert bad_code == 1
     assert bad_artifact["failure"]["code"] == "bff_journey_truth_invalid"
+
+    # 3. Contradictory broker/fill/ledger/reconciliation identifiers or invalid
+    # quantities on a sell_without_holdings rejection remain partial and fail closed.
+    for idx, contra_extra in enumerate(
+        [
+            {"broker_order_id": "broker-real"},
+            {"fill_id": "fill-real"},
+            {"filled_quantity": "invalid"},
+            {"metadata": {"reconciliation_id": "recon-nested"}},
+            {"metrics": {"fill_quantity": "invalid"}},
+        ],
+        start=1,
+    ):
+        contra_output = tmp_path / f"contra-readback-{idx}.json"
+        contra_code, contra_artifact = readback.execute_readback(
+            source_path=source,
+            output=contra_output,
+            expected_sha=f6_sha,
+            base_url=BASE_URL,
+            client_id="client-id",
+            client_secret="client-secret",
+            client=build_app(
+                RetainedStoredRowReader(
+                    include_reason=True, submission_extra=contra_extra
+                )
+            ),
+        )
+        assert contra_code == 1
+        assert contra_artifact["failure"]["code"] == "bff_journey_truth_invalid"
+
 
 
