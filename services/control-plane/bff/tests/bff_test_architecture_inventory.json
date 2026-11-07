@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 395,
+  "total_test_files": 396,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -2893,6 +2893,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "BFF-JOBS-LIST-NEWEST-FIRST-20261106 regression coverage for GET /bff/jobs cross-source newest-first ordering by started_at falling back to created_at, id tie-break, no-time last, pagination stability, and filter/diagnostic preservation; never imports main"
+    },
+    {
+      "file": "tests/test_human_inbox_owner_filtered_reads.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "HUMAN-INBOX-OWNER-FILTERED-READ-20261107 regression coverage for Human Inbox pending approval and decidable evolution owner filtered reads, prewarm deduplication, bounded linked terminal plan decision lookup, and 575/446 hosted-scale parity; never imports main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,

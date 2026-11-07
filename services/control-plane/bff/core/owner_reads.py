@@ -352,6 +352,83 @@ def approval_records():
     return cached_owner_call(("approval_records", authorization.get(), selected_tenant.get()), lambda: approval_owner.list_decisions(authorization.get()))
 
 
+_DEFAULT_APPROVAL_RECORDS = approval_records
+
+DECIDABLE_EVOLUTION_STATES: tuple[str, ...] = ("reviewed", "under_review", "in_review")
+DECIDABLE_EVOLUTION_QUERY_PATH = "/api/evolution/proposals?decision_state=reviewed,under_review,in_review"
+
+
+def pending_approval_records():
+    if approval_records is not _DEFAULT_APPROVAL_RECORDS:
+        return [
+            r
+            for r in (approval_records() or [])
+            if str(r.get("decision_state") or r.get("state") or r.get("status") or "").strip().lower()
+            in {"proposed", "under_review", "reviewed", "pending", "in_review"}
+        ]
+    if not authorization.get():
+        raise RuntimeError("Governance reads require the caller's authorization")
+    return cached_owner_call(
+        ("pending_approval_records", authorization.get(), selected_tenant.get()),
+        lambda: approval_owner.list_decisions(
+            authorization.get(),
+            pending_only=True,
+            owner_decision_states=approval_owner.OWNER_PENDING_DECISION_STATES,
+        ),
+    )
+
+
+def approval_records_by_ids(decision_ids):
+    clean_ids = tuple(
+        dict.fromkeys(
+            clean
+            for raw in (decision_ids or ())
+            for part in str(raw or "").split(",")
+            if (clean := part.strip())
+        )
+    )
+    if not clean_ids:
+        return []
+    if approval_records is not _DEFAULT_APPROVAL_RECORDS:
+        want = set(clean_ids)
+        return [
+            r
+            for r in (approval_records() or [])
+            if str(r.get("decision_id") or r.get("id") or "").strip() in want
+        ]
+    if not authorization.get():
+        raise RuntimeError("Governance reads require the caller's authorization")
+    return cached_owner_call(
+        ("approval_records_by_ids", tuple(sorted(clean_ids)), authorization.get(), selected_tenant.get()),
+        lambda: approval_owner.list_decisions(
+            authorization.get(),
+            decision_ids=clean_ids,
+        ),
+    )
+
+
+def decidable_evolution_records(persona_store=None):
+    from ..ports.lifecycle_telemetry_governance import DomainGovernancePort
+
+    if hasattr(persona_store, "list_evolution_decisions") and not os.getenv("PANTHEON_EVOLUTION_API_URL", "").strip():
+        raw = persona_store.list_evolution_decisions()
+    else:
+        raw = read_evolution_records(evolution_url, DECIDABLE_EVOLUTION_QUERY_PATH)
+    items = []
+    for r in (raw or []):
+        d = dict(r)
+        meta = d.get("metadata") or {}
+        if "program_id" in meta and not d.get("program_id"):
+            d["program_id"] = meta["program_id"]
+        if "resolved_at" in meta and not d.get("resolved_at"):
+            d["resolved_at"] = meta["resolved_at"]
+        projected = {**d, **DomainGovernancePort.project_evolution_decision(d)}
+        status = str(projected.get("decision_state") or projected.get("status") or "").strip().lower()
+        if status in DECIDABLE_EVOLUTION_STATES:
+            items.append(projected)
+    return items
+
+
 def latest_ranking_snapshot(ranking_store=None, *, surface: str = "quarterly"):
     from ..ports import rankings as rankings_port
 

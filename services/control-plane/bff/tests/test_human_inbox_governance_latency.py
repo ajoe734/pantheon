@@ -504,9 +504,15 @@ def test_real_http_owner_readers_propagate_deadline_dedupe_sources_and_preserve_
     from services.control_plane.bff.governance import approval_owner
 
     state: Dict[str, Any] = {
-        "delays": {"/api/governance/approvals": 0.35, "/api/deployment/plans": 0.35, "/api/evolution/proposals": 0.35},
+        "delays": {
+            "/api/governance/approvals": 0.35,
+            "/api/governance/approvals?decision_id=apv-decided-0000": 0.05,
+            "/api/deployment/plans": 0.35,
+            "/api/evolution/proposals": 0.35,
+        },
         "status_codes": {},
         "counts": {"/api/governance/approvals": 0, "/api/deployment/plans": 0, "/api/evolution/proposals": 0, "/api/incidents": 0},
+        "full_counts": {},
         "headers": [],
     }
     state_lock = threading.Lock()
@@ -514,9 +520,12 @@ def test_real_http_owner_readers_propagate_deadline_dedupe_sources_and_preserve_
 
     class _OwnerHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
-            path = self.path.split("?", 1)[0]
+            parsed = urllib.parse.urlsplit(self.path)
+            path = parsed.path
+            qs = urllib.parse.parse_qs(parsed.query)
             with state_lock:
                 state["counts"][path] = state["counts"].get(path, 0) + 1
+                state["full_counts"][self.path] = state["full_counts"].get(self.path, 0) + 1
                 state["headers"].append(
                     (
                         path,
@@ -524,14 +533,37 @@ def test_real_http_owner_readers_propagate_deadline_dedupe_sources_and_preserve_
                         self.headers.get("X-Tenant-Id"),
                     )
                 )
-                delay = float(state["delays"].get(path, 0.0))
+                delay = float(state["delays"].get(self.path, state["delays"].get(path, 0.0)))
                 code = int(state["status_codes"].get(path, 200))
             if delay > 0:
                 time.sleep(delay)
             if code != 200:
                 payload = json.dumps({"error": "owner failure"}).encode("utf-8")
             elif path == "/api/governance/approvals":
-                payload = json.dumps(hosted_approvals).encode("utf-8")
+                rows = hosted_approvals
+                if "decision_state" in qs:
+                    wanted_states = {
+                        part.strip().lower()
+                        for raw in qs["decision_state"]
+                        for part in raw.split(",")
+                        if part.strip()
+                    }
+                    rows = [
+                        r for r in rows
+                        if str(r.get("decision_state") or r.get("state") or "").lower() in wanted_states
+                    ]
+                if "decision_id" in qs:
+                    wanted_ids = {
+                        part.strip()
+                        for raw in qs["decision_id"]
+                        for part in raw.split(",")
+                        if part.strip()
+                    }
+                    rows = [
+                        r for r in rows
+                        if str(r.get("decision_id") or r.get("id") or "") in wanted_ids
+                    ]
+                payload = json.dumps(rows).encode("utf-8")
             elif path == "/api/deployment/plans":
                 payload = json.dumps(
                     [
@@ -546,17 +578,28 @@ def test_real_http_owner_readers_propagate_deadline_dedupe_sources_and_preserve_
                     ]
                 ).encode("utf-8")
             elif path == "/api/evolution/proposals":
-                payload = json.dumps(
-                    [
-                        {
-                            "decision_id": "evo-http-1",
-                            "status": "under_review",
-                            "risk_level": "medium",
-                            "created_at": "2026-11-05T12:00:00Z",
-                            "rationale": "HTTP evolution decision",
-                        }
+                evo_rows = [
+                    {
+                        "decision_id": "evo-http-1",
+                        "status": "under_review",
+                        "decision_state": "under_review",
+                        "risk_level": "medium",
+                        "created_at": "2026-11-05T12:00:00Z",
+                        "rationale": "HTTP evolution decision",
+                    }
+                ]
+                if "decision_state" in qs:
+                    wanted_evo = {
+                        part.strip().lower()
+                        for raw in qs["decision_state"]
+                        for part in raw.split(",")
+                        if part.strip()
+                    }
+                    evo_rows = [
+                        r for r in evo_rows
+                        if str(r.get("decision_state") or r.get("status") or "").lower() in wanted_evo
                     ]
-                ).encode("utf-8")
+                payload = json.dumps(evo_rows).encode("utf-8")
             else:
                 payload = b"[]"
             try:
@@ -618,9 +661,12 @@ def test_real_http_owner_readers_propagate_deadline_dedupe_sources_and_preserve_
                 assert elapsed < 0.95, f"reload {reload_idx} took {elapsed:.3f}s"
                 ids = {i["item_id"] for i in body["data"]["items"]}
                 assert ids == {"review-plan-http-1", "review-evo-http-1"}
-                assert state["counts"]["/api/governance/approvals"] == reload_idx
+                assert state["full_counts"]["/api/governance/approvals?decision_state=proposed,under_review"] == reload_idx
+                assert state["full_counts"]["/api/governance/approvals?decision_id=apv-decided-0000"] == reload_idx
+                assert state["full_counts"].get("/api/governance/approvals", 0) == 0
                 assert state["counts"]["/api/deployment/plans"] == reload_idx
-                assert state["counts"]["/api/evolution/proposals"] == reload_idx
+                assert state["full_counts"]["/api/evolution/proposals?decision_state=reviewed,under_review,in_review"] == reload_idx
+                assert state["full_counts"].get("/api/evolution/proposals", 0) == 0
 
             # Verify headers forwarded to each owner HTTP endpoint.
             seen_by_path = {path: (auth, tid) for path, auth, tid in state["headers"]}
