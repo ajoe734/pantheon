@@ -1001,29 +1001,63 @@ class DomainGovernancePort:
     }
 
     @staticmethod
-    def _owner_decision(
-        decision_id: str, token: str, tenant: str, timeout: Optional[float]
-    ) -> Optional[Dict[str, Any]]:
-        """Tenant-guarded Evolution decision read; None when not visible to the tenant."""
-        import urllib.error
+    def _owner_decision(decision_id: str) -> Optional[Dict[str, Any]]:
+        """Historical Evolution decision via the existing tenant-bound owner object read.
+
+        Returns None for 404 (foreign and unknown are indistinguishable). Any other
+        failure, a malformed payload, or an exhausted request budget raises so the
+        caller can mark only that item unresolved. Every GET recomputes the remaining
+        request budget; no HTTP is issued once it is exhausted.
+        """
         from urllib.parse import quote
 
-        from services.control_plane.bff.command_adapters.base import evolution_owner_request, get_base_url
+        from services.control_plane.bff.command_adapters.base import evolution_url
+        from services.control_plane.bff.core.owner_reads import (
+            read_evolution_object,
+            remaining_management_read_budget,
+        )
 
-        base = get_base_url("PANTHEON_EVOLUTION_API_URL")
+        rem = remaining_management_read_budget()
+        if rem is not None and rem <= 0.0:
+            raise TimeoutError("owner read budget exhausted")
         try:
-            body = evolution_owner_request(
-                f"{base}/api/evolution/proposals/{quote(decision_id, safe='')}",
-                caller_token=token,
-                method="GET",
-                tenant_id=tenant,
-                **({"timeout": timeout} if timeout is not None else {}),
-            )
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
+            return read_evolution_object(evolution_url, f"/api/evolution/proposals/{quote(decision_id, safe='')}")
+        except Exception as exc:
+            cause = getattr(exc, "__cause__", None)
+            if isinstance(cause, urllib.error.HTTPError) and cause.code == 404:
                 return None
             raise
-        return body if isinstance(body, dict) else None
+
+    @staticmethod
+    def _decision_binds_row(dataset: str, row: Dict[str, Any], decision: Dict[str, Any]) -> bool:
+        """Canonical action/record/target identity between a row and its decision.
+
+        Pure comparison of owner-provided decision fields; no execution-state gate
+        (requested/history rows are legitimate). A stored execution reference that
+        names a different record contradicts the binding.
+        """
+
+        def _s(value: Any) -> str:
+            return str(value or "").strip()
+
+        result = decision.get("execution_result")
+        ref = _s(result.get("execution_ref_id")) if isinstance(result, dict) else ""
+        if dataset == "freeze_orders":
+            if _s(decision.get("action_type")) != "freeze":
+                return False
+            if ref and ref != _s(row.get("freeze_order_id") or row.get("id")):
+                return False
+            return all(_s(row.get(f)) == _s(decision.get(f)) for f in ("target_id", "target_version"))
+        if _s(decision.get("action_type")) != "rollback":
+            return False
+        if ref and ref != _s(row.get("rollback_id") or row.get("id")):
+            return False
+        target = _s(decision.get("target_id"))
+        return bool(target) and target in {
+            _s(row.get("runtime_id")),
+            _s(row.get("runtime_binding_id")),
+            _s(row.get("target_id")),
+        }
 
     def _owner_scoped_records(self, dataset: str) -> Tuple[List[Dict[str, Any]], int]:
         """Read one canonical Governance collection; return (visible rows, unresolved count).
@@ -1063,30 +1097,32 @@ class DomainGovernancePort:
                 raise RuntimeError(f"Invalid Governance owner collection for {dataset}")
             visible: List[Dict[str, Any]] = []
             unresolved = 0
-            decisions: Dict[str, Optional[Dict[str, Any]]] = {}
             for row in body:
                 # A row's own tenant_id is client-writable body data, never proof.
                 # Tenant is proven only by the Evolution owner's tenant-guarded
-                # read of the decision the row is bound to.
+                # read of the decision the row is bound to; each item resolves
+                # independently so one failure never discards verified rows.
                 decision_id = str(row.get("evolution_decision_id") or "").strip()
                 if not decision_id:
                     unresolved += 1
                     continue
-                if decision_id not in decisions:
-                    decisions[decision_id] = self._owner_decision(decision_id, token, tenant, rem)
-                decision = decisions[decision_id]
+                claimed = str(row.get("tenant_id") or "").strip()
+                try:
+                    decision = self._owner_decision(decision_id)
+                except Exception:
+                    unresolved += 1
+                    continue
                 if decision is None:
-                    # Not visible to the caller tenant (foreign or unknown): hidden.
+                    # 404 is foreign-or-unknown. A row that itself claims another
+                    # tenant is hidden; otherwise existence cannot be established.
+                    if not claimed or claimed == tenant:
+                        unresolved += 1
                     continue
                 if str(decision.get("tenant_id") or "").strip() != tenant:
                     continue
-                claimed = str(row.get("tenant_id") or "").strip()
                 if claimed and claimed != tenant:
                     continue
-                if dataset == "freeze_orders" and any(
-                    str(row.get(f) or "").strip() != str(decision.get(f) or "").strip()
-                    for f in ("target_id", "target_version")
-                ):
+                if not self._decision_binds_row(dataset, row, decision):
                     unresolved += 1
                     continue
                 visible.append(dict(row))

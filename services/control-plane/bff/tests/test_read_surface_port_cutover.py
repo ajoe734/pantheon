@@ -555,15 +555,24 @@ def _patch_evolution_decisions(monkeypatch, tenant="t-own"):
     from services.control_plane.bff.command_adapters import base
 
     monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.test")
-    table = {"d-own": "t-own", "d-x": "t-x"}
+    table = {
+        "d-own": ("t-own", "rt1"),
+        "d-own2": ("t-own", "rt2"),
+        "d-x": ("t-x", "rt1"),
+    }
 
     def _evo(url, *, tenant_id=None, **_kw):
         owner = table.get(url.rsplit("/", 1)[1])
-        if owner is None or owner != tenant_id:
+        if owner is None or owner[0] != tenant_id:
             raise urllib.error.HTTPError(url, 404, "nf", {}, None)
-        return {"tenant_id": owner}
+        return {"tenant_id": owner[0], "action_type": "rollback", "target_id": owner[1]}
+
+    from services.control_plane.bff.core import owner_reads
 
     monkeypatch.setattr(base, "evolution_owner_request", _evo)
+    monkeypatch.setattr(owner_reads, "evolution_owner_request", _evo)
+    monkeypatch.setattr(owner_reads, "bound_tenant", lambda payload=None, tenant_id=None, auth_token=None: tenant)
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "svc-token")
 
 
 def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
@@ -573,7 +582,7 @@ def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
         DomainGovernancePort,
     )
 
-    rows = [{"rollback_id": "r1", "evolution_decision_id": "d-own", "status": "completed"}, {"rollback_id": "r2", "evolution_decision_id": "d-x", "tenant_id": "t-own"}]
+    rows = [{"rollback_id": "r1", "evolution_decision_id": "d-own", "runtime_id": "rt1", "status": "completed"}, {"rollback_id": "r2", "evolution_decision_id": "d-x", "runtime_id": "rt1", "tenant_id": "t-own"}]
     _patch_evolution_decisions(monkeypatch)
     calls = []
     from services.control_plane.bff import command_executor
@@ -581,7 +590,7 @@ def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
 
     monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
     monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: "t-own")
-    monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: calls.append(url) or rows)
+    monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: calls.append(url) or (rows if url.endswith("/rollbacks") else []))
     token = owner_reads.authorization.set("Bearer tok")
     try:
         rsp = ReadSurfacePorts(
@@ -590,7 +599,7 @@ def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
             )
         )
         assert [r["rollback_id"] for r in rsp.list_all_rollbacks()] == ["r1"]
-        assert rsp.dataset_source("all_rollbacks") == "service"
+        assert rsp.dataset_source("all_rollbacks") == "unavailable"  # foreign-or-unknown 404 with own claim stays unresolved
         assert rsp.dataset_source("freeze_orders") == "service"
     finally:
         owner_reads.authorization.reset(token)
@@ -605,7 +614,7 @@ def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(mon
 
     rows = [
         {"rollback_id": "r1", "evolution_decision_id": "d-own", "runtime_id": "rt1", "status": "completed"},
-        {"rollback_id": "r2", "evolution_decision_id": "d-own", "runtime_id": "rt2"},
+        {"rollback_id": "r2", "evolution_decision_id": "d-own2", "runtime_id": "rt2"},
         {"rollback_id": "r3", "evolution_decision_id": "d-x", "runtime_id": "rt1"},
         {"rollback_id": "r4", "tenant_id": "t-own", "runtime_id": "rt1"},
     ]

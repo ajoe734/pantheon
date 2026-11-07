@@ -2789,8 +2789,9 @@ def _mounted_owner_journal(monkeypatch, governance: dict, decisions: dict) -> di
 
 
 _JOURNAL_DECISIONS = {
-    "d-own": {"decision_id": "d-own", "tenant_id": "t-own", "target_id": "a1", "target_version": "v1"},
-    "d-foreign": {"decision_id": "d-foreign", "tenant_id": "t-other", "target_id": "a9", "target_version": "v1"},
+    "d-own": {"decision_id": "d-own", "tenant_id": "t-own", "target_id": "a1", "target_version": "v1", "action_type": "freeze"},
+    "d-foreign": {"decision_id": "d-foreign", "tenant_id": "t-other", "target_id": "a9", "target_version": "v1", "action_type": "freeze"},
+    "d-rb": {"decision_id": "d-rb", "tenant_id": "t-own", "target_id": "rt1", "action_type": "rollback"},
 }
 
 
@@ -2837,8 +2838,8 @@ def test_journal_owner_rollbacks_use_canonical_owner_rows(monkeypatch) -> None:
         {
             "freeze-orders": [],
             "rollbacks": [
-                {"rollback_id": "r-own", "runtime_id": "rt1", "status": "completed", "evolution_decision_id": "d-own"},
-                {"rollback_id": "r-foreign", "runtime_id": "rt1", "status": "completed", "evolution_decision_id": "d-foreign"},
+                {"rollback_id": "r-own", "runtime_id": "rt1", "status": "completed", "evolution_decision_id": "d-rb"},
+                {"rollback_id": "r-foreign", "runtime_id": "rt1", "status": "completed", "tenant_id": "t-other", "evolution_decision_id": "d-foreign"},
             ],
         },
         _JOURNAL_DECISIONS,
