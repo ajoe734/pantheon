@@ -459,3 +459,42 @@ def test_alert_builder_marks_failed_incident_owner_unavailable(monkeypatch) -> N
     alerts, surface = bff_main._build_incident_alerts("2026-11-07T00:00:00Z")
     assert alerts == []
     assert surface["status"] == "unavailable"
+
+
+def test_retired_runtime_exclusion_holds_on_both_alert_list_routes(monkeypatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.control_plane.bff.auth import policy as auth_policy
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.incidents.router import create_incident_router
+
+    rows = [{"runtime_id": "rt-current", "status": "failed"}] + _RETIRED_FAILED_RUNTIMES
+    bff_main, store = _patch_runtime_store(monkeypatch, rows)
+    ok = {"status": "ok", "dataset": "x", "source": "test"}
+    monkeypatch.setattr(bff_main, "_build_incident_alerts", lambda _s: ([], dict(ok)))
+    monkeypatch.setattr(
+        bff_main, "_build_governance_alerts",
+        lambda _s: ([], {"review_queue": dict(ok), "approval_queue": dict(ok)}),
+    )
+    monkeypatch.setattr(bff_main, "_build_kill_switch_alerts", lambda _s: ([], dict(ok), None))
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+
+    app = FastAPI()
+    app.include_router(
+        create_incident_router(
+            build_operator_alerts_payload=bff_main._build_operator_alerts_payload,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+        )
+    )
+    register_error_handlers(app)
+    client = TestClient(app)
+    for path in ("/bff/alerts", "/bff/risk/alerts"):
+        resp = client.get(path, headers={"Authorization": "Bearer op-tester:operator"})
+        assert resp.status_code == 200, (path, resp.text)
+        ids = {a["alert_id"] for a in resp.json()["alerts"]}
+        assert ids == {"alert-runtime-rt-current"}, (path, ids)
+    assert not set(store.telemetry_reads) & {r["runtime_id"] for r in _RETIRED_FAILED_RUNTIMES}

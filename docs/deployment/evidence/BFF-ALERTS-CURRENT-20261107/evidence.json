@@ -13,16 +13,22 @@
     "BFF_API_CONTRACT.md records budget and reason",
     "No second builder; IncidentsService alert builders untouched (production passes main builder via app_factory/router)"
   ],
-  "tests": "tests/test_main_composition_seam_extraction_005.py (real retired failed rows rt-fae0166d, rt-0354501c, rt-43344296; current failed/error/degraded/paused severities; open_only + investigating; failed owner unavailable); test_mgmt_load_005_read_concurrency.py (default 3.0/override, 0.8s read survives, timeout/error/saturated reasons + warning). Existing alerts timeout test now sets the named alerts env var instead of the generic one (same 0.05s bound, no assertion weakened).",
+  "tests": "tests/test_main_composition_seam_extraction_005.py (real retired failed rows rt-fae0166d, rt-0354501c, rt-43344296; current failed/error/degraded/paused severities; open_only + investigating; failed owner unavailable); test_mgmt_load_005_read_concurrency.py (default 3.0/override, 0.8s read survives, timeout/error/saturated reasons + warning). Existing alerts timeout test now sets the named alerts env var instead of the generic one (same 0.05s bound, no assertion weakened). | test_main_composition_seam_extraction_005::test_retired_runtime_exclusion_holds_on_both_alert_list_routes (GET /bff/alerts and GET /bff/risk/alerts via router + main._build_operator_alerts_payload: only current failed runtime alerts; retired rows produce no alert and no telemetry read)",
   "mutation_check": "With the _trading_pulse_binding_is_retired skip removed locally (not committed), test_retired_failed_runtimes_raise_no_alert_and_no_telemetry_read and test_current_failed_error_degraded_paused_runtimes_keep_severity failed (2 failed); exclusion restored.",
-  "validation": {
-    "command": "uv run --python 3.12 pytest on seam_extraction_005, mgmt_load_005, alerts_acknowledge, incident_router, pkt012, pkt013, incidents_real_source, bff_main_composition (163 passed + new tests passing; only failure the pre-existing one); second batch consol_010, governance_runtime_risk_audit, management_cockpit, incident_owner_semantics, event_loop_guard, seam_003, p0_tw_paper_activate_honesty (80 passed, 2 failed)",
-    "known_preexisting_failures": [
-      "seam_extraction_005::test_zero_duplicate_definitions_ast_readback",
-      "seam_extraction_003::test_compose_bff_app_matches_main_route_set",
-      "test_p0_tw_paper_activate_honesty::test_build_persona_health_items_binds_telemetry_and_seed_flags"
-    ],
-    "preexisting_check": "all three fail identically on clean HEAD archive"
-  },
+  "validation": [
+    {
+      "command": "uv run --python 3.12 pytest on seam_extraction_005, mgmt_load_005, alerts_acknowledge, incident_router, pkt012, pkt013, incidents_real_source, bff_main_composition (163 passed + new tests passing; only failure the pre-existing one); second batch consol_010, governance_runtime_risk_audit, management_cockpit, incident_owner_semantics, event_loop_guard, seam_003, p0_tw_paper_activate_honesty (80 passed, 2 failed)",
+      "known_preexisting_failures": [
+        "seam_extraction_005::test_zero_duplicate_definitions_ast_readback",
+        "seam_extraction_003::test_compose_bff_app_matches_main_route_set",
+        "test_p0_tw_paper_activate_honesty::test_build_persona_health_items_binds_telemetry_and_seed_flags"
+      ],
+      "preexisting_check": "all three fail identically on clean HEAD archive"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py -q",
+      "result": "16 passed, 1 failed (pre-existing test_zero_duplicate_definitions_ast_readback, _resolve_final_idempotency_key, untouched by this task); new two-route test passes"
+    }
+  ],
   "hosted_verification": "NOT RUN. Hosted verification belongs to MGMT-AI-TRUTH-ACCEPTANCE-20261107; no hosted result is claimed."
 }
