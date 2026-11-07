@@ -284,7 +284,7 @@ def _verify_unpacked_tarball_matches_dir(
         for member in tf.getmembers():
             if not member.isfile():
                 continue
-            rel_name = member.name.lstrip("./")
+            rel_name = member.name[2:] if member.name.startswith("./") else member.name
             if not rel_name:
                 continue
             if rel_name == "deployment.json":
