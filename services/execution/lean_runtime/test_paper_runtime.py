@@ -2721,6 +2721,7 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
 
     def test_taiwan_paper_fill_published_with_shioaji_trade_id(self):
         algo, events = self._algo()
+        algo._holding("2330.TW").Quantity = 2
         algo.SetCurrentSignalContext(
             {
                 "market_price": 2340.0,
@@ -2747,7 +2748,7 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
         self.assertEqual(ev.metadata["adapter"], "shioaji")
         self.assertEqual(ev.metadata["currency"], "TWD")
         self.assertEqual(ev.metadata["exchange"], "TSE")
-        self.assertEqual(algo._holding("2330.TW").Quantity, -1)
+        self.assertEqual(algo._holding("2330.TW").Quantity, 1)
 
     def test_taiwan_submit_posts_signal_client_id_and_correlation_envelope(self):
         from services.trade_journey.correlation_envelope import mint_trade_envelope
@@ -2786,6 +2787,7 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
 
     def test_taiwan_broker_error_records_rejection(self):
         algo, events = self._algo()
+        algo._holding("2330.TW").Quantity = 1
         algo.SetCurrentSignalContext(
             {
                 "market_price": 2340.0,
@@ -3915,13 +3917,13 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def test_close_build_failure_defers_chain_without_stranding_or_retrading(self):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         self.assertEqual(service._algo._fill_count, 1)
 
         # order_submitted cannot be built for the close: the original defect
         # stopped the accepted chain right after risk_evaluation.
         service = self._service(fail_build_for={"order_submitted"})
-        self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         ledger = service._algo.performance_ledger()
         self.assertEqual(ledger["fill_count"], 2)
         self.assertEqual(ledger["cash"], 99985.0)
@@ -3961,9 +3963,9 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def test_restart_replays_interrupted_close_chain_exactly_once(self):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         service = self._service(fail_build_for={"position_snapshot"})
-        self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         self.assertEqual(service.snapshot()["pending_fill_publication_count"], 1)
         self.assertNotIn("paper_fill_simulated", self._types("sb"))
 
@@ -3983,11 +3985,11 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def test_replay_after_admission_before_ack_is_idempotent(self):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         with patch.object(
             PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
         ):
-            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+            self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         self.assertEqual(len(service._algo.pending_fill_publications()), 1)
         restarted = self._service()
         restarted.drain_once()
@@ -3998,11 +4000,11 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def _assert_next_event_contiguous_after_replay(self, restart):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         with patch.object(
             PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
         ):
-            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+            self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         runtime = self._service() if restart else service
         runtime.drain_once()
         durable = runtime._lifecycle_outbox.chains()
@@ -4039,11 +4041,11 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def _assert_replay_survives_batch_eviction_horizon(self, restart):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         with patch.object(
             PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
         ):
-            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+            self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         fill = next(
             e for e in self.captured
             if e.get("signal_id") == "sb" and e["event_type"] == "paper_fill_simulated"

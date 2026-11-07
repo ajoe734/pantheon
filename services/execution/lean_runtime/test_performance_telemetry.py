@@ -1131,7 +1131,14 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
     def test_taiwan_sell_fill_is_signed_and_credits_cash(self):
         events = []
         algorithm = PaperExecutionAlgorithm(initial_cash=1_000.0, event_sink=events.append)
-        broker_fill = {
+        broker_buy_fill = {
+            "order_id": "tw-order-buy-001",
+            "fill_qty": 5,
+            "fill_price": 50.0,
+            "filled_at": "2026-07-14T10:55:00Z",
+            "quote_source": "shioaji-paper-quote",
+        }
+        broker_sell_fill = {
             "order_id": "tw-order-001",
             "fill_qty": 3,
             "fill_price": 50.0,
@@ -1146,7 +1153,20 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
                 "market_price_source": "source-ingest://snapshots/test-2330",
             }
         )
-        with patch.object(algorithm, "_post_broker_paper_order", return_value=broker_fill):
+        with patch.object(
+            algorithm,
+            "_post_broker_paper_order",
+            side_effect=[broker_buy_fill, broker_sell_fill],
+        ):
+            algorithm.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="signal-tw-buy-001",
+                side="buy",
+                quantity=5,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+            self.assertEqual(algorithm.performance_ledger()["cash"], 750.0)
             algorithm.SubmitTaiwanBrokerOrder(
                 "2330.TW",
                 signal_id="signal-tw-sell-001",
@@ -1157,11 +1177,11 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
             )
 
         ledger = algorithm.performance_ledger()
-        self.assertEqual(ledger["positions"][0]["quantity"], -3.0)
-        self.assertEqual(ledger["cash"], 1_150.0)
-        self.assertEqual(ledger["fill_count"], 1)
-        self.assertEqual(events[0].quantity, -3.0)
-        self.assertEqual(events[0].fill_price, 50.0)
+        self.assertEqual(ledger["positions"][0]["quantity"], 2.0)
+        self.assertEqual(ledger["cash"], 900.0)
+        self.assertEqual(ledger["fill_count"], 2)
+        self.assertEqual(events[1].quantity, -3.0)
+        self.assertEqual(events[1].fill_price, 50.0)
 
     def test_e2e_paper_execution_algorithm_ledger_provider_valuator(self):
         algorithm = PaperExecutionAlgorithm(initial_cash=100_000.0)
