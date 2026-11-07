@@ -1,0 +1,28 @@
+{
+  "task_id": "BFF-EVO-ALPHA-PAGE-TRUTH-20261107",
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used and no workflow was dispatched. Hosted acceptance belongs to EVO-ALPHA-PAGES-HOSTED-ACCEPT-20261107. Everything below is functional evidence from local tests that use the real hosted record shapes given in the task brief.",
+  "write_scope": "Reads and display only. No decision, postmortem, freeze order, rollback, strategy, admission or queue entry is written, cancelled, closed or retired.",
+  "change": {
+    "journal": "evolution/router.py emits exactly one evolution_decision row per decision; the mutation review projection is nested as mutation_review (hydrated with approval_decision/allowedActions/review_chain) and no mutation_review row is emitted. evolution/service.py: source_type=mutation_review selects decision rows carrying a projection; evolution_journal_item_is_history only classifies evolution_decision; mutation_review_count and pending_review_count count decision rows once.",
+    "owner_route": "services/research/main.py _build_alpha_replication_entry: last_error from queue failure_reason; replay_count, last_replayed_at, revalidation_count passed through (null when absent).",
+    "bff_alpha_factory": "console_gap/alpha_factory.py cards carry last_error, replay_count, last_replayed_at, revalidation_count and strategy_state; strategy_state is read once per distinct strategy_id through StrategiesService.get_strategy_registry_state (strategies/service.py), a StrategiesService built in core/app_factory.py over the same read surface as the strategies router, so no second registry client is created. A failed read leaves strategy_state null and sets meta.surfaces.alpha_factory_strategy_state to unavailable; cards and lanes unchanged.",
+    "contract": "BFF_API_CONTRACT.md: one-row-per-decision rule, summary counts, new card fields, strategy_state and the alpha_factory_strategy_state surface."
+  },
+  "acceptance": {
+    "1_one_row_per_decision": "test_hosted_shape_history_reports_one_row_per_decision and the rewritten view/deep-link tests in tests/test_bff_b3_evolution_journal.py; no entry_type mutation_review row appears under any view.",
+    "2_history_and_auto_proposals_totals": "3 hosted-shaped decisions (approved, executed, canceled; incident_severity; hosted-all12 plan) report page_info.total 3 and summary.total_items 3 under view=history. test_view_history_filter_runs_before_pagination_across_multiple_pages walks view=auto_proposals over several pages and asserts every page_info.total equals auto_proposal_counts.total (16) and ids are unique. The 443/2128 hosted population itself was not reproduced locally.",
+    "3_deep_links": "test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_target_under_any_view covers decision, mutation_review, persona and source_type=mutation_review under all, history and auto_proposals.",
+    "4_summary_counts": "test_summary_counts_pending_reviews_once_per_decision.",
+    "5_owner_route": "test_entries_route_returns_failure_reason_and_replay_facts_from_real_queue_shapes in services/research/alpha_replication/test_replication_entries_read.py (replayed, failed and plain records).",
+    "6_7_8_alpha_cards": "tests/test_bff_alpha_factory_contract.py: four hosted-shaped cards with states approved/approved/retired/retired, one registry read per distinct strategy_id (a duplicate strategy adds no read), failed read leaves strategy_state null with the surface unavailable and all four cards still returned and in their lanes; test_strategies_service_state_reader_uses_registry_detail_and_degrades. tests/test_event_loop_owner_reads_guard.py::test_real_app_alpha_factory_reads_state_through_registry_strategy_reader drives the composed app and checks the handler is a plain def.",
+    "9_contract": "BFF_API_CONTRACT.md updated.",
+    "10_tests": "see commands"
+  },
+  "commands": [
+    {"cmd": "python -m pytest -q services/research/alpha_replication/test_replication_entries_read.py", "result": "3 passed"},
+    {"cmd": "python -m pytest -q tests/test_bff_b3_evolution_journal.py tests/test_evolution_router.py tests/test_evochain_004_freeze_rollback_store.py test_execute_plans_final_live_wiring_contract.py tests/test_bff_alpha_factory_contract.py tests/test_event_loop_owner_reads_guard.py tests/test_bff_test_architecture.py (cwd services/control-plane/bff)", "result": "110 passed, 1 skipped, 1 failed"}
+  ],
+  "known_failure_not_caused_by_this_task": "test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos fails on /bff/alerts returning an empty payload. The same test fails identically on the pre-task tree (commit 63d124fcd, exported with git archive and run in isolation), so it is not related to journal or alpha factory changes.",
+  "follow_up_outside_artifact_contract": "scripts/verify_e2e_producer_chain.py (_formal_journal_entry) still looks for an entry_type mutation_review row. Against a BFF with this change it finds none and fails; it should read the nested mutation_review of the evolution_decision row with the same source_id. That file is not in this task's artifact list, so it was not changed here.",
+  "behaviour_notes": "Row status follows the decision status (status first). A record whose status and decision_state diverge no longer appears as a second row with the decision_state; the divergence is visible in the nested mutation_review.decision_state. status filters apply to the decision row."
+}
