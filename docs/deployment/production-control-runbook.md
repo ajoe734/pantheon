@@ -106,7 +106,16 @@ The control compose packages the same existing product owners and Agora request 
 
 ## 6. Missing hosted prerequisites (recorded, not forged)
 
-Published staging evidence: public-safe allowlisted `staging_verified` summaries for release `pantheon-20261028-102` (manifest `sha256:617e2936…bcf3`, runs 41579314601 and 41581135775 on control commit `9df41340`, rollback 107.727 s / 108.599 s, 4-resource cleanup with readback each) are the top-level fields of `docs/deployment/evidence/ENV-PROD-CONTROL-IMPL-001/evidence.json` (latest run 41581135775; both runs under `staging_verification_runs`) and pass `prod_preflight.check_staging_evidence`; usable as `staging_evidence_path`. Both runs skipped hosted QA (QA 0, step 9), so this is NOT complete acceptance: still pending are 3 real hosted QA accounts, a distinct release 103, the Prod 102 baseline, backup/restore DR with measured RPO/RTO, VM replacement, two Prod rollbacks and the 1800 s observation. `PROD_*` values are GitHub Environment-scoped in `production` (read-only readback: 20 required names present), not repository-only.
+Published staging evidence: public-safe allowlisted `staging_verified` summaries for release `pantheon-20261028-102` (manifest `sha256:617e2936…bcf3`, runs 41579314601 and 41581135775 on control commit `9df41340`, rollback 107.727 s / 108.599 s, 4-resource cleanup with readback each) are the top-level fields of `docs/deployment/evidence/ENV-PROD-CONTROL-IMPL-001/evidence.json` (latest run 41581135775; both runs under `staging_verification_runs`) and pass `prod_preflight.check_staging_evidence`; usable as `staging_evidence_path`. Both runs skipped hosted QA (QA 0, step 9), so this is NOT complete acceptance and release 102 is infrastructure evidence only.
+
+Release baselines (source scope only; nothing below has been executed):
+
+- Stage run 42145201460 (2026-11-06, QA300) proved operator login but failed viewer and foreign-tenant QA on release 102, so 102 must never be the first Prod baseline. Stage infrastructure 2/2 on 102 stays accepted as infrastructure evidence only.
+- First healthy baseline A is `pantheon-20261107-103` (BFF `2638f809c`, FE `979294ceb`). Candidate B is `pantheon-20261107-104` (BFF `d77e03a05`, FE `b7cd3d847`), whose `rollback_baseline` is A. Manifests: `deploy/staging/releases/pantheon-20261107-103.json` and `-104.json`.
+- Each needs its own `staging_verified` evidence with the three real accounts inside the QA300 window, because evidence binds to the exact `release_id` and manifest sha256.
+- Prod sequence (all still pending): protected bootstrap of A; backup/restore with RPO 3600 s and RTO 1800 s; fresh-boot VM replacement with the existing data disk and IP; A to B then real rollback to A, twice, each under 120 s; final protected B plus 1800 s observation.
+
+`PROD_*` values are GitHub Environment-scoped in `production` (read-only readback: 20 required names present), not repository-only.
 
 Production project/billing/domain/IdP, WIF/SA/IAM, `production` GitHub Environment with required reviewers (ajoe734; prevent_self_review=false), `PRODUCTION_RELEASE_ENABLED`, ops adapter and artifact transport on the control VM, approved RPO/RTO/retention/on-call/rollback owner, and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 / all12 chain `h12-01a11-20261023-9aeb` (not rerun or relabeled here).
 
