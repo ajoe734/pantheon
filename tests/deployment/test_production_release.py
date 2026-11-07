@@ -1167,6 +1167,28 @@ class ControlVmSizeTests(unittest.TestCase):
         self.assertLess(wf.index("vm-size"), wf.index("pantheon-prod-pre-"))
         self.assertIn("set-machine-type", (REPO_ROOT / "docs/deployment/production-control-runbook.md").read_text())
 
+    def test_pre_switch_snapshot_name_unique_per_run_attempt(self):
+        """Repeat forwards of the same release_id (105->106 rollback 105 ->106) must not collide
+        on a retained fixed-name snapshot."""
+        wf = WORKFLOW.read_text()
+        m = re.search(r'snap="(pantheon-prod-pre-[^"]*)"', wf)
+        self.assertIsNotNone(m)
+        tmpl = m.group(1)
+        self.assertNotEqual(tmpl, "pantheon-prod-pre-${RELEASE_ID}")  # original fixed-name plan
+        self.assertIn("${GITHUB_RUN_ID}", tmpl)
+        self.assertIn("${GITHUB_RUN_ATTEMPT}", tmpl)
+
+        def name(rid, run, att):
+            return tmpl.replace("${RELEASE_ID}", rid).replace("${GITHUB_RUN_ID}", str(run)).replace(
+                "${GITHUB_RUN_ATTEMPT}", str(att))
+        names = [name("pantheon-20261107-106", 25000000001, 1), name("pantheon-20261107-106", 25000000002, 1),
+                 name("pantheon-20261107-106", 25000000002, 2)]
+        self.assertEqual(len(set(names)), 3)
+        for n in names:
+            self.assertRegex(n, r"^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$")
+        # snapshot record still keys on the release id and carries the real snapshot name
+        self.assertIn('"snapshot": sys.argv[3]', wf)
+
 
 class PreflightTests(unittest.TestCase):
     def test_complete_config_passes(self):
