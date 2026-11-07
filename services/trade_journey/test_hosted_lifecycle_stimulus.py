@@ -820,3 +820,122 @@ def test_http_auth_rejection_is_terminal_and_redacted(monkeypatch, code):
     assert excinfo.value.code == "outbound_auth_rejected"
     assert excinfo.value.safe_details == {"http_status": code}
     assert "secret" not in excinfo.value.safe_message
+
+
+def test_stimulus_accepts_sell_without_holdings_rejection_terminal(tmp_path):
+    binding = _binding()
+    now_iso = "2026-07-18T14:00:00Z"
+    run_id = f"run-{binding['binding_id']}-{now_iso}-1"
+    heartbeat_at = stimulus._utc_now()
+    reconcile_calls: list[tuple[str, dict]] = []
+
+    def get_json(url: str, **_kwargs):
+        if "desired-state" in url:
+            return {"bindings": [binding]}
+        if "api/fleet/state" in url:
+            return {
+                "workers": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "capital_pool_id": binding["capital_pool_id"],
+                        "status": "running",
+                        "started_at": heartbeat_at,
+                        "last_heartbeat_at": heartbeat_at,
+                        "heartbeat_status": "active",
+                    }
+                ]
+            }
+        if "runtime-summaries" in url:
+            return {
+                "summaries": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "deployment_stage": "paper",
+                        "last_lifecycle_identity": {
+                            "event_id": "event-rejection-sell-without-holdings-001",
+                            "event_type": "order_rejection",
+                            "run_id": run_id,
+                            "sequence_no": 3,
+                            "environment": "paper",
+                            "execution_mode": "paper",
+                            "deployment_stage": "paper",
+                            "source_mode": "live",
+                            "reason": "sell_without_holdings",
+                            "broker_submission_status": "sell_without_holdings",
+                        },
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected GET {url}")
+
+    def post_json(url: str, payload: dict, **_kwargs):
+        reconcile_calls.append((url, dict(payload)))
+        return {"lifecycle_append_results": []}
+
+    code, artifact, store, _posts = _run(
+        tmp_path,
+        binding=binding,
+        get_json=get_json,
+        post_json=post_json,
+        execute_kwargs={"now_factory": lambda: now_iso},
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert len(store.enqueued) == 1
+    assert reconcile_calls == []
+    assert artifact["stimulus"]["lifecycle_summary_event_id"] == (
+        "event-rejection-sell-without-holdings-001"
+    )
+    assert artifact["stimulus"]["reconciliation_status"] == (
+        "skipped_sell_without_holdings"
+    )
+
+
+def test_committed_identity_accepts_sell_without_holdings_rejection_row(monkeypatch):
+    binding = _binding()
+    run_id = f"run-{binding['binding_id']}-2026-10-05T22:14:45Z-1"
+    event = {
+        "event_id": "event-committed-rejection-001",
+        "event_type": "order_rejection",
+        "binding_id": binding["binding_id"],
+        "runtime_id": binding["runtime_id"],
+        "run_id": run_id,
+        "environment": "paper",
+        "execution_mode": "paper",
+        "deployment_stage": "paper",
+        "source_mode": "live",
+        "broker_submission_status": "sell_without_holdings",
+        "metadata": {
+            "run_id": run_id,
+            "sequence_no": 3,
+            "reason": "sell_without_holdings",
+            "broker_submission_status": "sell_without_holdings",
+        },
+    }
+    connection = _FakeAsyncpgConnection(
+        {
+            "event_id": event["event_id"],
+            "event_type": "order_rejection",
+            "created_at": "2026-10-05T22:14:51Z",
+            "payload": json.dumps(event),
+        }
+    )
+
+    async def connect(_dsn: str):
+        return connection
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+
+    identity = stimulus.fetch_committed_lifecycle_identity(
+        "postgresql://unit-test-redacted", binding=binding, run_id=run_id
+    )
+
+    assert identity is not None
+    assert identity["event_id"] == event["event_id"]
+    assert identity["event_type"] == "order_rejection"
+    assert identity["reason"] == "sell_without_holdings"
+    assert identity["sequence_no"] == 3
+

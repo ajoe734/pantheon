@@ -947,3 +947,245 @@ def test_strict_mode_every_registry_mutation_rejects_viewer_and_view_only_and_ke
         assert resp.status_code == 403, (read_role, method, path, resp.status_code, resp.text)
         assert "not authorized" in resp.json()["detail"].lower()
 
+
+def test_registry_auth_env_forwards_oidc_and_role_map_fallbacks(monkeypatch):
+    from .service import _registry_auth_env
+
+    monkeypatch.setenv("PANTHEON_BFF_JWKS_URI", "https://idp.example/bff/jwks")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "https://idp.example/.well-known/openid-configuration")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_ISSUER", "https://idp.example/issuer")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_AUDIENCE", "pantheon-stage-aud")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_CLAIMS", "roles,groups,realm_access.roles")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP", "pantheon-operator=operator;pantheon-viewer=viewer")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED", "true")
+
+    env = _registry_auth_env()
+    assert env["PANTHEON_RUNTIME_JWKS_URI"] == "https://idp.example/bff/jwks"
+    assert env["PANTHEON_RUNTIME_OIDC_DISCOVERY_URL"] == "https://idp.example/.well-known/openid-configuration"
+    assert env["PANTHEON_RUNTIME_OIDC_ISSUER"] == "https://idp.example/issuer"
+    assert env["PANTHEON_RUNTIME_OIDC_AUDIENCE"] == "pantheon-stage-aud"
+    assert env["PANTHEON_RUNTIME_ROLE_CLAIMS"] == "roles,groups,realm_access.roles"
+    assert env["PANTHEON_RUNTIME_ROLE_MAP"] == "pantheon-operator=operator;pantheon-viewer=viewer"
+    assert env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] == "strict"
+    assert env["PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED"] == "true"
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_ROLE_MAP", "runtime-op=operator")
+    assert _registry_auth_env()["PANTHEON_RUNTIME_ROLE_MAP"] == "runtime-op=operator"
+    monkeypatch.setenv("PANTHEON_REGISTRY_ROLE_MAP", "registry-op=operator")
+    assert _registry_auth_env()["PANTHEON_RUNTIME_ROLE_MAP"] == "registry-op=operator"
+
+
+def test_strict_mode_external_role_map_allows_mapped_operator_and_viewer(strict_client, monkeypatch):
+    monkeypatch.setenv(
+        "PANTHEON_RUNTIME_ROLE_MAP",
+        "pantheon-operator=operator;pantheon-viewer=viewer",
+    )
+    monkeypatch.setenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", "strict")
+
+    op_headers = _bearer(_jwt(sub="idp-op-1", roles=["pantheon-operator"], tenant="tenant-a"))
+    list_resp = strict_client.get(
+        "/api/registry/strategy-specs?exclude_state=draft&page_size=20",
+        headers=op_headers,
+    )
+    assert list_resp.status_code == 200, list_resp.text
+
+    viewer_headers = _bearer(_jwt(sub="idp-viewer-1", roles=["pantheon-viewer"], tenant="tenant-a"))
+    viewer_list = strict_client.get(
+        "/api/registry/strategy-specs?exclude_state=draft&page_size=20",
+        headers=viewer_headers,
+    )
+    assert viewer_list.status_code == 200, viewer_list.text
+
+    viewer_write = strict_client.post("/api/registry/entries", json=_ENTRY_PAYLOAD, headers=viewer_headers)
+    assert viewer_write.status_code == 403
+
+    unmapped_headers = _bearer(_jwt(sub="idp-unmapped-1", roles=["external-unmapped"], tenant="tenant-a"))
+    unmapped_resp = strict_client.get(
+        "/api/registry/strategy-specs?exclude_state=draft&page_size=20",
+        headers=unmapped_headers,
+    )
+    assert unmapped_resp.status_code == 403
+
+
+def test_dual_mode_shared_secret_preserves_canonical_internal_roles():
+    from services.runtime_auth_inbound import AuthError, validate_request_auth
+
+    dual_env = {
+        "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+        "PANTHEON_RUNTIME_JWT_SECRET": _JWT_SECRET,
+        "PANTHEON_RUNTIME_JWT_ISSUER": "pantheon-runtime-authority",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": "pantheon-runtime",
+        "PANTHEON_RUNTIME_OIDC_ISSUER": "https://securetoken.google.com/stage-proj",
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": "stage-proj",
+        "PANTHEON_RUNTIME_JWKS_URI": "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com",
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": "roles,role",
+        "PANTHEON_RUNTIME_ROLE_MAP": "pantheon-operator=operator;pantheon-viewer=viewer",
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": "strict",
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": "true",
+    }
+    internal_token = encode_jwt_hs256(
+        {
+            "sub": "paper-signal-producer",
+            "iss": "pantheon-runtime-authority",
+            "aud": "pantheon-runtime",
+            "roles": ["operator"],
+            "exp": int(time.time()) + 3600,
+        },
+        secret=_JWT_SECRET,
+    )
+    ctx = validate_request_auth(
+        authorization=f"Bearer {internal_token}",
+        required_roles=("operator", "admin", "viewer"),
+        env=dual_env,
+        allow_shared_secret=True,
+    )
+    assert ctx.actor_id == "paper-signal-producer"
+    assert "operator" in ctx.roles
+
+    with pytest.raises(AuthError) as exc_info:
+        validate_request_auth(
+            authorization=f"Bearer {internal_token}",
+            required_roles=("operator", "admin", "viewer"),
+            env=dual_env,
+            allow_shared_secret=False,
+        )
+    assert exc_info.value.status_code == 401
+
+
+def test_registry_oidc_rs256_mapped_groups_and_dot_path_roles_succeed_while_unmapped_or_missing_fail_closed(
+    strict_client, monkeypatch, tmp_path
+):
+    import base64
+    import json
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    from services.runtime_auth_inbound import _JWKS_CACHE
+
+    _JWKS_CACHE.clear()
+    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub_nums = rsa_key.public_key().public_numbers()
+    b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    int_b64 = lambda val: b64(val.to_bytes((val.bit_length() + 7) // 8, "big"))
+    kid = "registry-oidc-key-1"
+    jwks_path = tmp_path / "jwks.json"
+    jwks_path.write_text(
+        json.dumps(
+            {
+                "keys": [
+                    {
+                        "kty": "RSA",
+                        "kid": kid,
+                        "use": "sig",
+                        "alg": "RS256",
+                        "n": int_b64(pub_nums.n),
+                        "e": int_b64(pub_nums.e),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _mint_rs256(payload: dict) -> str:
+        hdr_b64 = b64(json.dumps({"alg": "RS256", "typ": "JWT", "kid": kid}).encode("utf-8"))
+        pay_b64 = b64(json.dumps(payload).encode("utf-8"))
+        sig = rsa_key.sign(f"{hdr_b64}.{pay_b64}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+        return f"{hdr_b64}.{pay_b64}.{b64(sig)}"
+
+    oidc_iss = "https://securetoken.google.com/pantheon-stage-registry"
+    oidc_aud = "pantheon-stage-registry"
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWKS_URI", jwks_path.as_uri())
+    monkeypatch.setenv("PANTHEON_REGISTRY_OIDC_ISSUER", oidc_iss)
+    monkeypatch.setenv("PANTHEON_REGISTRY_OIDC_AUDIENCE", oidc_aud)
+    monkeypatch.setenv("PANTHEON_REGISTRY_ROLE_CLAIMS", "roles,groups,realm_access.roles")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP", "pantheon-operator=operator;pantheon-viewer=viewer")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED", "true")
+
+    now = int(time.time())
+    mapped_group_op = _mint_rs256(
+        {
+            "iss": oidc_iss,
+            "aud": oidc_aud,
+            "sub": "oidc-reg-op-1",
+            "tenant_id": "tenant-a",
+            "email_verified": True,
+            "groups": ["pantheon-operator"],
+            "iat": now,
+            "exp": now + 600,
+        }
+    )
+    create_resp = strict_client.post(
+        "/api/registry/entries",
+        json=_ENTRY_PAYLOAD,
+        headers=_bearer(mapped_group_op),
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    assert create_resp.json()["entry"]["last_actor"]["actor_id"] == "oidc-reg-op-1"
+    assert create_resp.json()["entry"]["last_actor"]["tenant"] == "tenant-a"
+
+    mapped_dot_viewer = _mint_rs256(
+        {
+            "iss": oidc_iss,
+            "aud": oidc_aud,
+            "sub": "oidc-reg-viewer-1",
+            "tenant_id": "tenant-a",
+            "email_verified": True,
+            "realm_access": {"roles": ["pantheon-viewer"]},
+            "iat": now,
+            "exp": now + 600,
+        }
+    )
+    read_resp = strict_client.get(
+        "/api/registry/strategy-specs?exclude_state=draft&page_size=20",
+        headers=_bearer(mapped_dot_viewer),
+    )
+    assert read_resp.status_code == 200, read_resp.text
+
+    viewer_write_resp = strict_client.post(
+        "/api/registry/entries",
+        json=_ENTRY_PAYLOAD,
+        headers=_bearer(mapped_dot_viewer),
+    )
+    assert viewer_write_resp.status_code == 403
+
+    unmapped_group_token = _mint_rs256(
+        {
+            "iss": oidc_iss,
+            "aud": oidc_aud,
+            "sub": "oidc-reg-unmapped",
+            "tenant_id": "tenant-a",
+            "email_verified": True,
+            "groups": ["external-unmapped-group"],
+            "iat": now,
+            "exp": now + 600,
+        }
+    )
+    unmapped_resp = strict_client.get(
+        "/api/registry/strategy-specs?exclude_state=draft&page_size=20",
+        headers=_bearer(unmapped_group_token),
+    )
+    assert unmapped_resp.status_code == 403
+
+    missing_role_token = _mint_rs256(
+        {
+            "iss": oidc_iss,
+            "aud": oidc_aud,
+            "sub": "oidc-reg-roleless",
+            "tenant_id": "tenant-a",
+            "email_verified": True,
+            "iat": now,
+            "exp": now + 600,
+        }
+    )
+    monkeypatch.setenv("PANTHEON_REGISTRY_DEFAULT_ROLE", "operator")
+    for method, path, kwargs in (
+        ("get", "/api/registry/strategy-specs?exclude_state=draft&page_size=20", {}),
+        ("post", "/api/registry/entries", {"json": _ENTRY_PAYLOAD}),
+    ):
+        resp_missing = getattr(strict_client, method)(
+            path, headers=_bearer(missing_role_token), **kwargs
+        )
+        assert resp_missing.status_code == 403, f"{method} {path}: {resp_missing.text}"
+    _JWKS_CACHE.clear()

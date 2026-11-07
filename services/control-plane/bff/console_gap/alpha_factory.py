@@ -33,6 +33,7 @@ except (ImportError, ValueError):
         from core.owner_reads import authorization as owner_authorization, selected_tenant  # type: ignore
 
 _SURFACE_KEY = "alpha_factory"
+_STRATEGY_STATE_SURFACE_KEY = "alpha_factory_strategy_state"
 _OWNER_SOURCE = "research_orchestrator"
 _ORCHESTRATOR_URL_ENV = "PANTHEON_RESEARCH_ORCHESTRATOR_API_URL"
 _ORCHESTRATOR_ENTRIES_PATH = "/api/research-orchestrator/alpha-replication/entries"
@@ -172,7 +173,47 @@ def _project_alpha_factory_card(entry: Dict[str, Any]) -> Dict[str, Any]:
         "authority_run_ids": auth_run_ids,
         "last_revalidation_at": entry.get("last_revalidation_at"),
         "last_error": entry.get("last_error"),
+        "replay_count": entry.get("replay_count"),
+        "last_replayed_at": entry.get("last_replayed_at"),
+        "revalidation_count": entry.get("revalidation_count"),
+        # Filled from the registry strategy reader after projection.
+        "strategy_state": None,
     }
+
+
+def _attach_strategy_state(
+    cards: List[Dict[str, Any]],
+    read_strategy_state: Optional[Callable[[str], Tuple[Optional[str], str]]],
+) -> Dict[str, Any]:
+    """Set ``strategy_state`` on each card from the registry strategy reader.
+
+    One read per distinct strategy_id. A failed read leaves ``strategy_state``
+    null on the affected cards and marks the surface unavailable; no card is
+    hidden or moved because of the state.
+    """
+    source = "bff_strategy_registry"
+    if read_strategy_state is None:
+        return {"status": "unavailable", "source": source, "reason": "reader_unconfigured"}
+    states: Dict[str, Tuple[Optional[str], str]] = {}
+    failed = False
+    for card in cards:
+        strategy_id = str(card.get("strategy_id") or "").strip()
+        if not strategy_id:
+            continue
+        if strategy_id not in states:
+            try:
+                states[strategy_id] = read_strategy_state(strategy_id)
+            except Exception:  # noqa: BLE001 - degrade, never drop cards
+                states[strategy_id] = (None, "unavailable")
+        state, status = states[strategy_id]
+        if status != "ok":
+            failed = True
+            card["strategy_state"] = None
+        else:
+            card["strategy_state"] = state
+    if failed:
+        return {"status": "unavailable", "source": source, "reason": "strategy_state_read_failed"}
+    return {"status": "ok", "source": source}
 
 
 def _build_alpha_factory_payload(
@@ -183,6 +224,7 @@ def _build_alpha_factory_payload(
     page_size: int,
     lane: Optional[str],
     surface: Dict[str, Any],
+    strategy_state_surface: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     is_unavailable = surface.get("status") == "unavailable"
     effective_cards = [] if is_unavailable else list(all_cards)
@@ -231,6 +273,9 @@ def _build_alpha_factory_payload(
         "replicated": replicated_items,
         "items": page_items,
     }
+    surfaces: Dict[str, Any] = {_SURFACE_KEY: surface}
+    if strategy_state_surface is not None:
+        surfaces[_STRATEGY_STATE_SURFACE_KEY] = strategy_state_surface
     return {
         "data": data,
         "items": page_items,
@@ -242,7 +287,7 @@ def _build_alpha_factory_payload(
         },
         "meta": {
             "snapshot_at": snapshot_at,
-            "surfaces": {_SURFACE_KEY: surface},
+            "surfaces": surfaces,
             "filters": {"lane": lane},
             "discovered": {"reason": _DISCOVERED_REASON},
         },
@@ -258,6 +303,7 @@ def create_alpha_factory_router(
     orchestrator_url_resolver: Optional[Callable[[], Optional[str]]] = None,
     read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
+    read_strategy_state: Optional[Callable[[str], Tuple[Optional[str], str]]] = None,
 ) -> APIRouter:
     del read_surface, get_read_store
     router = APIRouter()
@@ -345,6 +391,8 @@ def create_alpha_factory_router(
                 continue
             cards.append(_project_alpha_factory_card(entry))
 
+        strategy_state_surface = _attach_strategy_state(cards, read_strategy_state)
+
         surface = {
             "status": "ok",
             "source": _OWNER_SOURCE,
@@ -356,6 +404,7 @@ def create_alpha_factory_router(
             page_size=page_size,
             lane=lane,
             surface=surface,
+            strategy_state_surface=strategy_state_surface,
         )
 
     return router

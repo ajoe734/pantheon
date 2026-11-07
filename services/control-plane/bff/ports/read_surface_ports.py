@@ -568,7 +568,10 @@ class ReadSurfacePorts:
             source = status.get("source")
             return "missing" if source in {None, "missing"} else source
         if dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}:
-            reader = self.ooda_management.review_queue._approval_decisions_reader
+            rq = getattr(self.ooda_management, "review_queue", None)
+            if rq is not None and hasattr(rq, "approval_decisions_dataset_source"):
+                return rq.approval_decisions_dataset_source(dataset)
+            reader = getattr(rq, "_approval_decisions_reader", None)
             try:
                 if reader is None:
                     return "missing"
@@ -1545,14 +1548,18 @@ def create_read_surface_ports(
     """Factory creating a production-grade composite ReadSurfacePorts instance."""
     from ..core.owner_reads import (
         approval_records,
+        approval_records_by_ids,
         create_owner_domain_ports,
+        decidable_evolution_records,
         latest_ranking_snapshot,
+        pending_approval_records,
         telemetry_summaries,
     )
     if lifecycle_telemetry_governance is None:
         lifecycle_telemetry_governance = create_lifecycle_telemetry_governance_port(
             telemetry_port=DomainTelemetryPort(telemetry_summaries_reader=telemetry_summaries),
         )
+    default_pcr = persona_capital_runtime is None
     if persona_capital_runtime is None:
         persona_capital_runtime = create_owner_domain_ports(
             persona_registry_store, ranking_store,
@@ -1562,6 +1569,13 @@ def create_read_surface_ports(
             deployment_plans_reader=persona_capital_runtime.list_deployment_plans,
             evolution_decisions_reader=persona_capital_runtime.list_evolution_decisions,
             approval_decisions_reader=approval_records,
+            pending_approval_decisions_reader=pending_approval_records,
+            approval_decisions_by_id_reader=approval_records_by_ids,
+            decidable_evolution_decisions_reader=(
+                (lambda: decidable_evolution_records(persona_registry_store))
+                if default_pcr
+                else None
+            ),
         ))
     if persona_training is None:
         persona_port = (

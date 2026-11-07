@@ -999,6 +999,55 @@ def _human_inbox_project_items(
     return items
 
 
+def read_pending_approval_queue_items(read_store: Any) -> List[Dict[str, Any]]:
+    """Read pending approval queue items through the owner's pending filter."""
+    if hasattr(read_store, "list_approval_queue_items"):
+        reader = read_store.list_approval_queue_items
+        try:
+            params = inspect.signature(reader).parameters
+        except (TypeError, ValueError):
+            params = {}
+        var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+        if "pending_only" in params or var_kw:
+            try:
+                rows = reader(pending_only=True)
+            except TypeError as exc:
+                if "pending_only" in str(exc) or "unexpected keyword" in str(exc) or "positional argument" in str(exc):
+                    rows = reader()
+                else:
+                    raise
+        else:
+            rows = reader()
+    elif hasattr(read_store, "list_approval_records"):
+        rows = read_store.list_approval_records()
+    else:
+        rows = []
+    return [row for row in (rows or []) if isinstance(row, dict)]
+
+
+def read_decidable_governance_review_queue_items(read_store: Any) -> List[Dict[str, Any]]:
+    """Read governance review queue items using filtered owner reads for Human Inbox."""
+    if not hasattr(read_store, "list_governance_review_queue_items"):
+        return []
+    reader = read_store.list_governance_review_queue_items
+    try:
+        params = inspect.signature(reader).parameters
+    except (TypeError, ValueError):
+        params = {}
+    var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if "decidable_only" in params or var_kw:
+        try:
+            rows = reader(decidable_only=True)
+        except TypeError as exc:
+            if "decidable_only" in str(exc) or "unexpected keyword" in str(exc) or "positional argument" in str(exc):
+                rows = reader()
+            else:
+                raise
+    else:
+        rows = reader()
+    return [row for row in (rows or []) if isinstance(row, dict)]
+
+
 def _human_inbox_governance_contributor(
     snapshot_at: str,
     *,
@@ -1010,7 +1059,7 @@ def _human_inbox_governance_contributor(
             read_store = _main_read_store
         except (ImportError, AttributeError):
             read_store = None
-    records = list(read_store.list_governance_review_queue_items() or []) if read_store else []
+    records = read_decidable_governance_review_queue_items(read_store) if read_store else []
     try:
         from ..main import read_store as _main_read_store
         from ..personas.service import _dataset_source_after_read, _dataset_surface_status
@@ -1040,7 +1089,7 @@ def _human_inbox_approval_contributor(
             read_store = _main_read_store
         except (ImportError, AttributeError):
             read_store = None
-    records = list(read_store.list_approval_queue_items() or []) if read_store else []
+    records = read_pending_approval_queue_items(read_store) if read_store else []
     try:
         from ..main import read_store as _main_read_store
         from ..personas.service import _dataset_source_after_read, _dataset_surface_status
@@ -1246,80 +1295,6 @@ def _human_inbox_persona_contributor(
     return rows, surface
 
 
-def _human_inbox_all_items(
-    snapshot_at: Optional[str] = None,
-    *,
-    identity: Optional[OperatorIdentity] = None,
-    source_types: Optional[set[str]] = None,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    if not snapshot_at:
-        try:
-            from ..main import utc_now
-            snapshot_at = utc_now()
-        except (ImportError, AttributeError):
-            from datetime import datetime, timezone
-            snapshot_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    include_all = not source_types
-    review_records: List[Dict[str, Any]] = []
-    approval_records: List[Dict[str, Any]] = []
-    incident_available = False
-    incident_records: List[Dict[str, Any]] = []
-    persona_rows: List[Dict[str, Any]] = []
-    surfaces: Dict[str, Dict[str, Any]] = {}
-    failures: Dict[str, Dict[str, Any]] = {}
-
-    def _failed(surface_key: str, exc: BaseException) -> None:
-        logging.getLogger(__name__).warning(
-            "bff.human_inbox contributor %s failed: %s", surface_key, type(exc).__name__
-        )
-        failures[surface_key] = {
-            "status": "degraded",
-            "source": "read_store",
-            "reason": "contributor_read_error",
-            "message": f"{surface_key} contributor failed: {type(exc).__name__}",
-            "snapshot_at": snapshot_at,
-        }
-        surfaces[surface_key] = failures[surface_key]
-
-    if include_all or "governance_review" in source_types:
-        try:
-            review_records, surfaces["governance_review_queue"] = _human_inbox_governance_contributor(snapshot_at)
-        except Exception as exc:
-            _failed("governance_review_queue", exc)
-    if include_all or "approval" in source_types:
-        try:
-            approval_records, surfaces["approval_queue"] = _human_inbox_approval_contributor(snapshot_at)
-        except Exception as exc:
-            _failed("approval_queue", exc)
-    if include_all or "incident" in source_types:
-        try:
-            incident_result, surfaces["incidents"] = _human_inbox_incident_contributor(snapshot_at)
-            incident_available, incident_records = incident_result
-        except Exception as exc:
-            _failed("incidents", exc)
-    if include_all or "readiness_blocker" in source_types:
-        try:
-            persona_rows, surfaces["persona_readiness"] = _human_inbox_persona_contributor(snapshot_at)
-        except Exception as exc:
-            _failed("persona_readiness", exc)
-    items = _human_inbox_project_items(
-        snapshot_at=snapshot_at,
-        review_records=review_records,
-        approval_records=approval_records,
-        incident_records=incident_records,
-        persona_rows=persona_rows,
-    )
-    return items, {
-        "governance_review_records": review_records,
-        "approval_records": approval_records,
-        "incident_available": incident_available,
-        "incident_records": incident_records,
-        "persona_rows": persona_rows,
-        "surfaces": surfaces,
-        "failures": failures,
-    }
-
-
 def _human_inbox_filter_items(
     items: List[Dict[str, Any]],
     *,
@@ -1374,191 +1349,3 @@ def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Di
         "critical_count": len([item for item in items if item.get("priority") == "critical"]),
         "high_count": len([item for item in items if item.get("priority") == "high"]),
     }
-
-
-def _human_inbox_loaded_surface(
-    *,
-    snapshot_at: str,
-    source: str,
-    available: bool = True,
-    has_data: Optional[bool] = None,
-    empty_is_unavailable: bool = False,
-    missing_message: Optional[str] = None,
-) -> Dict[str, Any]:
-    try:
-        from ..personas.service import _surface_status
-        surface = dict(_surface_status())
-    except (ImportError, AttributeError):
-        surface = {"status": "ok"}
-    surface["source"] = source
-    if not available or (empty_is_unavailable and has_data is False):
-        surface["status"] = "unavailable"
-        surface["source"] = "missing" if not available else source
-        if missing_message:
-            surface["message"] = missing_message
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        )
-    return surface
-
-
-def _human_inbox_surfaces(
-    *,
-    snapshot_at: str,
-    governance_review_records: List[Dict[str, Any]],
-    approval_records: List[Dict[str, Any]],
-    incident_available: bool,
-    incident_records: List[Dict[str, Any]],
-    persona_rows: List[Dict[str, Any]],
-    source_types: Optional[set[str]] = None,
-    surface_failures: Optional[Dict[str, Dict[str, Any]]] = None,
-    loaded_surfaces: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    include_all = not source_types
-    failures = surface_failures or {}
-    provenance = loaded_surfaces or {}
-    contributor_surfaces: Dict[str, Dict[str, Any]] = {}
-
-    if include_all or "governance_review" in source_types:
-        contributor_surfaces["governance_review_queue"] = failures.get(
-            "governance_review_queue"
-        ) or provenance.get("governance_review_queue") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="read_store",
-            has_data=bool(governance_review_records),
-            missing_message="Governance review queue has no readable source records.",
-        )
-    if include_all or "approval" in source_types:
-        contributor_surfaces["approval_queue"] = failures.get(
-            "approval_queue"
-        ) or provenance.get("approval_queue") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="read_store",
-            has_data=bool(approval_records),
-            missing_message="Approval queue has no readable source records.",
-        )
-    if include_all or "incident" in source_types:
-        contributor_surfaces["incidents"] = failures.get(
-            "incidents"
-        ) or provenance.get("incidents") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="read_store" if incident_available else "missing",
-            available=incident_available,
-            has_data=bool(incident_records),
-            missing_message="Incidents have no readable source records.",
-        )
-    if include_all or "readiness_blocker" in source_types:
-        contributor_surfaces["persona_readiness"] = failures.get(
-            "persona_readiness"
-        ) or provenance.get("persona_readiness") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="bff_composed",
-            has_data=bool(persona_rows),
-        )
-
-    try:
-        from ..main import _aggregate_group_surface
-        aggregate_surface = _aggregate_group_surface(
-            "human_inbox",
-            list(contributor_surfaces.values()),
-            snapshot_at=snapshot_at,
-            unavailable_message="Human inbox aggregate unavailable.",
-            degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
-        )
-    except (ImportError, AttributeError):
-        aggregate_surface = {"status": "ok"}
-    return {
-        "human_inbox": aggregate_surface,
-        **contributor_surfaces,
-    }
-
-
-def _human_inbox_payload_from_loaded(
-    snapshot_at: str,
-    *,
-    items: List[Dict[str, Any]],
-    sources: Dict[str, Any],
-    source_types: Optional[set[str]],
-    source_type: Optional[str] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: Optional[int] = 20,
-    surface_failures: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    filtered = _human_inbox_filter_items(
-        items,
-        source_type=source_type,
-        status=status,
-        priority=priority,
-    )
-    total = len(filtered)
-    from ..main import _snapshot_meta
-    from ..personas.service import _page_slice
-    if page_size is None:
-        page_items = filtered
-        next_page_token = None
-        returned_page_size = len(page_items)
-    else:
-        page_items, next_page_token = _page_slice(filtered, page_token, page_size)
-        returned_page_size = page_size
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = _human_inbox_surfaces(
-        snapshot_at=snapshot_at,
-        governance_review_records=sources["governance_review_records"],
-        approval_records=sources["approval_records"],
-        incident_available=bool(sources["incident_available"]),
-        incident_records=sources["incident_records"],
-        persona_rows=sources["persona_rows"],
-        source_types=source_types,
-        surface_failures=surface_failures,
-        loaded_surfaces=sources.get("surfaces"),
-    )
-    if surface_failures:
-        meta["partial"] = True
-        meta["degradation"] = {
-            "reason": "one_or_more_human_inbox_contributors_incomplete",
-            "contributors": sorted(surface_failures),
-        }
-    summary = _human_inbox_summary(filtered, len(page_items))
-    canonical_page_items = _management_prune_camel_aliases(page_items)
-    return {
-        "data": {
-            "id": "management-human-inbox",
-            "items": canonical_page_items,
-            "summary": summary,
-        },
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": returned_page_size,
-        },
-        "meta": meta,
-    }
-
-
-def _human_inbox_payload(
-    snapshot_at: str,
-    *,
-    identity: Optional[OperatorIdentity] = None,
-    source_type: Optional[str] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: Optional[int] = 20,
-) -> Dict[str, Any]:
-    source_types = _human_inbox_csv_filter(source_type)
-    items, sources = _human_inbox_all_items(snapshot_at, identity=identity, source_types=source_types)
-    return _human_inbox_payload_from_loaded(
-        snapshot_at,
-        items=items,
-        sources=sources,
-        source_types=source_types,
-        source_type=source_type,
-        status=status,
-        priority=priority,
-        page_token=page_token,
-        page_size=page_size,
-        surface_failures=sources.get("failures") or None,
-    )

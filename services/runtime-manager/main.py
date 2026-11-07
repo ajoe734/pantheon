@@ -350,7 +350,7 @@ def _resolve_binding_read_tenant(ctx: Any) -> Optional[str]:
     if req_tenant == "*":
         raise AuthError("TENANT_SCOPE_FORBIDDEN", "Literal wildcard '*' is not a concrete tenant", 403)
 
-    is_viewer = ctx is not None and ctx.has_role("viewer") and not ctx.has_role(*_OPERATOR_ROLES)
+    is_viewer = ctx is None or not ctx.has_role(*_OPERATOR_ROLES)
 
     claims = dict(ctx.claims) if (ctx and getattr(ctx, "claims", None)) else {}
     allowed_tenants: list[str] = []
@@ -398,7 +398,7 @@ def health():
 
 
 @app.route("/api/runtimes/deploy", methods=["POST"])
-@require_authn(roles=_OPERATOR_ROLES, mfa_required=True)
+@require_authn(roles=_OPERATOR_ROLES, mfa_required=True, allow_shared_secret=True)
 def deploy():
     """Create a RuntimeBinding from a DeploymentPlan descriptor.
 
@@ -464,7 +464,7 @@ def deploy():
 
 
 @app.route("/api/runtimes/<runtime_id>/replace", methods=["POST"])
-@require_authn(roles=_OPERATOR_ROLES, mfa_required=True)
+@require_authn(roles=_OPERATOR_ROLES, mfa_required=True, allow_shared_secret=True)
 def replace_runtime(runtime_id):
     """Forward-replace one binding while preserving its runtime identity.
 
@@ -554,7 +554,7 @@ def replace_runtime(runtime_id):
 
 
 @app.route("/api/runtime-bindings/<binding_id>/promote", methods=["POST"])
-@require_authn(roles=("operator", "admin"), mfa_required=True)
+@require_authn(roles=("operator", "admin"), mfa_required=True, allow_shared_secret=True)
 def promote_runtime_binding(binding_id):
     """Perform one MFA- and four-person-governed stage cutover."""
     body = request.get_json(force=True) or {}
@@ -690,7 +690,7 @@ def promote_runtime_binding(binding_id):
 
 
 @app.route("/api/runtime-bindings", methods=["GET"])
-@require_authn(roles=_BINDING_READ_ROLES)
+@require_authn(roles=_BINDING_READ_ROLES, allow_shared_secret=True)
 def list_bindings():
     """List RuntimeBindings, optionally filtered by pool_id or plan_id."""
     ctx = get_auth_context()
@@ -720,7 +720,7 @@ def list_bindings():
 
 
 @app.route("/api/runtime-bindings/<binding_id>", methods=["GET"])
-@require_authn(roles=_BINDING_READ_ROLES)
+@require_authn(roles=_BINDING_READ_ROLES, allow_shared_secret=True)
 def get_binding(binding_id):
     """Read a single RuntimeBinding by id."""
     ctx = get_auth_context()
@@ -745,7 +745,7 @@ def get_binding(binding_id):
 
 
 @app.route("/api/runtime-bindings/<binding_id>/retire", methods=["POST"])
-@require_authn(roles=_OPERATOR_ROLES, mfa_required=True)
+@require_authn(roles=_OPERATOR_ROLES, mfa_required=True, allow_shared_secret=True)
 def retire_binding(binding_id):
     """Retire (terminal-terminate) a RuntimeBinding."""
     body = request.get_json(force=True) or {}
@@ -763,7 +763,7 @@ def retire_binding(binding_id):
 
 
 @app.route("/api/runtime-bindings/<binding_id>/transition", methods=["POST"])
-@require_authn(roles=_OPERATOR_ROLES, mfa_required=True)
+@require_authn(roles=_OPERATOR_ROLES, mfa_required=True, allow_shared_secret=True)
 def transition_binding(binding_id):
     """Advance a binding through the allowed status state machine.
 
@@ -789,7 +789,7 @@ def transition_binding(binding_id):
 
 
 @app.route("/api/runtime-fleet/desired-state", methods=["GET"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_OPERATOR_ROLES, allow_shared_secret=True)
 def fleet_desired_state():
     """Return the active fleet desired state for paper/canary RuntimeBindings.
 
@@ -836,7 +836,7 @@ def fleet_desired_state():
 
 
 @app.route("/api/runtimes/<pool_id>/active", methods=["GET"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_OPERATOR_ROLES, allow_shared_secret=True)
 def get_active_binding(pool_id):
     """Return the single active RuntimeBinding for a capital pool."""
     svc = _get_service()
@@ -855,7 +855,7 @@ def get_active_binding(pool_id):
 
 
 @app.route("/api/rollback", methods=["POST"])
-@require_authn(roles=_INCIDENT_ROLES, mfa_required=True)
+@require_authn(roles=_INCIDENT_ROLES, mfa_required=True, allow_shared_secret=True)
 def execute_rollback():
     """Execute a canonical rollback action.
 
@@ -921,7 +921,7 @@ def execute_rollback():
 
 
 @app.route("/api/rollback/history", methods=["GET"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_OPERATOR_ROLES, allow_shared_secret=True)
 def rollback_history():
     """Return all bindings that have a rollback_parent set (i.e. replacement bindings).
 
@@ -944,7 +944,7 @@ def rollback_history():
 
 
 @app.route("/api/kill-switch/dispatch", methods=["POST"])
-@require_authn(roles=_INCIDENT_ROLES, mfa_required=True)
+@require_authn(roles=_INCIDENT_ROLES, mfa_required=True, allow_shared_secret=True)
 def kill_switch_dispatch():
     """Emergency kill-switch fast path.
 
@@ -981,7 +981,7 @@ def kill_switch_dispatch():
 
 
 @app.route("/api/kill-switch/<pool_id>/safe-mode", methods=["GET"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_OPERATOR_ROLES, allow_shared_secret=True)
 def get_safe_mode(pool_id):
     """Return the current SafeModeState for a capital pool."""
     svc = _get_service()
@@ -993,7 +993,7 @@ def get_safe_mode(pool_id):
 
 
 @app.route("/api/kill-switch/<pool_id>/safe-mode", methods=["POST"])
-@require_authn(roles=_INCIDENT_ROLES, mfa_required=True)
+@require_authn(roles=_INCIDENT_ROLES, mfa_required=True, allow_shared_secret=True)
 def advance_safe_mode(pool_id):
     """Manually advance the safe-mode state for a capital pool (governance recovery path).
 
@@ -1026,7 +1026,7 @@ def advance_safe_mode(pool_id):
 
 
 @app.route("/api/kill-switch/audit-log", methods=["GET"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_OPERATOR_ROLES, allow_shared_secret=True)
 def kill_switch_audit_log():
     """Return all kill-switch audit entries for this service instance."""
     svc = _get_service()
@@ -1038,7 +1038,7 @@ def kill_switch_audit_log():
 
 
 @app.route("/api/evolution/freeze", methods=["POST"])
-@require_authn(roles=_APPROVER_ROLES, mfa_required=True)
+@require_authn(roles=_APPROVER_ROLES, mfa_required=True, allow_shared_secret=True)
 def evolution_freeze():
     """Execute runtime follow-through for an approved evolution freeze decision.
 
@@ -1081,7 +1081,7 @@ def evolution_freeze():
 
 
 @app.route("/api/evolution/retrain", methods=["POST"])
-@require_authn(roles=_APPROVER_ROLES, mfa_required=True)
+@require_authn(roles=_APPROVER_ROLES, mfa_required=True, allow_shared_secret=True)
 def evolution_retrain():
     """Record dispatch of an approved retrain/revalidate EvolutionDecision.
 
@@ -1120,7 +1120,7 @@ def evolution_retrain():
 
 
 @app.route("/api/evolution/redeploy", methods=["POST"])
-@require_authn(roles=_APPROVER_ROLES, mfa_required=True)
+@require_authn(roles=_APPROVER_ROLES, mfa_required=True, allow_shared_secret=True)
 def evolution_redeploy():
     """Execute redeploy follow-through after an approved evolution decision.
 

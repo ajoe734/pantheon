@@ -27,7 +27,10 @@ from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     validate_envelope,
 )
-from services.trade_journey.lifecycle_noop_order import is_noop_order
+from services.trade_journey.lifecycle_noop_order import (
+    is_noop_order,
+    is_sell_without_holdings_rejection,
+)
 from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
 from services.trade_journey.materializer import (
     IDENTIFIER_FIELDS,
@@ -905,10 +908,22 @@ class RelationalLifecycleProjector:
                 "correlation_envelope": source.get("correlation_envelope"),
                 **identity,
             }
+            is_no_holdings_reject = is_sell_without_holdings_rejection(source, metadata)
             for field in _PASSTHROUGH_FIELDS:
+                if is_no_holdings_reject and field in {
+                    "client_order_id",
+                    "order_id",
+                    "broker_order_id",
+                    "broker_trade_id",
+                    "ledger_entry_id",
+                    "reconciliation_id",
+                }:
+                    continue
                 value = _first(source.get(field), metadata.get(field))
                 if value is not None:
                     event[field] = value
+            if is_no_holdings_reject:
+                event["reason_code"] = "sell_without_holdings"
             if source.get("event_type") == FIXTURE_EVENT_TYPE:
                 for field in FIXTURE_PASSTHROUGH_FIELDS:
                     value = fixture_payload.get(field)

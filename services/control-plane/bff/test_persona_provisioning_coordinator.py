@@ -2870,3 +2870,154 @@ def test_chain_paper_capital_ensure_refuses_pool_of_another_persona_or_chain() -
         _ensure(_chain_coordinator(transport), labels={"chain_id": "chain-1"})
 
     assert [c for c in transport.calls if c[0] != "GET"] == []
+
+
+def test_non_baseline_paper_persona_writes_expression_policy_controls_and_pool_risk_policy_leaving_baseline_and_legacy_unchanged() -> None:
+    from services.capital.risk_policy import RiskPolicy
+
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    ids = deterministic_provisioning_ids(record)
+
+    # 1. Pool risk policy
+    pool = _post_payload(transport, "/api/capital-pools")
+    assert pool["metadata"]["risk_policy"] == {
+        "risk_policy_id": f"rp-{ids.capital_pool_id}",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_asset_classes": ["equity", "future"],
+    }
+    parsed_policy = RiskPolicy.from_mapping(pool["metadata"]["risk_policy"])
+    assert parsed_policy.max_leverage == 2.0
+    assert parsed_policy.gross_limit == 2.0
+    assert parsed_policy.allowed_asset_classes == ("equity", "future")
+
+    # 2. Baseline spec & artifact are unchanged
+    baseline_spec = _post_payload(
+        transport,
+        "/api/registry/strategy-specs",
+        identity=("registry_id", ids.baseline_registry_id),
+    )["strategy_spec"]
+    assert baseline_spec["market_scope"]["asset_classes"] == ["equity"]
+
+    baseline_artifact = _post_payload(
+        transport,
+        "/api/registry/strategy-artifacts",
+        identity=("registry_id", ids.baseline_strategy_artifact_id),
+    )["strategy_artifact"]
+    assert "expression_policy" not in baseline_artifact
+    assert "strength_scale_k" not in baseline_artifact["parameters"]
+    assert "strength_floor_momentum" not in baseline_artifact["parameters"]
+    assert [
+        c["parameter_key"] for c in baseline_artifact["mutation_surface"]["controls"]
+    ] == ["lookback_bars", "momentum_threshold"]
+
+    # 3. Non-baseline paper persona spec & artifact include expression_policy and 4 controls
+    candidate_spec = _post_payload(
+        transport,
+        "/api/registry/strategy-specs",
+        identity=("registry_id", ids.registry_id),
+    )["strategy_spec"]
+    assert candidate_spec["market_scope"]["asset_classes"] == ["equity", "future"]
+
+    forward_artifact = _post_payload(
+        transport,
+        "/api/registry/strategy-artifacts",
+        identity=("registry_id", ids.strategy_artifact_id),
+    )["strategy_artifact"]
+    assert forward_artifact["expression_policy"] == {
+        "version": "1.0",
+        "kind": "notional_target_v1",
+        "parameters": {
+            "lever_min_strength": 0.5,
+            "notional_fraction_at_full_strength": 1.0,
+            "allow_pyramiding": False,
+            "close_before_reverse": True,
+        },
+    }
+    assert forward_artifact["parameters"]["strength_scale_k"] == 1.0
+    assert forward_artifact["parameters"]["strength_floor_momentum"] == 0.01
+    controls_by_key = {
+        c["parameter_key"]: c for c in forward_artifact["mutation_surface"]["controls"]
+    }
+    assert list(controls_by_key) == [
+        "lookback_bars",
+        "momentum_threshold",
+        "strength_scale_k",
+        "strength_floor_momentum",
+        "lever_min_strength",
+        "notional_fraction_at_full_strength",
+    ]
+    assert controls_by_key["strength_scale_k"] == {
+        "parameter_key": "strength_scale_k",
+        "value_type": "number",
+        "current_value": 1.0,
+        "allowed_range": {"min": 0.25, "max": 4.0},
+        "step": 0.05,
+    }
+    assert controls_by_key["strength_floor_momentum"] == {
+        "parameter_key": "strength_floor_momentum",
+        "value_type": "number",
+        "current_value": 0.01,
+        "allowed_range": {"min": 0.002, "max": 0.05},
+        "step": 0.001,
+    }
+    assert controls_by_key["lever_min_strength"] == {
+        "parameter_key": "lever_min_strength",
+        "value_type": "number",
+        "current_value": 0.5,
+        "allowed_range": {"min": 0.0, "max": 1.0},
+        "step": 0.05,
+    }
+    assert controls_by_key["notional_fraction_at_full_strength"] == {
+        "parameter_key": "notional_fraction_at_full_strength",
+        "value_type": "number",
+        "current_value": 1.0,
+        "allowed_range": {"min": 0.1, "max": 1.0},
+        "step": 0.05,
+    }
+
+    # 4. Legacy persona artifact without expression_policy stays unchanged when adopted/transitioned
+    legacy_transport = FakeOwnerTransport()
+    _seed_approved_registry(legacy_transport)
+    legacy_result = _ensure(_chain_coordinator(legacy_transport))
+    assert legacy_result["registry"]["strategy_artifact"]["checksum"] == "sha256:frozen"
+
+    legacy_store, legacy_record = _record_and_store()
+    legacy_tx = FakeOwnerTransport()
+    legacy_coord = _coordinator(legacy_store, legacy_tx, _schedule_receipt)
+    legacy_coordinated = legacy_coord.coordinate(legacy_record)
+    legacy_ids = deterministic_provisioning_ids(legacy_record)
+    parent_path = f"/api/registry/strategy-artifacts/{legacy_ids.strategy_artifact_id}"
+    for target_artifact in (
+        legacy_tx.objects[("registry", parent_path)]["entry"]["metadata"]["strategy_artifact"],
+        legacy_coordinated.references["strategy_artifact_approved"]["entry"]["metadata"]["strategy_artifact"],
+        legacy_store.get(legacy_record.tenant_id, legacy_record.idempotency_key).references["strategy_artifact_approved"]["entry"]["metadata"]["strategy_artifact"],
+    ):
+        target_artifact.pop("expression_policy", None)
+        target_artifact["parameters"].pop("strength_scale_k", None)
+        target_artifact["parameters"].pop("strength_floor_momentum", None)
+        target_artifact["mutation_surface"]["controls"] = [
+            c
+            for c in target_artifact["mutation_surface"]["controls"]
+            if c["parameter_key"] in {"lookback_bars", "momentum_threshold"}
+        ]
+    transitioned = legacy_coord.transition_legacy_persona_market(
+        legacy_coordinated, market="US"
+    )
+    child_artifact = transitioned.references["strategy_artifact_approved"]["entry"][
+        "metadata"
+    ]["strategy_artifact"]
+    assert "expression_policy" not in child_artifact
+    assert [
+        c["parameter_key"] for c in child_artifact["mutation_surface"]["controls"]
+    ] == ["lookback_bars", "momentum_threshold"]
+
+

@@ -30,8 +30,12 @@ x-core-env: &core_env
   PANTHEON_ASSISTANT_PROVIDER: "disabled"
   PANTHEON_BFF_JWT_ISSUER: ${PROD_JWT_ISSUER:?jwt issuer required}
   PANTHEON_BFF_JWT_AUDIENCE: ${PROD_JWT_AUDIENCE:?jwt audience required}
+  PANTHEON_BFF_OIDC_ISSUER: ${PROD_IDP_ISSUER:?idp issuer required}
+  PANTHEON_BFF_OIDC_DISCOVERY_URL: ${PROD_IDP_ISSUER:?idp issuer required}/.well-known/openid-configuration
   PANTHEON_RUNTIME_JWT_ISSUER: ${PROD_JWT_ISSUER:?jwt issuer required}
   PANTHEON_RUNTIME_JWT_AUDIENCE: ${PROD_JWT_AUDIENCE:?jwt audience required}
+  PANTHEON_RUNTIME_OIDC_ISSUER: ${PROD_IDP_ISSUER:?idp issuer required}
+  PANTHEON_RUNTIME_OIDC_DISCOVERY_URL: ${PROD_IDP_ISSUER:?idp issuer required}/.well-known/openid-configuration
 
 x-product-owner: &product_owner
   pull_policy: never
@@ -272,7 +276,7 @@ services:
       PANTHEON_REGISTRY_AUTH_MODE: strict
       PANTHEON_REGISTRY_JWT_ISSUER: ${PROD_JWT_ISSUER:?jwt issuer required}
       PANTHEON_REGISTRY_JWT_AUDIENCE: ${PROD_JWT_AUDIENCE:?jwt audience required}
-      PANTHEON_REGISTRY_ROLE_CLAIMS: roles,role
+      PANTHEON_REGISTRY_ROLE_CLAIMS: ${PANTHEON_REGISTRY_ROLE_CLAIMS:-${PANTHEON_RUNTIME_ROLE_CLAIMS:-${PANTHEON_BFF_ROLE_CLAIMS:-roles,role,groups,realm_access.roles}}}
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
     depends_on:
       - governance
@@ -293,6 +297,8 @@ services:
       PORT: "8083"
       TELEMETRY_STORAGE_DIR: /data/telemetry
       PANTHEON_TELEMETRY_AUTH_MODE: strict
+      PANTHEON_TELEMETRY_OIDC_ISSUER: ${PROD_IDP_ISSUER:?idp issuer required}
+      PANTHEON_TELEMETRY_OIDC_DISCOVERY_URL: ${PROD_IDP_ISSUER:?idp issuer required}/.well-known/openid-configuration
       PANTHEON_TELEMETRY_SERVICE_TENANTS: ${PROD_TENANT_ID:?production tenant id required}
       PANTHEON_TELEMETRY_INFRA_PRODUCERS: control-plane-bff
       PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED: "false"
@@ -528,6 +534,8 @@ services:
       POLICY_LEARNING_DATA_DIR: /data/policy-learning
       POLICY_LEARNING_ENABLE_PRODUCTION_ADAPTERS: "false"
       POLICY_LEARNING_STORE_BACKEND: postgres
+      POLICY_LEARNING_OIDC_ISSUER: ${PROD_IDP_ISSUER:?idp issuer required}
+      POLICY_LEARNING_OIDC_DISCOVERY_URL: ${PROD_IDP_ISSUER:?idp issuer required}/.well-known/openid-configuration
       POLICY_LEARNING_SERVICE_TENANTS: ${PROD_TENANT_ID:?production tenant id required}
       POLICY_LEARNING_AGORA_TENANT_ID: ${PROD_TENANT_ID:?production tenant id required}
       AGORA_DATASET_STORE_SCHEMA: agora

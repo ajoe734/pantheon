@@ -1255,8 +1255,80 @@ class EvolutionDecisionStore:
             decision = self._decisions.get(decision_id)
             return self._copy_for_caller(decision) if decision is not None else None
 
-    def list_all(self) -> List[EvolutionDecision]:
-        return self._select(lambda _decision: True)
+    def list_all(
+        self,
+        *,
+        tenant_id: str | None = None,
+        target_id: str | None = None,
+        target_type: EvolutionTargetType | str | None = None,
+        decision_states: List[EvolutionDecisionState | str] | tuple[EvolutionDecisionState | str, ...] | None = None,
+        risk_level: EvolutionRiskLevel | str | None = None,
+        active_only: bool = False,
+    ) -> List[EvolutionDecision]:
+        scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+        state_values: set[str] | None = None
+        if decision_states is not None:
+            state_values = {
+                str(s.value if hasattr(s, "value") else s).strip().lower()
+                for s in decision_states
+                if str(s.value if hasattr(s, "value") else s).strip()
+            }
+            if not state_values:
+                return []
+        tt_value = (target_type.value if hasattr(target_type, "value") else str(target_type)) if target_type is not None else None
+        rl_value = (risk_level.value if hasattr(risk_level, "value") else str(risk_level)) if risk_level is not None else None
+
+        def _matches(decision: EvolutionDecision) -> bool:
+            if scope is not None and decision.tenant_id != scope:
+                return False
+            if target_id is not None and decision.target_id != target_id:
+                return False
+            if tt_value is not None and _target_type_value(decision) != tt_value:
+                return False
+            if state_values is not None:
+                ds_val = decision.decision_state.value if hasattr(decision.decision_state, "value") else str(decision.decision_state)
+                if ds_val.strip().lower() not in state_values:
+                    return False
+            if rl_value is not None:
+                rl_val = decision.risk_level.value if hasattr(decision.risk_level, "value") else str(decision.risk_level)
+                if rl_val != rl_value:
+                    return False
+            if active_only and not decision.is_active():
+                return False
+            return True
+
+        if self._postgres_store is not None:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if scope is not None:
+                clauses.append("coalesce(nullif(btrim(payload->>'tenant_id'), ''), 'pantheon-system') = %s")
+                params.append(scope)
+            if target_id is not None:
+                clauses.append("coalesce(payload->>'target_id', '') = %s")
+                params.append(str(target_id))
+            if tt_value is not None:
+                clauses.append("coalesce(payload->>'target_type', '') = %s")
+                params.append(str(tt_value))
+            if state_values is not None:
+                clauses.append("lower(coalesce(payload->>'decision_state', '')) = ANY(%s)")
+                params.append(sorted(state_values))
+            if rl_value is not None:
+                clauses.append("coalesce(payload->>'risk_level', '') = %s")
+                params.append(str(rl_value))
+            visible_sql = " AND ".join(clauses) if clauses else None
+            rows = self._postgres_store.list_all_selected(
+                "payload",
+                visible_sql=visible_sql,
+                keep_params=params,
+            )
+            matched: List[EvolutionDecision] = []
+            for row in rows:
+                decision = EvolutionDecision.from_dict(self._postgres_store._decode_payload(row[0]))
+                if _matches(decision):
+                    matched.append(self._copy_for_caller(decision))
+            return matched
+
+        return self._select(_matches)
 
     def _select(
         self, predicate: Callable[[EvolutionDecision], bool]

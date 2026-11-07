@@ -593,8 +593,52 @@ class OperatorMemoryStore:
         row = self.rows.get(decision_id)
         return ApprovalDecision.from_dict(_copy.deepcopy(row)) if row else None
 
-    def list_all(self):
-        return [self.get(key) for key in self.rows]
+    def list_all(
+        self,
+        *,
+        tenant_id=None,
+        decision_states=None,
+        decision_ids=None,
+        target_type=None,
+        target_id=None,
+        risk_level=None,
+    ):
+        state_values = (
+            {s.value if hasattr(s, "value") else str(s) for s in decision_states}
+            if decision_states is not None
+            else None
+        )
+        if state_values is not None and not state_values:
+            return []
+        id_values = (
+            {str(did).strip() for did in decision_ids if str(did).strip()}
+            if decision_ids is not None
+            else None
+        )
+        if id_values is not None and not id_values:
+            return []
+        tt_value = (
+            target_type.value if hasattr(target_type, "value") else str(target_type)
+        ) if target_type is not None else None
+        rl_value = (
+            risk_level.value if hasattr(risk_level, "value") else str(risk_level)
+        ) if risk_level is not None else None
+        out = []
+        for key, row in self.rows.items():
+            if tenant_id is not None and (row.get("tenant_id") or "pantheon-system") != str(tenant_id):
+                continue
+            if state_values is not None and str(row.get("decision_state") or "") not in state_values:
+                continue
+            if id_values is not None and str(row.get("decision_id") or key) not in id_values:
+                continue
+            if tt_value is not None and str(row.get("target_type") or "") != tt_value:
+                continue
+            if target_id is not None and str(row.get("target_id") or "") != str(target_id):
+                continue
+            if rl_value is not None and str(row.get("risk_level") or "") != rl_value:
+                continue
+            out.append(ApprovalDecision.from_dict(_copy.deepcopy(row)))
+        return out
 
     def find_by_target(self, target_type, target_id):
         return [d for d in self.list_all() if d.target_id == target_id]

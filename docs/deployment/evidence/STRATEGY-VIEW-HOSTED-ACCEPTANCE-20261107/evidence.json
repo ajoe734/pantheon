@@ -1,0 +1,158 @@
+{
+  "task": "STRATEGY-VIEW-HOSTED-ACCEPTANCE-20261107",
+  "result": "passed",
+  "operator": "local operator session (Human/Ops) through a real admintest browser login; no password or token is stored in this evidence or its files",
+  "measured_at": {
+    "api_and_desktop": "2026-11-07T17:19:54.755Z",
+    "parameters_and_phone": "2026-11-07T17:28:38Z",
+    "phone_list_run_status": "2026-11-07T17:29Z",
+    "served_version_read": "2026-11-07T17:30:13Z"
+  },
+  "hosted_pair": {
+    "deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/42389893848",
+    "deploy_conclusion": "success (Admit and switch exact FE/BFF release accepted)",
+    "bff_commit": "e9a1a196805663b175423964c2ccdc21bf2d24ea",
+    "frontend_commit": "d3de20a7b807178662faf57aa8046eefbdf4777f",
+    "deployment_json": "app.dev.mvl-cap.tw/deployment.json commit d3de20a7b807178662faf57aa8046eefbdf4777f bffCommit e9a1a196805663b175423964c2ccdc21bf2d24ea deployedAt 20261107T171417Z",
+    "bff_container_commit": "GET api.dev.mvl-cap.tw/bff/version from the running operator-bff container: source_commit_sha e9a1a196805663b175423964c2ccdc21bf2d24ea image_digest sha256:a8b52c396d9e591e8a6c927b12638344df4fad5350e0a009786b77290bd3db6c build_time 2026-11-07T16:17:17Z (read through the public API; no VM access)",
+    "contains": {
+      "pantheon": [
+        "#7027 merge 514806bbc83ac27506faba8bcc42187fec962287 (BFF-STRATEGY-OPERATIONAL-TRUTH-20261107)",
+        "#7032 merge 63d124fcdca732df27018b72a20ffaa6a6d1ceb9 (DEV-PAPER-RELEASE-RETIRE-REDRIVE-20261107)"
+      ],
+      "execute-plans": [
+        "#964 merge d3de20a7b807178662faf57aa8046eefbdf4777f (FE-STRATEGY-OPERATIONAL-VIEW-20261107)"
+      ]
+    }
+  },
+  "acceptance": {
+    "AC1_pair": "passed: both source tasks merged; run 42389893848 accepted the exact pair above; deployment.json and the BFF container's /bff/version report the same commits",
+    "AC2_default_tab": {
+      "verdict": "passed",
+      "request": "GET /bff/strategies?exclude_state=draft&hide_retired_personas=true&page_size=200 -> 200 in 4996 ms",
+      "page_info_total": 6,
+      "rows": 6,
+      "operational_counts": {
+        "running": 4,
+        "idle": 0,
+        "retired": 138,
+        "unbound": 2,
+        "unknown": 0
+      },
+      "hidden_retired_persona_count": 138,
+      "state_counts_draft": 3217,
+      "ui": "default tab label '預設（隱藏草稿） (6)'; notice '預設已隱藏 3217 筆草稿策略與 138 筆 Persona 已退役的策略。'; 6 rows: 4 運行中 (release 42389893848 and 青禾 2330 R2 and 衡岳 0050 and 澄川 2317) and 2 未綁定 Persona; footer '顯示第 1–6 筆，共 6 筆'"
+    },
+    "AC3_run_status_vs_personas": {
+      "verdict": "passed",
+      "personas_read": "GET /bff/personas?page_size=200&include_archived=true in the same session -> 200 in 3498 ms; 148 personas: retired 138 and paper_running 4 and research_only 3 and draft 3",
+      "mismatches": 0,
+      "every_paper_running_persona_listed": true,
+      "release_personas_running": 1,
+      "note": "Only the served release case 42389893848 runs. The deploy's retire step retired the previous served case dev-paper-release-42379584176-1 on its second attempt (attempts 2; status retired; no error), which is the DEV-PAPER-RELEASE-RETIRE-REDRIVE-20261107 behaviour; the earlier second paper_running release persona no longer occurs."
+    },
+    "AC4_detail_pages": {
+      "verdict": "passed",
+      "strategies": {
+        "strategy-persona-298e138c136c9840b0e4": "青禾｜2330 台股 Paper 學習 R2 (running learning strategy)",
+        "strategy-persona-c944e470ab6fbf6fc734": "Pantheon Dev Paper Release 42389893848 Attempt 1 (running release strategy)"
+      },
+      "checked": "spec tab shows 策略標題 and 假設 and 目標 from the detail DTO; 交易規則 shows the trading bundle sentence '每根日K 收盤時，比較最新收盤價與 1 根前的收盤價：漲幅大於 0% 就買進 1 股，否則賣出 1 股。' and the baseline bundle labelled 不送單回滾基準 (正負向皆不動作，下單數量 0); 參數 lists lookback_bars 2 range 2–60 step 1 and momentum_threshold 0 range 0–0.05 step 0.001 and the fixed parameters marked 固定; overview shows 運行狀態 運行中 and the bound persona with 模擬執行中",
+      "artifact_match": "for both strategies and both bundles the detail rules parameters and adjustableControls and strategyLogic equal metadata.strategy_artifact of GET /bff/artifacts/<registryId> exactly; rollback_baseline role matches lineage.parent_registry_ids of the trading bundle",
+      "read_only": "spec tab has 0 input/textarea/select elements and no 送出草稿版本 control (desktop and phone)"
+    },
+    "AC5_browser": {
+      "verdict": "passed",
+      "desktop": "1440x1000 Chromium; list and both detail overview/spec/parameter sections",
+      "phone": "390x844 mobile emulation; document width 390 on the list and the release spec tab (no horizontal page overflow); spec tab scrolled to 交易規則 and 參數; list table scrolled horizontally to show 運行狀態 and 標的",
+      "secrets": "screenshots never include the login page; no password or token in any file"
+    }
+  },
+  "observations_not_failures": [
+    "Phone width: the list keeps the existing table-in-scroll-box layout, so 運行狀態 is reached by scrolling the table sideways; the page itself does not overflow. Pre-existing layout, not introduced here.",
+    "Single-sample latencies: hide-mode default list 5.0 s; ordinary exclude_state=draft list (page_size 20) 3.7 s; persona directory 3.5 s.",
+    "Ordinary list without hide_retired_personas returned meta.operational_counts because its candidate set (144) fits one 200-row owner page, per the AC6 Option A decision recorded on BFF-STRATEGY-OPERATIONAL-TRUTH-20261107."
+  ],
+  "files": {
+    "directory": "/tmp/pantheon-strategy-view-acceptance-20261107",
+    "sha256": {
+      "accept_api.json": {
+        "sha256": "7f973450f992bf640af49dead6132c12e13434f79e8948704c2260f7ab6db61c",
+        "bytes": 666731
+      },
+      "accept_texts2.json": {
+        "sha256": "92fe1cb7af3b75e2f493fa31bd8853b78e2db8b8e2a19c1cc21e50205445416f",
+        "bytes": 6163
+      },
+      "phone-list-rows.json": {
+        "sha256": "a5692a0618fbf17b98131cd372ce78e376101ed8be56dae4a66598eb29695898",
+        "bytes": 1334
+      },
+      "dev-paper-release-case-retire.json": {
+        "sha256": "841d9c8bbd7ac41ce2f4a172b851d7da600b98609e1cdf30f699e130a0e0193a",
+        "bytes": 12145
+      },
+      "release-controller-accepted.json": {
+        "sha256": "f11e9ded50fd1a8201f97b0465c65724cc279d48dadaf3c43ba0e90c6c8a06c2",
+        "bytes": 15875
+      },
+      "bff-version.json": {
+        "sha256": "9e8ee3b68467ec8c2a4f44e114b1ce258d51cf3fa779bb5d515147b6e306de3b",
+        "bytes": 570
+      },
+      "deployment.json": {
+        "sha256": "17bd01f9561083bf780b40a4e0694f041bc7d8d2060566b4fda41cd2f7a0de54",
+        "bytes": 6041
+      },
+      "shots/learning-overview-desktop.png": {
+        "sha256": "775954aca599872c72e4b42e5f7b20d7e05f326552ab52ce191a756b96c65b55",
+        "bytes": 212776
+      },
+      "shots/learning-params-desktop.png": {
+        "sha256": "4d81ff32af4d9b3c9c7748d2b44368fa3346ee1b2915c3708295fcbce2a4f05b",
+        "bytes": 214531
+      },
+      "shots/learning-spec-desktop.png": {
+        "sha256": "8a95aec0a15555568682280b1343bd8dd0175198032525666361334f8cb64a6c",
+        "bytes": 238612
+      },
+      "shots/list-desktop.png": {
+        "sha256": "ef9226a0c29f52a1e1efa20c74444d5ff5b6fcadf6e6a7d5b17fca91997819e9",
+        "bytes": 203677
+      },
+      "shots/list-phone-run-status.png": {
+        "sha256": "05f9e1c8101e87e2f7ca202ad3a26f3c613a70224fe5ba7c1c2de2773dc078e3",
+        "bytes": 63831
+      },
+      "shots/list-phone-top.png": {
+        "sha256": "e4476921935480074b90992da4d5210d2e111496e51ad6092b0352c5ae4c0e29",
+        "bytes": 60885
+      },
+      "shots/release-overview-desktop.png": {
+        "sha256": "3f243a89a0095ac9397062feeddab148f6a42793eaf52e23dde0916210668afa",
+        "bytes": 214291
+      },
+      "shots/release-params-desktop.png": {
+        "sha256": "63b2bfff9b769dff0efbd2fcbf9e3ed186c88798c62cdce24e79f0388e78d2df",
+        "bytes": 215798
+      },
+      "shots/release-spec-desktop.png": {
+        "sha256": "2a5be7de17ddc3b7325a9b1af043a636e10ca2da94bdfc10ec25ccb368297352",
+        "bytes": 216479
+      },
+      "shots/release-spec-phone-params.png": {
+        "sha256": "7ef7c57dd14c495e61bdc1826db00ee04da8f311c95992ac6163afabfadf074a",
+        "bytes": 69198
+      },
+      "shots/release-spec-phone-rules.png": {
+        "sha256": "b5e8aae487e2fb57e9e1506291fee64a71958bbe34372a4131a85da5a9053984",
+        "bytes": 78961
+      },
+      "shots/release-spec-phone-top.png": {
+        "sha256": "c285e46fc548dbe57c14717a14e9fa2c437558d5aa000c0e9272fda411e5d933",
+        "bytes": 85047
+      }
+    }
+  },
+  "not_done": "No write, archive, promote or retire action was taken; no VM or SSH access; no workflow other than the ordinary Hourly Publish Cut dispatch at about 16:08Z that produced run 42389893848."
+}

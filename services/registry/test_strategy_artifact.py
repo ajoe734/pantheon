@@ -21,12 +21,15 @@ from .split_api import RegistryError, RegistryService
 from .storage import get_store, reset_store
 from .strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
+    FORBIDDEN_MUTATION_CONTROL_KEYS,
+    REQUIRED_EXPRESSION_POLICY_CONTROLS,
     StrategyArtifactValidationError,
     build_market_transition_registry_payload,
     build_strategy_artifact_registry_payload,
     canonical_market_context,
     create_market_transition_revision,
     evaluate_strategy_action,
+    evaluate_strategy_view,
     load_strategy_artifact_registration,
     mutate_strategy_artifact,
     strategy_artifact_checksum,
@@ -1262,4 +1265,299 @@ def test_list_strategy_artifacts_catalog_flat_projection_and_paging():
         ]
     )
     assert assembled == [body2["items"][0]]
+
+
+def _artifact_with_expression_policy() -> dict:
+    artifact = copy.deepcopy(_artifact())
+    artifact["parameters"]["strength_scale_k"] = 1.0
+    artifact["parameters"]["strength_floor_momentum"] = 0.01
+    artifact["expression_policy"] = {
+        "version": "1.0",
+        "kind": "notional_target_v1",
+        "parameters": {
+            "lever_min_strength": 0.5,
+            "notional_fraction_at_full_strength": 1.0,
+            "allow_pyramiding": False,
+            "close_before_reverse": True,
+        },
+    }
+    artifact["mutation_surface"]["controls"].extend(
+        [
+            {
+                "parameter_key": "strength_scale_k",
+                "value_type": "number",
+                "current_value": 1.0,
+                "allowed_range": {"min": 0.25, "max": 4.0},
+                "step": 0.05,
+            },
+            {
+                "parameter_key": "strength_floor_momentum",
+                "value_type": "number",
+                "current_value": 0.01,
+                "allowed_range": {"min": 0.002, "max": 0.05},
+                "step": 0.001,
+            },
+            {
+                "parameter_key": "lever_min_strength",
+                "value_type": "number",
+                "current_value": 0.5,
+                "allowed_range": {"min": 0.0, "max": 1.0},
+                "step": 0.05,
+            },
+            {
+                "parameter_key": "notional_fraction_at_full_strength",
+                "value_type": "number",
+                "current_value": 1.0,
+                "allowed_range": {"min": 0.1, "max": 1.0},
+                "step": 0.05,
+            },
+        ]
+    )
+    return artifact
+
+
+def test_evaluate_strategy_view_legacy_and_expression_policy_pin_decimal_strength():
+    from decimal import Decimal
+
+    legacy = _artifact()
+    assert "expression_policy" not in legacy
+
+    # Positive momentum on legacy artifact: strength is None, action/direction match
+    view_legacy_buy = evaluate_strategy_view(legacy, [100.0, 100.5])
+    assert evaluate_strategy_action(legacy, [100.0, 100.5]) == "BUY"
+    assert view_legacy_buy == {
+        "action": "BUY",
+        "direction": "LONG",
+        "momentum": 0.005,
+        "strength": None,
+    }
+
+    # Negative momentum on legacy artifact: SELL -> SHORT, strength is None
+    view_legacy_sell = evaluate_strategy_view(legacy, [100.0, 99.4])
+    assert evaluate_strategy_action(legacy, [100.0, 99.4]) == "SELL"
+    assert view_legacy_sell == {
+        "action": "SELL",
+        "direction": "SHORT",
+        "momentum": -0.006,
+        "strength": None,
+    }
+
+    # HOLD baseline artifact: HOLD -> FLAT, strength is None
+    baseline = copy.deepcopy(legacy)
+    baseline["strategy_logic"]["positive_action"] = "HOLD"
+    baseline["strategy_logic"]["non_positive_action"] = "HOLD"
+    baseline["parameters"]["zero_momentum_action"] = "HOLD"
+    view_flat = evaluate_strategy_view(baseline, [100.0, 100.0])
+    assert evaluate_strategy_action(baseline, [100.0, 100.0]) == "HOLD"
+    assert view_flat == {
+        "action": "HOLD",
+        "direction": "FLAT",
+        "momentum": 0.0,
+        "strength": None,
+    }
+
+    # Artifact with expression_policy: strength computed with Decimal
+    # momentum = (100.6 - 100.0) / 100.0 = 0.006; denom = 1.0 * max(0.0, 0.01) = 0.01 -> strength = 0.6
+    expr_art = _artifact_with_expression_policy()
+    view_expr_buy = evaluate_strategy_view(expr_art, [100.0, 100.6])
+    assert evaluate_strategy_action(expr_art, [100.0, 100.6]) == "BUY"
+    expected_mom = (Decimal("100.6") - Decimal("100.0")) / Decimal("100.0")
+    expected_strength = min(
+        Decimal("1"),
+        abs(expected_mom) / (Decimal("1.0") * max(Decimal("0.0"), Decimal("0.01"))),
+    )
+    assert view_expr_buy == {
+        "action": "BUY",
+        "direction": "LONG",
+        "momentum": float(expected_mom),
+        "strength": float(expected_strength),
+    }
+    assert view_expr_buy["strength"] == 0.6
+
+    # Negative momentum that saturates min(1, ...) at 1.0
+    view_expr_sell_cap = evaluate_strategy_view(expr_art, [100.0, 97.5])
+    assert evaluate_strategy_action(expr_art, [100.0, 97.5]) == "SELL"
+    assert view_expr_sell_cap == {
+        "action": "SELL",
+        "direction": "SHORT",
+        "momentum": -0.025,
+        "strength": 1.0,
+    }
+
+    # Custom momentum_threshold > strength_floor_momentum and custom strength_scale_k
+    mutated = mutate_strategy_artifact(
+        expr_art,
+        new_artifact_id="artifact-tw-session-momentum-v2-expr",
+        new_version="1.0.1",
+        parameter_updates={
+            "momentum_threshold": 0.02,
+            "strength_scale_k": 1.5,
+        },
+        source_run_ids=["run-strength-test"],
+    )
+    # momentum = 0.015 <= threshold 0.02 -> SELL / SHORT
+    # denom = 1.5 * max(0.02, 0.01) = 0.03 -> strength = 0.015 / 0.03 = 0.5
+    view_mutated = evaluate_strategy_view(mutated, [100.0, 101.5])
+    assert evaluate_strategy_action(mutated, [100.0, 101.5]) == "SELL"
+    assert view_mutated == {
+        "action": "SELL",
+        "direction": "SHORT",
+        "momentum": 0.015,
+        "strength": 0.5,
+    }
+
+
+def test_expression_policy_schema_and_forbidden_keys_and_controls():
+    valid = _artifact_with_expression_policy()
+    validate_strategy_artifact(valid)
+
+    # Unknown key in expression_policy top-level
+    bad_top = copy.deepcopy(valid)
+    bad_top["expression_policy"]["extra_field"] = "nope"
+    with pytest.raises(StrategyArtifactValidationError, match="schema validation failed"):
+        validate_strategy_artifact(bad_top)
+
+    # Unknown key in expression_policy.parameters
+    bad_param = copy.deepcopy(valid)
+    bad_param["expression_policy"]["parameters"]["unknown_policy_knob"] = 1
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_strategy_artifact(bad_param)
+
+    # Reject any parameter key matching prefer_.*_when_.* in parameters or expression_policy.parameters
+    for bad_key in ("prefer_future_when_short", "prefer_shares_when_long", "prefer_ssf_when_volatile"):
+        bad_in_params = copy.deepcopy(valid)
+        bad_in_params["parameters"][bad_key] = True
+        bad_in_params["mutation_surface"]["immutable_parameters"].append(bad_key)
+        with pytest.raises(StrategyArtifactValidationError, match="prefer_"):
+            validate_strategy_artifact(bad_in_params)
+
+        bad_in_expr = copy.deepcopy(valid)
+        bad_in_expr["expression_policy"]["parameters"][bad_key] = True
+        with pytest.raises(StrategyArtifactValidationError, match="prefer_"):
+            validate_strategy_artifact(bad_in_expr)
+
+    # Missing required control when expression_policy is present
+    for required_key in REQUIRED_EXPRESSION_POLICY_CONTROLS:
+        missing_ctrl = copy.deepcopy(valid)
+        missing_ctrl["mutation_surface"]["controls"] = [
+            c
+            for c in missing_ctrl["mutation_surface"]["controls"]
+            if c["parameter_key"] != required_key
+        ]
+        if required_key in missing_ctrl["parameters"]:
+            missing_ctrl["mutation_surface"]["immutable_parameters"].append(required_key)
+        with pytest.raises(StrategyArtifactValidationError, match=required_key):
+            validate_strategy_artifact(missing_ctrl)
+
+    # Wrong range or step on expression control
+    wrong_step = copy.deepcopy(valid)
+    for c in wrong_step["mutation_surface"]["controls"]:
+        if c["parameter_key"] == "strength_scale_k":
+            c["step"] = 0.1
+    with pytest.raises(StrategyArtifactValidationError, match="strength_scale_k"):
+        validate_strategy_artifact(wrong_step)
+
+    # Reject forbidden controls in mutation_surface.controls
+    for forbidden_ctrl in FORBIDDEN_MUTATION_CONTROL_KEYS:
+        bad_ctrl = copy.deepcopy(valid)
+        bad_ctrl["parameters"][forbidden_ctrl] = 1.0
+        bad_ctrl["mutation_surface"]["controls"].append(
+            {
+                "parameter_key": forbidden_ctrl,
+                "value_type": "number",
+                "current_value": 1.0,
+                "allowed_range": {"min": 0.0, "max": 5.0},
+                "step": 0.5,
+            }
+        )
+        with pytest.raises(StrategyArtifactValidationError, match=forbidden_ctrl):
+            validate_strategy_artifact(bad_ctrl)
+
+
+def test_mutate_strategy_artifact_accepts_all_four_expression_controls():
+    parent = _artifact_with_expression_policy()
+    child = mutate_strategy_artifact(
+        parent,
+        new_artifact_id="artifact-tw-session-momentum-v1-expr-child",
+        new_version="1.0.1",
+        parameter_updates={
+            "strength_scale_k": 1.25,
+            "strength_floor_momentum": 0.015,
+            "lever_min_strength": 0.65,
+            "notional_fraction_at_full_strength": 0.85,
+        },
+        source_run_ids=["run-mutate-expr-001"],
+    )
+    validate_strategy_artifact(child)
+    assert child["parameters"]["strength_scale_k"] == 1.25
+    assert child["parameters"]["strength_floor_momentum"] == 0.015
+    assert child["expression_policy"]["parameters"]["lever_min_strength"] == 0.65
+    assert child["expression_policy"]["parameters"]["notional_fraction_at_full_strength"] == 0.85
+    ctrl_map = {
+        c["parameter_key"]: c["current_value"]
+        for c in child["mutation_surface"]["controls"]
+    }
+    assert ctrl_map["strength_scale_k"] == 1.25
+    assert ctrl_map["strength_floor_momentum"] == 0.015
+    assert ctrl_map["lever_min_strength"] == 0.65
+    assert ctrl_map["notional_fraction_at_full_strength"] == 0.85
+
+    # Reject mutating allow_pyramiding or close_before_reverse
+    for immutable_policy_key in ("allow_pyramiding", "close_before_reverse"):
+        with pytest.raises(StrategyArtifactValidationError, match=immutable_policy_key):
+            mutate_strategy_artifact(
+                parent,
+                new_artifact_id="artifact-bad-child",
+                new_version="1.0.2",
+                parameter_updates={immutable_policy_key: True},
+                source_run_ids=["run-mutate-expr-002"],
+            )
+
+
+def test_existing_builtin_and_persona_artifact_checksums_unchanged():
+    import json
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+
+    # 1. Built-in artifact
+    builtin_artifact = _artifact()
+    validate_strategy_artifact(builtin_artifact)
+    assert (
+        strategy_artifact_checksum(builtin_artifact)
+        == "sha256:59fd62555bdda65f4215352402c6ef7cedd5acb998957f55f77579073e35fe92"
+    )
+
+    # 2. Checked-in persona and H12 artifacts from governance baseline evidence
+    evidence_Artifact_files = [
+        (
+            "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/input-qinghe-2330.json",
+            "sha256:a11791e9d18c0f0dcec765a7df477a7fc65ae0a66f7c892f777ce01a162db880",
+        ),
+        (
+            "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/input-hengyue-0050.json",
+            "sha256:d6bb93411b738b9f50022ecf473be327ffb07aa017eca01a14cb8f503becbe1b",
+        ),
+        (
+            "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/input-chengchuan-2317.json",
+            "sha256:2383a5084ab3110d83282accddb168e724e3174e9a8cfece3fbb8f84dada6040",
+        ),
+        (
+            "docs/deployment/evidence/H12-DRAWDOWN-POLICY-CONFIG-20261025/input.json",
+            "sha256:fa3a3cdf56c61c8ada5cf29863a89204e13aafa89845b98fe60bff419c6aed75",
+        ),
+        (
+            "docs/deployment/evidence/H12-4923-DRAWDOWN-POLICY-CONFIG-20261101/input.json",
+            "sha256:db3d764e77031c82745deb9d5ab92ae676c2eb0175f33cd1b059c4ec682b9d83",
+        ),
+    ]
+    for rel_path, expected_checksum in evidence_Artifact_files:
+        payload = json.loads((repo_root / rel_path).read_text(encoding="utf-8"))
+        persona_artifact = payload["actual_current_artifact"]
+        validate_strategy_artifact(persona_artifact)
+        assert strategy_artifact_checksum(persona_artifact) == expected_checksum
+        if "registry_entry" in payload:
+            assert payload["registry_entry"]["checksum"] == expected_checksum
+        assert evaluate_strategy_view(persona_artifact, [100.0, 101.0])["strength"] is None
+
 

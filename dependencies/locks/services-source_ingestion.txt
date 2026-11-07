@@ -26,10 +26,18 @@ certifi==2026.7.22
     #   -c dependencies/constraints-core.txt
     #   httpcore
     #   httpx
+cffi==2.1.1
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   cryptography
 click==8.5.0
     # via
     #   -c dependencies/constraints-core.txt
     #   uvicorn
+cryptography==50.0.1
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   -r services/source_ingestion/requirements.txt
 fastapi==0.141.1
     # via
     #   -c dependencies/constraints-core.txt
@@ -68,6 +76,10 @@ psycopg-binary==3.3.6
     # via
     #   -c dependencies/constraints-core.txt
     #   psycopg
+pycparser==3.0
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   cffi
 pydantic==2.13.5
     # via
     #   -c dependencies/constraints-core.txt

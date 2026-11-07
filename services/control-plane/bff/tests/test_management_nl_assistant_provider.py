@@ -36,6 +36,7 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
 # aggregates_history_and_quota` below.
 bff_main = get_management_nl_module()
 from services.control_plane.bff.assistant.control_mode import ControlModeStore
+from services.control_plane.bff.assistant.management_service import get_management_ai_context_service
 from services.control_plane.bff.assistant.models import AssistantMode
 from services.control_plane.bff.management_nl_command_idempotency import (
     ManagementNlCommandIdempotencyStore,
@@ -46,6 +47,7 @@ from services.control_plane.bff.management_nl_command_idempotency import (
 )
 from services.control_plane.bff.management_ai_store import ManagementAiAttachmentStore
 from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.management_read_models.service import ManagementService
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     create_market_persona_projection_test_double,
@@ -3581,9 +3583,9 @@ def test_mgmt_nl_collect_context_all_bounds_telemetry_owner_reads_and_reuses_tra
             lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}},
         )
         monkeypatch.setattr(
-            bff_main,
-            "_human_inbox_payload",
-            lambda *args, **kwargs: {"items": [], "meta": {"surfaces": {}}},
+        get_management_ai_context_service(),
+        "get_human_inbox",
+            lambda *args, **kwargs: {"data": {"items": []}, "page_info": {"total": 0}, "meta": {"surfaces": {}}},
         )
         monkeypatch.setattr(
             bff_main,
@@ -3688,9 +3690,9 @@ def test_mgmt_nl_collect_context_preserves_fail_closed_unavailable_when_telemetr
             lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}},
         )
         monkeypatch.setattr(
-            bff_main,
-            "_human_inbox_payload",
-            lambda *args, **kwargs: {"items": [], "meta": {"surfaces": {}}},
+        get_management_ai_context_service(),
+        "get_human_inbox",
+            lambda *args, **kwargs: {"data": {"items": []}, "page_info": {"total": 0}, "meta": {"surfaces": {}}},
         )
         monkeypatch.setattr(
             bff_main,
@@ -4242,8 +4244,10 @@ def _cs_scenario(monkeypatch, *, runtime_count: int, current_runtime_count: int,
     monkeypatch.setattr(ms, "_list_persona_records", lambda *a, **k: list(personas))
     monkeypatch.setattr(ms, "_build_operator_alerts_payload",
                         lambda _s: {"alerts": [], "meta": {"surfaces": {}}})
-    monkeypatch.setattr(ms, "_human_inbox_payload",
-                        lambda *a, **k: {"data": {"items": []}, "meta": {"surfaces": {}}})
+    monkeypatch.setattr(
+        get_management_ai_context_service(),
+        "get_human_inbox",
+                        lambda *a, **k: {"data": {"items": []}, "page_info": {"total": 0}, "meta": {"surfaces": {}}})
     monkeypatch.setattr(ms, "_build_management_anomalies_payload",
                         lambda _s: {"items": [], "meta": {"surfaces": {}}})
     return ms, counts, store
@@ -4574,7 +4578,10 @@ def test_ai_cockpit_counts_wired_human_inbox_data_items_with_caller_identity(mon
             }},
         }
 
-    monkeypatch.setattr(ms, "_human_inbox_payload", wired_payload)
+    monkeypatch.setattr(
+        get_management_ai_context_service(),
+        "get_human_inbox", lambda **kwargs: wired_payload(None, **kwargs)
+    )
     caller = object()
     context = ms._mgmt_nl_collect_context(
         "cockpit", _CS_NOW, tenant_id=_CS_TENANT, identity=caller

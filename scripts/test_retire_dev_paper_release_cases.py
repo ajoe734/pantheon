@@ -392,3 +392,131 @@ def test_blocked_list_all_in_execute_is_bounded():
                          timeout_seconds=0.2)
     assert _t.monotonic() - began < 2
     assert out["deadline_reached"] is True and out["deadline_stage"] == "list_cases"
+
+
+class Sequenced(Coordinator):
+    """Pending for the first ``n`` calls of a persona, then retired."""
+
+    def __init__(self, pending_calls=None, boom=()):
+        super().__init__(boom=boom)
+        self.pending_calls = dict(pending_calls or {})
+
+    def __call__(self, tenant_id, persona_id, *, reason):
+        seen = self.calls.count(persona_id)
+        out = super().__call__(tenant_id, persona_id, reason=reason)
+        if seen < self.pending_calls.get(persona_id, 0):
+            return {"persona_id": persona_id, "state": "provisioning",
+                    "retirement": {"status": "pending"}}
+        return out
+
+
+def _replay(clock, durations, coord, *, poll=5.0, timeout=180, store=None):
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock.now += seconds
+
+    fake = _fake_call(clock, durations)
+
+    def call(fn, timeout):
+        try:
+            return fake(fn, timeout)
+        except RuntimeError as exc:  # a raising retire_case, as in the real call
+            return True, None, exc
+
+    out = retire.execute(
+        store=store or _store(), retire_case=coord, run_id="9", dry_run=False,
+        outcome="accepted", new_case_key=KEYS[3], timeout_seconds=timeout,
+        monotonic=clock, call_with_timeout=call,
+        poll_seconds=poll, sleep=sleep,
+    )
+    return out, sleeps
+
+
+def test_pending_then_retired_on_second_call_ends_retired():
+    clock, coord = Clock(), Sequenced({"p-2": 1})
+    out, sleeps = _replay(clock, [2, 20, 2, 3], coord)
+    assert out["status"] == "retired" and out["deadline_reached"] is False
+    assert coord.calls.count("p-2") == 2
+    assert coord.calls.count("p-1") == 1 and coord.calls.count("p-3") == 1
+    assert out["attempts"] == {KEYS[0]: 1, KEYS[1]: 2, KEYS[2]: 1}
+    assert out["duration_seconds"][KEYS[1]] == 23
+    assert sleeps == [5.0]
+
+
+def test_pending_every_call_stops_when_reserve_forbids():
+    clock, coord = Clock(), Sequenced({"p-1": 99})
+    out, sleeps = _replay(clock, [30, 1, 1] + [30] * 10, coord, timeout=100)
+    assert out["results"][KEYS[0]] == "pending"
+    assert out["deadline_reached"] is True and out["status"] == "partial"
+    # 30+1+1 | 5 + 30 -> t=67 | 5 -> t=72: 28s left < slowest 30, no new call.
+    assert coord.calls.count("p-1") == 2
+    assert sleeps == [5.0, 5.0]
+    assert clock.now <= 100
+
+
+def test_case_that_raises_is_not_replayed():
+    clock, coord = Clock(), Sequenced({"p-2": 1}, boom={"p-1"})
+    out, _ = _replay(clock, [1, 1, 1, 1], coord)
+    assert coord.calls.count("p-1") == 1
+    assert out["results"][KEYS[0]] == "error"
+    assert out["results"][KEYS[1]] == "retired"
+    assert out["status"] == "partial"
+
+
+def test_not_attempted_case_is_never_replayed():
+    clock, coord = Clock(), Sequenced({"p-1": 99})
+    out, _ = _replay(clock, [60, 1, 1], coord, timeout=100)
+    assert out["results"][KEYS[1]] == "not_attempted_deadline"
+    assert "p-2" not in coord.calls and "p-3" not in coord.calls
+
+
+def test_replay_only_touches_pending_cases_in_scope():
+    clock, coord = Clock(), Sequenced({"p-2": 1})
+    store = _store({KEYS[0]: "retired"})
+    out, _ = _replay(clock, [1, 1, 1, 1], coord, store=store)
+    assert "p-1" not in coord.calls and "p-4" not in coord.calls
+    assert out["status"] == "retired"
+
+
+def test_no_poll_seconds_means_single_pass():
+    coord = Sequenced({"p-2": 1})
+    out = _run(_store(), coord, outcome="accepted", new_case_key=KEYS[3])
+    assert out["results"][KEYS[1]] == "pending" and coord.calls.count("p-2") == 1
+
+
+def test_poll_seconds_help_and_default():
+    assert retire.parse_args(["--outcome", "accepted"]).poll_seconds == 5.0
+    import inspect
+
+    assert "accepted for compatibility" not in inspect.getsource(retire.parse_args)
+
+
+def test_watchdog_during_replay_prints_within_budget(monkeypatch, capsys):
+    import threading
+
+    release = threading.Event()
+
+    class Slow(Sequenced):
+        def __call__(self, tenant_id, persona_id, *, reason):
+            if self.calls:
+                release.wait(30)
+            return super().__call__(tenant_id, persona_id, reason=reason)
+
+    store = Store([Rec(KEYS[0], "2026-10-01", persona_id="p-1"),
+                   Rec(KEYS[1], "2026-10-02", persona_id="p-2")])
+    monkeypatch.setattr(retire, "_build_runtime",
+                        lambda: (store, Slow({"p-1": 99})))
+    monkeypatch.setattr(retire, "WATCHDOG_MARGIN_SECONDS", 0.2)
+    monkeypatch.setattr(retire, "CASE_RESERVE_FLOOR_SECONDS", 0.0)
+    monkeypatch.setattr(retire, "_PROCESS_START", retire.time.monotonic())
+    started = retire.time.monotonic()
+    try:
+        rc = retire.main(["--outcome", "accepted", "--new-case-key", KEYS[1],
+                          "--timeout-seconds", "1", "--poll-seconds", "0.01"])
+    finally:
+        release.set()
+    out = capsys.readouterr().out
+    assert rc == 0 and '"deadline_reached": true' in out
+    assert retire.time.monotonic() - started < 3

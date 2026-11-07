@@ -179,7 +179,7 @@ class RiskPolicyEvaluationContext:
     net_exposure: float | None = None
     leverage: float | None = None
     turnover: float | None = None
-    asset_classes: tuple[str, ...] = ()
+    asset_classes: Sequence[str] = ()
     strategy_family: str | None = None
     strategy_family_concentration: Mapping[str, float] = field(default_factory=dict)
     target_overlap: float | None = None
@@ -194,16 +194,30 @@ class RiskPolicyEvaluationContext:
     gross_scale_pct: float | None = None
     runtime_action: str | None = None
     kill_switch_trigger: str | None = None
+    decision_id: str | None = None
+    instrument_id: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     trace_id: str | None = None
     correlation_envelope: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "asset_classes", _string_tuple(self.asset_classes))
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "RiskPolicyEvaluationContext":
         metadata = _mapping(payload.get("metadata"))
         return cls(
             target_type=_first_text(payload, "target_type", default=RiskPolicyTargetType.RUNTIME_ACTION.value),
-            target_id=_first_text(payload, "target_id", "proposal_id", "plan_id", "binding_id", "runtime_id"),
+            target_id=_first_text(
+                payload,
+                "target_id",
+                "decision_id",
+                "order_id",
+                "proposal_id",
+                "plan_id",
+                "binding_id",
+                "runtime_id",
+            ),
             capital_pool_id=_first_text(payload, "capital_pool_id"),
             stage=_first_text_or_none(payload, "stage", "target_stage", "deployment_mode", "scope_ref"),
             risk_policy_ref=_first_text_or_none(payload, "risk_policy_ref", "risk_policy_id"),
@@ -212,7 +226,12 @@ class RiskPolicyEvaluationContext:
             net_exposure=_optional_float(payload.get("net_exposure")),
             leverage=_optional_float(payload.get("leverage")),
             turnover=_optional_float(payload.get("turnover")),
-            asset_classes=_string_tuple(payload.get("asset_classes", metadata.get("asset_classes"))),
+            asset_classes=_string_tuple(
+                payload.get(
+                    "asset_classes",
+                    payload.get("asset_class", metadata.get("asset_classes")),
+                )
+            ),
             strategy_family=_first_text_or_none(payload, "strategy_family"),
             strategy_family_concentration=_numeric_mapping(
                 payload.get(
@@ -242,6 +261,8 @@ class RiskPolicyEvaluationContext:
             gross_scale_pct=_optional_float(payload.get("gross_scale_pct")),
             runtime_action=_first_text_or_none(payload, "runtime_action"),
             kill_switch_trigger=_first_text_or_none(payload, "kill_switch_trigger"),
+            decision_id=_optional_text(payload.get("decision_id") or metadata.get("decision_id")),
+            instrument_id=_optional_text(payload.get("instrument_id") or metadata.get("instrument_id")),
             metadata=metadata,
             trace_id=_first_text_or_none(payload, "trace_id"),
             correlation_envelope=_mapping(payload.get("correlation_envelope")) or None,

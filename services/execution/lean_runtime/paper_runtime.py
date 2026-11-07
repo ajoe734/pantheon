@@ -331,8 +331,44 @@ class PaperExecutionAlgorithm:
         self._state_load_error: str | None = None
         self._load_state()
 
+    @staticmethod
+    def _taiwan_underlying_key(symbol: str) -> tuple[str, str] | None:
+        raw = str(symbol or "").strip()
+        if "." not in raw:
+            return None
+        try:
+            return normalize_taiwan_symbol(raw)
+        except Exception:
+            return None
+
+    def _resolve_holding_symbol(self, symbol: str) -> str:
+        target = str(symbol)
+        tw_key = self._taiwan_underlying_key(target)
+        if tw_key is None:
+            return target
+        for existing_symbol, holding in self.Portfolio.items():
+            if self._taiwan_underlying_key(existing_symbol) == tw_key and holding.Quantity != 0:
+                return existing_symbol
+        if target in self.Portfolio:
+            return target
+        for existing_symbol in self.Portfolio:
+            if self._taiwan_underlying_key(existing_symbol) == tw_key:
+                return existing_symbol
+        return target
+
+    def _taiwan_underlying_holding_quantity(self, native: str, exchange: str) -> float:
+        total = 0.0
+        for existing_symbol, holding in self.Portfolio.items():
+            if self._taiwan_underlying_key(existing_symbol) == (native, exchange):
+                total += _finite_float(
+                    holding.Quantity,
+                    field="Taiwan current holding quantity",
+                )
+        return total
+
     def _holding(self, symbol: str) -> _Holding:
-        return self.Portfolio.setdefault(symbol, _Holding())
+        resolved = self._resolve_holding_symbol(symbol)
+        return self.Portfolio.setdefault(resolved, _Holding())
 
     def _security(self, symbol: str) -> _Security:
         return self.Securities.setdefault(symbol, _Security(price=self._default_price))
@@ -486,6 +522,7 @@ class PaperExecutionAlgorithm:
                     field="Taiwan limit price",
                     positive=True,
                 )
+            holding_quantity = self._taiwan_underlying_holding_quantity(native, exchange)
         except ValueError as exc:
             self._reject_invalid_paper_fill(
                 str(symbol),
@@ -496,6 +533,41 @@ class PaperExecutionAlgorithm:
             )
             log.warning("[%s] TW order rejected before broker: %s", signal_id, exc)
             return
+
+        requested_quantity = float(qty)
+        partial_clamped = False
+        if side == "sell":
+            if holding_quantity <= 0:
+                self._publish(
+                    "order_rejection",
+                    str(symbol),
+                    0.0,
+                    action,
+                    broker_submission_status="sell_without_holdings",
+                    submitted_to_broker=False,
+                    metadata={
+                        **base_metadata,
+                        "reason": "sell_without_holdings",
+                        "reject_reason": "sell_without_holdings",
+                        "rejection_status": "rejected",
+                        "order_status": "rejected",
+                        "rejected_order_count": 1,
+                        "requested_quantity": requested_quantity,
+                        "holding_quantity": float(holding_quantity),
+                    },
+                )
+                log.warning(
+                    "[%s] TW sell rejected without holdings for %s (requested=%s, holding=%s)",
+                    signal_id,
+                    symbol,
+                    requested_quantity,
+                    holding_quantity,
+                )
+                return
+            if qty > holding_quantity:
+                qty = float(holding_quantity)
+                partial_clamped = True
+
         broker_url = os.getenv("PANTHEON_BROKER_PAPER_URL", "http://broker:8102").rstrip("/")
         payload = {
             "capital_pool_id": os.getenv("PANTHEON_CAPITAL_POOL_ID", "") or self._taiwan_capital_pool_id(),
@@ -537,13 +609,15 @@ class PaperExecutionAlgorithm:
                 field="Taiwan broker fill_qty",
                 positive=True,
             )
+            current_quantity = self._taiwan_underlying_holding_quantity(native, exchange)
+            if side == "sell" and fill_qty > current_quantity:
+                fill_qty = float(current_quantity)
+                partial_clamped = True
             signed_fill_qty = fill_qty if side == "buy" else -fill_qty
-            current_quantity = _finite_float(
-                self._holding(str(symbol)).Quantity,
-                field="Taiwan current holding quantity",
-            )
             current_cash = _finite_float(self._cash, field="Taiwan current cash")
             next_quantity = current_quantity + signed_fill_qty
+            if side == "sell" and (next_quantity < 0 or abs(next_quantity) <= 1e-12):
+                next_quantity = 0.0
             next_cash = current_cash - (signed_fill_qty * fill_price)
             if not math.isfinite(next_quantity) or not math.isfinite(next_cash):
                 raise ValueError("Taiwan broker fill produces non-finite ledger values")
@@ -576,12 +650,20 @@ class PaperExecutionAlgorithm:
             ),
             price_source=market_price_source if is_market else "paper_limit_fill",
         )
+        fill_metadata: dict[str, Any] = {
+            **base_metadata,
+            "broker_order_id": order_id,
+            "shioaji_trade_id": order_id,
+        }
+        if partial_clamped:
+            fill_metadata["paper_order_partial_clamped"] = True
+            fill_metadata["requested_quantity"] = float(requested_quantity)
+            fill_metadata["clamped_quantity"] = float(fill_qty)
         self._publish(
             "paper_fill_simulated", str(symbol), signed_fill_qty, action,
             broker_submission_status="filled",
             submitted_to_broker=True,
-            metadata={**base_metadata, "broker_order_id": order_id,
-                      "shioaji_trade_id": order_id},
+            metadata=fill_metadata,
         )
         log.info("[%s] TW paper fill %s %s %.0f @ %.4f (order=%s)",
                  signal_id, side, native, fill_qty, fill_price, order_id)
@@ -1360,10 +1442,19 @@ class PaperExecutionAlgorithm:
         price_source: str = "paper_fill",
     ) -> None:
         """Atomically mutate and persist a fill before any fill event is published."""
-        holding = self._holding(symbol)
+        holding_symbol = self._resolve_holding_symbol(symbol)
+        holding = self._holding(holding_symbol)
         security = self._security(symbol)
+        holding_security = self._security(holding_symbol)
+        tw_key = self._taiwan_underlying_key(symbol)
+        alias_quantities: dict[str, float] = {}
+        if tw_key is not None:
+            for existing_symbol, existing_holding in self.Portfolio.items():
+                if existing_symbol != holding_symbol and self._taiwan_underlying_key(existing_symbol) == tw_key:
+                    alias_quantities[existing_symbol] = existing_holding.Quantity
         checkpoint = {
             "quantity": holding.Quantity,
+            "alias_quantities": dict(alias_quantities),
             "cash": self._cash,
             "fill_count": self._fill_count,
             "first_fill_at": self._first_fill_at,
@@ -1372,21 +1463,25 @@ class PaperExecutionAlgorithm:
             "mark_as_of": security.MarkAsOf,
             "mark_source": security.MarkSource,
             "mark_authoritative": security.MarkAuthoritative,
+            "holding_price": holding_security.Price,
+            "holding_mark_as_of": holding_security.MarkAsOf,
+            "holding_mark_source": holding_security.MarkSource,
+            "holding_mark_authoritative": holding_security.MarkAuthoritative,
             "active_episodes": dict(self._active_episodes),
             "last_fill_episode_id": self._last_fill_episode_id,
             "reversal_info": self._reversal_info,
         }
         try:
-            prev_qty = float(holding.Quantity)
+            prev_qty = float(holding.Quantity) + sum(float(v) for v in alias_quantities.values())
             new_qty = float(next_quantity)
             cand_ep = str(self._current_signal_metadata.get("trade_episode_id") or "").strip() or None
             self._reversal_info = None
 
-            if abs(prev_qty) > 1e-12 and symbol not in self._active_episodes:
+            if abs(prev_qty) > 1e-12 and holding_symbol not in self._active_episodes:
                 is_rev = (prev_qty > 0 and new_qty < 0) or (prev_qty < 0 and new_qty > 0)
                 new_ep_id = (cand_ep or str(uuid.uuid4())) if is_rev else None
                 if is_rev:
-                    self._active_episodes[symbol] = new_ep_id
+                    self._active_episodes[holding_symbol] = new_ep_id
                     self._reversal_info = {
                         "old_episode_id": None,
                         "new_episode_id": new_ep_id,
@@ -1395,17 +1490,17 @@ class PaperExecutionAlgorithm:
                     }
                 self._last_fill_episode_id = new_ep_id
             elif abs(new_qty) <= 1e-12:
-                self._last_fill_episode_id = self._active_episodes.pop(symbol, None)
+                self._last_fill_episode_id = self._active_episodes.pop(holding_symbol, None)
             elif abs(prev_qty) <= 1e-12:
                 ep_id = cand_ep or str(uuid.uuid4())
-                self._active_episodes[symbol] = ep_id
+                self._active_episodes[holding_symbol] = ep_id
                 self._last_fill_episode_id = ep_id
             elif (prev_qty > 0 and new_qty > 0) or (prev_qty < 0 and new_qty < 0):
-                self._last_fill_episode_id = self._active_episodes.get(symbol)
+                self._last_fill_episode_id = self._active_episodes.get(holding_symbol)
             else:
-                old_ep_id = self._active_episodes.pop(symbol, None)
+                old_ep_id = self._active_episodes.pop(holding_symbol, None)
                 new_ep_id = cand_ep if cand_ep and cand_ep != old_ep_id else str(uuid.uuid4())
-                self._active_episodes[symbol] = new_ep_id
+                self._active_episodes[holding_symbol] = new_ep_id
                 self._last_fill_episode_id = new_ep_id
                 self._reversal_info = {
                     "old_episode_id": old_ep_id,
@@ -1422,11 +1517,23 @@ class PaperExecutionAlgorithm:
                     source=price_source,
                     authoritative=False,
                 )
+                if holding_symbol != symbol:
+                    self.SetSecurityPrice(
+                        holding_symbol,
+                        execution_price,
+                        as_of=price_as_of,
+                        source=price_source,
+                        authoritative=False,
+                    )
+            for alias_sym in alias_quantities:
+                self.Portfolio[alias_sym].Quantity = 0.0
             holding.Quantity = next_quantity
             self._cash = next_cash
             self._record_fill()
         except Exception:
             holding.Quantity = checkpoint["quantity"]
+            for alias_sym, alias_qty in checkpoint["alias_quantities"].items():
+                self.Portfolio[alias_sym].Quantity = alias_qty
             self._cash = checkpoint["cash"]
             self._fill_count = checkpoint["fill_count"]
             self._first_fill_at = checkpoint["first_fill_at"]
@@ -1435,6 +1542,10 @@ class PaperExecutionAlgorithm:
             security.MarkAsOf = checkpoint["mark_as_of"]
             security.MarkSource = checkpoint["mark_source"]
             security.MarkAuthoritative = checkpoint["mark_authoritative"]
+            holding_security.Price = checkpoint["holding_price"]
+            holding_security.MarkAsOf = checkpoint["holding_mark_as_of"]
+            holding_security.MarkSource = checkpoint["holding_mark_source"]
+            holding_security.MarkAuthoritative = checkpoint["holding_mark_authoritative"]
             self._active_episodes = dict(checkpoint["active_episodes"])
             self._last_fill_episode_id = checkpoint["last_fill_episode_id"]
             self._reversal_info = checkpoint["reversal_info"]
