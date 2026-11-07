@@ -1,0 +1,353 @@
+{
+  "schema": "pantheon.human-inbox.hosted-acceptance.evidence.v1",
+  "task_id": "HUMAN-INBOX-HOSTED-ACCEPTANCE-20261104",
+  "title": "Hosted acceptance that the human inbox shows the real open work",
+  "measured_by": "Human/Ops Root01a10 independent QA",
+  "measured_at": "2026-11-07T12:23:55.627278+00:00 to 2026-11-07T12:26:01.379Z",
+  "recorded_at": "2026-11-07T12:27:36.716080+00:00",
+  "documented_by": {
+    "repository_author": "Antigravity",
+    "assigned_reviewer": "Claude",
+    "role": "record_only_repository_documentation_writer",
+    "authority_note": "All hosted browser, owner HTTP, and read-only PostgreSQL QA measurements were executed and verified by Human/Ops (Root01a10 independent QA) on 2026-11-07. Antigravity is record-only for repository persistence and claims no independent hosted measurements or live execution authority."
+  },
+  "hosted_acceptance_pass": true,
+  "verdict": "pass",
+  "exact_pair": {
+    "fe": "2d6d209316c158c3e42ed258c81a3d8cd1f77e2e",
+    "bff": "004a9a4ec76f53628fd08b0120f92847d5200c6d",
+    "pair": "d03446f9df03b6f9ed6651922ca41e042d68af72ce7145e0fc2a72a59770dcf4",
+    "profile": "operator-live"
+  },
+  "pair_after": {
+    "fe": "2d6d209316c158c3e42ed258c81a3d8cd1f77e2e",
+    "bff": "004a9a4ec76f53628fd08b0120f92847d5200c6d",
+    "pair": "d03446f9df03b6f9ed6651922ca41e042d68af72ce7145e0fc2a72a59770dcf4",
+    "profile": "operator-live"
+  },
+  "deployment_root": "https://github.com/ajoe734/pantheon/actions/runs/42364851577",
+  "frontend_gate": "https://github.com/ajoe734/execute-plans/actions/runs/42366711401",
+  "frontend_deploy": "https://github.com/ajoe734/execute-plans/actions/runs/42367849134",
+  "live_BFF_container_proof": "/tmp/pantheon-dev-operable-20261104/Root01a10-Persona-004a-p95-failed-two-exact-UTC-logs-20261107.json",
+  "live_BFF_container_identity": {
+    "captured_at": "2026-11-07T12:05:23.048038+00:00",
+    "container": "901ac6ea04df",
+    "started_at": "2026-11-07T11:04:45.689277324Z",
+    "image": "sha256:7aa1de9fcababbec53b7e11b35eeda83159c2f178bd241581bf99369c8041ea6",
+    "source_sha": {
+      "GIT_SHA": "004a9a4ec76f53628fd08b0120f92847d5200c6d"
+    }
+  },
+  "prerequisites_satisfied": [
+    {
+      "task_id": "INCIDENT-READ-NOOP-SWEEP-20261104",
+      "repository": "ajoe734/pantheon",
+      "pr": 6951,
+      "head_sha": "e0c2c56ad790e216ac98f3e33066940768bf54aa",
+      "merge_commit_sha": "0bd88495e27e90f6cfaadc1991139d28a8809501",
+      "status": "done"
+    },
+    {
+      "task_id": "BFF-HUMAN-INBOX-TRUTH-20261104",
+      "repository": "ajoe734/pantheon",
+      "pr": 6957,
+      "head_sha": "c139fe0109039794ecc8a2a86e19e0f8aa842131",
+      "merge_commit_sha": "a88f3bc5a06f5c2f3ef19fb3deaa1665656cb4d9",
+      "status": "done"
+    },
+    {
+      "task_id": "FE-HUMAN-INBOX-TRUTH-20261104",
+      "repository": "ajoe734/execute-plans",
+      "pr": 916,
+      "head_sha": "f68c6f4520d22ec5f79904984738c7bec4977f62",
+      "merge_commit_sha": "9529c069b0a151bc2be508a263c91c21cb0e9fbd",
+      "status": "done"
+    }
+  ],
+  "owner_truth": {
+    "incident_owner_read": "actual-incident-postmortem-owner-122355.json",
+    "incident_owner_measured_at": "2026-11-07T12:23:55.627278+00:00",
+    "open_incident_ids": [
+      "agent-2e0cc89b4ea8-0001"
+    ],
+    "HTTP200_n": 20,
+    "spacing_seconds": 1,
+    "median_ms": 11.019,
+    "min_ms": 6.957,
+    "max_ms": 408.65,
+    "limit_ms": 100,
+    "samples_ms": [
+      25.426,
+      7.72,
+      9.977,
+      9.51,
+      12.061,
+      7.649,
+      211.658,
+      7.153,
+      238.14,
+      18.464,
+      316.583,
+      9.231,
+      205.269,
+      6.957,
+      408.65,
+      8.49,
+      258.526,
+      7.943,
+      326.177,
+      7.444
+    ],
+    "postmortems_owner_total": 2132,
+    "approval_owner_read": "actual-owner-counts-122506.json",
+    "approval_owner_measured_at": "2026-11-07T12:25:06.391685+00:00",
+    "forced_transaction_read_only": "on",
+    "governance_tenant_dev_states": [
+      [
+        "tenant-dev",
+        "decided",
+        568
+      ],
+      [
+        "tenant-dev",
+        "revoked",
+        3
+      ]
+    ],
+    "proposed_count": 0
+  },
+  "acceptance_results": [
+    {
+      "AC": 1,
+      "criterion": "On the deployed BFF and frontend exact pair the inbox page in a real logged-in browser lists every incident the owner reports open and every approval decision with decision_state proposed at measurement time and no resolved incident",
+      "pass": true,
+      "proof": "Same actualopenincident1/proposed0 matches all10BFF+realUI reloads; no resolvedincidents visible",
+      "measured": {
+        "browser_account": "OPERATOR_A",
+        "owner_open_incidents": [
+          "agent-2e0cc89b4ea8-0001"
+        ],
+        "owner_proposed_approvals": 0,
+        "owner_decided_approvals": 568,
+        "owner_revoked_approvals": 3,
+        "owner_postmortems_total": 2132,
+        "inbox_returned_items": 1,
+        "inbox_item_ids": [
+          "incident:agent-2e0cc89b4ea8-0001"
+        ],
+        "inbox_summary": {
+          "total": 1,
+          "total_items": 1,
+          "returned_items": 1,
+          "pending_items": 1,
+          "incident_count": 1,
+          "approval_count": 0,
+          "governance_review_count": 0,
+          "readiness_blocker_count": 0
+        },
+        "resolved_incidents_shown": 0
+      }
+    },
+    {
+      "AC": 2,
+      "criterion": "Ten consecutive reloads of the page show the same rows and none shows the all-empty fallback",
+      "pass": true,
+      "proof": "10real fullreloads each waitactual visible title; same IDs1, all5surface statusesok, no all-emptyfallback",
+      "measured": {
+        "window_utc": "2026-11-07T12:25:47.779Z to 2026-11-07T12:26:01.379Z",
+        "consecutive_reloads": 10,
+        "http_statuses": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "all_reloads_same_ids": [
+          "incident:agent-2e0cc89b4ea8-0001"
+        ],
+        "all_reloads_total": 1,
+        "surface_statuses_every_reload": {
+          "approval_queue": "ok",
+          "governance_review_queue": "ok",
+          "incidents": "ok",
+          "persona_readiness": "ok",
+          "human_inbox": "ok"
+        },
+        "all_empty_fallback_shown_count": 0
+      }
+    },
+    {
+      "AC": 3,
+      "criterion": "GET /api/incidents?open_only=true on the hosted owner has a median under 100 milliseconds over 20 requests spaced 1 second apart",
+      "pass": true,
+      "proof": "Actualowner20GET spaced1sec allHTTP200/sameopenID,median11.019ms<100",
+      "measured": {
+        "endpoint": "GET /api/incidents?open_only=true",
+        "requests_count": 20,
+        "spacing_seconds": 1,
+        "all_http_200": true,
+        "median_ms": 11.019,
+        "threshold_ms": 100,
+        "open_incident_ids_every_sample": [
+          "agent-2e0cc89b4ea8-0001"
+        ]
+      }
+    },
+    {
+      "AC": 4,
+      "criterion": "An incident row shows kind incident with no approve or reject control and opens its incident page",
+      "pass": true,
+      "proof": {
+        "status": "pass",
+        "id": "agent-2e0cc89b4ea8-0001",
+        "title": "Control loop cannot fetch runtime summaries",
+        "kind": "incident",
+        "no_approve_reject": true,
+        "no_false_cannot_proceed": true,
+        "actual_navigation": "https://app.dev.mvl-cap.tw/management/incidents/agent-2e0cc89b4ea8-0001",
+        "detail_status": 200,
+        "no_fabricated_record": true
+      }
+    },
+    {
+      "AC": 5,
+      "criterion": "Measured values are recorded with the deployed BFF and frontend SHAs",
+      "pass": true,
+      "proof": "Exact BFF004a andFE2d6 accepted manifests beforeafter, actualcontainerGIT_SHA proof, realworkflow URLs",
+      "measured": {
+        "deployed_bff_sha": "004a9a4ec76f53628fd08b0120f92847d5200c6d",
+        "deployed_frontend_sha": "2d6d209316c158c3e42ed258c81a3d8cd1f77e2e",
+        "accepted_pair_digest": "d03446f9df03b6f9ed6651922ca41e042d68af72ce7145e0fc2a72a59770dcf4",
+        "profile": "operator-live"
+      }
+    }
+  ],
+  "browser_reloads": [
+    {
+      "reload": 1,
+      "snapshot_at": "2026-11-07T12:25:49Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 2,
+      "snapshot_at": "2026-11-07T12:25:50Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 3,
+      "snapshot_at": "2026-11-07T12:25:52Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 4,
+      "snapshot_at": "2026-11-07T12:25:53Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 5,
+      "snapshot_at": "2026-11-07T12:25:54Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 6,
+      "snapshot_at": "2026-11-07T12:25:56Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 7,
+      "snapshot_at": "2026-11-07T12:25:57Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 8,
+      "snapshot_at": "2026-11-07T12:25:58Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 9,
+      "snapshot_at": "2026-11-07T12:25:59Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    },
+    {
+      "reload": 10,
+      "snapshot_at": "2026-11-07T12:26:00Z",
+      "total": 1,
+      "ids": [
+        "incident:agent-2e0cc89b4ea8-0001"
+      ],
+      "all_surfaces_ok": true
+    }
+  ],
+  "raw_UI": "management-ui-yHDYme/result.json",
+  "receipt_digests_sha256": {
+    "/tmp/pantheon-dev-operable-20261104/Root01a10-original-HumanInbox-ALL5AC-natural-positive-hosted-PASS-20261107.json": "aa940639f2a99a5d5e39b211b001397d9f4b100fcd065b669d3ac4b6e79f799f",
+    "/tmp/pantheon-dev-operable-20261104/management-ui-yHDYme/result.json": "9c1b27816b93f72f08c6c1c65b1c0de5ad820c2e096c4407f0a625ed7d51e889",
+    "/tmp/pantheon-dev-operable-20261104/actual-incident-postmortem-owner-122355.json": "c250c93c3b5b9b46f895be38c8b165d23d9258352fc71e8499396015a7944b58",
+    "/tmp/pantheon-dev-operable-20261104/actual-owner-counts-122506.json": "f11d945633c8fa3995a3e066b24ed2affb1c6a9568a39fb814f7b75b92f80805",
+    "/tmp/pantheon-dev-operable-20261104/Root01a10-Persona-004a-p95-failed-two-exact-UTC-logs-20261107.json": "d893ded39f47875c4f90a519a31cf887f0ccb5af1f1beaaeabd02b499b9a8538"
+  },
+  "screenshots": [
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/management-ui-yHDYme/human-inbox.png",
+      "sha256": "103089d7dcd5fe0ae493df936e64cbf5de271ba899147dc40561b5b5cde25aca",
+      "independently_viewed": true
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/management-ui-yHDYme/actual-incident-detail.png",
+      "sha256": "2e1da12ef51930ac815b76e42fa0884e61c9dd66b6fbf2625ddeccab69e4e79b",
+      "independently_viewed": true
+    }
+  ],
+  "logout_HTTP": 200,
+  "page_errors": [],
+  "blocked_business_writes": [],
+  "limitations": [
+    "Natural incident existed before this QA and was not created, approved, acknowledged, resolved or otherwise mutated for acceptance.",
+    "Incident detail has actual mitigation/close controls; no businesscontrol was executed. Inboxincident card itself correctly has no approve/reject.",
+    "Proposedapproval count was genuinely zero; no new proposal/decision or approval positive case is fabricated. OriginalAC4 specifically covers realincidentrow and is now actually exercised.",
+    "This closes only original HumanInbox live AC1-5 on measured004a/2d6, not original12loops/PersonaSLA/JournalResearchunreleased/StageProd.",
+    "Persistent repository evidence must still be recorded through original supervisor author/genuineClaude peer/requiredCI/merge; local JSON is not completedrepo delivery."
+  ]
+}
