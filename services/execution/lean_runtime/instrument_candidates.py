@@ -327,10 +327,11 @@ def _as_date(value: Any) -> date:
     if isinstance(value, date):
         return value
     text = str(value).strip()
-    if re.fullmatch(r"\d{7}", text):
-        text = f"{int(text[:3]) + 1911:04d}-{text[3:5]}-{text[5:7]}"
-    elif re.fullmatch(r"\d{8}", text):
-        text = f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    digits = re.sub(r"\D", "", text)
+    if re.fullmatch(r"\d{7}", text) or (len(digits) == 7 and "/" in text):
+        text = f"{int(digits[:3]) + 1911:04d}-{digits[3:5]}-{digits[5:7]}"
+    elif re.fullmatch(r"\d{8}", text) or (len(digits) == 8 and "/" in text):
+        text = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
     return date.fromisoformat(text)
 
 
@@ -386,18 +387,9 @@ def _is_applicable_on_decision_day(row: Mapping[str, Any], decision_day: date) -
 
 def _snapshot_run_key(
     row: Mapping[str, Any],
-) -> tuple[date, float, str, float, str, int]:
-    market_date = _snapshot_market_date(row)
-    margin_date = _snapshot_margin_date(row)
-    effective_market_date = market_date or margin_date or date.min
-    avail_epoch, avail_raw = _optional_timestamp(row.get("available_time"))
-    ingest_epoch, ingest_raw = _optional_timestamp(row.get("ingest_time"))
+) -> tuple[date, date, float, str, float, str, int]:
     return (
-        effective_market_date,
-        avail_epoch,
-        avail_raw,
-        ingest_epoch,
-        ingest_raw,
+        *_row_snapshot_time_key(row),
         int(row.get("_file_run_seq") or 0),
     )
 
@@ -436,20 +428,8 @@ def _snapshot_sort_key(
     row: Mapping[str, Any],
     order_index: int,
 ) -> tuple[date, date, float, str, float, str, int, int]:
-    market_date = _snapshot_market_date(row)
-    margin_date = _snapshot_margin_date(row)
-    effective_market_date = market_date or margin_date or date.min
-    effective_margin_date = margin_date or effective_market_date
-    avail_epoch, avail_raw = _optional_timestamp(row.get("available_time"))
-    ingest_epoch, ingest_raw = _optional_timestamp(row.get("ingest_time"))
     return (
-        effective_market_date,
-        effective_margin_date,
-        avail_epoch,
-        avail_raw,
-        ingest_epoch,
-        ingest_raw,
-        int(row.get("_file_run_seq") or 0),
+        *_snapshot_run_key(row),
         order_index,
     )
 
@@ -666,8 +646,7 @@ def _eligible_rows(
             str(contract)
             for row in newest_covering_rows
             for contract in (
-                row.get("snapshot_contracts")
-                or row.get("_file_contracts")
+                (row.get("_file_contracts") if "_file_contracts" in row else row.get("snapshot_contracts"))
                 or ([row["contract"]] if row.get("contract") else ())
             )
             if contract
@@ -696,7 +675,7 @@ def _eligible_rows(
         if not _is_applicable_on_decision_day(row, decision_day):
             continue
         row_run_key = _snapshot_run_key(row)
-        if row_run_key != latest_run_key and row_run_key[1:] != latest_run_key[1:]:
+        if row_run_key != latest_run_key and row_run_key[2:] != latest_run_key[2:]:
             continue
         sort_key = _snapshot_sort_key(row, order_index)
         cm_key = (contract, month)

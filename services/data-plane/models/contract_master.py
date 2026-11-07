@@ -5,11 +5,12 @@ Based on Pantheon_Market_Data_Scope_and_Source_Plan_v1 §6.2
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
-from datetime import datetime, timezone
+from typing import Any, Mapping, Optional
+from datetime import date, datetime, timezone
 from enum import Enum
 import json
 import math
+import re
 
 
 TAIFEX_STF_SPEC_URL = "https://www.taifex.com.tw/cht/2/sTF"
@@ -57,7 +58,30 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _iso_epoch(raw: str) -> float:
+def _as_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    digits = re.sub(r"\D", "", text)
+    if re.fullmatch(r"\d{7}", text) or (len(digits) == 7 and "/" in text):
+        text = f"{int(digits[:3]) + 1911:04d}-{digits[3:5]}-{digits[5:7]}"
+    elif re.fullmatch(r"\d{8}", text) or (len(digits) == 8 and "/" in text):
+        text = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+    return date.fromisoformat(text)
+
+
+def _optional_date(value: Any) -> Optional[date]:
+    if value in (None, ""):
+        return None
+    try:
+        return _as_date(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _iso_epoch(raw: Any) -> float:
     text = str(raw or "").strip()
     if not text:
         return float("-inf")
@@ -66,10 +90,51 @@ def _iso_epoch(raw: str) -> float:
     try:
         dt = datetime.fromisoformat(text)
     except ValueError:
+        parsed_date = _optional_date(text)
+        if parsed_date is not None:
+            return datetime(parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=timezone.utc).timestamp()
         return float("-inf")
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.timestamp()
+
+
+def _snapshot_market_date(row: Mapping[str, Any]) -> Optional[date]:
+    raw_market = row.get("raw_market_row")
+    return (
+        _optional_date(row.get("price_date"))
+        or _optional_date(row.get("date"))
+        or _optional_date(row.get("Date"))
+        or (_optional_date(raw_market.get("Date")) if isinstance(raw_market, Mapping) else None)
+    )
+
+
+def _snapshot_margin_date(row: Mapping[str, Any]) -> Optional[date]:
+    raw_margin = row.get("raw_margin_row")
+    return _optional_date(row.get("margin_date")) or (
+        _optional_date(raw_margin.get("Date")) if isinstance(raw_margin, Mapping) else None
+    )
+
+
+def _ssf_snapshot_run_key(row: Mapping[str, Any]) -> tuple[date, date, float, str, float, str, int]:
+    market_date = _snapshot_market_date(row)
+    margin_date = _snapshot_margin_date(row)
+    effective_market_date = market_date or margin_date or date.min
+    effective_margin_date = margin_date or effective_market_date
+    avail = str(row.get("available_time") or "").strip()
+    avail_epoch = _iso_epoch(avail)
+    ingest = str(row.get("ingest_time") or "").strip()
+    ingest_epoch = _iso_epoch(ingest)
+    file_seq = int(row.get("_file_run_seq") or 0)
+    return (
+        effective_market_date,
+        effective_margin_date,
+        avail_epoch,
+        avail,
+        ingest_epoch,
+        ingest,
+        file_seq,
+    )
 
 
 @dataclass
@@ -218,6 +283,10 @@ class ContractMaster:
         )
         stamp = row.get("available_time") or _utc_now_iso()
         tick_size = cls.ssf_tick_size(row.get("underlying_kind"), row.get("settlement_price"))
+        market_date = _snapshot_market_date(row)
+        margin_date = _snapshot_margin_date(row)
+        settlement_price_date = market_date.isoformat() if market_date is not None else row.get("price_date")
+        resolved_margin_date = margin_date.isoformat() if margin_date is not None else row.get("margin_date")
         return cls(
             contract_id=f"ssf:{row['contract']}:{row['contract_month']}",
             underlying_id=str(row["underlying_code"]),
@@ -239,8 +308,8 @@ class ContractMaster:
                 "margin_mode": row.get("margin_mode"),
                 **margin,
                 "settlement_price": row.get("settlement_price"),
-                "settlement_price_date": row.get("price_date"),
-                "margin_date": row.get("margin_date"),
+                "settlement_price_date": settlement_price_date,
+                "margin_date": resolved_margin_date,
                 "volume": row.get("volume"),
                 "open_interest": row.get("open_interest"),
                 "last_trading_day_basis": row.get("last_trading_day_basis"),
@@ -260,19 +329,14 @@ class ContractMaster:
             if str(row.get("underlying_code") or "").strip()
         }
         for row in row_list:
-            for item in (row.get("snapshot_scope") or ()):
-                if str(item or "").strip():
-                    underlyings.add(str(item).strip())
-        latest_run_by_underlying: dict[str, tuple[float, str, float, str, int, str]] = {}
+            for key in ("snapshot_scope", "snapshot_underlyings"):
+                for item in (row.get(key) or ()):
+                    if str(item or "").strip():
+                        underlyings.add(str(item).strip())
+        latest_run_by_underlying: dict[str, tuple[date, date, float, str, float, str, int]] = {}
         newest_rows_by_underlying: dict[str, list[dict[str, Any]]] = {}
         for row in row_list:
-            price_date = str(row.get("price_date") or row.get("date") or "")
-            avail = str(row.get("available_time") or "")
-            avail_epoch = _iso_epoch(avail)
-            ingest = str(row.get("ingest_time") or "")
-            ingest_epoch = _iso_epoch(ingest)
-            file_seq = int(row.get("_file_run_seq") or 0)
-            run_key = (avail_epoch, avail, ingest_epoch, ingest, file_seq, price_date)
+            run_key = _ssf_snapshot_run_key(row)
             row_underlying = str(row.get("underlying_code") or "").strip()
             scope_mode = str(row.get("snapshot_scope_mode") or "").strip()
             scope_set = {str(item).strip() for item in (row.get("snapshot_scope") or ()) if str(item).strip()}
@@ -294,27 +358,45 @@ class ContractMaster:
         allowed_contracts_by_underlying: dict[str, set[str] | None] = {}
         absent_contracts_by_underlying: dict[str, set[str]] = {}
         for code, newest_rows in newest_rows_by_underlying.items():
-            absent_contracts_by_underlying[code] = {
+            absent = {
                 str(c)
                 for r in newest_rows
                 for c in (r.get("snapshot_absent_contracts") or ())
                 if c
             }
+            absent_contracts_by_underlying[code] = absent
             if any(r.get("tombstone") or r.get("_snapshot_truncated") for r in newest_rows):
                 allowed_contracts_by_underlying[code] = set()
-            elif any("snapshot_contracts" in r or "_file_contracts" in r for r in newest_rows):
-                allowed: set[str] = set()
-                for r in newest_rows:
-                    if r.get("contract"):
-                        allowed.add(str(r["contract"]))
-                    for c in r.get("snapshot_contracts") or r.get("_file_contracts") or ():
-                        if c:
-                            allowed.add(str(c))
-                allowed_contracts_by_underlying[code] = allowed
             else:
-                allowed_contracts_by_underlying[code] = None
+                direct_contracts = {
+                    str(r["contract"])
+                    for r in newest_rows
+                    if str(r.get("underlying_code") or "").strip() == code and r.get("contract")
+                }
+                if direct_contracts and (len(newest_rows) > 1 or any("_file_contracts" in r for r in newest_rows)):
+                    allowed = set(direct_contracts)
+                    file_sets = [
+                        {str(c) for c in (r.get("_file_contracts") or ()) if c}
+                        for r in newest_rows
+                        if "_file_contracts" in r
+                    ]
+                    if file_sets:
+                        allowed &= set().union(*file_sets)
+                    allowed_contracts_by_underlying[code] = allowed - absent
+                elif any("snapshot_contracts" in r or "_file_contracts" in r for r in newest_rows):
+                    allowed = set()
+                    for r in newest_rows:
+                        if r.get("contract"):
+                            allowed.add(str(r["contract"]))
+                        row_contracts = r.get("_file_contracts") if "_file_contracts" in r else r.get("snapshot_contracts")
+                        for c in row_contracts or ():
+                            if c:
+                                allowed.add(str(c))
+                    allowed_contracts_by_underlying[code] = allowed - absent
+                else:
+                    allowed_contracts_by_underlying[code] = None
 
-        latest: dict[str, tuple[tuple[float, str, float, str, int, str, str, int], dict[str, Any]]] = {}
+        latest: dict[str, tuple[tuple[date, date, float, str, float, str, int, int], dict[str, Any]]] = {}
         for index, row in enumerate(row_list):
             if row.get("tombstone") or row.get("_snapshot_truncated") or not row.get("contract") or not row.get("contract_month"):
                 continue
@@ -326,14 +408,7 @@ class ContractMaster:
             if allowed is not None and contract not in allowed:
                 continue
             key = f"ssf:{contract}:{row['contract_month']}"
-            price_date = str(row.get("price_date") or row.get("date") or "")
-            margin_date = str(row.get("margin_date") or price_date)
-            avail = str(row.get("available_time") or "")
-            avail_epoch = _iso_epoch(avail)
-            ingest = str(row.get("ingest_time") or "")
-            ingest_epoch = _iso_epoch(ingest)
-            file_seq = int(row.get("_file_run_seq") or 0)
-            sort_key = (avail_epoch, avail, ingest_epoch, ingest, file_seq, price_date, margin_date, index)
+            sort_key = (*_ssf_snapshot_run_key(row), index)
             if key not in latest or sort_key >= latest[key][0]:
                 latest[key] = (sort_key, row)
         masters: list[ContractMaster] = []

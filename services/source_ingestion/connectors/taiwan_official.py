@@ -2220,7 +2220,7 @@ def taifex_ssf_normalized_rows(
                 "dataset": TAIFEX_SSF_DATASET,
                 "date": tombstone_date,
                 "price_date": tombstone_date,
-                "margin_date": tombstone_date,
+                "margin_date": latest_margin_date or tombstone_date,
                 "event_time": f"{tombstone_date}T00:00:00Z",
                 "available_time": tombstone_avail,
                 "ingest_time": ingest_time,

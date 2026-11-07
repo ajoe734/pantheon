@@ -825,3 +825,178 @@ def test_bounded_reader_fails_closed_when_latest_coverage_cannot_be_established(
 
     # 3. Scan limit exceeded fails closed.
     assert ic.read_normalized_ssf_rows(ambig_root, max_scan_files=1) == []
+
+
+def test_older_market_date_replay_with_newer_available_time_aligns_contract_master_and_candidates(
+    payload: dict[str, Any], tmp_path: Path
+) -> None:
+    import importlib.util
+    import sys
+    from types import SimpleNamespace
+
+    from services.source_ingestion.connectors.taiwan_official import (
+        TaifexDerivativesChipAdapter,
+        taifex_ssf_normalized_rows,
+    )
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    spec = importlib.util.spec_from_file_location(
+        "contract_master",
+        Path(__file__).resolve().parents[2] / "data-plane" / "models" / "contract_master.py",
+    )
+    assert spec and spec.loader
+    cm_mod = importlib.util.module_from_spec(spec)
+    sys.modules["contract_master"] = cm_mod
+    spec.loader.exec_module(cm_mod)
+    ContractMaster = cm_mod.ContractMaster
+
+    payload_20261109 = {
+        **payload,
+        "SingleStockFuturesMargining": [
+            {**r, "Date": "20261109"} for r in payload["SingleStockFuturesMargining"]
+        ],
+        "SingleStockFuturesETFMargining": [
+            {**r, "Date": "20261109"} for r in payload["SingleStockFuturesETFMargining"]
+        ],
+        "DailyMarketReportFut": [
+            {
+                **r,
+                "Date": "20261109",
+                "SettlementPrice": "2150"
+                if (
+                    r.get("Contract") == "QFF"
+                    and str(r.get("ContractMonth(Week)")).strip() == "202611"
+                    and r.get("TradingSession") == "一般"
+                )
+                else r.get("SettlementPrice"),
+            }
+            for r in payload["DailyMarketReportFut"]
+        ],
+    }
+
+    adapter = TaifexDerivativesChipAdapter()
+    replay_root = tmp_path / "replay_priced"
+    writer = MarketDataStorageWriter(replay_root)
+    rec_20261109 = adapter.records_from_payload(
+        payload_20261109,
+        dataset="taifex_ssf_contracts",
+        contracts=["2330", "2317"],
+        available_time="2026-11-09T16:30:00Z",
+    )
+    for r in rec_20261109:
+        r.metadata["ingest_time"] = "2026-11-09T16:30:01Z"
+        r.metadata["normalized_row"]["ingest_time"] = "2026-11-09T16:30:01Z"
+    rec_replay_20261106 = adapter.records_from_payload(
+        payload,
+        dataset="taifex_ssf_contracts",
+        contracts=["2330", "2317"],
+        available_time="2026-11-10T06:00:00Z",
+    )
+    for r in rec_replay_20261106:
+        r.metadata["ingest_time"] = "2026-11-10T06:00:01Z"
+        r.metadata["normalized_row"]["ingest_time"] = "2026-11-10T06:00:01Z"
+    writer.write_run(
+        result=SimpleNamespace(records=rec_20261109, run=SimpleNamespace(ingest_run_id="ingest-000000000000")),
+        connector=adapter.connector(),
+    )
+    writer.write_run(
+        result=SimpleNamespace(records=rec_replay_20261106, run=SimpleNamespace(ingest_run_id="ingest-ffffffffffff")),
+        connector=adapter.connector(),
+    )
+
+    disk_rows = ic.read_normalized_ssf_rows(replay_root)
+    masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(disk_rows)}
+    assert masters["ssf:QFF:202611"].metadata_json["settlement_price"] == 2150.0
+    assert masters["ssf:QFF:202611"].metadata_json["settlement_price_date"] == "2026-11-09"
+    assert masters["ssf:QFF:202611"].metadata_json["margin_date"] == "2026-11-09"
+
+    cands = {
+        c["instrument_id"]: c
+        for c in ic.build_candidates(
+            "2330",
+            date(2026, 11, 10),
+            {},
+            BUDGET,
+            cash_price=2200.0,
+            cash_price_date="2026-11-09",
+            normalized_root=replay_root,
+        )
+    }
+    assert cands["ssf:QFF:202611"]["price"] == 2150.0
+    assert cands["ssf:QFF:202611"]["price_date"] == "2026-11-09"
+    assert cands["ssf:QFF:202611"]["source_refs"][0]["margin_date"] == "2026-11-09"
+
+    # Older unpriced/tombstone replayed with newer available_time must NOT evict newer 2026-11-09 snapshot.
+    unpriced_20261106 = {
+        **payload,
+        "DailyMarketReportFut": [
+            {**r, "SettlementPrice": "-"}
+            if (
+                r.get("Contract") == "QFF"
+                and str(r.get("ContractMonth(Week)")).strip() == "202611"
+                and r.get("TradingSession") == "一般"
+            )
+            else r
+            for r in payload["DailyMarketReportFut"]
+        ],
+    }
+    no_dhf_20261106 = {
+        **payload,
+        "SingleStockFuturesMargining": [
+            r for r in payload["SingleStockFuturesMargining"] if r["Contract"] != "DHF"
+        ],
+        "DailyMarketReportFut": [
+            r for r in payload["DailyMarketReportFut"] if r["Contract"] != "DHF"
+        ],
+    }
+    rows_20261109 = [dict(r.metadata["normalized_row"]) for r in rec_20261109]
+    replayed_old_unpriced = [
+        dict(r, ingest_time="2026-11-10T06:00:01Z")
+        for r in taifex_ssf_normalized_rows(
+            unpriced_20261106,
+            underlying_codes=["2330"],
+            available_time="2026-11-10T06:00:00Z",
+        )
+    ]
+    replayed_old_tombstone = [
+        dict(r, ingest_time="2026-11-10T06:00:01Z")
+        for r in taifex_ssf_normalized_rows(
+            no_dhf_20261106,
+            underlying_codes=["2317"],
+            available_time="2026-11-10T06:00:00Z",
+        )
+    ]
+    for ordered in (
+        [*rows_20261109, *replayed_old_unpriced, *replayed_old_tombstone],
+        [*replayed_old_unpriced, *replayed_old_tombstone, *rows_20261109],
+    ):
+        m_map = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(ordered)}
+        assert m_map["ssf:QFF:202611"].metadata_json["settlement_price"] == 2150.0
+        assert "ssf:DHF:202611" in m_map
+        c_2330 = {
+            c["instrument_id"]: c
+            for c in ic.build_candidates(
+                "2330",
+                date(2026, 11, 10),
+                {},
+                BUDGET,
+                cash_price=2200.0,
+                cash_price_date="2026-11-09",
+                rows_reader=lambda ordered=ordered: ordered,
+            )
+        }
+        assert c_2330["ssf:QFF:202611"]["price"] == 2150.0
+        c_2317 = {
+            c["instrument_id"]: c
+            for c in ic.build_candidates(
+                "2317",
+                date(2026, 11, 10),
+                {},
+                BUDGET,
+                cash_price=230.0,
+                cash_price_date="2026-11-09",
+                rows_reader=lambda ordered=ordered: ordered,
+            )
+        }
+        assert "ssf:DHF:202611" in c_2317
+

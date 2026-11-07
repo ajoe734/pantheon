@@ -543,6 +543,179 @@ class TestContractMasterFromSsfDataset(unittest.TestCase):
             self.assertNotIn("ssf:QFF:202611", masters2)
             self.assertIn("ssf:CDF:202611", masters2)
 
+    def test_older_market_date_replay_with_newer_available_time_stays_aligned_with_candidates(self):
+        import tempfile
+        from datetime import date
+        from types import SimpleNamespace
+        from services.source_ingestion.connectors.taiwan_official import (
+            TaifexDerivativesChipAdapter,
+            taifex_ssf_normalized_rows,
+        )
+        from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+        from services.execution.lean_runtime.instrument_candidates import (
+            build_candidates,
+            read_normalized_ssf_rows,
+        )
+
+        fixtures = Path(__file__).resolve().parents[2] / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
+
+        def load(name):
+            return json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
+
+        payload_20261106 = {
+            "SingleStockFuturesMargining": load("SingleStockFuturesMargining"),
+            "SingleStockFuturesETFMargining": load("SingleStockFuturesETFMargining"),
+            "DailyMarketReportFut": load("DailyMarketReportFut"),
+            "FinalSettlementPriceSSF": load("FinalSettlementPriceSSF"),
+            "stockLists": (fixtures / "stockLists.html").read_text(encoding="utf-8"),
+        }
+        payload_20261109 = {
+            **payload_20261106,
+            "SingleStockFuturesMargining": [
+                {**r, "Date": "20261109"} for r in payload_20261106["SingleStockFuturesMargining"]
+            ],
+            "SingleStockFuturesETFMargining": [
+                {**r, "Date": "20261109"} for r in payload_20261106["SingleStockFuturesETFMargining"]
+            ],
+            "DailyMarketReportFut": [
+                {
+                    **r,
+                    "Date": "20261109",
+                    "SettlementPrice": "2150"
+                    if (
+                        r.get("Contract") == "QFF"
+                        and str(r.get("ContractMonth(Week)")).strip() == "202611"
+                        and r.get("TradingSession") == "一般"
+                    )
+                    else r.get("SettlementPrice"),
+                }
+                for r in payload_20261106["DailyMarketReportFut"]
+            ],
+        }
+
+        rows_20261109 = [
+            dict(r, ingest_time="2026-11-09T16:30:01Z")
+            for r in taifex_ssf_normalized_rows(
+                payload_20261109,
+                underlying_codes=["2330"],
+                available_time="2026-11-09T16:30:00Z",
+            )
+        ]
+        replayed_20261106 = [
+            dict(r, ingest_time="2026-11-10T06:00:01Z")
+            for r in taifex_ssf_normalized_rows(
+                payload_20261106,
+                underlying_codes=["2330"],
+                available_time="2026-11-10T06:00:00Z",
+            )
+        ]
+
+        for ordered in ([*rows_20261109, *replayed_20261106], [*replayed_20261106, *rows_20261109]):
+            masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(ordered)}
+            qff = masters["ssf:QFF:202611"]
+            self.assertEqual(qff.metadata_json["settlement_price"], 2150.0)
+            self.assertEqual(qff.metadata_json["settlement_price_date"], "2026-11-09")
+            self.assertEqual(qff.metadata_json["margin_date"], "2026-11-09")
+
+        adapter = TaifexDerivativesChipAdapter()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            writer = MarketDataStorageWriter(tmp_path)
+            rec_20261109 = adapter.records_from_payload(
+                payload_20261109,
+                dataset="taifex_ssf_contracts",
+                contracts=["2330"],
+                available_time="2026-11-09T16:30:00Z",
+            )
+            for r in rec_20261109:
+                r.metadata["ingest_time"] = "2026-11-09T16:30:01Z"
+                r.metadata["normalized_row"]["ingest_time"] = "2026-11-09T16:30:01Z"
+            rec_replay_20261106 = adapter.records_from_payload(
+                payload_20261106,
+                dataset="taifex_ssf_contracts",
+                contracts=["2330"],
+                available_time="2026-11-10T06:00:00Z",
+            )
+            for r in rec_replay_20261106:
+                r.metadata["ingest_time"] = "2026-11-10T06:00:01Z"
+                r.metadata["normalized_row"]["ingest_time"] = "2026-11-10T06:00:01Z"
+            writer.write_run(
+                result=SimpleNamespace(records=rec_20261109, run=SimpleNamespace(ingest_run_id="ingest-aaaaaaaaaaaa")),
+                connector=adapter.connector(),
+            )
+            writer.write_run(
+                result=SimpleNamespace(
+                    records=rec_replay_20261106,
+                    run=SimpleNamespace(ingest_run_id="ingest-ffffffffffff"),
+                ),
+                connector=adapter.connector(),
+            )
+            disk_rows = read_normalized_ssf_rows(tmp_path)
+            disk_masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(disk_rows)}
+            self.assertEqual(disk_masters["ssf:QFF:202611"].metadata_json["settlement_price"], 2150.0)
+            self.assertEqual(disk_masters["ssf:QFF:202611"].metadata_json["settlement_price_date"], "2026-11-09")
+            self.assertEqual(disk_masters["ssf:QFF:202611"].metadata_json["margin_date"], "2026-11-09")
+
+            cands = {
+                c["instrument_id"]: c
+                for c in build_candidates(
+                    "2330",
+                    date(2026, 11, 10),
+                    {},
+                    {
+                        "available_cash": 1_000_000.0,
+                        "gross_limit": 2_000_000.0,
+                        "gross_used": 0.0,
+                    },
+                    cash_price=2200.0,
+                    cash_price_date="2026-11-09",
+                    normalized_root=tmp_path,
+                )
+            }
+            self.assertEqual(cands["ssf:QFF:202611"]["price"], 2150.0)
+            self.assertEqual(cands["ssf:QFF:202611"]["price_date"], "2026-11-09")
+            self.assertEqual(cands["ssf:QFF:202611"]["source_refs"][0]["margin_date"], "2026-11-09")
+
+        # Older removal/unpriced/tombstone replayed with newer available_time must NOT evict newer priced snapshot.
+        trimmed_20261106 = {
+            **payload_20261106,
+            "SingleStockFuturesMargining": [
+                r for r in payload_20261106["SingleStockFuturesMargining"] if r["Contract"] != "QFF"
+            ],
+        }
+        replayed_old_removal = [
+            dict(r, ingest_time="2026-11-10T06:00:01Z")
+            for r in taifex_ssf_normalized_rows(
+                trimmed_20261106,
+                underlying_codes=["2330"],
+                available_time="2026-11-10T06:00:00Z",
+            )
+        ]
+        for ordered in ([*rows_20261109, *replayed_old_removal], [*replayed_old_removal, *rows_20261109]):
+            masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(ordered)}
+            self.assertIn("ssf:QFF:202611", masters)
+            self.assertEqual(masters["ssf:QFF:202611"].metadata_json["settlement_price"], 2150.0)
+
+        # Newer removal/unpriced/tombstone with older available_time than an older-date replay MUST still evict.
+        trimmed_20261109 = {
+            **payload_20261109,
+            "SingleStockFuturesMargining": [
+                r for r in payload_20261109["SingleStockFuturesMargining"] if r["Contract"] != "QFF"
+            ],
+        }
+        newer_removal = [
+            dict(r, ingest_time="2026-11-09T16:30:01Z")
+            for r in taifex_ssf_normalized_rows(
+                trimmed_20261109,
+                underlying_codes=["2330"],
+                available_time="2026-11-09T16:30:00Z",
+            )
+        ]
+        for ordered in ([*newer_removal, *replayed_20261106], [*replayed_20261106, *newer_removal]):
+            masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(ordered)}
+            self.assertNotIn("ssf:QFF:202611", masters)
+            self.assertIn("ssf:CDF:202611", masters)
+
     def test_no_second_contract_model_exists(self):
         models = Path(__file__).resolve().parents[1] / "models"
         self.assertEqual([p.name for p in models.glob("*contract*.py")], ["contract_master.py"])
