@@ -1,0 +1,41 @@
+{
+  "task_id": "BFF-FLEET-OWNER-TOP-LEVEL-20261107",
+  "title": "Persona fleet and persona health ignore the record owner and show a default instead",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change": "In services/control-plane/bff/personas/service.py, added persona.get('owner') after metadata owner_id and before the existing 'pathreon-management' default in the owner expressions of _project_persona_fleet_row_impl and _build_persona_health_items_impl. No helper refactoring, sibling projection changes, default rename, metadata write/backfill, or frontend changes.",
+  "verification_commands": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Provisioned .venv-pantheon/bin/python3 and verified imports from foreign cwd."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_persona_fleet.py services/control-plane/bff/tests/test_persona_health_single_owner.py",
+      "exit_code": 0,
+      "result": "25 passed, 3 warnings in 14.83s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_request_scoped_reads.py services/control-plane/bff/tests/test_persona_archived_lifecycle.py services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py",
+      "exit_code": 0,
+      "result": "29 passed, 141 warnings in 43.65s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+      "exit_code": 0,
+      "result": "68 passed, 8 skipped, 10 warnings in 82.00s"
+    }
+  ],
+  "total_test_summary": "122 passed, 8 skipped, 0 failed across the 6 acceptance test files (including 3 new tests in test_bff_b3_persona_fleet.py and test_persona_health_single_owner.py; none weakened or deleted).",
+  "acceptance_criteria": {
+    "1_fleet_top_level_owner": "GET /bff/management/persona-fleet returns persona.get('owner') when metadata has neither owner nor owner_id; covered by test_persona_fleet_returns_top_level_owner_and_filters_by_q_when_metadata_lacks_owner in services/control-plane/bff/tests/test_bff_b3_persona_fleet.py.",
+    "2_fleet_q_filter": "GET /bff/management/persona-fleet?q=<owner> matches such a persona by its top-level owner and no longer matches it when q=pathreon-management; covered by test_persona_fleet_returns_top_level_owner_and_filters_by_q_when_metadata_lacks_owner in services/control-plane/bff/tests/test_bff_b3_persona_fleet.py.",
+    "3_persona_health_top_level_owner": "GET /bff/v5/execution/persona-health returns persona.get('owner') when metadata has neither owner nor owner_id; covered by test_v5_execution_persona_health_returns_top_level_owner_and_preserves_precedence_and_default in services/control-plane/bff/tests/test_persona_health_single_owner.py.",
+    "4_metadata_precedence": "metadata['owner'] then metadata['owner_id'] keep precedence over top-level owner in both routes; covered by test_persona_fleet_owner_precedence_and_default_fallback and test_v5_execution_persona_health_returns_top_level_owner_and_preserves_precedence_and_default.",
+    "5_default_fallback": "A record with no owner in metadata and no top-level owner keeps 'pathreon-management' in both routes; covered by test_persona_fleet_owner_precedence_and_default_fallback and test_v5_execution_persona_health_returns_top_level_owner_and_preserves_precedence_and_default.",
+    "6_production_scope": "Production change in services/control-plane/bff/personas/service.py is strictly limited to the owner expressions in _project_persona_fleet_row_impl and _build_persona_health_items_impl.",
+    "7_regression_suites": "All 6 acceptance test files stay green with no test weakened or deleted.",
+    "8_hosted_verification": "Hosted verification was not run; hosted readback is performed by the operator's coordinator after deploy."
+  },
+  "hosted_verification": "Hosted verification was not run."
+}
