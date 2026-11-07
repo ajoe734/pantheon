@@ -4388,6 +4388,83 @@ class MultiTaskPerRunOrderingTests(unittest.TestCase):
         )
 
 
+class BlockedWithInflightCheckTests(unittest.TestCase):
+    """OPS-BLOCKED-INFLIGHT-20261107: PR #949 shape (duplicate-named runs)."""
+
+    @staticmethod
+    def _run_item(started: str, status: str, conclusion: str) -> dict[str, Any]:
+        return {
+            "__typename": "CheckRun",
+            "name": "Component merge gate",
+            "workflowName": "Branch CI Gate",
+            "status": status,
+            "conclusion": conclusion,
+            "startedAt": started,
+        }
+
+    def _integrate(self, rollup: list[dict[str, Any]]):
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            raw_task={
+                "generation": 7,
+                "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+            },
+        )
+        pr = green_pr()
+        pr["mergeStateStatus"] = "BLOCKED"
+        pr["statusCheckRollup"] = [*pr["statusCheckRollup"], *rollup]
+        with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            status_root = Path(tmp_dir)
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                FakeRunner(pr=pr),
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+            )
+            requests = [
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in (status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")
+            ]
+        return result, requests
+
+    def test_blocked_with_earlier_started_run_in_progress_waits(self) -> None:
+        result, requests = self._integrate(
+            [
+                self._run_item("2026-11-06T13:09:44Z", "IN_PROGRESS", ""),
+                self._run_item("2026-11-06T13:10:06Z", "COMPLETED", "SUCCESS"),
+            ]
+        )
+        self.assertEqual(result.action, "waiting")
+        self.assertIsNone(result.unblock_task_id)
+        self.assertEqual(requests, [])
+        self.assertIn("Component merge gate", result.detail)
+
+    def test_blocked_with_all_checks_complete_still_opens_unblock(self) -> None:
+        result, requests = self._integrate(
+            [
+                self._run_item("2026-11-06T13:09:44Z", "COMPLETED", "SUCCESS"),
+                self._run_item("2026-11-06T13:10:06Z", "COMPLETED", "SUCCESS"),
+            ]
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(
+            requests[0]["reason"],
+            "merge-state-blocked",
+        )
+
+
 class BehindReturnToOwnerTests(unittest.TestCase):
     """An approved, green, clean-trial-merge PR that is BEHIND goes back to its owner."""
 
