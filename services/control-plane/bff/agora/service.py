@@ -244,19 +244,14 @@ class AgoraService:
         return self._get_audit_store()
 
     def _record_agora_audit_event(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Write an Agora audit event through its mutation-owned store.
+        """Write an Agora audit event through the mutation-owned audit store.
 
-        The read-surface ports deliberately stay read-only.  The fallback keeps
-        compatibility with focused unit-test doubles that still expose the
-        legacy method, while production wiring always supplies ``audit_store``.
+        Read-surface ports stay read-only; there is no fallback to them.
         """
         writer = self.audit_store
-        if writer is not None and hasattr(writer, "record_agora_audit_event"):
-            return writer.record_agora_audit_event(event)
-        legacy = self.read_store
-        if legacy is not None and hasattr(legacy, "record_agora_audit_event"):
-            return legacy.record_agora_audit_event(event)
-        return None
+        if writer is None:
+            return None
+        return writer.record_agora_audit_event(event)
 
     @property
     def command_store(self) -> Any:

@@ -2111,9 +2111,6 @@ def reset_agora_audit_store() -> None:
     _AGORA_AUDIT_STORE = None
 
 def _record_agora_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    legacy_writer = getattr(get_read_store(), "record_agora_audit_event", None)
-    if callable(legacy_writer):
-        return legacy_writer(event)
     return get_agora_audit_store().record_agora_audit_event(event)
 
 

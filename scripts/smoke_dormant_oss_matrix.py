@@ -594,27 +594,23 @@ def _smoke_wandb() -> SmokeRow:
     W&B: offline local-store scaffold.
 
     Config-level gate: EXPERIMENT_BACKEND=wandb raises EnvironmentError at
-    import time unless PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1 is set.  The
-    legacy PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 flag remains accepted as a
-    compatibility alias.  The offline smoke uses OfflineWandbLocalBackend
+    import time unless PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1 is set.  The offline smoke uses OfflineWandbLocalBackend
     (no W&B SDK required).
 
     Gate mechanism: config.selected_backend() raises EnvironmentError when
-    EXPERIMENT_BACKEND=wandb without the offline-store flag or alias.
+    EXPERIMENT_BACKEND=wandb without the offline-store flag.
     Distinguishable from missing_optional_dep: the wandb SDK is simply not
     installed; the local-store scaffold works without it.
     """
     integration = "wandb"
     gate_mechanism = (
-        "EXPERIMENT_BACKEND=wandb requires PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1 "
-        "(PANTHEON_ENABLE_WANDB_DEFERRED_PREP compatibility alias accepted)"
+        "EXPERIMENT_BACKEND=wandb requires PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1"
     )
 
     # Scrub W&B activation env so parent contamination cannot bypass the gate
     # denial check.
     wandb_scrub = {
         "PANTHEON_ENABLE_WANDB_OFFLINE_STORE",
-        "PANTHEON_ENABLE_WANDB_DEFERRED_PREP",
         "PANTHEON_WANDB_ONLINE_SYNC_ENABLED",
     }
     denial_code, denial_out, denial_err = _run(
@@ -635,9 +631,8 @@ def _smoke_wandb() -> SmokeRow:
     denial_text = denial_err + denial_out
     gate_denial_verified = (
         denial_code != 0
-        and "reserved for the offline local run store" in denial_text
+        and "offline local store requires" in denial_text
         and "PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1" in denial_text
-        and "PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 is accepted only as a compatibility alias" in denial_text
     )
 
     if not gate_denial_verified:
@@ -658,7 +653,455 @@ def _smoke_wandb() -> SmokeRow:
     code, out, err = _run(
         [PYTHON, "services/registry/experiments/smoke_test.py", "--backend", "wandb"],
         env={"PANTHEON_ENABLE_WANDB_OFFLINE_STORE": "1"},
-        scrub={"PANTHEON_ENABLE_WANDB_DEFERRED_PREP", "PANTHEON_WANDB_ONLINE_SYNC_ENABLED"},
+        scrub={"PANTHEON_WANDB_ONLINE_SYNC_ENABLED"},
+    )
+    if code != 0:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=_short(err or out),
+        )
+
+    assertions_ok = "assertions: OK" in out
+
+    if activation_allowed is not False:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=f"preflight activation_allowed={activation_allowed!r}; expected False",
+        )
+    if not assertions_ok:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail="smoke assertions not OK",
+        )
+
+    return SmokeRow(
+        integration=integration,
+        gate_mechanism=gate_mechanism,
+        result="passed",
+        gate_state="closed",
+        activated=False,
+        evidence={
+            "artifact_state": kv.get("artifact_state", ""),
+            "deployment_stage": kv.get("deployment_stage", ""),
+            "direct_live_influence": False,
+            "preflight_activation_allowed": activation_allowed,
+            "preflight_summary": preflight.get("summary", ""),
+            "assertions": "OK",
+        },
+    )
+
+
+def _smoke_trl() -> SmokeRow:
+    """
+    TRL: stub DPO smoke + preflight.
+
+    The stub smoke proves the DPO adapter is runnable and emits
+    artifact_state=draft / deployment_stage=none / direct_live_influence=false.
+    The preflight confirms activation_allowed=false (fb002_volume and
+    preference_pairs gates BLOCKED — 0 events available, 200 required).
+
+    Gate mechanism: preflight requires >=200 governed FB-002 feedback events
+    and >=100 valid preference pairs.  Neither threshold is met.
+    """
+    integration = "trl"
+    gate_mechanism = (
+        "preflight fb002_volume (0/200 events) + preference_pairs (0/100 pairs) BLOCKED"
+    )
+
+    code, out, err = _run([PYTHON, "services/learning/trl/smoke_test.py"])
+    if code != 0:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=_short(err or out),
+        )
+
+    kv = _kv(out)
+
+    pf_code, pf_out, _ = _run([
+        PYTHON, "-c",
+        (
+            "import sys; sys.path.insert(0,'.');"
+            "from services.learning.trl.preflight import run_trl_preflight; import json;"
+            "r = run_trl_preflight(fb002_events=[], preference_pairs=[]);"
+            "print(json.dumps(r.to_dict()))"
+        ),
+    ])
+    try:
+        preflight: dict[str, Any] = json.loads(pf_out)
+    except (json.JSONDecodeError, ValueError):
+        preflight = {}
+
+    activation_allowed = preflight.get("activation_allowed")
+    assertions_ok = "assertions: OK" in out
+
+    if activation_allowed is not False:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=f"preflight activation_allowed={activation_allowed!r}; expected False",
+        )
+    if not assertions_ok:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail="smoke assertions not OK",
+        )
+
+    return SmokeRow(
+        integration=integration,
+        gate_mechanism=gate_mechanism,
+        result="passed",
+        gate_state="closed",
+        activated=False,
+        evidence={
+            "artifact_state": kv.get("artifact_state", ""),
+            "deployment_stage": kv.get("deployment_stage", ""),
+            "direct_live_influence": False,
+            "preflight_activation_allowed": activation_allowed,
+            "preflight_summary": preflight.get("summary", ""),
+            "assertions": "OK",
+        },
+    )
+
+
+def _smoke_finrl() -> SmokeRow:
+    """
+    FinRL: deferred-prep adapter.
+
+    Gate requires explicit --enable-deferred-prep flag.  Without the flag the
+    script exits 2 (gate_denied).  With the flag the adapter runs in
+    stub_finrl backend and emits gate_state=closed / artifact_state=draft.
+
+    Gate mechanism: DeferredPrepGate.require_cli_flag() — EnvironmentError
+    without flag; exit code 2.  Distinguishable from missing_optional_dep
+    (ImportError / no finrl package).
+    """
+    integration = "finrl"
+    gate_mechanism = "--enable-deferred-prep flag (FinRL DeferredPrepGate)"
+
+    # Verify gate denial: must exit 2 without the flag.
+    denied_code, _, denied_err = _run([PYTHON, "services/research/finrl/smoke_test.py"])
+    if denied_code != 2:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=(
+                f"gate denial check failed: expected exit 2, got {denied_code}. "
+                f"stderr: {_short(denied_err)}"
+            ),
+        )
+
+    # Run with gate explicitly opened.
+    code, out, err = _run([
+        PYTHON, "services/research/finrl/smoke_test.py", "--enable-deferred-prep",
+    ])
+    if code != 0:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=_short(err or out),
+        )
+
+    kv = _kv(out)
+    gate_state_out = kv.get("gate_state", "")
+    assertions_ok = "assertions: OK" in out
+
+    if gate_state_out != "closed":
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=f"gate_state not closed in output: {gate_state_out!r}",
+        )
+    if not assertions_ok:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state=gate_state_out,
+            activated=False,
+            error_detail="smoke assertions not OK",
+        )
+
+    return SmokeRow(
+        integration=integration,
+        gate_mechanism=gate_mechanism,
+        result="passed",
+        gate_state=gate_state_out,
+        activated=False,
+        evidence={
+            "gate_state": gate_state_out,
+            "artifact_state": kv.get("artifact_state", ""),
+            "deployment_stage": kv.get("deployment_stage", ""),
+            "lean_consumption": kv.get("lean_consumption", ""),
+            "direct_live_influence": False,
+            "assertions": "OK",
+            "gate_denial_verified": True,
+        },
+    )
+
+
+def _smoke_rllib() -> SmokeRow:
+    """
+    RLlib: deferred-prep adapter.
+
+    Gate requires explicit --enable-deferred-prep flag.  Without the flag the
+    script exits 2 (gate_denied).  With the flag the stub_rllib backend runs
+    and emits gate_state=closed / artifact_state=draft.
+
+    Gate mechanism: DeferredPrepGate.require_cli_flag() — same pattern as
+    FinRL but for RLlib multi-agent portfolio training.
+    """
+    integration = "rllib"
+    gate_mechanism = "--enable-deferred-prep flag (RLlib DeferredPrepGate)"
+
+    denied_code, _, denied_err = _run([PYTHON, "services/research/rllib/smoke_test.py"])
+    if denied_code != 2:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=(
+                f"gate denial check failed: expected exit 2, got {denied_code}. "
+                f"stderr: {_short(denied_err)}"
+            ),
+        )
+
+    code, out, err = _run([
+        PYTHON, "services/research/rllib/smoke_test.py", "--enable-deferred-prep",
+    ])
+    if code != 0:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=_short(err or out),
+        )
+
+    kv = _kv(out)
+    gate_state_out = kv.get("gate_state", "")
+    assertions_ok = "assertions: OK" in out
+
+    if gate_state_out != "closed":
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=f"gate_state not closed in output: {gate_state_out!r}",
+        )
+    if not assertions_ok:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state=gate_state_out,
+            activated=False,
+            error_detail="smoke assertions not OK",
+        )
+
+    return SmokeRow(
+        integration=integration,
+        gate_mechanism=gate_mechanism,
+        result="passed",
+        gate_state=gate_state_out,
+        activated=False,
+        evidence={
+            "gate_state": gate_state_out,
+            "artifact_state": kv.get("artifact_state", ""),
+            "deployment_stage": kv.get("deployment_stage", ""),
+            "direct_live_influence": False,
+            "search_strategy": kv.get("search_strategy", ""),
+            "assertions": "OK",
+            "gate_denial_verified": True,
+        },
+    )
+
+
+def _smoke_raytune() -> SmokeRow:
+    """
+    Ray Tune: deferred-prep hyperparameter search adapter.
+
+    Gate requires explicit --enable-deferred-prep flag.  Without the flag the
+    script exits 2 (gate_denied).  With the flag the stub backend runs and
+    emits gate_state=closed / artifact_type=optimizer_result / artifact_state=draft.
+
+    Gate mechanism: RayTuneDeferredPrepGate.require_cli_flag() — same
+    activation-gate pattern as FinRL/RLlib.
+    """
+    integration = "raytune"
+    gate_mechanism = "--enable-deferred-prep flag (RayTuneDeferredPrepGate)"
+
+    denied_code, _, denied_err = _run([
+        PYTHON, "services/research/rllib/ray_tune_smoke_test.py",
+    ])
+    if denied_code != 2:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=(
+                f"gate denial check failed: expected exit 2, got {denied_code}. "
+                f"stderr: {_short(denied_err)}"
+            ),
+        )
+
+    code, out, err = _run([
+        PYTHON, "services/research/rllib/ray_tune_smoke_test.py", "--enable-deferred-prep",
+    ])
+    if code != 0:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=_short(err or out),
+        )
+
+    kv = _kv(out)
+    gate_state_out = kv.get("gate_state", "")
+    assertions_ok = "assertions: OK" in out
+
+    if gate_state_out != "closed":
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=f"gate_state not closed in output: {gate_state_out!r}",
+        )
+    if not assertions_ok:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state=gate_state_out,
+            activated=False,
+            error_detail="smoke assertions not OK",
+        )
+
+    return SmokeRow(
+        integration=integration,
+        gate_mechanism=gate_mechanism,
+        result="passed",
+        gate_state=gate_state_out,
+        activated=False,
+        evidence={
+            "gate_state": gate_state_out,
+            "artifact_state": kv.get("artifact_state", ""),
+            "artifact_type": kv.get("artifact_type", ""),
+            "deployment_stage": kv.get("deployment_stage", ""),
+            "direct_live_influence": False,
+            "assertions": "OK",
+            "gate_denial_verified": True,
+        },
+    )
+
+
+def _smoke_wandb() -> SmokeRow:
+    """
+    W&B: offline local-store scaffold.
+
+    Config-level gate: EXPERIMENT_BACKEND=wandb raises EnvironmentError at
+    import time unless PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1 is set.  The offline smoke uses OfflineWandbLocalBackend
+    (no W&B SDK required).
+
+    Gate mechanism: config.selected_backend() raises EnvironmentError when
+    EXPERIMENT_BACKEND=wandb without the offline-store flag.
+    Distinguishable from missing_optional_dep: the wandb SDK is simply not
+    installed; the local-store scaffold works without it.
+    """
+    integration = "wandb"
+    gate_mechanism = (
+        "EXPERIMENT_BACKEND=wandb requires PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1"
+    )
+
+    # Scrub W&B activation env so parent contamination cannot bypass the gate
+    # denial check.
+    wandb_scrub = {
+        "PANTHEON_ENABLE_WANDB_OFFLINE_STORE",
+        "PANTHEON_WANDB_ONLINE_SYNC_ENABLED",
+    }
+    denial_code, denial_out, denial_err = _run(
+        [
+            PYTHON, "-c",
+            (
+                "import sys, importlib.util; sys.path.insert(0,'.');"
+                "spec=importlib.util.spec_from_file_location("
+                "'_exp_cfg','services/registry/experiments/config.py');"
+                "mod=importlib.util.module_from_spec(spec);"
+                "sys.modules[spec.name]=mod;"
+                "spec.loader.exec_module(mod)"
+            ),
+        ],
+        env={"EXPERIMENT_BACKEND": "wandb"},
+        scrub=wandb_scrub,
+    )
+    denial_text = denial_err + denial_out
+    gate_denial_verified = (
+        denial_code != 0
+        and "offline local store requires" in denial_text
+        and "PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1" in denial_text
+    )
+
+    if not gate_denial_verified:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=(
+                f"gate denial check failed in scrubbed env: "
+                f"exit={denial_code} "
+                f"stdout={_short(denial_out)} stderr={_short(denial_err)}"
+            ),
+        )
+
+    # Run offline local-store smoke with the canonical offline-store flag set.
+    code, out, err = _run(
+        [PYTHON, "services/registry/experiments/smoke_test.py", "--backend", "wandb"],
+        env={"PANTHEON_ENABLE_WANDB_OFFLINE_STORE": "1"},
+        scrub={"PANTHEON_WANDB_ONLINE_SYNC_ENABLED"},
     )
     if code != 0:
         return SmokeRow(
@@ -716,7 +1159,6 @@ def _smoke_wandb() -> SmokeRow:
             "sdk_backed": False,
             "wandb_sdk_present": wandb_sdk_present,
             "offline_store_gate": "PANTHEON_ENABLE_WANDB_OFFLINE_STORE",
-            "deferred_prep_alias_verified": True,
             "activation_state": "deferred",
             "gate_denial_verified": True,
             "assertions": "OK",
