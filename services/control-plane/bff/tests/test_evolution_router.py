@@ -725,7 +725,6 @@ def test_evolution_journal_router_view_filter_and_evidence_class():
     }
     assert {it["id"] for it in data_hist["items"]} == {
         "evolution_decision:evo-thresh-hist-1",
-        "mutation_review:evo-thresh-hist-1",
         "postmortem:pm-pub-1",
     }
 
@@ -734,8 +733,6 @@ def test_evolution_journal_router_view_filter_and_evidence_class():
     data_auto = resp_auto.json()["data"]
     assert {it["id"] for it in data_auto["items"]} == {
         "evolution_decision:evo-sweep-agent-000b205c0ef9-0000",
-        "mutation_review:evo-sweep-agent-000b205c0ef9-0000",
         "evolution_decision:evo-sweep-inc-deployment-comp-deployment-saga-plan-persona-paper-1bad2eca6831457cd885",
-        "mutation_review:evo-sweep-inc-deployment-comp-deployment-saga-plan-persona-paper-1bad2eca6831457cd885",
         "postmortem:pm-draft-1",
     }

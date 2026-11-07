@@ -460,9 +460,11 @@ def test_evolution_journal_composes_required_sources() -> None:
             assert by_type["freeze_order"]["freeze_order"]["freeze_order_id"]
             assert "entryType" not in by_type["freeze_order"]
             assert "freezeOrder" not in by_type["freeze_order"]
+            # One row per decision: the mutation review is nested in the decision row.
+            assert not [item for item in items if item["entry_type"] == "mutation_review"]
             mutation_review = next(
                 item for item in items
-                if item["entry_type"] == "mutation_review"
+                if item["entry_type"] == "evolution_decision"
                 and item["source_id"] == "evo-dec-88f3a2c1"
             )
             assert mutation_review["mutation_review"]["decision_id"] == "evo-dec-88f3a2c1"
@@ -490,7 +492,7 @@ def test_evolution_journal_supports_filters_and_pagination() -> None:
             summary = body["data"]["summary"]
             assert len(items) == 1
             item = items[0]
-            assert item["entry_type"] == "mutation_review"
+            assert item["entry_type"] == "evolution_decision"
             assert item["source_id"] == "evo-dec-88f3a2c1"
             assert item["mutation_review"]["decision_id"] == "evo-dec-88f3a2c1"
             assert item["mutation_review"]["allowedActions"]["canApproveMutation"] is True
@@ -545,7 +547,7 @@ def test_evolution_journal_server_side_filtering_and_origin() -> None:
             items = body["data"]["items"]
             assert len(items) > 0
             for item in items:
-                assert item["entry_type"] in ("mutation_review", "evolution_decision")
+                assert item["entry_type"] == "evolution_decision"
                 assert "evo-dec-88f3a2c1" in str(item).lower()
 
             # 4. Verify origin field in response is set correctly (seed/live)
@@ -723,7 +725,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             resp = client.get("/bff/management/evolution-journal?persona=persona-1", headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             items = resp.json()["data"]["items"]
-            assert len(items) == 2
+            assert len(items) == 1
             assert all(item["source_id"] == "dec-1" for item in items)
 
             # 2. Test typed hits / empty results
@@ -739,7 +741,8 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             assert resp.status_code == 200, resp.text
             items_mr = resp.json()["data"]["items"]
             assert len(items_mr) == 1
-            assert items_mr[0]["entry_type"] == "mutation_review"
+            assert items_mr[0]["entry_type"] == "evolution_decision"
+            assert items_mr[0]["mutation_review"]["decision_id"] == "dec-1"
 
             # Querying for nonexistent decision should return 0 items
             resp = client.get("/bff/management/evolution-journal?decision=nonexistent", headers=OPERATOR_HEADERS)
@@ -750,8 +753,8 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             items = resp.json()["data"]["items"]
-            # 6 decisions + 6 mutation reviews + 6 backfilled default items = 18 total items
-            assert len(items) == 18
+            # 6 decisions (mutation review nested) + 6 backfilled default items = 12 total items
+            assert len(items) == 12
 
             by_id_and_type = {(item["source_id"], item["entry_type"]): item for item in items}
             assert by_id_and_type[("evo-vslice-1", "evolution_decision")]["origin"] == "seed"
@@ -760,27 +763,15 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             assert by_id_and_type[("dec-1", "evolution_decision")]["origin"] == "unknown"
 
             # Verify mutation reviews also preserve the correct origin
-            assert by_id_and_type[("evo-vslice-1", "mutation_review")]["origin"] == "seed"
-            assert by_id_and_type[("dec-live", "mutation_review")]["origin"] == "live"
-            assert by_id_and_type[("dec-explicit-unknown", "mutation_review")]["origin"] == "unknown"
-            assert by_id_and_type[("dec-1", "mutation_review")]["origin"] == "unknown"
+            assert not [key for key in by_id_and_type if key[1] == "mutation_review"]
 
             # 4. Test filtered total plus next token (paging)
-            # Querying for persona-1 with page_size=1 should return exactly 1 item and total=2 (dec-1 decision + dec-1 mutation_review)
+            # persona-1 lineage owns exactly one decision row (mutation review nested), so one page.
             resp = client.get("/bff/management/evolution-journal?persona=persona-1&page_size=1", headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["page_info"]["total"] == 2
+            assert body["page_info"]["total"] == 1
             assert len(body["data"]["items"]) == 1
-            next_token = body["page_info"]["next_page_token"]
-            assert next_token is not None
-
-            # Get next page
-            resp = client.get(f"/bff/management/evolution-journal?persona=persona-1&page_size=1&page_token={next_token}", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert len(body["data"]["items"]) == 1
-            assert body["page_info"]["total"] == 2
             assert body["page_info"]["next_page_token"] is None
 
         finally:
@@ -1701,7 +1692,7 @@ def test_unfiltered_default_page_read_amplification_bounded_across_history_sizes
             assert store.get_evolution_decision_by_id_call_count == 0
 
             # Sliced page items must not exceed page_size (20)
-            expected_total = n_decisions * 2 + 6  # 2 decisions per entry (decision + mutation_review) + 6 fixture items (postmortems, freeze orders, rollbacks)
+            expected_total = n_decisions + 6  # 1 row per decision (mutation_review nested) + 6 fixture items (postmortems, freeze orders, rollbacks)
             expected_page_size = min(expected_total, 20)
             assert len(items) == expected_page_size
             assert page_info["page_size"] == 20
@@ -1718,12 +1709,12 @@ def test_divergent_status_decision_state_filtering_and_canonical_summary() -> No
     must obey canonical decision_state precedence for mutation_review and status
     precedence for evolution_decision BEFORE slicing.
 
-    A decision with status='pending' and decision_state='approved' produces:
-    - evolution_decision with status='pending' (status FIRST)
-    - mutation_review with status='approved' (decision_state FIRST)
+    A decision with status='pending' and decision_state='approved' produces ONE
+    evolution_decision row with status='pending' (status FIRST) whose nested
+    mutation_review keeps decision_state='approved'.
 
-    Filtering ?status=approved selects mutation_review and omits evolution_decision.
-    Filtering ?status=pending selects evolution_decision and omits mutation_review.
+    Filtering ?status=pending selects the row; ?status=approved does not, because
+    row status follows the decision status. The divergence stays visible nested.
     Summary by_status preserves both distinct canonical counts, and owner calls
     remain strictly bounded.
     """
@@ -1763,8 +1754,8 @@ def test_divergent_status_decision_state_filtering_and_canonical_summary() -> No
     body_mr = resp_mr.json()
     items_mr = body_mr["data"]["items"]
     assert len(items_mr) == 1
-    assert items_mr[0]["status"] == "approved"
-    assert items_mr[0]["entry_type"] == "mutation_review"
+    assert items_mr[0]["status"] == "pending"
+    assert items_mr[0]["entry_type"] == "evolution_decision"
     assert (items_mr[0].get("mutation_review") or {}).get("decision_state") == "approved"
 
     # 2. Unfiltered request for decision: renders status='pending' (evolution_journal_status status FIRST)
@@ -1779,19 +1770,16 @@ def test_divergent_status_decision_state_filtering_and_canonical_summary() -> No
     assert items_dec[0]["status"] == "pending"
     assert items_dec[0]["entry_type"] == "evolution_decision"
 
-    # 3. Filter status=approved: selects mutation_review, omits evolution_decision
+    # 3. Filter status=approved: the single row follows decision status, so it is omitted
     resp_appr = client.get(
         "/bff/management/evolution-journal?status=approved",
         headers=OPERATOR_HEADERS,
     )
     assert resp_appr.status_code == 200, resp_appr.text
     items_appr = resp_appr.json()["data"]["items"]
-    matched_mr = [it for it in items_appr if it.get("source_id") == record["id"]]
-    assert len(matched_mr) == 1
-    assert matched_mr[0]["entry_type"] == "mutation_review"
-    assert matched_mr[0]["status"] == "approved"
+    assert [it for it in items_appr if it.get("source_id") == record["id"]] == []
 
-    # 4. Filter status=pending: selects evolution_decision, omits mutation_review
+    # 4. Filter status=pending: selects the single evolution_decision row
     resp_pend = client.get(
         "/bff/management/evolution-journal?status=pending",
         headers=OPERATOR_HEADERS,
@@ -1803,14 +1791,14 @@ def test_divergent_status_decision_state_filtering_and_canonical_summary() -> No
     assert matched_pend[0]["entry_type"] == "evolution_decision"
     assert matched_pend[0]["status"] == "pending"
 
-    # 5. Full summary reflects distinct states for both entry types
+    # 5. Full summary counts the one row once
     resp_all = client.get(
         "/bff/management/evolution-journal",
         headers=OPERATOR_HEADERS,
     )
     assert resp_all.status_code == 200
     summary = resp_all.json()["data"]["summary"]
-    assert summary["by_status"]["approved"] >= 1
+    assert "approved" not in summary["by_status"]
     assert summary["by_status"]["pending"] >= 1
     assert summary["decision_count"] == 1
     assert summary["mutation_review_count"] == 1
@@ -1825,8 +1813,8 @@ def test_full_summary_by_status_consistent_across_pages_and_history_sizes() -> N
     correctly projecting off-page rows without full-history deep hydration.
 
     Each raw decision has status='pending' and decision_state='approved':
-    - 30 evolution_decisions with status='pending'
-    - 30 mutation_reviews with status='approved'
+    - 30 evolution_decision rows with status='pending', each carrying a nested
+      mutation_review whose decision_state is 'approved'
     """
     n_decisions = 30
     decisions = [
@@ -1863,7 +1851,7 @@ def test_full_summary_by_status_consistent_across_pages_and_history_sizes() -> N
     store.list_evolution_decisions_call_count = 0
     store.get_evolution_decision_by_id_call_count = 0
 
-    # Unfiltered page 1: 20 items returned out of total (30*2 + 6 default fixtures = 66)
+    # Unfiltered page 1: 20 items returned out of total (30 + 6 default fixtures = 36)
     resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -1871,48 +1859,25 @@ def test_full_summary_by_status_consistent_across_pages_and_history_sizes() -> N
     summary = body["data"]["summary"]
 
     assert len(items) == 20
-    # Returned items reflect distinct entry-type statuses:
-    # evolution_decision has status='pending'; mutation_review has status='approved'
     for it in items:
+        assert it.get("entry_type") != "mutation_review"
         if it.get("entry_type") == "evolution_decision":
             assert it["status"] == "pending"
-        elif it.get("entry_type") == "mutation_review":
-            assert it["status"] == "approved"
+            assert it["mutation_review"]["decision_state"] == "approved"
 
-    # Full summary across all 66 items reflects canonical states without full hydration
-    assert summary["by_status"]["approved"] == n_decisions
+    # Full summary across all 36 rows reflects canonical states without full hydration
+    assert "approved" not in summary["by_status"]
     assert summary["by_status"]["pending"] == n_decisions
     assert summary["decision_count"] == n_decisions
     assert summary["mutation_review_count"] == n_decisions
 
-    # Filtering by approved retains all 30 mutation_review items
+    # Row status follows the decision status, so approved matches nothing
     resp_appr = client.get(
         "/bff/management/evolution-journal?status=approved",
         headers=OPERATOR_HEADERS,
     )
     assert resp_appr.status_code == 200
-    appr_data = resp_appr.json()["data"]
-    assert appr_data["summary"]["total_items"] == n_decisions
-    assert appr_data["summary"]["by_status"]["approved"] == n_decisions
-    assert len(appr_data["items"]) == 20
-    for it in appr_data["items"]:
-        assert it.get("entry_type") == "mutation_review"
-        assert it["status"] == "approved"
-
-    # Page 2 pagination retains approved summary consistency
-    next_tok = resp_appr.json()["page_info"]["next_page_token"]
-    assert next_tok is not None
-    resp_appr_p2 = client.get(
-        f"/bff/management/evolution-journal?status=approved&page_token={next_tok}",
-        headers=OPERATOR_HEADERS,
-    )
-    assert resp_appr_p2.status_code == 200
-    appr_p2_data = resp_appr_p2.json()["data"]
-    assert len(appr_p2_data["items"]) == 10
-    assert appr_p2_data["summary"]["total_items"] == n_decisions
-    for it in appr_p2_data["items"]:
-        assert it.get("entry_type") == "mutation_review"
-        assert it["status"] == "approved"
+    assert resp_appr.json()["data"]["summary"]["total_items"] == 0
 
     # Filtering by pending yields all 30 evolution_decision items
     resp_pend = client.get(
@@ -2043,10 +2008,10 @@ def test_persona_lineage_filtering_through_linked_incident() -> None:
     # dec-unrelated must NOT match
     assert "dec-unrelated" not in matched_sources
 
-    # Both evolution_decision and mutation_review items for dec-linked-inc are included
-    types_for_inc = {it["entry_type"] for it in items if it["source_id"] == "dec-linked-inc"}
-    assert "evolution_decision" in types_for_inc
-    assert "mutation_review" in types_for_inc
+    # One decision row for dec-linked-inc, carrying the nested mutation_review
+    rows_for_inc = [it for it in items if it["source_id"] == "dec-linked-inc"]
+    assert [it["entry_type"] for it in rows_for_inc] == ["evolution_decision"]
+    assert isinstance(rows_for_inc[0]["mutation_review"], dict)
 
     # Owner queries remain bounded
     assert store.get_evolution_decision_by_id_call_count == 0
@@ -2094,8 +2059,8 @@ def test_lightweight_callback_semantic_defaults_and_summary() -> None:
     assert mr.get("target_version") is None
     assert mr.get("action_type") is None
     assert mr.get("risk_level") is None
-    assert item["target"].get("version") is None
-    assert item["status"] == "unknown"
+    assert mr.get("decision_state") is None
+    assert item["entry_type"] == "evolution_decision"
 
     # Off-page summary does not replace None with defaults
     summary = resp.json()["data"]["summary"]
@@ -2126,7 +2091,8 @@ def test_lightweight_callback_semantic_defaults_and_summary() -> None:
     assert mr_no_cb.get("target_version") == "v9.9.9"
     assert mr_no_cb.get("action_type") == "mutation"
     assert mr_no_cb.get("risk_level") == "low"
-    assert item_no_cb["status"] == "pending"
+    assert mr_no_cb.get("decision_state") == "pending"
+    assert item_no_cb["entry_type"] == "evolution_decision"
 
 
 # --------------------------------------------------------------------------- #
@@ -2264,25 +2230,22 @@ def test_evidence_class_classification_on_decisions_and_mutation_reviews_real_ho
     items = resp.json()["data"]["items"]
 
     by_id = {it["id"]: it for it in items}
-    assert by_id[f"evolution_decision:{dec_followup['decision_id']}"]["evidence_class"] == "incident_followup"
-    assert by_id[f"mutation_review:{dec_followup['decision_id']}"]["evidence_class"] == "incident_followup"
-    assert (
-        by_id[f"mutation_review:{dec_followup['decision_id']}"]["mutation_review"]["evidence_class"]
-        == "incident_followup"
-    )
+    assert not [it for it in items if it["entry_type"] == "mutation_review"]
+    decision_rows = [it for it in items if it["entry_type"] == "evolution_decision"]
+    assert len(decision_rows) == len(all_decisions)
 
-    assert by_id[f"evolution_decision:{dec_severity['decision_id']}"]["evidence_class"] == "incident_severity"
-    assert by_id[f"mutation_review:{dec_severity['decision_id']}"]["evidence_class"] == "incident_severity"
-    assert (
-        by_id[f"mutation_review:{dec_severity['decision_id']}"]["mutation_review"]["evidence_class"]
-        == "incident_severity"
-    )
+    for dec, expected in (
+        (dec_followup, "incident_followup"),
+        (dec_severity, "incident_severity"),
+    ):
+        row = by_id[f"evolution_decision:{dec['decision_id']}"]
+        assert row["evidence_class"] == expected
+        assert row["mutation_review"]["evidence_class"] == expected
 
     for sig in signal_types:
-        did = f"evo-thresh-{sig}"
-        assert by_id[f"evolution_decision:{did}"]["evidence_class"] == "threshold_signal"
-        assert by_id[f"mutation_review:{did}"]["evidence_class"] == "threshold_signal"
-        assert by_id[f"mutation_review:{did}"]["mutation_review"]["evidence_class"] == "threshold_signal"
+        row = by_id[f"evolution_decision:evo-thresh-{sig}"]
+        assert row["evidence_class"] == "threshold_signal"
+        assert row["mutation_review"]["evidence_class"] == "threshold_signal"
 
 
 def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> None:
@@ -2378,7 +2341,8 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
     ]
     assert body_omitted["data"]["auto_proposal_counts"] == expected_counts
     assert body_all["data"]["auto_proposal_counts"] == expected_counts
-    assert body_all["page_info"]["total"] == 13
+    # 4 decisions (one row each) + 3 postmortems + 1 freeze order + 1 rollback
+    assert body_all["page_info"]["total"] == 9
 
     # 2. view=history returns freeze_order, rollback, non-draft postmortem,
     #    non-proposed decision (+ mutation_review), and proposed threshold_signal decision (+ mutation_review)
@@ -2391,12 +2355,10 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
         "rollback:rb-hist-001",
         "postmortem:pm-published-001",
         f"evolution_decision:{dec_approved['decision_id']}",
-        f"mutation_review:{dec_approved['decision_id']}",
         f"evolution_decision:{dec_thresh_proposed['decision_id']}",
-        f"mutation_review:{dec_thresh_proposed['decision_id']}",
     }
-    assert body_hist["page_info"]["total"] == 7
-    assert body_hist["data"]["summary"]["total_items"] == 7
+    assert body_hist["page_info"]["total"] == 5
+    assert body_hist["data"]["summary"]["total_items"] == 5
     assert body_hist["data"]["auto_proposal_counts"] == expected_counts
 
     # 3. view=auto_proposals returns remaining proposed decisions (+ mutation_reviews) and draft postmortems
@@ -2409,14 +2371,13 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
     auto_ids = {it["id"] for it in body_auto["data"]["items"]}
     assert auto_ids == {
         f"evolution_decision:{dec_followup['decision_id']}",
-        f"mutation_review:{dec_followup['decision_id']}",
         f"evolution_decision:{dec_severity['decision_id']}",
-        f"mutation_review:{dec_severity['decision_id']}",
         "postmortem:pm-draft-001",
         "postmortem:pm-draft-002",
     }
-    assert body_auto["page_info"]["total"] == 6
-    assert body_auto["data"]["summary"]["total_items"] == 6
+    # The list and the counts agree: page_info.total == auto_proposal_counts.total
+    assert body_auto["page_info"]["total"] == expected_counts["total"] == 4
+    assert body_auto["data"]["summary"]["total_items"] == 4
     assert body_auto["data"]["auto_proposal_counts"] == expected_counts
 
     # 4. Invalid view is rejected with 400
@@ -2428,7 +2389,7 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
     """Filter runs before pagination so page_info, next_page_token, and summary
     describe the filtered set, and a history item beyond the first raw page is returned.
     """
-    # 15 auto-proposal decisions (30 items: decision + mutation_review) with newer timestamps
+    # 15 auto-proposal decisions (15 rows, mutation_review nested) with newer timestamps
     auto_decisions = {
         f"evo-sweep-agent-{i:04d}": _real_hosted_incident_followup_decision(
             f"evo-sweep-agent-{i:04d}",
@@ -2436,8 +2397,8 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
         )
         for i in range(15)
     }
-    # 1 threshold_signal proposed decision (2 history items) + 1 freeze_order + 1 rollback = 4 history items
-    # All have older timestamps (00:01..00:03), placing them at raw indices 30..33 (well beyond raw page 1)
+    # 1 threshold_signal proposed decision + 1 freeze_order + 1 rollback = 3 history items
+    # All have older timestamps (00:01..00:03), placing them at raw indices 16..18 (beyond raw page 1)
     hist_thresh = _threshold_signal_decision(
         "evo-thresh-old-001",
         signal_type="performance_degradation",
@@ -2482,35 +2443,64 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
 
     # Raw page 1 (view=all, page_size=2) only sees the newest auto proposals
     raw_p1 = client.get("/bff/management/evolution-journal?page_size=2", headers=OPERATOR_HEADERS).json()
-    assert raw_p1["page_info"]["total"] == 35
+    assert raw_p1["page_info"]["total"] == 19
 
-    # Filtered page 1 (view=history, page_size=2) sees the first 2 of 4 history items
+    # Filtered page 1 (view=history, page_size=2) sees the first 2 of 3 history items
     hist_p1_resp = client.get(
         "/bff/management/evolution-journal?view=history&page_size=2",
         headers=OPERATOR_HEADERS,
     )
     assert hist_p1_resp.status_code == 200
     hist_p1 = hist_p1_resp.json()
-    assert hist_p1["page_info"]["total"] == 4
+    assert hist_p1["page_info"]["total"] == 3
     assert hist_p1["page_info"]["page_size"] == 2
     assert hist_p1["page_info"]["next_page_token"] == "2"
-    assert hist_p1["data"]["summary"]["total_items"] == 4
+    assert hist_p1["data"]["summary"]["total_items"] == 3
     assert hist_p1["data"]["summary"]["returned_items"] == 2
     assert len(hist_p1["data"]["items"]) == 2
 
-    # Filtered page 2 (view=history, page_size=2, page_token=2) returns the remaining 2 history items
+    # Filtered page 2 (view=history, page_size=2, page_token=2) returns the remaining history item
     hist_p2_resp = client.get(
         "/bff/management/evolution-journal?view=history&page_size=2&page_token=2",
         headers=OPERATOR_HEADERS,
     )
     assert hist_p2_resp.status_code == 200
     hist_p2 = hist_p2_resp.json()
-    assert hist_p2["page_info"]["total"] == 4
+    assert hist_p2["page_info"]["total"] == 3
     assert hist_p2["page_info"]["next_page_token"] is None
-    assert hist_p2["data"]["summary"]["total_items"] == 4
-    assert hist_p2["data"]["summary"]["returned_items"] == 2
+    assert hist_p2["data"]["summary"]["total_items"] == 3
+    assert hist_p2["data"]["summary"]["returned_items"] == 1
     p2_ids = [it["id"] for it in hist_p2["data"]["items"]]
-    assert p2_ids == ["freeze_order:fo-old-001", "rollback:rb-oldest-001"]
+    assert p2_ids == ["rollback:rb-oldest-001"]
+
+    # view=auto_proposals across several pages: list total equals the counts total
+    auto_resp = client.get(
+        "/bff/management/evolution-journal?view=auto_proposals&page_size=4",
+        headers=OPERATOR_HEADERS,
+    )
+    assert auto_resp.status_code == 200
+    auto_body = auto_resp.json()
+    counts = auto_body["data"]["auto_proposal_counts"]
+    assert counts == {
+        "incident_followup": 15,
+        "incident_severity": 0,
+        "postmortem_draft": 1,
+        "total": 16,
+    }
+    assert auto_body["page_info"]["total"] == counts["total"]
+    assert auto_body["data"]["summary"]["total_items"] == counts["total"]
+    seen_ids: list[str] = []
+    token = auto_body["page_info"]["next_page_token"]
+    seen_ids.extend(it["id"] for it in auto_body["data"]["items"])
+    while token is not None:
+        page = client.get(
+            f"/bff/management/evolution-journal?view=auto_proposals&page_size=4&page_token={token}",
+            headers=OPERATOR_HEADERS,
+        ).json()
+        assert page["page_info"]["total"] == counts["total"]
+        seen_ids.extend(it["id"] for it in page["data"]["items"])
+        token = page["page_info"]["next_page_token"]
+    assert len(seen_ids) == len(set(seen_ids)) == counts["total"]
 
 
 def test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_target_under_any_view() -> None:
@@ -2590,8 +2580,18 @@ def test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_
         assert r_mr.status_code == 200
         items_mr = r_mr.json()["data"]["items"]
         assert len(items_mr) == 1
-        assert items_mr[0]["id"] == f"mutation_review:{dec_followup['decision_id']}"
+        assert items_mr[0]["id"] == f"evolution_decision:{dec_followup['decision_id']}"
+        assert items_mr[0]["mutation_review"]["decision_id"] == dec_followup["decision_id"]
         assert items_mr[0]["evidence_class"] == "incident_followup"
+
+        # 2b. source_type=mutation_review selects decision rows that carry a projection
+        r_st = client.get(
+            f"/bff/management/evolution-journal?view={view_val}&source_type=mutation_review&decision={dec_followup['decision_id']}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert r_st.status_code == 200
+        items_st = r_st.json()["data"]["items"]
+        assert [it["id"] for it in items_st] == [f"evolution_decision:{dec_followup['decision_id']}"]
 
         # 3. Deep link by persona (matches dec_followup via linked_incident_id under any view)
         r_persona = client.get(
@@ -2602,7 +2602,7 @@ def test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_
         items_persona = r_persona.json()["data"]["items"]
         matched_ids = {it["id"] for it in items_persona}
         assert f"evolution_decision:{dec_followup['decision_id']}" in matched_ids
-        assert f"mutation_review:{dec_followup['decision_id']}" in matched_ids
+        assert not [i for i in matched_ids if i.startswith("mutation_review:")]
 
 
 def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_owner_write(
@@ -2695,7 +2695,7 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
             "postmortem_draft": 2027,
             "total": 2029,
         }
-        assert body_default["page_info"]["total"] == 2027 + 6
+        assert body_default["page_info"]["total"] == 2027 + 3
 
         # 2. History view (view=history)
         owner_srv.requests_received.clear()
@@ -2711,7 +2711,6 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
         body_history = resp_history.json()
         assert {it["id"] for it in body_history["data"]["items"]} == {
             f"evolution_decision:{dec_history['decision_id']}",
-            f"mutation_review:{dec_history['decision_id']}",
         }
         assert body_history["data"]["auto_proposal_counts"] == {
             "incident_followup": 1,
@@ -2849,3 +2848,107 @@ def test_journal_owner_rollbacks_use_canonical_owner_rows(monkeypatch) -> None:
     )
     assert result["ids"] == ["r-own"]
     assert result["rollbacks"]["status"] != "ok"  # foreign/unknown 404 is conservatively unresolved, not healthy
+
+
+# --------------------------------------------------------------------------- #
+# BFF-EVO-ALPHA-PAGE-TRUTH-20261107: one journal row per decision
+# --------------------------------------------------------------------------- #
+
+
+def _hosted_all12_decision(decision_id: str, state: str, *, created_by_id: str, created_at: str) -> dict[str, Any]:
+    """Decision of the real hosted shape: incident_severity evidence, hosted-all12 plan."""
+    return {
+        **_real_hosted_incident_severity_decision(decision_id, created_at=created_at),
+        "decision_state": state,
+        "status": state,
+        "created_by_id": created_by_id,
+        "approval_decision_id": f"appr-{decision_id}",
+        "metadata": {"deployment_plan_id": "hosted-all12-h12-01a11-20261023-9aeb"},
+        "required_approvals": 1,
+        "review_chain": [],
+        "risk_assessment": {"risk_summary": "severity-1 incident"},
+    }
+
+
+def test_hosted_shape_history_reports_one_row_per_decision() -> None:
+    decisions = [
+        _hosted_all12_decision(
+            "evo-sweep-inc-drift-87d6930c62ee", "approved",
+            created_by_id="evolution-daily-sweep", created_at="2026-11-05T01:00:00Z",
+        ),
+        _hosted_all12_decision(
+            "evo-h12-01a11-20261023-9aeb-duplicate-execution-usera", "executed",
+            created_by_id="operator", created_at="2026-11-05T02:00:00Z",
+        ),
+        _hosted_all12_decision(
+            "evo-h12-01a11-20261023-9aeb-duplicate-execution", "canceled",
+            created_by_id="operator", created_at="2026-11-05T03:00:00Z",
+        ),
+    ]
+    data = {
+        "evolution_decisions": {d["decision_id"]: d for d in decisions},
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    client = _JournalTestClient(_create_app_for_store(_EvolutionJournalTestStore(data)), raise_server_exceptions=True)
+
+    for view in ("all", "history"):
+        body = client.get(
+            # source_type scopes away the fixture-pack postmortems/freezes/rollbacks the test store adds
+            f"/bff/management/evolution-journal?view={view}&source_type=evolution_decision&page_size=50",
+            headers=OPERATOR_HEADERS,
+        ).json()
+        assert body["page_info"]["total"] == 3
+        summary = body["data"]["summary"]
+        assert summary["total_items"] == 3
+        assert summary["decision_count"] == 3
+        assert summary["mutation_review_count"] == 3
+        assert summary["by_status"] == {"approved": 1, "executed": 1, "canceled": 1}
+        assert summary["by_type"] == {"evolution_decision": 3}
+        rows = body["data"]["items"]
+        assert [r["entry_type"] for r in rows] == ["evolution_decision"] * 3
+        for row in rows:
+            nested = row["mutation_review"]
+            assert nested["decision_id"] == row["source_id"]
+            assert nested["evidence_class"] == "incident_severity"
+            assert "allowedActions" in nested
+            assert "approval_decision" in nested
+            assert row["decision"]["metadata"]["deployment_plan_id"].startswith("hosted-all12-")
+
+    auto = client.get(
+        "/bff/management/evolution-journal?view=auto_proposals&page_size=50", headers=OPERATOR_HEADERS
+    ).json()
+    assert auto["page_info"]["total"] == auto["data"]["auto_proposal_counts"]["total"]
+    assert auto["data"]["auto_proposal_counts"]["incident_severity"] == 0
+
+
+def test_summary_counts_pending_reviews_once_per_decision() -> None:
+    decisions = {}
+    for idx, state in enumerate(("pending", "reviewed", "under_review", "in_review", "approved")):
+        did = f"evo-pending-{idx}"
+        decisions[did] = {
+            **_hosted_all12_decision(did, state, created_by_id="operator", created_at=f"2026-11-05T0{idx}:00:00Z"),
+        }
+    data = {
+        "evolution_decisions": decisions,
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    client = _JournalTestClient(_create_app_for_store(_EvolutionJournalTestStore(data)), raise_server_exceptions=True)
+    summary = client.get(
+        "/bff/management/evolution-journal?source_type=evolution_decision&page_size=50",
+        headers=OPERATOR_HEADERS,
+    ).json()["data"]["summary"]
+    assert summary["total_items"] == 5
+    assert summary["decision_count"] == 5
+    assert summary["mutation_review_count"] == 5
+    assert summary["pending_review_count"] == 4
+
+    by_source_type = client.get(
+        "/bff/management/evolution-journal?source_type=mutation_review&page_size=50", headers=OPERATOR_HEADERS
+    ).json()
+    assert by_source_type["page_info"]["total"] == 5

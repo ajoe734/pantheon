@@ -1042,11 +1042,22 @@ def mount_bff_routers(
         )
     )
     from ..console_gap.alpha_factory import create_alpha_factory_router
+    # The alpha factory reads strategy state through StrategiesService, the same
+    # registry strategy reader GET /bff/strategies/{id} uses, over the same read
+    # surface (no second registry client).
+    from ..strategies.service import StrategiesService as _AlphaStrategiesService
+    _alpha_strategies_service = _AlphaStrategiesService(
+        read_surface=app_deps.read_surface,
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+        normalize_lifecycle_state=_dep("_normalize_lifecycle_state"),
+    )
     app.include_router(
         create_alpha_factory_router(
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             utc_now=_dep("utc_now"),
+            read_strategy_state=lambda strategy_id: _alpha_strategies_service.get_strategy_registry_state(strategy_id),
         )
     )
 
