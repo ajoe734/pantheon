@@ -297,6 +297,78 @@ def test_list_filter_by_state():
     assert did in ids
 
 
+def test_list_filter_by_multiple_pending_states_and_decision_ids_in_postgres_and_json_store(monkeypatch, tmp_path):
+    from services.governance.pg_store import ApprovalDecision, ApprovalDecisionStore
+
+    prop_id = uid()
+    rev_id = uid()
+    dec_id = uid()
+    revoked_id = uid()
+
+    for did, tid in ((prop_id, "m-prop"), (rev_id, "m-rev"), (dec_id, "m-dec"), (revoked_id, "m-revoked")):
+        r = client.post("/api/governance/approvals", json={
+            "expected_version": 0,
+            "expires_at": "2099-01-01T00:00:00Z",
+            "tenant_id": "synthetic-tenant",
+            "owner_user_id": "synthetic-reviewer",
+            "decision_id": did,
+            "target_type": "registry_entry",
+            "target_id": tid,
+            "target_version": "v1",
+            "risk_level": "low",
+        }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
+        assert r.status_code == 201, r.text
+
+    r = client.post(f"/api/governance/approvals/{rev_id}/review", json={
+        "expected_version": 1, "actor_role": "governance_reviewer", "actor_id": "rev-1",
+    }, headers=_signed_headers(actor='rev-1', role='governance_reviewer', tenant='synthetic-tenant'))
+    assert r.status_code == 200, r.text
+
+    for did in (dec_id, revoked_id):
+        r = client.post(f"/api/governance/approvals/{did}/review", json={
+            "expected_version": 1, "actor_role": "governance_reviewer", "actor_id": "rev-1",
+        }, headers=_signed_headers(actor='rev-1', role='governance_reviewer', tenant='synthetic-tenant'))
+        assert r.status_code == 200, r.text
+        r = client.post(f"/api/governance/approvals/{did}/decide", json={
+            "expected_version": 2, "actor_role": "governance_reviewer", "actor_id": "rev-1",
+            "outcome": "approved", "rationale": "ok",
+        }, headers=_signed_headers(actor='rev-1', role='governance_reviewer', tenant='synthetic-tenant'))
+        assert r.status_code == 200, r.text
+
+    r = client.post(f"/api/governance/approvals/{revoked_id}/revoke", json={
+        "expected_version": 3, "actor_role": "risk_owner", "actor_id": "ro-1",
+    }, headers=_signed_headers(actor='ro-1', role='risk_owner', tenant='synthetic-tenant'))
+    assert r.status_code == 200, r.text
+
+    built_ids = []
+    orig_from_dict = ApprovalDecision.from_dict
+
+    def _spy_from_dict(data):
+        built_ids.append(data.get("decision_id"))
+        return orig_from_dict(data)
+
+    monkeypatch.setattr(ApprovalDecision, "from_dict", _spy_from_dict)
+
+    r_pending = client.get("/api/governance/approvals", params={"decision_state": "proposed,under_review"})
+    assert r_pending.status_code == 200
+    assert {d["decision_id"] for d in r_pending.json()} == {prop_id, rev_id}
+    assert set(built_ids) == {prop_id, rev_id}
+
+    built_ids.clear()
+    r_by_id = client.get("/api/governance/approvals", params={"decision_id": f"{dec_id},{revoked_id}"})
+    assert r_by_id.status_code == 200
+    assert {d["decision_id"] for d in r_by_id.json()} == {dec_id, revoked_id}
+    assert set(built_ids) == {dec_id, revoked_id}
+
+    monkeypatch.setattr(ApprovalDecision, "from_dict", orig_from_dict)
+
+    json_store = ApprovalDecisionStore(storage_path=str(tmp_path / "approvals.json"))
+    for d in main.store.list_all():
+        json_store.put(d)
+    assert {d.decision_id for d in json_store.list_all(tenant_id="synthetic-tenant", decision_states=["proposed", "under_review"])} == {prop_id, rev_id}
+    assert {d.decision_id for d in json_store.list_all(tenant_id="synthetic-tenant", decision_ids=[dec_id])} == {dec_id}
+
+
 # ---------------------------------------------------------------------------
 # Full lifecycle: propose → review → decide (approved)
 # ---------------------------------------------------------------------------

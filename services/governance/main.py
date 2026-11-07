@@ -1524,24 +1524,45 @@ def list_approvals(
     target_type:    Optional[str] = Query(None),
     target_id:      Optional[str] = Query(None),
     decision_state: Optional[str] = Query(None),
+    decision_id:    Optional[str] = Query(None),
     risk_level:     Optional[str] = Query(None),
     authorization: Optional[str] = Header(None),
 ) -> List[ApprovalDecisionResponse]:
     """List all decisions with optional filters.  Most-recent first."""
     ctx = _approval_reader(authorization)
-    decisions = [d for d in store.list_all() if d.tenant_id == ctx.claims["tenant_id"]]
+    tenant_id = ctx.claims["tenant_id"]
+    parsed_states: Optional[List[str]] = None
+    if decision_state:
+        parsed_states = [part.strip() for part in decision_state.split(",") if part.strip()]
+    parsed_ids: Optional[List[str]] = None
+    if decision_id is not None:
+        parsed_ids = [part.strip() for part in decision_id.split(",") if part.strip()]
 
     def _match_str(val, expected: str) -> bool:
         return val == expected or (hasattr(val, "value") and val.value == expected)
 
-    if target_type:
-        decisions = [d for d in decisions if _match_str(d.target_type, target_type)]
-    if target_id:
-        decisions = [d for d in decisions if d.target_id == target_id]
-    if decision_state:
-        decisions = [d for d in decisions if _match_str(d.decision_state, decision_state)]
-    if risk_level:
-        decisions = [d for d in decisions if _match_str(d.risk_level, risk_level)]
+    try:
+        decisions = store.list_all(
+            tenant_id=tenant_id,
+            decision_states=parsed_states,
+            decision_ids=parsed_ids,
+            target_type=target_type or None,
+            target_id=target_id or None,
+            risk_level=risk_level or None,
+        )
+    except TypeError:
+        decisions = [d for d in store.list_all() if d.tenant_id == tenant_id]
+        if target_type:
+            decisions = [d for d in decisions if _match_str(d.target_type, target_type)]
+        if target_id:
+            decisions = [d for d in decisions if d.target_id == target_id]
+        if parsed_states is not None:
+            decisions = [d for d in decisions if any(_match_str(d.decision_state, s) for s in parsed_states)]
+        if parsed_ids is not None:
+            id_set = set(parsed_ids)
+            decisions = [d for d in decisions if d.decision_id in id_set]
+        if risk_level:
+            decisions = [d for d in decisions if _match_str(d.risk_level, risk_level)]
 
     decisions.sort(key=lambda d: d.created_at, reverse=True)
     return [_to_response(d) for d in decisions]

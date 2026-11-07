@@ -999,6 +999,55 @@ def _human_inbox_project_items(
     return items
 
 
+def read_pending_approval_queue_items(read_store: Any) -> List[Dict[str, Any]]:
+    """Read pending approval queue items through the owner's pending filter."""
+    if hasattr(read_store, "list_approval_queue_items"):
+        reader = read_store.list_approval_queue_items
+        try:
+            params = inspect.signature(reader).parameters
+        except (TypeError, ValueError):
+            params = {}
+        var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+        if "pending_only" in params or var_kw:
+            try:
+                rows = reader(pending_only=True)
+            except TypeError as exc:
+                if "pending_only" in str(exc) or "unexpected keyword" in str(exc) or "positional argument" in str(exc):
+                    rows = reader()
+                else:
+                    raise
+        else:
+            rows = reader()
+    elif hasattr(read_store, "list_approval_records"):
+        rows = read_store.list_approval_records()
+    else:
+        rows = []
+    return [row for row in (rows or []) if isinstance(row, dict)]
+
+
+def read_decidable_governance_review_queue_items(read_store: Any) -> List[Dict[str, Any]]:
+    """Read governance review queue items using filtered owner reads for Human Inbox."""
+    if not hasattr(read_store, "list_governance_review_queue_items"):
+        return []
+    reader = read_store.list_governance_review_queue_items
+    try:
+        params = inspect.signature(reader).parameters
+    except (TypeError, ValueError):
+        params = {}
+    var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if "decidable_only" in params or var_kw:
+        try:
+            rows = reader(decidable_only=True)
+        except TypeError as exc:
+            if "decidable_only" in str(exc) or "unexpected keyword" in str(exc) or "positional argument" in str(exc):
+                rows = reader()
+            else:
+                raise
+    else:
+        rows = reader()
+    return [row for row in (rows or []) if isinstance(row, dict)]
+
+
 def _human_inbox_governance_contributor(
     snapshot_at: str,
     *,
@@ -1010,7 +1059,7 @@ def _human_inbox_governance_contributor(
             read_store = _main_read_store
         except (ImportError, AttributeError):
             read_store = None
-    records = list(read_store.list_governance_review_queue_items() or []) if read_store else []
+    records = read_decidable_governance_review_queue_items(read_store) if read_store else []
     try:
         from ..main import read_store as _main_read_store
         from ..personas.service import _dataset_source_after_read, _dataset_surface_status
@@ -1040,7 +1089,7 @@ def _human_inbox_approval_contributor(
             read_store = _main_read_store
         except (ImportError, AttributeError):
             read_store = None
-    records = list(read_store.list_approval_queue_items() or []) if read_store else []
+    records = read_pending_approval_queue_items(read_store) if read_store else []
     try:
         from ..main import read_store as _main_read_store
         from ..personas.service import _dataset_source_after_read, _dataset_surface_status

@@ -766,6 +766,40 @@ def test_list_filter_by_state():
     assert states == {"proposed"}
 
 
+def test_list_filter_by_decidable_states_filters_before_serializing(monkeypatch):
+    prop_id = uid()
+    rev_id = uid()
+    app_id = uid()
+    for did, tid in ((prop_id, f"strat-p-{prop_id}"), (rev_id, f"strat-r-{rev_id}"), (app_id, f"strat-a-{app_id}")):
+        client.post("/api/evolution/proposals", json={**LOW_RISK_BODY, "decision_id": did, "target_id": tid}).raise_for_status()
+    advance_to_reviewed(rev_id, apv_id=f"apv-{rev_id}")
+    advance_to_reviewed(app_id, apv_id=f"apv-{app_id}")
+    advance_to_approved(app_id)
+
+    serialized_ids = []
+    orig_to_resp = evo_main._decision_to_response
+
+    def _spy_to_resp(decision):
+        serialized_ids.append(decision.decision_id)
+        return orig_to_resp(decision)
+
+    copied_ids = []
+    orig_copy = evo_main.store._copy_for_caller
+
+    def _spy_copy(decision):
+        copied_ids.append(decision.decision_id)
+        return orig_copy(decision)
+
+    monkeypatch.setattr(evo_main, "_decision_to_response", _spy_to_resp)
+    monkeypatch.setattr(evo_main.store, "_copy_for_caller", _spy_copy)
+
+    r = client.get("/api/evolution/proposals", params={"decision_state": "reviewed,under_review,in_review"})
+    assert r.status_code == 200
+    assert [d["decision_id"] for d in r.json()] == [rev_id]
+    assert serialized_ids == [rev_id]
+    assert copied_ids == [rev_id]
+
+
 def test_list_filter_by_target_id():
     target_id = f"strat-list-{uuid.uuid4().hex[:6]}"
     did = uid()
