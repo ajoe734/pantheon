@@ -1,0 +1,76 @@
+{
+  "task": "BFF-AI-INBOX-OWNER-20261107",
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used and no workflow was dispatched. Functional evidence only; hosted verification belongs to MGMT-AI-TRUTH-ACCEPTANCE-20261107.",
+  "changes": {
+    "ai_inbox": "_mgmt_nl_collect_context now calls ManagementService.get_human_inbox(page_size=2000, identity=identity), the builder GET /bff/management/human-inbox uses. human_inbox_summary.total comes from page_info.total.",
+    "incidents": "ManagementService.get_context_incidents loads through read_open_incidents (open_only + raise_on_error) and passes empty_read_is_ok=True to _typed_context_list. Only the incidents subject uses it; the empty-read-is-degraded rule for every other subject is unchanged.",
+    "removed_unused": [
+      "governance/human_inbox.py: _human_inbox_payload, _human_inbox_payload_from_loaded, _human_inbox_surfaces, _human_inbox_loaded_surface, _human_inbox_all_items (the 'Approval queue has no readable source records' empty rule lived here)",
+      "assistant/management_service.py: get/set/reset_human_inbox_payload, _human_inbox_payload and the human_inbox_payload argument of wire_management_runtime_projections",
+      "main.py: the imports of the removed builders and the human_inbox_payload wiring"
+    ],
+    "kept": "The per-contributor functions in governance/human_inbox.py (still used by tests/test_persona_main_residue.py) and _human_inbox_filter_items/_human_inbox_summary (used by the route service)."
+  },
+  "out_of_scope_unchanged": "Per-persona 'returned no records' observations (sessions, teaching sessions, allowed actions, strategies, bindings) and the rollback observation are untouched.",
+  "event_loop": "Both _bff_management_nl_ask_impl and _bff_management_nl_ask_stream_impl run _mgmt_nl_collect_context under asyncio.to_thread with identity=identity (asserted in test_ai_collect_context_no_longer_uses_the_governance_payload_builder), so the inbox read does not block the loop.",
+  "new_tests": {
+    "file": "services/control-plane/bff/tests/test_human_inbox_truth.py",
+    "tests": [
+      "test_ai_inbox_matches_the_route_for_an_empty_queue_and_one_open_incident[0,1] (real IncidentOwner HTTP server, real read ports, real incident row shape)",
+      "test_ai_inbox_total_is_the_page_info_total_not_one_page",
+      "test_ai_inbox_failed_owner_read_is_not_reported_ok",
+      "test_ai_collect_context_no_longer_uses_the_governance_payload_builder",
+      "test_context_incidents_successful_empty_open_list_is_ok_through_the_port",
+      "test_context_incidents_failed_owner_read_is_unavailable_through_the_port",
+      "test_context_incidents_open_rows_are_ok_and_returned"
+    ],
+    "inventory": "No new test file, so bff_test_architecture_inventory.json is unchanged."
+  },
+  "fails_with_fix_removed": {
+    "method": "Reverted the four source files (assistant/management_service.py, governance/human_inbox.py, main.py, management_read_models/service.py) with git apply -R, kept the new tests, ran: pytest tests/test_human_inbox_truth.py -k 'ai_ or context_incidents'",
+    "result": "7 failed, 1 passed (the 1 pass is test_context_incidents_open_rows_are_ok_and_returned, which the old code also satisfies). Source patch re-applied afterwards; the revert was never committed.",
+    "failed": [
+      "test_ai_inbox_matches_the_route_for_an_empty_queue_and_one_open_incident[0]",
+      "test_ai_inbox_matches_the_route_for_an_empty_queue_and_one_open_incident[1]",
+      "test_ai_inbox_total_is_the_page_info_total_not_one_page",
+      "test_ai_inbox_failed_owner_read_is_not_reported_ok",
+      "test_ai_collect_context_no_longer_uses_the_governance_payload_builder",
+      "test_context_incidents_successful_empty_open_list_is_ok_through_the_port",
+      "test_context_incidents_failed_owner_read_is_unavailable_through_the_port"
+    ]
+  },
+  "assertions_changed": "None weakened or removed. Test harness seams moved from the removed _human_inbox_payload to ManagementService.get_human_inbox: tests/test_management_nl_single_owner.py and tests/test_management_nl_assistant_provider.py stub ManagementService.get_human_inbox with the real payload shape (data.items, page_info.total, meta.surfaces); tests/test_bff_management_cockpit.py host routes get_human_inbox to its existing _human_inbox_payload hook via _InboxStubbedContextService; test_main_composition_seam_extraction_002/005 drop the removed names from their imports/identity assertion.",
+  "commands": [
+    {
+      "cmd": "/tmp/svc-venv/bin/python -m pytest -q -p no:cacheprovider <tests/test_mgmt_read_001_persona_fleet_owner_observations.py, test_main_composition_seam_extraction_002.py, _005.py, test_persona_main_residue.py, management_read_models/test_management_service_context_observations.py, management_read_models/test_persona_fleet_read_failures.py, test_human_inbox_truth.py, test_bff_management_cockpit.py, test_bff_b6_management_nl_ask.py, test_management_nl_single_owner.py>",
+      "result": "185 passed, 2 failed"
+    },
+    {
+      "cmd": "pytest tests/test_management_nl_assistant_provider.py tests/test_management_nl_single_owner.py tests/test_bff_b6_management_nl_ask.py",
+      "result": "113 passed"
+    },
+    {
+      "cmd": "pytest tests/test_bff_management_cockpit.py -k overlapping",
+      "result": "1 passed (rerun alone)"
+    }
+  ],
+  "known_failures": {
+    "test_main_composition_seam_extraction_005.py::test_zero_duplicate_definitions_ast_readback": "Fails on 'Helper _resolve_final_idempotency_key is not defined as def in management_service.py'. That name is an import re-export at management_service.py:1231 which this task did not touch; unrelated to the inbox change. Not verified against an untouched checkout because a clean worktree could not be created (read-only .git/worktrees).",
+    "test_bff_management_cockpit.py::test_cockpit_overlapping_reload_waves_keep_every_section_complete": "Failed once in the combined 10-file run (timing/load test with 40 threads) and passed when rerun alone. It exercises the cockpit route, not the AI context path."
+  },
+  "pr7036_test_architecture_repair": {
+    "defect": "test_no_global_monkeypatching_in_migrated_suites failed: class-level monkeypatch.setattr(ManagementService,'get_human_inbox',...) at test_management_nl_assistant_provider.py (3 sites + _cs_scenario + wired test) and test_management_nl_single_owner.py (1 site)",
+    "fix": "Patch the per-test AI context service instance (get_management_ai_context_service()) instead of the production class; lambdas no longer take self; payload shape and caller-identity assertions unchanged. No rule/allowlist/assertion change.",
+    "commands": [
+      {
+        "cmd": "pytest test_bff_test_architecture*.py test_management_nl_assistant_provider.py test_management_nl_single_owner.py test_human_inbox_truth.py",
+        "result": "156 passed"
+      },
+      {
+        "cmd": "pytest test_bff_b6_management_nl_ask.py test_bff_management_cockpit.py management_read_models/test_management_service_context_observations.py management_read_models/test_persona_fleet_read_failures.py",
+        "result": "101 passed"
+      }
+    ],
+    "hosted_verification": "not run"
+  }
+}
