@@ -668,6 +668,13 @@ async def retrieve_memory(
                     ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
                 )
 
+    persona_tenant = None
+    if ctx is not None:
+        token_tenant = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
+        if token_tenant != "*":
+            persona_tenant = token_tenant
+    persona_fetch_limit = 100 if persona_tenant is not None else limit
+
     if scope in {"persona", "both"}:
         try:
             persona_store = _persona_store()
@@ -687,8 +694,10 @@ async def retrieve_memory(
                     memory_type=memory_type,
                     relevance_scope=persona_relevance_scope,
                     tags=tag_values,
-                    limit=limit,
+                    limit=persona_fetch_limit,
                 ):
+                    if persona_tenant is not None and hit.entry.tenant_id != persona_tenant:
+                        continue
                     ranked_hits.append(
                         ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
                     )
@@ -699,8 +708,10 @@ async def retrieve_memory(
                     memory_type=memory_type,
                     relevance_scope=persona_relevance_scope,
                     tags=tag_values,
-                    limit=limit,
+                    limit=persona_fetch_limit,
                 ):
+                    if persona_tenant is not None and hit.entry.tenant_id != persona_tenant:
+                        continue
                     ranked_hits.append(
                         ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
                     )

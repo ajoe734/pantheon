@@ -883,3 +883,31 @@ def test_memory_auth_env_forwards_oidc_and_role_map(memory_client, monkeypatch, 
 if __name__ == "__main__":
     unittest.main()
 
+
+
+def test_memory_retrieve_persona_entries_are_tenant_scoped(memory_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    ids = {}
+    for tenant in ("tenant-alpha", "tenant-beta"):
+        token = _make_jwt(tenant_id=tenant, roles=["operator"])
+        entry = _persona_auth_payload(tenant_id=tenant, content={"summary": f"{tenant} private", "tags": ["auth"]})
+        ids[tenant] = entry["memory_id"]
+        assert memory_client.post(
+            "/api/memory/persona-entries", json=entry, headers={"Authorization": f"Bearer {token}"}
+        ).status_code == 201
+    params = _retrieve_auth_params(scope="persona", persona_id="persona-alpha", query="")
+    alpha = _make_jwt(tenant_id="tenant-alpha", roles=["operator"])
+    resp = memory_client.get("/api/memory/retrieve", params=params, headers={"Authorization": f"Bearer {alpha}"})
+    assert resp.status_code == 200, resp.text
+    got = {h["entry"]["memory_id"] for h in resp.json()["hits"]}
+    assert ids["tenant-alpha"] in got and ids["tenant-beta"] not in got
+    assert {h["entry"]["tenant_id"] for h in resp.json()["hits"]} == {"tenant-alpha"}
+    # unauthenticated in strict mode stays rejected
+    assert memory_client.get("/api/memory/retrieve", params=params).status_code == 401
+    # tenant with no entries sees nothing
+    gamma = _make_jwt(tenant_id="tenant-gamma", roles=["operator"])
+    resp = memory_client.get("/api/memory/retrieve", params=params, headers={"Authorization": f"Bearer {gamma}"})
+    assert resp.status_code == 200 and not any(
+        h["entry"]["memory_id"] in ids.values() for h in resp.json()["hits"]
+    )
