@@ -1,0 +1,28 @@
+{
+  "task_id": "BFF-ALERTS-CURRENT-20261107",
+  "before": {
+    "measured": "2026-11-06 hosted",
+    "alerts_reads": "10 consecutive GET /bff/alerts: 9 empty timeout_fallback (~1 s), 1 bff_composed degraded with 0 rows; earlier read returned 3 critical runtime alerts",
+    "fleet": "133 runtimes: 5 active, 3 failed (retired 2026-09-18 x2, 2026-10-13), 125 retired",
+    "incident_owner": "2667 rows, no tenant_id key; unfiltered 183 ms, open_only 5 ms"
+  },
+  "changes": [
+    "main._build_runtime_alerts skips bindings where management_read_models.service._trading_pulse_binding_is_retired is true: no alert, no get_telemetry_summary; _build_management_anomalies_payload inherits it",
+    "main._build_incident_alerts calls list_incidents(open_only=True); rule is open|investigating (in_progress removed); owner failure leaves incidents surface unavailable",
+    "incidents/router.py GET /bff/alerts uses _get_alerts_read_timeout (PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS, default 3.0); fallback reason read_timeout|read_saturated|read_error + one warning; source stays timeout_fallback",
+    "BFF_API_CONTRACT.md records budget and reason",
+    "No second builder; IncidentsService alert builders untouched (production passes main builder via app_factory/router)"
+  ],
+  "tests": "tests/test_main_composition_seam_extraction_005.py (real retired failed rows rt-fae0166d, rt-0354501c, rt-43344296; current failed/error/degraded/paused severities; open_only + investigating; failed owner unavailable); test_mgmt_load_005_read_concurrency.py (default 3.0/override, 0.8s read survives, timeout/error/saturated reasons + warning). Existing alerts timeout test now sets the named alerts env var instead of the generic one (same 0.05s bound, no assertion weakened).",
+  "mutation_check": "With the _trading_pulse_binding_is_retired skip removed locally (not committed), test_retired_failed_runtimes_raise_no_alert_and_no_telemetry_read and test_current_failed_error_degraded_paused_runtimes_keep_severity failed (2 failed); exclusion restored.",
+  "validation": {
+    "command": "uv run --python 3.12 pytest on seam_extraction_005, mgmt_load_005, alerts_acknowledge, incident_router, pkt012, pkt013, incidents_real_source, bff_main_composition (163 passed + new tests passing; only failure the pre-existing one); second batch consol_010, governance_runtime_risk_audit, management_cockpit, incident_owner_semantics, event_loop_guard, seam_003, p0_tw_paper_activate_honesty (80 passed, 2 failed)",
+    "known_preexisting_failures": [
+      "seam_extraction_005::test_zero_duplicate_definitions_ast_readback",
+      "seam_extraction_003::test_compose_bff_app_matches_main_route_set",
+      "test_p0_tw_paper_activate_honesty::test_build_persona_health_items_binds_telemetry_and_seed_flags"
+    ],
+    "preexisting_check": "all three fail identically on clean HEAD archive"
+  },
+  "hosted_verification": "NOT RUN. Hosted verification belongs to MGMT-AI-TRUTH-ACCEPTANCE-20261107; no hosted result is claimed."
+}
