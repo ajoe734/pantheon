@@ -32,5 +32,11 @@
     "partial_provenance": "reported separately via dataset_source('all_rollbacks') == 'unavailable' (Journal/dataset path). Domain status is not changed to signal partial provenance.",
     "known_limit": "ManagementService.get_context_rollbacks record-provenance seam keys off record 'status', so it cannot express partial provenance for canonical-status rows without editing management_read_models/service.py (not admitted; minimal admission required if reviewer wants that observation to flag partial).",
     "runs": "124 passed (three admitted files + management context observations); regression asserts runtime projection status and dataset_source together"
+  },
+  "consumer_v5": {
+    "change": "ManagementService.get_context_rollbacks consumes same-request store.dataset_source('all_rollbacks'): verified own rows kept unchanged (ids/status/fields); unavailable/missing source with rows => ManagementObservation degraded with reason; no rows => unavailable; service => ok (healthy empty stays ok). Stores without dataset_source keep legacy behavior. No alias, status overwrite, wrapper or global cache.",
+    "prerequisite": "BFF-AI-CURRENT-STATE-20261107 merged (8b331f141); dev merged into task branch",
+    "tests": "civenv pytest: cutover, governance ports, b3 journal, mgmt observations, cockpit, runtime_state_trades = 166 passed; management_read_models + persona_fleet + nl_assistant = 180 passed",
+    "scope": "source only; not hosted acceptance"
   }
 }

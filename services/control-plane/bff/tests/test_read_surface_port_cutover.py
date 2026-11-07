@@ -634,6 +634,9 @@ def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(mon
 
         mrows, obs = ManagementService(read_store=rsp).get_context_rollbacks("rt1")
         assert [r["rollback_id"] for r in mrows] == ["r1"]
+        assert mrows[0]["status"] == "completed"
+        assert obs["status"] == "degraded", obs
+        assert obs["degradation_reason"]
         # Canonical status survives into the existing runtime projection too.
         from services.control_plane.bff.management_read_models.service import _project_runtime_state_latest_rollback
 
@@ -647,6 +650,10 @@ def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(mon
         monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: rows[:2])
         assert [r["rollback_id"] for r in rsp.get_rollbacks("rt1")] == ["r1"]
         assert sorted(r["rollback_id"] for r in rsp.get_rollbacks()) == ["r1", "r2"]
+        # Fully verified owner read is healthy again (rows + observation agree).
+        hrows, hobs = ManagementService(read_store=rsp).get_context_rollbacks("rt1")
+        assert [r["rollback_id"] for r in hrows] == ["r1"]
+        assert hobs["status"] == "ok", hobs
 
         def _boom(url, **kw):
             raise TimeoutError("owner timeout")

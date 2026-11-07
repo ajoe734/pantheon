@@ -2901,6 +2901,28 @@ class ManagementService:
                 correlation_id=worst.get("correlation_id"),
                 contributing_observations=contributing_observations,
             )
+        # Same-request owner read outcome: verified rows with unresolved sibling
+        # provenance are partial (degraded), never a healthy "ok".
+        source_fn = getattr(store, "dataset_source", None)
+        if callable(source_fn):
+            try:
+                owner_source = str(source_fn("all_rollbacks"))
+            except Exception:
+                owner_source = "unavailable"
+            if owner_source in ("unavailable", "missing"):
+                return rollbacks, self._context_observation(
+                    subject_type="rollbacks",
+                    subject_id=runtime_id,
+                    status="degraded" if rollbacks else "unavailable",
+                    owner=observation_owner,
+                    source_kind="unavailable",
+                    degradation_reason=(
+                        "rollback owner provenance is partially unresolved; "
+                        "only verified rows are shown."
+                        if rollbacks
+                        else "rollback owner read is unavailable."
+                    ),
+                )
         return rollbacks, self._context_observation(
             subject_type="rollbacks",
             subject_id=runtime_id,
