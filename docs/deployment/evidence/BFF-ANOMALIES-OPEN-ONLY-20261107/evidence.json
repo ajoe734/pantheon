@@ -18,7 +18,12 @@
     "Cockpit incident group open_incidents and shell summary open_alerts count investigating",
     "Fakes with list_incidents(self) now accept **kwargs"
   ],
-  "tests": "tests/test_management_incident_owner_semantics.py (production ReadSurfacePorts + DomainIncidentPort with captured opener, both builders)",
+  "tests": "tests/test_management_incident_owner_semantics.py (production ReadSurfacePorts + DomainIncidentPort with captured opener, ManagementService builder; investigating-only tenant => incident health group degraded with open_incidents=1 and shell open_alerts=1); tests/test_management_anomalies_main_composition.py (main builder, allowlisted composition suite)",
   "operator_verification": "In the incidents service access log, GET /bff/management/cockpit and Management AI context requests must produce GET /api/incidents?open_only=true for the anomalies reads (no bare GET /api/incidents from those builders); cockpit response anomalies items contain only open/investigating incidents and the response size drops by roughly 557 KB. /bff/alerts reads are out of scope and remain unfiltered.",
-  "known_preexisting_failures": "12 tests in test_bff_management_cockpit, test_main_composition_seam_extraction_005, test_persona_health_single_owner, test_p0_tw_paper_activate_honesty fail identically on the base commit in this worker environment"
+  "known_preexisting_failures": "test_main_composition_seam_extraction_005::test_zero_duplicate_definitions_ast_readback (helper _resolve_final_idempotency_key, untouched by this task); stash@{0} belongs to another task and was not dropped",
+  "validation": {
+    "cwd": "repo root, .venv-pantheon",
+    "command": "pytest test_management_incident_owner_semantics, test_management_anomalies_main_composition, test_bff_test_architecture, test_bff_management_cockpit, test_management_read_models_router, test_shell_summary_jobs_read, test_main_composition_seam_extraction_005",
+    "result": "135 passed, 2 failed in combined run; test_bff_test_architecture.py passes; test_bff_management_cockpit.py passes alone (33 passed) so the combined-run failure is order-dependent; test_main_composition_seam_extraction_005::test_zero_duplicate_definitions_ast_readback fails on missing _resolve_final_idempotency_key in management_service.py, a helper this task does not touch"
+  }
 }

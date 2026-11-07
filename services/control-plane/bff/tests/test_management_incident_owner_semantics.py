@@ -97,22 +97,17 @@ def test_management_service_anomalies_request_open_only_from_owner() -> None:
     assert out["meta"]["surfaces"]["incidents"]["status"] == "ok"
 
 
-def test_main_anomalies_builder_requests_open_only_from_owner(monkeypatch) -> None:
-    from services.control_plane.bff import main as bff_main
-
-    port, requested = _capturing_port()
-    monkeypatch.setattr(bff_main, "read_store", _ports(port))
-    out = bff_main._build_management_anomalies_payload("2026-11-07T00:00:00Z")
-    assert requested and all(q.get("open_only") == ["true"] for q in requested)
-    ids = {i["id"] for i in out["items"] if i["kind"] == "incident"}
-    assert ids == {"inc-open", "inc-inv"}
-
-
-def test_main_anomalies_builder_marks_failed_owner_unavailable(monkeypatch) -> None:
-    from services.control_plane.bff import main as bff_main
-
-    port = DomainIncidentPort(incidents_api_url="http://incident-owner.invalid", opener=_down)
-    monkeypatch.setattr(bff_main, "read_store", _ports(port))
-    out = bff_main._build_management_anomalies_payload("2026-11-07T00:00:00Z")
-    assert out["meta"]["surfaces"]["incidents"]["status"] == "unavailable"
-    assert not [i for i in out["items"] if i["kind"] == "incident"]
+def test_investigating_only_tenant_is_degraded_and_counted_open() -> None:
+    svc = _service(
+        DomainIncidentPort(
+            incidents={"inc-1": {"incident_id": "inc-1", "status": "investigating", "severity": "high"}}
+        )
+    )
+    health = svc.get_operator_health_status()
+    group = next(
+        g for g in health.get("data", health)["groups"] if g["group_id"] == "incident"
+    )
+    assert group["status"] == "degraded"
+    assert group["details"]["open_incidents"] == 1
+    counts = svc.build_shell_summary_counts()
+    assert counts["counts"]["open_alerts"] == 1, counts

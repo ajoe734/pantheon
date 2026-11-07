@@ -21,6 +21,7 @@
     "tests/test_bff_rebalance_proposals.py",
     "tests/test_bff_test_architecture.py",
     "tests/test_http_auth_composition_owner.py",
+    "tests/test_management_anomalies_main_composition.py",
     "tests/test_persona_main_residue.py",
     "tests/test_main_composition_seam_extraction_002.py",
     "tests/test_main_composition_seam_extraction_003.py",
