@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from services.source_ingestion.scheduler import JsonlIngestScheduleStore
 
 
 def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
@@ -223,11 +224,11 @@ def test_two_scheduler_threads_create_one_run_and_one_source_record(client) -> N
     payloads = [response.json() for response in responses]
     assert sum(payload["summary"]["total_ran"] for payload in payloads) == 1
     assert sum(payload["summary"]["total_skipped"] for payload in payloads) == 1
-    assert len(module.store.list_runs()) == 1
-    assert len(module.store.list_frontier(status="done")) == 1
-    assert len(module.evidence_repository.list_source_records()) == 1
-    assert len(module.schedule_config_store.list_schedules()) == 1
-    assert module.connector_store.get_fetch_state("conn-two-workers")["attempts"] == 1
+    assert len(module.runtime.store.list_runs()) == 1
+    assert len(module.runtime.store.list_frontier(status="done")) == 1
+    assert len(module.runtime.evidence_repository.list_source_records()) == 1
+    assert len(module.runtime.schedule_config_store.list_schedules()) == 1
+    assert module.runtime.connector_store.get_fetch_state("conn-two-workers")["attempts"] == 1
 
 
 def test_run_scheduled_rejects_concurrency_above_supervised_limit(client) -> None:
@@ -254,7 +255,7 @@ def test_run_scheduled_exclusive_scope_never_enqueues_or_runs_unrelated_due_conn
             json={"interval_seconds": 1, "enabled": True},
         )
         assert scheduled.status_code == 200, scheduled.text
-    unrelated_frontier = module.store.enqueue_frontier(
+    unrelated_frontier = module.runtime.store.enqueue_frontier(
         connector_id=unrelated_id,
         available_at="2020-01-01T00:00:00Z",
     )
@@ -278,8 +279,8 @@ def test_run_scheduled_exclusive_scope_never_enqueues_or_runs_unrelated_due_conn
     assert [item["connector_id"] for item in body["enqueued"]] == [target_id]
     assert [item["connector_id"] for item in body["ran"]] == [target_id]
     assert body["excluded"] == [unrelated_id]
-    assert module.store.get_frontier(unrelated_frontier.frontier_id).status == "queued"
-    assert module.store.list_receipts(connector_id=unrelated_id) == []
+    assert module.runtime.store.get_frontier(unrelated_frontier.frontier_id).status == "queued"
+    assert module.runtime.store.list_receipts(connector_id=unrelated_id) == []
 
 
 @pytest.mark.parametrize(
@@ -342,16 +343,16 @@ def test_run_scheduled_exclusive_scope_fails_closed_when_target_is_unavailable(
 
 def test_stale_running_frontier_is_durably_recovered_after_restart(client) -> None:
     _, _, module = client
-    item = module.store.enqueue_frontier(
+    item = module.runtime.store.enqueue_frontier(
         connector_id="conn-restart-recovery",
         max_attempts=2,
         available_at="2026-07-14T00:00:00Z",
     )
-    claimed = module.store.claim_frontier(item.frontier_id, now="2026-07-14T00:00:00Z")
+    claimed = module.runtime.store.claim_frontier(item.frontier_id, now="2026-07-14T00:00:00Z")
     future = (datetime.now(timezone.utc) + timedelta(seconds=600)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-    recovered = module.store.recover_stale_running(timeout_seconds=300, now=future)
-    reloaded = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH)
+    recovered = module.runtime.store.recover_stale_running(timeout_seconds=300, now=future)
+    reloaded = JsonlIngestScheduleStore(module.runtime.SCHEDULE_STORE_PATH)
 
     assert claimed.status == "running"
     assert recovered[0].status == "retry"
@@ -360,12 +361,12 @@ def test_stale_running_frontier_is_durably_recovered_after_restart(client) -> No
 
 def test_frontier_append_failure_does_not_publish_phantom_work(client, monkeypatch: pytest.MonkeyPatch) -> None:
     _, _, module = client
-    monkeypatch.setattr(module.store, "_append", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(module.runtime.store, "_append", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
 
     with pytest.raises(OSError, match="disk full"):
-        module.store.enqueue_frontier(connector_id="conn-phantom")
+        module.runtime.store.enqueue_frontier(connector_id="conn-phantom")
 
-    assert module.store.list_frontier() == []
+    assert module.runtime.store.list_frontier() == []
 
 
 def test_run_scheduled_honors_bounded_concurrency(client) -> None:
@@ -480,7 +481,7 @@ def test_provider_failure_matrix_is_isolated_and_projected_to_source_health(
     class ProviderServiceFailure(RuntimeError):
         pass
 
-    original_fetch = module.configured_fetcher.fetch_batch
+    original_fetch = module.runtime.configured_fetcher.fetch_batch
 
     def classified_fetch(connector_id, watermark, **kwargs):
         if connector_id == connector_ids["credential"]:
@@ -489,7 +490,7 @@ def test_provider_failure_matrix_is_isolated_and_projected_to_source_health(
             raise ProviderServiceFailure("provider unavailable")
         return original_fetch(connector_id, watermark, **kwargs)
 
-    monkeypatch.setattr(module.configured_fetcher, "fetch_batch", classified_fetch)
+    monkeypatch.setattr(module.runtime.configured_fetcher, "fetch_batch", classified_fetch)
 
     payloads = [
         test_client.post(
@@ -522,7 +523,7 @@ def test_provider_failure_matrix_is_isolated_and_projected_to_source_health(
         else:
             assert health["status"] == "failed"
             assert health["last_failure_at"]
-    assert len(module.evidence_repository.list_source_records()) == 1
+    assert len(module.runtime.evidence_repository.list_source_records()) == 1
 
 
 def test_post_processing_failure_keeps_durable_typed_receipt_after_reload(
@@ -541,14 +542,14 @@ def test_post_processing_failure_keeps_durable_typed_receipt_after_reload(
     def fail_health_write(*args, **kwargs):
         raise OSError("simulated health-store failure")
 
-    monkeypatch.setattr(module.source_health_store, "upsert", fail_health_write)
+    monkeypatch.setattr(module.runtime.source_health_store, "upsert", fail_health_write)
     response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
 
     assert response.status_code == 200, response.text
     assert response.json()["summary"]["total_failed"] == 1
-    terminal_runs = [run for run in module.store.list_runs() if run.status.value == "completed"]
+    terminal_runs = [run for run in module.runtime.store.list_runs() if run.status.value == "completed"]
     assert len(terminal_runs) == 1
-    receipt = module.store.get_receipt(terminal_runs[0].ingest_run_id)
+    receipt = module.runtime.store.get_receipt(terminal_runs[0].ingest_run_id)
     assert receipt is not None
     assert receipt.status == "failed"
     assert receipt.typed_failure == {
@@ -560,7 +561,7 @@ def test_post_processing_failure_keeps_durable_typed_receipt_after_reload(
         "stage": "source_health_usage",
     }
 
-    reloaded_store = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH)
+    reloaded_store = JsonlIngestScheduleStore(module.runtime.SCHEDULE_STORE_PATH)
     durable_run = reloaded_store.get_run(terminal_runs[0].ingest_run_id)
     durable_receipt = reloaded_store.get_receipt(terminal_runs[0].ingest_run_id)
     assert durable_run is not None and durable_run.status.value == "completed"
@@ -580,7 +581,7 @@ def test_final_receipt_append_failure_is_rewritten_as_terminal_typed_failure(
         json={"interval_seconds": 60, "enabled": True},
     ).status_code == 200
 
-    original_upsert = module.store.upsert_receipt
+    original_upsert = module.runtime.store.upsert_receipt
     receipt_writes = 0
 
     def fail_final_receipt_once(receipt):
@@ -590,20 +591,20 @@ def test_final_receipt_append_failure_is_rewritten_as_terminal_typed_failure(
             raise OSError("simulated final receipt append failure")
         return original_upsert(receipt)
 
-    monkeypatch.setattr(module.store, "upsert_receipt", fail_final_receipt_once)
+    monkeypatch.setattr(module.runtime.store, "upsert_receipt", fail_final_receipt_once)
     response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
 
     assert response.status_code == 200, response.text
     assert response.json()["summary"]["total_failed"] == 1
-    run = next(run for run in module.store.list_runs() if run.connector_id == connector_id)
-    receipt = module.store.get_receipt(run.ingest_run_id)
+    run = next(run for run in module.runtime.store.list_runs() if run.connector_id == connector_id)
+    receipt = module.runtime.store.get_receipt(run.ingest_run_id)
     assert run.status.value == "completed"
     assert receipt is not None and receipt.status == "failed"
     assert receipt.typed_failure["code"] == "post_processing_failed"
     assert receipt.typed_failure["stage"] == "receipt_finalize"
     assert receipt_writes == 3
 
-    durable_receipt = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH).get_receipt(run.ingest_run_id)
+    durable_receipt = JsonlIngestScheduleStore(module.runtime.SCHEDULE_STORE_PATH).get_receipt(run.ingest_run_id)
     assert durable_receipt is not None and durable_receipt.status == "failed"
     assert durable_receipt.typed_failure["stage"] == "receipt_finalize"
 
@@ -620,24 +621,24 @@ def test_restart_recovers_processing_receipt_when_final_and_fallback_appends_fai
         json={"interval_seconds": 60, "enabled": True},
     ).status_code == 200
 
-    original_upsert = module.store.upsert_receipt
+    original_upsert = module.runtime.store.upsert_receipt
 
     def fail_terminal_receipts(receipt):
         if receipt.status != "processing":
             raise OSError("simulated persistent terminal receipt failure")
         return original_upsert(receipt)
 
-    monkeypatch.setattr(module.store, "upsert_receipt", fail_terminal_receipts)
+    monkeypatch.setattr(module.runtime.store, "upsert_receipt", fail_terminal_receipts)
     response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
 
     assert response.status_code == 200, response.text
     assert response.json()["summary"]["total_failed"] == 1
-    run = next(run for run in module.store.list_runs() if run.connector_id == connector_id)
-    stranded = module.store.get_receipt(run.ingest_run_id)
+    run = next(run for run in module.runtime.store.list_runs() if run.connector_id == connector_id)
+    stranded = module.runtime.store.get_receipt(run.ingest_run_id)
     assert run.status.value == "completed"
     assert stranded is not None and stranded.status == "processing"
 
-    reloaded = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH)
+    reloaded = JsonlIngestScheduleStore(module.runtime.SCHEDULE_STORE_PATH)
     recovered = reloaded.get_receipt(run.ingest_run_id)
     assert recovered is not None and recovered.status == "failed"
     assert recovered.typed_failure == {
@@ -648,7 +649,7 @@ def test_restart_recovers_processing_receipt_when_final_and_fallback_appends_fai
         "retryable": True,
         "stage": "restart_recovery",
     }
-    replayed = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH).get_receipt(run.ingest_run_id)
+    replayed = JsonlIngestScheduleStore(module.runtime.SCHEDULE_STORE_PATH).get_receipt(run.ingest_run_id)
     assert replayed is not None and replayed.to_dict() == recovered.to_dict()
 
 
@@ -719,8 +720,8 @@ def test_run_scheduled_frontier_retry_backoff_and_dlq_replay_are_durable(client)
     assert immediate_retry.status_code == 200, immediate_retry.text
     assert immediate_retry.json()["summary"]["total_ran"] == 0
 
-    original_dlq_entry = module.dead_letter_queue.pending_entries(tag_filter="retry_exhausted")[0]
-    correlated_dlq_entry = module.dead_letter_queue.reject(
+    original_dlq_entry = module.runtime.dead_letter_queue.pending_entries(tag_filter="retry_exhausted")[0]
+    correlated_dlq_entry = module.runtime.dead_letter_queue.reject(
         original_dlq_entry.event,
         reason="correlated duplicate failure receipt",
         tags=original_dlq_entry.tags,
@@ -903,20 +904,20 @@ def test_completed_frontier_sweep_repairs_crash_before_dlq_resolution(
     )
     failed = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
     frontier_id = failed.json()["failed"][0]["frontier"]["frontier_id"]
-    original_append_audit = module._append_audit_actions
+    original_append_audit = module.runtime._append_audit_actions
 
     def fail_recovery_audit(actions):
         if any(action.action_type == "source_ingestion.scheduled_run.recovered" for action in actions):
             raise OSError("simulated recovery audit fsync failure")
         return original_append_audit(actions)
 
-    monkeypatch.setattr(module, "_append_audit_actions", fail_recovery_audit)
+    monkeypatch.setattr(module.runtime, "_append_audit_actions", fail_recovery_audit)
     with pytest.raises(OSError, match="simulated recovery audit fsync failure"):
         test_client.post(f"/api/source-ingest/frontier/{frontier_id}/replay")
 
-    assert module.store.get_frontier(frontier_id).status == "done"
+    assert module.runtime.store.get_frontier(frontier_id).status == "done"
     assert test_client.get("/api/source-ingest/dlq").json()["pending_count"] == 1
-    monkeypatch.setattr(module, "_append_audit_actions", original_append_audit)
+    monkeypatch.setattr(module.runtime, "_append_audit_actions", original_append_audit)
 
     swept = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
     assert swept.status_code == 200, swept.text

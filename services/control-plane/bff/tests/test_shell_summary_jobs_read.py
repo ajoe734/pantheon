@@ -265,7 +265,7 @@ def _serve_real_source_ingestion(env: Dict[str, Any], runs: int):
     mp.setenv("SEARCH_INGEST_NOTIFY_URL", "")
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.reload(importlib.import_module("services.source_ingestion.main"))
-    _seed_hosted_scale_journal(module.store, runs)
+    _seed_hosted_scale_journal(module.runtime.store, runs)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     server = uvicorn.Server(uvicorn.Config(module.app, log_level="error"))
