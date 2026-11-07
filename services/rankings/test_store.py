@@ -48,6 +48,7 @@ class _FakeCursor:
 class _FakeConnection:
     rows: dict[str, dict[str, dict]] = {}
     statements: list[str] = []
+    legacy_candidate_selects = 0
     _table_lock = threading.Lock()
 
     def __enter__(self):
@@ -121,6 +122,19 @@ class _FakeConnection:
                 return _FakeCursor([])
             winner = max(candidates, key=lambda item: (item[0], item[1]))[2]
             return _FakeCursor([(winner,)])
+        if normalized.startswith("SELECT PAYLOAD") and "LEFT(RECORD_ID" in normalized and "<>" in normalized:
+            # Legacy-candidate listing: rows under the excluded record_id
+            # prefixes are filtered by the plain column, so their payloads
+            # never cross the store boundary. params = (len1, prefix1, len2, prefix2).
+            excluded = (str(params[1]), str(params[3]))
+            type(self).legacy_candidate_selects += 1
+            return _FakeCursor(
+                [
+                    (payload,)
+                    for record_id, payload in self.rows.get(table, {}).items()
+                    if not record_id.startswith(excluded)
+                ]
+            )
         if normalized.startswith("SELECT PAYLOAD"):
             return _FakeCursor([(payload,) for payload in self.rows.get(table, {}).values()])
         return _FakeCursor([])
@@ -649,8 +663,12 @@ def test_legacy_list_rankings_raises_on_mixed_envelope_masquerading_as_legacy(st
     # A row carrying both a recognized record_type and a ranking_id is a
     # mixed envelope, not a legacy row that happens to have an extra field:
     # record_type must be inspected before ranking_id, not after.
+    # The envelope is stored under a non-namespaced record_id: rows under the
+    # ranking-snapshot:: / allocation-evaluation:: prefixes are never fetched by
+    # the legacy list (see the boundary test below), so the integrity check
+    # applies to the rows the legacy surface does read.
     store._records_table.put(
-        "ranking-snapshot::masquerade",
+        "masquerade-row",
         {
             "record_type": "ranking_snapshot",
             "ranking_id": "masquerade",
@@ -814,3 +832,33 @@ def test_get_latest_ranking_snapshot_decodes_only_single_winner_and_fails_closed
     with pytest.raises(RankingWriteOwnerError):
         reader.get_latest_ranking_snapshot(surface="quarterly")
 
+
+
+def test_legacy_reads_never_fetch_namespaced_rows(store) -> None:
+    """Snapshot/evaluation rows never cross the store boundary for legacy reads."""
+
+    store.create_ranking(_ranking_for_boundary_test())
+    store._records_table.put(
+        "ranking-snapshot::boundary",
+        {"record_type": "ranking_snapshot", "ranking_id": "must-not-be-read", "items": []},
+    )
+    store._records_table.put(
+        "allocation-evaluation::boundary",
+        {"record_type": "allocation_evaluation", "ranking_id": "must-not-be-read"},
+    )
+    decoded = []
+    original = store._records_table._decode_payload
+    store._records_table._decode_payload = lambda payload: (decoded.append(payload), original(payload))[1]
+
+    _FakeConnection.legacy_candidate_selects = 0
+    listed = store.list_rankings()
+    fetched = store.get_ranking("boundary-ranking")
+
+    assert [r.ranking_id for r in listed] == ["boundary-ranking"]
+    assert fetched is not None and fetched.ranking_id == "boundary-ranking"
+    assert _FakeConnection.legacy_candidate_selects == 2
+    assert all(p.get("ranking_id") == "boundary-ranking" for p in decoded)
+
+
+def _ranking_for_boundary_test():
+    return RankingRecord(ranking_id="boundary-ranking", title="Boundary", criteria="sharpe_30d")
