@@ -1,0 +1,46 @@
+{
+  "task_id": "SD-INSTRUMENT-EXPRESSION-DEV-PLAN-20261107",
+  "kind": "design_document_evidence",
+  "read_date": "2026-11-07",
+  "document": "docs/04/pantheon_persona_instrument_decision_2026-11-07/DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER_2026-11-07.md",
+  "design_document_changed": "docs/04/pantheon_persona_instrument_decision_2026-11-07/SD_PERSONA_INSTRUMENT_DECISION_2026-11-07.md (decision notice only)",
+  "hosted_behavior_claimed": false,
+  "scope_statement": "dev plan only; no source/test/workflow/config change; no VM, SSH, broker, broker sandbox, futures smoke, model provider call or hosted workflow used",
+  "repo_base": "origin/dev 63d124fcd",
+  "operator_decisions": {
+    "Q1": "deterministic per-persona expression policy (design option B); no model call on the trade path",
+    "Q2": "cash shares + listed single-stock and ETF futures + recorded no-trade",
+    "Q3": "per-persona gross-notional multiple 2.0x of pool equity in the pool risk policy (max_leverage, gross_limit)",
+    "Q4": "later; expression layer ships against the current provisioned view"
+  },
+  "coordinator_commit": "fb48890ca (coordinator draft); owner verification applied on top",
+  "repository_commands": [
+    "git show origin/dev:services/research/vectorbt/adapter/vectorbt_adapter.py (lines 513-585, _artifact_order_sizes SHARES only)",
+    "git show origin/dev:services/capital/risk_policy.py (RiskPolicyTargetType.RUNTIME_ACTION line 48; RiskPolicyEvaluator.evaluate line 348)",
+    "git show origin/dev:services/execution/lean_runtime/paper_runtime.py (SubmitTaiwanBrokerOrder lines 414-580; sec_type equity line 443; risk label line 3443; order_rejection lifecycle line 3384)",
+    "git show origin/dev:services/execution/lean_runtime/paper_signal_producer.py (lines 360-470)",
+    "git show origin/dev:services/control-plane/bff/persona_provisioning_coordinator.py (lines 1845-1900, 2100-2200)",
+    "git show origin/dev:services/control-plane/bff/agora/decision_projection/producer.py (lines 165-185)",
+    "git show origin/dev:scripts/probe_dev_runtime_paper_lifecycle.py (lines 1270-1330)",
+    "git show origin/dev:services/trade_journey/hosted_lifecycle_probe.py (lines 55-80, 440-475)",
+    "git show origin/dev:services/source_ingestion/connector_definitions.py (lines 870-930); active_universe.py (lines 255-320)",
+    "git show origin/dev:services/evolution/config/threshold_sweep_baselines.json; threshold_sweep_thresholds.json"
+  ],
+  "external_references_read": [
+    "https://www.quantconnect.com/docs/v2/writing-algorithms/algorithm-framework/alpha/key-concepts",
+    "https://quantconnect.com/docs/v2/writing-algorithms/algorithm-framework/portfolio-construction/supported-models",
+    "https://codeclimate.com/github/freqtrade/freqtrade/docs/leverage.md/source",
+    "https://docs.nautilustrader.io/concepts/overview.html"
+  ],
+  "verification": {
+    "paths_and_symbols": "All files named in the plan exist at 63d124fcd; verified symbols: _artifact_order_sizes (vectorbt_adapter.py:513, SHARES-only check :525), RiskPolicyTargetType.RUNTIME_ACTION (risk_policy.py:48), RiskPolicyEvaluator.evaluate (:348), SubmitTaiwanBrokerOrder (paper_runtime.py:414, sec_type equity :443), risk_status succeeded (:3443), order_rejection lifecycle (:3384), decision_projection producer asset_class equity (:175), probe fill wait (probe_dev_runtime_paper_lifecycle.py:1295), REQUIRED_EVENT_TYPES (hosted_lifecycle_probe.py:57), evaluate_strategy_action (strategy_artifact.py:851), restart test (test_paper_signal_producer.py:1837), lifecycle_projector terminals for order_rejection/paper_order_simulated.",
+    "worked_outcomes": "Recomputed: QFF 2133x100=213,300>200,000 -> 0 units (1 unit at 3.0x, margin 28,795.5 ok); SRF 92.5x1000=92,500, max 2 units, N*=120,000 -> 1 unit, margin 8,700; DHF 225x2000=450,000 -> 0 units; 2330 LONG 0.2 -> 1 cash share. Rows 1-4 correct.",
+    "corrections": [
+      "Row 5 (0050 LONG 0.9) and sections 4.2/4.5/10.6: draft bounded cash shares only by gross limit (2,162 shares = 200,000 on 100,000 equity, i.e. borrowed cash). Corrected: cash_share initial_margin_per_unit = full price, max 1,081 shares, SRF 2 units wins.",
+      "Section 9: added note that the live task store carries extra serialization dependencies (BFF-EVO-ALPHA-PAGE-TRUTH-20261107, FE-* tasks) not in the table."
+    ],
+    "task_store": "central coordination root ai-status.json: all 13 section 9 ids present; owners/reviewers match; none missing."
+  },
+  "documentation_pages_read": "the four external_references_read URLs were cited by the coordinator; owner did not re-fetch them (no network read in this verification)",
+  "hosted_behavior_statement": "Hosted behaviour was not exercised; verification is source reading and arithmetic only."
+}
