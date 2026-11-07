@@ -4213,6 +4213,33 @@ def _mgmt_nl_filter_tenant_records(
         for record in records
         if isinstance(record, dict) and _mgmt_nl_record_matches_tenant(record, tenant_id)
     ]
+def _mgmt_nl_filter_deployment_scoped_records(
+    records: List[Dict[str, Any]],
+    tenant_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Tenant filter for the few owners whose rows have no tenant dimension.
+
+    The incidents owner, the operator alert rows, the anomaly rows and the
+    human inbox rows carry no tenant key at all, so the strict filter above
+    removes every one of them. A row with no tenant key is deployment scoped
+    and is kept for a caller that has a tenant scope (the same caller can read
+    the same rows through GET /bff/alerts, /bff/incidents and
+    /bff/management/human-inbox). A row that names a tenant still has to match
+    the caller, and a caller with no tenant scope gets nothing. Only the named
+    sources use this; every other source keeps the strict filter.
+    """
+    clean_tenant = str(tenant_id or "").strip()
+    if not clean_tenant:
+        return []
+    return [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and (
+            not _mgmt_nl_record_tenant_ids(record)
+            or _mgmt_nl_record_matches_tenant(record, clean_tenant)
+        )
+    ]
 def _mgmt_nl_add_entity(
     entities: Set[Tuple[str, str]],
     entity_type: str,
@@ -4313,6 +4340,8 @@ def _mgmt_nl_trading_pulse_snippet(
     runtime_bindings: List[Dict[str, Any]],
     entities: Set[Tuple[str, str]],
     telemetry_by_runtime_id: Optional[Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]] = None,
+    *,
+    retired_runtime_count: int = 0,
 ) -> Dict[str, Any]:
     runtime_rows = _mgmt_nl_scoped_runtime_rows(
         runtime_bindings,
@@ -4348,6 +4377,8 @@ def _mgmt_nl_trading_pulse_snippet(
     summary = {
         "runtimeCount": len(runtime_rows),
         "runtime_count": len(runtime_rows),
+        "retiredRuntimeCount": retired_runtime_count,
+        "retired_runtime_count": retired_runtime_count,
         "telemetryCoverageCount": len(telemetry_rows),
         "telemetry_coverage_count": len(telemetry_rows),
         "byStatus": _management_count_by(runtime_rows, "status"),
@@ -4728,16 +4759,32 @@ def _mgmt_nl_collect_context(
     def _tenant_record_filter(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return _mgmt_nl_filter_tenant_records(records, tenant_id)
 
+    def _deployment_scoped_record_filter(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return _mgmt_nl_filter_deployment_scoped_records(records, tenant_id)
+
     _cached_runtime_bindings: Optional[Tuple[List[Dict[str, Any]], Dict[str, Any]]] = None
     _cached_unfiltered_telemetry: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
     _cached_trading_pulse_snippet: Optional[Dict[str, Any]] = None
+    retired_runtime_count = 0
 
     def _get_runtime_bindings() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        nonlocal _cached_runtime_bindings
+        # Split once with the single retired rule of the trading pulse: a
+        # retired runtime is history, so it is not a current runtime row and
+        # causes no telemetry, monitoring or rollback read and no observation.
+        nonlocal _cached_runtime_bindings, retired_runtime_count
         if _cached_runtime_bindings is None:
-            _cached_runtime_bindings = _management_ai_context_service.get_context_runtime_bindings(
+            from ..management_read_models.service import _trading_pulse_binding_is_retired
+
+            all_bindings, bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
                 record_filter=_tenant_record_filter
             )
+            current_bindings = [
+                binding
+                for binding in all_bindings
+                if not (isinstance(binding, dict) and _trading_pulse_binding_is_retired(binding))
+            ]
+            retired_runtime_count = len(all_bindings) - len(current_bindings)
+            _cached_runtime_bindings = (current_bindings, bindings_obs)
         return _cached_runtime_bindings
 
     def _get_unfiltered_telemetry(
@@ -4766,27 +4813,21 @@ def _mgmt_nl_collect_context(
         nonlocal _cached_trading_pulse_snippet
         if _cached_trading_pulse_snippet is None:
             _cached_trading_pulse_snippet = _mgmt_nl_trading_pulse_snippet(
-                runtime_bindings, evidence_entities, _cached_unfiltered_telemetry
+                runtime_bindings,
+                evidence_entities,
+                _cached_unfiltered_telemetry,
+                retired_runtime_count=retired_runtime_count,
             )
         return _cached_trading_pulse_snippet
 
     if use_all or focus == "cockpit":
         try:
             alerts_payload = _build_operator_alerts_payload(snapshot_at)
-            alerts = _mgmt_nl_filter_tenant_records(
-                list(alerts_payload.get("alerts") or []),
-                tenant_id,
-            )
+            alerts = _deployment_scoped_record_filter(list(alerts_payload.get("alerts") or []))
             human_inbox_payload = _human_inbox_payload(snapshot_at, page_size=None)
-            inbox_items = _mgmt_nl_filter_tenant_records(
-                list(human_inbox_payload.get("items") or []),
-                tenant_id,
-            )
+            inbox_items = _deployment_scoped_record_filter(list(human_inbox_payload.get("items") or []))
             anomalies_payload = _build_management_anomalies_payload(snapshot_at)
-            anomalies = _mgmt_nl_filter_tenant_records(
-                list(anomalies_payload.get("items") or []),
-                tenant_id,
-            )
+            anomalies = _deployment_scoped_record_filter(list(anomalies_payload.get("items") or []))
             runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
             trading_pulse = _get_trading_pulse_snippet(runtime_bindings)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
@@ -4864,6 +4905,7 @@ def _mgmt_nl_collect_context(
             snippets["portfolio"] = {
                 "capital_pool_count": len(pools),
                 "runtime_count": len(runtime_bindings),
+                "retired_runtime_count": retired_runtime_count,
                 "total_pnl": portfolio_rollup.get("total_pnl"),
                 "max_drawdown": portfolio_rollup.get("max_drawdown"),
                 "average_fill_rate": portfolio_rollup.get("average_fill_rate"),
@@ -4897,9 +4939,28 @@ def _mgmt_nl_collect_context(
             personas, personas_obs = _management_ai_context_service.get_context_personas(
                 lambda: _list_persona_records(tenant_id), record_filter=_tenant_record_filter
             )
+            # Retired personas are history: they are counted, not projected, and
+            # operational personas come first so the row cap cannot hide one.
+            from ..personas.service import (
+                _is_persona_lifecycle_operational,
+                _persona_record_projected_state,
+            )
+
+            all_personas = list(personas)
+            personas = [
+                persona
+                for persona in all_personas
+                if _persona_record_projected_state(persona) != "retired"
+            ]
+            retired_persona_count = len(all_personas) - len(personas)
+            personas.sort(
+                key=lambda persona: not _is_persona_lifecycle_operational(
+                    _persona_record_projected_state(persona)
+                )
+            )
             runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
             incidents, incidents_obs = _management_ai_context_service.get_context_incidents(
-                record_filter=_tenant_record_filter
+                record_filter=_deployment_scoped_record_filter
             )
             evolution_decisions, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions(
                 record_filter=_tenant_record_filter
@@ -4941,8 +5002,9 @@ def _mgmt_nl_collect_context(
             # personas that already projected successfully, nor the
             # runtime/incidents/evolution provenance already collected above.
             fleet_items = []
+            fleet_item_states: List[str] = []
             fleet_owner_observations: List[Dict[str, Any]] = []
-            for persona in personas:
+            for persona in personas[:20]:
                 item, item_owner_observations = _project_persona_fleet_item(
                     persona,
                     all_runtime_bindings=runtime_bindings,
@@ -4951,8 +5013,8 @@ def _mgmt_nl_collect_context(
                     telemetry_by_runtime_id=telemetry_by_runtime_id,
                     tenant_id=tenant_id,
                 )
-                if len(fleet_items) < 20:
-                    fleet_items.append(item)
+                fleet_items.append(item)
+                fleet_item_states.append(_persona_record_projected_state(persona))
                 # Telemetry observations are already carried once per unique
                 # runtime in telemetry_observations above; only the
                 # per-persona-only owners (bindings, teaching sessions) are
@@ -4971,8 +5033,24 @@ def _mgmt_nl_collect_context(
             fleet_summary = {
                 "total_personas": len(personas),
                 "returned_personas": len(fleet_items),
+                "retired_persona_count": retired_persona_count,
+                "retired_runtime_count": retired_runtime_count,
+                "by_lifecycle_state": _management_count_by(
+                    [
+                        {"lifecycle_state": _persona_record_projected_state(persona)}
+                        for persona in personas
+                    ],
+                    "lifecycle_state",
+                ),
                 "critical_personas": len([item for item in fleet_items if item["health"]["status"] == "critical"]),
-                "degraded_personas": len([item for item in fleet_items if item["health"]["status"] == "degraded"]),
+                # A draft or research_only persona is not running yet; it is
+                # not a degraded one.
+                "degraded_personas": len([
+                    item
+                    for item, state in zip(fleet_items, fleet_item_states)
+                    if item["health"]["status"] == "degraded"
+                    and state not in {"draft", "research_only"}
+                ]),
                 "healthy_personas": len([item for item in fleet_items if item["health"]["status"] == "healthy"]),
                 "bound_personas": len([item for item in fleet_items if item["bindings"]]),
                 "runtime_bound_personas": len([item for item in fleet_items if item["runtimeBindings"]]),
@@ -5670,7 +5748,7 @@ def _mgmt_nl_build_context_pack(
 
     request = AssistantContextPackRequest(
         mode=assistant_mode,
-        include=["ui", "management_nl", "persona_health"],
+        include=["ui", "management_nl"],
         question=question,
         route=frontend_route,
         frontend={
@@ -5690,33 +5768,6 @@ def _mgmt_nl_build_context_pack(
     )
 
     def collect_source(source_id: str, _request: Any, snapshot_at: str) -> Any:
-        if source_id == "persona_health":
-            persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-            scoped_personas = _mgmt_nl_filter_tenant_records(_list_persona_records(caller_tenant_id), caller_tenant_id)
-            return AssistantCollectedSource(
-                source_id="persona_health",
-                href="/bff/v5/execution/persona-health",
-                payload={
-                    "items": [
-                        {
-                            "id": persona.get("persona_id") or persona.get("id"),
-                            "persona_id": persona.get("persona_id") or persona.get("id"),
-                            "name": persona.get("name") or persona.get("persona_id"),
-                            "health": "healthy"
-                            if persona.get("lifecycle_state") == "active"
-                            else "degraded",
-                            "lifecycle_state": persona.get("lifecycle_state"),
-                        }
-                        for persona in scoped_personas
-                    ],
-                    "meta": {
-                        "snapshot_at": snapshot_at,
-                        "surfaces": {"persona_health": persona_surface},
-                    },
-                },
-                status=str(persona_surface.get("status") or "ok"),
-                source_kind="bff",
-            )
         if source_id != "management_nl":
             return _assistant_collect_source(source_id, _request, snapshot_at)
         return AssistantCollectedSource(
