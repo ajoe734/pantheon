@@ -1051,7 +1051,10 @@ def _build_alpha_replication_entry(
         "authority_task_id": q.get("authority_task_id") if has_q else None,
         "authority_run_ids": auth_run_ids,
         "last_revalidation_at": q.get("last_revalidation_at") if has_q else None,
-        "last_error": q.get("last_error") if has_q else None,
+        "last_error": q.get("failure_reason") if has_q else None,
+        "replay_count": q.get("replay_count") if has_q else None,
+        "last_replayed_at": q.get("last_replayed_at") if has_q else None,
+        "revalidation_count": q.get("revalidation_count") if has_q else None,
     }
 
 

@@ -219,6 +219,7 @@ def _make_bff_client(
     *,
     http_get: Optional[ Any ] = None,
     orchestrator_url: Optional[str] = "http://research-orchestrator.local",
+    read_strategy_state: Optional[Any] = None,
 ) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", JWT_SECRET)
@@ -233,6 +234,7 @@ def _make_bff_client(
         require_read_role=auth_policy.require_read_role,
         utc_now=lambda: FIXED_NOW,
         http_get=http_get,
+        read_strategy_state=read_strategy_state,
     )
     app.include_router(router)
     return TestClient(app)
@@ -600,3 +602,152 @@ def test_alpha_factory_cards_removed_from_read_surface_ports() -> None:
             f"{cls.__name__} must not retain dead list_alpha_factory_cards reader"
         )
     assert "alpha_factory_cards" not in ReadSurfacePorts._OPERATIONS_CONSULTATION_OWNED_DATASETS
+
+
+# --------------------------------------------------------------------------- #
+# BFF-EVO-ALPHA-PAGE-TRUTH-20261107: failure facts and strategy_state on cards
+# --------------------------------------------------------------------------- #
+
+_SPY = "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e-spy-anchor-7e96a8404f3c"
+_TW = "strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
+_H12_A = "strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8"
+_H12_B = "strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a"
+
+
+def _hosted_four_entries() -> List[Dict[str, Any]]:
+    """The four real hosted queue records as the owner route returns them."""
+    rows = [
+        (_SPY, 0, None, 0, 1),
+        (_TW, 1, "2026-10-16T02:54:42Z", 1, 4),
+        (_H12_A, 1, "2026-10-24T02:28:22Z", 1, 4),
+        (_H12_B, 0, None, 0, 1),
+    ]
+    entries = []
+    for idx, (strategy_id, replay_count, replayed_at, _unused, _runs) in enumerate(rows):
+        entries.append(
+            {
+                "admission_id": f"adm-hosted-{idx}",
+                "tenant_id": "tenant-dev",
+                "strategy_spec_id": f"spec-{idx}",
+                "strategy_id": strategy_id,
+                "spec_version": "1.0.0",
+                "checksum": VALID_CHECKSUM,
+                "approval_decision_id": f"approval-{idx}",
+                "approver": "pantheon-dev-approver",
+                "approved_at": "2026-10-01T01:00:00Z",
+                "admission_status": "admitted",
+                "status": "admitted",
+                "queue_status": "completed",
+                "attempt_count": 0,
+                "max_attempts": 3,
+                "experiment_run_ids": ["run-1"],
+                "authority_run_ids": ["run-a"],
+                "last_revalidation_at": "2026-10-24T02:30:00Z",
+                "last_error": None,
+                "replay_count": replay_count,
+                "last_replayed_at": replayed_at,
+                "revalidation_count": 1,
+            }
+        )
+    return entries
+
+
+_HOSTED_STATES = {_SPY: "approved", _TW: "approved", _H12_A: "retired", _H12_B: "retired"}
+
+
+def test_alpha_factory_cards_carry_failure_replay_facts_and_strategy_state(monkeypatch) -> None:
+    reads: List[str] = []
+
+    def reader(strategy_id: str) -> Tuple[Optional[str], str]:
+        reads.append(strategy_id)
+        return _HOSTED_STATES[strategy_id], "ok"
+
+    entries = _hosted_four_entries()
+    # Two cards share one strategy: the registry must still be read once for it.
+    entries.append({**entries[2], "admission_id": "adm-hosted-dup", "strategy_spec_id": "spec-dup"})
+    entries[1]["last_error"] = "experiment run timed out"
+    entries[1]["attempt_count"] = 2
+
+    client = _make_bff_client(
+        monkeypatch, http_get=lambda url, **kw: (200, entries), read_strategy_state=reader
+    )
+    payload = client.get("/bff/alpha-factory?page_size=100", headers=_auth_headers("tenant-dev")).json()
+
+    assert sorted(reads) == sorted(_HOSTED_STATES)
+    assert len(reads) == len(set(reads)) == 4
+    assert payload["meta"]["surfaces"]["alpha_factory_strategy_state"]["status"] == "ok"
+
+    cards = {c["admission_id"]: c for c in payload["data"]["items"]}
+    assert len(cards) == 5
+    assert cards["adm-hosted-1"]["last_error"] == "experiment run timed out"
+    assert cards["adm-hosted-1"]["attempt_count"] == 2
+    assert cards["adm-hosted-2"]["replay_count"] == 1
+    assert cards["adm-hosted-2"]["last_replayed_at"] == "2026-10-24T02:28:22Z"
+    assert cards["adm-hosted-2"]["revalidation_count"] == 1
+    assert cards["adm-hosted-0"]["replay_count"] == 0
+    assert cards["adm-hosted-0"]["last_replayed_at"] is None
+    assert {cid: c["strategy_state"] for cid, c in cards.items()} == {
+        "adm-hosted-0": "approved",
+        "adm-hosted-1": "approved",
+        "adm-hosted-2": "retired",
+        "adm-hosted-3": "retired",
+        "adm-hosted-dup": "retired",
+    }
+
+    # Retired strategies are not hidden or moved: lane rules are unchanged.
+    lanes = {lane["id"]: lane for lane in payload["data"]["lanes"]}
+    assert len(lanes["replicated"]["items"]) == 5
+    assert lanes["scaffolded"]["items"] == []
+    assert lanes["discovered"] == {
+        "id": "discovered", "label": "Discovered", "reason": "no_candidate_source", "items": [],
+    }
+
+
+def test_alpha_factory_failed_strategy_state_read_keeps_cards_and_marks_surface(monkeypatch) -> None:
+    def reader(strategy_id: str) -> Tuple[Optional[str], str]:
+        if strategy_id == _H12_A:
+            raise RuntimeError("registry down")
+        if strategy_id == _TW:
+            return None, "unavailable"
+        return "approved", "ok"
+
+    client = _make_bff_client(
+        monkeypatch,
+        http_get=lambda url, **kw: (200, _hosted_four_entries()),
+        read_strategy_state=reader,
+    )
+    resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["meta"]["surfaces"]["alpha_factory_strategy_state"]["status"] == "unavailable"
+    assert payload["meta"]["surfaces"]["alpha_factory"]["status"] == "ok"
+    assert payload["page_info"]["total"] == 4
+    states = {c["strategy_id"]: c["strategy_state"] for c in payload["data"]["items"]}
+    assert states == {_SPY: "approved", _TW: None, _H12_A: None, _H12_B: "approved"}
+    assert len(payload["data"]["lanes"][2]["items"]) == 4
+
+
+def test_strategies_service_state_reader_uses_registry_detail_and_degrades() -> None:
+    from services.control_plane.bff.strategies.service import StrategiesService
+
+    class _Store:
+        def __init__(self) -> None:
+            self.detail_calls: List[str] = []
+
+        def get_strategy_spec_detail(self, strategy_id, version_selector="current"):
+            self.detail_calls.append(strategy_id)
+            if strategy_id == "boom":
+                raise RuntimeError("registry down")
+            if strategy_id == "missing":
+                return None
+            return {"strategy_id": strategy_id, "lifecycle_state": "retired"}
+
+    store = _Store()
+    svc = StrategiesService(
+        read_surface=store,
+        normalize_lifecycle_state=lambda s: str(s).strip().lower(),
+    )
+    assert svc.get_strategy_registry_state(_H12_A) == ("retired", "ok")
+    assert store.detail_calls == [_H12_A]
+    assert svc.get_strategy_registry_state("missing") == (None, "ok")
+    assert svc.get_strategy_registry_state("boom") == (None, "unavailable")

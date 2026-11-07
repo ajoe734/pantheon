@@ -374,3 +374,131 @@ def test_entries_route_enforces_two_tenant_isolation_and_auth_boundary(
         ).status_code
         == 400
     )
+
+
+def test_entries_route_returns_failure_reason_and_replay_facts_from_real_queue_shapes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """BFF-EVO-ALPHA-PAGE-TRUTH-20261107: last_error comes from failure_reason,
+    and replay_count / last_replayed_at / revalidation_count pass through unchanged."""
+    monkeypatch.setenv("PANTHEON_RESEARCH_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", JWT_SECRET)
+
+    module, client = _load_research_app(tmp_path, "truth_fields")
+    alpha_dir = Path(module.ALPHA_REPLICATION_DATA_DIR)
+
+    replayed_spec = "reg-strategy-spec-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8"
+    failed_spec = "reg-strategy-spec-failed-example"
+    plain_spec = "reg-strategy-spec-spy-anchor"
+
+    def _admission(spec_id: str, strategy_id: str, admission_id: str) -> Dict[str, Any]:
+        return {
+            "admission_id": admission_id,
+            "tenant_id": "tenant-dev",
+            "strategy_spec_id": spec_id,
+            "strategy_id": strategy_id,
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-1",
+            "approver": "pantheon-dev-approver",
+            "approved_at": "2026-10-10T01:00:00Z",
+            "requested_by": "pantheon-dev-operator",
+            "review_ref": None,
+            "mode": "initial",
+            "status": "admitted",
+            "created_at": "2026-10-10T01:05:00Z",
+        }
+
+    def _queue(spec_id: str, strategy_id: str, **extra: Any) -> Dict[str, Any]:
+        record = {
+            "strategy_spec_id": spec_id,
+            "tenant_id": "tenant-dev",
+            "strategy_id": strategy_id,
+            "spec_version": "1.0.0",
+            "checksum": VALID_CHECKSUM,
+            "approval_decision_id": "approval-1",
+            "approver": "pantheon-dev-approver",
+            "approved_at": "2026-10-10T01:00:00Z",
+            "enqueued_at": "2026-10-10T01:10:00Z",
+            "enqueued_by": "alpha-replication-controller",
+            "max_attempts": 3,
+            "experiment_task_id": "etask-1",
+            "experiment_run_ids": ["run-1"],
+            "authority_task_id": "rtask-1",
+            "authority_run_ids": ["run-a"],
+            "lifecycle_state": "approved",
+            "claim_generation": 1,
+            "reclaimed_count": 0,
+            "consumed_replay_ids": [],
+        }
+        record.update(extra)
+        return record
+
+    admissions = {
+        f"tenant-dev:{replayed_spec}": _admission(replayed_spec, "strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8", "adm-replayed"),
+        f"tenant-dev:{failed_spec}": _admission(failed_spec, "strat-failed-example", "adm-failed"),
+        f"tenant-dev:{plain_spec}": _admission(plain_spec, "strat-src-spy-anchor", "adm-plain"),
+    }
+    queue_entries = {
+        f"tenant-dev:{replayed_spec}": _queue(
+            replayed_spec,
+            "strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
+            status="completed",
+            attempt_count=0,
+            replay_count=1,
+            revalidation_count=1,
+            last_replayed_at="2026-10-24T02:28:22Z",
+            last_replay_id="replay-1",
+            last_replay_reason="operator replay",
+            last_replayed_by="pantheon-dev-operator",
+            failure_reason=None,
+            last_revalidation_at="2026-10-24T02:30:00Z",
+        ),
+        f"tenant-dev:{failed_spec}": _queue(
+            failed_spec,
+            "strat-failed-example",
+            status="failed",
+            attempt_count=2,
+            failure_reason="experiment run timed out",
+            last_revalidation_at=None,
+        ),
+        f"tenant-dev:{plain_spec}": _queue(
+            plain_spec,
+            "strat-src-spy-anchor",
+            status="completed",
+            attempt_count=0,
+            replay_count=0,
+            revalidation_count=1,
+            last_replayed_at=None,
+            failure_reason=None,
+            last_revalidation_at="2026-10-10T02:00:00Z",
+        ),
+    }
+    _write_admissions_and_queue(alpha_dir, admissions=admissions, queue_entries=queue_entries)
+
+    resp = client.get(
+        "/api/research-orchestrator/alpha-replication/entries",
+        headers=_tenant_headers("tenant-dev"),
+    )
+    assert resp.status_code == 200
+    by_spec = {item["strategy_spec_id"]: item for item in resp.json()}
+
+    replayed = by_spec[replayed_spec]
+    assert replayed["replay_count"] == 1
+    assert replayed["last_replayed_at"] == "2026-10-24T02:28:22Z"
+    assert replayed["revalidation_count"] == 1
+    assert replayed["attempt_count"] == 0
+    assert replayed["last_error"] is None
+
+    failed = by_spec[failed_spec]
+    assert failed["last_error"] == "experiment run timed out"
+    assert failed["attempt_count"] == 2
+    assert failed["replay_count"] is None
+    assert failed["last_replayed_at"] is None
+    assert failed["revalidation_count"] is None
+
+    plain = by_spec[plain_spec]
+    assert plain["replay_count"] == 0
+    assert plain["last_replayed_at"] is None
+    assert plain["revalidation_count"] == 1

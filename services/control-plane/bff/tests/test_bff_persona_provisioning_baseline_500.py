@@ -1189,3 +1189,67 @@ def test_dev_paper_baseline_fleet_reports_catalog_defaults_without_ghost_rows(mo
     assert data["items"] == []
     assert set(data) == {"items", "summary"}
     assert data["summary"]["catalog_default_total"] == 1
+
+
+def test_dev_paper_baseline_create_paper_bundle_writes_expression_policy_and_pool_risk_policy(monkeypatch):
+    """Verify non-baseline paper persona bundle writes expression_policy, 4 controls, equity+future scope, and pool risk policy."""
+    _, store = _setup_mock_services(monkeypatch)
+    with tempfile.TemporaryDirectory() as td:
+        read_store = create_in_memory_read_surface_ports()
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+
+        client = _build_test_client(read_store, cmd_store)
+        idempotency_key = "dev-paper-expression-policy-bundle-key-v1"
+        resp = client.post(
+            "/bff/management/personas/create-paper-bundle",
+            json={
+                "name": "Pantheon Dev Paper Expression Policy Persona",
+                "archetype": "momentum",
+                "risk": "low",
+                "mandate": "Verify expression policy and pool risk policy",
+                "market": "US",
+                "strategy_family": "dev_paper_baseline",
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": idempotency_key},
+        )
+        assert resp.status_code == 201, resp.text
+        records = store.list_all()
+        assert len(records) == 1
+        refs = records[0].references
+
+        forward_artifact = refs["strategy_artifact_approved"]["entry"]["metadata"]["strategy_artifact"]
+        baseline_artifact = refs["baseline_strategy_artifact_approved"]["entry"]["metadata"]["strategy_artifact"]
+        forward_spec = refs["strategy_spec_approved"]["entry"]["metadata"]["strategy_spec"]
+        baseline_spec = refs["baseline_strategy_spec_approved"]["entry"]["metadata"]["strategy_spec"]
+        pool_risk = refs["capital_pool"]["metadata"]["risk_policy"]
+
+        assert forward_artifact["expression_policy"] == {
+            "version": "1.0",
+            "kind": "notional_target_v1",
+            "parameters": {
+                "lever_min_strength": 0.5,
+                "notional_fraction_at_full_strength": 1.0,
+                "allow_pyramiding": False,
+                "close_before_reverse": True,
+            },
+        }
+        assert [c["parameter_key"] for c in forward_artifact["mutation_surface"]["controls"]] == [
+            "lookback_bars",
+            "momentum_threshold",
+            "strength_scale_k",
+            "strength_floor_momentum",
+            "lever_min_strength",
+            "notional_fraction_at_full_strength",
+        ]
+        assert "expression_policy" not in baseline_artifact
+        assert [c["parameter_key"] for c in baseline_artifact["mutation_surface"]["controls"]] == [
+            "lookback_bars",
+            "momentum_threshold",
+        ]
+        assert forward_spec["market_scope"]["asset_classes"] == ["equity", "future"]
+        assert baseline_spec["market_scope"]["asset_classes"] == ["equity"]
+        assert pool_risk["max_leverage"] == 2.0
+        assert pool_risk["gross_limit"] == 2.0
+        assert pool_risk["allowed_asset_classes"] == ["equity", "future"]
+

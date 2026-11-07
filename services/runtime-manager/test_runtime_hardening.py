@@ -75,6 +75,14 @@ class HardeningEnvScope:
         "PANTHEON_RUNTIME_JWT_SECRET",
         "PANTHEON_RUNTIME_JWT_ISSUER",
         "PANTHEON_RUNTIME_JWT_AUDIENCE",
+        "PANTHEON_RUNTIME_JWKS_URI",
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL",
+        "PANTHEON_RUNTIME_OIDC_ISSUER",
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE",
+        "PANTHEON_RUNTIME_ROLE_CLAIMS",
+        "PANTHEON_RUNTIME_ROLE_MAP",
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE",
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED",
         "PANTHEON_RUNTIME_MFA_REQUIRED",
         "PANTHEON_RUNTIME_DEFAULT_ROLE",
         "PANTHEON_DEPLOYMENT_API_URL",
@@ -834,6 +842,356 @@ class RuntimeBindingsViewerReadAndTenancyTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.get_json()["error"]["code"], "TENANT_AMBIGUOUS")
+
+
+class OidcJwksAndInternalPaperCallerDualPathTests(unittest.TestCase):
+    """Verify runtime-manager enforces external OIDC/JWKS + strict ROLE_MAP while
+    preserving verified internal HS256 Paper/RuntimeBinding caller tokens.
+    """
+
+    def setUp(self):
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        from services.runtime_auth_inbound import _JWKS_CACHE
+
+        _JWKS_CACHE.clear()
+        self.env = HardeningEnvScope().__enter__()
+        self.tempdir = tempfile.TemporaryDirectory()
+        self._rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pub_numbers = self._rsa_key.public_key().public_numbers()
+
+        def _b64u_int(val: int) -> str:
+            length = max(1, (val.bit_length() + 7) // 8)
+            return base64.urlsafe_b64encode(val.to_bytes(length, "big")).rstrip(b"=").decode("ascii")
+
+        self.kid = "rm-oidc-key-1"
+        jwks_path = Path(self.tempdir.name) / "jwks.json"
+        jwks_path.write_text(
+            json.dumps(
+                {
+                    "keys": [
+                        {
+                            "kty": "RSA",
+                            "use": "sig",
+                            "alg": "RS256",
+                            "kid": self.kid,
+                            "n": _b64u_int(pub_numbers.n),
+                            "e": _b64u_int(pub_numbers.e),
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        self.hs256_secret = "staging-internal-runtime-jwt-secret-key-2026"
+        self.hs256_issuer = "https://auth.pantheon-staging.internal"
+        self.hs256_audience = "pantheon-staging-runtime"
+        self.oidc_issuer = "https://idp.pantheon.example/realms/prod"
+        self.oidc_audience = "pantheon-prod-oidc-client"
+
+        os.environ["PANTHEON_RUNTIME_AUTH_MODE"] = "enforced"
+        os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = self.hs256_secret
+        os.environ["PANTHEON_RUNTIME_JWT_ISSUER"] = self.hs256_issuer
+        os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"] = self.hs256_audience
+        os.environ["PANTHEON_RUNTIME_JWKS_URI"] = jwks_path.as_uri()
+        os.environ["PANTHEON_RUNTIME_OIDC_ISSUER"] = self.oidc_issuer
+        os.environ["PANTHEON_RUNTIME_OIDC_AUDIENCE"] = self.oidc_audience
+        os.environ["PANTHEON_RUNTIME_ROLE_CLAIMS"] = "roles,groups,realm_access.roles"
+        os.environ["PANTHEON_RUNTIME_ROLE_MAP"] = "pantheon-operator=operator;pantheon-viewer=viewer"
+        os.environ["PANTHEON_RUNTIME_ROLE_MAP_MODE"] = "strict"
+        os.environ["PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED"] = "true"
+
+        self.store_path = Path(self.tempdir.name) / "bindings.json"
+        self.command_state_path = Path(self.tempdir.name) / "commands.json"
+        self.main = _load_main_module(self.store_path, self.command_state_path)
+        self.client = self.main.app.test_client()
+
+        from services.runtime_manager.runtime_binding import RuntimeBinding
+
+        service = self.main._get_service()
+        service.store._bindings["rtb-dev-001"] = RuntimeBinding(
+            binding_id="rtb-dev-001",
+            runtime_id="rt-dev-001",
+            capital_pool_id="pool-dev-001",
+            artifact_id="artifact-dev",
+            artifact_version="1.0.0",
+            deployment_mode="paper",
+            execution_mode="paper",
+            effective_at="2026-05-01T00:00:00Z",
+            status="active",
+            plan_id="plan-dev-001",
+            persona_capital_binding_id="pcb-dev-001",
+            metadata={"tenant_id": "tenant-dev"},
+        )
+        service.store._bindings["rtb-other-001"] = RuntimeBinding(
+            binding_id="rtb-other-001",
+            runtime_id="rt-other-001",
+            capital_pool_id="pool-other-001",
+            artifact_id="artifact-other",
+            artifact_version="1.0.0",
+            deployment_mode="paper",
+            execution_mode="paper",
+            effective_at="2026-05-01T00:00:00Z",
+            status="active",
+            plan_id="plan-other-001",
+            persona_capital_binding_id="pcb-other-001",
+            metadata={"tenant_id": "tenant-other"},
+        )
+        service.store._save()
+        self._hashes = hashes
+        self._padding = padding
+        self._base64 = base64
+
+    def tearDown(self):
+        from services.runtime_auth_inbound import _JWKS_CACHE
+
+        _JWKS_CACHE.clear()
+        self.tempdir.cleanup()
+        self.env.__exit__(None, None, None)
+
+    def _mint_rs256(self, payload: dict) -> str:
+        b64 = lambda raw: self._base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+        header_b64 = b64(json.dumps({"alg": "RS256", "typ": "JWT", "kid": self.kid}).encode("utf-8"))
+        payload_b64 = b64(json.dumps(payload).encode("utf-8"))
+        signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+        sig = self._rsa_key.sign(signing_input, self._padding.PKCS1v15(), self._hashes.SHA256())
+        return f"{header_b64}.{payload_b64}.{b64(sig)}"
+
+    def test_external_oidc_operator_and_viewer_tokens_work_with_strict_role_map(self):
+        now = int(time.time())
+        op_token = self._mint_rs256(
+            {
+                "iss": self.oidc_issuer,
+                "aud": self.oidc_audience,
+                "sub": "oidc-op-1",
+                "email_verified": True,
+                "groups": ["pantheon-operator"],
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+                "iat": now,
+                "exp": now + 600,
+            }
+        )
+        res_op = self.client.get(
+            "/api/runtime-fleet/desired-state?stage=paper",
+            headers={"Authorization": f"Bearer {op_token}"},
+        )
+        self.assertEqual(res_op.status_code, 200, res_op.get_data(as_text=True))
+        self.assertEqual(res_op.get_json()["fleet_stages"], ["paper"])
+        res_op_bindings = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {op_token}"},
+        )
+        self.assertEqual(res_op_bindings.status_code, 200, res_op_bindings.get_data(as_text=True))
+        self.assertEqual(res_op_bindings.get_json()["count"], 2)
+
+        viewer_token = self._mint_rs256(
+            {
+                "iss": self.oidc_issuer,
+                "aud": self.oidc_audience,
+                "sub": "oidc-viewer-1",
+                "email_verified": True,
+                "groups": ["pantheon-viewer"],
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+                "iat": now,
+                "exp": now + 600,
+            }
+        )
+        res_list = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+        self.assertEqual(res_list.status_code, 200, res_list.get_data(as_text=True))
+        self.assertEqual(res_list.get_json()["count"], 1)
+        self.assertEqual(res_list.get_json()["bindings"][0]["binding_id"], "rtb-dev-001")
+
+        res_foreign = self.client.get(
+            "/api/runtime-bindings/rtb-other-001",
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+        self.assertEqual(res_foreign.status_code, 404)
+
+        res_forbidden = self.client.get(
+            "/api/runtime-fleet/desired-state?stage=paper",
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+        self.assertEqual(res_forbidden.status_code, 403)
+        self.assertEqual(res_forbidden.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+    def test_external_oidc_unmapped_role_and_unverified_email_rejected(self):
+        now = int(time.time())
+        unmapped_token = self._mint_rs256(
+            {
+                "iss": self.oidc_issuer,
+                "aud": self.oidc_audience,
+                "sub": "oidc-unmapped",
+                "email_verified": True,
+                "groups": ["unmapped-external-group"],
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+                "iat": now,
+                "exp": now + 600,
+            }
+        )
+        res_unmapped = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {unmapped_token}"},
+        )
+        self.assertEqual(res_unmapped.status_code, 403)
+        self.assertEqual(res_unmapped.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+        unverified_token = self._mint_rs256(
+            {
+                "iss": self.oidc_issuer,
+                "aud": self.oidc_audience,
+                "sub": "oidc-unverified",
+                "email_verified": False,
+                "groups": ["pantheon-operator"],
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+                "iat": now,
+                "exp": now + 600,
+            }
+        )
+        res_unverified = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {unverified_token}"},
+        )
+        self.assertEqual(res_unverified.status_code, 401)
+        self.assertEqual(res_unverified.get_json()["error"]["code"], "AUTH_EMAIL_UNVERIFIED")
+
+    def test_external_oidc_missing_role_claims_never_escalate_to_operator_or_cross_tenant(self):
+        now = int(time.time())
+        roleless_token = self._mint_rs256(
+            {
+                "iss": self.oidc_issuer,
+                "aud": self.oidc_audience,
+                "sub": "oidc-roleless-user",
+                "email_verified": True,
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+                "iat": now,
+                "exp": now + 600,
+            }
+        )
+        for path in (
+            "/api/runtime-fleet/desired-state?stage=paper",
+            "/api/runtime-bindings",
+            "/api/runtime-bindings/rtb-dev-001",
+            "/api/runtime-bindings/rtb-other-001",
+        ):
+            res = self.client.get(path, headers={"Authorization": f"Bearer {roleless_token}"})
+            self.assertEqual(res.status_code, 403, f"{path}: {res.get_data(as_text=True)}")
+            self.assertEqual(res.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+        # Even if PANTHEON_RUNTIME_DEFAULT_ROLE=operator is set under strict role mapping,
+        # a roleless external IdP token must fail closed and never inherit operator privileges.
+        with mock.patch.dict(os.environ, {"PANTHEON_RUNTIME_DEFAULT_ROLE": "operator"}, clear=False):
+            for path in (
+                "/api/runtime-fleet/desired-state?stage=paper",
+                "/api/runtime-bindings",
+                "/api/runtime-bindings/rtb-other-001",
+            ):
+                res_strict_op = self.client.get(
+                    path, headers={"Authorization": f"Bearer {roleless_token}"}
+                )
+                self.assertEqual(res_strict_op.status_code, 403, f"{path}: {res_strict_op.get_data(as_text=True)}")
+                self.assertEqual(res_strict_op.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+        # When an explicit unprivileged viewer default role is configured, operator routes
+        # remain 403 and binding reads enforce strict viewer tenancy (never leaking tenant-other).
+        with mock.patch.dict(os.environ, {"PANTHEON_RUNTIME_DEFAULT_ROLE": "viewer"}, clear=False):
+            res_desired = self.client.get(
+                "/api/runtime-fleet/desired-state?stage=paper",
+                headers={"Authorization": f"Bearer {roleless_token}"},
+            )
+            self.assertEqual(res_desired.status_code, 403)
+            self.assertEqual(res_desired.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+            res_bindings = self.client.get(
+                "/api/runtime-bindings",
+                headers={"Authorization": f"Bearer {roleless_token}"},
+            )
+            self.assertEqual(res_bindings.status_code, 200, res_bindings.get_data(as_text=True))
+            self.assertEqual(res_bindings.get_json()["count"], 1)
+            self.assertEqual(res_bindings.get_json()["bindings"][0]["binding_id"], "rtb-dev-001")
+
+            res_other = self.client.get(
+                "/api/runtime-bindings/rtb-other-001",
+                headers={"Authorization": f"Bearer {roleless_token}"},
+            )
+            self.assertEqual(res_other.status_code, 404)
+
+            res_foreign_hdr = self.client.get(
+                "/api/runtime-bindings",
+                headers={
+                    "Authorization": f"Bearer {roleless_token}",
+                    "X-Tenant-Id": "tenant-other",
+                },
+            )
+            self.assertEqual(res_foreign_hdr.status_code, 403)
+            self.assertEqual(res_foreign_hdr.get_json()["error"]["code"], "TENANT_SCOPE_FORBIDDEN")
+
+    def test_internal_hs256_paper_caller_token_succeeds_and_invalid_hs256_fails_closed(self):
+        now = int(time.time())
+        internal_token = encode_jwt_hs256(
+            {
+                "iss": self.hs256_issuer,
+                "aud": self.hs256_audience,
+                "sub": "svc:staging-paper-runtime-caller",
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+                "roles": ["operator"],
+                "iat": now,
+                "nbf": now - 5,
+                "exp": now + 3600,
+            },
+            secret=self.hs256_secret,
+        )
+        for path in (
+            "/api/runtime-fleet/desired-state?stage=paper",
+            "/api/runtime-bindings",
+            "/api/runtime-bindings/rtb-dev-001",
+        ):
+            res = self.client.get(path, headers={"Authorization": f"Bearer {internal_token}"})
+            self.assertEqual(res.status_code, 200, f"{path}: {res.get_data(as_text=True)}")
+
+        bad_sig = encode_jwt_hs256(
+            {
+                "iss": self.hs256_issuer,
+                "aud": self.hs256_audience,
+                "sub": "svc:staging-paper-runtime-caller",
+                "roles": ["operator"],
+                "exp": now + 3600,
+            },
+            secret="wrong-secret",
+        )
+        res_bad_sig = self.client.get(
+            "/api/runtime-fleet/desired-state?stage=paper",
+            headers={"Authorization": f"Bearer {bad_sig}"},
+        )
+        self.assertEqual(res_bad_sig.status_code, 401)
+        self.assertEqual(res_bad_sig.get_json()["error"]["code"], "AUTH_JWT_BAD_SIGNATURE")
+
+        wrong_iss = encode_jwt_hs256(
+            {
+                "iss": "https://wrong.issuer.internal",
+                "aud": self.hs256_audience,
+                "sub": "svc:staging-paper-runtime-caller",
+                "roles": ["operator"],
+                "exp": now + 3600,
+            },
+            secret=self.hs256_secret,
+        )
+        res_wrong_iss = self.client.get(
+            "/api/runtime-fleet/desired-state?stage=paper",
+            headers={"Authorization": f"Bearer {wrong_iss}"},
+        )
+        self.assertEqual(res_wrong_iss.status_code, 401)
+        self.assertEqual(res_wrong_iss.get_json()["error"]["code"], "AUTH_JWT_ISSUER_MISMATCH")
 
 
 if __name__ == "__main__":

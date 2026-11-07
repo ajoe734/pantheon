@@ -126,3 +126,70 @@ def test_homogeneity_and_correlation_limits_are_hard_vetoes() -> None:
         "target_overlap_limit_exceeded",
         "signal_correlation_limit_exceeded",
     }
+
+
+def test_runtime_action_future_order_gate_enforces_2x_gross_limit_rejecting_2_13_and_accepting_1_85() -> None:
+    policy = RiskPolicy.from_mapping(
+        {
+            "risk_policy_id": "rp-pool-persona-paper-001",
+            "version": "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": 2.0,
+            "net_limit": 2.0,
+            "max_leverage": 2.0,
+            "allowed_asset_classes": ["equity", "future"],
+        }
+    )
+    assert policy.gross_limit == 2.0
+    assert policy.max_leverage == 2.0
+    assert policy.allowed_asset_classes == ("equity", "future")
+
+    rejected_ctx = RiskPolicyEvaluationContext(
+        target_type="runtime_action",
+        target_id="dec-qff-2330-short",
+        capital_pool_id="pool-persona-paper-001",
+        stage="paper",
+        gross_exposure=2.13,
+        net_exposure=-2.13,
+        leverage=2.13,
+        asset_classes=["future"],
+        decision_id="dec-qff-2330-short",
+        instrument_id="ssf:QFF:202611",
+    )
+    assert rejected_ctx.asset_classes == ("future",)
+    assert rejected_ctx.decision_id == "dec-qff-2330-short"
+    assert rejected_ctx.instrument_id == "ssf:QFF:202611"
+
+    rejected_eval = RiskPolicyEvaluator().evaluate(policy, rejected_ctx)
+    assert rejected_eval.rejected is True
+    assert rejected_eval.decision == RiskPolicyDecision.REJECTED.value
+    assert {check.code for check in rejected_eval.checks if check.status == "failed"} == {
+        "gross_exposure_limit_exceeded",
+        "net_exposure_limit_exceeded",
+        "leverage_limit_exceeded",
+    }
+
+    accepted_ctx = RiskPolicyEvaluationContext.from_mapping(
+        {
+            "target_type": "runtime_action",
+            "decision_id": "dec-srf-0050-long",
+            "instrument_id": "ssf:SRF:202611",
+            "capital_pool_id": "pool-persona-paper-001",
+            "stage": "paper",
+            "gross_exposure": 1.85,
+            "net_exposure": 1.85,
+            "leverage": 1.85,
+            "asset_classes": ["future"],
+        }
+    )
+    assert accepted_ctx.target_id == "dec-srf-0050-long"
+    assert accepted_ctx.asset_classes == ("future",)
+    assert accepted_ctx.decision_id == "dec-srf-0050-long"
+    assert accepted_ctx.instrument_id == "ssf:SRF:202611"
+
+    accepted_eval = RiskPolicyEvaluator().evaluate(policy, accepted_ctx)
+    assert accepted_eval.allowed is True
+    assert accepted_eval.decision == RiskPolicyDecision.ALLOWED.value
+    assert accepted_eval.blocking_reasons == ()
+

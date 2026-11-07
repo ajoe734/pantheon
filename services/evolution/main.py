@@ -1935,21 +1935,17 @@ def list_proposals(
         if tenant_id is not None or _auth_mode() == "token"
         else None
     )
-    decisions: List[EvolutionDecision] = [
-        decision
-        for decision in store.list_all()
-        if scope is None or decision.tenant_id == scope
-    ]
-    if target_id:
-        decisions = [d for d in decisions if d.target_id == target_id]
-    if target_type:
-        decisions = [d for d in decisions if _enum_value(d.target_type) == target_type]
+    parsed_states: Optional[List[str]] = None
     if decision_state:
-        decisions = [d for d in decisions if _enum_value(d.decision_state) == decision_state]
-    if risk_level:
-        decisions = [d for d in decisions if _enum_value(d.risk_level) == risk_level]
-    if active_only:
-        decisions = [d for d in decisions if d.is_active()]
+        parsed_states = [part.strip() for part in decision_state.split(",") if part.strip()]
+    decisions: List[EvolutionDecision] = store.list_all(
+        tenant_id=scope,
+        target_id=target_id or None,
+        target_type=target_type or None,
+        decision_states=parsed_states,
+        risk_level=risk_level or None,
+        active_only=bool(active_only),
+    )
     return [_decision_to_response(d) for d in decisions]
 
 

@@ -1781,3 +1781,74 @@ def test_shared_fleet_ledger_read_prefers_slim_reader_and_falls_back_to_full() -
     assert svc._persona_provisioning_records_shared(slim, "") == ["slim"]
     assert slim.calls == ["slim", "slim_all"]
     assert svc._persona_provisioning_records_shared(Full(), "t") == ["full"]
+
+
+def test_provisioned_paper_persona_readback_retains_expression_policy_and_future_scope(
+    harness: _Harness,
+) -> None:
+    from services.control_plane.bff.persona_provisioning_coordinator import (
+        deterministic_provisioning_ids,
+    )
+    from services.control_plane.bff.test_persona_provisioning_coordinator import (
+        FakeOwnerTransport,
+        _coordinator,
+        _record_and_store,
+        _schedule_receipt,
+    )
+
+    coord_store, coord_record = _record_and_store()
+    coord_transport = FakeOwnerTransport()
+    coordinated = _coordinator(coord_store, coord_transport, _schedule_receipt).coordinate(
+        coord_record
+    )
+    ids = deterministic_provisioning_ids(coord_record)
+    harness.provisioning_store.references = deepcopy(coordinated.references)
+
+    binding = _runtime_binding()
+    state, _ = _evaluate(
+        bindings={RUNTIME_BINDING_ID: binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+    assert state == "paper_running"
+
+    released_refs = harness.provisioning_store.released[-1].references
+    forward_artifact = released_refs["strategy_artifact_approved"]["entry"]["metadata"][
+        "strategy_artifact"
+    ]
+    baseline_artifact = released_refs["baseline_strategy_artifact_approved"]["entry"][
+        "metadata"
+    ]["strategy_artifact"]
+    forward_spec = released_refs["strategy_spec_approved"]["entry"]["metadata"][
+        "strategy_spec"
+    ]
+    baseline_spec = released_refs["baseline_strategy_spec_approved"]["entry"]["metadata"][
+        "strategy_spec"
+    ]
+    pool = released_refs["capital_pool"]
+
+    assert forward_artifact["expression_policy"]["kind"] == "notional_target_v1"
+    assert forward_artifact["expression_policy"]["version"] == "1.0"
+    assert [
+        c["parameter_key"] for c in forward_artifact["mutation_surface"]["controls"]
+    ] == [
+        "lookback_bars",
+        "momentum_threshold",
+        "strength_scale_k",
+        "strength_floor_momentum",
+        "lever_min_strength",
+        "notional_fraction_at_full_strength",
+    ]
+    assert "expression_policy" not in baseline_artifact
+    assert forward_spec["market_scope"]["asset_classes"] == ["equity", "future"]
+    assert baseline_spec["market_scope"]["asset_classes"] == ["equity"]
+    assert pool["metadata"]["risk_policy"] == {
+        "risk_policy_id": f"rp-{ids.capital_pool_id}",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_asset_classes": ["equity", "future"],
+    }
+

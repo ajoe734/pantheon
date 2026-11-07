@@ -3,6 +3,8 @@
 Status: design for review (Reviewer: Antigravity). Owner: Claude. Date: 2026-11-07.
 Scope of this change: this document, a status notice at the top of `docs/04/pantheon_tw_paper_stock_futures_2026-11-06/SD_TW_PAPER_STOCK_FUTURES_2026-11-06.md`, and `docs/deployment/evidence/SD-PERSONA-INSTRUMENT-DECISION-20261107/evidence.json`. No source, test, workflow or configuration change. No implementation task is created by this work.
 
+> **Decision notice (2026-11-07).** The operator decided the four open questions of §0: Q1 = option B (deterministic per-persona expression policy), Q2 = cash shares + listed stock/ETF futures + recorded no-trade, Q3 = a 2.0× gross-notional multiple per persona held in the pool risk policy, Q4 = later. The implementation specification and task list are in `DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER_2026-11-07.md` in this folder; where the two differ, the dev plan wins. §14 of this document is superseded by the dev plan §9.
+
 **Nothing in this document is decided.** Every "recommendation" is a proposal for the operator. The four open questions in §0 are the operator's.
 
 ## 0. Operator statement, scope, open questions

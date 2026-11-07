@@ -72,6 +72,22 @@ def _get_cockpit_funcs():
     return _COCKPIT_FUNCS
 
 
+class _InboxStubbedContextService:
+    """Real context service for every read except the human inbox, which the
+    cockpit now takes from ManagementService.get_human_inbox; the host's
+    ``_human_inbox_payload`` hook stands in for that one call."""
+
+    def __init__(self, service, inbox_payload):
+        self._service = service
+        self._inbox_payload = inbox_payload
+
+    def get_human_inbox(self, *args, **kwargs):
+        return self._inbox_payload(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._service, name)
+
+
 class _MockContextHost:
     def __init__(self):
         self.store = None
@@ -88,11 +104,13 @@ class _MockContextHost:
             "json": json,
             "__package__": "services.control_plane.bff.assistant",
             "read_store": self.store,
+            "_MGMT_NL_HUMAN_INBOX_PAGE_SIZE": 2000,
             "_ALERT_SEVERITY_ORDER": {"critical": 4, "high": 3, "medium": 2, "low": 1},
             "_ALERT_CATEGORY_ORDER": {"incident": 4, "kill_switch": 3, "governance": 2, "runtime": 1},
-            "_management_ai_context_service": self._management_ai_context_service,
+            "_management_ai_context_service": _InboxStubbedContextService(
+                self._management_ai_context_service, self._human_inbox_payload
+            ),
             "_build_operator_alerts_payload": self._build_operator_alerts_payload,
-            "_human_inbox_payload": self._human_inbox_payload,
             "_build_management_anomalies_payload": self._build_management_anomalies_payload,
             "utc_now": lambda: snapshot_at,
         })

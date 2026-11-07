@@ -64,7 +64,7 @@ REQUIRED_EVENT_TYPES = (
     "position_snapshot",
 )
 RECONCILIATION_TYPES = ("reconciliation_completed", "reconciliation_failed")
-QUERY_TYPES = (*REQUIRED_EVENT_TYPES, *RECONCILIATION_TYPES)
+QUERY_TYPES = (*REQUIRED_EVENT_TYPES, "order_rejection", *RECONCILIATION_TYPES)
 EXPECTED_STAGES = {
     "signal_generation": "signal_generation",
     "trade_decision": "trade_decision",
@@ -73,11 +73,13 @@ EXPECTED_STAGES = {
     "order_accepted": "broker_acknowledgement",
     "paper_fill_simulated": "fill_management",
     "position_snapshot": "ledger_booking",
+    "order_rejection": "order_submission",
     "reconciliation_completed": "reconciliation",
     "reconciliation_failed": "reconciliation",
 }
 EXPECTED_PRODUCERS = {
     **{event_type: "execution.paper_runtime" for event_type in REQUIRED_EVENT_TYPES},
+    "order_rejection": "execution.paper_runtime",
     **{
         event_type: "reconciliation-drift.scheduled"
         for event_type in RECONCILIATION_TYPES
@@ -419,6 +421,7 @@ def _complete_candidates(
             "sequence_no": sequence_no,
             "producer": str(envelope["producer"]),
             "causal_parent_event_id": causal_parent_id,
+            "rejection_reason": str(metadata.get("reason") or event.get("reason") or ""),
             "reconciliation_evaluation_id": str(
                 metadata.get("reconciliation_evaluation_id") or ""
             ),
@@ -447,6 +450,35 @@ def _complete_candidates(
     for group in groups.values():
         selected = sorted(group["events"], key=lambda item: item["sequence_no"])
         event_types = [item["event_type"] for item in selected]
+        is_sell_without_holdings_terminal = (
+            event_types == ["signal_generation", "trade_decision", "order_rejection"]
+            and selected[2].get("rejection_reason") == "sell_without_holdings"
+            and [item["sequence_no"] for item in selected] == [1, 2, 3]
+            and all(
+                current["ingested_seq"] < following["ingested_seq"]
+                for current, following in zip(selected, selected[1:])
+            )
+            and selected[0]["causal_parent_event_id"] == f"signal:{group['identity']['signal_id']}"
+            and all(
+                following["causal_parent_event_id"] == current["event_id"]
+                for current, following in zip(selected, selected[1:])
+            )
+            and selected[1]["event_id"] == str(
+                uuid.uuid5(PAPER_LIFECYCLE_UUID_NAMESPACE, f"{selected[0]['event_id']}:trade_decision")
+            )
+        )
+        if is_sell_without_holdings_terminal:
+            if mode == "natural":
+                try:
+                    _validate_natural_candidate(group, case, now_dt=now_dt, require_snapshot=False)
+                except ProbeError as exc:
+                    if rejections is not None:
+                        rejections.append(exc)
+                    continue
+            group["selected_events"] = selected
+            group["max_ingested_seq"] = max(item["ingested_seq"] for item in selected)
+            complete.append(group)
+            continue
         middle = event_types[2:-1]
         if (
             len(selected) < 8
@@ -1089,7 +1121,13 @@ def _correlate(
         raise ProbeError("loop_identity_mismatch", "loop-run stable identity does not match committed telemetry")
     if loop.get("accepted_live") is not True or loop.get("projection_mode") != "live":
         raise ProbeError("loop_run_not_live", "loop-run is not accepted live truth")
-    if loop.get("status") not in {"completed", "completed_with_variance"}:
+    terminal_event_type = candidate["selected_events"][-1]["event_type"]
+    allowed_loop_statuses = (
+        {"failed"}
+        if terminal_event_type == "order_rejection"
+        else {"completed", "completed_with_variance"}
+    )
+    if loop.get("status") not in allowed_loop_statuses:
         raise ProbeError("loop_run_not_terminal", "loop-run is not reconciled terminal truth")
 
     return {

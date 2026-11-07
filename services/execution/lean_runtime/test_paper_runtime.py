@@ -2721,6 +2721,7 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
 
     def test_taiwan_paper_fill_published_with_shioaji_trade_id(self):
         algo, events = self._algo()
+        algo._holding("2330.TW").Quantity = 2
         algo.SetCurrentSignalContext(
             {
                 "market_price": 2340.0,
@@ -2747,7 +2748,7 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
         self.assertEqual(ev.metadata["adapter"], "shioaji")
         self.assertEqual(ev.metadata["currency"], "TWD")
         self.assertEqual(ev.metadata["exchange"], "TSE")
-        self.assertEqual(algo._holding("2330.TW").Quantity, -1)
+        self.assertEqual(algo._holding("2330.TW").Quantity, 1)
 
     def test_taiwan_submit_posts_signal_client_id_and_correlation_envelope(self):
         from services.trade_journey.correlation_envelope import mint_trade_envelope
@@ -2786,6 +2787,7 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
 
     def test_taiwan_broker_error_records_rejection(self):
         algo, events = self._algo()
+        algo._holding("2330.TW").Quantity = 1
         algo.SetCurrentSignalContext(
             {
                 "market_price": 2340.0,
@@ -3915,13 +3917,13 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def test_close_build_failure_defers_chain_without_stranding_or_retrading(self):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         self.assertEqual(service._algo._fill_count, 1)
 
         # order_submitted cannot be built for the close: the original defect
         # stopped the accepted chain right after risk_evaluation.
         service = self._service(fail_build_for={"order_submitted"})
-        self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         ledger = service._algo.performance_ledger()
         self.assertEqual(ledger["fill_count"], 2)
         self.assertEqual(ledger["cash"], 99985.0)
@@ -3961,9 +3963,9 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def test_restart_replays_interrupted_close_chain_exactly_once(self):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         service = self._service(fail_build_for={"position_snapshot"})
-        self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+        self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         self.assertEqual(service.snapshot()["pending_fill_publication_count"], 1)
         self.assertNotIn("paper_fill_simulated", self._types("sb"))
 
@@ -3983,11 +3985,11 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def test_replay_after_admission_before_ack_is_idempotent(self):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         with patch.object(
             PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
         ):
-            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+            self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         self.assertEqual(len(service._algo.pending_fill_publications()), 1)
         restarted = self._service()
         restarted.drain_once()
@@ -3998,11 +4000,11 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def _assert_next_event_contiguous_after_replay(self, restart):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         with patch.object(
             PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
         ):
-            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+            self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         runtime = self._service() if restart else service
         runtime.drain_once()
         durable = runtime._lifecycle_outbox.chains()
@@ -4039,11 +4041,11 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
     def _assert_replay_survives_batch_eviction_horizon(self, restart):
         self.store = InMemoryPendingSignalStore()
         service = self._service()
-        self._run(service, "a", "SELL", "SHORT", 2385.0, "o1")
+        self._run(service, "a", "BUY", "LONG", 2400.0, "o1")
         with patch.object(
             PaperExecutionAlgorithm, "ack_fill_publication", return_value=False
         ):
-            self._run(service, "b", "BUY", "LONG", 2400.0, self.BROKER_ORDER_ID)
+            self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         fill = next(
             e for e in self.captured
             if e.get("signal_id") == "sb" and e["event_type"] == "paper_fill_simulated"
@@ -4088,6 +4090,241 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
 
     def test_replay_after_many_batches_restart(self):
         self._assert_replay_survives_batch_eviction_horizon(restart=True)
+
+
+class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
+    """AC1-AC3: Taiwan paper ledger never sells shares it does not hold."""
+
+    @staticmethod
+    def _set_market_context(algo: PaperExecutionAlgorithm, price: float = 1000.0) -> None:
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": price,
+                "market_price_as_of": "2026-11-06T05:30:00Z",
+                "market_price_source": "source-ingest://snapshots/mss-2330",
+            }
+        )
+
+    def test_sell_with_zero_or_negative_holdings_rejects_without_fill_cash_or_position_change(self):
+        events = []
+        algo = PaperExecutionAlgorithm(initial_cash=100_000.0, event_sink=events.append)
+        self._set_market_context(algo, 1050.0)
+
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order") as mock_post:
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="sig-sell-zero",
+                side="sell",
+                quantity=2.0,
+                quantity_type="SHARES",
+                order_type="MARKET",
+                action="SELL",
+            )
+            mock_post.assert_not_called()
+
+        self.assertEqual(len(events), 1)
+        rej = events[0]
+        self.assertEqual(rej.event_type, "order_rejection")
+        self.assertEqual(rej.broker_submission_status, "sell_without_holdings")
+        self.assertFalse(rej.submitted_to_broker)
+        self.assertEqual(rej.metadata.get("reason"), "sell_without_holdings")
+        self.assertEqual(rej.metadata.get("requested_quantity"), 2.0)
+        self.assertEqual(rej.metadata.get("holding_quantity"), 0.0)
+        self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
+        self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+        self.assertEqual(algo.positions(), [])
+        self.assertEqual(algo._holding("2330.TW").Quantity, 0.0)
+
+        # Even if a legacy negative holding were present in memory, sell still rejects with sell_without_holdings
+        algo._holding("2330.TW").Quantity = -1.0
+        events.clear()
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order") as mock_post:
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="sig-sell-neg",
+                side="sell",
+                quantity=1.0,
+                quantity_type="SHARES",
+                order_type="MARKET",
+                action="SELL",
+            )
+            mock_post.assert_not_called()
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertEqual(events[0].broker_submission_status, "sell_without_holdings")
+        self.assertEqual(events[0].metadata.get("reason"), "sell_without_holdings")
+        self.assertEqual(events[0].metadata.get("requested_quantity"), 1.0)
+        self.assertEqual(events[0].metadata.get("holding_quantity"), -1.0)
+        self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
+        self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+
+    def test_sell_larger_than_holding_clamps_to_held_quantity_and_ends_at_zero(self):
+        events = []
+        algo = PaperExecutionAlgorithm(initial_cash=100_000.0, event_sink=events.append)
+        self._set_market_context(algo, 1000.0)
+
+        def fake_broker(_url, payload):
+            return {
+                "order_id": f"ord-{payload['client_order_id']}",
+                "status": "filled",
+                "fill_price": 1000.0,
+                "fill_qty": payload["qty"],
+                "filled_at": "2026-11-06T05:30:01Z",
+            }
+
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            side_effect=fake_broker,
+        ) as mock_post:
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="sig-buy-3",
+                side="buy",
+                quantity=3.0,
+                quantity_type="SHARES",
+                order_type="MARKET",
+                action="BUY",
+            )
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="sig-sell-5",
+                side="sell",
+                quantity=5.0,
+                quantity_type="SHARES",
+                order_type="MARKET",
+                action="SELL",
+            )
+
+        self.assertEqual(mock_post.call_count, 2)
+        second_payload = mock_post.call_args_list[1][0][1]
+        self.assertEqual(second_payload["qty"], 3.0)
+
+        self.assertEqual(len(events), 2)
+        sell_fill = events[1]
+        self.assertEqual(sell_fill.event_type, "paper_fill_simulated")
+        self.assertEqual(sell_fill.quantity, -3.0)
+        self.assertIs(sell_fill.metadata.get("paper_order_partial_clamped"), True)
+        self.assertEqual(sell_fill.metadata.get("requested_quantity"), 5.0)
+        self.assertEqual(sell_fill.metadata.get("clamped_quantity"), 3.0)
+        self.assertEqual(algo._holding("2330.TW").Quantity, 0.0)
+        self.assertEqual(algo.positions(), [])
+        self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
+
+    def test_tw_and_twse_aliases_resolve_to_one_underlying_holding(self):
+        events = []
+        algo = PaperExecutionAlgorithm(initial_cash=100_000.0, event_sink=events.append)
+        self._set_market_context(algo, 1000.0)
+
+        def fake_broker(_url, payload):
+            price = 1000.0 if payload["side"] == "buy" else 1010.0
+            return {
+                "order_id": f"ord-{payload['client_order_id']}",
+                "status": "filled",
+                "fill_price": price,
+                "fill_qty": payload["qty"],
+                "filled_at": "2026-11-06T05:30:01Z",
+            }
+
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            side_effect=fake_broker,
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="sig-buy-tw",
+                side="buy",
+                quantity=2.0,
+                quantity_type="SHARES",
+                order_type="MARKET",
+                action="BUY",
+            )
+            self._set_market_context(algo, 1010.0)
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TWSE",
+                signal_id="sig-sell-twse",
+                side="sell",
+                quantity=2.0,
+                quantity_type="SHARES",
+                order_type="MARKET",
+                action="SELL",
+            )
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TWSE",
+                signal_id="sig-sell-twse-again",
+                side="sell",
+                quantity=1.0,
+                quantity_type="SHARES",
+                order_type="MARKET",
+                action="SELL",
+            )
+
+        self.assertEqual([e.event_type for e in events], [
+            "paper_fill_simulated",
+            "paper_fill_simulated",
+            "order_rejection",
+        ])
+        self.assertEqual(events[2].metadata.get("reason"), "sell_without_holdings")
+        self.assertEqual(algo.positions(), [])
+        self.assertEqual(algo.performance_ledger()["cash"], 100_020.0)
+
+    def test_ledger_never_holds_negative_shares_across_any_buy_sell_sequence(self):
+        algo = PaperExecutionAlgorithm(initial_cash=500_000.0)
+        self._set_market_context(algo, 200.0)
+
+        def fake_broker(_url, payload):
+            return {
+                "order_id": f"ord-{payload['client_order_id']}",
+                "status": "filled",
+                "fill_price": 200.0,
+                "fill_qty": payload["qty"],
+                "filled_at": "2026-11-06T05:30:01Z",
+            }
+
+        sequence = [
+            ("2330.TW", "sell", 1.0),
+            ("2330.TWSE", "sell", 3.0),
+            ("2330.TW", "buy", 2.0),
+            ("2330.TWSE", "sell", 5.0),
+            ("2330.TW", "sell", 1.0),
+            ("2330.TWSE", "buy", 4.0),
+            ("2330.TW", "sell", 2.0),
+            ("2330.TWSE", "sell", 2.0),
+            ("2330.TW", "sell", 2.0),
+            ("2317.TW", "sell", 10.0),
+            ("2317.TW", "buy", 3.0),
+            ("2317.TW", "sell", 4.0),
+            ("2317.TW", "sell", 1.0),
+        ]
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            side_effect=fake_broker,
+        ):
+            for idx, (sym, side, qty) in enumerate(sequence, start=1):
+                algo.SubmitTaiwanBrokerOrder(
+                    sym,
+                    signal_id=f"seq-{idx}",
+                    side=side,
+                    quantity=qty,
+                    quantity_type="SHARES",
+                    order_type="MARKET",
+                    action=side.upper(),
+                )
+                for h_sym, holding in algo.Portfolio.items():
+                    self.assertGreaterEqual(
+                        holding.Quantity,
+                        0.0,
+                        f"Negative holding {holding.Quantity} on {h_sym} at step {idx}",
+                    )
+                for pos in algo.performance_ledger()["positions"]:
+                    self.assertGreater(
+                        pos["quantity"],
+                        0.0,
+                        f"Non-positive ledger position {pos} at step {idx}",
+                    )
 
 
 if __name__ == "__main__":

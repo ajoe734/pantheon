@@ -87,6 +87,8 @@ class HonestCanonicalOwnerDouble:
         telemetry_real_capital: bool = False,
         telemetry_real_order: bool = False,
         telemetry_broker_status: str = "filled",
+        telemetry_event_type: str = "paper_fill_simulated",
+        telemetry_rejection_reason: str | None = None,
         telemetry_correlation_override: str | None = None,
         telemetry_stripped_mode: bool = False,
         trade_episode_produced: bool = True,
@@ -128,6 +130,8 @@ class HonestCanonicalOwnerDouble:
         self.telemetry_real_capital = telemetry_real_capital
         self.telemetry_real_order = telemetry_real_order
         self.telemetry_broker_status = telemetry_broker_status
+        self.telemetry_event_type = telemetry_event_type
+        self.telemetry_rejection_reason = telemetry_rejection_reason
         self.telemetry_correlation_override = telemetry_correlation_override
         self.telemetry_stripped_mode = telemetry_stripped_mode
         self.trade_episode_produced = trade_episode_produced
@@ -687,7 +691,7 @@ class HonestCanonicalOwnerDouble:
             )
             ev = {
                 "event_id": event_id,
-                "event_type": "paper_fill_simulated",
+                "event_type": self.telemetry_event_type,
                 "binding_id": binding_id,
                 "artifact_id": artifact_id,
                 "runtime_id": runtime_id,
@@ -701,6 +705,10 @@ class HonestCanonicalOwnerDouble:
                     "correlation_envelope": {"correlation_id": correlation_id},
                 },
             }
+            if self.telemetry_rejection_reason is not None:
+                ev["metadata"]["reason"] = self.telemetry_rejection_reason
+                ev["metadata"]["requested_quantity"] = 1.0
+                ev["metadata"]["holding_quantity"] = 0.0
             self.created_events[event_id] = ev
             return HttpResponse(200, ev, {}, url, method)
 
@@ -1652,3 +1660,55 @@ def test_cli_auth_token_argument_propagation() -> None:
     auth_requests = [r for r in double.recorded_requests if r["url"].endswith("/bff/version")]
     assert len(auth_requests) >= 1
     assert auth_requests[0]["headers"]["Authorization"] == "Bearer custom-secret-key"
+
+
+def test_paper_lifecycle_accepts_sell_without_holdings_rejection_terminal() -> None:
+    """Verifies that order_rejection with reason=sell_without_holdings is accepted as a valid Loop 9 terminal."""
+    double = HonestCanonicalOwnerDouble(
+        telemetry_event_type="order_rejection",
+        telemetry_rejection_reason="sell_without_holdings",
+        telemetry_broker_status="sell_without_holdings",
+        trade_episode_produced=False,
+    )
+    config = _default_test_config(execute_paper_lifecycle=True)
+
+    def transport_factory() -> HonestCanonicalOwnerDouble:
+        fresh_double = HonestCanonicalOwnerDouble(
+            telemetry_event_type="order_rejection",
+            telemetry_rejection_reason="sell_without_holdings",
+            telemetry_broker_status="sell_without_holdings",
+            trade_episode_produced=False,
+        )
+        fresh_double.created_bindings = double.created_bindings
+        fresh_double.created_events = double.created_events
+        return fresh_double
+
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+    evidence = probe.run(fresh_transport_factory=transport_factory)
+
+    assert evidence["status"] == "passed"
+    loop9 = evidence["loops"]["loop_09_capital_artifact_execution"]
+    assert loop9["authority_readback"]["event_type"] == "order_rejection"
+    assert loop9["authority_readback"]["metadata"]["reason"] == "sell_without_holdings"
+    assert loop9["assertions"]["broker_submission_status"] == "sell_without_holdings"
+    assert loop9["durable_reload"]["verified"] is True
+    assert evidence["durable_fresh_client_reload"]["verified"] is True
+
+
+def test_paper_lifecycle_rejects_other_order_rejection_reasons() -> None:
+    """Verifies that order_rejection with any reason other than sell_without_holdings fails closed."""
+    double = HonestCanonicalOwnerDouble(
+        telemetry_event_type="order_rejection",
+        telemetry_rejection_reason="broker_error",
+        telemetry_broker_status="tw_broker_error",
+        trade_episode_produced=False,
+    )
+    config = _default_test_config(
+        execute_paper_lifecycle=True,
+        poll_timeout_seconds=0.1,
+    )
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(ProbeTimeoutError, match="Timed out waiting for telemetry fill event"):
+        probe.run()
+

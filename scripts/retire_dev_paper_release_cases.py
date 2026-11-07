@@ -55,6 +55,11 @@ _PROCESS_START = time.monotonic()
 CASE_RESERVE_FLOOR_SECONDS = 20.0
 # The watchdog prints evidence at most this long after the budget ends.
 WATCHDOG_MARGIN_SECONDS = 5.0
+# Wait between replay passes.  Real timing (runs 42345302114 / 42364851577): a
+# first pass that ends pending takes 24-45 s and the retiring saga settled
+# about 2 s after the step ended, so one short wait is enough; 5 s keeps replay
+# calls well under the 180 s budget (a replay of settled steps is GET-first).
+DEFAULT_POLL_SECONDS = 5.0
 # Set when the watchdog gave up on a still-running worker thread.
 _ABANDONED = False
 
@@ -184,7 +189,14 @@ def execute(
         [Callable[[], Any], float], tuple[bool, Any, BaseException | None]
     ] = _call_with_timeout,
     progress: dict[str, Any] | None = None,
+    poll_seconds: float | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
+    """Retire the planned cases, then replay the ones that answered pending.
+
+    ``poll_seconds`` is the wait between replay passes; ``None`` disables the
+    replay (single pass).  The CLI always passes a value.
+    """
     started = monotonic() if started_at is None else started_at
     deadline = started + timeout_seconds
     progress = {} if progress is None else progress
@@ -214,6 +226,7 @@ def execute(
         "errors": {},
         "results": {},
         "duration_seconds": {},
+        "attempts": {},
         "budget_seconds": timeout_seconds,
         "case_reserve_floor_seconds": CASE_RESERVE_FLOOR_SECONDS,
         "deadline_reached": False,
@@ -233,7 +246,41 @@ def execute(
 
     results: dict[str, str] = result["results"]
     durations: dict[str, float] = result["duration_seconds"]
+    attempts: dict[str, int] = result["attempts"]
     slowest = 0.0
+
+    def attempt(key: str, remaining: float) -> None:
+        """One retire_case call for ``key``; records result, errors, timing."""
+        nonlocal slowest
+        case = by_key[key]
+        progress["in_flight"] = key
+        attempts[key] = attempts.get(key, 0) + 1
+        begun = monotonic()
+        finished, summary, exc = call_with_timeout(
+            lambda case=case, key=key: retire_case(
+                str(case.tenant_id), str(case.persona_id), reason=retire_reason(key)
+            ),
+            remaining,
+        )
+        progress["in_flight"] = ""
+        took = monotonic() - begun
+        durations[key] = round(durations.get(key, 0.0) + took, 3)
+        slowest = max(slowest, round(took, 3))
+        if not finished:
+            # Still running at the budget: report pending and leave it to the
+            # checkpointed, GET-first coordinator to finish on a later run.
+            results[key] = CASE_PENDING
+            errors[key] = "deadline: retire_case still running at budget end"
+            result["deadline_reached"] = True
+            return
+        if isinstance(exc, RetireCaseUnavailable):
+            raise exc
+        if exc is not None:
+            errors[key] = f"{exc.__class__.__name__}: {exc}"
+            results[key] = "error"
+            return
+        results[key] = _summarize(summary)
+
     for key in decision["retire"]:
         remaining = deadline - monotonic()
         if remaining <= 0:
@@ -243,32 +290,31 @@ def execute(
         ):
             results[key] = CASE_NOT_ATTEMPTED
             continue
-        case = by_key[key]
-        progress["in_flight"] = key
-        begun = monotonic()
-        finished, summary, exc = call_with_timeout(
-            lambda case=case, key=key: retire_case(
-                str(case.tenant_id), str(case.persona_id), reason=retire_reason(key)
-            ),
-            remaining,
-        )
-        progress["in_flight"] = ""
-        durations[key] = round(monotonic() - begun, 3)
-        slowest = max(slowest, durations[key])
-        if not finished:
-            # Still running at the budget: report pending and leave it to the
-            # checkpointed, GET-first coordinator to finish on a later run.
-            results[key] = CASE_PENDING
-            errors[key] = "deadline: retire_case still running at budget end"
-            result["deadline_reached"] = True
-            continue
-        if isinstance(exc, RetireCaseUnavailable):
-            raise exc
-        if exc is not None:
-            errors[key] = f"{exc.__class__.__name__}: {exc}"
-            results[key] = "error"
-            continue
-        results[key] = _summarize(summary)
+        attempt(key, remaining)
+
+    # Bounded replay of the idempotent retire_case for cases that answered
+    # pending (e.g. the deployment saga was still retiring).  Only cases from
+    # the first pass that ended pending without an error are replayed.
+    pending = [
+        k
+        for k in decision["retire"]
+        if results.get(k) == CASE_PENDING and k not in errors
+    ]
+    while poll_seconds is not None and pending and not result["deadline_reached"]:
+        # Never sleep past the budget: the watchdog prints at budget + margin.
+        sleep(min(max(poll_seconds, 0.0), max(deadline - monotonic(), 0.0)))
+        for key in pending:
+            remaining = deadline - monotonic()
+            if remaining <= 0 or remaining < max(CASE_RESERVE_FLOOR_SECONDS, slowest):
+                # Budget ended: the case stays pending exactly as today.
+                result["deadline_reached"] = True
+                break
+            attempt(key, remaining)
+            if result["deadline_reached"]:
+                break
+        pending = [
+            k for k in pending if results.get(k) == CASE_PENDING and k not in errors
+        ]
     unsettled = [k for k, v in results.items() if v != CASE_RETIRED]
     result["status"] = "retired" if not unsettled and not errors else "partial"
     return result
@@ -293,6 +339,7 @@ def _deadline_evidence(
         "errors": {"deadline": f"budget ended during {stage}; no case was started"},
         "results": {},
         "duration_seconds": {},
+        "attempts": {},
         "budget_seconds": budget,
         "case_reserve_floor_seconds": CASE_RESERVE_FLOOR_SECONDS,
         "deadline_reached": True,
@@ -315,10 +362,10 @@ def _watchdog_evidence(args: argparse.Namespace, progress: Mapping[str, Any]) ->
     result = json.loads(json.dumps(live, default=str))
     results = result.setdefault("results", {})
     in_flight = str(progress.get("in_flight") or "")
-    if in_flight and in_flight not in results:
+    if in_flight:
         results[in_flight] = CASE_PENDING
-        result.setdefault("errors", {})[in_flight] = (
-            "deadline: retire_case still running at budget end"
+        result.setdefault("errors", {}).setdefault(
+            in_flight, "deadline: retire_case still running at budget end"
         )
     for key in result.get("retire", []):
         results.setdefault(key, CASE_NOT_ATTEMPTED)
@@ -359,7 +406,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
     parser.add_argument(
-        "--poll-seconds", type=float, default=3.0, help="accepted for compatibility"
+        "--poll-seconds",
+        type=float,
+        default=DEFAULT_POLL_SECONDS,
+        help="wait between replay passes of retire_case for cases still pending",
     )
     args = parser.parse_args(argv)
     if args.new_case_key and not args.new_case_key.startswith(CASE_KEY_PREFIX):
@@ -368,6 +418,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--new-case-key is required to retire on a compensated release")
     if not 0 < args.timeout_seconds <= 600:
         parser.error("--timeout-seconds must be in (0, 600]")
+    if args.poll_seconds < 0:
+        parser.error("--poll-seconds must be >= 0")
     return args
 
 
@@ -385,6 +437,7 @@ def _run(args: argparse.Namespace, box: dict[str, Any], progress: dict[str, Any]
             timeout_seconds=args.timeout_seconds,
             started_at=_PROCESS_START,
             progress=progress,
+            poll_seconds=args.poll_seconds,
         )
     except RetireCaseUnavailable as exc:
         box["result"] = {

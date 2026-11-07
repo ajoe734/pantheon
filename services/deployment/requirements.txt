@@ -4,3 +4,4 @@ httpx
 pydantic
 jsonschema>=4.0,<5.0
 asyncpg
+cryptography

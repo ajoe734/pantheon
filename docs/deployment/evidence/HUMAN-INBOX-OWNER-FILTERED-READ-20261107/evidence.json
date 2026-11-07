@@ -1,0 +1,155 @@
+{
+  "task": "HUMAN-INBOX-OWNER-FILTERED-READ-20261107",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used and no workflow was dispatched. Functional evidence only; hosted verification belongs to HUMAN-INBOX-OWNER-FILTERED-READ-ACCEPTANCE-20261107. No hosted latency is claimed.",
+  "changes": {
+    "governance_owner": {
+      "services/governance/pg_store.py": "PostgresApprovalDecisionStore.list_all accepts optional keyword filters (tenant_id, decision_states, decision_ids, target_type, target_id, risk_level) and pushes them into SQL via PostgresJsonOwnerStore.list_all_selected before constructing any ApprovalDecision object.",
+      "services/control-plane/governance/approval_decision.py": "ApprovalDecisionStore.list_all accepts the same optional keyword filters so the JSON/in-memory store applies identical filtering.",
+      "services/governance/main.py": "GET /api/governance/approvals accepts comma-separated decision_state and decision_id query parameters and delegates filtering to store.list_all before serializing decisions.",
+      "services/governance/test_governance_api.py": "test_list_filter_by_multiple_pending_states_and_decision_ids_in_postgres_and_json_store imports ApprovalDecision and ApprovalDecisionStore via canonical package path services.governance.pg_store so root conftest transient-module cleanup across full-directory pytest collection never raises ModuleNotFoundError."
+    },
+    "evolution_owner": {
+      "services/control-plane/governance/evolution_decision.py": "EvolutionDecisionStore.list_all accepts optional keyword filters (tenant_id, target_id, target_type, decision_states, risk_level, active_only) and filters inside _select (and via list_all_selected on _postgres_store when backed by Postgres) before _copy_for_caller is called.",
+      "services/evolution/main.py": "GET /api/evolution/proposals parses comma-separated decision_state values and delegates filtering to store.list_all before _decision_to_response serialization."
+    },
+    "bff": {
+      "services/control-plane/bff/governance/approval_owner.py": "Added OWNER_PENDING_DECISION_STATES = ('proposed', 'under_review'), map_owner_decision_states, and optional owner_decision_states / decision_ids parameters on list_decisions, forwarding ?decision_state=... and ?decision_id=... to GET /api/governance/approvals while preserving the BFF state/outcome/id filter as a second guard.",
+      "services/control-plane/bff/core/owner_reads.py": "Added pending_approval_records(), approval_records_by_ids(decision_ids), and decidable_evolution_records() (/api/evolution/proposals?decision_state=reviewed,under_review,in_review) while leaving approval_records() unchanged for non-inbox callers.",
+      "services/control-plane/bff/ports/ooda_management.py": "ManagementReviewQueuePort gained read_pending_approval_decisions, read_approval_decisions_by_id, read_decidable_evolution_decisions, pending_only on list_approval_queue_items, and decidable_only on list_governance_review_queue_items (resolving terminal approval decisions linked to reviewable deployment plans in a single bounded read_approval_decisions_by_id call per inbox read).",
+      "services/control-plane/bff/ports/read_surface_ports.py": "Wired pending_approval_records, approval_records_by_ids, and decidable_evolution_records into create_read_surface_ports and routed approval_queue_items / governance_review_queue_items dataset_source checks through approval_decisions_dataset_source.",
+      "services/control-plane/bff/governance/human_inbox.py": "Added read_pending_approval_queue_items and read_decidable_governance_review_queue_items.",
+      "services/control-plane/bff/management_read_models/service.py": "Updated get_human_inbox prewarm and _human_inbox_contributor_readers to use read_pending_approval_decisions, read_decidable_evolution_decisions, read_pending_approval_queue_items, and read_decidable_governance_review_queue_items, and removed unfiltered list_evolution_decisions from the raw_store prewarm list."
+    }
+  },
+  "scale_benchmark_functional": {
+    "dataset_shape": {
+      "approval_decisions_total": 575,
+      "approval_decisions_by_state": {
+        "decided": 572,
+        "revoked": 3
+      },
+      "approval_decisions_by_target_type": {
+        "registry_entry": 568,
+        "persona_lifecycle_transition": 2,
+        "evolution_proposal": 1,
+        "evolution_execute": 1,
+        "strategy_workshop": 1,
+        "capital_pool_activation": 1,
+        "capital_binding_activation": 1
+      },
+      "evolution_decisions_total": 446,
+      "evolution_decisions_by_state": {
+        "proposed": 443,
+        "approved": 1,
+        "executed": 1,
+        "canceled": 1
+      },
+      "evolution_decisions_by_target_type": {
+        "candidate_artifact": 446
+      }
+    },
+    "zero_decidable_items_case": {
+      "old_unfiltered_path": {
+        "owner_call_count": 4,
+        "total_response_bytes": 624479,
+        "local_harness_elapsed_ms": 46.65,
+        "requests": [
+          {
+            "full_path": "/api/governance/approvals",
+            "row_count": 575,
+            "response_bytes": 388095
+          },
+          {
+            "full_path": "/api/deployment/plans",
+            "row_count": 0,
+            "response_bytes": 2
+          },
+          {
+            "full_path": "/api/evolution/proposals",
+            "row_count": 446,
+            "response_bytes": 236380
+          },
+          {
+            "full_path": "/api/incidents?open_only=true",
+            "row_count": 0,
+            "response_bytes": 2
+          }
+        ]
+      },
+      "new_filtered_path": {
+        "owner_call_count": 4,
+        "total_response_bytes": 8,
+        "local_harness_elapsed_ms": 21.86,
+        "requests": [
+          {
+            "full_path": "/api/governance/approvals?decision_state=proposed,under_review",
+            "row_count": 0,
+            "response_bytes": 2
+          },
+          {
+            "full_path": "/api/evolution/proposals?decision_state=reviewed,under_review,in_review",
+            "row_count": 0,
+            "response_bytes": 2
+          },
+          {
+            "full_path": "/api/deployment/plans",
+            "row_count": 0,
+            "response_bytes": 2
+          },
+          {
+            "full_path": "/api/incidents?open_only=true",
+            "row_count": 0,
+            "response_bytes": 2
+          }
+        ]
+      }
+    },
+    "with_pending_rows_and_two_reviewable_plans_linked_to_terminal_approvals": {
+      "new_filtered_path": {
+        "governance_owner_calls": [
+          {
+            "full_path": "/api/governance/approvals?decision_state=proposed,under_review",
+            "row_count": 1
+          },
+          {
+            "full_path": "/api/governance/approvals?decision_id=apv-hosted-0000,apv-hosted-0001",
+            "row_count": 2
+          }
+        ],
+        "evolution_owner_calls": [
+          {
+            "full_path": "/api/evolution/proposals?decision_state=reviewed,under_review,in_review",
+            "row_count": 1
+          }
+        ],
+        "parity_with_legacy": "filtered_body['data']['items'] == legacy_body['data']['items'] and filtered_body['data']['summary'] == legacy_body['data']['summary']"
+      }
+    }
+  },
+  "invariants_preserved": {
+    "surface_timeout_seconds": 1.0,
+    "route_timeout_seconds": 2.5,
+    "cross_request_cache_or_ttl_added": false,
+    "existing_tests_weakened_or_deleted": false
+  },
+  "verification_commands": [
+    {
+      "cmd": "GOV_APPROVAL_TEST_DSN=postgresql://postgres:t@127.0.0.1:55432/gov_approval_test .venv-pantheon/bin/python3 -m pytest -q services/governance",
+      "result": "535 passed, 3 skipped"
+    },
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest services/evolution/test_evolution_service.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_governance_latency.py services/control-plane/bff/tests/test_ooda_management_ports.py -q",
+      "result": "186 passed"
+    },
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest --noconftest services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py services/control-plane/bff/tests/test_bff_test_architecture.py -q",
+      "result": "91 passed"
+    },
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_management_cockpit.py -q",
+      "result": "33 passed"
+    }
+  ]
+}

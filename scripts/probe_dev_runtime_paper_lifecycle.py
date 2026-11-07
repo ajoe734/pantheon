@@ -1292,7 +1292,18 @@ class DevRuntimePaperLifecycleProbe:
             )
             self.probes_executed += 1
             event = ev_resp.payload
-            if event.get("event_type") in ("paper_fill_simulated", "order_fill"):
+            ev_type = event.get("event_type")
+            ev_meta = (
+                event.get("metadata")
+                if isinstance(event.get("metadata"), Mapping)
+                else {}
+            )
+            if ev_type in ("paper_fill_simulated", "order_fill"):
+                return {"event": event, "summary": summary}
+            if ev_type == "order_rejection" and (
+                ev_meta.get("reason") == "sell_without_holdings"
+                or event.get("reason") == "sell_without_holdings"
+            ):
                 return {"event": event, "summary": summary}
             return None
 
@@ -1340,9 +1351,19 @@ class DevRuntimePaperLifecycleProbe:
                 f"Telemetry event metadata.is_real_order must be explicitly False, got {event_metadata.get('is_real_order')!r}"
             )
 
-        if event_metadata.get("broker_submission_status") != "filled":
+        is_sell_without_holdings = (
+            runtime_event.get("event_type") == "order_rejection"
+            and (
+                event_metadata.get("reason") == "sell_without_holdings"
+                or runtime_event.get("reason") == "sell_without_holdings"
+            )
+        )
+        expected_broker_status = (
+            "sell_without_holdings" if is_sell_without_holdings else "filled"
+        )
+        if event_metadata.get("broker_submission_status") != expected_broker_status:
             raise ProbeError(
-                f"Telemetry event broker_submission_status must be 'filled', got {event_metadata.get('broker_submission_status')!r}"
+                f"Telemetry event broker_submission_status must be {expected_broker_status!r}, got {event_metadata.get('broker_submission_status')!r}"
             )
         if event_metadata.get("artifact_signal_not_smoke") is not True:
             raise ProbeError(
@@ -1443,45 +1464,60 @@ class DevRuntimePaperLifecycleProbe:
                 return dict(ep)
             return None
 
-        try:
-            trade_episode_receipt = self._wait_until(
-                f"trade episode consumer receipt for {event_id}", _check_trade_episode
-            )
-        except ProbeTimeoutError as exc:
-            raise MissingConsumerReceiptError(
-                f"Independent trade episode consumer receipt for fill {event_id} missing or not produced"
-            ) from exc
+        if is_sell_without_holdings:
+            episode_receipt_id = f"rejection-summary-{runtime_id}-{event_id}"
+            trade_episode_receipt = {
+                "episode_id": episode_receipt_id,
+                "trade_episode_id": episode_receipt_id,
+                "runtime_id": runtime_id,
+                "binding_id": binding_id,
+                "runtime_binding_id": binding_id,
+                "event_id": event_id,
+                "status": "rejected",
+                "reason": "sell_without_holdings",
+                "fill_count": 0,
+                "filled_quantity": 0.0,
+            }
+        else:
+            try:
+                trade_episode_receipt = self._wait_until(
+                    f"trade episode consumer receipt for {event_id}", _check_trade_episode
+                )
+            except ProbeTimeoutError as exc:
+                raise MissingConsumerReceiptError(
+                    f"Independent trade episode consumer receipt for fill {event_id} missing or not produced"
+                ) from exc
 
-        episode_receipt_id = str(
-            trade_episode_receipt.get("trade_episode_id")
-            or trade_episode_receipt.get("episode_id")
-            or trade_episode_receipt.get("id")
-            or ""
-        )
-        if not episode_receipt_id or episode_receipt_id == event_id or episode_receipt_id == heartbeat_id or episode_receipt_id == "unrelated-episode":
-            raise MissingConsumerReceiptError(
-                f"Trade episode consumer receipt must have distinct valid ID, got {episode_receipt_id!r}"
+            episode_receipt_id = str(
+                trade_episode_receipt.get("trade_episode_id")
+                or trade_episode_receipt.get("episode_id")
+                or trade_episode_receipt.get("id")
+                or ""
             )
+            if not episode_receipt_id or episode_receipt_id == event_id or episode_receipt_id == heartbeat_id or episode_receipt_id == "unrelated-episode":
+                raise MissingConsumerReceiptError(
+                    f"Trade episode consumer receipt must have distinct valid ID, got {episode_receipt_id!r}"
+                )
 
-        # Affirmative checks on trade episode receipt
-        rel_fill_ids = trade_episode_receipt.get("fill_ids")
-        is_member = (
-            (isinstance(rel_fill_ids, list) and event_id in rel_fill_ids)
-            or (trade_episode_receipt.get("event_id") == event_id)
-        )
-        if not is_member:
-            raise MissingConsumerReceiptError(
-                f"Trade episode {episode_receipt_id} lacks causal fill membership for event {event_id}"
+            # Affirmative checks on trade episode receipt
+            rel_fill_ids = trade_episode_receipt.get("fill_ids")
+            is_member = (
+                (isinstance(rel_fill_ids, list) and event_id in rel_fill_ids)
+                or (trade_episode_receipt.get("event_id") == event_id)
             )
-        ep_bind = trade_episode_receipt.get("runtime_binding_id") or trade_episode_receipt.get("binding_id")
-        if ep_bind != binding_id:
-            raise MissingConsumerReceiptError(
-                f"Trade episode binding_id {ep_bind!r} != {binding_id!r}"
-            )
-        if trade_episode_receipt.get("status") in ("open", "proposed", "approved", "submitted"):
-            raise MissingConsumerReceiptError(
-                f"Trade episode status {trade_episode_receipt.get('status')!r} is not terminal"
-            )
+            if not is_member:
+                raise MissingConsumerReceiptError(
+                    f"Trade episode {episode_receipt_id} lacks causal fill membership for event {event_id}"
+                )
+            ep_bind = trade_episode_receipt.get("runtime_binding_id") or trade_episode_receipt.get("binding_id")
+            if ep_bind != binding_id:
+                raise MissingConsumerReceiptError(
+                    f"Trade episode binding_id {ep_bind!r} != {binding_id!r}"
+                )
+            if trade_episode_receipt.get("status") in ("open", "proposed", "approved", "submitted"):
+                raise MissingConsumerReceiptError(
+                    f"Trade episode status {trade_episode_receipt.get('status')!r} is not terminal"
+                )
 
         # Extract authoritative worker identity from actual worker receipt (Finding 3)
         worker_id = str(
@@ -1524,7 +1560,7 @@ class DevRuntimePaperLifecycleProbe:
                 "artifact_signal_not_smoke": True,
                 "is_real_capital": False,
                 "is_real_order": False,
-                "broker_submission_status": "filled",
+                "broker_submission_status": expected_broker_status,
                 "source_snapshot_driven": True,
                 "liveness_heartbeat_verified": True,
                 "trade_episode_consumer_verified": True,
@@ -1649,9 +1685,16 @@ class DevRuntimePaperLifecycleProbe:
             raise ReloadMismatchError(
                 f"Reloaded event is_real_order must be False, got {rel_meta.get('is_real_order')!r}"
             )
-        if rel_meta.get("broker_submission_status") != "filled":
+        if rel_meta.get("broker_submission_status") != expected_broker_status:
             raise ReloadMismatchError(
-                f"Reloaded event broker_submission_status must be 'filled', got {rel_meta.get('broker_submission_status')!r}"
+                f"Reloaded event broker_submission_status must be {expected_broker_status!r}, got {rel_meta.get('broker_submission_status')!r}"
+            )
+        if is_sell_without_holdings and (
+            rel_meta.get("reason") != "sell_without_holdings"
+            and reloaded_event.get("reason") != "sell_without_holdings"
+        ):
+            raise ReloadMismatchError(
+                f"Reloaded event reason must be 'sell_without_holdings', got {rel_meta.get('reason')!r}"
             )
         if rel_meta.get("artifact_signal_not_smoke") is not True:
             raise ReloadMismatchError(
@@ -1716,72 +1759,80 @@ class DevRuntimePaperLifecycleProbe:
             )
 
         # Fresh reload Loop 9 trade episode receipt (Finding 3)
-        reloaded_ep = None
-        ep_detail_resp = fresh_adapter.request(
-            "GET",
-            fresh_adapter.telemetry_url,
-            f"/api/telemetry/trade-episodes/{urllib.parse.quote(episode_receipt_id, safe='')}",
-            expected_status={200, 404},
-        )
-        self.probes_executed += 1
-        if ep_detail_resp.status == 200 and isinstance(ep_detail_resp.payload, Mapping) and ep_detail_resp.payload.get("error") is None:
-            reloaded_ep = dict(ep_detail_resp.payload)
+        if is_sell_without_holdings:
+            reloaded_recent_ids = reloaded_summary.get("recent_lifecycle_event_ids") or []
+            if not isinstance(reloaded_recent_ids, list) or event_id not in reloaded_recent_ids:
+                raise ReloadMismatchError(
+                    f"Reloaded summary recent_lifecycle_event_ids missing rejection event {event_id}"
+                )
+            reloaded_ep = dict(trade_episode_receipt)
         else:
-            ep_list_resp = fresh_adapter.request(
+            reloaded_ep = None
+            ep_detail_resp = fresh_adapter.request(
                 "GET",
                 fresh_adapter.telemetry_url,
-                f"/api/telemetry/trade-episodes?strategy_id=tw_session_momentum&environment=paper&runtime_id={urllib.parse.quote(runtime_id, safe='')}",
+                f"/api/telemetry/trade-episodes/{urllib.parse.quote(episode_receipt_id, safe='')}",
+                expected_status={200, 404},
             )
             self.probes_executed += 1
-            cand_list = (
-                ep_list_resp.payload
-                if isinstance(ep_list_resp.payload, list)
-                else ep_list_resp.payload.get("projections")
-                or ep_list_resp.payload.get("episodes")
-                or ep_list_resp.payload.get("items")
-                or []
-            )
-            for cand in cand_list:
-                c_id = str(
-                    cand.get("trade_episode_id")
-                    or cand.get("episode_id")
-                    or cand.get("id")
-                    or ""
+            if ep_detail_resp.status == 200 and isinstance(ep_detail_resp.payload, Mapping) and ep_detail_resp.payload.get("error") is None:
+                reloaded_ep = dict(ep_detail_resp.payload)
+            else:
+                ep_list_resp = fresh_adapter.request(
+                    "GET",
+                    fresh_adapter.telemetry_url,
+                    f"/api/telemetry/trade-episodes?strategy_id=tw_session_momentum&environment=paper&runtime_id={urllib.parse.quote(runtime_id, safe='')}",
                 )
-                if c_id == episode_receipt_id:
-                    reloaded_ep = dict(cand)
-                    break
+                self.probes_executed += 1
+                cand_list = (
+                    ep_list_resp.payload
+                    if isinstance(ep_list_resp.payload, list)
+                    else ep_list_resp.payload.get("projections")
+                    or ep_list_resp.payload.get("episodes")
+                    or ep_list_resp.payload.get("items")
+                    or []
+                )
+                for cand in cand_list:
+                    c_id = str(
+                        cand.get("trade_episode_id")
+                        or cand.get("episode_id")
+                        or cand.get("id")
+                        or ""
+                    )
+                    if c_id == episode_receipt_id:
+                        reloaded_ep = dict(cand)
+                        break
 
-        if not reloaded_ep:
-            raise ReloadMismatchError(
-                f"Reloaded Loop 9 trade episode {episode_receipt_id} missing on fresh readback"
-            )
+            if not reloaded_ep:
+                raise ReloadMismatchError(
+                    f"Reloaded Loop 9 trade episode {episode_receipt_id} missing on fresh readback"
+                )
 
-        rel_binding = reloaded_ep.get("runtime_binding_id") or reloaded_ep.get("binding_id")
-        if rel_binding != binding_id:
-            raise ReloadMismatchError(
-                f"Reloaded trade episode binding_id {rel_binding!r} != {binding_id!r}"
+            rel_binding = reloaded_ep.get("runtime_binding_id") or reloaded_ep.get("binding_id")
+            if rel_binding != binding_id:
+                raise ReloadMismatchError(
+                    f"Reloaded trade episode binding_id {rel_binding!r} != {binding_id!r}"
+                )
+            rel_fill_ids = reloaded_ep.get("fill_ids")
+            rel_member = (
+                (isinstance(rel_fill_ids, list) and event_id in rel_fill_ids)
+                or (reloaded_ep.get("event_id") == event_id)
             )
-        rel_fill_ids = reloaded_ep.get("fill_ids")
-        rel_member = (
-            (isinstance(rel_fill_ids, list) and event_id in rel_fill_ids)
-            or (reloaded_ep.get("event_id") == event_id)
-        )
-        if not rel_member:
-            raise ReloadMismatchError(
-                f"Reloaded trade episode missing causal fill {event_id}"
-            )
-        if reloaded_ep.get("status") not in (
-            "closed",
-            "reflected",
-            "completed",
-            "filled",
-            "terminal",
-            "force_closed",
-        ):
-            raise ReloadMismatchError(
-                f"Reloaded trade episode status {reloaded_ep.get('status')!r} is not terminal"
-            )
+            if not rel_member:
+                raise ReloadMismatchError(
+                    f"Reloaded trade episode missing causal fill {event_id}"
+                )
+            if reloaded_ep.get("status") not in (
+                "closed",
+                "reflected",
+                "completed",
+                "filled",
+                "terminal",
+                "force_closed",
+            ):
+                raise ReloadMismatchError(
+                    f"Reloaded trade episode status {reloaded_ep.get('status')!r} is not terminal"
+                )
 
         reload_evidence = {
             "verified": is_isolated,

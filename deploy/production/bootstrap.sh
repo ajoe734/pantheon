@@ -67,19 +67,22 @@ for f in "$PROD_SECRETS_ENV_FILE" "$PROD_POSTGRES_PASSWORD_FILE"; do
   [[ "$mode" =~ ^(400|600)$ ]] || fail SECRET_MODE "${f} must be mode 0400/0600"
 done
 
-run_priv python3 - "$PROD_SECRETS_ENV_FILE" "$PROD_POSTGRES_PASSWORD_FILE" "${PROD_REQUIRE_FULL_SECRET_KEYS:-false}" "${PROD_POSTGRES_DB:-pantheon_production}" <<'PY' \
+run_priv python3 - "$PROD_SECRETS_ENV_FILE" "$PROD_POSTGRES_PASSWORD_FILE" "${PROD_REQUIRE_FULL_SECRET_KEYS:-false}" "${PROD_POSTGRES_DB:-pantheon_production}" "${PROD_PUBLIC_GCP_IDENTITY_AUDIENCE:-${PROD_PUBLIC_GCP_IDENTITY_PROJECT_ID:-}}" <<'PY' \
   || fail SECRET_CONTENT_INVALID "production secrets failed safety or required-key validation"
-import sys
+import os, sys, tempfile
 from pathlib import Path
 
-env_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+env_path = Path(sys.argv[1])
+env_text = env_path.read_text(encoding="utf-8")
 pw_text = Path(sys.argv[2]).read_text(encoding="utf-8").strip()
 require_full = sys.argv[3].lower() == "true"
+public_oidc_aud = sys.argv[5].strip() if len(sys.argv) > 5 else ""
 if not pw_text:
     raise SystemExit("empty postgres password")
 
+lines = env_text.splitlines()
 kv = {}
-for raw in env_text.splitlines():
+for raw in lines:
     line = raw.strip()
     if not line or line.startswith("#") or "=" not in line:
         continue
@@ -153,6 +156,47 @@ if require_full:
                 raise SystemExit(f"{dsn_key} must not carry routing override parameters: {sorted(bad)}")
         if not kv[dsn_key].startswith(("postgresql://", "postgres://")) or dsn_base.rstrip("/").rsplit("/", 1)[-1] != pg_db:
             raise SystemExit(f"{dsn_key} must be a postgres DSN for isolated production db {pg_db}")
+
+added = []
+for suffix, default_val in (
+    ("OIDC_AUDIENCE", public_oidc_aud),
+    ("JWKS_URI", ""),
+    ("ROLE_CLAIMS", ""),
+    ("ROLE_MAP", ""),
+    ("ROLE_MAP_MODE", ""),
+    ("REQUIRE_EMAIL_VERIFIED", ""),
+):
+    shared_val = (
+        kv.get(f"PANTHEON_BFF_{suffix}")
+        or kv.get(f"PANTHEON_RUNTIME_{suffix}")
+        or default_val
+    )
+    if not shared_val:
+        continue
+    for prefix in ("PANTHEON_BFF", "PANTHEON_RUNTIME", "PANTHEON_TELEMETRY", "POLICY_LEARNING"):
+        if prefix == "POLICY_LEARNING" and suffix == "REQUIRE_EMAIL_VERIFIED":
+            continue
+        target_key = f"{prefix}_{suffix}"
+        if not kv.get(target_key):
+            added.append(f"{target_key}={shared_val}")
+            kv[target_key] = shared_val
+
+if added:
+    st = env_path.stat()
+    fd, tmp = tempfile.mkstemp(dir=str(env_path.parent), prefix=".prod-oidc.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines + added) + "\n")
+        os.chmod(tmp, st.st_mode & 0o7777)
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except PermissionError:
+            pass
+        os.replace(tmp, env_path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 PY
 
 [[ "$PROD_FE_HOST" != "$PROD_BFF_HOST" ]] || fail HOST_COLLISION "FE and BFF hosts must differ"

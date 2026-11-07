@@ -114,7 +114,16 @@
       "type": "object",
       "minProperties": 1,
       "propertyNames": {
-        "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+        "allOf": [
+          {
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+          },
+          {
+            "not": {
+              "pattern": "^prefer_.*_when_.*$"
+            }
+          }
+        ]
       },
       "additionalProperties": {
         "anyOf": [
@@ -158,7 +167,24 @@
                 "properties": {
                   "parameter_key": {
                     "type": "string",
-                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+                    "not": {
+                      "anyOf": [
+                        {
+                          "pattern": "^prefer_.*_when_.*$"
+                        },
+                        {
+                          "enum": [
+                            "max_leverage",
+                            "gross_limit",
+                            "net_limit",
+                            "allowed_asset_classes",
+                            "allow_pyramiding",
+                            "close_before_reverse"
+                          ]
+                        }
+                      ]
+                    }
                   },
                   "value_type": {"const": "integer"},
                   "current_value": {"type": "integer"},
@@ -187,7 +213,24 @@
                 "properties": {
                   "parameter_key": {
                     "type": "string",
-                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+                    "not": {
+                      "anyOf": [
+                        {
+                          "pattern": "^prefer_.*_when_.*$"
+                        },
+                        {
+                          "enum": [
+                            "max_leverage",
+                            "gross_limit",
+                            "net_limit",
+                            "allowed_asset_classes",
+                            "allow_pyramiding",
+                            "close_before_reverse"
+                          ]
+                        }
+                      ]
+                    }
                   },
                   "value_type": {"const": "number"},
                   "current_value": {"type": "number"},
@@ -279,6 +322,57 @@
         "observed_at": {"type": "string", "format": "date-time"},
         "evidence_ref": {"type": "string", "minLength": 1},
         "replacement_task_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "expression_policy": {
+      "description": "Deterministic per-persona instrument expression policy for paper/live execution.",
+      "type": "object",
+      "required": [
+        "version",
+        "kind",
+        "parameters"
+      ],
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "notional_target_v1"
+        },
+        "parameters": {
+          "type": "object",
+          "required": [
+            "lever_min_strength",
+            "notional_fraction_at_full_strength",
+            "allow_pyramiding",
+            "close_before_reverse"
+          ],
+          "propertyNames": {
+            "not": {
+              "pattern": "^prefer_.*_when_.*$"
+            }
+          },
+          "properties": {
+            "lever_min_strength": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0
+            },
+            "notional_fraction_at_full_strength": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "allow_pyramiding": {
+              "type": "boolean"
+            },
+            "close_before_reverse": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

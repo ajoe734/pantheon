@@ -343,6 +343,82 @@ class TestManagementReviewQueuePort:
         assert item["decision_context"]["required_approvals"] == 1
         assert item["decision_context"]["governance_chain"]["target_id"] == "strat-42"
 
+    def test_decidable_only_and_pending_only_use_filtered_readers_and_bounded_plan_decision_lookup(self):
+        full_approval_calls = 0
+        full_evo_calls = 0
+        by_id_batches = []
+
+        def _full_approvals():
+            nonlocal full_approval_calls
+            full_approval_calls += 1
+            return []
+
+        def _full_evo():
+            nonlocal full_evo_calls
+            full_evo_calls += 1
+            return []
+
+        def _by_id(ids):
+            by_id_batches.append(tuple(ids))
+            return [
+                {
+                    "decision_id": "dec-terminal-plan",
+                    "risk_level": "medium",
+                    "outcome": "approved",
+                    "state": "decided",
+                    "decision_state": "decided",
+                    "decided_at": "2026-11-01T00:00:00Z",
+                    "reviewer": "claude",
+                }
+            ]
+
+        port = ManagementReviewQueuePort(
+            deployment_plans_reader=lambda: [
+                {
+                    "plan_id": "plan-terminal-linked",
+                    "status": "pending_review",
+                    "target_stage": "paper",
+                    "approval_decision_id": "dec-terminal-plan",
+                }
+            ],
+            approval_decisions_reader=_full_approvals,
+            evolution_decisions_reader=_full_evo,
+            pending_approval_decisions_reader=lambda: [
+                {
+                    "decision_id": "dec-pending-only",
+                    "decision_state": "under_review",
+                    "state": "under_review",
+                    "target_type": "registry_entry",
+                    "risk_level": "high",
+                }
+            ],
+            approval_decisions_by_id_reader=_by_id,
+            decidable_evolution_decisions_reader=lambda: [
+                {
+                    "decision_id": "evo-decidable-only",
+                    "status": "under_review",
+                    "decision_state": "under_review",
+                    "risk_level": "low",
+                }
+            ],
+        )
+
+        review_items = port.list_governance_review_queue_items(decidable_only=True)
+        approval_items = port.list_approval_queue_items(pending_only=True)
+
+        assert full_approval_calls == 0
+        assert full_evo_calls == 0
+        assert by_id_batches == [("dec-terminal-plan",)]
+        assert [i["decision_id"] for i in approval_items] == ["dec-pending-only"]
+        plan_item = next(i for i in review_items if i["item_id"] == "review-plan-terminal-linked")
+        assert plan_item["allowedActions"] == {
+            "canApprove": False,
+            "canReject": False,
+            "canPromoteToPaper": True,
+        }
+        assert plan_item["review_summary"]["governanceOutcome"] == "approved"
+        assert plan_item["review_summary"]["reviewer"] == "claude"
+
 
 # ---------------------------------------------------------------------------
 # 5. Combined OodaManagementDomainPort Tests

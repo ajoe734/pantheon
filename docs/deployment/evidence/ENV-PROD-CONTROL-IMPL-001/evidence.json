@@ -224,6 +224,10 @@
     {
       "id": "prod_migration_backend_commit_and_8vcpu_gate_20261103",
       "summary": "production-release.yml renders versioned SQL and db_migrate.sh from manifest backend.commit via prod_preflight.py migration render-commit (shallow fetch + git archive; fail-closed reasons invalid_backend_commit, backend_commit_fetch_failed, migration_path_missing, substrate_path_missing, migration_archive_failed, migration_digest_or_spec_mismatch), never from the workflow checkout; migration_set_sha256 check unchanged. e2-standard-8 recorded as minimum Prod control VM; read-only prod_preflight.py vm-size gate rejects <8 vCPUs (tested 2, 4 rejected; 8 accepted) and runs in the workflow before the snapshot. Resize procedure for pantheon-prod-control prepared in the runbook and NOT executed. Local source validation only; no workflow dispatch, no Prod VM/GSM/IAM mutation, not hosted drill evidence."
+    },
+    {
+      "id": "owner_oidc_jwks_crypto_closure_and_runtime_manager_dual_path_20261107",
+      "summary": "Stage and Prod compose/bootstrap propagate OIDC/JWKS and role-map env (OIDC_ISSUER, OIDC_DISCOVERY_URL, OIDC_AUDIENCE, JWKS_URI, ROLE_CLAIMS, ROLE_MAP, ROLE_MAP_MODE, REQUIRE_EMAIL_VERIFIED) to PANTHEON_RUNTIME_*, PANTHEON_TELEMETRY_*, and POLICY_LEARNING_*; registry and memory forward full OIDC/JWKS/role-claims/role-map keys in _registry_auth_env() and _memory_auth_env() and honor configured PANTHEON_RUNTIME_ROLE_CLAIMS paths (including groups and realm_access.roles) in _require_verified_identity without allowing missing-role default escalation; all 12 packaged owner requirement/lock pairs pin cryptography==50.0.1, cffi==2.1.1, and pycparser==3.0 for RS256 JWKS verification; runtime_auth_inbound fails closed on roleless external OIDC/JWKS tokens and forbids privileged default-role fallback under ROLE_MAP_MODE=strict while runtime-manager enables allow_shared_secret=True for internal HS256 Paper/RuntimeBinding callers and enforces strict viewer tenancy for any non-operator caller. Local source validation only; hosted qualification remains external_wait."
     }
   ],
   "scope_limits": {
@@ -278,10 +282,10 @@
   "task_id": "ENV-PROD-CONTROL-IMPL-001",
   "track": "functional",
   "validation": {
-    "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
-    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
-    "result": "tests.deployment.test_production_release pytest run locally (script behavior only; not hosted drill evidence)",
-    "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree; script behavior only, not hosted drill evidence"
+    "command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py",
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/runtime-manager/test_runtime_hardening.py services/test_runtime_auth_inbound_attack_matrix.py services/registry/test_registry_auth_wiring.py services/memory/test_main.py scripts/test_check_service_lock_shared_deps.py && .venv-pantheon/bin/python3 scripts/check_service_lock_shared_deps.py",
+    "result": "Bounded batch 1: 204 passed across owner/BFF auth and lock suites (test_runtime_hardening 33 OK, test_runtime_auth_inbound_attack_matrix 46 OK, test_registry_auth_wiring 14 OK, test_main 18 OK, test_bff_auth_facade 85 OK, test_check_service_lock_shared_deps 8 OK) + check_service_lock_shared_deps.py exit 0; Bounded batch 2: test_production_release 98 OK + test_staging_release focused manifest/sanitize/workflow/bootstrap suites 22 OK (script/source behavior only; not hosted drill evidence)",
+    "scope": "real prod_ops.sh/bootstrap.sh/prod_atomic_switch.sh/prod_rollback.sh scripts with fake docker/curl/mountpoint/sudo binaries and temp state tree plus owner RS256 OIDC/JWKS + HS256 auth and lock suites; script/source behavior only, not hosted drill evidence"
   },
   "workflow_run_id": "41581135775"
 }

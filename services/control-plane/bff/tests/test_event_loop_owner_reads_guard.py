@@ -315,3 +315,64 @@ def test_performance_attribution_blocking_read_does_not_stall_me_or_livez(monkey
 def _route_endpoint_for_probe(path: str):
     with _isolated_final_read_models() as client:
         return _route_endpoint(client.app, path)
+
+
+# BFF-EVO-ALPHA-PAGE-TRUTH-20261107: the composed app wires /bff/alpha-factory
+# to the strategies router's registry reader, on a plain ``def`` handler.
+_WIRING_STATES = {
+    "strat-src-dev-product-spy-anchor": "approved",
+    "strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715": "approved",
+    "strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8": "retired",
+    "strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a": "retired",
+}
+
+
+def _hosted_four_entries_for_wiring():
+    return [
+        {
+            "admission_id": f"adm-wire-{idx}",
+            "tenant_id": "tenant-dev",
+            "strategy_spec_id": f"spec-wire-{idx}",
+            "strategy_id": strategy_id,
+            "admission_status": "admitted",
+            "status": "admitted",
+            "queue_status": "completed",
+            "attempt_count": 0,
+            "last_error": None,
+        }
+        for idx, strategy_id in enumerate(_WIRING_STATES)
+    ]
+
+
+def test_real_app_alpha_factory_reads_state_through_registry_strategy_reader(monkeypatch) -> None:
+    """The composed app wires the alpha factory to the strategies router service."""
+    import inspect
+
+    from services.control_plane.bff.console_gap import alpha_factory as alpha_module
+    from services.control_plane.bff.strategies.service import StrategiesService
+
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-orchestrator.local")
+    # The composed app captured _default_http_get at import; stub its network edge.
+    monkeypatch.setattr(alpha_module, "bound_tenant", lambda payload, **kw: kw.get("tenant_id"))
+    monkeypatch.setattr(
+        alpha_module,
+        "http_request_json_with_headers",
+        lambda url, **kw: (200, {}, _hosted_four_entries_for_wiring()),
+    )
+    state_calls: List[str] = []
+
+    def _state(self, strategy_id: str):
+        state_calls.append(strategy_id)
+        return _WIRING_STATES[strategy_id], "ok"
+
+    monkeypatch.setattr(StrategiesService, "get_strategy_registry_state", _state)
+
+    with _isolated_final_read_models() as client:
+        endpoint = _route_endpoint(client.app, "/bff/alpha-factory")
+        assert endpoint is not None and not inspect.iscoroutinefunction(endpoint)
+        resp = client.get("/bff/alpha-factory?page_size=100", headers={**HEADERS, "X-Tenant-Id": "tenant-dev"})
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert sorted(state_calls) == sorted(_WIRING_STATES)
+    assert {c["strategy_id"]: c["strategy_state"] for c in payload["data"]["items"]} == _WIRING_STATES
+    assert payload["meta"]["surfaces"]["alpha_factory_strategy_state"]["status"] == "ok"

@@ -582,6 +582,50 @@ def run_vectorbt_workflow(
     )
 
 
+def _artifact_view_strength(
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any] | None
+) -> tuple[float | dict[str, float | None] | None, dict[str, list[float | None]] | None]:
+    """Compute view strength series from evaluate_strategy_view for run metadata only (never sizing)."""
+
+    if artifact is None:
+        return None, None
+    from services.execution.shioaji_adapter import normalize_taiwan_symbol
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError,
+        evaluate_strategy_view,
+    )
+
+    parameters = artifact["parameters"]
+    lookback = int(parameters[artifact["strategy_logic"]["lookback_parameter"]])
+    wanted = {normalize_taiwan_symbol(symbol) for symbol in parameters["symbols"]}
+    selected: list[str] = []
+    for instrument in dataset.instruments:
+        try:
+            key = normalize_taiwan_symbol(instrument)
+        except ValueError:
+            continue
+        if key in wanted:
+            selected.append(instrument)
+    by_instrument: dict[str, list[float | None]] = {}
+    terminal: dict[str, float | None] = {}
+    for instrument in selected:
+        closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
+        strengths: list[float | None] = [None] * len(closes)
+        for index in range(lookback - 1, len(closes)):
+            try:
+                view = evaluate_strategy_view(artifact, closes[: index + 1])
+            except StrategyArtifactValidationError as exc:
+                raise VectorbtWorkflowError(
+                    f"strategy artifact view evaluation failed: {exc}"
+                ) from exc
+            strengths[index] = view["strength"]
+        by_instrument[instrument] = strengths
+        terminal[instrument] = strengths[-1] if strengths else None
+    if len(terminal) == 1:
+        return next(iter(terminal.values())), by_instrument
+    return (terminal or None), (by_instrument or None)
+
+
 def _artifact_identity(artifact: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Identity (never the model body) of the artifact a backtest actually evaluated."""
 
@@ -589,7 +633,7 @@ def _artifact_identity(artifact: Mapping[str, Any] | None) -> dict[str, Any] | N
         return None
     from services.registry.strategy_artifact import strategy_artifact_checksum
 
-    return {
+    identity: dict[str, Any] = {
         "artifact_id": artifact["artifact_id"],
         "strategy_id": artifact["strategy_id"],
         "version": artifact["version"],
@@ -597,6 +641,9 @@ def _artifact_identity(artifact: Mapping[str, Any] | None) -> dict[str, Any] | N
         "strategy_kind": artifact["strategy_logic"]["kind"],
         "parameters": copy.deepcopy(artifact["parameters"]),
     }
+    if "expression_policy" in artifact:
+        identity["expression_policy"] = copy.deepcopy(artifact["expression_policy"])
+    return identity
 
 
 def _build_artifact_bundle(
@@ -604,6 +651,7 @@ def _build_artifact_bundle(
     result: BacktestRunResult,
     config: BacktestConfig,
 ) -> dict[str, Any]:
+    strength_summary, _ = _artifact_view_strength(dataset, config.strategy_artifact)
     return {
         "schema_version": "1.0",
         "artifact_family": "vectorbt_backtest",
@@ -616,6 +664,7 @@ def _build_artifact_bundle(
             "version": config.version,
             "strategy_params": config.strategy_params,
             "strategy_artifact": _artifact_identity(config.strategy_artifact),
+            "strength": strength_summary,
             "init_cash": config.init_cash,
             "fees": config.fees,
             "requested_by": config.requested_by,
@@ -644,6 +693,9 @@ def _build_registry_entry(
     artifact_bundle: Mapping[str, Any],
     config: BacktestConfig,
 ) -> dict[str, Any]:
+    strength_summary, view_strength_by_instrument = _artifact_view_strength(
+        dataset, config.strategy_artifact
+    )
     storage_path = config.storage_path_template.format(
         strategy_id=dataset.strategy_id,
         version=config.version,
@@ -682,6 +734,8 @@ def _build_registry_entry(
             ),
             "strategy_params": config.strategy_params,
             "strategy_artifact": _artifact_identity(config.strategy_artifact),
+            "strength": strength_summary,
+            "view_strength_by_instrument": view_strength_by_instrument,
             "num_instruments": dataset.num_instruments,
             "total_bars": dataset.total_bars,
             "data_frequency": dataset.data_frequency,

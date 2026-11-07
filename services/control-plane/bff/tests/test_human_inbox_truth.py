@@ -490,3 +490,128 @@ def test_inbox_projection_is_shared_by_the_nl_path_and_the_management_route(tmp_
     by_id = {i["id"]: i for i in mgmt_service._management_prune_camel_aliases(nl_items)}
     for item in route_items:
         assert set(item) == set(by_id[item["id"]]), item["id"]
+
+
+# ---------------------------------------------------------------------------
+# BFF-AI-INBOX-OWNER-20261107: the Management AI reads the inbox through the
+# same ManagementService.get_human_inbox builder the route uses.
+# ---------------------------------------------------------------------------
+
+_AI_NOW = "2026-11-07T15:15:00Z"
+
+
+def _ai_cockpit_context(monkeypatch, store: Any, *, identity: Any = None) -> Dict[str, Any]:
+    from services.control_plane.bff.assistant import management_service as ms
+
+    service = ManagementService(get_read_store=lambda: store, utc_now=lambda: _AI_NOW)
+    monkeypatch.setattr(ms, "_MANAGEMENT_AI_CONTEXT_SERVICE", service)
+    monkeypatch.setattr(
+        ms, "_build_operator_alerts_payload", lambda _s: {"alerts": [], "meta": {"surfaces": {}}}
+    )
+    monkeypatch.setattr(
+        ms, "_build_management_anomalies_payload", lambda _s: {"items": [], "meta": {"surfaces": {}}}
+    )
+    return ms._mgmt_nl_collect_context("cockpit", _AI_NOW, identity=identity)
+
+
+def _ai_inbox_observations(context: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    observation = context["surfaces"]["management_cockpit"]["owner_observation"]
+    return {
+        o["subject_type"]: o
+        for o in observation["contributing_observations"]
+        if o.get("owner") == "human_inbox"
+    }
+
+
+@pytest.mark.parametrize("open_incidents", [0, 1])
+def test_ai_inbox_matches_the_route_for_an_empty_queue_and_one_open_incident(
+    tmp_path, monkeypatch, open_incidents
+) -> None:
+    """Acceptance 2 and 3: an approval queue read that succeeded with zero
+    records is ok for the AI exactly as it is on the route, and the surface
+    statuses and item total are the route's."""
+    rows = [_incident(i, "open") for i in range(open_incidents)]
+    with IncidentOwner(rows) as owner, _inbox_app(tmp_path, incidents_url=owner.url) as (client, store):
+        route = _get(client)
+        context = _ai_cockpit_context(monkeypatch, store, identity=object())
+    route_surfaces = route["meta"]["surfaces"]
+    assert route_surfaces["approval_queue"]["status"] == "ok"
+    ai = _ai_inbox_observations(context)
+    for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness", "human_inbox"):
+        assert ai[key]["status"] == route_surfaces[key]["status"] == "ok", (key, ai[key])
+    assert route["page_info"]["total"] == open_incidents
+    assert context["snippets"]["cockpit"]["human_inbox_summary"]["total"] == route["page_info"]["total"]
+    assert "Approval queue has no readable source records." not in json.dumps(context["surfaces"])
+
+
+def test_ai_inbox_total_is_the_page_info_total_not_one_page(tmp_path, monkeypatch) -> None:
+    rows = [_incident(i, "open") for i in range(7)]
+    with IncidentOwner(rows) as owner, _inbox_app(tmp_path, incidents_url=owner.url) as (client, store):
+        route_total = _get(client, page_size=2)["page_info"]["total"]
+        context = _ai_cockpit_context(monkeypatch, store)
+    assert route_total == 7
+    assert context["snippets"]["cockpit"]["human_inbox_summary"]["total"] == 7
+
+
+def test_ai_inbox_failed_owner_read_is_not_reported_ok(tmp_path, monkeypatch) -> None:
+    with _inbox_app(tmp_path, incidents_url=_closed_port_url()) as (_client, store):
+        context = _ai_cockpit_context(monkeypatch, store)
+    ai = _ai_inbox_observations(context)
+    assert ai["incidents"]["status"] != "ok"
+    assert ai["human_inbox"]["status"] != "ok"
+
+
+def test_ai_collect_context_no_longer_uses_the_governance_payload_builder() -> None:
+    import inspect
+
+    from services.control_plane.bff.assistant import management_service as ms
+    from services.control_plane.bff.governance import human_inbox as governance_inbox
+
+    source = inspect.getsource(ms._mgmt_nl_collect_context)
+    assert "get_human_inbox(" in source
+    assert "_human_inbox_payload" not in source
+    assert not hasattr(governance_inbox, "_human_inbox_payload")
+    assert not hasattr(ms, "set_human_inbox_payload")
+    # Both transports run the collector off the event loop with the identity.
+    for transport in (ms._bff_management_nl_ask_impl, ms._bff_management_nl_ask_stream_impl):
+        collected = inspect.getsource(transport)
+        assert "asyncio.to_thread(\n            _mgmt_nl_collect_context, focus, now" in collected
+        assert "identity=identity" in collected.split("_mgmt_nl_collect_context, focus, now", 1)[1][:120]
+
+
+def test_context_incidents_successful_empty_open_list_is_ok_through_the_port() -> None:
+    with IncidentOwner([_incident(1, "resolved", "high"), _incident(2, "closed", "low")]) as owner:
+        store = create_read_surface_ports(
+            lifecycle_telemetry_governance=create_lifecycle_telemetry_governance_port(
+                incident_port=DomainIncidentPort(incidents_api_url=owner.url),
+            ),
+        )
+        records, observation = ManagementService(read_store=store).get_context_incidents()
+        assert owner.paths == ["/api/incidents?open_only=true"]
+    assert records == []
+    assert observation["status"] == "ok"
+    assert not observation.get("degradation_reason")
+
+
+def test_context_incidents_failed_owner_read_is_unavailable_through_the_port() -> None:
+    store = create_read_surface_ports(
+        lifecycle_telemetry_governance=create_lifecycle_telemetry_governance_port(
+            incident_port=DomainIncidentPort(incidents_api_url=_closed_port_url()),
+        ),
+    )
+    records, observation = ManagementService(read_store=store).get_context_incidents()
+    assert records == []
+    assert observation["status"] == "unavailable"
+    assert "incidents read failed" in observation["degradation_reason"]
+
+
+def test_context_incidents_open_rows_are_ok_and_returned() -> None:
+    with IncidentOwner([_incident(1, "open"), _incident(2, "resolved", "high")]) as owner:
+        store = create_read_surface_ports(
+            lifecycle_telemetry_governance=create_lifecycle_telemetry_governance_port(
+                incident_port=DomainIncidentPort(incidents_api_url=owner.url),
+            ),
+        )
+        records, observation = ManagementService(read_store=store).get_context_incidents()
+    assert [r["status"] for r in records] == ["open"]
+    assert observation["status"] == "ok"
