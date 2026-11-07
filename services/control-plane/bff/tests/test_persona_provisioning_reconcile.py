@@ -260,6 +260,7 @@ def _fresh_client(td: str) -> TestClient:
     )
     persona_svc._write_owner = mutation_port
     persona_svc._read_store = read_surface
+    _persona_service_module._current_persona_service.set(persona_svc)
 
     app = FastAPI()
 
@@ -1541,3 +1542,58 @@ def test_higher_existing_ceiling_is_not_touched():
     with pytest.raises(PersonaAdvisoryAdmissionError):
         PersonaAdvisoryAdmissionPort(persona_mutation_port=owner).ensure("p1", p, generated_at="t")
     assert owner.updates == 0
+
+
+def test_reconcile_preserves_provisioned_expression_policy_and_pool_risk_policy() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        resp = client.post(
+            "/bff/personas",
+            json={"name": "Trader Expression Policy Reconcile"},
+            headers={**HEADERS, "Idempotency-Key": "create-trader-expression-policy-reconcile"},
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()["data"]
+        meta = resp.json()["meta"]
+        persona_id = data["id"]
+
+        _install_authoritative_readback(
+            persona_id=persona_id,
+            plan_id=data["deploymentPlanId"],
+            saga_id=meta["deployment_saga_id"],
+            persona_capital_binding_id=meta["persona_capital_binding_id"],
+        )
+
+        reconciled = client.post(
+            f"/bff/personas/{persona_id}/provisioning/reconcile",
+            headers=HEADERS,
+        )
+        assert reconciled.status_code == 200, reconciled.text
+        assert reconciled.json()["data"]["state"] == "paper_running"
+
+        records = _persona_service_module._PERSONA_PROVISIONING_STORE.list_all()
+        assert len(records) == 1
+        refs = records[0].references
+        forward_artifact = refs["strategy_artifact_approved"]["entry"]["metadata"]["strategy_artifact"]
+        baseline_artifact = refs["baseline_strategy_artifact_approved"]["entry"]["metadata"]["strategy_artifact"]
+        forward_spec = refs["strategy_spec_approved"]["entry"]["metadata"]["strategy_spec"]
+        baseline_spec = refs["baseline_strategy_spec_approved"]["entry"]["metadata"]["strategy_spec"]
+        pool_risk = refs["capital_pool"]["metadata"]["risk_policy"]
+
+        assert forward_artifact["expression_policy"]["kind"] == "notional_target_v1"
+        assert forward_artifact["expression_policy"]["version"] == "1.0"
+        assert [c["parameter_key"] for c in forward_artifact["mutation_surface"]["controls"]] == [
+            "lookback_bars",
+            "momentum_threshold",
+            "strength_scale_k",
+            "strength_floor_momentum",
+            "lever_min_strength",
+            "notional_fraction_at_full_strength",
+        ]
+        assert "expression_policy" not in baseline_artifact
+        assert forward_spec["market_scope"]["asset_classes"] == ["equity", "future"]
+        assert baseline_spec["market_scope"]["asset_classes"] == ["equity"]
+        assert pool_risk["max_leverage"] == 2.0
+        assert pool_risk["gross_limit"] == 2.0
+        assert pool_risk["allowed_asset_classes"] == ["equity", "future"]
+

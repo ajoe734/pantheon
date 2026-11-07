@@ -414,6 +414,140 @@ class TestCanonicalArtifactBacktest(unittest.TestCase):
         self.assertEqual(result.registry_entry["metadata"]["strategy"], "ma_crossover")
         self.assertIsNone(result.registry_entry["metadata"]["strategy_artifact"])
 
+    def test_expression_policy_ignored_for_sizing_and_strength_recorded_in_metadata(self) -> None:
+        import math
+        from adapter.vectorbt_adapter import (
+            BacktestRunResult,
+            _artifact_order_sizes,
+        )
+
+        prepared = GovernedVectorbtInputAdapter().prepare(
+            _canonical_dataset(self.RISING, self.FALLING)
+        )
+        legacy_artifact = _momentum_artifact(lookback=2, threshold=0.0)
+        expression_artifact = copy.deepcopy(legacy_artifact)
+        expression_artifact["parameters"]["strength_scale_k"] = 1.0
+        expression_artifact["parameters"]["strength_floor_momentum"] = 0.01
+        expression_artifact["expression_policy"] = {
+            "version": "1.0",
+            "kind": "notional_target_v1",
+            "parameters": {
+                "lever_min_strength": 0.5,
+                "notional_fraction_at_full_strength": 1.0,
+                "allow_pyramiding": False,
+                "close_before_reverse": True,
+            },
+        }
+        expression_artifact["mutation_surface"]["controls"].extend(
+            [
+                {
+                    "parameter_key": "strength_scale_k",
+                    "value_type": "number",
+                    "current_value": 1.0,
+                    "allowed_range": {"min": 0.25, "max": 4.0},
+                    "step": 0.05,
+                },
+                {
+                    "parameter_key": "strength_floor_momentum",
+                    "value_type": "number",
+                    "current_value": 0.01,
+                    "allowed_range": {"min": 0.002, "max": 0.05},
+                    "step": 0.001,
+                },
+                {
+                    "parameter_key": "lever_min_strength",
+                    "value_type": "number",
+                    "current_value": 0.5,
+                    "allowed_range": {"min": 0.0, "max": 1.0},
+                    "step": 0.05,
+                },
+                {
+                    "parameter_key": "notional_fraction_at_full_strength",
+                    "value_type": "number",
+                    "current_value": 1.0,
+                    "allowed_range": {"min": 0.1, "max": 1.0},
+                    "step": 0.05,
+                },
+            ]
+        )
+
+        # 1. _artifact_order_sizes still requires quantity_type == "SHARES"
+        bad_qty = copy.deepcopy(expression_artifact)
+        bad_qty["parameters"]["quantity_type"] = "CONTRACTS"
+        with self.assertRaisesRegex(VectorbtWorkflowError, "SHARES only"):
+            _artifact_order_sizes(prepared, bad_qty)
+
+        # 2. _artifact_order_sizes produces identical order sizes with and without expression_policy
+        sizes_without = _artifact_order_sizes(prepared, legacy_artifact)
+        sizes_with = _artifact_order_sizes(prepared, expression_artifact)
+        self.assertEqual(list(sizes_without), ["2330.TWSE"])
+        self.assertEqual(list(sizes_with), ["2330.TWSE"])
+        self.assertTrue(math.isnan(sizes_without["2330.TWSE"][0]))
+        self.assertTrue(math.isnan(sizes_with["2330.TWSE"][0]))
+        self.assertEqual(sizes_without["2330.TWSE"][1:], sizes_with["2330.TWSE"][1:])
+        self.assertEqual(sizes_with["2330.TWSE"][1:], [1.0] * (len(self.RISING) - 1))
+
+        # 3. Run metadata records strength without using it for sizing
+        class _OrderCapturingBackend:
+            def __init__(self) -> None:
+                self.captured_orders: list[dict[str, list[float]]] = []
+
+            def run(self, ds, cfg) -> BacktestRunResult:
+                orders = _artifact_order_sizes(ds, cfg.strategy_artifact)
+                self.captured_orders.append(orders)
+                return BacktestRunResult(
+                    backend="vectorbt_portfolio",
+                    run_id="vbt-contract-run",
+                    per_instrument_metrics={
+                        "2330.TWSE": {
+                            "total_return": 0.1,
+                            "sharpe_ratio": 1.5,
+                            "max_drawdown": 0.02,
+                            "final_portfolio_value": 110000.0,
+                            "trade_count": len(orders["2330.TWSE"]) - 1,
+                            "num_bars": len(orders["2330.TWSE"]),
+                            "net_position": sum(
+                                s for s in orders["2330.TWSE"] if not math.isnan(s)
+                            ),
+                        }
+                    },
+                    aggregate_metrics={
+                        "num_instruments": 1,
+                        "mean_total_return": 0.1,
+                        "mean_sharpe_ratio": 1.5,
+                        "mean_max_drawdown": 0.02,
+                        "total_trades": len(orders["2330.TWSE"]) - 1,
+                    },
+                    notes=("contract test",),
+                )
+
+        backend = _OrderCapturingBackend()
+        res_without = run_vectorbt_workflow(
+            _canonical_dataset(self.RISING, self.FALLING),
+            backend=backend,
+            config=BacktestConfig(strategy_artifact=legacy_artifact),
+        )
+        res_with = run_vectorbt_workflow(
+            _canonical_dataset(self.RISING, self.FALLING),
+            backend=backend,
+            config=BacktestConfig(strategy_artifact=expression_artifact),
+        )
+        self.assertEqual(
+            res_without.artifact_bundle["per_instrument_metrics"],
+            res_with.artifact_bundle["per_instrument_metrics"],
+        )
+        self.assertIsNone(res_without.registry_entry["metadata"]["strength"])
+        strength_val = res_with.registry_entry["metadata"]["strength"]
+        self.assertIsInstance(strength_val, float)
+        self.assertGreater(strength_val, 0.0)
+        self.assertLessEqual(strength_val, 1.0)
+        series_with = res_with.registry_entry["metadata"]["view_strength_by_instrument"][
+            "2330.TWSE"
+        ]
+        self.assertIsNone(series_with[0])
+        self.assertTrue(all(isinstance(v, float) and 0.0 <= v <= 1.0 for v in series_with[1:]))
+
+
 
 if __name__ == "__main__":
     unittest.main()

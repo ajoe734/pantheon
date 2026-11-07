@@ -1,0 +1,108 @@
+{
+  "task_id": "STRATEGY-ARTIFACT-VIEW-STRENGTH-POLICY-20261107",
+  "title": "Strategy artifact gains a view strength and an expression policy section",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "date": "2026-11-07",
+  "branch": "task/STRATEGY-ARTIFACT-VIEW-STRENGTH-POLICY-20261107",
+  "hosted_behavior_claimed": false,
+  "hosted_behavior_statement": "Hosted behaviour was not exercised; verification is local repository unit, contract, and schema validation only (no VM, SSH, broker, broker sandbox, futures smoke, model provider call, or hosted workflow was executed).",
+  "acceptance_verification": {
+    "1_evaluate_strategy_view": {
+      "status": "passed",
+      "summary": "evaluate_strategy_view(artifact, closes) returns {action, direction, momentum, strength} where action and direction equal evaluate_strategy_action and the paper producer (direction = SHORT if action == SELL else LONG if action == BUY else FLAT), and strength = min(1, abs(momentum) / (strength_scale_k * max(momentum_threshold, strength_floor_momentum))) computed with Decimal when expression_policy is present, or None when expression_policy is absent. evaluate_strategy_action is unchanged.",
+      "files": [
+        "services/registry/strategy_artifact.py",
+        "services/registry/test_strategy_artifact.py"
+      ]
+    },
+    "2_schema_and_existing_checksums": {
+      "status": "passed",
+      "summary": "services/registry/strategy_artifact.schema.json and validate_strategy_artifact accept optional expression_policy with version '1.0', kind 'notional_target_v1', and parameters {lever_min_strength, notional_fraction_at_full_strength, allow_pyramiding, close_before_reverse}, reject unknown keys, and reject any parameter key matching prefer_.*_when_.*. Existing builtin and persona artifact checksums are unchanged.",
+      "verified_checksums": {
+        "services/registry/strategy-artifacts/tw-session-momentum-v1.registration.json": "sha256:59fd62555bdda65f4215352402c6ef7cedd5acb998957f55f77579073e35fe92",
+        "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/input-qinghe-2330.json": "sha256:a11791e9d18c0f0dcec765a7df477a7fc65ae0a66f7c892f777ce01a162db880",
+        "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/input-hengyue-0050.json": "sha256:d6bb93411b738b9f50022ecf473be327ffb07aa017eca01a14cb8f503becbe1b",
+        "docs/deployment/evidence/PAPER-PERSONA-BASELINES-20261105/input-chengchuan-2317.json": "sha256:2383a5084ab3110d83282accddb168e724e3174e9a8cfece3fbb8f84dada6040",
+        "docs/deployment/evidence/H12-DRAWDOWN-POLICY-CONFIG-20261025/input.json": "sha256:fa3a3cdf56c61c8ada5cf29863a89204e13aafa89845b98fe60bff419c6aed75",
+        "docs/deployment/evidence/H12-4923-DRAWDOWN-POLICY-CONFIG-20261101/input.json": "sha256:db3d764e77031c82745deb9d5ab92ae676c2eb0175f33cd1b059c4ec682b9d83"
+      },
+      "files": [
+        "services/registry/strategy_artifact.schema.json",
+        "services/registry/strategy_artifact.py",
+        "services/registry/test_strategy_artifact.py"
+      ]
+    },
+    "3_mutation_surface_and_evolution_child_checks": {
+      "status": "passed",
+      "summary": "When expression_policy is present, mutation_surface must declare strength_scale_k (0.25..4.0 step 0.05), strength_floor_momentum (0.002..0.05 step 0.001), lever_min_strength (0.0..1.0 step 0.05), and notional_fraction_at_full_strength (0.1..1.0 step 0.05). Validation rejects max_leverage, gross_limit, net_limit, allowed_asset_classes, allow_pyramiding, and close_before_reverse as controls. mutate_strategy_artifact and validate_evolution_child_artifact / EvolutionService.validate_child_artifact accept the four new controls and reject forbidden controls.",
+      "files": [
+        "services/registry/strategy_artifact.py",
+        "services/registry/test_strategy_artifact.py",
+        "services/control-plane/bff/evolution/service.py",
+        "services/control-plane/bff/evolution/test_router.py"
+      ]
+    },
+    "4_provisioning_coordinator": {
+      "status": "passed",
+      "summary": "PersonaProvisioningCoordinator writes for non-baseline paper personas the expression_policy section with default parameters (lever_min_strength=0.5, notional_fraction_at_full_strength=1.0, allow_pyramiding=False, close_before_reverse=True) and the four controls (strength_scale_k=1.0, strength_floor_momentum=0.01, lever_min_strength=0.5, notional_fraction_at_full_strength=1.0), market_scope.asset_classes ['equity', 'future'], and pool risk_policy with max_leverage=2.0, gross_limit=2.0, and allowed_asset_classes=['equity', 'future'], while the baseline artifact and legacy personas remain unchanged.",
+      "files": [
+        "services/control-plane/bff/persona_provisioning_coordinator.py",
+        "services/control-plane/bff/test_persona_provisioning_coordinator.py",
+        "services/control-plane/bff/test_persona_provisioning_readback.py",
+        "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+        "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+        "services/registry/paper_strategy_spec.py",
+        "services/registry/test_paper_strategy_spec.py"
+      ]
+    },
+    "5_vectorbt_contract": {
+      "status": "passed",
+      "summary": "_artifact_order_sizes still requires quantity_type == 'SHARES' and produces identical order sizes, trades, and metrics for an artifact with and without an expression_policy section, while _artifact_view_strength records strength in the run metadata without using it for sizing.",
+      "files": [
+        "services/research/vectorbt/adapter/vectorbt_adapter.py",
+        "services/research/vectorbt/test_adapter.py"
+      ]
+    },
+    "6_risk_policy_runtime_action_future": {
+      "status": "passed",
+      "summary": "RiskPolicy.from_mapping and RiskPolicyEvaluationContext.from_mapping accept order-level gate fields (target_type='runtime_action', asset_classes=['future'], decision_id, order_id, instrument_id, gross_exposure, net_exposure, leverage), and a 2.0 gross_limit rejects gross_exposure=2.13 and accepts gross_exposure=1.85.",
+      "files": [
+        "services/capital/risk_policy.py",
+        "services/capital/test_risk_policy.py"
+      ]
+    }
+  },
+  "commands_and_results": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_strategy_artifact.py services/registry/test_paper_strategy_spec.py -q",
+      "exit_code": 0,
+      "result": "70 passed in 22.84s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/research/vectorbt/test_adapter.py -q",
+      "exit_code": 0,
+      "result": "42 passed, 5 subtests passed in 63.95s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/capital/test_risk_policy.py -q",
+      "exit_code": 0,
+      "result": "6 passed in 0.42s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/evolution/test_router.py -q",
+      "exit_code": 0,
+      "result": "9 passed, 1 warning in 7.80s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_strategy_artifact.py services/registry/test_paper_strategy_spec.py services/research/vectorbt/test_adapter.py services/capital/test_risk_policy.py services/control-plane/bff/evolution/test_router.py -q",
+      "exit_code": 0,
+      "result": "122 passed, 1 warning, 5 subtests passed in 82.00s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py -q",
+      "exit_code": 0,
+      "result": "191 passed, 8 warnings in 102.07s"
+    }
+  ]
+}

@@ -33,6 +33,7 @@ PAPER_EVALUATOR_REF_ID = f"eval-{PAPER_STRATEGY_SPEC_ID}-paper"
 PAPER_DATASET_REF = "dataset:tw-equity-paper-fixture-v1"
 SOURCE_STRATEGY_SPEC_ID = "qlib-tw-cross-sectional-alpha-spec-v1"
 CREATED_AT = "2026-05-15T15:00:00Z"
+PAPER_EXPRESSION_ASSET_CLASSES = ["equity", "future"]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_PATH = REPO_ROOT / "support" / "evidence" / f"{TASK_ID}-paper-strategy-spec.json"
@@ -300,6 +301,18 @@ def validate_strategy_spec(strategy_spec: Dict[str, Any]) -> List[str]:
         strategy_spec,
         "services/control-plane/specs/strategy_spec.schema.json",
     )
+
+
+def build_paper_expression_strategy_spec(
+    ctx: PaperStrategySpecContext | None = None,
+) -> Dict[str, Any]:
+    """Build a paper StrategySpec whose market_scope declares equity and future."""
+    spec = build_strategy_spec(ctx)
+    spec["market_scope"] = {
+        **spec["market_scope"],
+        "asset_classes": list(PAPER_EXPRESSION_ASSET_CLASSES),
+    }
+    return spec
 
 
 def validate_registry_entry(registry_entry: Dict[str, Any]) -> List[str]:

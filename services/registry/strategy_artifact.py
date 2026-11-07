@@ -49,6 +49,53 @@ _RFC3339_RE = re.compile(
 _PYTHON_REF_RE = re.compile(
     r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$"
 )
+EXPRESSION_POLICY_VERSION = "1.0"
+EXPRESSION_POLICY_KIND = "notional_target_v1"
+FORBIDDEN_PARAMETER_KEY_RE = re.compile(r"^prefer_.*_when_.*$")
+FORBIDDEN_MUTATION_CONTROL_KEYS: frozenset[str] = frozenset({
+    "max_leverage",
+    "gross_limit",
+    "net_limit",
+    "allowed_asset_classes",
+    "allow_pyramiding",
+    "close_before_reverse",
+})
+REQUIRED_EXPRESSION_POLICY_CONTROLS: dict[str, dict[str, Any]] = {
+    "strength_scale_k": {
+        "value_type": "number",
+        "default_value": 1.0,
+        "allowed_range": {"min": 0.25, "max": 4.0},
+        "step": 0.05,
+    },
+    "strength_floor_momentum": {
+        "value_type": "number",
+        "default_value": 0.01,
+        "allowed_range": {"min": 0.002, "max": 0.05},
+        "step": 0.001,
+    },
+    "lever_min_strength": {
+        "value_type": "number",
+        "default_value": 0.5,
+        "allowed_range": {"min": 0.0, "max": 1.0},
+        "step": 0.05,
+    },
+    "notional_fraction_at_full_strength": {
+        "value_type": "number",
+        "default_value": 1.0,
+        "allowed_range": {"min": 0.1, "max": 1.0},
+        "step": 0.05,
+    },
+}
+_EXPRESSION_POLICY_MUTABLE_PARAM_KEYS: frozenset[str] = frozenset({
+    "lever_min_strength",
+    "notional_fraction_at_full_strength",
+})
+_EXPRESSION_POLICY_REQUIRED_PARAM_KEYS: frozenset[str] = frozenset({
+    "lever_min_strength",
+    "notional_fraction_at_full_strength",
+    "allow_pyramiding",
+    "close_before_reverse",
+})
 
 
 class StrategyArtifactValidationError(RegistryError):
@@ -276,6 +323,44 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         validator.iter_errors(dict(artifact)),
         key=lambda error: list(error.absolute_path),
     )
+    raw_params = artifact.get("parameters")
+    if isinstance(raw_params, Mapping):
+        for param_key in raw_params:
+            if FORBIDDEN_PARAMETER_KEY_RE.match(str(param_key)):
+                raise StrategyArtifactValidationError(
+                    f"StrategyArtifact schema validation failed: parameter key "
+                    f"{param_key!r} is forbidden (matches prefer_.*_when_.*)"
+                )
+    raw_expr = artifact.get("expression_policy")
+    if isinstance(raw_expr, Mapping) and isinstance(raw_expr.get("parameters"), Mapping):
+        for expr_key in raw_expr["parameters"]:
+            if FORBIDDEN_PARAMETER_KEY_RE.match(str(expr_key)):
+                raise StrategyArtifactValidationError(
+                    f"StrategyArtifact schema validation failed: "
+                    f"expression_policy.parameters key {expr_key!r} is forbidden "
+                    "(matches prefer_.*_when_.*)"
+                )
+    raw_surface = artifact.get("mutation_surface")
+    if (
+        isinstance(raw_surface, Mapping)
+        and isinstance(raw_surface.get("controls"), Sequence)
+        and not isinstance(raw_surface.get("controls"), (str, bytes))
+    ):
+        for control in raw_surface["controls"]:
+            if isinstance(control, Mapping):
+                ctrl_key = str(control.get("parameter_key") or "")
+                if FORBIDDEN_PARAMETER_KEY_RE.match(ctrl_key):
+                    raise StrategyArtifactValidationError(
+                        f"StrategyArtifact schema validation failed: "
+                        f"mutation_surface.controls parameter_key {ctrl_key!r} is "
+                        "forbidden (matches prefer_.*_when_.*)"
+                    )
+                if ctrl_key in FORBIDDEN_MUTATION_CONTROL_KEYS:
+                    raise StrategyArtifactValidationError(
+                        f"StrategyArtifact schema validation failed: "
+                        f"mutation_surface.controls must not declare forbidden control {ctrl_key!r}"
+                    )
+
     if schema_errors:
         detail = "; ".join(
             f"{_json_path(error)}: {error.message}" for error in schema_errors
@@ -325,26 +410,138 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
     controls = mutation_surface["controls"]
     immutable_parameters = mutation_surface["immutable_parameters"]
 
+    for param_key in parameters:
+        if FORBIDDEN_PARAMETER_KEY_RE.match(str(param_key)):
+            raise StrategyArtifactValidationError(
+                f"parameter key {param_key!r} is forbidden: fixed mapping keys "
+                "matching 'prefer_.*_when_.*' are not allowed"
+            )
+
+    expression_policy = artifact.get("expression_policy")
+    expression_params: Mapping[str, Any] = {}
+    if expression_policy is not None:
+        if not isinstance(expression_policy, Mapping):
+            raise StrategyArtifactValidationError(
+                "expression_policy must be a JSON object"
+            )
+        if expression_policy.get("version") != EXPRESSION_POLICY_VERSION:
+            raise StrategyArtifactValidationError(
+                f"expression_policy.version must be {EXPRESSION_POLICY_VERSION!r}"
+            )
+        if expression_policy.get("kind") != EXPRESSION_POLICY_KIND:
+            raise StrategyArtifactValidationError(
+                f"expression_policy.kind must be {EXPRESSION_POLICY_KIND!r}"
+            )
+        raw_expr_params = expression_policy.get("parameters")
+        if not isinstance(raw_expr_params, Mapping):
+            raise StrategyArtifactValidationError(
+                "expression_policy.parameters must be a JSON object"
+            )
+        expression_params = raw_expr_params
+        for expr_key in expression_params:
+            if FORBIDDEN_PARAMETER_KEY_RE.match(str(expr_key)):
+                raise StrategyArtifactValidationError(
+                    f"expression_policy.parameters key {expr_key!r} is forbidden: "
+                    "fixed mapping keys matching 'prefer_.*_when_.*' are not allowed"
+                )
+        unknown_expr_keys = set(expression_params) - _EXPRESSION_POLICY_REQUIRED_PARAM_KEYS
+        if unknown_expr_keys:
+            raise StrategyArtifactValidationError(
+                "expression_policy.parameters has unknown keys: "
+                + ", ".join(sorted(str(k) for k in unknown_expr_keys))
+            )
+        missing_expr_keys = _EXPRESSION_POLICY_REQUIRED_PARAM_KEYS - set(expression_params)
+        if missing_expr_keys:
+            raise StrategyArtifactValidationError(
+                "expression_policy.parameters is missing required keys: "
+                + ", ".join(sorted(missing_expr_keys))
+            )
+        for bool_key in ("allow_pyramiding", "close_before_reverse"):
+            if not isinstance(expression_params.get(bool_key), bool):
+                raise StrategyArtifactValidationError(
+                    f"expression_policy.parameters.{bool_key} must be a boolean"
+                )
+        for num_key in ("lever_min_strength", "notional_fraction_at_full_strength"):
+            val = expression_params.get(num_key)
+            if not _is_finite_number(val):
+                raise StrategyArtifactValidationError(
+                    f"expression_policy.parameters.{num_key} must be a finite number"
+                )
+
     control_by_key: dict[str, Mapping[str, Any]] = {}
     for control in controls:
         key = control["parameter_key"]
+        if FORBIDDEN_PARAMETER_KEY_RE.match(str(key)):
+            raise StrategyArtifactValidationError(
+                f"mutation_surface.controls parameter_key {key!r} is forbidden "
+                "(matches prefer_.*_when_.*)"
+            )
+        if key in FORBIDDEN_MUTATION_CONTROL_KEYS:
+            raise StrategyArtifactValidationError(
+                f"mutation_surface.controls must not declare forbidden control {key!r}"
+            )
         if key in control_by_key:
             raise StrategyArtifactValidationError(
                 f"mutation_surface.controls repeats parameter {key!r}"
             )
         control_by_key[key] = control
-        if key not in parameters:
+        in_parameters = key in parameters
+        in_expression_parameters = (
+            expression_policy is not None
+            and key in _EXPRESSION_POLICY_MUTABLE_PARAM_KEYS
+            and key in expression_params
+        )
+        if not in_parameters and not in_expression_parameters:
             raise StrategyArtifactValidationError(
                 f"mutable parameter {key!r} is absent from parameters"
             )
-        if parameters[key] != control["current_value"]:
+        if in_parameters and parameters[key] != control["current_value"]:
             raise StrategyArtifactValidationError(
                 f"mutation control {key!r} current_value must equal parameters[{key!r}]"
             )
+        if in_expression_parameters and expression_params[key] != control["current_value"]:
+            raise StrategyArtifactValidationError(
+                f"mutation control {key!r} current_value must equal "
+                f"expression_policy.parameters[{key!r}]"
+            )
         _validate_control_value(control, control["current_value"])
-        _validate_control_value(control, parameters[key])
+        if in_parameters:
+            _validate_control_value(control, parameters[key])
+        if in_expression_parameters:
+            _validate_control_value(control, expression_params[key])
+
+    if expression_policy is not None:
+        for req_key, req_spec in REQUIRED_EXPRESSION_POLICY_CONTROLS.items():
+            if req_key not in control_by_key:
+                raise StrategyArtifactValidationError(
+                    f"expression_policy requires mutation_surface.controls to declare {req_key!r}"
+                )
+            ctrl = control_by_key[req_key]
+            if ctrl.get("value_type") != req_spec["value_type"]:
+                raise StrategyArtifactValidationError(
+                    f"control {req_key!r} must have value_type {req_spec['value_type']!r}"
+                )
+            ctrl_range = ctrl.get("allowed_range") or {}
+            if (
+                _decimal(ctrl_range.get("min"), f"control {req_key!r} min")
+                != _decimal(req_spec["allowed_range"]["min"], f"expected {req_key!r} min")
+                or _decimal(ctrl_range.get("max"), f"control {req_key!r} max")
+                != _decimal(req_spec["allowed_range"]["max"], f"expected {req_key!r} max")
+                or _decimal(ctrl.get("step"), f"control {req_key!r} step")
+                != _decimal(req_spec["step"], f"expected {req_key!r} step")
+            ):
+                raise StrategyArtifactValidationError(
+                    f"control {req_key!r} must declare allowed_range "
+                    f"{req_spec['allowed_range']} and step {req_spec['step']}"
+                )
+        for view_key in ("strength_scale_k", "strength_floor_momentum"):
+            if view_key not in parameters:
+                raise StrategyArtifactValidationError(
+                    f"expression_policy requires {view_key!r} in parameters"
+                )
 
     mutable_keys = set(control_by_key)
+    mutable_param_keys = {key for key in control_by_key if key in parameters}
     immutable_keys = set(immutable_parameters)
     overlap = mutable_keys & immutable_keys
     if overlap:
@@ -352,13 +549,18 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
             "parameters cannot be both mutable and immutable: "
             + ", ".join(sorted(overlap))
         )
-    unknown_immutable = immutable_keys - set(parameters)
+    allowed_immutable_sources = set(parameters) | (
+        {"allow_pyramiding", "close_before_reverse"}
+        if expression_policy is not None
+        else set()
+    )
+    unknown_immutable = immutable_keys - allowed_immutable_sources
     if unknown_immutable:
         raise StrategyArtifactValidationError(
             "immutable parameters are absent from parameters: "
             + ", ".join(sorted(unknown_immutable))
         )
-    unclassified = set(parameters) - mutable_keys - immutable_keys
+    unclassified = set(parameters) - mutable_param_keys - immutable_keys
     if unclassified:
         raise StrategyArtifactValidationError(
             "every parameter must be classified as mutable or immutable; missing: "
@@ -671,16 +873,44 @@ def mutate_strategy_artifact(
         control["parameter_key"]: control
         for control in child["mutation_surface"]["controls"]
     }
+    expression_policy = child.get("expression_policy")
+    expression_params = (
+        expression_policy.get("parameters")
+        if isinstance(expression_policy, Mapping)
+        and isinstance(expression_policy.get("parameters"), dict)
+        else None
+    )
     changed = False
     for key, value in parameter_updates.items():
-        if key not in child["parameters"]:
+        if FORBIDDEN_PARAMETER_KEY_RE.match(str(key)):
+            raise StrategyArtifactValidationError(
+                f"parameter key {key!r} is forbidden (matches prefer_.*_when_.*)"
+            )
+        if key in FORBIDDEN_MUTATION_CONTROL_KEYS:
+            raise StrategyArtifactValidationError(
+                f"parameter {key!r} is forbidden as a mutable control"
+            )
+        in_params = key in child["parameters"]
+        in_expr_params = (
+            expression_params is not None
+            and key in _EXPRESSION_POLICY_MUTABLE_PARAM_KEYS
+            and key in expression_params
+        )
+        if not in_params and not in_expr_params:
+            if expression_params is not None and key in expression_params:
+                raise StrategyArtifactValidationError(f"parameter {key!r} is immutable")
             raise StrategyArtifactValidationError(f"unknown parameter {key!r}")
         if key not in controls:
             raise StrategyArtifactValidationError(f"parameter {key!r} is immutable")
         _validate_control_value(controls[key], value)
-        if child["parameters"][key] != value:
-            changed = True
-        child["parameters"][key] = value
+        if in_params:
+            if child["parameters"][key] != value:
+                changed = True
+            child["parameters"][key] = value
+        if in_expr_params and expression_params is not None:
+            if expression_params[key] != value:
+                changed = True
+            expression_params[key] = value
         controls[key]["current_value"] = value
     if not changed:
         raise StrategyArtifactValidationError(
@@ -885,6 +1115,88 @@ def evaluate_strategy_action(
     if momentum > _decimal(threshold, "momentum threshold"):
         return logic["positive_action"]
     return logic["non_positive_action"]
+
+
+def evaluate_strategy_view(
+    strategy_artifact: Mapping[str, Any],
+    closes: Sequence[float],
+) -> dict[str, Any]:
+    """Interpret the v1 close-to-close momentum view with optional strength.
+
+    Returns ``{"action": BUY|SELL|HOLD, "direction": LONG|SHORT|FLAT,
+    "momentum": float, "strength": float in [0, 1] or None}`` where ``action``
+    and ``direction`` match ``evaluate_strategy_action`` and the paper signal
+    producer, and ``strength`` is ``min(1, abs(momentum) / (strength_scale_k *
+    max(momentum_threshold, strength_floor_momentum)))`` computed with
+    ``Decimal`` when ``expression_policy`` is present, or ``None`` when the
+    artifact has no ``expression_policy`` section.
+    """
+    validate_strategy_artifact(strategy_artifact)
+    if isinstance(closes, (str, bytes)):
+        raise StrategyArtifactValidationError("closes must be a numeric sequence")
+
+    logic = strategy_artifact["strategy_logic"]
+    if logic["kind"] != "close_to_close_momentum":
+        raise StrategyArtifactValidationError(
+            f"unsupported strategy_logic kind: {logic['kind']!r}"
+        )
+    parameters = strategy_artifact["parameters"]
+    lookback = parameters[logic["lookback_parameter"]]
+    threshold = parameters[logic["threshold_parameter"]]
+    if len(closes) < lookback:
+        raise StrategyArtifactValidationError(
+            f"close_to_close_momentum requires at least {lookback} closes"
+        )
+
+    anchor = closes[-lookback]
+    latest = closes[-1]
+    if not _is_number(anchor) or not _is_number(latest):
+        raise StrategyArtifactValidationError("closes must contain numeric values")
+    if not _is_finite_number(anchor) or not _is_finite_number(latest):
+        raise StrategyArtifactValidationError("closes must contain finite values")
+    anchor_decimal = _decimal(anchor, "momentum anchor close")
+    latest_decimal = _decimal(latest, "momentum latest close")
+    if anchor_decimal == 0:
+        raise StrategyArtifactValidationError("momentum anchor close must not be zero")
+
+    momentum_decimal = (latest_decimal - anchor_decimal) / anchor_decimal
+    threshold_decimal = _decimal(threshold, "momentum threshold")
+    if momentum_decimal > threshold_decimal:
+        action = logic["positive_action"]
+    else:
+        action = logic["non_positive_action"]
+
+    if action == "SELL":
+        direction = "SHORT"
+    elif action == "BUY":
+        direction = "LONG"
+    else:
+        direction = "FLAT"
+
+    strength: float | None = None
+    if strategy_artifact.get("expression_policy") is not None:
+        scale_k = _decimal(
+            parameters["strength_scale_k"],
+            "parameter 'strength_scale_k'",
+        )
+        floor_momentum = _decimal(
+            parameters["strength_floor_momentum"],
+            "parameter 'strength_floor_momentum'",
+        )
+        denom = scale_k * max(threshold_decimal, floor_momentum)
+        if denom <= 0:
+            raise StrategyArtifactValidationError(
+                "strength denominator must be greater than zero"
+            )
+        raw_strength = min(Decimal("1"), abs(momentum_decimal) / denom)
+        strength = float(raw_strength)
+
+    return {
+        "action": action,
+        "direction": direction,
+        "momentum": float(momentum_decimal),
+        "strength": strength,
+    }
 
 
 # ---------------------------------------------------------------------------

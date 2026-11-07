@@ -21,8 +21,10 @@ from paper_strategy_spec import (
     PAPER_APPROVAL_DECISION_ID,
     PAPER_DATASET_REF,
     PAPER_EVALUATOR_REF_ID,
+    PAPER_EXPRESSION_ASSET_CLASSES,
     PAPER_STRATEGY_SPEC_ID,
     PAPER_STRATEGY_VERSION,
+    build_paper_expression_strategy_spec,
     build_paper_strategy_spec_packet,
     build_registry_entry,
     build_strategy_spec,
@@ -57,6 +59,18 @@ def test_strategy_spec_schema() -> None:
     check("execution mode is paper", strategy_spec["execution_profile"]["execution_mode_hint"] == "paper")
     check("universe has at least 50 symbols", len(strategy_spec["market_scope"]["symbols"]) >= 50)
     check("approval is required", strategy_spec["governance"]["approval_required"] is True)
+    expression_spec = build_paper_expression_strategy_spec()
+    check(
+        "expression paper spec asset_classes is equity and future",
+        expression_spec["market_scope"]["asset_classes"] == PAPER_EXPRESSION_ASSET_CLASSES,
+    )
+    check(
+        "expression paper spec validates against schema",
+        validate_strategy_spec(expression_spec) == [],
+    )
+    assert errors == []
+    assert expression_spec["market_scope"]["asset_classes"] == ["equity", "future"]
+    assert validate_strategy_spec(expression_spec) == []
 
 
 def test_candidate_registry_entry() -> None:

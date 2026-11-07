@@ -295,3 +295,79 @@ def test_action_dispatches_through_injected_callable():
         "payload": {"reason": "looks good"},
         "authorization": "Bearer test-operator-token",
     }
+
+
+def test_evolution_child_checks_accept_expression_controls_and_reject_forbidden_controls():
+    import copy
+    import pytest
+    from services.control_plane.bff.evolution.service import (
+        EvolutionService,
+        validate_evolution_child_artifact,
+    )
+    from services.control_plane.bff.persona_provisioning_coordinator import (
+        deterministic_provisioning_ids,
+    )
+    from services.control_plane.bff.test_persona_provisioning_coordinator import (
+        FakeOwnerTransport,
+        _coordinator,
+        _record_and_store,
+        _schedule_receipt,
+    )
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError,
+        mutate_strategy_artifact,
+    )
+
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    _coordinator(store, transport, _schedule_receipt).coordinate(record)
+    ids = deterministic_provisioning_ids(record)
+    parent = transport.objects[
+        ("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")
+    ]["entry"]["metadata"]["strategy_artifact"]
+
+    child = mutate_strategy_artifact(
+        parent,
+        parameter_updates={
+            "strength_scale_k": 1.25,
+            "strength_floor_momentum": 0.015,
+            "lever_min_strength": 0.65,
+            "notional_fraction_at_full_strength": 0.85,
+        },
+        new_artifact_id=f"{ids.strategy_artifact_id}-evo-child-1",
+        new_version="1.0.1",
+        source_run_ids=["vbt-evo-child-run-1"],
+        parent_registry_id=ids.strategy_artifact_id,
+    )
+
+    svc = EvolutionService(_FakeReadStore())
+    check_res = svc.validate_child_artifact(parent, child)
+    assert check_res["valid"] is True
+    assert check_res["mutated_controls"] == [
+        "lever_min_strength",
+        "notional_fraction_at_full_strength",
+        "strength_floor_momentum",
+        "strength_scale_k",
+    ]
+
+    for forbidden in (
+        "max_leverage",
+        "gross_limit",
+        "net_limit",
+        "allowed_asset_classes",
+        "allow_pyramiding",
+        "close_before_reverse",
+        "prefer_future_when_short",
+    ):
+        with pytest.raises(StrategyArtifactValidationError):
+            validate_evolution_child_artifact(
+                parent,
+                child,
+                parameter_changes={forbidden: 0.5},
+            )
+
+    tampered_child = copy.deepcopy(child)
+    tampered_child["expression_policy"]["parameters"]["allow_pyramiding"] = True
+    with pytest.raises(StrategyArtifactValidationError):
+        validate_evolution_child_artifact(parent, tampered_child)
+

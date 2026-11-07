@@ -14,9 +14,131 @@ import json
 import logging
 import os
 import re
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+
+from services.registry.strategy_artifact import (
+    FORBIDDEN_MUTATION_CONTROL_KEYS,
+    REQUIRED_EXPRESSION_POLICY_CONTROLS,
+    StrategyArtifactValidationError,
+    mutate_strategy_artifact,
+    validate_strategy_artifact,
+)
 
 log = logging.getLogger(__name__)
+
+EVOLUTION_ALLOWED_EXPRESSION_CONTROLS: Tuple[str, ...] = tuple(
+    REQUIRED_EXPRESSION_POLICY_CONTROLS.keys()
+)
+EVOLUTION_FORBIDDEN_CONTROLS: Tuple[str, ...] = tuple(
+    sorted(FORBIDDEN_MUTATION_CONTROL_KEYS)
+)
+_PREFER_WHEN_KEY_RE = re.compile(r"^prefer_.*_when_.*$")
+
+
+def validate_evolution_child_artifact(
+    parent_artifact: Mapping[str, Any],
+    child_artifact: Mapping[str, Any],
+    *,
+    parameter_changes: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Validate an evolution child strategy artifact against its parent and mutation surface.
+
+    Accepts the expression policy controls (strength_scale_k, strength_floor_momentum,
+    lever_min_strength, notional_fraction_at_full_strength) when expression_policy is
+    present, and rejects forbidden controls or immutable parameter mutations.
+    """
+    validate_strategy_artifact(parent_artifact)
+    validate_strategy_artifact(child_artifact)
+    parent = dict(parent_artifact)
+    child = dict(child_artifact)
+
+    if child["strategy_id"] != parent["strategy_id"]:
+        raise StrategyArtifactValidationError(
+            "evolution child strategy_id must match parent strategy_id"
+        )
+    parent_ids = child.get("lineage", {}).get("parent_registry_ids") or []
+    if parent["artifact_id"] not in parent_ids:
+        raise StrategyArtifactValidationError(
+            "evolution child lineage.parent_registry_ids must include parent artifact_id"
+        )
+
+    parent_controls = {
+        ctrl["parameter_key"]: ctrl
+        for ctrl in parent["mutation_surface"]["controls"]
+    }
+    child_controls = {
+        ctrl["parameter_key"]: ctrl
+        for ctrl in child["mutation_surface"]["controls"]
+    }
+    if set(parent_controls) != set(child_controls):
+        raise StrategyArtifactValidationError(
+            "evolution child mutation_surface.controls keys must match parent"
+        )
+
+    inferred_changes: Dict[str, Any] = {}
+    for key, val in child["parameters"].items():
+        if parent["parameters"].get(key) != val:
+            inferred_changes[key] = val
+    for key in parent["parameters"]:
+        if key not in child["parameters"]:
+            raise StrategyArtifactValidationError(
+                f"evolution child removed parent parameter {key!r}"
+            )
+
+    if "expression_policy" in parent or "expression_policy" in child:
+        if "expression_policy" not in parent or "expression_policy" not in child:
+            raise StrategyArtifactValidationError(
+                "evolution child cannot add or remove expression_policy section"
+            )
+        parent_ep = parent["expression_policy"]
+        child_ep = child["expression_policy"]
+        if (
+            parent_ep.get("version") != child_ep.get("version")
+            or parent_ep.get("kind") != child_ep.get("kind")
+        ):
+            raise StrategyArtifactValidationError(
+                "evolution child cannot change expression_policy version or kind"
+            )
+        for key, val in child_ep["parameters"].items():
+            if parent_ep["parameters"].get(key) != val:
+                inferred_changes[key] = val
+
+    changes_to_check = (
+        dict(parameter_changes) if parameter_changes is not None else inferred_changes
+    )
+    if not changes_to_check:
+        raise StrategyArtifactValidationError(
+            "evolution child must mutate at least one declared control"
+        )
+
+    for key in changes_to_check:
+        if key in FORBIDDEN_MUTATION_CONTROL_KEYS or _PREFER_WHEN_KEY_RE.match(str(key)):
+            raise StrategyArtifactValidationError(
+                f"evolution child cannot mutate forbidden control {key!r}"
+            )
+        if key not in parent_controls:
+            raise StrategyArtifactValidationError(
+                f"evolution child mutated undeclared control {key!r}"
+            )
+
+    expected_child = mutate_strategy_artifact(
+        parent,
+        parameter_updates=changes_to_check,
+        new_artifact_id=child["artifact_id"],
+        new_version=child["version"],
+        source_run_ids=child["lineage"]["source_run_ids"],
+        parent_registry_id=parent["artifact_id"],
+    )
+    if expected_child != child:
+        raise StrategyArtifactValidationError(
+            "evolution child artifact does not match governed mutation of parent"
+        )
+    return {
+        "valid": True,
+        "parent_artifact_id": parent["artifact_id"],
+        "child_artifact_id": child["artifact_id"],
+        "mutated_controls": sorted(changes_to_check.keys()),
+    }
 
 _EW04_ALLOWED_SURFACE_STATES = {"fresh", "stale", "unavailable"}
 
@@ -1121,3 +1243,16 @@ class EvolutionService:
     def list_ooda_packets_for_evolution_program(self, program_id: str) -> List[Dict[str, Any]]:
         store = self.read_store
         return getattr(store, "list_ooda_packets_for_evolution_program", lambda pid: [])(program_id) or []
+
+    def validate_child_artifact(
+        self,
+        parent_artifact: Mapping[str, Any],
+        child_artifact: Mapping[str, Any],
+        *,
+        parameter_changes: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return validate_evolution_child_artifact(
+            parent_artifact,
+            child_artifact,
+            parameter_changes=parameter_changes,
+        )
