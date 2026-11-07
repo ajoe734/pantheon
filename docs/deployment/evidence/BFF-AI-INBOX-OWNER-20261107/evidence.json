@@ -41,12 +41,36 @@
   },
   "assertions_changed": "None weakened or removed. Test harness seams moved from the removed _human_inbox_payload to ManagementService.get_human_inbox: tests/test_management_nl_single_owner.py and tests/test_management_nl_assistant_provider.py stub ManagementService.get_human_inbox with the real payload shape (data.items, page_info.total, meta.surfaces); tests/test_bff_management_cockpit.py host routes get_human_inbox to its existing _human_inbox_payload hook via _InboxStubbedContextService; test_main_composition_seam_extraction_002/005 drop the removed names from their imports/identity assertion.",
   "commands": [
-    {"cmd": "/tmp/svc-venv/bin/python -m pytest -q -p no:cacheprovider <tests/test_mgmt_read_001_persona_fleet_owner_observations.py, test_main_composition_seam_extraction_002.py, _005.py, test_persona_main_residue.py, management_read_models/test_management_service_context_observations.py, management_read_models/test_persona_fleet_read_failures.py, test_human_inbox_truth.py, test_bff_management_cockpit.py, test_bff_b6_management_nl_ask.py, test_management_nl_single_owner.py>", "result": "185 passed, 2 failed"},
-    {"cmd": "pytest tests/test_management_nl_assistant_provider.py tests/test_management_nl_single_owner.py tests/test_bff_b6_management_nl_ask.py", "result": "113 passed"},
-    {"cmd": "pytest tests/test_bff_management_cockpit.py -k overlapping", "result": "1 passed (rerun alone)"}
+    {
+      "cmd": "/tmp/svc-venv/bin/python -m pytest -q -p no:cacheprovider <tests/test_mgmt_read_001_persona_fleet_owner_observations.py, test_main_composition_seam_extraction_002.py, _005.py, test_persona_main_residue.py, management_read_models/test_management_service_context_observations.py, management_read_models/test_persona_fleet_read_failures.py, test_human_inbox_truth.py, test_bff_management_cockpit.py, test_bff_b6_management_nl_ask.py, test_management_nl_single_owner.py>",
+      "result": "185 passed, 2 failed"
+    },
+    {
+      "cmd": "pytest tests/test_management_nl_assistant_provider.py tests/test_management_nl_single_owner.py tests/test_bff_b6_management_nl_ask.py",
+      "result": "113 passed"
+    },
+    {
+      "cmd": "pytest tests/test_bff_management_cockpit.py -k overlapping",
+      "result": "1 passed (rerun alone)"
+    }
   ],
   "known_failures": {
     "test_main_composition_seam_extraction_005.py::test_zero_duplicate_definitions_ast_readback": "Fails on 'Helper _resolve_final_idempotency_key is not defined as def in management_service.py'. That name is an import re-export at management_service.py:1231 which this task did not touch; unrelated to the inbox change. Not verified against an untouched checkout because a clean worktree could not be created (read-only .git/worktrees).",
     "test_bff_management_cockpit.py::test_cockpit_overlapping_reload_waves_keep_every_section_complete": "Failed once in the combined 10-file run (timing/load test with 40 threads) and passed when rerun alone. It exercises the cockpit route, not the AI context path."
+  },
+  "pr7036_test_architecture_repair": {
+    "defect": "test_no_global_monkeypatching_in_migrated_suites failed: class-level monkeypatch.setattr(ManagementService,'get_human_inbox',...) at test_management_nl_assistant_provider.py (3 sites + _cs_scenario + wired test) and test_management_nl_single_owner.py (1 site)",
+    "fix": "Patch the per-test AI context service instance (get_management_ai_context_service()) instead of the production class; lambdas no longer take self; payload shape and caller-identity assertions unchanged. No rule/allowlist/assertion change.",
+    "commands": [
+      {
+        "cmd": "pytest test_bff_test_architecture*.py test_management_nl_assistant_provider.py test_management_nl_single_owner.py test_human_inbox_truth.py",
+        "result": "156 passed"
+      },
+      {
+        "cmd": "pytest test_bff_b6_management_nl_ask.py test_bff_management_cockpit.py management_read_models/test_management_service_context_observations.py management_read_models/test_persona_fleet_read_failures.py",
+        "result": "101 passed"
+      }
+    ],
+    "hosted_verification": "not run"
   }
 }
