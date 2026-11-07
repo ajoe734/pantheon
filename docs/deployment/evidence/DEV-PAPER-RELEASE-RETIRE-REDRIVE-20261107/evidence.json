@@ -1,0 +1,9 @@
+{
+  "task": "DEV-PAPER-RELEASE-RETIRE-REDRIVE-20261107",
+  "change": "scripts/retire_dev_paper_release_cases.py execute() replays retire_case after the first pass for every case whose result is pending (and only those), waiting --poll-seconds between passes, under the existing budget, per-case reserve rule max(CASE_RESERVE_FLOOR_SECONDS, slowest), call_with_timeout and watchdog. Cases that errored, were not_attempted_deadline or are retired are never replayed. A case still pending at budget end stays pending with deadline_reached true. Evidence keeps schema_version and all keys, adds per-case attempts; duration_seconds is the total per case.",
+  "poll_seconds_default": 5.0,
+  "poll_seconds_justification": "Run 42345302114: first pass ended pending after 24.053 s and the retiring saga settled about 2 s after the step ended (rt-1190a590 retired_at 11:41:43Z vs step end 11:41:41Z); run 42364851577: pending after 44.743 s with about 110 s of the 180 s budget unused. One short wait is enough; 5 s lets several replays fit in the unused budget while a replay of already-completed steps is GET-first and cheap. The wait is capped at the remaining budget.",
+  "test_command": "/tmp/svc-venv/bin/python -m pytest scripts/test_retire_dev_paper_release_cases.py -q",
+  "test_result": "45 passed (37 pre-existing unedited + 8 new: pending-then-retired, pending-every-call stops at reserve, raising case not replayed, not_attempted never replayed, replay scope, single pass without poll, poll default/help, watchdog during replay)",
+  "hosted_run": "none. No hosted workflow, VM, SSH or real coordinator/store was used. The next ordinary Root deploy is the hosted check, to be verified by the operator; no hosted result is claimed."
+}
