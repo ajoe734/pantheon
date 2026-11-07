@@ -1,7 +1,10 @@
 name: Canonical Review Gate
 
-# Guarantees the "Pantheon canonical review gate" required status check is
-# posted for every PR into dev/master -- success or failure, never silence.
+# Publishes the "Pantheon canonical review gate" status check for PRs into
+# dev/master only when `review_gate.github_review_bridge_required` is `true` in
+# `.orchestrator/config.json`. When `review_gate.github_review_bridge_required`
+# is `false`, `scripts/git/canonical_review_gate_ci.py` logs a workflow notice,
+# makes no GitHub API call, posts no status, and exits 0.
 #
 # v1 (SUP-REVIEW-PIPELINE-INTEGRITY-20260804) tried to re-derive the review
 # policy locally by reading ai-status.json out of this workflow's own

@@ -544,30 +544,38 @@ master merge.
 
 Provided by `.github/workflows/branch-ci.yml`:
 
-| Status check name      | Source job in branch-ci.yml | What it does                                              |
-|------------------------|------------------------------|-----------------------------------------------------------|
-| `Commit trailers`      | trailers                     | Enforce subject prefix + LLM-Agent / Task-ID / Reviewer   |
-| `Runtime mirror guard` | generated-files              | Reject `ai-activity-log.jsonl` etc. from the diff         |
-| `Smoke acceptance`     | smoke                        | Run `scripts/run-acceptance.sh smoke`                     |
+| Status check name      | Source job in branch-ci.yml | Enforced on         | What it does                                              |
+|------------------------|------------------------------|---------------------|-----------------------------------------------------------|
+| `Commit trailers`      | `trailers`                   | `dev`, `master`     | Enforce subject prefix + LLM-Agent / Task-ID / Reviewer   |
+| `Runtime mirror guard` | `generated-files`            | `dev`, `master`     | Reject `ai-activity-log.jsonl` etc. from the diff         |
+| `Smoke acceptance`     | `smoke`                      | `dev`, `master`     | Run `scripts/run-acceptance.sh smoke`                     |
+| `Service suites`       | `service-suites`             | `dev`               | Aggregate the four service test legs (`service-suites-*`) |
 
 ### 7.2 Branch protection on origin
 
-| Branch     | Require PR | Required status checks            | Force push | Delete |
-|------------|------------|------------------------------------|------------|--------|
-| `master`   | ✅          | 3 (above) + base up-to-date        | blocked    | blocked|
-| `dev`      | ✅          | 3 (above) + base up-to-date        | blocked    | blocked|
-| `task/*`   | n/a        | runs but not required              | allowed    | allowed (auto-deleted on merge) |
-| `publish/*`| n/a        | runs                               | blocked    | blocked|
-| `hotfix/*` | n/a        | runs (required by the PR itself)   | allowed    | allowed (auto-deleted on merge) |
+Verified via `gh api repos/ajoe734/pantheon/branches/{dev,master}/protection` on 2026-11-07 (`docs/deployment/evidence/OPS-REVIEW-GATE-QUIET-20261107/evidence.json`):
 
-GitHub *branch protection* approvals required: **0**. Human code review
-does not scale to dozens of AI-generated PRs/day, so CI carries the
-mechanical gate.
+| Branch     | Require PR (`required_pull_request_reviews`) | Required Approvals | Required status checks                                                             | Up-to-date base (`strict`) | Admin enforcement (`enforce_admins`) | Force push | Delete |
+|------------|----------------------------------------------|--------------------|------------------------------------------------------------------------------------|----------------------------|--------------------------------------|------------|--------|
+| `master`   | Enforced (`required_pull_request_reviews` present) | `0`          | 3 (`Commit trailers`, `Runtime mirror guard`, `Smoke acceptance`)                  | Enforced (`true`)          | Off (`false`)                        | blocked    | blocked|
+| `dev`      | Not enforced (no pull-request review rule)   | `0`                | 4 (`Commit trailers`, `Runtime mirror guard`, `Smoke acceptance`, `Service suites`)| Not enforced (`false`)     | On (`true`)                          | blocked    | blocked|
+| `task/*`   | n/a                                          | `0`                | runs on PR but branch itself is unprotected                                        | n/a                        | n/a                                  | allowed    | allowed (auto-deleted on merge) |
+| `publish/*`| n/a                                          | `0`                | runs                                                                               | n/a                        | n/a                                  | blocked    | blocked|
+| `hotfix/*` | n/a                                          | `0`                | runs (enforced by target branch `dev` / `master`)                                  | n/a                        | n/a                                  | allowed    | allowed (auto-deleted on merge) |
 
-Independent review is not therefore optional: it is enforced off GitHub,
-by the canonical review-before-merge gate (§ 2.3.1). A task PR whose
-canonical row assigns an independent reviewer gets no auto-merge and is
-merged only at the exact head that reviewer approved.
+GitHub *branch protection* approvals required: **0** on both `master` and `dev` (`master` enforces a pull request rule with `required_approving_review_count: 0` and `strict: true`; `dev` has no `required_pull_request_reviews` rule, `strict: false`, and `enforce_admins.enabled: true`). In `ajoe734/execute-plans`, `dev` requires 3 checks (`Commit trailers`, `Generated files guard`, `Component merge gate`) and `main` requires 3 checks (`Commit trailers`, `Generated files guard`, `Smoke acceptance`), both with `strict: true`, pull request required with `0` approvals, and `enforce_admins.enabled: false`.
+
+Independent review is enforced off GitHub by the canonical review-before-merge gate (§ 2.3.1): a task PR whose canonical row assigns an independent reviewer gets no auto-merge and is merged by `scripts/git/auto_integrator.py` only at the exact head that reviewer approved in TaskStore.
+
+#### Operator Decisions (2026-09-08 & 2026-11-07), Residual Risk, and Restoration Steps
+
+- **2026-09-08 decision (`OPS-GITHUB-REVIEW-GATE-001` / `OPS-REVIEW-BRIDGE-POLICY-ALIGNMENT-001`)**: Because every Pantheon worker shares a single GitHub account and GitHub refuses self-review, the operator removed the GitHub-side review requirement and set `review_gate.github_review_bridge_required: false` in `.orchestrator/config.json` (TaskStore-only exact-head review mode). No `refs/tags/pantheon-review/*` proof tag is created while that policy is `false`.
+- **2026-11-07 confirmation (`OPS-REVIEW-GATE-QUIET-20261107`)**: An audit of the last 100 merged pull requests confirmed 99 merged only after an exact-head TaskStore approval and 1 was an explicit operator-requested direct delivery. The operator confirmed keeping TaskStore-only exact-head review mode and updated `scripts/git/canonical_review_gate_ci.py` so non-dry-run executions emit a workflow notice and exit `0` without calling `gh` or posting a failing `Pantheon canonical review gate` commit status in either `pantheon` or `execute-plans` while `review_gate.github_review_bridge_required` is `false`.
+- **Residual risk**: While all workers share one GitHub account, `review_gate.github_review_bridge_required` is `false`, and branch protection requires 0 approvals (with no pull-request review rule on `dev`), any holder of the shared GitHub credential can merge a PR without review via the GitHub API or web UI.
+- **Steps to restore GitHub-side review enforcement**:
+  1. Provision a dedicated GitHub identity for review that is separate from the worker GitHub identity so independent review actions do not hit GitHub's self-review restriction.
+  2. In `.orchestrator/config.json`, set `review_gate.github_review_bridge_required` to `true` and add `"Pantheon canonical review gate"` to `branch_workflow.task_pr.required_status_checks` in the same change (required by `.orchestrator/common.py::validate_review_bridge_policy`).
+  3. Add `"Pantheon canonical review gate"` back to GitHub branch protection `required_status_checks` on the protected target branches (`pantheon` `dev`/`master` and `execute-plans` `dev`/`main`).
 
 ---
 

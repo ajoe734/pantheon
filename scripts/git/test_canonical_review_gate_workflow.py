@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -364,6 +368,7 @@ class MainDryRunTests(unittest.TestCase):
 
     def test_non_dry_run_posts_the_computed_payload(self) -> None:
         with (
+            mock.patch.object(gate_ci, "_github_review_bridge_required", return_value=True),
             mock.patch.object(gate_ci, "default_tag_lookup", return_value=None),
             mock.patch.object(gate_ci, "_post_status") as post_status,
         ):
@@ -382,6 +387,7 @@ class MainDryRunTests(unittest.TestCase):
         # making the workflow's bash step treat "posted nothing at all" the
         # same as "correctly posted failure".
         with (
+            mock.patch.object(gate_ci, "_github_review_bridge_required", return_value=True),
             mock.patch.object(gate_ci, "default_tag_lookup", return_value=None),
             mock.patch.object(
                 gate_ci, "_post_status", side_effect=gate_ci.StatusPostError("boom")
@@ -393,6 +399,242 @@ class MainDryRunTests(unittest.TestCase):
         post_status.assert_called_once()
         self.assertEqual(exit_code, gate_ci.EXIT_STATUS_POST_FAILED)
         self.assertNotEqual(exit_code, 1)
+
+    def test_policy_false_non_dry_run_skips_gh_and_posts_no_status_for_both_delivery_classes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "review_gate": {"github_review_bridge_required": False},
+                        "branch_workflow": {
+                            "task_pr": {
+                                "required_status_checks": [
+                                    "Commit trailers",
+                                    "Runtime mirror guard",
+                                    "Smoke acceptance",
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            for delivery_class in ("product", "tooling"):
+                with self.subTest(delivery_class=delivery_class):
+                    stdout = io.StringIO()
+                    with (
+                        mock.patch.object(gate_ci, "CONFIG_PATH", config_path),
+                        mock.patch.object(gate_ci, "default_tag_lookup") as lookup,
+                        mock.patch.object(gate_ci, "_post_status") as post_status,
+                        mock.patch.object(gate_ci.subprocess, "run") as run_proc,
+                        contextlib.redirect_stdout(stdout),
+                    ):
+                        exit_code = gate_ci.main(
+                            [
+                                "--repo",
+                                REPOSITORY,
+                                "--head-ref",
+                                "task/SUP-X",
+                                "--head-sha",
+                                HEAD,
+                                "--delivery-class",
+                                delivery_class,
+                            ]
+                        )
+                    self.assertEqual(exit_code, 0)
+                    lookup.assert_not_called()
+                    post_status.assert_not_called()
+                    run_proc.assert_not_called()
+                    output = stdout.getvalue()
+                    self.assertIn("::notice::", output)
+                    self.assertIn("review_gate.github_review_bridge_required", output)
+
+    def test_policy_true_config_keeps_publishing_behaviour(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "review_gate": {"github_review_bridge_required": True},
+                        "branch_workflow": {
+                            "task_pr": {
+                                "required_status_checks": [
+                                    "Commit trailers",
+                                    "Runtime mirror guard",
+                                    "Smoke acceptance",
+                                    "Pantheon canonical review gate",
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(gate_ci, "CONFIG_PATH", config_path),
+                mock.patch.object(gate_ci, "default_tag_lookup", return_value=None) as lookup,
+                mock.patch.object(gate_ci, "_post_status") as post_status,
+                contextlib.redirect_stdout(stdout),
+            ):
+                exit_code = gate_ci.main(
+                    ["--repo", REPOSITORY, "--head-ref", "task/SUP-X", "--head-sha", HEAD]
+                )
+            self.assertEqual(exit_code, 1)
+            self.assertGreaterEqual(lookup.call_count, 1)
+            post_status.assert_called_once()
+            self.assertEqual(post_status.call_args.kwargs["payload"]["state"], "failure")
+            self.assertNotIn("::notice::", stdout.getvalue())
+
+    def test_missing_unreadable_or_contradictory_config_warns_and_keeps_publishing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_path = Path(tmpdir) / "missing-config.json"
+            unreadable_path = Path(tmpdir) / "unreadable-config.json"
+            unreadable_path.write_text("{not valid json", encoding="utf-8")
+            contradictory_path = Path(tmpdir) / "contradictory-config.json"
+            contradictory_path.write_text(
+                json.dumps(
+                    {
+                        "review_gate": {"github_review_bridge_required": False},
+                        "branch_workflow": {
+                            "task_pr": {
+                                "required_status_checks": [
+                                    "Commit trailers",
+                                    "Runtime mirror guard",
+                                    "Smoke acceptance",
+                                    "Pantheon canonical review gate",
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cases = {
+                "missing": missing_path,
+                "unreadable": unreadable_path,
+                "contradictory": contradictory_path,
+            }
+            for label, path in cases.items():
+                with self.subTest(case=label):
+                    stdout = io.StringIO()
+                    with (
+                        mock.patch.object(gate_ci, "CONFIG_PATH", path),
+                        mock.patch.object(gate_ci, "default_tag_lookup", return_value=None),
+                        mock.patch.object(gate_ci, "_post_status") as post_status,
+                        contextlib.redirect_stdout(stdout),
+                    ):
+                        exit_code = gate_ci.main(
+                            [
+                                "--repo",
+                                REPOSITORY,
+                                "--head-ref",
+                                "task/SUP-X",
+                                "--head-sha",
+                                HEAD,
+                            ]
+                        )
+                    self.assertEqual(exit_code, 1)
+                    post_status.assert_called_once()
+                    self.assertEqual(
+                        post_status.call_args.kwargs["payload"]["state"], "failure"
+                    )
+                    self.assertIn("::warning::", stdout.getvalue())
+
+    def test_dry_run_output_and_exit_code_stay_unchanged_under_both_policy_values(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            false_config = Path(tmpdir) / "false-config.json"
+            false_config.write_text(
+                json.dumps(
+                    {
+                        "review_gate": {"github_review_bridge_required": False},
+                        "branch_workflow": {
+                            "task_pr": {
+                                "required_status_checks": [
+                                    "Commit trailers",
+                                    "Runtime mirror guard",
+                                    "Smoke acceptance",
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            true_config = Path(tmpdir) / "true-config.json"
+            true_config.write_text(
+                json.dumps(
+                    {
+                        "review_gate": {"github_review_bridge_required": True},
+                        "branch_workflow": {
+                            "task_pr": {
+                                "required_status_checks": [
+                                    "Commit trailers",
+                                    "Runtime mirror guard",
+                                    "Smoke acceptance",
+                                    "Pantheon canonical review gate",
+                                ]
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+            approved_table = {
+                (REPOSITORY, ref): {"ref": ref, "object": {"sha": HEAD, "type": "commit"}}
+            }
+            scenarios = [
+                ("unapproved_product", {}, "task/SUP-X", "product", 1),
+                ("approved_product", approved_table, "task/SUP-X", "product", 0),
+                ("tooling", {}, "task/SUP-X", "tooling", 0),
+            ]
+            for name, table, head_ref, delivery_class, expected_rc in scenarios:
+                with self.subTest(scenario=name):
+                    outputs: list[str] = []
+                    exit_codes: list[int] = []
+                    for cfg in (false_config, true_config):
+                        buf = io.StringIO()
+                        with (
+                            mock.patch.object(gate_ci, "CONFIG_PATH", cfg),
+                            mock.patch.object(
+                                gate_ci,
+                                "default_tag_lookup",
+                                side_effect=lambda r, target, t=table: t.get((r, target)),
+                            ),
+                            mock.patch.object(gate_ci, "_post_status") as post_status,
+                            contextlib.redirect_stdout(buf),
+                        ):
+                            rc = gate_ci.main(
+                                [
+                                    "--repo",
+                                    REPOSITORY,
+                                    "--head-ref",
+                                    head_ref,
+                                    "--head-sha",
+                                    HEAD,
+                                    "--delivery-class",
+                                    delivery_class,
+                                    "--dry-run",
+                                ]
+                            )
+                        post_status.assert_not_called()
+                        outputs.append(buf.getvalue())
+                        exit_codes.append(rc)
+                    self.assertEqual(exit_codes, [expected_rc, expected_rc])
+                    self.assertEqual(outputs[0], outputs[1])
+                    parsed_payload = json.loads(outputs[0])
+                    self.assertEqual(
+                        parsed_payload["state"],
+                        "success" if expected_rc == 0 else "failure",
+                    )
 
 
 class PostStatusRetryTests(unittest.TestCase):
