@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from services.control_plane.bff.assistant.management_service import ManagementNlUseCase
+from services.control_plane.bff.management_read_models.service import ManagementService
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     clear_management_nl_sse_buffer,
     get_management_nl_module,
@@ -379,9 +380,9 @@ def test_ask_and_stream_transports_bound_telemetry_owner_reads_for_multi_runtime
             lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}},
         )
         monkeypatch.setattr(
-            bff_main,
-            "_human_inbox_payload",
-            lambda *args, **kwargs: {"items": [], "meta": {"surfaces": {}}},
+            ManagementService,
+            "get_human_inbox",
+            lambda self, *args, **kwargs: {"data": {"items": []}, "page_info": {"total": 0}, "meta": {"surfaces": {}}},
         )
         monkeypatch.setattr(
             bff_main,
