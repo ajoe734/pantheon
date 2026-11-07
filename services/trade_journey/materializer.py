@@ -215,6 +215,10 @@ class JourneyMaterializer:
                 corrections.append(event)
             explicit_cancel |= event.get("event_type") in {"cancel", "order_cancelled"}
 
+        inferred_risk = self._inferred_nonfill_risk_stage(stages, events, identifiers)
+        if inferred_risk is not None:
+            stages["risk_evaluation"] = inferred_risk
+
         diagnostics: list[dict[str, Any]] = []
         drifted = [event for event in events if abs(float(event.get("clock_skew_seconds", 0))) > CLOCK_DRIFT_THRESHOLD_SECONDS]
         if drifted:
@@ -284,9 +288,59 @@ class JourneyMaterializer:
             return "partially_filled"
         if statuses.get("order_submission") == "succeeded" and statuses.get("fill_management") == "active":
             return "executing"
-        if statuses.get("order_submission") == "skipped":
+        if statuses.get("order_submission") == "skipped" or (
+            statuses.get("trade_decision") == "skipped" and "order_submission" not in statuses
+        ):
             return "no_order"
         return "open" if stages else "incomplete"
+
+    @staticmethod
+    def _inferred_nonfill_risk_stage(
+        stages: Mapping[str, Mapping[str, Any]],
+        events: list[dict[str, Any]],
+        identifiers: Mapping[str, set[str]],
+    ) -> dict[str, Any] | None:
+        if "risk_evaluation" in stages:
+            return None
+        if stages.get("signal_generation", {}).get("status") != "succeeded":
+            return None
+        if stages.get("trade_decision", {}).get("status") not in {"succeeded", "skipped"}:
+            return None
+        if {"broker_acknowledgement", "fill_management", "ledger_booking", "reconciliation"} & set(stages):
+            return None
+        if {"fill_id", "broker_trade_id", "ledger_entry_id"} & set(identifiers):
+            return None
+        order_stage = stages.get("order_submission")
+        if not isinstance(order_stage, Mapping):
+            return None
+        order_status = order_stage.get("status")
+        submission_events = [item for item in events if item.get("stage") == "order_submission"]
+        if not submission_events or any(item.get("submitted_to_broker") is True for item in submission_events):
+            return None
+        if order_status == "skipped":
+            return {
+                "status": "skipped",
+                "updated_at": order_stage["updated_at"],
+                "revision": order_stage.get("revision", 1),
+            }
+        if order_status in {"failed", "rejected"} and any(
+            item.get("event_type") in {"order_rejection", "order_rejection_simulated"}
+            or item.get("risk_status") in {"rejected", "failed"}
+            or item.get("stage_status") == "rejected"
+            or bool(
+                item.get("reason_code")
+                or item.get("reject_reason")
+                or item.get("reason")
+                or item.get("risk_decision_id")
+            )
+            for item in submission_events
+        ):
+            return {
+                "status": "rejected",
+                "updated_at": order_stage["updated_at"],
+                "revision": order_stage.get("revision", 1),
+            }
+        return None
 
     @staticmethod
     def deadline_status(stages: Mapping[str, Any], last_occurred: datetime, as_of: datetime,

@@ -909,8 +909,41 @@ class RelationalLifecycleProjector:
                 **identity,
             }
             is_no_holdings_reject = is_sell_without_holdings_rejection(source, metadata)
+            is_noop = is_noop_order(source, metadata)
+            metrics_map = (
+                source.get("metrics")
+                if isinstance(source.get("metrics"), Mapping)
+                else {}
+            )
+            submitted_to_broker = _first(
+                source.get("submitted_to_broker"),
+                metadata.get("submitted_to_broker"),
+                metrics_map.get("submitted_to_broker"),
+            )
+            reject_reason = _first(
+                source.get("reason_code"),
+                metadata.get("reason_code"),
+                source.get("reason"),
+                metadata.get("reason"),
+                source.get("reject_reason"),
+                metadata.get("reject_reason"),
+                source.get("broker_submission_status"),
+                metadata.get("broker_submission_status"),
+            )
+            risk_status_raw = _first(
+                source.get("risk_status"), metadata.get("risk_status")
+            )
+            is_evaluated_reject = is_no_holdings_reject or (
+                source.get("event_type") in {"order_rejection", "order_rejection_simulated"}
+                and submitted_to_broker is not True
+                and (
+                    reject_reason is not None
+                    or str(risk_status_raw or "").strip().lower() in {"rejected", "failed"}
+                )
+            )
+            strip_order_identifiers = is_no_holdings_reject or is_noop
             for field in _PASSTHROUGH_FIELDS:
-                if is_no_holdings_reject and field in {
+                if strip_order_identifiers and field in {
                     "client_order_id",
                     "order_id",
                     "broker_order_id",
@@ -922,8 +955,50 @@ class RelationalLifecycleProjector:
                 value = _first(source.get(field), metadata.get(field))
                 if value is not None:
                     event[field] = value
-            if is_no_holdings_reject:
-                event["reason_code"] = "sell_without_holdings"
+            if is_evaluated_reject:
+                event["reason_code"] = (
+                    "sell_without_holdings"
+                    if is_no_holdings_reject
+                    else str(reject_reason or "order_rejected")
+                )
+                event["risk_status"] = "rejected"
+                event["submitted_to_broker"] = False
+            elif (
+                source.get("event_type") in {"order_rejection", "order_rejection_simulated"}
+                and submitted_to_broker is True
+            ):
+                event["submitted_to_broker"] = True
+                if reject_reason is not None:
+                    event["reason_code"] = str(reject_reason)
+            elif is_noop:
+                noop_reason = _first(
+                    source.get("reason_code"),
+                    metadata.get("reason_code"),
+                    source.get("noop_reason"),
+                    metadata.get("noop_reason"),
+                    "no_order",
+                )
+                event["reason_code"] = str(noop_reason)
+                event["decision_status"] = "no_order"
+                event["order_status"] = "not_submitted"
+                event["risk_status"] = "skipped"
+                event["submitted_to_broker"] = False
+            elif (
+                source.get("event_type") == "trade_decision"
+                and _stage_status(metadata.get("decision_status") or "succeeded")
+                == "skipped"
+            ):
+                event["decision_status"] = "no_order"
+                decision_reason = _first(
+                    source.get("reason_code"),
+                    metadata.get("reason_code"),
+                    source.get("noop_reason"),
+                    metadata.get("noop_reason"),
+                    source.get("reason"),
+                    metadata.get("reason"),
+                )
+                if decision_reason is not None:
+                    event["reason_code"] = str(decision_reason)
             if source.get("event_type") == FIXTURE_EVENT_TYPE:
                 for field in FIXTURE_PASSTHROUGH_FIELDS:
                     value = fixture_payload.get(field)

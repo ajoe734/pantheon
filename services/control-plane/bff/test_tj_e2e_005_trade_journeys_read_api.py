@@ -1324,3 +1324,155 @@ def test_lifecycle_proj_bff_postgres_page_query_is_scoped_and_bounded() -> None:
     assert "tenant_id=%s AND environment=%s AND status=%s" in count_sql
     assert " LIMIT " not in count_sql
     assert count_params == ("tenant-a", "paper", "open")
+
+
+def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_while_incomplete_stays_partial() -> None:
+    retained_id = "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f"
+    events = [
+        _event(
+            "192e0569-ee44-4e5a-9f21-d24415530353",
+            retained_id,
+            "signal_generation",
+            "succeeded",
+            1,
+            tenant="default",
+            signal_id="sig-20261107180614-f45eb161-4",
+            decision_id="dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+            symbol="2330.TW",
+            side="sell",
+            quantity=1,
+            price=1055.0,
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "20476142-6e7a-5715-b20f-fa61022cf1aa",
+            retained_id,
+            "trade_decision",
+            "succeeded",
+            2,
+            tenant="default",
+            signal_id="sig-20261107180614-f45eb161-4",
+            decision_id="dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+            symbol="2330.TW",
+            side="sell",
+            quantity=1,
+            price=1055.0,
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "483dede1-6213-4d7b-8df4-48d1ae30b747",
+            retained_id,
+            "order_submission",
+            "failed",
+            3,
+            tenant="default",
+            event_type="order_rejection",
+            reason_code="sell_without_holdings",
+            submitted_to_broker=False,
+            signal_id="sig-20261107180614-f45eb161-4",
+            decision_id="dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+            symbol="2330.TW",
+            side="sell",
+            quantity=1,
+            price=1055.0,
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "noop-1",
+            "tj_no_order_1",
+            "signal_generation",
+            "succeeded",
+            4,
+            tenant="default",
+            signal_id="sig-noop-1",
+            decision_id="dec-noop-1",
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "noop-2",
+            "tj_no_order_1",
+            "trade_decision",
+            "succeeded",
+            5,
+            tenant="default",
+            signal_id="sig-noop-1",
+            decision_id="dec-noop-1",
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "noop-3",
+            "tj_no_order_1",
+            "order_submission",
+            "skipped",
+            6,
+            tenant="default",
+            event_type="paper_order_simulated",
+            reason_code="hold_signal",
+            submitted_to_broker=False,
+            signal_id="sig-noop-1",
+            decision_id="dec-noop-1",
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+    ]
+    client, _ = _client_with(events)
+
+    detail_resp = client.get(
+        f"/bff/management/trade-journeys/{retained_id}?tenant_id=default&environment=paper",
+        headers=OPERATOR_HEADERS,
+    )
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail_payload = detail_resp.json()
+    assert detail_payload["data"]["status"] == "failed"
+    assert detail_payload["data"]["flags"]["rejected"] is True
+    assert detail_payload["data"]["read_state"] == "formal"
+    assert detail_payload["meta"]["read_state"] == "formal"
+    assert detail_payload["data"]["stages"]["risk_evaluation"]["status"] == "rejected"
+    assert "risk_evaluation" not in detail_payload["data"]["completeness"]["missing_stages"]
+    assert detail_payload["data"]["event_count"] == 3
+
+    noop_resp = client.get(
+        "/bff/management/trade-journeys/tj_no_order_1?tenant_id=default&environment=paper",
+        headers=OPERATOR_HEADERS,
+    )
+    assert noop_resp.status_code == 200, noop_resp.text
+    noop_payload = noop_resp.json()
+    assert noop_payload["data"]["status"] == "no_order"
+    assert noop_payload["data"]["read_state"] == "formal"
+    assert noop_payload["meta"]["read_state"] == "formal"
+    assert noop_payload["data"]["stages"]["risk_evaluation"]["status"] == "skipped"
+    assert "risk_evaluation" not in noop_payload["data"]["completeness"]["missing_stages"]
+
+    list_resp = client.get(
+        "/bff/management/trade-journeys?tenant_id=default&environment=paper",
+        headers=OPERATOR_HEADERS,
+    )
+    assert list_resp.status_code == 200, list_resp.text
+    list_payload = list_resp.json()
+    assert list_payload["meta"]["read_state"] == "formal"
+    assert {item["journey_id"]: item["read_state"] for item in list_payload["data"]["items"]} == {
+        retained_id: "formal",
+        "tj_no_order_1": "formal",
+    }
+
+    incomplete_events = [
+        _event("inc-1", "tj_inc", "signal_generation", "succeeded", 1, tenant="default"),
+        _event("inc-2", "tj_inc", "trade_decision", "succeeded", 2, tenant="default"),
+        _event("inc-3", "tj_inc", "order_submission", "succeeded", 3, tenant="default"),
+    ]
+    inc_client, _ = _client_with(incomplete_events)
+    inc_resp = inc_client.get(
+        "/bff/management/trade-journeys/tj_inc?tenant_id=default&environment=paper",
+        headers=OPERATOR_HEADERS,
+    )
+    assert inc_resp.status_code == 200
+    inc_data = inc_resp.json()["data"]
+    assert "risk_evaluation" in inc_data["completeness"]["missing_stages"]
+    assert inc_data["read_state"] == "partial"
+    assert inc_resp.json()["meta"]["read_state"] == "partial"
+

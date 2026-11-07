@@ -1908,3 +1908,162 @@ def test_same_decision_in_another_tenant_is_not_treated_as_retry():
     result = projector.project_records(other, mode="live", source_high_watermark=4)
 
     assert (result.accepted, result.ignored) == (2, 0)
+
+
+def test_retained_root42397678868_sell_without_holdings_and_no_order_project_complete_nonfill_truth():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store,
+        deployment_sha="f6d40b77da32309498863a6d66debcc2449268e2",
+        clock=lambda: "2026-11-07T18:06:16Z",
+    )
+    retained_identity = {
+        "tenant_id": "default",
+        "environment": "paper",
+        "journey_id": "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f",
+        "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4",
+        "loop_run_id": "lr-run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+        "signal_id": "sig-20261107180614-f45eb161-4",
+        "strategy_id": "strategy-tw-session-momentum",
+        "runtime_id": "rt-f45eb161",
+        "binding_id": "rb-8aceee4784be4ae581d51ab7ef2243c4",
+        "capital_pool_id": "cp-tw-paper-01",
+        "persona_id": "persona-tw-momentum",
+        "persona_capital_binding_id": "pcb-tw-paper-01",
+        "artifact_id": "art-tw-session-momentum",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-tw-paper-01",
+        "trace_id": "a72a765e-9a40-4e0f-9a16-1481dc50bf40",
+    }
+    specs = [
+        ("192e0569-ee44-4e5a-9f21-d24415530353", "signal_generation", 1, 11210607, "2026-11-07T18:06:14.700840Z"),
+        ("20476142-6e7a-5715-b20f-fa61022cf1aa", "trade_decision", 2, 11210608, "2026-11-07T18:06:14.700966Z"),
+        ("483dede1-6213-4d7b-8df4-48d1ae30b747", "order_rejection", 3, 11210635, "2026-11-07T18:06:15.367903Z"),
+    ]
+    envelope = None
+    retained_rows = []
+    for event_id, event_type, seq_no, ingested_seq, created_at in specs:
+        envelope = (
+            mint_trade_envelope(
+                {
+                    "tenant_id": retained_identity["tenant_id"],
+                    "environment": retained_identity["environment"],
+                    "trace_id": retained_identity["trace_id"],
+                },
+                producer="execution.paper-runtime",
+                event_id=event_id,
+                journey_id=retained_identity["journey_id"],
+                now=created_at,
+            )
+            if envelope is None
+            else propagate_envelope(
+                envelope,
+                producer="execution.paper-runtime",
+                event_id=event_id,
+                event_time=created_at,
+            )
+        )
+        metadata = {
+            **retained_identity,
+            "sequence_no": seq_no,
+            "causal_parent_id": envelope["causation_event_id"],
+            "decision_id": "dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+            "symbol": "2330.TW",
+            "side": "sell",
+            "quantity": 1.0,
+            "price": 1055.0,
+        }
+        if event_type == "order_rejection":
+            metadata.update(
+                reason="sell_without_holdings",
+                reject_reason="sell_without_holdings",
+                broker_submission_status="sell_without_holdings",
+                rejection_status="rejected",
+                order_status="rejected",
+                submitted_to_broker=False,
+                requested_quantity=1.0,
+                holding_quantity=0.0,
+            )
+        payload = {
+            **retained_identity,
+            "event_id": event_id,
+            "event_type": event_type,
+            "created_at": created_at,
+            "execution_mode": "paper",
+            "deployment_stage": "paper",
+            "authority_refs": {"persona_id": retained_identity["persona_id"]},
+            "target": {"strategy_id": retained_identity["strategy_id"]},
+            "metrics": {"action": "SELL", "fill_quantity": 0.0, "submitted_to_broker": False},
+            "metadata": metadata,
+            "correlation_envelope": envelope,
+        }
+        retained_rows.append(
+            {
+                "ingested_seq": ingested_seq,
+                "ingested_at": created_at,
+                "event_id": event_id,
+                "event_type": event_type,
+                "created_at": created_at,
+                "payload": payload,
+            }
+        )
+
+    res = projector.project_records(
+        retained_rows, mode="live", source_high_watermark=11210635
+    )
+    assert res.accepted == 3
+    mutation = store.mutations[-1]
+    assert len(mutation.journeys) == 1
+    assert len(mutation.stages) == 3
+    journey = mutation.journeys[0]
+    assert journey.journey_id == "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f"
+    assert journey.status == "failed"
+    assert journey.is_terminal is True
+    assert journey.stage_coverage["risk_evaluation"]["status"] == "rejected"
+    assert journey.stage_coverage["order_submission"]["status"] == "failed"
+    diag_stages = journey.diagnostic_summary["diagnostics"][0]["stages"]
+    assert "risk_evaluation" not in diag_stages
+    assert mutation.loop_runs[0].status == "failed"
+
+    noop_rows = _retry_rows(lifecycle_rows(), "tj-paper-noop-complete", first_seq=11210636, count=3)
+    for row in noop_rows:
+        row["payload"]["run_id"] = "run-paper-noop-001"
+        row["payload"]["signal_id"] = "sig-paper-noop-001"
+        row["payload"]["metadata"].update(
+            run_id="run-paper-noop-001",
+            signal_id="sig-paper-noop-001",
+            decision_id="dec-paper-noop-001",
+        )
+    noop_rows[2]["event_type"] = "paper_order_simulated"
+    noop_rows[2]["payload"]["event_type"] = "paper_order_simulated"
+    noop_rows[2]["payload"]["metadata"].update(
+        noop_reason="hold_signal",
+        decision_status="no_order",
+        order_status="not_submitted",
+        computed_quantity=0.0,
+        submitted_to_broker=False,
+    )
+    noop_rows[2]["payload"]["metrics"] = {
+        "action": "hold_signal_noop",
+        "fill_price": 0.0,
+        "fill_quantity": 0.0,
+        "submitted_to_broker": False,
+    }
+    noop_res = projector.project_records(
+        noop_rows, mode="live", source_high_watermark=11210638
+    )
+    assert noop_res.accepted == 3
+    noop_mutation = store.mutations[-1]
+    noop_journey = noop_mutation.journeys[0]
+    assert noop_journey.status == "no_order"
+    assert noop_journey.is_terminal is True
+    assert noop_journey.stage_coverage["risk_evaluation"]["status"] == "skipped"
+    assert noop_journey.stage_coverage["order_submission"]["status"] == "skipped"
+    noop_missing_diag = next(
+        item
+        for item in noop_journey.diagnostic_summary["diagnostics"]
+        if item.get("code") == "missing_stages"
+    )
+    assert "risk_evaluation" not in noop_missing_diag["stages"]
+    assert noop_mutation.loop_runs[0].status == "no_order"
+

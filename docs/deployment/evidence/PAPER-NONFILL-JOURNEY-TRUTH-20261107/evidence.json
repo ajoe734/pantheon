@@ -1,0 +1,115 @@
+{
+  "task_id": "PAPER-NONFILL-JOURNEY-TRUTH-20261107",
+  "title": "Repair truthful causal completeness for Paper rejection and no-trade journeys",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "prerequisite": {
+    "task_id": "PAPER-LEDGER-NO-NEGATIVE-SHARES-20261107",
+    "status": "done",
+    "satisfied": true,
+    "pr": 7038,
+    "merge_commit": "8c221214634de099291c18c13946927cc741f92e"
+  },
+  "root_42397678868_reproduction": {
+    "journey_id": "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f",
+    "loop_run_id": "lr-run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+    "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4",
+    "runtime_id": "rt-f45eb161",
+    "binding_id": "rb-8aceee4784be4ae581d51ab7ef2243c4",
+    "signal_id": "sig-20261107180614-f45eb161-4",
+    "decision_id": "dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+    "symbol": "2330.TW",
+    "side": "sell",
+    "requested_quantity": 1.0,
+    "holding_quantity": 0.0,
+    "events": [
+      {
+        "event_id": "192e0569-ee44-4e5a-9f21-d24415530353",
+        "event_type": "signal_generation",
+        "sequence_no": 1,
+        "ingested_seq": 11210607
+      },
+      {
+        "event_id": "20476142-6e7a-5715-b20f-fa61022cf1aa",
+        "event_type": "trade_decision",
+        "sequence_no": 2,
+        "ingested_seq": 11210608
+      },
+      {
+        "event_id": "483dede1-6213-4d7b-8df4-48d1ae30b747",
+        "event_type": "order_rejection",
+        "reason": "sell_without_holdings",
+        "sequence_no": 3,
+        "ingested_seq": 11210635
+      }
+    ],
+    "candidate_f6_failure_evidence": {
+      "candidate_bff_sha": "f6d40b77da32309498863a6d66debcc2449268e2",
+      "source_probe_completed_at": "2026-11-07T18:07:13Z",
+      "source_probe_outcome": "passed",
+      "source_probe_loop_status": "failed",
+      "projection_generation": 64378,
+      "readback_failed_at": "2026-11-07T18:07:27Z",
+      "failure_code": "bff_journey_truth_invalid",
+      "failure_message": "Trade Journey was not formal complete truth"
+    },
+    "after_restore_e9_readback_diagnosis": {
+      "restored_bff_sha": "e9a1a196805663b175423964c2ccdc21bf2d24ea",
+      "diagnosed_at": "2026-11-07T18:16:35Z",
+      "e9_f6_bff_helper_bytes_identical": true,
+      "why_risk_evaluation_was_missing": "paper_runtime.py emitted a separate risk_evaluation telemetry event only for committed_fill and canonical_lifecycle, while pre-broker order_rejection (sell_without_holdings) and explicit no-trade paper_order_simulated mapped directly to order_submission (index 9 of STAGES). Because risk_evaluation (index 8 of STAGES) is an observable stage before order_submission, JourneyMaterializer._missing_stages and TradeJourneyProjectionStore._projection_from_journey included risk_evaluation in completeness.missing_stages, causing trade_journeys._read_state to downgrade both detail and list surfaces from formal to partial.",
+      "pre_fix_result": {
+        "status": "failed",
+        "read_state": "partial",
+        "meta_read_state": "partial",
+        "missing_stages": [
+          "research_rationale",
+          "feature_hypothesis",
+          "backtest_validation",
+          "paper_graduation",
+          "champion_challenger",
+          "deployment_runtime",
+          "risk_evaluation"
+        ]
+      }
+    },
+    "post_fix_result": {
+      "status": "failed",
+      "flags_rejected": true,
+      "read_state": "formal",
+      "meta_read_state": "formal",
+      "risk_evaluation_stage_status": "rejected",
+      "order_submission_stage_status": "failed",
+      "missing_observable_stages": [],
+      "correlated_event_count": 3,
+      "hosted_bff_readback_outcome": "passed"
+    }
+  },
+  "repair_summary": {
+    "paper_runtime": "Stamps truthful risk_status=rejected and risk_decision_id on pre-broker order_rejection events (including sell_without_holdings) and risk_status=skipped on explicit no-trade paper_order_simulated events without fabricating fills, cash/position mutations, or extra telemetry events.",
+    "lifecycle_projector": "Propagates explicit pre-broker rejection (risk_status=rejected, reason_code, submitted_to_broker=false) and explicit no-trade (risk_status=skipped, decision_status=no_order, order_status=not_submitted, reason_code) contract fields while stripping post-decision order/fill/ledger/reconciliation identifiers.",
+    "materializer": "Records truthful risk_evaluation stage coverage (rejected for evaluated pre-broker order rejections, skipped for explicit no-order skips) only when required upstream signal_generation and trade_decision stages are present, no post-submission stages or fill/ledger/reconciliation identifiers exist, and explicit terminal non-fill evidence is present; rolls up explicit trade_decision skipped without order_submission as no_order.",
+    "bff_trade_journeys": "Normalizes non-fill terminal stage coverage and completeness across detail, list, timeline, graph, and evidence surfaces (including already-persisted journeys rows) while keeping incomplete/missing upstream decisions or unverified/broker-submitted order failures partial, anomalies degraded, and unavailable readers unavailable."
+  },
+  "constraints_verified": {
+    "hosted_bff_readback_production_assertions_untouched": true,
+    "repair_plan_copied_byte_for_byte": true,
+    "no_futures_broker_vm_ssh_cloud_or_provider_calls": true,
+    "no_datastore_hand_edits": true
+  },
+  "validation": {
+    "pytest_suites": [
+      "services/trade_journey/test_materializer.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "services/trade_journey/test_hosted_bff_readback.py",
+      "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "services/execution/lean_runtime/test_paper_runtime.py"
+    ],
+    "results": {
+      "trade_journey_and_bff_suites": "139 passed, 2 skipped",
+      "paper_runtime_suite": "98 passed, 27 subtests passed",
+      "total_passed": 237
+    },
+    "status": "passed"
+  }
+}

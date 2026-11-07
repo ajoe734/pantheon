@@ -139,3 +139,90 @@ def test_failure_injection_rejects_invalid_event_and_marks_failed_rebuild():
         materializer.rebuild([invalid])
     assert materializer.rebuild_status == "failed"
     assert materializer.projections == []
+
+
+def test_evaluated_prebroker_rejection_and_explicit_no_order_cover_risk_evaluation():
+    rejected = JourneyMaterializer()
+    rejected.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-2330"),
+        event("e2", "trade_decision", "succeeded", 2, decision_id="dec-2330"),
+        event(
+            "e3",
+            "order_submission",
+            "failed",
+            3,
+            event_type="order_rejection",
+            reason_code="sell_without_holdings",
+            submitted_to_broker=False,
+        ),
+    ])
+    rej_proj = rejected.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert rej_proj.snapshot["status"] == "failed"
+    assert rej_proj.snapshot["stages"]["risk_evaluation"]["status"] == "rejected"
+    assert "risk_evaluation" not in rej_proj.snapshot["completeness"]["missing_stages"]
+
+    noop = JourneyMaterializer()
+    noop.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-noop"),
+        event("e2", "trade_decision", "succeeded", 2, decision_id="dec-noop"),
+        event(
+            "e3",
+            "order_submission",
+            "skipped",
+            3,
+            event_type="paper_order_simulated",
+            reason_code="hold_signal",
+            submitted_to_broker=False,
+        ),
+    ])
+    noop_proj = noop.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert noop_proj.snapshot["status"] == "no_order"
+    assert noop_proj.snapshot["stages"]["risk_evaluation"]["status"] == "skipped"
+    assert "risk_evaluation" not in noop_proj.snapshot["completeness"]["missing_stages"]
+
+    decision_noop = JourneyMaterializer()
+    decision_noop.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-dec-noop"),
+        event("e2", "trade_decision", "skipped", 2, decision_id="dec-dec-noop", decision_status="no_order"),
+    ])
+    dec_proj = decision_noop.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert dec_proj.snapshot["status"] == "no_order"
+    assert "risk_evaluation" not in dec_proj.snapshot["completeness"]["missing_stages"]
+
+
+def test_missing_upstream_decision_or_unverified_submission_keeps_risk_missing():
+    missing_decision = JourneyMaterializer()
+    missing_decision.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-gap"),
+        event(
+            "e3",
+            "order_submission",
+            "failed",
+            3,
+            event_type="order_rejection",
+            reason_code="sell_without_holdings",
+            submitted_to_broker=False,
+        ),
+    ])
+    gap_proj = missing_decision.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert {"trade_decision", "risk_evaluation"} <= set(
+        gap_proj.snapshot["completeness"]["missing_stages"]
+    )
+
+    broker_err = JourneyMaterializer()
+    broker_err.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-bkr"),
+        event("e2", "trade_decision", "succeeded", 2, decision_id="dec-bkr"),
+        event(
+            "e3",
+            "order_submission",
+            "failed",
+            3,
+            event_type="order_rejection",
+            reason_code="taiwan_broker_error",
+            submitted_to_broker=True,
+        ),
+    ])
+    bkr_proj = broker_err.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert "risk_evaluation" in bkr_proj.snapshot["completeness"]["missing_stages"]
+

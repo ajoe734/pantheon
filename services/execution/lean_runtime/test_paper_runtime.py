@@ -2487,6 +2487,9 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             [event["metadata"]["sequence_no"] for event in lifecycle],
             [1, 2, 3],
         )
+        self.assertEqual(lifecycle[2]["metadata"].get("risk_status"), "skipped")
+        self.assertEqual(lifecycle[2]["metadata"].get("decision_status"), "no_order")
+        self.assertEqual(lifecycle[2]["metadata"].get("order_status"), "not_submitted")
 
 
 class PaperExecutionInputHardeningTest(unittest.TestCase):
@@ -4128,6 +4131,8 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         self.assertEqual(rej.broker_submission_status, "sell_without_holdings")
         self.assertFalse(rej.submitted_to_broker)
         self.assertEqual(rej.metadata.get("reason"), "sell_without_holdings")
+        self.assertEqual(rej.metadata.get("risk_status"), "rejected")
+        self.assertEqual(rej.metadata.get("risk_reason"), "sell_without_holdings")
         self.assertEqual(rej.metadata.get("requested_quantity"), 2.0)
         self.assertEqual(rej.metadata.get("holding_quantity"), 0.0)
         self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
