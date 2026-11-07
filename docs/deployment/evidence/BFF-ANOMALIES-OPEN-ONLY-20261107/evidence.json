@@ -1,0 +1,24 @@
+{
+  "task_id": "BFF-ANOMALIES-OPEN-ONLY-20261107",
+  "before": {
+    "cockpit_total_kb": 1275,
+    "cockpit_anomalies_kb": 557,
+    "cockpit_anomalies_items_all_resolved_or_closed": 2620,
+    "trading_pulse_kb": 710,
+    "measured_cockpit": "2026-11-05 BFF 2a2411124 GET /bff/management/cockpit",
+    "incidents_service_rows": 2667,
+    "incidents_service_kb": 6607,
+    "incidents_service_open_rows": 0,
+    "measured_incidents": "2026-11-07 BFF d77e03a05 GET /api/incidents",
+    "cockpit_active_count_shown": 537,
+    "owner_actual_active": "537 open + 6 investigating = 543"
+  },
+  "changes": [
+    "ManagementService.get_management_anomalies and main._build_management_anomalies_payload call list_incidents(open_only=True)",
+    "Cockpit incident group open_incidents and shell summary open_alerts count investigating",
+    "Fakes with list_incidents(self) now accept **kwargs"
+  ],
+  "tests": "tests/test_management_incident_owner_semantics.py (production ReadSurfacePorts + DomainIncidentPort with captured opener, both builders)",
+  "operator_verification": "In the incidents service access log, GET /bff/management/cockpit and Management AI context requests must produce GET /api/incidents?open_only=true for the anomalies reads (no bare GET /api/incidents from those builders); cockpit response anomalies items contain only open/investigating incidents and the response size drops by roughly 557 KB. /bff/alerts reads are out of scope and remain unfiltered.",
+  "known_preexisting_failures": "12 tests in test_bff_management_cockpit, test_main_composition_seam_extraction_005, test_persona_health_single_owner, test_p0_tw_paper_activate_honesty fail identically on the base commit in this worker environment"
+}

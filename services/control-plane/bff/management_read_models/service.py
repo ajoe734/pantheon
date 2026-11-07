@@ -3019,7 +3019,7 @@ class ManagementService:
         pending_states = {"pending", "in_review"}
         pending_approvals = count(approvals, {*pending_states, "proposed", "under_review", "reviewed"}, "decision_state", "status")
         open_alerts = (
-            count(incidents, {"open", "in_progress"}, "status")
+            count(incidents, {"open", "in_progress", "investigating"}, "status")
             + count(reviews, {*pending_states, "escalated"}, "status")
             + count(approvals, pending_states, "decision_state")
         )
@@ -3294,7 +3294,7 @@ class ManagementService:
 
             # 3. Incident group
             incidents: List[Dict[str, Any]] = _resolve_group("incident", [])
-            open_incidents = [i for i in incidents if isinstance(i, dict) and i.get("status") in ("open", "active", "triggered")]
+            open_incidents = [i for i in incidents if isinstance(i, dict) and i.get("status") in ("open", "active", "triggered", "investigating")]
             incident_failed = _group_read_failed("incident")
             incident_group = {
                 "group_id": "incident",
@@ -4653,7 +4653,7 @@ class ManagementService:
         # 1. Incidents
         try:
             if hasattr(store, "list_incidents"):
-                findings = store.list_incidents() or []
+                findings = store.list_incidents(open_only=True) or []
                 for f in findings:
                     if not isinstance(f, dict):
                         continue

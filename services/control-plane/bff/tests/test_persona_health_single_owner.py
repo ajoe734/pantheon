@@ -161,7 +161,7 @@ def _fake_read_store() -> Any:
         def list_persona_league(self, **kwargs: Any) -> List[Dict[str, Any]]:
             return []
 
-        def list_incidents(self) -> List[Dict[str, Any]]:
+        def list_incidents(self, **kwargs: Any) -> List[Dict[str, Any]]:
             return []
 
         def list_evolution_decisions(self) -> List[Dict[str, Any]]:

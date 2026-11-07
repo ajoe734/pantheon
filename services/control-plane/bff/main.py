@@ -2079,7 +2079,7 @@ _MANAGEMENT_RISK_LEVEL_ORDER = {
 def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
     incident_anomalies: List[Dict[str, Any]] = []
-    for incident in read_store.list_incidents():
+    for incident in read_store.list_incidents(open_only=True):
         incident_id = str(incident.get("id") or incident.get("incident_id") or "").strip()
         if not incident_id:
             continue
