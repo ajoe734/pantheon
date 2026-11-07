@@ -709,6 +709,12 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name == "_get_persona_directory_snapshot":
         from ..personas.service import _get_persona_directory_snapshot
         return _get_persona_directory_snapshot
+    if name == "_persona_record_projected_state":
+        from ..personas.service import _persona_record_projected_state
+        return _persona_record_projected_state
+    if name == "_PERSONA_OPERATIONAL_LIFECYCLE_STATES":
+        from ..personas.service import _PERSONA_OPERATIONAL_LIFECYCLE_STATES
+        return _PERSONA_OPERATIONAL_LIFECYCLE_STATES
     if name == "_persona_record_tenant_id":
         from ..personas.service import _persona_record_tenant_id
         return _persona_record_tenant_id
@@ -1349,6 +1355,9 @@ def mount_bff_routers(
             deprecated_bff_path_response=_dep("_deprecated_bff_path_response"),
             bff_me_tenant_payload=_dep("_bff_me_tenant_payload"),
             list_persona_records=_dep("_list_persona_records"),
+            persona_directory_snapshot=_dep("_get_persona_directory_snapshot"),
+            persona_record_projected_state=_dep("_persona_record_projected_state"),
+            persona_operational_states=_dep("_PERSONA_OPERATIONAL_LIFECYCLE_STATES"),
             list_strategy_summaries=_dep("_list_strategy_summaries"),
             strategy_write_owner=lambda: _dep("strategy_write_owner"),
         )

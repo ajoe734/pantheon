@@ -8,6 +8,12 @@ from fastapi import HTTPException
 
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
+from ..operational import (
+    PersonaStateLookup,
+    read_persona_state_lookup,
+    unavailable_lookup,
+)
+
 try:
     from services.control_plane.bff.ports.strategy_write_owner import StrategyWriteOwnerPort
 except (ImportError, ValueError):
@@ -217,9 +223,18 @@ def _project_strategy_spec_detail(source: Optional[Dict[str, Any]]) -> Optional[
     if traits_out:
         meta_out["traits"] = traits_out
 
+    def _spec_text(key: str) -> Optional[str]:
+        for candidate in (source.get(key), nested_spec.get(key)):
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return None
+
     return {
         "spec_version_id": spec_version_id,
         "spec_version": spec_version,
+        "title": _spec_text("title"),
+        "hypothesis": _spec_text("hypothesis"),
+        "objective": _spec_text("objective"),
         "market_scope": ms_out or None,
         "execution_profile": ep_out or None,
         "evaluation_plan": ev_out or None,
@@ -349,6 +364,11 @@ class StrategyRouteContext:
     deprecated_bff_path_response: Optional[Callable[..., Any]] = None
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None
+    # The Persona list route's own directory read and state projection, so the
+    # Strategy pages report exactly the state GET /bff/personas reports.
+    persona_directory_snapshot: Optional[Callable[..., Any]] = None
+    persona_record_projected_state: Optional[Callable[[Any], str]] = None
+    persona_operational_states: Optional[Any] = None
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None
     strategy_write_owner: Optional[Union[StrategyWriteOwnerPort, Callable[[], StrategyWriteOwnerPort]]] = None
     get_strategy_write_owner: Optional[Callable[[], StrategyWriteOwnerPort]] = None
@@ -382,6 +402,20 @@ class StrategyRouteContext:
         if self.bff_me_tenant_payload is None:
             raise NotImplementedError("bff_me_tenant_payload dependency was not supplied")
         return str(self.bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+
+    def read_persona_state_lookup(self, identity: Any, snapshot_at: str) -> PersonaStateLookup:
+        """Read the Persona directory once for this request (tenant of the caller)."""
+        try:
+            tenant_id = self.bff_tenant_id(identity)
+        except Exception as exc:  # noqa: BLE001 - no tenant means no persona truth
+            return unavailable_lookup(f"persona tenant unresolved: {type(exc).__name__}")
+        return read_persona_state_lookup(
+            directory_snapshot=self.persona_directory_snapshot,
+            projected_state=self.persona_record_projected_state,
+            operational_states=self.persona_operational_states,
+            tenant_id=tenant_id,
+            snapshot_at=snapshot_at,
+        )
 
     def write_principal(self, identity: Any) -> Dict[str, Any]:
         """Bind writes to the authenticated identity, never request-body fields."""
@@ -443,6 +477,7 @@ class StrategyRouteContext:
         ranking_read_failed: bool = False,
         ranking_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         include_spec: bool = False,
+        persona_lookup: Optional[PersonaStateLookup] = None,
     ) -> Dict[str, Any]:
         if overlay is not None:
             raise AttributeError("strategy overlay is retired; process-local state overlays are deleted")
@@ -537,7 +572,11 @@ class StrategyRouteContext:
             "availableActions": available_actions,
             "labelKey": f"strategy.{strategy_id}" if strategy_id else None,
             "lifecycleStatus": str(lifecycle_raw or ""),
+            "symbols": _clean_str_list(market_scope.get("symbols")),
         }
+        if persona_lookup is not None:
+            dto["personaStates"] = persona_lookup.persona_states(persona_ids)
+            dto["operationalStatus"] = persona_lookup.operational_status(persona_ids)
         if include_spec:
             spec_source = detail if (isinstance(detail, dict) and detail) else summary
             dto["spec"] = _project_strategy_spec_detail(spec_source)

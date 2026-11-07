@@ -569,6 +569,11 @@ class ResearchKnowledgeSourcePort:
     ) -> Tuple[Optional[Dict[str, Any]], str]:
         raise NotImplementedError
 
+    def read_registry_strategy_artifacts_for_strategy(
+        self, strategy_id: Optional[str]
+    ) -> ArtifactOwnerReadResult:
+        raise NotImplementedError
+
     def read_research_artifact_catalog_rows(self) -> ArtifactOwnerReadResult:
         raise NotImplementedError
 
@@ -3902,6 +3907,56 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if not isinstance(entry, Mapping) or entry.get("artifact_type") not in (None, "execution_bundle"):
             return None, "ok"
         return project_registry_catalog_detail(entry), "ok"
+
+    def read_registry_strategy_artifacts_for_strategy(
+        self, strategy_id: Optional[str]
+    ) -> ArtifactOwnerReadResult:
+        """Approved execution bundles of one strategy, as raw registry entries.
+
+        Uses the owner route ``GET /api/registry/strategies/{strategy_id}/strategy-artifacts``
+        (one targeted SQL predicate on ``strategy_id`` in the registry store,
+        then a state filter), so lineage and metadata stay intact and the read
+        never loads the whole artifact catalog.
+        """
+        clean_id = str(strategy_id or "").strip()
+        if not clean_id:
+            return ArtifactOwnerReadResult([], "ok", "missing")
+        base_url = self._resolve_registry_base_url()
+        if self._has_injected_registry_strategy_artifacts and not base_url:
+            items: List[Dict[str, Any]] = []
+            for row in self._registry_strategy_artifacts.values():
+                if not isinstance(row, Mapping):
+                    continue
+                entry = row.get("entry") if isinstance(row.get("entry"), Mapping) else row
+                if str(entry.get("strategy_id") or "").strip() != clean_id:
+                    continue
+                if entry.get("artifact_type") not in (None, "execution_bundle"):
+                    continue
+                items.append(dict(entry))
+            return ArtifactOwnerReadResult(items, "ok", "typed_store")
+        if not base_url:
+            return ArtifactOwnerReadResult([], "unconfigured", "missing")
+        from urllib.parse import quote
+
+        status_code, payload = self._registry_http_get(
+            base_url,
+            f"/api/registry/strategies/{quote(clean_id, safe='')}/strategy-artifacts"
+            "?artifact_state=approved",
+        )
+        if status_code != 200 or not isinstance(payload, list):
+            return ArtifactOwnerReadResult(
+                [],
+                "failed",
+                "unavailable",
+                f"Registry strategy-artifacts read for strategy failed (status={status_code})",
+            )
+        items = []
+        for raw_item in payload:
+            if not isinstance(raw_item, Mapping):
+                continue
+            entry = raw_item.get("entry") if isinstance(raw_item.get("entry"), Mapping) else raw_item
+            items.append(dict(entry))
+        return ArtifactOwnerReadResult(items, "ok", "service_client")
 
     def read_research_artifact_catalog_rows(self) -> ArtifactOwnerReadResult:
         if self._artifacts:

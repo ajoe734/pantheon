@@ -804,6 +804,9 @@ class ReadSurfacePorts:
     def read_registry_strategy_artifact_detail(self, artifact_id: Optional[str]) -> Any:
         return self.research_knowledge_source.read_registry_strategy_artifact_detail(artifact_id)
 
+    def read_registry_strategy_artifacts_for_strategy(self, strategy_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_registry_strategy_artifacts_for_strategy(strategy_id)
+
     def read_research_artifact_catalog_rows(self) -> Any:
         if "list_research_artifacts" in self.__dict__:
             from .research_knowledge_source import ArtifactOwnerReadResult, normalize_research_catalog_row

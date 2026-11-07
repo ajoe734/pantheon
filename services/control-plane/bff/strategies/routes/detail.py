@@ -39,14 +39,36 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
-        dto = ctx.project_strategy_dto(summary, detail=detail or summary, include_spec=True)
-        return {
-            "data": dto,
-            "meta": ctx.read_surface_meta(
+        persona_lookup = ctx.read_persona_state_lookup(identity, snapshot_at)
+        dto = ctx.project_strategy_dto(
+            summary,
+            detail=detail or summary,
+            include_spec=True,
+            persona_lookup=persona_lookup,
+        )
+        # Rules come from one registry owner read per request. A failed read
+        # leaves the detail at 200 with rules null and the surface unavailable.
+        rules, rules_status = ctx.service.get_strategy_rules(strategy_id)
+        dto["rules"] = rules
+        meta = dict(
+            ctx.read_surface_meta(
                 "strategy_specs", "strategy_detail",
                 snapshot_at=snapshot_at,
-            ),
-        }
+            )
+        )
+        surfaces = dict(meta.get("surfaces") or {})
+        surfaces["persona_states"] = persona_lookup.surface()
+        surfaces["strategy_rules"] = (
+            {"status": "ok", "source": "registry_strategy_artifacts"}
+            if rules_status == "ok"
+            else {
+                "status": "unavailable",
+                "source": "registry_strategy_artifacts",
+                "reason": "execution bundle read failed",
+            }
+        )
+        meta["surfaces"] = surfaces
+        return {"data": dto, "meta": meta}
 
     @router.patch("/bff/strategies/{strategy_id}")
     def bff_patch_strategy(
@@ -83,6 +105,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         snapshot_at = ctx.utc_now()
         base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
         base.pop("spec", None)
+        base.pop("symbols", None)
         for field_name in (
             "name", "owner", "state", "risk", "alpha",
             "capitalPoolId", "personaIds",
