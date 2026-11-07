@@ -3,8 +3,7 @@
   "scope": "source_only",
   "hosted_completion_claimed": false,
   "tests": {
-    "services/control-plane/bff/tests/test_persona_paper_advisory_admission.py": "6 passed",
-    "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py": "passed",
+    "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py::paper_advisory": "6 passed (37 passed in file)",
     "services/control-plane/bff/test_persona_provisioning_route_security.py": "2 failures pre-existing on unmodified base (strategy_store_unavailable)"
   },
   "operation": "POST /bff/personas/{persona_id}/provisioning/advisory-admission"

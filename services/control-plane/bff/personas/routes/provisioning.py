@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from services.control_plane.bff.models import ErrorCode
 from ..service import (
+    PersonaAdvisoryAdmissionError,
     PersonaProvisioningCoordinationError,
     ensure_chain_paper_capital,
     retire_chain_paper_capital,
@@ -138,8 +139,6 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
         Tenant comes from the caller's identity; no order, capital or runtime
         authority is granted and ineligible Personas are refused (409).
         """
-
-        from ..reconciliation import PersonaAdvisoryAdmissionError
 
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
