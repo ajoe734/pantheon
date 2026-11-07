@@ -1229,6 +1229,8 @@ _extract_identity = auth_policy.extract_identity
 _require_read_role = auth_policy.require_read_role
 _bff_error = auth_policy.bff_error
 from ..command_adapters.contracts import resolve_final_idempotency_key as _resolve_final_idempotency_key  # noqa: E402,F401  re-export for existing callers
+
+
 _first_nonblank = auth_policy.first_nonblank
 _capabilities_for_identity = auth_policy.capabilities_for_identity
 from ..models import redact_evidence_refs
@@ -1295,11 +1297,23 @@ def set_read_store(store: Optional[Any]) -> None:
     global _MANAGEMENT_AI_CONTEXT_SERVICE
     if _MANAGEMENT_AI_CONTEXT_SERVICE is not None and hasattr(_MANAGEMENT_AI_CONTEXT_SERVICE, "_get_read_store"):
         _MANAGEMENT_AI_CONTEXT_SERVICE._get_read_store = (lambda: store) if store is not None else get_read_store
+    if _CONTROL_LOOPS_SERVICE is not None and hasattr(_CONTROL_LOOPS_SERVICE, "read_store"):
+        _CONTROL_LOOPS_SERVICE.read_store = (
+            store
+            if store is not None
+            else (_CONTROL_LOOPS_SERVICE_ORIG_READ_STORE if _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE is not None else read_store)
+        )
 
 
 def reset_read_store() -> None:
     global _READ_STORE
     _READ_STORE = None
+    if _CONTROL_LOOPS_SERVICE is not None and hasattr(_CONTROL_LOOPS_SERVICE, "read_store"):
+        _CONTROL_LOOPS_SERVICE.read_store = (
+            _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE
+            if _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE is not None
+            else read_store
+        )
 
 
 class _ReadStoreProxy:
@@ -1762,12 +1776,22 @@ _REMAINING_MAIN_HELPERS = [
 ]
 
 
-_MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
+_MGMT_NL_VALID_FOCUS = {
+    "cockpit",
+    "trading_pulse",
+    "portfolio",
+    "persona_fleet",
+    "loop_health",
+    "all",
+}
 _MGMT_NL_FOCUS_ALIASES = {
     "persona": "persona_fleet",
     "personas": "persona_fleet",
     "runtime": "trading_pulse",
     "runtimes": "trading_pulse",
+    "loop": "loop_health",
+    "loops": "loop_health",
+    "loop-health": "loop_health",
 }
 _MGMT_NL_MAX_QUESTION_BYTES = 2048
 _MGMT_NL_MAX_RECENT_TURNS = 12
@@ -2110,6 +2134,41 @@ def _mgmt_nl_control_store() -> Optional[Any]:
     return get_assistant_control_mode_store()
 
 
+_CONTROL_LOOPS_SERVICE: Optional[Any] = None
+_CONTROL_LOOPS_SERVICE_ORIG_READ_STORE: Optional[Any] = None
+
+
+def get_control_loops_service() -> Any:
+    if _CONTROL_LOOPS_SERVICE is not None:
+        return _CONTROL_LOOPS_SERVICE
+    from ..control_loops.service import ControlLoopsService
+
+    return ControlLoopsService(
+        read_store=get_read_store(),
+        utc_now_fn=utc_now,
+        bff_error_fn=_bff_error,
+    )
+
+
+def set_control_loops_service(service: Optional[Any]) -> None:
+    global _CONTROL_LOOPS_SERVICE, _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE
+    _CONTROL_LOOPS_SERVICE = service
+    _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE = getattr(service, "read_store", None) if service is not None else None
+    if _READ_STORE is not None and service is not None and hasattr(service, "read_store"):
+        service.read_store = _READ_STORE
+
+
+def reset_control_loops_service() -> None:
+    global _CONTROL_LOOPS_SERVICE, _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE
+    if _CONTROL_LOOPS_SERVICE is not None and _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE is not None:
+        try:
+            _CONTROL_LOOPS_SERVICE.read_store = _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE
+        except Exception:
+            pass
+    _CONTROL_LOOPS_SERVICE = None
+    _CONTROL_LOOPS_SERVICE_ORIG_READ_STORE = None
+
+
 _MANAGEMENT_AI_CONTEXT_SERVICE: Optional[Any] = None
 
 def get_management_ai_context_service() -> Any:
@@ -2334,7 +2393,13 @@ def _project_persona_fleet_item_impl(
     strategies, strategies_obs = ctx_svc.get_context_strategies_for_persona(
         persona_id, record_filter=record_filter
     )
-    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=len(strategies))
+    # The source-health overlay in _project_persona_dto reads the current
+    # PersonaService ContextVar; the wired project_persona_fleet_item callback
+    # (main.py) binds the app-scoped instance exactly as
+    # PersonaService.build_persona_health_items does.
+    persona_dto = _project_persona_dto(
+        raw_persona, overlay=None, routed_strategies=len(strategies)
+    )
 
     bindings, bindings_obs = ctx_svc.get_context_bindings_for_persona(
         persona_id, record_filter=record_filter
@@ -2973,6 +3038,24 @@ def register_sse_buffers(buffers: Dict[str, deque], subscribers: Optional[Dict[s
         _ACTIVE_SSE_BUFFERS.append(buffers)
 
 
+def bind_persona_service_projection(service):
+    """Bind an app-scoped PersonaService as the current one for the projection.
+
+    Same binding as PersonaService.build_persona_health_items; no module global.
+    """
+    from ..personas.service import _current_persona_service
+
+    def _project(*args, **kwargs):
+        token = _current_persona_service.set(service) if service is not None else None
+        try:
+            return _project_persona_fleet_item_impl(*args, **kwargs)
+        finally:
+            if token is not None:
+                _current_persona_service.reset(token)
+
+    return _project
+
+
 def wire_management_runtime_projections(
     read_store: Optional[Any] = None,
     *,
@@ -2987,6 +3070,7 @@ def wire_management_runtime_projections(
     assistant_collect_source: Optional[Callable[..., Any]] = None,
     agora_audit_store: Optional[Any] = None,
     assistant_control_mode_store: Optional[Any] = None,
+    control_loops_service: Optional[Any] = None,
     sse_buffers: Optional[Dict[str, deque]] = None,
     sse_subscribers: Optional[Dict[str, list]] = None,
 ) -> None:
@@ -3029,6 +3113,8 @@ def wire_management_runtime_projections(
         set_agora_audit_store(agora_audit_store)
     if assistant_control_mode_store is not None:
         set_assistant_control_mode_store(assistant_control_mode_store)
+    if control_loops_service is not None:
+        set_control_loops_service(control_loops_service)
     if sse_buffers is not None:
         register_sse_buffers(sse_buffers, sse_subscribers)
 
@@ -4151,6 +4237,48 @@ def _mgmt_nl_filter_tenant_records(
         for record in records
         if isinstance(record, dict) and _mgmt_nl_record_matches_tenant(record, tenant_id)
     ]
+def _mgmt_nl_persona_state(persona: Dict[str, Any]) -> str:
+    """Projected lifecycle state of one persona record, from the Persona owner's
+    own rule."""
+    from ..personas.service import _persona_record_projected_state
+
+    return _persona_record_projected_state(persona)
+def _mgmt_nl_persona_is_operational(state: str) -> bool:
+    from ..personas.service import _is_persona_lifecycle_operational
+
+    return _is_persona_lifecycle_operational(state)
+def _mgmt_nl_runtime_is_retired(binding: Dict[str, Any]) -> bool:
+    """The single retired-runtime rule of the trading pulse."""
+    from ..management_read_models.service import _trading_pulse_binding_is_retired
+
+    return _trading_pulse_binding_is_retired(binding)
+def _mgmt_nl_filter_deployment_scoped_records(
+    records: List[Dict[str, Any]],
+    tenant_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Tenant filter for the few owners whose rows have no tenant dimension.
+
+    The incidents owner, the operator alert rows, the anomaly rows and the
+    human inbox rows carry no tenant key at all, so the strict filter above
+    removes every one of them. A row with no tenant key is deployment scoped
+    and is kept for a caller that has a tenant scope (the same caller can read
+    the same rows through GET /bff/alerts, /bff/incidents and
+    /bff/management/human-inbox). A row that names a tenant still has to match
+    the caller, and a caller with no tenant scope gets nothing. Only the named
+    sources use this; every other source keeps the strict filter.
+    """
+    clean_tenant = str(tenant_id or "").strip()
+    if not clean_tenant:
+        return []
+    return [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and (
+            not _mgmt_nl_record_tenant_ids(record)
+            or _mgmt_nl_record_matches_tenant(record, clean_tenant)
+        )
+    ]
 def _mgmt_nl_add_entity(
     entities: Set[Tuple[str, str]],
     entity_type: str,
@@ -4251,6 +4379,8 @@ def _mgmt_nl_trading_pulse_snippet(
     runtime_bindings: List[Dict[str, Any]],
     entities: Set[Tuple[str, str]],
     telemetry_by_runtime_id: Optional[Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]] = None,
+    *,
+    retired_runtime_count: int = 0,
 ) -> Dict[str, Any]:
     runtime_rows = _mgmt_nl_scoped_runtime_rows(
         runtime_bindings,
@@ -4286,6 +4416,8 @@ def _mgmt_nl_trading_pulse_snippet(
     summary = {
         "runtimeCount": len(runtime_rows),
         "runtime_count": len(runtime_rows),
+        "retiredRuntimeCount": retired_runtime_count,
+        "retired_runtime_count": retired_runtime_count,
         "telemetryCoverageCount": len(telemetry_rows),
         "telemetry_coverage_count": len(telemetry_rows),
         "byStatus": _management_count_by(runtime_rows, "status"),
@@ -4376,7 +4508,318 @@ def _mgmt_nl_merge_owner_observations(
     merged["degradation_reason"] = "; ".join(dict.fromkeys(degradation_reasons)) or worst.get("degradation_reason")
     merged["contributing_observations"] = present
     return merged
-def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+
+
+_MGMT_NL_LOOP_HEALTH_TIMEOUT_DEFAULT_SECONDS = 2.0
+_MGMT_NL_LOOP_HEALTH_PREFETCH: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "mgmt_nl_loop_health_prefetch",
+    default=None,
+)
+
+
+def _mgmt_nl_loop_health_timeout_seconds() -> float:
+    for env_name in (
+        "PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS",
+        "PANTHEON_BFF_LOOP_HEALTH_READ_TIMEOUT_SECONDS",
+    ):
+        raw = os.getenv(env_name)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        return min(10.0, max(0.02, value))
+    return _MGMT_NL_LOOP_HEALTH_TIMEOUT_DEFAULT_SECONDS
+
+
+def _mgmt_nl_requested_environment(payload: Optional[Mapping[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, Mapping):
+        return None
+    direct = str(payload.get("environment") or "").strip()
+    if direct:
+        return direct
+    ui = payload.get("ui")
+    if isinstance(ui, Mapping):
+        filters = ui.get("filters")
+        if isinstance(filters, Mapping):
+            filtered = str(filters.get("environment") or "").strip()
+            if filtered:
+                return filtered
+    return None
+
+
+def _mgmt_nl_loop_health_unavailable(
+    reason: str,
+    *,
+    message: Optional[str] = None,
+    compact_rows: Optional[List[Dict[str, Any]]] = None,
+    by_live_status: Optional[Dict[str, int]] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    rows = [dict(row) for row in (compact_rows or []) if isinstance(row, Mapping)]
+    counts = dict(by_live_status or {})
+    surface: Dict[str, Any] = {
+        "status": "unavailable",
+        "source": "control_loops_service",
+        "reason": reason,
+    }
+    if message:
+        surface["message"] = message
+    snippet: Dict[str, Any] = {
+        "status": "unavailable",
+        "total": len(rows),
+        "accepted": 0,
+        "by_live_status": counts,
+        "items": rows,
+    }
+    if rows and len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) > 8192:
+        orig_summaries = [str(row.get("summary") or "") for row in rows]
+        low, high = 0, 200
+        while low < high:
+            mid = (low + high + 1) // 2
+            for row, orig in zip(rows, orig_summaries):
+                row["summary"] = orig[:mid]
+            if len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) <= 8192:
+                low = mid
+            else:
+                high = mid - 1
+        for row, orig in zip(rows, orig_summaries):
+            row["summary"] = orig[:low]
+    return snippet, surface
+
+
+def _mgmt_nl_compact_loop_health_row(item: Mapping[str, Any]) -> Dict[str, Any]:
+    controller_health = (
+        item.get("controller_health")
+        if isinstance(item.get("controller_health"), Mapping)
+        else {}
+    )
+    downstream = (
+        item.get("downstream_actual_state")
+        if isinstance(item.get("downstream_actual_state"), Mapping)
+        else {}
+    )
+    accepted = bool(controller_health.get("current_record_accepted"))
+    downstream_status = str(downstream.get("status") or "unobserved").strip() or "unobserved"
+    controller_status = str(controller_health.get("status") or "unobserved").strip() or "unobserved"
+    raw_live_status = item.get("live_status")
+    if isinstance(raw_live_status, str) and raw_live_status.strip():
+        live_status = raw_live_status.strip()
+    elif accepted:
+        live_status = (
+            downstream_status
+            if downstream_status not in {"", "unobserved", "unknown"}
+            else controller_status
+        )
+    else:
+        live_status = (
+            controller_status
+            if controller_status not in {"", "healthy", "ok", "ready"}
+            else "unobserved"
+        )
+    raw_summary = downstream.get("summary")
+    summary = str(raw_summary)[:200] if raw_summary is not None else ""
+    return {
+        "loop_id": str(item.get("loop_id") or item.get("id") or ""),
+        "live_status": live_status,
+        "current_record_accepted": accepted,
+        "status": downstream_status,
+        "summary": summary,
+    }
+
+
+def _mgmt_nl_project_loop_health_outcome(outcome: Mapping[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    kind = str(outcome.get("kind") or "error")
+    if kind != "ok":
+        return _mgmt_nl_loop_health_unavailable(
+            str(outcome.get("reason") or "read_error"),
+            message=str(outcome.get("message") or "") or None,
+        )
+    payload = outcome.get("payload")
+    if not isinstance(payload, Mapping):
+        return _mgmt_nl_loop_health_unavailable("read_error", message="Loop health payload is invalid.")
+    meta = payload.get("meta") if isinstance(payload.get("meta"), Mapping) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), Mapping) else {}
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        raw_items = data.get("items") if isinstance(data.get("items"), list) else []
+    compact_rows = [
+        _mgmt_nl_compact_loop_health_row(item)
+        for item in raw_items
+        if isinstance(item, Mapping)
+    ]
+    by_live_status: Dict[str, int] = {}
+    accepted_count = 0
+    for row in compact_rows:
+        status_key = str(row.get("live_status") or "unobserved").strip() or "unobserved"
+        by_live_status[status_key] = by_live_status.get(status_key, 0) + 1
+        if row.get("current_record_accepted") is True:
+            accepted_count += 1
+    total = len(compact_rows)
+    coverage = meta.get("coverage") if isinstance(meta.get("coverage"), Mapping) else {}
+    meta_surfaces = meta.get("surfaces") if isinstance(meta.get("surfaces"), Mapping) else {}
+    route_surface = (
+        meta_surfaces.get("loop_health")
+        if isinstance(meta_surfaces.get("loop_health"), Mapping)
+        else {}
+    )
+    if "controller_health_records_available" in coverage:
+        records_available = bool(coverage.get("controller_health_records_available"))
+    elif "controller_health_records_available" in meta:
+        records_available = bool(meta.get("controller_health_records_available"))
+    else:
+        records_available = str(route_surface.get("source") or "") not in {"", "missing"}
+    if (
+        not records_available
+        or str(route_surface.get("status") or "") == "unavailable"
+        or str(route_surface.get("source") or "") == "missing"
+    ):
+        return _mgmt_nl_loop_health_unavailable(
+            "controller_health_store_unavailable",
+            message=str(route_surface.get("note") or "") or None,
+            compact_rows=compact_rows,
+            by_live_status=by_live_status,
+        )
+    if "accepted_live" in route_surface:
+        accepted_live = bool(route_surface.get("accepted_live"))
+    else:
+        live_status_block = data.get("live_status") if isinstance(data.get("live_status"), Mapping) else {}
+        accepted_live = bool(live_status_block.get("accepted_live"))
+    if accepted_live and total > 0 and accepted_count == total:
+        surface_status = "ok"
+    else:
+        surface_status = "degraded"
+    surface: Dict[str, Any] = {
+        "status": surface_status,
+        "source": str(route_surface.get("source") or "controller_store"),
+        "accepted_live": accepted_live,
+    }
+    if route_surface.get("note"):
+        surface["note"] = route_surface.get("note")
+    snippet: Dict[str, Any] = {
+        "status": surface_status,
+        "total": total,
+        "accepted": accepted_count,
+        "by_live_status": by_live_status,
+        "items": compact_rows,
+    }
+    if compact_rows and len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) > 8192:
+        orig_summaries = [str(row.get("summary") or "") for row in compact_rows]
+        low, high = 0, 200
+        while low < high:
+            mid = (low + high + 1) // 2
+            for row, orig in zip(compact_rows, orig_summaries):
+                row["summary"] = orig[:mid]
+            if len(json.dumps(snippet, sort_keys=True, ensure_ascii=True).encode("utf-8")) <= 8192:
+                low = mid
+            else:
+                high = mid - 1
+        for row, orig in zip(compact_rows, orig_summaries):
+            row["summary"] = orig[:low]
+    return snippet, surface
+
+
+async def _mgmt_nl_prefetch_loop_health(
+    identity: Any,
+    *,
+    requested_tenant: Optional[str] = None,
+    requested_environment: Optional[str] = None,
+) -> Dict[str, Any]:
+    timeout_s = _mgmt_nl_loop_health_timeout_seconds()
+    try:
+        service = get_control_loops_service()
+        coro = service.loop_health(
+            identity,
+            requested_tenant=requested_tenant,
+            requested_environment=requested_environment,
+        )
+        payload = await asyncio.wait_for(coro, timeout=timeout_s)
+        return {"kind": "ok", "payload": payload}
+    except asyncio.TimeoutError:
+        return {
+            "kind": "error",
+            "reason": "read_timeout",
+            "message": f"Loop health read timed out after {timeout_s:.2f}s.",
+        }
+    except HTTPException as exc:
+        reason = "caller_out_of_scope" if int(getattr(exc, "status_code", 500) or 500) in {401, 403} else "read_error"
+        return {
+            "kind": "error",
+            "reason": reason,
+            "message": str(getattr(exc, "detail", exc)),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "kind": "error",
+            "reason": "read_error",
+            "message": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _mgmt_nl_collect_loop_health(
+    *,
+    loop_health_outcome: Optional[Mapping[str, Any]] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    outcome = (
+        loop_health_outcome
+        if loop_health_outcome is not None
+        else _MGMT_NL_LOOP_HEALTH_PREFETCH.get()
+    )
+    if not isinstance(outcome, Mapping):
+        return _mgmt_nl_loop_health_unavailable(
+            "missing_prefetched_loop_health",
+            message="Loop health requires an authenticated prefetched outcome from ControlLoopsService.loop_health.",
+        )
+    return _mgmt_nl_project_loop_health_outcome(outcome)
+
+
+def _mgmt_nl_unavailable_fleet_item(
+    persona: Dict[str, Any], exc: BaseException
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """One persona whose projection raised: an unavailable owner observation
+    naming the exception class, so the other personas still project."""
+    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+    exc_name = type(exc).__name__
+    logging.getLogger(__name__).warning(
+        "bff.management_nl persona_fleet item projection failed: %s", exc_name
+    )
+    observation = {
+        "subject_type": "persona",
+        "subject_id": persona_id,
+        "status": "unavailable",
+        "owner": "persona_fleet",
+        "source_kind": "unavailable",
+        "source_version": None,
+        "observed_at": None,
+        "freshness_seconds": None,
+        "correlation_id": None,
+        "degradation_reason": f"persona_projection_failed:{exc_name}",
+        "contributing_observations": [],
+    }
+    item = {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "persona": {"id": persona_id},
+        "health": {
+            "status": "unavailable",
+            "reasons": [f"persona_projection_failed:{exc_name}"],
+        },
+        "bindings": [],
+        "runtime_bindings": [],
+        "runtimeBindings": [],
+        "owner_observations": [observation],
+    }
+    return item, [observation]
+
+
+def _mgmt_nl_collect_context(
+    focus: str,
+    snapshot_at: str,
+    tenant_id: Optional[str] = None,
+    *,
+    loop_health_outcome: Optional[Mapping[str, Any]] = None,
+    identity: Optional[Any] = None,
+) -> Dict[str, Any]:
     """Collect management summary context for the requested focus surface(s).
 
     BFF-B6-001-SEC-FIX: accepts optional tenant_id to scope retrieved data.
@@ -4395,16 +4838,30 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
     def _tenant_record_filter(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return _mgmt_nl_filter_tenant_records(records, tenant_id)
 
+    def _deployment_scoped_record_filter(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return _mgmt_nl_filter_deployment_scoped_records(records, tenant_id)
+
     _cached_runtime_bindings: Optional[Tuple[List[Dict[str, Any]], Dict[str, Any]]] = None
     _cached_unfiltered_telemetry: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
     _cached_trading_pulse_snippet: Optional[Dict[str, Any]] = None
+    retired_runtime_count = 0
 
     def _get_runtime_bindings() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        nonlocal _cached_runtime_bindings
+        # Split once with the single retired rule of the trading pulse: a
+        # retired runtime is history, so it is not a current runtime row and
+        # causes no telemetry, monitoring or rollback read and no observation.
+        nonlocal _cached_runtime_bindings, retired_runtime_count
         if _cached_runtime_bindings is None:
-            _cached_runtime_bindings = _management_ai_context_service.get_context_runtime_bindings(
+            all_bindings, bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
                 record_filter=_tenant_record_filter
             )
+            current_bindings = [
+                binding
+                for binding in all_bindings
+                if not (isinstance(binding, dict) and _mgmt_nl_runtime_is_retired(binding))
+            ]
+            retired_runtime_count = len(all_bindings) - len(current_bindings)
+            _cached_runtime_bindings = (current_bindings, bindings_obs)
         return _cached_runtime_bindings
 
     def _get_unfiltered_telemetry(
@@ -4433,27 +4890,25 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
         nonlocal _cached_trading_pulse_snippet
         if _cached_trading_pulse_snippet is None:
             _cached_trading_pulse_snippet = _mgmt_nl_trading_pulse_snippet(
-                runtime_bindings, evidence_entities, _cached_unfiltered_telemetry
+                runtime_bindings,
+                evidence_entities,
+                _cached_unfiltered_telemetry,
+                retired_runtime_count=retired_runtime_count,
             )
         return _cached_trading_pulse_snippet
 
     if use_all or focus == "cockpit":
         try:
             alerts_payload = _build_operator_alerts_payload(snapshot_at)
-            alerts = _mgmt_nl_filter_tenant_records(
-                list(alerts_payload.get("alerts") or []),
-                tenant_id,
+            alerts = _deployment_scoped_record_filter(list(alerts_payload.get("alerts") or []))
+            human_inbox_payload = _human_inbox_payload(
+                snapshot_at, page_size=None, identity=identity
             )
-            human_inbox_payload = _human_inbox_payload(snapshot_at, page_size=None)
-            inbox_items = _mgmt_nl_filter_tenant_records(
-                list(human_inbox_payload.get("items") or []),
-                tenant_id,
+            inbox_items = _deployment_scoped_record_filter(
+                list(((human_inbox_payload.get("data") or {}).get("items")) or [])
             )
             anomalies_payload = _build_management_anomalies_payload(snapshot_at)
-            anomalies = _mgmt_nl_filter_tenant_records(
-                list(anomalies_payload.get("items") or []),
-                tenant_id,
-            )
+            anomalies = _deployment_scoped_record_filter(list(anomalies_payload.get("items") or []))
             runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
             trading_pulse = _get_trading_pulse_snippet(runtime_bindings)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
@@ -4531,6 +4986,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             snippets["portfolio"] = {
                 "capital_pool_count": len(pools),
                 "runtime_count": len(runtime_bindings),
+                "retired_runtime_count": retired_runtime_count,
                 "total_pnl": portfolio_rollup.get("total_pnl"),
                 "max_drawdown": portfolio_rollup.get("max_drawdown"),
                 "average_fill_rate": portfolio_rollup.get("average_fill_rate"),
@@ -4564,9 +5020,23 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             personas, personas_obs = _management_ai_context_service.get_context_personas(
                 lambda: _list_persona_records(tenant_id), record_filter=_tenant_record_filter
             )
+            # Retired personas are history: they are counted, not projected, and
+            # operational personas come first so the row cap cannot hide one.
+            all_personas = list(personas)
+            personas = [
+                persona
+                for persona in all_personas
+                if _mgmt_nl_persona_state(persona) != "retired"
+            ]
+            retired_persona_count = len(all_personas) - len(personas)
+            personas.sort(
+                key=lambda persona: not _mgmt_nl_persona_is_operational(
+                    _mgmt_nl_persona_state(persona)
+                )
+            )
             runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
             incidents, incidents_obs = _management_ai_context_service.get_context_incidents(
-                record_filter=_tenant_record_filter
+                record_filter=_deployment_scoped_record_filter
             )
             evolution_decisions, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions(
                 record_filter=_tenant_record_filter
@@ -4608,18 +5078,25 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             # personas that already projected successfully, nor the
             # runtime/incidents/evolution provenance already collected above.
             fleet_items = []
+            fleet_item_states: List[str] = []
             fleet_owner_observations: List[Dict[str, Any]] = []
             for persona in personas:
-                item, item_owner_observations = _project_persona_fleet_item(
-                    persona,
-                    all_runtime_bindings=runtime_bindings,
-                    all_incidents=incidents,
-                    all_evolution_decisions=evolution_decisions,
-                    telemetry_by_runtime_id=telemetry_by_runtime_id,
-                    tenant_id=tenant_id,
-                )
+                try:
+                    item, item_owner_observations = _project_persona_fleet_item(
+                        persona,
+                        all_runtime_bindings=runtime_bindings,
+                        all_incidents=incidents,
+                        all_evolution_decisions=evolution_decisions,
+                        telemetry_by_runtime_id=telemetry_by_runtime_id,
+                        tenant_id=tenant_id,
+                    )
+                except Exception as persona_exc:
+                    item, item_owner_observations = _mgmt_nl_unavailable_fleet_item(
+                        persona, persona_exc
+                    )
                 if len(fleet_items) < 20:
                     fleet_items.append(item)
+                    fleet_item_states.append(_mgmt_nl_persona_state(persona))
                 # Telemetry observations are already carried once per unique
                 # runtime in telemetry_observations above; only the
                 # per-persona-only owners (bindings, teaching sessions) are
@@ -4638,8 +5115,24 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             fleet_summary = {
                 "total_personas": len(personas),
                 "returned_personas": len(fleet_items),
+                "retired_persona_count": retired_persona_count,
+                "retired_runtime_count": retired_runtime_count,
+                "by_lifecycle_state": _management_count_by(
+                    [
+                        {"lifecycle_state": _mgmt_nl_persona_state(persona)}
+                        for persona in personas
+                    ],
+                    "lifecycle_state",
+                ),
                 "critical_personas": len([item for item in fleet_items if item["health"]["status"] == "critical"]),
-                "degraded_personas": len([item for item in fleet_items if item["health"]["status"] == "degraded"]),
+                # A draft or research_only persona is not running yet; it is
+                # not a degraded one.
+                "degraded_personas": len([
+                    item
+                    for item, state in zip(fleet_items, fleet_item_states)
+                    if item["health"]["status"] == "degraded"
+                    and state not in {"draft", "research_only"}
+                ]),
                 "healthy_personas": len([item for item in fleet_items if item["health"]["status"] == "healthy"]),
                 "bound_personas": len([item for item in fleet_items if item["bindings"]]),
                 "runtime_bound_personas": len([item for item in fleet_items if item["runtimeBindings"]]),
@@ -4683,8 +5176,31 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                     *fleet_owner_observations,
                 ],
             }
-        except Exception:
+        except Exception as fleet_exc:
+            logging.getLogger(__name__).warning(
+                "bff.management_nl persona_fleet context failed: %s",
+                type(fleet_exc).__name__,
+            )
             surfaces["persona_fleet"] = {"status": "unavailable", "source": "error"}
+
+    if use_all or focus == "loop_health":
+        loop_health_collector = globals().get("_mgmt_nl_collect_loop_health")
+        if callable(loop_health_collector):
+            try:
+                loop_snippet, loop_surface = loop_health_collector(
+                    loop_health_outcome=loop_health_outcome,
+                )
+            except Exception as exc:  # noqa: BLE001
+                loop_snippet, loop_surface = _mgmt_nl_loop_health_unavailable(
+                    "read_error",
+                    message=f"{type(exc).__name__}: {exc}",
+                )
+            snippets["loop_health"] = loop_snippet
+            surfaces["loop_health"] = loop_surface
+            for row in loop_snippet.get("items") or []:
+                if isinstance(row, dict) and row.get("loop_id"):
+                    _mgmt_nl_add_entity(evidence_entities, "control_loop", row.get("loop_id"))
+            evidence_source_types.add("loop_health")
 
     return {
         "snippets": snippets,
@@ -4703,6 +5219,7 @@ def _mgmt_nl_synthesize_answer(question: str, snippets: Dict[str, Any], focus: s
     pulse = snippets.get("trading_pulse") or {}
     portfolio = snippets.get("portfolio") or {}
     fleet = snippets.get("persona_fleet") or {}
+    loop_health = snippets.get("loop_health")
 
     if cockpit:
         alerts = cockpit.get("alerts_summary") or {}
@@ -4743,6 +5260,17 @@ def _mgmt_nl_synthesize_answer(question: str, snippets: Dict[str, Any], focus: s
         total = fleet.get("total")
         if total is not None:
             parts.append(f"Persona fleet size: {total}.")
+
+    if isinstance(loop_health, dict):
+        if loop_health.get("status") == "unavailable":
+            parts.append("Loop health cannot be determined because the loop health surface is unavailable.")
+        elif loop_health.get("total") is not None and loop_health.get("accepted") is not None:
+            parts.append(
+                f"Loop health: {int(loop_health['accepted'])}/{int(loop_health['total'])} "
+                f"canonical loops accepted ({int(loop_health['accepted'])} of {int(loop_health['total'])})."
+            )
+    elif focus == "loop_health":
+        parts.append("Loop health cannot be determined because the loop health surface is unavailable.")
 
     if not parts:
         return (
@@ -5306,7 +5834,7 @@ def _mgmt_nl_build_context_pack(
 
     request = AssistantContextPackRequest(
         mode=assistant_mode,
-        include=["ui", "management_nl", "persona_health"],
+        include=["ui", "management_nl"],
         question=question,
         route=frontend_route,
         frontend={
@@ -5326,33 +5854,6 @@ def _mgmt_nl_build_context_pack(
     )
 
     def collect_source(source_id: str, _request: Any, snapshot_at: str) -> Any:
-        if source_id == "persona_health":
-            persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-            scoped_personas = _mgmt_nl_filter_tenant_records(_list_persona_records(caller_tenant_id), caller_tenant_id)
-            return AssistantCollectedSource(
-                source_id="persona_health",
-                href="/bff/v5/execution/persona-health",
-                payload={
-                    "items": [
-                        {
-                            "id": persona.get("persona_id") or persona.get("id"),
-                            "persona_id": persona.get("persona_id") or persona.get("id"),
-                            "name": persona.get("name") or persona.get("persona_id"),
-                            "health": "healthy"
-                            if persona.get("lifecycle_state") == "active"
-                            else "degraded",
-                            "lifecycle_state": persona.get("lifecycle_state"),
-                        }
-                        for persona in scoped_personas
-                    ],
-                    "meta": {
-                        "snapshot_at": snapshot_at,
-                        "surfaces": {"persona_health": persona_surface},
-                    },
-                },
-                status=str(persona_surface.get("status") or "ok"),
-                source_kind="bff",
-            )
         if source_id != "management_nl":
             return _assistant_collect_source(source_id, _request, snapshot_at)
         return AssistantCollectedSource(
@@ -6539,9 +7040,26 @@ async def _bff_management_nl_ask_impl(
     # the single-worker BFF that blocks the event loop for seconds per request;
     # run it in a worker thread so concurrent requests (and the FE-BFF gate's
     # nl/ask burst) are not starved.
-    context_bundle = await asyncio.to_thread(
-        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
-    )
+    prefetch_token = None
+    if focus in ("all", "", "loop_health"):
+        prefetched_loop_health = await _mgmt_nl_prefetch_loop_health(
+            identity,
+            requested_tenant=_first_nonblank(
+                payload.get("tenant_id"),
+                payload.get("tenantId"),
+                x_tenant_id,
+                x_pantheon_tenant,
+            ),
+            requested_environment=_mgmt_nl_requested_environment(payload),
+        )
+        prefetch_token = _MGMT_NL_LOOP_HEALTH_PREFETCH.set(prefetched_loop_health)
+    try:
+        context_bundle = await asyncio.to_thread(
+            _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id, identity=identity
+        )
+    finally:
+        if prefetch_token is not None:
+            _MGMT_NL_LOOP_HEALTH_PREFETCH.reset(prefetch_token)
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
     evidence_entities = context_bundle.get("evidence_entities") or set()
@@ -6993,9 +7511,26 @@ async def _bff_management_nl_ask_stream_impl(
         session_id=session_id,
         client_hint=_mgmt_nl_normalize_conversation_context(payload.get("conversation")),
     )
-    context_bundle = await asyncio.to_thread(
-        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
-    )
+    prefetch_token = None
+    if focus in ("all", "", "loop_health"):
+        prefetched_loop_health = await _mgmt_nl_prefetch_loop_health(
+            identity,
+            requested_tenant=_first_nonblank(
+                payload.get("tenant_id"),
+                payload.get("tenantId"),
+                x_tenant_id,
+                x_pantheon_tenant,
+            ),
+            requested_environment=_mgmt_nl_requested_environment(payload),
+        )
+        prefetch_token = _MGMT_NL_LOOP_HEALTH_PREFETCH.set(prefetched_loop_health)
+    try:
+        context_bundle = await asyncio.to_thread(
+            _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id, identity=identity
+        )
+    finally:
+        if prefetch_token is not None:
+            _MGMT_NL_LOOP_HEALTH_PREFETCH.reset(prefetch_token)
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
     confidence = _mgmt_nl_surface_confidence(surfaces)

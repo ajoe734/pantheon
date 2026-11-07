@@ -2881,6 +2881,13 @@
       "rationale": "BFF-STRATEGY-LIST-DEFAULT-VIEW-20261106 regression coverage for GET /bff/strategies exclude_state=draft, meta.state_counts at 5000 real-shape rows, state=retired, unknown lifecycle visibility, and tenant isolation; never imports main"
     },
     {
+      "file": "tests/test_strategy_operational_status.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-STRATEGY-OPERATIONAL-TRUTH-20261107 regression coverage for strategy personaStates, operationalStatus, hide_retired_personas paging at the real 141 row mix, operational_counts, symbols, spec hypothesis/objective and execution bundle rules; never imports main"
+    },
+    {
       "file": "tests/test_bff_jobs_newest_first.py",
       "layer": "router",
       "imports_main": false,

@@ -512,6 +512,9 @@ class ReadSurfacePorts:
         if dataset == "lineage_edges":
             # Real registry-owner read outcome (service_client / unavailable), never a constant.
             return self.lifecycle_telemetry_governance.dataset_source(dataset)
+        if dataset in ("freeze_orders", "all_rollbacks"):
+            # Real Governance owner read outcome (service / unavailable / missing).
+            return self.lifecycle_telemetry_governance.dataset_source(dataset)
         if dataset in ("incidents", "postmortems"):
             # The incident/postmortem owners can be down while list_*() swallows
             # the outage and returns []; surface their real availability.
@@ -800,6 +803,9 @@ class ReadSurfacePorts:
 
     def read_registry_strategy_artifact_detail(self, artifact_id: Optional[str]) -> Any:
         return self.research_knowledge_source.read_registry_strategy_artifact_detail(artifact_id)
+
+    def read_registry_strategy_artifacts_for_strategy(self, strategy_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_registry_strategy_artifacts_for_strategy(strategy_id)
 
     def read_research_artifact_catalog_rows(self) -> Any:
         if "list_research_artifacts" in self.__dict__:
@@ -1242,31 +1248,19 @@ class ReadSurfacePorts:
         return actions
 
     def get_rollbacks(self, runtime_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        # list_loop_runs() returns (False, []) when the rollback owner is
-        # unconfigured/unavailable, distinct from an authoritative healthy
-        # empty result (True, []). A bare empty list cannot be told apart
-        # from a missing owner, so a genuinely unavailable owner must raise
-        # instead of returning a false-healthy empty list; callers that need
-        # the previous best-effort-empty behavior already catch broadly
-        # (management context rollback observations, and the runtime/
-        # deployment-review routers that must not surface a 500 for a
-        # merely-unconfigured owner).
-        available, runs = self.lifecycle_telemetry_governance.list_loop_runs()
-        if not available:
-            raise RuntimeError("rollback read surface is unavailable or unconfigured.")
-        if runtime_id:
-            return [r for r in runs if r.get("runtime_id") == runtime_id]
-        return runs
+        # Canonical Governance rollback ledger. An unavailable/unconfigured
+        # owner raises so callers never mistake it for a healthy empty list.
+        gov = getattr(self.lifecycle_telemetry_governance, "governance", None)
+        strict = getattr(gov, "read_rollbacks_strict", None)
+        if callable(strict):
+            return strict(runtime_id)
+        return self.lifecycle_telemetry_governance.list_all_rollbacks(runtime_id=runtime_id)
 
     def list_all_rollbacks(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        # Preserves its long-standing best-effort empty-list contract for
-        # generic evolution-journal/rollback-listing callers that are not
-        # owner-observation aware; get_rollbacks() itself raises on a
-        # genuinely unavailable owner for callers that need that signal.
-        try:
-            return self.get_rollbacks()
-        except Exception:
-            return []
+        # Canonical Governance rollback ledger (not loop_runs / incident-derived
+        # pseudo-rollbacks). Owner failures are reported through
+        # dataset_source("all_rollbacks"), not as a healthy zero.
+        return self.lifecycle_telemetry_governance.list_all_rollbacks(**kwargs)
 
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
         return cached_owner_call(("rsp_paper_monitoring", id(self), selected_tenant.get()), self._load_paper_runtime_monitoring_sessions)

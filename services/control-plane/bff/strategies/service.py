@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
+
 try:
     from services.control_plane.bff.models import ErrorCode
 except (ImportError, ValueError):
@@ -54,6 +55,91 @@ except (ImportError, ValueError):
     StrategySpecSeedStoreError = Exception  # type: ignore
 
 _DEFAULT_SEED_STORE_CLASS = StrategySpecSeedStore
+
+# Registry summary paging bounds (owner caps page_size at 200).
+STRATEGY_OWNER_PAGE_SIZE = 200
+STRATEGY_CANDIDATE_WALK_MAX_PAGES = 100
+# operational_counts without hide_retired_personas walks the candidate set only
+# up to this size (one owner page); larger sets keep the one-read default view.
+STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES = STRATEGY_OWNER_PAGE_SIZE
+
+ROLE_TRADING = "trading"
+ROLE_ROLLBACK_BASELINE = "rollback_baseline"
+
+
+def _clean_dict(value: Any) -> Dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def project_strategy_rules(
+    entries: Any,
+    *,
+    strategy_id: str,
+) -> List[Dict[str, Any]]:
+    """One rule per approved execution_bundle of ``strategy_id``.
+
+    ``entries`` is the registry owner response of
+    ``GET /api/registry/strategies/{strategy_id}/strategy-artifacts``: a list
+    of RegistryEntryView (``{"entry": {...}}``) or bare entries. Role is
+    ``rollback_baseline`` only when the registry id is named in
+    ``lineage.parent_registry_ids`` of another approved bundle of the same
+    strategy. No registry id is ever derived by rewriting another id.
+    """
+    approved: List[Dict[str, Any]] = []
+    for item in entries if isinstance(entries, list) else []:
+        entry = (
+            item.get("entry")
+            if isinstance(item, dict) and isinstance(item.get("entry"), dict)
+            else item
+        )
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("artifact_type") not in (None, "execution_bundle"):
+            continue
+        if str(entry.get("artifact_state") or "").strip().lower() != "approved":
+            continue
+        if str(entry.get("strategy_id") or "").strip() != strategy_id:
+            continue
+        registry_id = str(entry.get("registry_id") or "").strip()
+        if not registry_id:
+            continue
+        approved.append(entry)
+
+    parent_ids_by_bundle: Dict[str, List[str]] = {}
+    for entry in approved:
+        lineage = _clean_dict(entry.get("lineage"))
+        parents = lineage.get("parent_registry_ids")
+        parent_ids_by_bundle[str(entry["registry_id"])] = (
+            [str(p) for p in parents if str(p).strip()]
+            if isinstance(parents, list)
+            else []
+        )
+
+    rules: List[Dict[str, Any]] = []
+    for entry in approved:
+        registry_id = str(entry["registry_id"])
+        is_parent_of_other = any(
+            registry_id in parents
+            for other_id, parents in parent_ids_by_bundle.items()
+            if other_id != registry_id
+        )
+        metadata = _clean_dict(entry.get("metadata"))
+        artifact = _clean_dict(metadata.get("strategy_artifact"))
+        mutation = _clean_dict(artifact.get("mutation_surface"))
+        controls = mutation.get("controls")
+        immutable = mutation.get("immutable_parameters")
+        rules.append(
+            {
+                "registryId": registry_id,
+                "version": entry.get("version"),
+                "role": ROLE_ROLLBACK_BASELINE if is_parent_of_other else ROLE_TRADING,
+                "strategyLogic": _clean_dict(artifact.get("strategy_logic")),
+                "parameters": _clean_dict(artifact.get("parameters")),
+                "adjustableControls": list(controls) if isinstance(controls, list) else [],
+                "immutableParameters": list(immutable) if isinstance(immutable, list) else [],
+            }
+        )
+    return rules
 
 log = logging.getLogger(__name__)
 
@@ -318,6 +404,84 @@ class StrategiesService:
         except Exception as exc:
             return self._invoke_read_owner(lambda: (_ for _ in ()).throw(exc))
         return page if isinstance(page, dict) else None
+
+    def list_all_strategy_summary_pages(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Walk every owner summary page of one candidate set (page_size 200).
+
+        Returns ``{"items", "total", "state_counts"}`` or ``None`` when the
+        owner has no paged view. The registry paging is by offset token, so a
+        repeated or non-advancing token is a broken owner and fails closed.
+        """
+        items: List[Dict[str, Any]] = []
+        state_counts: Optional[Dict[str, int]] = None
+        total = 0
+        page_token: Optional[str] = None
+        seen_tokens: Set[str] = set()
+        for page_number in range(STRATEGY_CANDIDATE_WALK_MAX_PAGES):
+            page = self.list_strategy_summaries_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                page_token=page_token,
+                page_size=STRATEGY_OWNER_PAGE_SIZE,
+            )
+            if page is None:
+                return None
+            page_items = page.get("items")
+            if not isinstance(page_items, list):
+                raise self._candidate_walk_error("Invalid strategy list payload")
+            items.extend(page_items)
+            if page_number == 0:
+                total = int(page.get("total") or 0)
+                state_counts = self.resolve_strategy_state_counts(owner_page=page)
+            next_token = page.get("next_page_token")
+            if not next_token:
+                return {"items": items, "total": total, "state_counts": state_counts}
+            next_token = str(next_token)
+            if next_token in seen_tokens or next_token == page_token:
+                raise self._candidate_walk_error("Strategy list paging did not advance")
+            seen_tokens.add(next_token)
+            page_token = next_token
+        raise self._candidate_walk_error(
+            "Strategy candidate set exceeds the bounded owner page walk"
+        )
+
+    def _candidate_walk_error(self, message: str) -> Exception:
+        if self._bff_error:
+            return self._bff_error(
+                503, ErrorCode.DEPENDENCY_UNAVAILABLE, message, "strategy_store_unavailable"
+            )
+        return HTTPException(status_code=503, detail=message)
+
+    def get_strategy_rules(
+        self, strategy_id: str
+    ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
+        """Rules of one strategy from its approved execution bundles.
+
+        Returns ``(rules, "ok")`` or ``(None, "unavailable")``. A failed owner
+        read never raises: the detail stays readable and says rules are
+        unavailable.
+        """
+        try:
+            read_store = self._get_read_store_port()
+            getter = getattr(read_store, "read_registry_strategy_artifacts_for_strategy", None)
+            if not callable(getter):
+                return None, "unavailable"
+            result = getter(strategy_id)
+        except Exception as exc:  # noqa: BLE001 - rules degrade, detail stays 200
+            log.warning("strategy rules read failed for %s: %s", strategy_id, exc)
+            return None, "unavailable"
+        if getattr(result, "status", None) != "ok":
+            return None, "unavailable"
+        return project_strategy_rules(
+            list(getattr(result, "items", None) or []), strategy_id=strategy_id
+        ), "ok"
 
     def resolve_strategy_state_counts(
         self,

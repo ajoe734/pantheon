@@ -1,0 +1,93 @@
+{
+  "backend": {
+    "commit": "2638f809cd4c933aeb26df017979eb122552e5dd",
+    "images": {
+      "agora_interaction_worker": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/agora-interaction-worker@sha256:1e9142e739ca87343f7d80b4c79c1f18997fb3514df74c91645c08fd2fb12ebd",
+      "capital": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/capital@sha256:b4b3a6c400b8d21a4429c837a1ebee7593c3222d11a93aa13447ed85506111e9",
+      "consultation_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/consultation-svc@sha256:fdf84eca4cb95ffaf215c47f6f797a41d4c9b1aa46c4c4c1ca16d247cbe49a22",
+      "deployment": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/deployment@sha256:2a1abf424149daded861629b3cf98c707bc11d00c7909e0764c618fe5fab1ded",
+      "evolution": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/evolution@sha256:0eae390a051831ee66466633796676f760e770e582b8a6dd5afd26517865fc8f",
+      "governance": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/governance@sha256:9a1e0e208e88715b2ec7a52eb5cad28a81aed134d7716ff17a119d652f9d958e",
+      "incidents": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/incidents@sha256:8e7f69112fada96d05b78e46c58e9d6ca91dbfe34077de594e80c666fe23c30d",
+      "lifecycle_projector": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/lifecycle-projector@sha256:d16175a4a484986471178e76feb1d5de372843c664776f0694b2039ddb2d8650",
+      "lineage_read": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/lineage-read@sha256:6ef9bebecdacb7bc19c0ba8367a30228b5616a954a4f1ec8a243f508d4320adb",
+      "memory": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/memory@sha256:fa6d9202c0e4a10bad9807a32944ac527c4a92b9946b6f610a821c9858f7e179",
+      "openclaw_gateway_adapter": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/openclaw-gateway-adapter@sha256:e0b88651b72ee2fa3fe3e5fcfdb3731cb0e77ad86bd0d621dceb544018a70e44",
+      "operator_bff": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:b809f511c8a1ab6977c4ed598b4ae129184970463140b0aa060569f1fa27ed51",
+      "paper_fleet_reconciler": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/training-session-svc@sha256:8b92b4762128101977e7812b771a2626e103d4aa8ea14e09388e3e60e3bd8426",
+      "paper_signal_producer": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/training-session-svc@sha256:8b92b4762128101977e7812b771a2626e103d4aa8ea14e09388e3e60e3bd8426",
+      "persona": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/persona@sha256:5487cc6adf7f097472b8f2ee3690689d1f876fa9d7d71645ea932910b24bcc89",
+      "policy_learning_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/policy-learning-svc@sha256:d8e88a2c13ed7c3d0a5adc269d8b18a5ead3b98b2c981e1cade9a742a7f4a3fc",
+      "postmortems": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/postmortems@sha256:f23278bf95f616d045f8939b5529bd0d02ec038d6ed312292304a2b176ff0088",
+      "reconciliation_drift_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/reconciliation-drift-svc@sha256:afa558cdd58a66f0c654f356029837ada23b3415d9eee42c11d860ed5d394137",
+      "registry": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/registry@sha256:865a35e4ef8abb0bfd3ecf557b25eef8bcf81bdaba5b4e8f8b106a29137f184c",
+      "research_orchestrator_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/research-orchestrator-svc@sha256:ab514ec875eedad8ddf42e0a75fe36fb09bc9f74688f89d976cbedd8124c9022",
+      "runtime_manager": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/runtime-manager@sha256:c0f48e3461e2641004918e244edeb746afa3b0fa4b35b9174650c35e1bc905ac",
+      "source_ingest": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/source-ingest@sha256:9ac311a607e00102358ba57a9b3d3e5060d9aa3298c2aaa3566310da18ec1b58",
+      "telemetry": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/telemetry@sha256:5286c8a09366e1736245445ccb273844f06500cd071f49cfb16a6f4ba9f6b663",
+      "training_session_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/training-session-svc@sha256:8b92b4762128101977e7812b771a2626e103d4aa8ea14e09388e3e60e3bd8426"
+    },
+    "repository": "ajoe734/pantheon"
+  },
+  "compatibility_manifest_sha256": "sha256:e9d79a1cb0f2d46e83dac51f256319eb02bf06f19a4e016d67a10d5bb7108a34",
+  "config_schema_version": "pantheon.env-config.v1",
+  "created_at": "2026-11-07T05:03:05Z",
+  "created_by_workflow": "ajoe734/pantheon/actions/runs/42181697809",
+  "dev_verification": {
+    "bff_version_commit": "2638f809cd4c933aeb26df017979eb122552e5dd",
+    "fe_deployment_manifest_sha256": "sha256:1771af4f85ec983888156ede18dc2c1f64da10fb78122bf2fa1f303e5d514dba",
+    "frontend_commit": "979294ceb37870186088a6934041c35f8e50c14a",
+    "status": "dev_verified",
+    "verified_at": "2026-11-06T08:40:52Z",
+    "workflow_run": "ajoe734/pantheon/actions/runs/42181697809"
+  },
+  "frontend": {
+    "artifact_sha256": "sha256:98b89fd0064bd1d090dbb0a40415a46aa0a76b2bf710afd4937f52e9f9eb3b53",
+    "commit": "979294ceb37870186088a6934041c35f8e50c14a",
+    "repository": "ajoe734/execute-plans"
+  },
+  "migration_set_sha256": "sha256:b54198cc799fa126b955f9ea383969152ac45e59ed18d94849ed04342d2d22e2",
+  "release_id": "pantheon-20261107-103",
+  "release_state": "dev_verified",
+  "rollback_baseline": {
+    "backend_commit": "9a12eb361165867d39b7c7c6f55e846a1b4564e1",
+    "backend_images": {
+      "agora_interaction_worker": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/agora-interaction-worker@sha256:8c5c1181284af22c17d352cde4f3ae25472ea2f053d3c29208939ef41ccb877d",
+      "capital": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/capital@sha256:3fc6819e5ceac4d32722ca6b2e17bcde672dce11147f5e16fe36deb269d8977c",
+      "consultation_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/consultation-svc@sha256:d2947fc6f026daf402bf02eee905af79bdfc348f0b7ecc23105408cbd9f4fb87",
+      "deployment": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/deployment@sha256:87a75b5adf5e05dd65648ff9b9514db54de451fdde41b24712c9b6d810d53823",
+      "evolution": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/evolution@sha256:293b1e7c995221732322685367f24b8a58fd6ea09cd54355f70a63d99e5da261",
+      "governance": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/governance@sha256:a389c128d45ae893e59a3519da18065d679229cbbdaa0670b89f09011ed121c2",
+      "incidents": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/incidents@sha256:a926e42f75e4e24ff255632afff287675bab424d5d2d197e3e757ce399c8ef89",
+      "lifecycle_projector": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/lifecycle-projector@sha256:bab79c6f235cb62d067d29390e63ecf125e1855caf37300e4b282d0c4be5eb62",
+      "lineage_read": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/lineage-read@sha256:90e81a516388a6cf98cf81366ae52654afb14ea709d4280887b49e9bd907cf21",
+      "memory": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/memory@sha256:db68c6189f1fbda76d5dd486e3e635d3387f2025c21cbde815d485064b7e60b4",
+      "openclaw_gateway_adapter": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/openclaw-gateway-adapter@sha256:873faec7b39d0a11cc89e15013a856c0bd21c14f20798d171eda00beb7a5e77f",
+      "operator_bff": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:ccb9b9291521b360ce8ac1fed682df36b4b39f9d45dfd74efe5e2d9eb65913b8",
+      "paper_fleet_reconciler": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/training-session-svc@sha256:32022e05d359d81797c7f6e7001f1cac9ffedf336af5d690a8208d6b4f4792b6",
+      "paper_signal_producer": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/training-session-svc@sha256:32022e05d359d81797c7f6e7001f1cac9ffedf336af5d690a8208d6b4f4792b6",
+      "persona": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/persona@sha256:d0baa47883f0d0ccf4242c972dc3d471ac2dd49d7063349a622c65d6afcc5dac",
+      "policy_learning_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/policy-learning-svc@sha256:b4c0638d59838afe40202dd9b8d6683f30bac2479c0ea790698173d81ee93db5",
+      "postmortems": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/postmortems@sha256:2ec94cc98aaa84eb2d59d9f8fe7310014b0bac02f1338c492ec6a9c2296e8dd3",
+      "reconciliation_drift_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/reconciliation-drift-svc@sha256:a819f3e6194e1020e96691de412dfe16bbb74781492588c1e9f63591b6ff2008",
+      "registry": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/registry@sha256:39982d0c496ff820e6647268fd7b2540dcec4675a80150da8acf50a0e50d6da3",
+      "research_orchestrator_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/research-orchestrator-svc@sha256:fc4cf85960226cc947065e4ec2330b0ffe17e374f73b996d82dc78535c4aa575",
+      "runtime_manager": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/runtime-manager@sha256:ea34e5f1ff404afafc9d727a5a626331588e7d78f99f748d77dabaac3fc95575",
+      "source_ingest": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/source-ingest@sha256:8a7288ce94413f119d3f6a1f765f80a7d3911d2d5f1447bc6f34d6e471cfc173",
+      "telemetry": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/telemetry@sha256:5132c63d0cdaaf4cf0ef261fd833b51e44efe68d55c78b79c88d6df1006b4bcc",
+      "training_session_svc": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/training-session-svc@sha256:32022e05d359d81797c7f6e7001f1cac9ffedf336af5d690a8208d6b4f4792b6"
+    },
+    "backend_operator_bff_image": "asia-east1-docker.pkg.dev/pantheon-stg-20260902/pantheon-releases/operator-bff@sha256:ccb9b9291521b360ce8ac1fed682df36b4b39f9d45dfd74efe5e2d9eb65913b8",
+    "config_schema_version": "pantheon.env-config.v1",
+    "frontend_artifact_sha256": "sha256:47cfd8d3c0f970569c22cfb9736294f6e7c01ed73f0141c3d07c7de9b0ead69a",
+    "frontend_commit": "24534489030770f9e7a52cb893e97efa14b53cc4",
+    "previous_release_id": "pantheon-20261028-102"
+  },
+  "safety_defaults": {
+    "control_vm_broker_credentials_present": false,
+    "live_broker_enabled": false,
+    "provider_enabled": false,
+    "real_writes_enabled": false
+  },
+  "schema_version": 1
+}

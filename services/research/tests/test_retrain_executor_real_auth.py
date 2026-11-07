@@ -671,3 +671,104 @@ def test_startup_leaves_non_retrain_and_finished_runs_alone(world):
     assert {k: v for k, v in store.get_run("run-not-retrain-restart").items() if k != "id"} == stub
     assert {k: v for k, v in store.get_run("run-finished-retrain-restart").items() if k != "id"} == finished
     assert len(world.training.store.list_sessions()) == sessions_before
+
+
+# --- Run identity and terminal transition (RESEARCH-RETRAIN-RUN-TRUTH-20261107) ---
+
+NON_REAL = {"stub", "manual", "unknown", "handoff_only", ""}
+
+
+def _task(world: World, run: dict[str, Any]) -> dict[str, Any]:
+    from fastapi.testclient import TestClient
+
+    return TestClient(world.research.app).get(f"/api/research-orchestrator/tasks/{run['task_id']}").json()
+
+
+def _assert_labelled_as_training_evaluation(run: dict[str, Any]) -> None:
+    for field in ("adapter", "requested_mode", "dispatch_mode"):
+        assert str(run[field]).lower() not in NON_REAL, (field, run[field])
+    queued = [e for e in run["events"] if e["event_type"] == "run_queued"]
+    assert len(queued) == 1 and "tub" not in queued[0]["summary"], queued
+
+
+def _completed_events(run: dict[str, Any]) -> list[dict[str, Any]]:
+    return [e for e in run["events"] if e["event_type"] == "run_completed"]
+
+
+def test_candidate_created_run_is_labelled_and_ends_its_task(world):
+    run = _run(world, "artifact-retrain-better-v1", "dec-truth-candidate")
+    assert run["status"] == "completed" and run["outcome"] == "candidate_created", run
+    _assert_labelled_as_training_evaluation(run)
+    done = _completed_events(run)
+    assert len(done) == 1 and "candidate_created" in done[0]["summary"] and run["outcome_reason"] in done[0]["summary"]
+    assert _task(world, run)["status"] == "completed"
+
+
+def test_no_candidate_run_is_labelled_and_ends_its_task(world):
+    run = _run(world, "artifact-retrain-worse-v1", "dec-truth-nocandidate")
+    assert run["status"] == "completed" and run["outcome"] == "no_candidate", run
+    assert run["outcome_reason"] == "not_better_than_baseline"
+    _assert_labelled_as_training_evaluation(run)
+    done = _completed_events(run)
+    assert len(done) == 1 and "no_candidate" in done[0]["summary"] and "not_better_than_baseline" in done[0]["summary"]
+    assert _task(world, run)["status"] == "completed"
+
+
+def test_failed_run_is_labelled_and_fails_its_task(world):
+    run = _run(world, "artifact-retrain-better-v1", "dec-truth-failed", tenant="tenant-other")
+    assert run["status"] == "failed" and run["failed_step"] == "read_target_artifact", run
+    _assert_labelled_as_training_evaluation(run)
+    done = _completed_events(run)
+    assert len(done) == 1 and "read_target_artifact" in done[0]["summary"]
+    assert _task(world, run)["status"] == "failed"
+
+
+def test_non_retrain_run_keeps_its_stub_identity(world):
+    from fastapi.testclient import TestClient
+
+    client = TestClient(world.research.app)
+    task = client.post("/api/research-orchestrator/tasks", json={"title": "t", "objective": "o", "idempotency_key": "task-truth-other"}).json()
+    run = client.post(f"/api/research-orchestrator/tasks/{task['task_id']}/runs", json={
+        "parameters": {"decision_id": "dec-x", "target_artifact_id": "artifact-x", "action_type": "rebalance"},
+        "idempotency_key": "run-truth-other",
+    }).json()
+    assert (run["adapter"], run["requested_mode"], run["dispatch_mode"]) == ("stub", "stub", "stub")
+    assert run["status"] == "queued" and "Stub" in run["events"][0]["summary"]
+
+
+def test_startup_repairs_a_task_left_running_by_a_finished_retrain_run(world):
+    from fastapi.testclient import TestClient
+
+    done = _run(world, "artifact-retrain-worse-v1", "dec-truth-repair")
+    _settle(world, done["run_id"])
+    store = world.research.get_store()
+    # The shape earlier hosted retrain runs left: stub identity, only the queued event,
+    # terminal run, task still running.
+    left = {k: v for k, v in done.items() if k != "completed_at"}
+    left.update(adapter="stub", requested_mode="stub", dispatch_mode="stub", events=done["events"][:1])
+    store.put_run(left)
+    task = store.get_task(done["task_id"])
+    task["status"] = "running"
+    store.put_task(task)
+    runs_before = len(store.list_runs())
+    sessions_before = len(world.training.store.list_sessions())
+    run_before = dict(store.get_run(done["run_id"]))
+
+    world.research.repair_retrain_tasks_left_running()
+    world.research.repair_retrain_tasks_left_running()  # once: a second pass changes nothing more
+
+    assert store.get_task(done["task_id"])["status"] == "completed"
+    assert store.get_run(done["run_id"]) == run_before
+    assert len(store.list_runs()) == runs_before
+    assert len(world.training.store.list_sessions()) == sessions_before
+    assert TestClient(world.research.app).get(f"/api/research-orchestrator/runs/{done['run_id']}").json() == run_before
+
+
+def test_startup_repair_leaves_a_task_with_an_active_run_running(world):
+    store = world.research.get_store()
+    store.put_task({"task_id": "rtask-active", "id": "rtask-active", "status": "running", "title": "t", "objective": "o"})
+    params = {"tenant_id": TENANT, "decision_id": "dec-active", "target_artifact_id": "artifact-x", "action_type": "retrain"}
+    store.put_run({"run_id": "rrun-active-old", "task_id": "rtask-active", "status": "completed", "parameters": params})
+    store.put_run({"run_id": "rrun-active-now", "task_id": "rtask-active", "status": "running", "cancellation_fence": "fenced", "parameters": params})
+    world.research.repair_retrain_tasks_left_running()
+    assert store.get_task("rtask-active")["status"] == "running"

@@ -1,0 +1,93 @@
+{
+  "task": "BFF-AI-CURRENT-STATE-20261107",
+  "hosted_verification": "NOT RUN. No hosted, VM or SSH access was used; hosted verification belongs to MGMT-AI-TRUTH-ACCEPTANCE-20261107.",
+  "role_check": "POST /bff/management/nl/ask calls _require_read_role (personas/service.py) and GET /bff/incidents, /bff/alerts, /bff/management/human-inbox call _require_read / _req_read: same READ_ROLES, no difference found.",
+  "tenant_filter_sources_by_repository_read": [
+    {
+      "source": "alerts (_build_operator_alerts_payload)",
+      "owner_row_has_tenant_key": false,
+      "filter": "deployment scoped (new)",
+      "basis": "alert row keys alert_id,severity,category,raised_at,summary,target_ref{surface_id,label,href,target_id} built in main.py"
+    },
+    {
+      "source": "incidents (get_context_incidents, open_only)",
+      "owner_row_has_tenant_key": false,
+      "filter": "deployment scoped (new)",
+      "basis": "task brief 20 key list, services/incident/incident.py has no row tenant field"
+    },
+    {
+      "source": "anomalies (_build_management_anomalies_payload)",
+      "owner_row_has_tenant_key": false,
+      "filter": "deployment scoped (new)",
+      "basis": "row built in main.py from incident + runtime alert rows, no tenant key"
+    },
+    {
+      "source": "human inbox (_human_inbox_payload)",
+      "owner_row_has_tenant_key": false,
+      "filter": "deployment scoped (new)",
+      "basis": "services/control-plane/bff/governance/human_inbox.py contains no tenant key"
+    },
+    {
+      "source": "assistant alerts source collector",
+      "owner_row_has_tenant_key": false,
+      "filter": "deployment scoped (new, deployment_scoped=True)",
+      "basis": "same alert rows as above"
+    },
+    {
+      "source": "runtime bindings",
+      "owner_row_has_tenant_key": "not re-read here; kept strict",
+      "filter": "strict (unchanged)"
+    },
+    {
+      "source": "capital pools",
+      "owner_row_has_tenant_key": "formal owner reconstructs tenant_id (governance/capital_pool.py); kept strict",
+      "filter": "strict (unchanged)"
+    },
+    {
+      "source": "personas and per persona strategies/bindings/sessions/teaching/pool/allowed actions",
+      "owner_row_has_tenant_key": "kept strict",
+      "filter": "strict (unchanged)"
+    },
+    {
+      "source": "telemetry summaries",
+      "owner_row_has_tenant_key": "kept strict",
+      "filter": "strict (unchanged)"
+    },
+    {
+      "source": "evolution decisions",
+      "owner_row_has_tenant_key": true,
+      "filter": "strict (unchanged)",
+      "basis": "services/evolution/models.py tenant_id"
+    }
+  ],
+  "size_and_reads_133_runtimes_5_current_143_personas_12_current": {
+    "before": {
+      "provider_summary_bytes": 34970,
+      "owner_reads": 1127,
+      "get_telemetry_summary": 133,
+      "get_rollbacks": 133,
+      "per_persona_reads_each": 143
+    },
+    "after": {
+      "provider_summary_bytes": 23943,
+      "owner_reads": 85,
+      "get_telemetry_summary": 5,
+      "get_rollbacks": 5,
+      "per_persona_reads_each": 12
+    },
+    "how": "test_ai_context_133_runtimes_143_personas_reads_and_size_drop with PANTHEON_AI_CURRENT_STATE_METRICS_PATH; before = same test file run against a git archive of HEAD~1 (pre-change code)"
+  },
+  "filter_removal_check": "With _deployment_scoped_record_filter temporarily returning _mgmt_nl_filter_tenant_records, test_ai_context_open_incident_without_tenant_key_reaches_every_summary failed (assert 0 == 1); the removal was reverted and not committed.",
+  "rollback_reads": "not changed; test_ai_context_current_runtime_rollback_unavailable_is_still_reported passes",
+  "assertions_changed": "only test_provider_enabled_invokes_openclaw_with_tenant_scoped_context: persona_health assertions replaced by absence of persona_health plus persona-beta exclusion on persona_fleet. Fixture-only edits: list_incidents lambdas now accept **kwargs; AST harness name sets/__package__ extended.",
+  "commands": [
+    "python3 scripts/dev/provision_python_distribution.py",
+    "PY -m pytest -q services/control-plane/bff/{management_read_models/test_management_service_context_observations.py,management_read_models/test_persona_fleet_read_failures.py,tests/test_assistant_context_pack.py,tests/test_assistant_security.py,tests/test_assistant_source_collectors_owner.py,tests/test_bff_b3_persona_fleet.py,tests/test_bff_b6_001_security_hardening.py,tests/test_bff_b6_management_nl_ask.py,tests/test_bff_management_cockpit.py,tests/test_management_nl_assistant_provider.py,tests/test_management_nl_single_owner.py,tests/test_main_composition_seam_extraction_005.py,tests/test_mgmt_read_001_persona_fleet_owner_observations.py,tests/test_runtime_binding_tenant_scope.py,tests/test_tenant_fallback_audit.py,test_runtime_state_trades.py} => 452 passed, 1 skipped, 2 failed"
+  ],
+  "known_failures_pre_existing": [
+    "tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary (total_pnl None)",
+    "tests/test_main_composition_seam_extraction_005.py::test_zero_duplicate_definitions_ast_readback (_resolve_final_idempotency_key wrapper removed by BFF-AI-LOOP-HEALTH-20261107)"
+  ],
+  "known_failures_note": "Both fail identically on a git archive of HEAD~1 (code before this task), so they are not caused by this change and were not fixed here.",
+  "not_done": "asserting retired_persona states other than projected state 'retired' (archived maps to retired in the Persona owner rule)."
+}

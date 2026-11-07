@@ -4300,7 +4300,11 @@ auth_handlers = getattr(app.state, "auth_handlers", None)
 auth_facade_service = getattr(app.state, "auth_facade_service", None)
 _core_handlers = getattr(app.state, "core_handlers", None)
 
-from .assistant.management_service import wire_management_runtime_projections
+from .assistant.management_service import (
+    bind_persona_service_projection as _bind_persona_service_projection,
+    wire_management_runtime_projections,
+)
+
 
 wire_management_runtime_projections(
     build_operator_alerts_payload=_build_operator_alerts_payload,
@@ -4312,9 +4316,11 @@ wire_management_runtime_projections(
     assistant_collect_source=_assistant_collect_source,
     agora_audit_store=agora_audit_store,
     assistant_control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
+    control_loops_service=getattr(app.state, "control_loops_service", None),
     sse_buffers=_sse_buffers,
     sse_subscribers=_sse_subscribers,
     read_store=read_store,
+    project_persona_fleet_item=_bind_persona_service_projection(persona_service),
 )
 
 from .deployment.router import create_deployment_router as _create_deployment_router

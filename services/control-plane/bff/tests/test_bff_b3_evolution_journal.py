@@ -2724,3 +2724,128 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
         assert len(owner_srv.store._postmortems) == 2027
         assert dec_followup["decision_state"] == "proposed"
         assert dec_severity["decision_state"] == "proposed"
+
+
+# --- Journal freeze/rollback from the canonical Governance owner (mounted HTTP) ---
+# Real Journal router + middleware + default ReadSurfacePorts + real owner
+# transport; only the outbound urlopen (the owner network edge) is faked.
+
+def _mounted_owner_journal(monkeypatch, governance: dict, decisions: dict) -> dict:
+    import base64
+    import io
+    import urllib.error
+    from unittest.mock import patch
+
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.personas.service import _dataset_surface_status as persona_surface_status
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
+    monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.test")
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "svc-token")
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime.test")
+    monkeypatch.setenv("BFF_READ_SURFACE_STATE", "fresh")
+    claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "t-own"}).encode()).decode().rstrip("=")
+    auth = f"Bearer test.{claims}.test"
+    calls: list[dict] = []
+
+    class _Resp(io.BytesIO):
+        status = 200
+
+    def transport(req, timeout=None):
+        tenant = req.get_header("X-tenant-id")
+        calls.append({"url": req.full_url, "tenant": tenant})
+        tail = req.full_url.rsplit("/", 1)[-1]
+        if req.full_url.startswith("http://runtime.test/"):
+            return _Resp(json.dumps({"bindings": [{"binding_id": "rt1", "tenant_id": "t-own"}]}).encode())
+        if req.full_url.startswith("http://evolution.test/"):
+            d = decisions.get(tail)
+            if d is None or d.get("tenant_id") != tenant:
+                raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
+            return _Resp(json.dumps(d).encode())
+        value = governance[tail]
+        if isinstance(value, Exception):
+            raise value
+        return _Resp(json.dumps(value).encode())
+
+    store = ReadSurfacePorts()
+    store.list_evolution_decisions = lambda: []
+    store.list_postmortems = lambda **kw: []
+    app = FastAPI()
+    app.add_middleware(OwnerReadContextMiddleware)
+    app.include_router(create_evolution_router(
+        read_surface=store,
+        extract_identity=lambda a: object(),
+        require_read_role=lambda i: None,
+        dataset_surface_status=lambda dataset, **kw: persona_surface_status(dataset, read_store=store, **kw),
+    ))
+    with patch("urllib.request.urlopen", transport), TestClient(app) as client:
+        res = client.get("/bff/management/evolution-journal", headers={"Authorization": auth, "X-Tenant-Id": "t-own"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    return {
+        "ids": [r["source_id"] for r in body["data"]["items"]],
+        "freeze": body["meta"]["surfaces"]["freeze_orders"],
+        "rollbacks": body["meta"]["surfaces"]["rollbacks"],
+        "calls": calls,
+    }
+
+
+_JOURNAL_DECISIONS = {
+    "d-own": {"decision_id": "d-own", "tenant_id": "t-own", "target_id": "a1", "target_version": "v1", "action_type": "freeze"},
+    "d-foreign": {"decision_id": "d-foreign", "tenant_id": "t-other", "target_id": "a9", "target_version": "v1", "action_type": "freeze"},
+    "d-rb": {"decision_id": "d-rb", "tenant_id": "t-own", "target_id": "rt1", "action_type": "force_risk_off"},
+}
+
+
+def test_journal_owner_reads_prove_tenant_via_decision_not_row_body(monkeypatch) -> None:
+    result = _mounted_owner_journal(
+        monkeypatch,
+        {
+            "freeze-orders": [
+                {"freeze_order_id": "own", "status": "active", "evolution_decision_id": "d-own",
+                 "tenant_id": "t-own", "target_id": "a1", "target_version": "v1"},
+                {"freeze_order_id": "foreign", "status": "active", "evolution_decision_id": "d-foreign", "tenant_id": "t-other"},
+                # Valid other-tenant caller wrote the requester's tenant into the body: not proof.
+                {"freeze_order_id": "caller-extra", "status": "active", "evolution_decision_id": "d-foreign",
+                 "tenant_id": "t-own", "target_id": "a9", "target_version": "v1"},
+                {"freeze_order_id": "claim-only", "status": "active", "tenant_id": "t-own"},
+                {"freeze_order_id": "legacy", "status": "active"},
+            ],
+            "rollbacks": [],
+        },
+        _JOURNAL_DECISIONS,
+    )
+    assert result["ids"] == ["own"]  # verified own row stays visible beside unresolved legacy rows
+    assert result["freeze"]["status"] == "unavailable"  # unresolved provenance is not healthy
+    assert result["rollbacks"]["status"] == "ok"  # healthy empty
+    gov_calls = [c for c in result["calls"] if c["url"].startswith("http://governance.test/")]
+    assert len(gov_calls) == 2  # one read per dataset: rows and source agree
+
+
+def test_journal_owner_reads_healthy_empty_and_timeout_stay_distinct(monkeypatch) -> None:
+    empty = _mounted_owner_journal(monkeypatch, {"freeze-orders": [], "rollbacks": []}, _JOURNAL_DECISIONS)
+    assert empty["ids"] == [] and empty["freeze"]["status"] == "ok" and empty["rollbacks"]["status"] == "ok"
+
+    timeout = _mounted_owner_journal(
+        monkeypatch, {"freeze-orders": TimeoutError("owner timeout"), "rollbacks": []}, _JOURNAL_DECISIONS
+    )
+    assert timeout["ids"] == []
+    assert timeout["freeze"]["status"] == "unavailable"
+    assert timeout["rollbacks"]["status"] == "ok"
+
+
+def test_journal_owner_rollbacks_use_canonical_owner_rows(monkeypatch) -> None:
+    result = _mounted_owner_journal(
+        monkeypatch,
+        {
+            "freeze-orders": [],
+            "rollbacks": [
+                {"rollback_id": "r-own", "runtime_id": "rt1", "status": "completed", "evolution_decision_id": "d-rb"},
+                {"rollback_id": "r-foreign", "runtime_id": "rt1", "status": "completed", "tenant_id": "t-other", "evolution_decision_id": "d-foreign"},
+            ],
+        },
+        _JOURNAL_DECISIONS,
+    )
+    assert result["ids"] == ["r-own"]
+    assert result["rollbacks"]["status"] != "ok"  # foreign/unknown 404 is conservatively unresolved, not healthy
