@@ -9,7 +9,14 @@ from ..service import (
     is_true_draft_lifecycle_state,
     normalize_strategy_dto_state,
 )
-from .common import StrategyRouteContext, _build_ranking_strategy_index
+from ..service import STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES
+from .common import (
+    STATUS_RETIRED,
+    StrategyRouteContext,
+    _build_ranking_strategy_index,
+    operational_counts,
+    summary_persona_ids,
+)
 
 try:
     from services.control_plane.bff.models import ErrorCode
@@ -20,11 +27,26 @@ except (ImportError, ValueError):
 def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
     router = APIRouter()
 
+    def _hide_retired_and_slice(
+        summaries: List[Dict[str, Any]],
+        persona_lookup: Any,
+        page_token: Optional[str],
+        page_size: int,
+    ):
+        kept = [
+            summary
+            for summary in summaries
+            if persona_lookup.operational_status(summary_persona_ids(summary)) != STATUS_RETIRED
+        ]
+        page, next_token = ctx.page_slice(kept, page_token, page_size)
+        return page, next_token, len(kept), len(summaries) - len(kept)
+
     @router.get("/bff/strategies")
     def bff_list_strategies(
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        hide_retired_personas: bool = False,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -49,6 +71,24 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         snapshot_at = ctx.utc_now()
         detail_by_id: Dict[str, Optional[Dict[str, Any]]] = {}
         state_counts: Optional[Dict[str, int]] = None
+        # One Persona directory read for the whole request: every row's
+        # personaStates, operationalStatus and the hide filter come from it.
+        persona_lookup = ctx.read_persona_state_lookup(identity, snapshot_at)
+        # Full candidate set selected by state / exclude_state / persona_id,
+        # before the hide filter. None until a path has loaded it.
+        candidates: Optional[List[Dict[str, Any]]] = None
+        operational_counts_failed = False
+        operational_counts_reason = "candidate set could not be read"
+        hidden_retired_persona_count = 0
+        owner_walk = (
+            ctx.service.list_all_strategy_summary_pages(
+                state=norm_state,
+                exclude_state=norm_exclude_state,
+                persona_id=persona_id,
+            )
+            if (ctx.service and hide_retired_personas)
+            else None
+        )
         owner_page = (
             ctx.service.list_strategy_summaries_page(
                 state=norm_state,
@@ -57,10 +97,20 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 page_token=page_token,
                 page_size=page_size,
             )
-            if ctx.service
+            if (ctx.service and owner_walk is None)
             else None
         )
-        if owner_page is not None:
+        if owner_walk is not None:
+            candidates = list(owner_walk["items"])
+            for summary in candidates:
+                strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
+                if not strategy_id:
+                    raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy summary entry", "strategy_store_unavailable")
+            state_counts = owner_walk["state_counts"]
+            page_summaries, next_page_token, total, hidden_retired_persona_count = _hide_retired_and_slice(
+                candidates, persona_lookup, page_token, page_size
+            )
+        elif owner_page is not None:
             if not isinstance(owner_page, dict) or not isinstance(owner_page.get("items"), list):
                 raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy list payload", "strategy_store_unavailable")
             page_summaries = list(owner_page["items"])
@@ -74,6 +124,29 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 state_counts = ctx.service.resolve_strategy_state_counts(
                     owner_page=owner_page
                 )
+            if not next_page_token and page_token in (None, ""):
+                candidates = page_summaries
+            elif total > STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES:
+                # Counting needs the whole candidate set. Past this size the
+                # default view stays one bounded owner read and says so.
+                operational_counts_failed = True
+                operational_counts_reason = (
+                    f"candidate set of {total} exceeds the {STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES} "
+                    "row bound for counting; use hide_retired_personas or a narrower filter"
+                )
+            else:
+                try:
+                    walked = ctx.service.list_all_strategy_summary_pages(
+                        state=norm_state,
+                        exclude_state=norm_exclude_state,
+                        persona_id=persona_id,
+                    )
+                except Exception:  # noqa: BLE001 - counts degrade, the page itself is unaffected
+                    walked = None
+                if walked is None:
+                    operational_counts_failed = True
+                else:
+                    candidates = list(walked["items"])
         else:
             want_retired = bool(norm_state and norm_state.lower() == "retired")
             if ctx.service:
@@ -178,8 +251,14 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                         continue
                     filtered_summaries.append(summary)
                 summaries = filtered_summaries
-            total = len(summaries)
-            page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
+            candidates = summaries
+            if hide_retired_personas:
+                page_summaries, next_page_token, total, hidden_retired_persona_count = _hide_retired_and_slice(
+                    summaries, persona_lookup, page_token, page_size
+                )
+            else:
+                total = len(summaries)
+                page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
         ranking_snapshot, ranking_read_failed = (
             ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
         )
@@ -206,6 +285,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                     ranking_snapshot=ranking_snapshot,
                     ranking_read_failed=ranking_read_failed,
                     ranking_index=ranking_index,
+                    persona_lookup=persona_lookup,
                 )
             )
         meta = dict(
@@ -217,6 +297,22 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         )
         meta["state_counts"] = state_counts
+        surfaces = dict(meta.get("surfaces") or {})
+        surfaces["persona_states"] = persona_lookup.surface()
+        if candidates is not None and not operational_counts_failed:
+            meta["operational_counts"] = operational_counts(
+                persona_lookup.operational_status(summary_persona_ids(summary))
+                for summary in candidates
+            )
+        else:
+            meta["operational_counts"] = None
+            surfaces["operational_counts"] = {
+                "status": "unavailable",
+                "source": "strategy_summary_pages",
+                "reason": operational_counts_reason,
+            }
+        meta["surfaces"] = surfaces
+        meta["hidden_retired_persona_count"] = hidden_retired_persona_count
         return {
             "data": page_items,
             "items": page_items,
