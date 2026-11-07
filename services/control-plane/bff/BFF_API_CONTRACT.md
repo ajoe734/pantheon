@@ -482,6 +482,8 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 - The "never show none" rule applies: the BFF never returns bare `[]` due to a downstream failure. When the Research Orchestrator owner is unconfigured or fails, the surface status is `unavailable` and `items` is an explicit empty list with degradation metadata. A healthy owner with zero admissions returns `status: "ok"` with empty lanes.
 - Auth/CORS re-uses the existing BFF token/JWT and CORS middleware; caller auth and verified tenant are forwarded to `GET /api/research-orchestrator/alpha-replication/entries`.
 - Cards are built over HTTP from `GET /api/research-orchestrator/alpha-replication/entries` via `PANTHEON_RESEARCH_ORCHESTRATOR_API_URL`.
+- BFF-EVO-ALPHA-PAGE-TRUTH-20261107: the owner route returns `last_error` from the queue record's `failure_reason` (null when absent) and passes `replay_count`, `last_replayed_at` and `revalidation_count` through exactly as the queue records them (null when absent). `attempt_count` means failures since the last replay, because a replay resets it to 0. Each card carries `last_error`, `replay_count`, `last_replayed_at`, `revalidation_count` and `strategy_state`.
+- `strategy_state` is the current registry state of the card's `strategy_id` (for example `approved` or `retired`), read through the same registry strategy reader as `GET /bff/strategies/{strategy_id}` (`StrategiesService.get_strategy_registry_state`), at most once per distinct `strategy_id` per request and never through a second registry client. A strategy the registry does not know has `strategy_state: null` with the surface `ok`. When a state read fails, `strategy_state` is `null` on the affected cards, `meta.surfaces.alpha_factory_strategy_state.status` is `unavailable`, and every card and lane is still returned. Lane rules are unchanged: no card is hidden or moved because of `strategy_state`, and the `discovered` lane keeps reason `no_candidate_source`. The route is a plain `def` handler and writes no owner state.
 
 ### 9.10 Automation Registry BFF Surfaces (AR-01–AR-02)
 
@@ -912,17 +914,19 @@ double-counted in the additive total.
 
 ## Management evolution journal evidence classification and server-side view filter (EVOLUTION-JOURNAL-EVIDENCE-CLASS-20261104)
 
-- Every journal item derived from an `EvolutionDecision` (`entry_type == "evolution_decision"` and its derived `entry_type == "mutation_review"` item, as well as the nested `decision` / `mutation_review` / `record` payload) carries `evidence_class`:
+- BFF-EVO-ALPHA-PAGE-TRUTH-20261107: one journal row per evolution decision. The derived mutation review projection is carried inside the decision row as the nested `mutation_review` object (with `approval_decision`, `allowedActions` and `review_chain` when the owner projection provides them) and is no longer emitted as a separate `entry_type == "mutation_review"` row. `source_type=mutation_review` selects the decision rows that carry a `mutation_review`. The row `status`, `summary`, `target` and `record` are the decision's own.
+- Every journal item derived from an `EvolutionDecision` (`entry_type == "evolution_decision"`, as well as the nested `decision` / `mutation_review` / `record` payload) carries `evidence_class`:
   - `"threshold_signal"` when a breached threshold snapshot (`breached=True`) has `signal_type` in `{"performance_degradation", "execution_drift", "feature_drift", "human_correction"}`.
   - `"incident_followup"` when the only metric is `"incident_followup_required"`.
   - `"incident_severity"` when the only metric is `"severity1_incident_count"`.
   - `"unclassified"` otherwise.
 - `GET /bff/management/evolution-journal` accepts query parameter `view` with values `all`, `history`, and `auto_proposals` (default `all` when omitted so existing callers are unchanged; invalid values return HTTP 400 `VALIDATION_FAILED`):
-  - `view=history`: returns `freeze_order` and `rollback` items, `postmortem` items not in status `draft`, every decision (and its `mutation_review` item) not in state `proposed`, and `proposed` decisions (and their `mutation_review` items) with `evidence_class == "threshold_signal"`.
-  - `view=auto_proposals`: returns the remaining `proposed` decisions (and their `mutation_review` items) and the `draft` postmortems.
+  - `view=history`: returns `freeze_order` and `rollback` items, `postmortem` items not in status `draft`, every decision row not in state `proposed`, and `proposed` decision rows with `evidence_class == "threshold_signal"`.
+  - `view=auto_proposals`: returns the remaining `proposed` decision rows and the `draft` postmortems; `page_info.total` equals `data.auto_proposal_counts.total`.
   - The `view` filter runs before pagination so `page_info`, `next_page_token`, and `data.summary` describe the filtered set.
-  - Deep-link override: when explicit target filter `decision`, `mutation_review`, or `persona` is supplied, the `view` filter is bypassed so a deep link returns its target record under any `view`.
-- `data.auto_proposal_counts` is returned on every response with `{incident_followup, incident_severity, postmortem_draft, total}` counted per underlying record so a decision and its `mutation_review` item count once.
+  - Deep-link override: when explicit target filter `decision`, `mutation_review`, or `persona` is supplied, the `view` filter is bypassed so a deep link returns its target decision row under any `view`; `decision` and `mutation_review` both match the decision row by `source_id`.
+- `data.auto_proposal_counts` is returned on every response with `{incident_followup, incident_severity, postmortem_draft, total}` counted per underlying record, one per decision.
+- `data.summary.mutation_review_count` counts decision rows that carry a `mutation_review` projection; `pending_review_count` counts those projections whose `decision_state` is `pending`, `reviewed`, `under_review` or `in_review`. No record is counted twice.
 - Postmortem owner reads use the bounded `list_postmortems_page` from `POSTMORTEM-BFF-OWNER-READ-20261104` so the postmortems owner is never asked for all 2027 draft postmortems on each page read.
 
 ## Shell summary running_jobs surface and bounded source-ingest job list (BFF-SHELL-SUMMARY-JOBS-SOURCE-20261105)

@@ -593,6 +593,39 @@ class StrategiesService:
             return res
         return None
 
+    def get_strategy_registry_state(self, strategy_id: str) -> Tuple[Optional[str], str]:
+        """Current registry state of one strategy, read like GET /bff/strategies/{id}.
+
+        Returns ``(state, "ok")`` (``state`` is None when the registry has no such
+        strategy) or ``(None, "unavailable")`` when the owner read fails. Never
+        raises and never writes.
+        """
+        try:
+            detail = self.get_strategy_spec_detail(strategy_id, version_selector="current")
+            summary = (
+                detail
+                if isinstance(detail, dict) and (detail.get("strategy_id") or detail.get("id"))
+                else self.get_strategy(strategy_id)
+            )
+        except Exception as exc:  # noqa: BLE001 - the caller degrades, never fails
+            log.warning("strategy state read failed for %s: %s", strategy_id, exc)
+            return None, "unavailable"
+        if not isinstance(summary, dict):
+            return None, "ok"
+        detail_dict = detail if isinstance(detail, dict) else {}
+        raw = (
+            detail_dict.get("lifecycle_state")
+            or detail_dict.get("state")
+            or detail_dict.get("status")
+            or summary.get("lifecycle_state")
+            or summary.get("state")
+            or summary.get("status")
+        )
+        if not raw:
+            return None, "ok"
+        normalize = self._normalize_lifecycle_state
+        return (str(normalize(raw)) if normalize is not None else str(raw)), "ok"
+
     def get_latest_ranking_snapshot(self) -> Tuple[Optional[Dict[str, Any]], bool]:
         from services.control_plane.bff.core.owner_reads import (
             cached_owner_call,

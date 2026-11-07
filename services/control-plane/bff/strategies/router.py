@@ -157,6 +157,8 @@ def create_strategies_router(
     )
 
     router = APIRouter()
+    # Exposed so other read routes (alpha factory) reuse this one registry reader.
+    router.strategies_service = ctx.service  # type: ignore[attr-defined]
 
     subrouters = [
         build_collection_router(ctx),
