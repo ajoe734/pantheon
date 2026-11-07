@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""GitHub Action entry point that guarantees the `Pantheon canonical review
-gate` required status check is posted for every PR into `dev`/`master`.
+"""GitHub Action entry point that publishes the `Pantheon canonical review
+gate` status check for PRs into `dev`/`master` when
+`review_gate.github_review_bridge_required` is enabled in
+`.orchestrator/config.json`.
+
+When `review_gate.github_review_bridge_required` is `false` (TaskStore-only
+exact-head review mode), a non-dry-run invocation prints a workflow notice,
+makes no GitHub API call, posts no commit status, and exits 0.
 
 SUP-REVIEW-PIPELINE-INTEGRITY-20260804 first version of this script tried to
 re-derive the review policy locally, by reading `ai-status.json` out of the
@@ -60,6 +66,7 @@ from github_review_bridge import (  # noqa: E402
 )
 
 DEFAULT_TASK_BRANCH_PREFIX = "task/"
+CONFIG_PATH = ROOT / ".orchestrator" / "config.json"
 APPROVE_DECISION = "approve"
 REOPEN_DECISION = REOPEN
 PRODUCT_DELIVERY_CLASS = "product"
@@ -541,8 +548,32 @@ def build_parser() -> argparse.ArgumentParser:
 EXIT_STATUS_POST_FAILED = 2
 
 
+def _github_review_bridge_required(config_path: Path | None = None) -> bool:
+    orchestrator_dir = str(ROOT / ".orchestrator")
+    if orchestrator_dir not in sys.path:
+        sys.path.insert(0, orchestrator_dir)
+    import common
+
+    resolved_path = CONFIG_PATH if config_path is None else Path(config_path)
+    try:
+        parsed = json.loads(resolved_path.read_text(encoding="utf-8"))
+        return bool(common.github_review_bridge_required(parsed))
+    except (OSError, ValueError, TypeError) as exc:
+        print(
+            f"::warning::review_gate.github_review_bridge_required could not be read from "
+            f"{resolved_path} ({exc}); keeping {CANONICAL_REVIEW_CONTEXT!r} status publication enabled"
+        )
+        return True
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not args.dry_run and not _github_review_bridge_required():
+        print(
+            "::notice::review_gate.github_review_bridge_required is false; "
+            f"skipping {CANONICAL_REVIEW_CONTEXT!r} status publication"
+        )
+        return 0
     payload = build_status_payload(
         head_ref=args.head_ref,
         repository=args.repo,

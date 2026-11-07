@@ -1,9 +1,11 @@
 # Canonical Review Publication and Exact-Version GitHub Gate Recovery
 
-Status: active operating rule
+Status: active operating rule (applies only when `review_gate.github_review_bridge_required` is `true`)
 Task: OPS-REVIEW-PROOF-001
 Plan source: `sha256:07b330d425946fb363e8b94a0e707595bb0e3c7af6be0d161ad9ab88705471f0`
 (`/tmp/pantheon-tooling-root-repair-20260907/REVIEW_PROOF_PLAN.md`)
+
+> **Scope (`OPS-REVIEW-GATE-QUIET-20261107`):** This procedure applies **only when `review_gate.github_review_bridge_required` is `true`** in `.orchestrator/config.json`. While `review_gate.github_review_bridge_required` is `false` (the TaskStore-only exact-head review mode set on 2026-09-08 and confirmed on 2026-11-07), no review-proof tags are pushed to GitHub, `scripts/git/canonical_review_gate_ci.py` logs a workflow notice and exits `0` without posting the `Pantheon canonical review gate` status, and TaskStore exact-head approval enforced by `scripts/git/auto_integrator.py` is the sole merge authority.
 
 ## The Contradictions and Defects This Closes
 
