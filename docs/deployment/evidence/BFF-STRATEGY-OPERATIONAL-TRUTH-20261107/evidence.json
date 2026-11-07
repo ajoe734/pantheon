@@ -5,7 +5,7 @@
  "change": {
   "list": "rows carry personaStates, operationalStatus, symbols; hide_retired_personas=true; meta.operational_counts; meta.hidden_retired_persona_count; meta.surfaces.persona_states",
   "detail": "personaStates, operationalStatus, spec.title/hypothesis/objective, rules (approved execution bundles via GET /api/registry/strategies/{id}/strategy-artifacts?artifact_state=approved), meta.surfaces.persona_states and strategy_rules",
-  "single_helper": "services/control-plane/bff/strategies/operational.py (PersonaStateLookup.operational_status is the only place operationalStatus is derived)",
+  "single_helper": "services/control-plane/bff/strategies/routes/common.py (PersonaStateLookup.operational_status is the only place operationalStatus is derived)",
   "persona_wiring": "core/app_factory.py injects _get_persona_directory_snapshot, _persona_record_projected_state and _PERSONA_OPERATIONAL_LIFECYCLE_STATES, the same callables the Persona list route uses"
  },
  "deviation_from_acceptance_6": "Without hide_retired_personas, operational_counts needs the whole candidate set. test_strategy_list_default_view.py (not weakened) pins one bounded owner request for a 217 row exclude_state=draft view and for the 4852 row default view. So counts are computed only when the candidate set fits one owner page (<= 200 rows; the real 141 row view does); larger sets keep the single read and return operational_counts null with meta.surfaces.operational_counts unavailable. With hide_retired_personas=true counts are always present.",

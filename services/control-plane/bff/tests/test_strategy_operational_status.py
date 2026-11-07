@@ -29,13 +29,11 @@ from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
 )
 from services.control_plane.bff.strategies import service as strategies_service_mod
-from services.control_plane.bff.strategies.operational import (
-    PersonaStateLookup,
-    project_strategy_rules,
-)
 from services.control_plane.bff.strategies.router import create_strategies_router
 from services.control_plane.bff.strategies.routes.common import (
+    PersonaStateLookup,
     _project_strategy_spec_detail,
+    project_strategy_rules,
     default_page_slice,
     default_read_surface_meta,
 )

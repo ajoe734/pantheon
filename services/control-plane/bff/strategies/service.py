@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
-from .operational import project_strategy_rules
+from .routes.common import project_strategy_rules
 
 try:
     from services.control_plane.bff.models import ErrorCode

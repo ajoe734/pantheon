@@ -9,13 +9,14 @@ from ..service import (
     is_true_draft_lifecycle_state,
     normalize_strategy_dto_state,
 )
-from ..operational import (
+from ..service import STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES
+from .common import (
     STATUS_RETIRED,
+    StrategyRouteContext,
+    _build_ranking_strategy_index,
     operational_counts,
     summary_persona_ids,
 )
-from ..service import STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES
-from .common import StrategyRouteContext, _build_ranking_strategy_index
 
 try:
     from services.control_plane.bff.models import ErrorCode
