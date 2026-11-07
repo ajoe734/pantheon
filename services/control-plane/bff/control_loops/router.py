@@ -480,6 +480,7 @@ def create_control_loops_router(
         response.setdefault("meta", {})["redacted_evidence_count"] = loops_count + incident_count
         return response
 
+    router.control_loops_service = resolved_service  # type: ignore[attr-defined]
     return router
 
 

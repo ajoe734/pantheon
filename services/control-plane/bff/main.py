@@ -4312,6 +4312,7 @@ wire_management_runtime_projections(
     assistant_collect_source=_assistant_collect_source,
     agora_audit_store=agora_audit_store,
     assistant_control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
+    control_loops_service=getattr(app.state, "control_loops_service", None),
     sse_buffers=_sse_buffers,
     sse_subscribers=_sse_subscribers,
     read_store=read_store,

@@ -572,3 +572,343 @@ def test_nl_ask_response_includes_redacted_evidence_count() -> None:
             assert isinstance(count, int) and count >= 0, (
                 f"meta.redacted_evidence_count must be non-negative int, got: {count!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# BFF-AI-LOOP-HEALTH-20261107 — loop_health context surface, parity with
+# GET /bff/v5/loop-health, surface states, bounded non-blocking read, and
+# deterministic synthesis
+# ---------------------------------------------------------------------------
+
+LOOP_HEALTH_TENANT = "tenant-loop-health"
+LOOP_HEALTH_ENV = "dev"
+LOOP_HEALTH_SCOPED_HEADERS = {
+    "Authorization": f"Bearer op-b6:operator,reviewer,admin:{LOOP_HEALTH_TENANT}",
+    "X-Tenant-Id": LOOP_HEALTH_TENANT,
+}
+
+
+def _canonical_controller_store_rows(
+    *,
+    tenant_id: str = LOOP_HEALTH_TENANT,
+    environment: str = LOOP_HEALTH_ENV,
+    reject_loop_id: Optional[str] = None,
+    long_summary: bool = False,
+) -> List[Dict[str, Any]]:
+    from datetime import datetime, timedelta, timezone
+    from services.control_plane.bff import loop_inventory as loop_inventory_model
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    registry = loop_inventory_model._load_registry()
+    rows: List[Dict[str, Any]] = []
+    for idx, loop in enumerate(registry.get("loops") or []):
+        loop_id = str(loop["loop_id"])
+        contract = loop.get("controller_contract") or {}
+        controller_name = str(contract.get("controller_name") or f"{loop_id}-controller")
+        is_rejected = loop_id == reject_loop_id
+        heartbeat = (now - timedelta(days=30)) if is_rejected else now
+        downstream_status = "ready" if idx % 2 == 0 else "ok"
+        summary_text = (
+            f"{loop_id} downstream verified: " + ("x" * 260)
+            if long_summary
+            else f"{loop_id} downstream verified ({downstream_status})."
+        )
+        rows.append(
+            {
+                "loop_id": loop_id,
+                "tenant_id": tenant_id,
+                "environment": environment,
+                "controller_id": f"{loop_id}-controller-1",
+                "controller_name": controller_name,
+                "deployment_sha": "deadbeefcafe",
+                "desired_state_query": f"desired state for {loop_id}",
+                "actual_state_query": f"actual state for {loop_id}",
+                "desired_state": {
+                    "present": True,
+                    "source": f"{loop_id}-desired-authority",
+                    "checked_at": heartbeat,
+                },
+                "downstream_actual_state": {
+                    "status": "degraded" if is_rejected else downstream_status,
+                    "source": f"{loop_id}-terminal-store",
+                    "summary": summary_text,
+                    "checked_at": heartbeat,
+                },
+                "last_heartbeat_at": heartbeat,
+                "last_tick_at": heartbeat,
+                "last_success_at": heartbeat,
+                "last_failure_at": heartbeat - timedelta(minutes=5),
+                "last_failure_reason": f"{loop_id} downstream timeout",
+                "last_repair_at": heartbeat - timedelta(minutes=4),
+                "last_repair_reason": f"{loop_id} drift repaired",
+                "backlog": 0,
+                "lag": 0,
+                "dlq_count": 0,
+                "evidence_refs": [
+                    f"docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/{loop_id}.json"
+                ],
+                "truth_level": "reconciled_live_proof",
+                "lease_token": f"{loop_id}-fence-1",
+                "lease_expires_at": heartbeat + timedelta(seconds=60),
+                "payload": {"last_success_summary": f"{loop_id} reconciled desired and actual"},
+            }
+        )
+    return rows
+
+
+def _install_loop_controller_store_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    rows: List[Dict[str, Any]],
+    *,
+    delay_seconds: float = 0.0,
+    error: Optional[Exception] = None,
+) -> None:
+    import asyncio
+    import importlib
+    import sys
+    from copy import deepcopy
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("PANTHEON_ENV", LOOP_HEALTH_ENV)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db",
+    )
+    monkeypatch.setitem(sys.modules, "asyncpg", MagicMock())
+    loop_control = importlib.import_module("services.loop-control")
+
+    async def mock_list_records(self, tenant_id: str, environment: str):
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+        if error is not None:
+            raise error
+        return deepcopy(rows)
+
+    monkeypatch.setattr(loop_control.LoopControllerStore, "list_records", mock_list_records)
+
+
+def test_loop_health_snippet_matches_v5_route_and_truncates_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        with _fresh_client(td) as client:
+            _install_loop_controller_store_rows(
+                monkeypatch,
+                _canonical_controller_store_rows(long_summary=True),
+            )
+            v5_resp = client.get("/bff/v5/loop-health", headers=LOOP_HEALTH_SCOPED_HEADERS)
+            assert v5_resp.status_code == 200, v5_resp.text
+            v5_payload = v5_resp.json()
+            v5_items = v5_payload["items"]
+            assert len(v5_items) == 12
+            assert v5_payload["meta"]["surfaces"]["loop_health"]["accepted_live"] is True
+
+            ask_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Are all 12 loops healthy?", "focus": "loop_health"},
+                headers={**LOOP_HEALTH_SCOPED_HEADERS, "Idempotency-Key": "ik-loop-health-match-001"},
+            )
+            assert ask_resp.status_code == 202, ask_resp.text
+            ask_body = ask_resp.json()
+            data = ask_body["data"]
+            meta = ask_body["meta"]
+
+            assert data["focus"] == "loop_health"
+            assert data["sources"] == ["loop_health"]
+            assert "loop_health" in data["context_pack"]["backend"]["management_nl"]["data"]["evidence_source_types"]
+            assert meta["surfaces"]["loop_health"]["status"] == "ok"
+            assert meta["surfaces"]["loop_health"]["accepted_live"] is True
+            assert data["confidence"] == "high"
+            assert "12/12 canonical loops accepted (12 of 12)" in data["answer"]
+
+            snippet = data["summary_context"]["loop_health"]
+            serialized = json.dumps(snippet)
+            assert len(serialized.encode("utf-8")) <= 8192
+            assert snippet["total"] == 12
+            assert snippet["accepted"] == 12
+            assert snippet["by_live_status"] == {"ready": 6, "ok": 6}
+            assert len(snippet["items"]) == 12
+
+            for row, route_item in zip(snippet["items"], v5_items):
+                assert set(row.keys()) == {
+                    "loop_id",
+                    "live_status",
+                    "current_record_accepted",
+                    "status",
+                    "summary",
+                }
+                assert row["loop_id"] == route_item["loop_id"]
+                assert row["current_record_accepted"] is route_item["controller_health"]["current_record_accepted"]
+                assert row["status"] == route_item["downstream_actual_state"]["status"]
+                assert row["live_status"] == route_item["downstream_actual_state"]["status"]
+                assert len(row["summary"]) == 200
+                assert row["summary"] == route_item["downstream_actual_state"]["summary"][:200]
+
+
+def test_loop_health_focus_all_and_cockpit_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        with _fresh_client(td) as client:
+            _install_loop_controller_store_rows(
+                monkeypatch,
+                _canonical_controller_store_rows(),
+            )
+            all_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Full management status including loops?", "focus": "all"},
+                headers={**LOOP_HEALTH_SCOPED_HEADERS, "Idempotency-Key": "ik-loop-health-all-001"},
+            )
+            assert all_resp.status_code == 202, all_resp.text
+            all_body = all_resp.json()
+            assert "loop_health" in all_body["data"]["sources"]
+            assert "loop_health" in all_body["data"]["summary_context"]
+            assert all_body["meta"]["surfaces"]["loop_health"]["status"] == "ok"
+            assert "12/12 canonical loops accepted" in all_body["data"]["answer"]
+
+            cockpit_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Cockpit status only?", "focus": "cockpit"},
+                headers={**LOOP_HEALTH_SCOPED_HEADERS, "Idempotency-Key": "ik-loop-health-cockpit-001"},
+            )
+            assert cockpit_resp.status_code == 202, cockpit_resp.text
+            cockpit_body = cockpit_resp.json()
+            assert cockpit_body["data"]["sources"] == ["cockpit"]
+            assert "loop_health" not in cockpit_body["data"]["summary_context"]
+            assert "loop_health" not in cockpit_body["meta"]["surfaces"]
+            assert "loop_health" not in cockpit_body["data"]["context_pack"]["backend"]["management_nl"]["data"]["evidence_source_types"]
+
+
+def test_loop_health_surface_degraded_and_unavailable_variants_do_not_fail_ask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        with _fresh_client(td) as client:
+            # 1. Degraded when any row is not accepted (11 of 12 accepted, accepted_live=False)
+            _install_loop_controller_store_rows(
+                monkeypatch,
+                _canonical_controller_store_rows(reject_loop_id="source_ingestion"),
+            )
+            deg_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Are loops healthy?", "focus": "loop_health"},
+                headers={**LOOP_HEALTH_SCOPED_HEADERS, "Idempotency-Key": "ik-loop-health-deg-001"},
+            )
+            assert deg_resp.status_code == 202, deg_resp.text
+            deg_body = deg_resp.json()
+            assert deg_body["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
+            assert deg_body["meta"]["surfaces"]["loop_health"]["accepted_live"] is False
+            assert deg_body["data"]["confidence"] == "partial"
+            assert deg_body["data"]["summary_context"]["loop_health"]["accepted"] == 11
+            assert deg_body["data"]["summary_context"]["loop_health"]["total"] == 12
+            assert "11/12 canonical loops accepted (11 of 12)" in deg_body["data"]["answer"]
+
+            # 2. Unavailable when controller store is unavailable (DATABASE_URL absent)
+            monkeypatch.delenv("DATABASE_URL", raising=False)
+            unavail_store_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Are loops healthy?", "focus": "loop_health"},
+                headers={**LOOP_HEALTH_SCOPED_HEADERS, "Idempotency-Key": "ik-loop-health-nostore-001"},
+            )
+            assert unavail_store_resp.status_code == 202, unavail_store_resp.text
+            unavail_store_body = unavail_store_resp.json()
+            assert unavail_store_body["meta"]["surfaces"]["loop_health"]["status"] == "unavailable"
+            assert unavail_store_body["meta"]["surfaces"]["loop_health"]["reason"] == "controller_health_store_unavailable"
+            assert unavail_store_body["data"]["confidence"] == "unavailable"
+            assert "Loop health cannot be determined" in unavail_store_body["data"]["answer"]
+
+            # 3. Unavailable when the read raises an unexpected error
+            _install_loop_controller_store_rows(
+                monkeypatch,
+                _canonical_controller_store_rows(),
+            )
+            service = get_management_nl_module().get_control_loops_service()
+            original_loop_health = service.loop_health
+
+            async def raising_loop_health(*_args, **_kwargs):
+                raise RuntimeError("controller read exploded")
+
+            monkeypatch.setattr(service, "loop_health", raising_loop_health)
+            err_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Are loops healthy?", "focus": "loop_health"},
+                headers={**LOOP_HEALTH_SCOPED_HEADERS, "Idempotency-Key": "ik-loop-health-raise-001"},
+            )
+            assert err_resp.status_code == 202, err_resp.text
+            err_body = err_resp.json()
+            assert err_body["meta"]["surfaces"]["loop_health"]["status"] == "unavailable"
+            assert err_body["meta"]["surfaces"]["loop_health"]["reason"] == "read_error"
+            assert "Loop health cannot be determined" in err_body["data"]["answer"]
+            monkeypatch.setattr(service, "loop_health", original_loop_health)
+
+            # 4. Unavailable when caller is out of scope for authenticated_loop_truth_scope
+            out_of_scope_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Are loops healthy?", "focus": "loop_health", "environment": "prod"},
+                headers={**LOOP_HEALTH_SCOPED_HEADERS, "Idempotency-Key": "ik-loop-health-oos-001"},
+            )
+            assert out_of_scope_resp.status_code == 202, out_of_scope_resp.text
+            out_of_scope_body = out_of_scope_resp.json()
+            assert out_of_scope_body["meta"]["surfaces"]["loop_health"]["status"] == "unavailable"
+            assert out_of_scope_body["meta"]["surfaces"]["loop_health"]["reason"] == "caller_out_of_scope"
+            assert "Loop health cannot be determined" in out_of_scope_body["data"]["answer"]
+
+            # 5. Unavailable when the read times out
+            monkeypatch.setenv("PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS", "0.03")
+            _install_loop_controller_store_rows(
+                monkeypatch,
+                _canonical_controller_store_rows(),
+                delay_seconds=0.2,
+            )
+            timeout_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Are loops healthy?", "focus": "loop_health"},
+                headers={**LOOP_HEALTH_SCOPED_HEADERS, "Idempotency-Key": "ik-loop-health-timeout-001"},
+            )
+            assert timeout_resp.status_code == 202, timeout_resp.text
+            timeout_body = timeout_resp.json()
+            assert timeout_body["meta"]["surfaces"]["loop_health"]["status"] == "unavailable"
+            assert timeout_body["meta"]["surfaces"]["loop_health"]["reason"] == "read_timeout"
+            assert "Loop health cannot be determined" in timeout_body["data"]["answer"]
+
+
+def test_mgmt_nl_collect_context_and_synthesize_answer_loop_health_direct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main_mod = get_management_nl_module()
+    with tempfile.TemporaryDirectory() as td:
+        with _fresh_client(td) as _client:
+            _install_loop_controller_store_rows(
+                monkeypatch,
+                _canonical_controller_store_rows(long_summary=True),
+            )
+            bundle = main_mod._mgmt_nl_collect_context(
+                "loop_health",
+                "2026-11-07T00:00:00Z",
+                tenant_id=LOOP_HEALTH_TENANT,
+            )
+            assert "loop_health" in bundle["snippets"]
+            assert bundle["surfaces"]["loop_health"]["status"] == "ok"
+            assert "loop_health" in bundle["evidence_source_types"]
+            snippet = bundle["snippets"]["loop_health"]
+            assert snippet["total"] == 12
+            assert snippet["accepted"] == 12
+            assert snippet["by_live_status"] == {"ready": 6, "ok": 6}
+            assert len(json.dumps(snippet).encode("utf-8")) <= 8192
+
+            synthesized = main_mod._mgmt_nl_synthesize_answer(
+                "Are the 12 loops healthy?",
+                bundle["snippets"],
+                "loop_health",
+            )
+            assert "12/12 canonical loops accepted (12 of 12)" in synthesized
+
+            unavail_synthesized = main_mod._mgmt_nl_synthesize_answer(
+                "Are the 12 loops healthy?",
+                {"loop_health": {"status": "unavailable", "total": 12, "accepted": 0, "by_live_status": {}, "items": []}},
+                "loop_health",
+            )
+            assert "Loop health cannot be determined" in unavail_synthesized
+
+
+

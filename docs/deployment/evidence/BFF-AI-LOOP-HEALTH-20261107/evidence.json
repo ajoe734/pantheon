@@ -1,0 +1,40 @@
+{
+  "task_id": "BFF-AI-LOOP-HEALTH-20261107",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "before": {
+    "measured": "2026-11-06 hosted reference",
+    "loop_health_route": "GET /bff/v5/loop-health returned 12 of 12 canonical loops accepted, all live_status ready or ok",
+    "management_nl_context": "Zero loop_health references in assistant/management_service.py, assistant/context_composer.py, or assistant/management_contracts.py; Management AI answered that it could not determine loop health"
+  },
+  "changes": [
+    "services/control-plane/bff/control_loops/router.py attaches router.control_loops_service = resolved_service so app_factory and main composition reuse the exact ControlLoopsService instance serving GET /bff/v5/loop-health",
+    "services/control-plane/bff/core/app_factory.py and services/control-plane/bff/main.py wire app.state.control_loops_service into management_service via set_control_loops_service and wire_management_runtime_projections",
+    "services/control-plane/bff/assistant/management_service.py adds focus loop_health (plus aliases loop, loops, loop-health), prefetches ControlLoopsService.loop_health on the async route before asyncio.to_thread with bounded wait PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS (default 2.0s) and caller scope checked by authenticated_loop_truth_scope, projects compact rows (loop_id, live_status, current_record_accepted, status, summary[:200]) and counts (total, accepted, by_live_status) under 8 KB into snippets['loop_health'] for focus all and loop_health, sets surfaces['loop_health'] to ok only when accepted_live is True, degraded when any row is not accepted, and unavailable when the controller store is unavailable, the read raises, the caller is out of scope, or the read times out without failing the ask, includes loop_health in evidence_source_types and response sources, and updates _mgmt_nl_synthesize_answer to report accepted/total or state that loop health cannot be determined when unavailable",
+    "services/control-plane/bff/BFF_API_CONTRACT.md documents the loop_health focus, compact snippet fields, surface status rules, and timeout env var",
+    "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py and services/control-plane/bff/tests/test_management_nl_assistant_provider.py cover route-matching rows from LoopControllerStore through loop_inventory._project_loop_health, 200-char summary truncation, <= 8 KB snippet bound, focus all vs loop_health vs cockpit unchanged, ok/degraded/unavailable surface states (store unavailable, read error, caller out of scope, timeout), deterministic synthesis, and provider prompt delivery on both POST /bff/management/nl/ask and POST /bff/management/nl/ask/stream"
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+      "exit_code": 0,
+      "result": "20 passed in 28.74s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "exit_code": 0,
+      "result": "70 passed in 40.28s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py services/control-plane/bff/tests/test_management_nl_single_owner.py services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py services/control-plane/bff/management_read_models/test_management_service_context_observations.py",
+      "exit_code": 0,
+      "result": "78 passed (4 in test_event_loop_owner_reads_guard.py, 11 in test_management_nl_single_owner.py, 7 in test_bff_b6_003_nl_high_risk_refusal.py, 17 in test_main_composition_seam_extraction_005.py, 10 in test_main_composition_seam_extraction_006.py, 29 in test_management_service_context_observations.py)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/test_loop_health_read_model_contract.py",
+      "exit_code": 1,
+      "result": "27 passed, 2 pre-existing failures on untouched files (test_control_loops_router.py::test_loop_runs_control_room_and_downstream_replay and test_loop_health_read_model_contract.py::test_loop_health_registry_only_lists_all_loops_without_live_claim); no existing assertion was weakened"
+    }
+  ],
+  "hosted_verification": "NOT RUN. Hosted verification was not run; hosted verification is owned by MGMT-AI-TRUTH-ACCEPTANCE-20261107 and no hosted result is claimed."
+}

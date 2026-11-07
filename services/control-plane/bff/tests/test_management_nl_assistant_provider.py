@@ -3922,3 +3922,136 @@ def test_management_nl_residual_repeated_rows_and_merged_observations_stay_withi
     finally:
         set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_mgmt_nl_ask_and_stream_deliver_loop_health_in_provider_prompt_summary_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both POST /bff/management/nl/ask and POST /bff/management/nl/ask/stream
+    deliver the loop_health snippet to the provider inside
+    backend.management_nl.data.summary_context and inside the provider prompt."""
+    import importlib
+    import sys
+    from copy import deepcopy
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import MagicMock
+    from services.control_plane.bff import loop_inventory as loop_inventory_model
+
+    original_store = get_management_nl_read_store()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    scoped_headers = {
+        "Authorization": "Bearer asst-bff-002:operator:tenant-alpha",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+
+    registry = loop_inventory_model._load_registry()
+    controller_rows: List[Dict[str, Any]] = []
+    for idx, loop in enumerate(registry.get("loops") or []):
+        loop_id = str(loop["loop_id"])
+        contract = loop.get("controller_contract") or {}
+        controller_name = str(contract.get("controller_name") or f"{loop_id}-controller")
+        downstream_status = "ready" if idx % 2 == 0 else "ok"
+        controller_rows.append(
+            {
+                "loop_id": loop_id,
+                "tenant_id": "tenant-alpha",
+                "environment": "dev",
+                "controller_id": f"{loop_id}-controller-1",
+                "controller_name": controller_name,
+                "deployment_sha": "deadbeefcafe",
+                "desired_state_query": f"desired state for {loop_id}",
+                "actual_state_query": f"actual state for {loop_id}",
+                "desired_state": {
+                    "present": True,
+                    "source": f"{loop_id}-desired-authority",
+                    "checked_at": now,
+                },
+                "downstream_actual_state": {
+                    "status": downstream_status,
+                    "source": f"{loop_id}-terminal-store",
+                    "summary": f"{loop_id} is {downstream_status}",
+                    "checked_at": now,
+                },
+                "last_heartbeat_at": now,
+                "last_tick_at": now,
+                "last_success_at": now,
+                "last_failure_at": now - timedelta(minutes=5),
+                "last_failure_reason": f"{loop_id} downstream timeout",
+                "last_repair_at": now - timedelta(minutes=4),
+                "last_repair_reason": f"{loop_id} drift repaired",
+                "backlog": 0,
+                "lag": 0,
+                "dlq_count": 0,
+                "evidence_refs": [
+                    f"docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/{loop_id}.json"
+                ],
+                "truth_level": "reconciled_live_proof",
+                "lease_token": f"{loop_id}-fence-1",
+                "lease_expires_at": now + timedelta(seconds=60),
+                "payload": {"last_success_summary": f"{loop_id} reconciled desired and actual"},
+            }
+        )
+
+    fake = FakeProviderClient(
+        stream_events=[
+            {"type": "delta", "text": "All 12 canonical control loops "},
+            {"type": "done", "text": "All 12 canonical control loops are accepted and healthy."},
+        ],
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "openclaw")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        monkeypatch.setenv("PANTHEON_ENV", "dev")
+        monkeypatch.setenv(
+            "DATABASE_URL",
+            "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db",
+        )
+        monkeypatch.setitem(sys.modules, "asyncpg", MagicMock())
+        loop_control = importlib.import_module("services.loop-control")
+
+        async def mock_list_records(self, tenant_id: str, environment: str):
+            return deepcopy(controller_rows)
+
+        monkeypatch.setattr(loop_control.LoopControllerStore, "list_records", mock_list_records)
+
+        ask_resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "Are the 12 loops healthy?", "focus": "all"},
+            headers={**scoped_headers, "Idempotency-Key": "ik-provider-loop-health-ask"},
+        )
+        assert ask_resp.status_code == 202, ask_resp.text
+        assert len(fake.calls) == 1
+        ask_call = fake.calls[0]
+        ask_pack = ask_call["context_pack"]
+        ask_loop_snippet = ask_pack["backend"]["management_nl"]["data"]["summary_context"]["loop_health"]
+        assert ask_loop_snippet["status"] == "ok"
+        assert ask_loop_snippet["total"] == 12
+        assert ask_loop_snippet["accepted"] == 12
+        assert ask_loop_snippet["by_live_status"] == {"ready": 6, "ok": 6}
+        assert len(ask_loop_snippet["items"]) == 12
+        assert '"loop_health":' in ask_call["prompt"]
+        assert '"source_ingestion"' in ask_call["prompt"]
+
+        stream_resp = client.post(
+            "/bff/management/nl/ask/stream",
+            json={"question": "Are the 12 loops healthy?", "focus": "loop_health"},
+            headers={**scoped_headers, "Idempotency-Key": "ik-provider-loop-health-stream"},
+        )
+        assert stream_resp.status_code == 200, stream_resp.text
+        _ = stream_resp.text
+        stream_calls = [c for c in fake.calls if c.get("stream")]
+        assert len(stream_calls) == 1
+        stream_call = stream_calls[0]
+        stream_pack = stream_call["context_pack"]
+        stream_loop_snippet = stream_pack["backend"]["management_nl"]["data"]["summary_context"]["loop_health"]
+        assert stream_loop_snippet == ask_loop_snippet
+        assert '"loop_health":' in stream_call["prompt"]
+        assert '"source_ingestion"' in stream_call["prompt"]
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()
+

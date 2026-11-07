@@ -1008,3 +1008,11 @@ resumed in place at startup, so the same item reaches a terminal state.
 - `GET /bff/personas` rows omit `sourceHealthBindings` / `source_health_bindings` and the `required_source_health` / `requiredSourceHealth` parts of `dataSourceStatus` (about 270 KB each per row on hosted data, three copies per row). Scalar `dataSourceStatus` fields (state, source_health_source, live_ingestion_enabled, live/static connector ids), `dataSources`, `dataSourceRefs` and `requiredDataSources` are unchanged. The `items`/`data` envelope is unchanged.
 - `GET /bff/personas/{persona_id}` and `GET /bff/management/persona-fleet` keep their current fields; the shared `_project_persona_dto` is unchanged, only the list projection strips.
 - `total`, filters, paging and tenant isolation are unchanged.
+
+### Management NL loop_health context surface (BFF-AI-LOOP-HEALTH-20261107)
+
+- `POST /bff/management/nl/ask` and `POST /bff/management/nl/ask/stream` accept focus `loop_health` (aliases `loop`, `loops`, `loop-health`) and include `loop_health` under `focus="all"` (and `""`).
+- `_mgmt_nl_collect_context` reads canonical loop health through the existing `ControlLoopsService.loop_health` path (`GET /bff/v5/loop-health`) with the caller identity validated by `authenticated_loop_truth_scope` and a bounded wait (`PANTHEON_BFF_MGMT_NL_LOOP_HEALTH_TIMEOUT_SECONDS`, default 2.0 s) without blocking or nesting an event loop.
+- `summary_context.loop_health` (and `backend.management_nl.data.summary_context.loop_health` delivered to the assistant provider) carries `{status, total, accepted, by_live_status, items}` with one compact row per canonical loop `{loop_id, live_status, current_record_accepted, status, summary}` (`summary` truncated to 200 chars, serialized snippet <= 8 KB for 12 loops).
+- `meta.surfaces.loop_health` reports `ok` only when `accepted_live` is `True` and all canonical rows are accepted, `degraded` when any row is not accepted, and `unavailable` when the controller health store is unavailable, the read raises, the caller is out of scope, or the read times out; none of these fails the ask.
+- `_mgmt_nl_synthesize_answer` reports `<accepted>/<total> canonical loops accepted (<accepted> of <total>)` when available and states that loop health cannot be determined when the surface is `unavailable`.
