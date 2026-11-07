@@ -3019,7 +3019,7 @@ class ManagementService:
         pending_states = {"pending", "in_review"}
         pending_approvals = count(approvals, {*pending_states, "proposed", "under_review", "reviewed"}, "decision_state", "status")
         open_alerts = (
-            count(incidents, {"open", "in_progress"}, "status")
+            count(incidents, {"open", "in_progress", "investigating"}, "status")
             + count(reviews, {*pending_states, "escalated"}, "status")
             + count(approvals, pending_states, "decision_state")
         )
@@ -3294,7 +3294,7 @@ class ManagementService:
 
             # 3. Incident group
             incidents: List[Dict[str, Any]] = _resolve_group("incident", [])
-            open_incidents = [i for i in incidents if isinstance(i, dict) and i.get("status") in ("open", "active", "triggered")]
+            open_incidents = [i for i in incidents if isinstance(i, dict) and i.get("status") in ("open", "active", "triggered", "investigating")]
             incident_failed = _group_read_failed("incident")
             incident_group = {
                 "group_id": "incident",
@@ -3981,7 +3981,14 @@ class ManagementService:
             int(block.get("eligible_item_count") or 0)
             for block in blocks
         )
-        if missing_metric_item_count and surfaces["management_trading_pulse_rankings"].get("status") == "ok":
+        # Sharpe is an accumulating metric for new runtimes (needs 10 daily
+        # returns); only its absence must not degrade the surface.
+        degrading_missing_metric_count = sum(
+            int(block.get("missing_metric_count") or 0)
+            for block in blocks
+            if block.get("block_id") != "sharpe-leaders"
+        )
+        if degrading_missing_metric_count and surfaces["management_trading_pulse_rankings"].get("status") == "ok":
             surfaces["management_trading_pulse_rankings"]["status"] = "degraded"
             surfaces["management_trading_pulse_rankings"]["message"] = (
                 "Trading pulse rankings are degraded because one or more ranking metrics are missing."
@@ -4653,7 +4660,7 @@ class ManagementService:
         # 1. Incidents
         try:
             if hasattr(store, "list_incidents"):
-                findings = store.list_incidents() or []
+                findings = store.list_incidents(open_only=True) or []
                 for f in findings:
                     if not isinstance(f, dict):
                         continue

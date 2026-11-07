@@ -381,10 +381,10 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
         CapitalPoolPort, DeploymentPlanPort, EvolutionProjectionPort,
         PersonaCapitalRuntimeDomainPort, PersonaFleetPort, RankingProjectionPort, RuntimePort,
     )
-    from services.rankings.store import build_rankings_store
+    from services.rankings.store import build_rankings_read_store
 
     def rankings():
-        return cached_owner_call(("rankings_store", id(ranking_store), selected_tenant.get()), lambda: [r.to_dict() for r in (ranking_store or build_rankings_store()).list_rankings()])
+        return cached_owner_call(("rankings_store", id(ranking_store), selected_tenant.get()), lambda: [r.to_dict() for r in (ranking_store or build_rankings_read_store()).list_rankings()])
 
     def ranking_formulas():
         from ..personas.service import _pm12_quarter_formula_payload

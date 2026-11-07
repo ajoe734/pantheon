@@ -144,7 +144,7 @@ class InMemoryManagementReadStore:
     def list_capital_pools(self, include_market_persona_defaults: bool = True) -> List[Dict[str, Any]]:
         return []
 
-    def list_incidents(self) -> List[Dict[str, Any]]:
+    def list_incidents(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return []
 
     def list_evolution_decisions(self) -> List[Dict[str, Any]]:

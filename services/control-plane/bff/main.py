@@ -1728,7 +1728,9 @@ def _alert_severity_for_risk_level(
         return "high"
     return severity
 def _build_incident_alerts(snapshot_at: str) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    incidents = read_store.list_incidents()
+    # The incident owner defines "open" (open and investigating); resolved and
+    # closed rows are neither transferred nor alerted.
+    incidents = read_store.list_incidents(open_only=True)
     incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     if incident_surface.get("status") == "unavailable":
         return [], incident_surface
@@ -1736,12 +1738,12 @@ def _build_incident_alerts(snapshot_at: str) -> tuple[List[Dict[str, Any]], Dict
     alerts: List[Dict[str, Any]] = []
     for incident in incidents:
         incident_status = str(incident.get("status") or "").lower()
-        if incident_status not in {"open", "in_progress"}:
+        if incident_status not in {"open", "investigating"}:
             continue
         incident_id = str(incident.get("incident_id") or "")
         severity = _alert_severity_for_incident(incident)
         title = str(incident.get("title") or incident_id or "Unnamed incident")
-        status_prefix = "Active" if incident_status == "open" else "In-progress"
+        status_prefix = "Active" if incident_status == "open" else "Investigating"
         alerts.append(
             {
                 "alert_id": f"alert-incident-{incident_id}",
@@ -1921,6 +1923,7 @@ def _runtime_anomaly_reasons(
                     break
 
     return reasons, _max_alert_severity(severities)
+from .management_read_models.service import _trading_pulse_binding_is_retired
 def _build_runtime_alerts(
     snapshot_at: str,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
@@ -1942,6 +1945,10 @@ def _build_runtime_alerts(
     bindings = read_store.list_runtime_bindings()
     missing_telemetry = False
     for binding in bindings:
+        # Retired runtimes are history, not live anomalies: no alert and no
+        # telemetry read. Reuses the single retired rule of the trading pulse.
+        if _trading_pulse_binding_is_retired(binding):
+            continue
         runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
         telemetry_summary = None
         if runtime_id and telemetry_surface.get("status") != "unavailable":
@@ -2079,7 +2086,7 @@ _MANAGEMENT_RISK_LEVEL_ORDER = {
 def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
     incident_anomalies: List[Dict[str, Any]] = []
-    for incident in read_store.list_incidents():
+    for incident in read_store.list_incidents(open_only=True):
         incident_id = str(incident.get("id") or incident.get("incident_id") or "").strip()
         if not incident_id:
             continue

@@ -1,5 +1,8 @@
 # SD-TW-PAPER-STOCK-FUTURES-20261106 — Taiwan paper shorting through listed stock futures
 
+> **Status notice, 2026-11-07 — partly superseded. Do not implement from this file alone.** The operator corrected the framing: the persona chooses the instrument per decision (shares, futures, other derivatives), so futures is not a fixed route and not a template value. The replacement design is `docs/04/pantheon_persona_instrument_decision_2026-11-07/SD_PERSONA_INSTRUMENT_DECISION_2026-11-07.md`, whose section 11 gives a verdict per section. **Replaced:** §1 decision 3; §2.2 step 3 (smallest unit rule); §5.2 (same-direction no-op); §7 (routing of SELL by artifact); §8 (recipe `instrument_type`, `CONTRACTS`, provisioning template change); §9 (long side as a global choice); §12 switch keyed on the artifact; §13 (split). **Kept** (checked against official sources): §2.1, §2.2 other steps, §3, §4, §5.1/§5.3–5.6, §6, §10, §11 (extended), §14. The text below is unchanged.
+
+
 Status: design for review (Reviewer: Antigravity). Owner: Claude. Date: 2026-11-06.
 Scope of this change: this document and `docs/deployment/evidence/SD-TW-PAPER-STOCK-FUTURES-20261106/evidence.json` only. No source, test, workflow or configuration change. No implementation task is created by this work.
 

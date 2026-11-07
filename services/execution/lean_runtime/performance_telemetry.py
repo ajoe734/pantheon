@@ -793,6 +793,48 @@ class RollingDrawdownTracker:
         self._latest_sample_shared_with_seed = shared_with_seed
         self._last_mark_provenance = restored_provenance
 
+    def _rolling_sharpe_metrics(self) -> dict[str, Any]:
+        """Annualised Sharpe (rf=0) from daily returns of the current window.
+
+        Absent (empty dict) when fewer than 10 daily returns, zero deviation
+        or a non-finite result; never emits a placeholder.
+        """
+        last_by_date: dict[date, float] = {}
+        for as_of, value in self._values:
+            last_by_date[as_of.astimezone(timezone.utc).date()] = value
+        if len(last_by_date) < 2:
+            return {}
+        first_day = min(last_by_date)
+        last_day = max(last_by_date)
+        returns: list[float] = []
+        previous: float | None = None
+        day = first_day
+        while day <= last_day:
+            if day in last_by_date:
+                current = last_by_date[day]
+            elif day.weekday() < 5 and previous is not None:
+                current = previous
+            else:
+                day += timedelta(days=1)
+                continue
+            if previous is not None:
+                if not math.isfinite(previous) or previous <= 0:
+                    return {}
+                returns.append(current / previous - 1.0)
+            previous = current
+            day += timedelta(days=1)
+        if len(returns) < 10:
+            return {}
+        mean = math.fsum(returns) / len(returns)
+        variance = math.fsum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+        std = math.sqrt(variance)
+        if not math.isfinite(std) or std <= 0:
+            return {}
+        sharpe = mean / std * math.sqrt(252.0)
+        if not math.isfinite(sharpe):
+            return {}
+        return {"sharpe_ratio": float(sharpe)}
+
     def observe(
         self,
         sample: PerformanceSample,
@@ -854,6 +896,7 @@ class RollingDrawdownTracker:
             "window_observations": len(self._values),
             "window_days": self._window_days,
             "drawdown_as_of": sample.as_of,
+            **self._rolling_sharpe_metrics(),
         }
 
     def observe_unchanged_provenance(
@@ -914,4 +957,5 @@ class RollingDrawdownTracker:
             "window_observations": len(self._values),
             "window_days": self._window_days,
             "drawdown_as_of": sample.as_of,
+            **self._rolling_sharpe_metrics(),
         }

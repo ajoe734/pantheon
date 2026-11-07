@@ -353,10 +353,14 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
 
     @router.get("/api/source-ingest/jobs/{ingest_run_id}")
     def get_job(ingest_run_id: str) -> dict[str, Any]:
-        run = runtime.store.get_run(ingest_run_id)
+        get_job_fn = getattr(runtime.store, "get_job", None)
+        if callable(get_job_fn):
+            run, receipt = get_job_fn(ingest_run_id)
+        else:
+            run = runtime.store.get_run(ingest_run_id)
+            receipt = runtime.store.get_receipt(ingest_run_id) if run is not None else None
         if run is None:
             raise HTTPException(status_code=404, detail="ingest run not found")
-        receipt = runtime.store.get_receipt(ingest_run_id)
         return {
             "run": run.to_dict(),
             "receipt": receipt.to_dict() if receipt is not None else None,
