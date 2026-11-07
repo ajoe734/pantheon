@@ -3784,7 +3784,7 @@ def test_management_nl_large_fleet_context_stays_within_provider_bound(tmp_path,
         client = _seeded_client(tmp_path, monkeypatch)
         monkeypatch.setattr(
             bff_main, "_mgmt_nl_collect_context",
-            lambda focus, now, tenant_id=None: {"snippets": snippets, "surfaces": surfaces},
+            lambda focus, now, tenant_id=None, **_kw: {"snippets": snippets, "surfaces": surfaces},
         )
         resp = client.post(
             "/bff/management/nl/ask",
@@ -3886,7 +3886,7 @@ def test_management_nl_residual_repeated_rows_and_merged_observations_stay_withi
         client = _seeded_client(tmp_path, monkeypatch)
         monkeypatch.setattr(
             bff_main, "_mgmt_nl_collect_context",
-            lambda focus, now, tenant_id=None: {"snippets": snippets, "surfaces": surfaces},
+            lambda focus, now, tenant_id=None, **_kw: {"snippets": snippets, "surfaces": surfaces},
         )
         resp = client.post(
             "/bff/management/nl/ask",
@@ -4243,7 +4243,7 @@ def _cs_scenario(monkeypatch, *, runtime_count: int, current_runtime_count: int,
     monkeypatch.setattr(ms, "_build_operator_alerts_payload",
                         lambda _s: {"alerts": [], "meta": {"surfaces": {}}})
     monkeypatch.setattr(ms, "_human_inbox_payload",
-                        lambda *a, **k: {"items": [], "meta": {"surfaces": {}}})
+                        lambda *a, **k: {"data": {"items": []}, "meta": {"surfaces": {}}})
     monkeypatch.setattr(ms, "_build_management_anomalies_payload",
                         lambda _s: {"items": [], "meta": {"surfaces": {}}})
     return ms, counts, store
@@ -4420,3 +4420,171 @@ def test_ai_context_current_runtime_rollback_unavailable_is_still_reported(monke
     surface = context["surfaces"]["management_trading_pulse"]
     assert surface["status"] == "unavailable"
     assert "rollback owner offline" in json.dumps(surface)
+
+
+# BFF-AI-FLEET-INBOX-20261107: the AI persona_fleet projection must run through
+# the app-scoped PersonaService, and the AI inbox read must use the wired
+# payload's data.items layer with the caller identity.
+def _fleet_inbox_real_persona_service():
+    from services.control_plane.bff.personas.service import (
+        PersonaService,
+        create_persona_registry_write_owner,
+    )
+
+    class _SourceHealthStore:
+        def get_source_connector_registry(self):
+            return {"connectors": []}
+
+        def get_source_health_usage_snapshot(self):
+            return {"sources": []}
+
+    return PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        ranking_write_owner=object(),
+        read_store=_SourceHealthStore(),
+        command_store=object(),
+    )
+
+
+def _fleet_inbox_source_health_persona(persona_id: str) -> dict:
+    return {
+        "persona_id": persona_id,
+        "name": persona_id,
+        "lifecycle_state": "paper_running",
+        "tenant_id": _CS_TENANT,
+        "required_data_sources": [{"provider_key": "shioaji"}],
+    }
+
+
+def _fleet_inbox_scenario(monkeypatch, personas):
+    ms, _counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=1, current_runtime_count=1, persona_count=1,
+        current_persona_count=1, incidents=[],
+    )
+    monkeypatch.setattr(ms, "_list_persona_records", lambda *a, **k: list(personas))
+    return ms
+
+
+def test_ai_persona_fleet_projects_source_health_personas_through_app_persona_service(monkeypatch) -> None:
+    ms = _fleet_inbox_scenario(
+        monkeypatch, [_fleet_inbox_source_health_persona("p-src-0")]
+    )
+    unbound = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    item = unbound["snippets"]["persona_fleet"]["items"][0]
+    # Without the app-scoped service the projection raises; the persona is an
+    # unavailable owner observation naming the exception class.
+    assert item["health"]["status"] == "unavailable"
+    assert any(
+        "RuntimeError" in str(o.get("degradation_reason"))
+        for o in unbound["surfaces"]["persona_fleet"]["owner_observations"]
+    )
+
+    from services.control_plane.bff.assistant.management_service import (
+        bind_persona_service_projection as _bind_persona_service_projection,
+    )
+
+    monkeypatch.setattr(
+        ms,
+        "_PROJECT_PERSONA_FLEET_ITEM_FN",
+        _bind_persona_service_projection(_fleet_inbox_real_persona_service()),
+    )
+    bound = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    bound_item = bound["snippets"]["persona_fleet"]["items"][0]
+    assert bound_item["health"]["status"] != "unavailable"
+    assert not any(
+        "persona_projection_failed" in str(o.get("degradation_reason"))
+        for o in bound["surfaces"]["persona_fleet"]["owner_observations"]
+    )
+
+
+def test_ai_persona_fleet_has_no_module_global_persona_service() -> None:
+    from services.control_plane.bff.assistant import management_service as ms
+
+    for name in ("_PERSONA_SERVICE", "set_persona_service", "get_persona_service", "reset_persona_service"):
+        assert not hasattr(ms, name), name
+
+
+def test_ai_persona_fleet_one_persona_failure_keeps_the_others_and_logs(monkeypatch, caplog) -> None:
+    ms = _fleet_inbox_scenario(
+        monkeypatch,
+        [_fleet_inbox_source_health_persona("p-bad"), _fleet_inbox_source_health_persona("p-good")],
+    )
+    from services.control_plane.bff.assistant.management_service import (
+        bind_persona_service_projection as _bind_persona_service_projection,
+    )
+
+    real_impl = _bind_persona_service_projection(_fleet_inbox_real_persona_service())
+
+    def flaky(persona, **kwargs):
+        if persona["persona_id"] == "p-bad":
+            raise KeyError("boom")
+        return real_impl(persona, **kwargs)
+
+    monkeypatch.setattr(ms, "_PROJECT_PERSONA_FLEET_ITEM_FN", flaky)
+    with caplog.at_level("WARNING"):
+        context = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    items = {i["persona_id"]: i for i in context["snippets"]["persona_fleet"]["items"]}
+    assert items["p-bad"]["health"]["status"] == "unavailable"
+    assert items["p-good"]["health"]["status"] != "unavailable"
+    bad_obs = [
+        o for o in context["surfaces"]["persona_fleet"]["owner_observations"]
+        if o.get("subject_id") == "p-bad"
+    ]
+    assert bad_obs and bad_obs[0]["status"] == "unavailable"
+    assert "KeyError" in bad_obs[0]["degradation_reason"]
+    assert any("KeyError" in r.getMessage() for r in caplog.records)
+
+
+def test_ai_persona_fleet_error_branch_logs_exception_class(monkeypatch, caplog) -> None:
+    ms = _fleet_inbox_scenario(monkeypatch, [_fleet_inbox_source_health_persona("p-x")])
+
+    def boom(*_a, **_k):
+        raise ValueError("owner list failed")
+
+    monkeypatch.setattr(ms, "_mgmt_nl_persona_state", boom)
+    with caplog.at_level("WARNING"):
+        context = ms._mgmt_nl_collect_context("persona_fleet", _CS_NOW, tenant_id=_CS_TENANT)
+    assert any("ValueError" in r.getMessage() for r in caplog.records)
+    assert context["surfaces"]["persona_fleet"]["status"] == "unavailable"
+
+
+def test_ai_cockpit_counts_wired_human_inbox_data_items_with_caller_identity(monkeypatch) -> None:
+    ms, _counts, _store = _cs_scenario(
+        monkeypatch, runtime_count=1, current_runtime_count=1, persona_count=1,
+        current_persona_count=1, incidents=[],
+    )
+    seen: dict = {}
+    incident_item = {
+        "id": "agent-2e0cc89b4ea8-0001",
+        "source_type": "incident",
+        "status": "open",
+        "title": "Control loop cannot fetch runtime summaries",
+        "tenant_id": _CS_TENANT,
+    }
+
+    def wired_payload(snapshot_at, **kwargs):
+        seen.update(kwargs)
+        ok = {"status": "ok", "source": "service"}
+        return {
+            "data": {"id": "management-human-inbox", "items": [incident_item], "summary": {}},
+            "page_info": {"next_page_token": None, "total": 1, "page_size": 1},
+            "meta": {"surfaces": {
+                "approval_queue": ok, "governance_review_queue": ok,
+                "incidents": ok, "persona_readiness": ok,
+            }},
+        }
+
+    monkeypatch.setattr(ms, "_human_inbox_payload", wired_payload)
+    caller = object()
+    context = ms._mgmt_nl_collect_context(
+        "cockpit", _CS_NOW, tenant_id=_CS_TENANT, identity=caller
+    )
+    assert context["snippets"]["cockpit"]["human_inbox_summary"]["total"] == 1
+    assert seen["identity"] is caller
+    observations = {
+        o["subject_type"]: o
+        for o in context["surfaces"]["management_cockpit"]["owner_observation"][
+            "contributing_observations"
+        ]
+    }
+    assert observations["approval_queue"]["status"] == "ok"
