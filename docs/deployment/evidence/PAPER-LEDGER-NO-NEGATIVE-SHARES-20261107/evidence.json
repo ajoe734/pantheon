@@ -1,0 +1,42 @@
+{
+  "task_id": "PAPER-LEDGER-NO-NEGATIVE-SHARES-20261107",
+  "title": "Paper ledger must not sell shares it does not hold",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "date": "2026-11-07",
+  "status": "blocked",
+  "hosted_verification": {
+    "executed": false,
+    "statement": "Hosted verification was not run. Per task brief, no VM/SSH access, no workflow dispatches, and no hosted verification are permitted in this task."
+  },
+  "commands_and_results": [
+    {
+      "command": "/tmp/civenv/bin/python -m pytest -q scripts/test_probe_dev_runtime_paper_lifecycle.py",
+      "exit_code": 0,
+      "summary": "55 passed in 16.61s"
+    },
+    {
+      "command": "/tmp/civenv/bin/python -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py -k \"sell_without_holdings or other_order_rejection\" services/trade_journey/test_hosted_lifecycle_stimulus.py -k \"sell_without_holdings\" services/execution/lean_runtime/test_paper_runtime.py -k TestTaiwanPaperLedgerNoNegativeShares",
+      "exit_code": 0,
+      "summary": "10 passed (4 in test_hosted_lifecycle_probe.py, 2 in test_hosted_lifecycle_stimulus.py, 4 in TestTaiwanPaperLedgerNoNegativeShares)"
+    },
+    {
+      "command": "/tmp/civenv/bin/python -m pytest -q services/execution/lean_runtime/test_paper_runtime_smoke.py services/execution/lean_runtime/test_executor.py",
+      "exit_code": 0,
+      "summary": "49 passed, 7 subtests passed in 15.85s"
+    },
+    {
+      "command": "/tmp/civenv/bin/python -m pytest -q services/execution/lean_runtime/test_performance_telemetry.py",
+      "exit_code": 1,
+      "summary": "1 failed (PaperPerformanceLedgerTest.test_taiwan_sell_fill_is_signed_and_credits_cash), 36 passed, 9 subtests passed",
+      "detail": "test_performance_telemetry.py:1131-1165 calls SubmitTaiwanBrokerOrder('2330.TW', side='sell', quantity=3, action='SELL') on a fresh algorithm with 0 holdings and asserts ledger['positions'][0]['quantity'] == -3.0, which is now rejected with sell_without_holdings per AC1. services/execution/lean_runtime/test_performance_telemetry.py is missing from the task artifact contract."
+    },
+    {
+      "command": "/tmp/civenv/bin/python -m pytest -q services/execution/lean_runtime/test_paper_runtime.py -k \"TestSubmitTaiwanBrokerOrder or TestCommittedCloseLifecycleRecovery\"",
+      "exit_code": 1,
+      "summary": "9 failed, 6 passed in 15.81s",
+      "detail": "Existing tests in test_paper_runtime.py (TestSubmitTaiwanBrokerOrder.test_taiwan_paper_fill_published_with_shioaji_trade_id at L2722 asserting Quantity == -1 after zero-holding sell, TestSubmitTaiwanBrokerOrder.test_taiwan_broker_error_records_rejection at L2787 selling 2330.TW with 0 holdings expecting broker submission, and 7 tests in TestCommittedCloseLifecycleRecovery at L3915-4090 opening 2330.TW with a zero-holding SELL/SHORT before closing with BUY/LONG) directly conflict with AC1 (rejecting zero/negative holding Taiwan sell with sell_without_holdings) and AC4/next ('the existing paper runtime and executor tests pass unchanged; do not weaken an existing assertion')."
+    }
+  ],
+  "blocker_summary": "Per task instruction ('do not weaken an existing assertion ... if an item here is wrong or a needed file is missing from the artifact contract then block with the exact reason instead of working around it'): (1) services/execution/lean_runtime/test_performance_telemetry.py is missing from the task artifact contract, yet .github/workflows/branch-ci.yml (L334) runs pytest on services/execution/lean_runtime where PaperPerformanceLedgerTest.test_taiwan_sell_fill_is_signed_and_credits_cash (L1131-1165) sells 3 shares of 2330.TW from 0 holdings and asserts position quantity == -3.0; (2) AC4 states 'the existing paper runtime and executor tests pass unchanged' and next forbids weakening existing assertions, which conflicts with 9 existing zero-holding Taiwan SELL tests in services/execution/lean_runtime/test_paper_runtime.py (TestSubmitTaiwanBrokerOrder L2722 & L2787, and TestCommittedCloseLifecycleRecovery L3915-4090)."
+}
