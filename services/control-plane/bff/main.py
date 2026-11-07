@@ -4316,6 +4316,7 @@ wire_management_runtime_projections(
     sse_buffers=_sse_buffers,
     sse_subscribers=_sse_subscribers,
     read_store=read_store,
+    persona_service=persona_service,
 )
 
 from .deployment.router import create_deployment_router as _create_deployment_router

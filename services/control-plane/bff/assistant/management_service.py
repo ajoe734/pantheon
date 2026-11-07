@@ -2393,7 +2393,23 @@ def _project_persona_fleet_item_impl(
     strategies, strategies_obs = ctx_svc.get_context_strategies_for_persona(
         persona_id, record_filter=record_filter
     )
-    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=len(strategies))
+    # Same binding build_persona_health_items uses: the source-health overlay
+    # in _project_persona_dto requires the app-scoped PersonaService to be the
+    # current one.
+    from ..personas.service import _current_persona_service
+    persona_service = get_persona_service()
+    service_token = (
+        _current_persona_service.set(persona_service)
+        if persona_service is not None
+        else None
+    )
+    try:
+        persona_dto = _project_persona_dto(
+            raw_persona, overlay=None, routed_strategies=len(strategies)
+        )
+    finally:
+        if service_token is not None:
+            _current_persona_service.reset(service_token)
 
     bindings, bindings_obs = ctx_svc.get_context_bindings_for_persona(
         persona_id, record_filter=record_filter
@@ -2569,6 +2585,19 @@ def _project_persona_fleet_item_impl(
     item["owner_observations"] = owner_observations
     return item, owner_observations
 
+
+_PERSONA_SERVICE: Optional[Any] = None
+
+def set_persona_service(service: Optional[Any]) -> None:
+    """Hold the app-scoped PersonaService wired by the composition root."""
+    global _PERSONA_SERVICE
+    _PERSONA_SERVICE = service
+
+def reset_persona_service() -> None:
+    set_persona_service(None)
+
+def get_persona_service() -> Optional[Any]:
+    return _PERSONA_SERVICE
 
 _PROJECT_PERSONA_FLEET_ITEM_FN: Optional[Callable[..., Tuple[Dict[str, Any], List[Dict[str, Any]]]]] = None
 
@@ -3049,6 +3078,7 @@ def wire_management_runtime_projections(
     control_loops_service: Optional[Any] = None,
     sse_buffers: Optional[Dict[str, deque]] = None,
     sse_subscribers: Optional[Dict[str, list]] = None,
+    persona_service: Optional[Any] = None,
 ) -> None:
     """Wire management projections, setters, and audit/SSE stores.
 
@@ -3091,6 +3121,8 @@ def wire_management_runtime_projections(
         set_assistant_control_mode_store(assistant_control_mode_store)
     if control_loops_service is not None:
         set_control_loops_service(control_loops_service)
+    if persona_service is not None:
+        set_persona_service(persona_service)
     if sse_buffers is not None:
         register_sse_buffers(sse_buffers, sse_subscribers)
 
@@ -4749,12 +4781,52 @@ def _mgmt_nl_collect_loop_health(
     return _mgmt_nl_project_loop_health_outcome(outcome)
 
 
+def _mgmt_nl_unavailable_fleet_item(
+    persona: Dict[str, Any], exc: BaseException
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """One persona whose projection raised: an unavailable owner observation
+    naming the exception class, so the other personas still project."""
+    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+    exc_name = type(exc).__name__
+    logging.getLogger(__name__).warning(
+        "bff.management_nl persona_fleet item projection failed: %s", exc_name
+    )
+    observation = {
+        "subject_type": "persona",
+        "subject_id": persona_id,
+        "status": "unavailable",
+        "owner": "persona_fleet",
+        "source_kind": "unavailable",
+        "source_version": None,
+        "observed_at": None,
+        "freshness_seconds": None,
+        "correlation_id": None,
+        "degradation_reason": f"persona_projection_failed:{exc_name}",
+        "contributing_observations": [],
+    }
+    item = {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "persona": {"id": persona_id},
+        "health": {
+            "status": "unavailable",
+            "reasons": [f"persona_projection_failed:{exc_name}"],
+        },
+        "bindings": [],
+        "runtime_bindings": [],
+        "runtimeBindings": [],
+        "owner_observations": [observation],
+    }
+    return item, [observation]
+
+
 def _mgmt_nl_collect_context(
     focus: str,
     snapshot_at: str,
     tenant_id: Optional[str] = None,
     *,
     loop_health_outcome: Optional[Mapping[str, Any]] = None,
+    identity: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Collect management summary context for the requested focus surface(s).
 
@@ -4837,8 +4909,12 @@ def _mgmt_nl_collect_context(
         try:
             alerts_payload = _build_operator_alerts_payload(snapshot_at)
             alerts = _deployment_scoped_record_filter(list(alerts_payload.get("alerts") or []))
-            human_inbox_payload = _human_inbox_payload(snapshot_at, page_size=None)
-            inbox_items = _deployment_scoped_record_filter(list(human_inbox_payload.get("items") or []))
+            human_inbox_payload = _human_inbox_payload(
+                snapshot_at, page_size=None, identity=identity
+            )
+            inbox_items = _deployment_scoped_record_filter(
+                list(((human_inbox_payload.get("data") or {}).get("items")) or [])
+            )
             anomalies_payload = _build_management_anomalies_payload(snapshot_at)
             anomalies = _deployment_scoped_record_filter(list(anomalies_payload.get("items") or []))
             runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
@@ -5013,14 +5089,19 @@ def _mgmt_nl_collect_context(
             fleet_item_states: List[str] = []
             fleet_owner_observations: List[Dict[str, Any]] = []
             for persona in personas:
-                item, item_owner_observations = _project_persona_fleet_item(
-                    persona,
-                    all_runtime_bindings=runtime_bindings,
-                    all_incidents=incidents,
-                    all_evolution_decisions=evolution_decisions,
-                    telemetry_by_runtime_id=telemetry_by_runtime_id,
-                    tenant_id=tenant_id,
-                )
+                try:
+                    item, item_owner_observations = _project_persona_fleet_item(
+                        persona,
+                        all_runtime_bindings=runtime_bindings,
+                        all_incidents=incidents,
+                        all_evolution_decisions=evolution_decisions,
+                        telemetry_by_runtime_id=telemetry_by_runtime_id,
+                        tenant_id=tenant_id,
+                    )
+                except Exception as persona_exc:
+                    item, item_owner_observations = _mgmt_nl_unavailable_fleet_item(
+                        persona, persona_exc
+                    )
                 if len(fleet_items) < 20:
                     fleet_items.append(item)
                     fleet_item_states.append(_mgmt_nl_persona_state(persona))
@@ -5103,7 +5184,11 @@ def _mgmt_nl_collect_context(
                     *fleet_owner_observations,
                 ],
             }
-        except Exception:
+        except Exception as fleet_exc:
+            logging.getLogger(__name__).warning(
+                "bff.management_nl persona_fleet context failed: %s",
+                type(fleet_exc).__name__,
+            )
             surfaces["persona_fleet"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "loop_health":
@@ -6978,7 +7063,7 @@ async def _bff_management_nl_ask_impl(
         prefetch_token = _MGMT_NL_LOOP_HEALTH_PREFETCH.set(prefetched_loop_health)
     try:
         context_bundle = await asyncio.to_thread(
-            _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
+            _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id, identity=identity
         )
     finally:
         if prefetch_token is not None:
@@ -7449,7 +7534,7 @@ async def _bff_management_nl_ask_stream_impl(
         prefetch_token = _MGMT_NL_LOOP_HEALTH_PREFETCH.set(prefetched_loop_health)
     try:
         context_bundle = await asyncio.to_thread(
-            _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
+            _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id, identity=identity
         )
     finally:
         if prefetch_token is not None:

@@ -1,0 +1,25 @@
+{
+  "task_id": "BFF-AI-FLEET-INBOX-20261107",
+  "hosted_verification": "NOT RUN. Hosted verification belongs to MGMT-AI-TRUTH-ACCEPTANCE-20261107; no hosted result is claimed.",
+  "changes": {
+    "persona_fleet": "_project_persona_fleet_item_impl binds the app-scoped PersonaService (wired via wire_management_runtime_projections persona_service) into _current_persona_service around _project_persona_dto; per-persona failures become unavailable items naming the exception class; error branch logs a warning with the exception class.",
+    "human_inbox": "_mgmt_nl_collect_context reads data.items of the wired payload and passes the caller identity (identity kwarg threaded via asyncio.to_thread by both ask and ask/stream)."
+  },
+  "fix_removed_proof": {
+    "method": "Temporarily reverted (a) the PersonaService binding and (b) the data.items read in management_service.py, ran the new tests, then restored the file. The removal is not committed.",
+    "command": "/tmp/civenv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py -k 'ai_persona_fleet or ai_cockpit_counts'",
+    "result_with_fix_removed": "3 failed, 1 passed (test_ai_persona_fleet_projects_source_health_personas_through_app_persona_service, test_ai_persona_fleet_one_persona_failure_keeps_the_others_and_logs, test_ai_cockpit_counts_wired_human_inbox_data_items_with_caller_identity failed; RuntimeError logged)",
+    "result_with_fix": "4 passed"
+  },
+  "tests_added": [
+    "test_ai_persona_fleet_projects_source_health_personas_through_app_persona_service (real PersonaService, production _project_persona_fleet_item_impl)",
+    "test_ai_persona_fleet_one_persona_failure_keeps_the_others_and_logs",
+    "test_ai_persona_fleet_error_branch_logs_exception_class",
+    "test_ai_cockpit_counts_wired_human_inbox_data_items_with_caller_identity (real data.items payload shape, one open incident, approval_queue ok)"
+  ],
+  "test_harness_updates": "AST-extraction harnesses in test_persona_fleet_read_failures.py and test_mgmt_read_001_persona_fleet_owner_observations.py gained the new helper names and logging; the _cs_scenario inbox stub and two collect_context lambdas now use the data.items shape / accept **_kw. No assertion weakened.",
+  "regression_runs": {
+    "command": "pytest over test_management_nl_assistant_provider, test_management_nl_single_owner, test_bff_b6_management_nl_ask, test_bff_management_cockpit, test_human_inbox_truth, test_main_composition_seam_extraction_005, test_mgmt_read_001_persona_fleet_owner_observations, test_bff_b6_003_nl_high_risk_refusal, management_read_models/",
+    "result": "all passed except test_main_composition_seam_extraction_005.py::test_zero_duplicate_definitions_ast_readback, which fails on '_resolve_final_idempotency_key' not defined as def in management_service.py; that helper is an import re-export untouched by this task (pre-existing, not caused by this change)."
+  }
+}
