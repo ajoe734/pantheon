@@ -690,6 +690,101 @@ class PortfolioValuationTest(unittest.TestCase):
         self.assertEqual(missing_fill_result.diagnostic["code"], "open_book_missing_fill_as_of")
 
 
+class RollingSharpeTest(unittest.TestCase):
+    _MONDAY = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+    _VECTOR = [100, 102, 101, 103, 105, 104, 106, 108, 107, 109, 110]
+
+    @classmethod
+    def _weekday(cls, index: int) -> datetime:
+        return cls._MONDAY + timedelta(days=index + 2 * (index // 5))
+
+    def _feed(self, values, *, tracker=None):
+        tracker = tracker or RollingDrawdownTracker(window_days=20)
+        metrics = None
+        for index, value in enumerate(values):
+            metrics = tracker.observe(_sample(float(value), self._weekday(index))) or metrics
+        return tracker, metrics
+
+    def test_hand_computed_vector_exact_value(self):
+        _, metrics = self._feed(self._VECTOR)
+        # 10 daily returns; mean/sample-std * sqrt(252), computed independently.
+        self.assertAlmostEqual(metrics["sharpe_ratio"], 11.2639458941423, places=9)
+
+    def test_nine_returns_omit_and_ten_returns_emit(self):
+        _, nine = self._feed(self._VECTOR[:-1])
+        self.assertNotIn("sharpe_ratio", nine)
+        _, ten = self._feed(self._VECTOR)
+        self.assertIn("sharpe_ratio", ten)
+
+    def test_flat_series_omits_sharpe_without_placeholder(self):
+        values = [100.0 + 0.0 for _ in range(12)]
+        tracker = RollingDrawdownTracker(window_days=20)
+        metrics = None
+        for index, value in enumerate(values):
+            sample = _sample(value, self._weekday(index), fill_count=index + 1)
+            metrics = tracker.observe(sample) or metrics
+        self.assertIsNotNone(metrics)
+        self.assertNotIn("sharpe_ratio", metrics)
+
+    def test_weekday_gap_counts_zero_return_and_weekend_excluded(self):
+        # Wednesday (index 2) has no sample: Tue->Wed->Thu yields a zero return.
+        tracker = RollingDrawdownTracker(window_days=20)
+        values = {0: 100, 1: 102, 3: 101, 4: 103, 5: 105, 6: 104, 7: 106, 8: 108, 9: 107, 10: 109}
+        metrics = None
+        for index, value in values.items():
+            metrics = tracker.observe(_sample(float(value), self._weekday(index))) or metrics
+        # Dates Mon..Mon = 11 weekdays -> 10 returns including the zero return.
+        series = [100, 102, 102, 101, 103, 105, 104, 106, 108, 107, 109]
+        returns = [series[i + 1] / series[i] - 1 for i in range(10)]
+        mean = sum(returns) / 10
+        std = (sum((r - mean) ** 2 for r in returns) / 9) ** 0.5
+        self.assertAlmostEqual(metrics["sharpe_ratio"], mean / std * 252**0.5, places=9)
+
+    def test_legacy_state_restores_and_yields_sharpe(self):
+        tracker, _ = self._feed(self._VECTOR[:-1])
+        state = tracker.export_state()
+        self.assertEqual(state["schema_version"], "rolling_drawdown.v1")
+        self.assertNotIn("sharpe_ratio", json.dumps(state))
+        restored = RollingDrawdownTracker(window_days=20)
+        restored.restore(state)
+        metrics = restored.observe(_sample(110.0, self._weekday(10)))
+        self.assertAlmostEqual(metrics["sharpe_ratio"], 11.2639458941423, places=9)
+        self.assertEqual(set(restored.export_state()), set(state) | set())
+
+    def test_observe_and_unchanged_provenance_agree(self):
+        mark = MarketMark(
+            symbol="BTC/USD.KRAKEN",
+            price=1.0,
+            as_of=_iso_z(self._weekday(10)),
+            observed_at=_iso_z(self._weekday(10)),
+            source_ref="test://sharpe",
+            lineage={"k": "v"},
+        )
+        base = dict(
+            pnl=10.0,
+            portfolio_value=110.0,
+            initial_cash=100.0,
+            cash=110.0,
+            as_of=_iso_z(self._weekday(10)),
+            fill_count=1,
+        )
+        tracker, _ = self._feed(self._VECTOR[:-1])
+        bare = MarketMark(
+            symbol="BTC/USD.KRAKEN",
+            price=1.0,
+            as_of=_iso_z(self._weekday(10)),
+            source_ref="test://sharpe",
+        )
+        first = tracker.observe(PerformanceSample(marks=(bare,), **base))
+        enriched = tracker.observe_unchanged_provenance(PerformanceSample(marks=(mark,), **base))
+        self.assertIsNotNone(enriched)
+        self.assertEqual(first["sharpe_ratio"], enriched["sharpe_ratio"])
+
+
+def _iso_z(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
 class RollingDrawdownTrackerTest(unittest.TestCase):
     def test_first_loss_is_measured_against_initial_funded_equity(self):
         tracker = RollingDrawdownTracker(window_days=20)
