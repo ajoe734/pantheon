@@ -40,7 +40,16 @@ from services.persona.lesson_governance import (
 )
 
 
-from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
+from services.runtime_auth_inbound import (
+    AuthContext,
+    AuthError,
+    _DEFAULT_ROLE_CLAIMS,
+    _claim_path_exists,
+    _claim_path_value,
+    _claim_values,
+    _split_csv,
+    validate_request_auth,
+)
 
 
 def _split_csv_values(values: Optional[List[str]]) -> List[str]:
@@ -98,7 +107,8 @@ def _memory_auth_env() -> dict[str, str]:
         ),
         "PANTHEON_RUNTIME_ROLE_CLAIMS": (
             os.getenv("PANTHEON_MEMORY_ROLE_CLAIMS")
-            or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", "")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS")
+            or os.getenv("PANTHEON_BFF_ROLE_CLAIMS", "")
         ),
         "PANTHEON_RUNTIME_MFA_CLAIMS": (
             os.getenv("PANTHEON_MEMORY_MFA_CLAIMS")
@@ -146,13 +156,30 @@ def _memory_auth_env() -> dict[str, str]:
     }
 
 
-def _require_verified_identity(ctx: AuthContext) -> None:
+def _has_verified_role_claim(
+    ctx: AuthContext, env: Optional[dict[str, str]] = None
+) -> bool:
+    resolved_env = env if env is not None else _memory_auth_env()
+    role_claims = _split_csv(str(resolved_env.get("PANTHEON_RUNTIME_ROLE_CLAIMS", "")))
+    if not role_claims:
+        role_claims = list(_DEFAULT_ROLE_CLAIMS)
+    for claim_path in role_claims:
+        if _claim_path_exists(ctx.claims, claim_path) and _claim_values(
+            _claim_path_value(ctx.claims, claim_path)
+        ):
+            return True
+    return False
+
+
+def _require_verified_identity(
+    ctx: AuthContext, *, env: Optional[dict[str, str]] = None
+) -> None:
     if ctx.token_kind != "jwt":
         return
     missing = [claim for claim in _REQUIRED_JWT_CLAIMS if not ctx.claims.get(claim)]
     if not any(str(ctx.claims.get(name) or "").strip() for name in _TENANT_CLAIM_NAMES):
         missing.append("tenant")
-    if not (ctx.claims.get("roles") or ctx.claims.get("role")):
+    if not _has_verified_role_claim(ctx, env) or not ctx.roles:
         missing.append("role")
     if missing:
         raise HTTPException(
@@ -202,7 +229,7 @@ def _authenticate_memory_request(
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     _reject_malformed_identity_claims(ctx)
-    _require_verified_identity(ctx)
+    _require_verified_identity(ctx, env=env)
     if require_jwt and ctx.token_kind != "jwt":
         raise HTTPException(status_code=401, detail="Unauthorized: a verified operator JWT is required")
     return ctx

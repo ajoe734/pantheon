@@ -350,7 +350,7 @@ def _resolve_binding_read_tenant(ctx: Any) -> Optional[str]:
     if req_tenant == "*":
         raise AuthError("TENANT_SCOPE_FORBIDDEN", "Literal wildcard '*' is not a concrete tenant", 403)
 
-    is_viewer = ctx is not None and ctx.has_role("viewer") and not ctx.has_role(*_OPERATOR_ROLES)
+    is_viewer = ctx is None or not ctx.has_role(*_OPERATOR_ROLES)
 
     claims = dict(ctx.claims) if (ctx and getattr(ctx, "claims", None)) else {}
     allowed_tenants: list[str] = []

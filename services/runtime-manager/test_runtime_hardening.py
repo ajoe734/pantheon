@@ -1063,6 +1063,78 @@ class OidcJwksAndInternalPaperCallerDualPathTests(unittest.TestCase):
         self.assertEqual(res_unverified.status_code, 401)
         self.assertEqual(res_unverified.get_json()["error"]["code"], "AUTH_EMAIL_UNVERIFIED")
 
+    def test_external_oidc_missing_role_claims_never_escalate_to_operator_or_cross_tenant(self):
+        now = int(time.time())
+        roleless_token = self._mint_rs256(
+            {
+                "iss": self.oidc_issuer,
+                "aud": self.oidc_audience,
+                "sub": "oidc-roleless-user",
+                "email_verified": True,
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+                "iat": now,
+                "exp": now + 600,
+            }
+        )
+        for path in (
+            "/api/runtime-fleet/desired-state?stage=paper",
+            "/api/runtime-bindings",
+            "/api/runtime-bindings/rtb-dev-001",
+            "/api/runtime-bindings/rtb-other-001",
+        ):
+            res = self.client.get(path, headers={"Authorization": f"Bearer {roleless_token}"})
+            self.assertEqual(res.status_code, 403, f"{path}: {res.get_data(as_text=True)}")
+            self.assertEqual(res.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+        # Even if PANTHEON_RUNTIME_DEFAULT_ROLE=operator is set under strict role mapping,
+        # a roleless external IdP token must fail closed and never inherit operator privileges.
+        with mock.patch.dict(os.environ, {"PANTHEON_RUNTIME_DEFAULT_ROLE": "operator"}, clear=False):
+            for path in (
+                "/api/runtime-fleet/desired-state?stage=paper",
+                "/api/runtime-bindings",
+                "/api/runtime-bindings/rtb-other-001",
+            ):
+                res_strict_op = self.client.get(
+                    path, headers={"Authorization": f"Bearer {roleless_token}"}
+                )
+                self.assertEqual(res_strict_op.status_code, 403, f"{path}: {res_strict_op.get_data(as_text=True)}")
+                self.assertEqual(res_strict_op.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+        # When an explicit unprivileged viewer default role is configured, operator routes
+        # remain 403 and binding reads enforce strict viewer tenancy (never leaking tenant-other).
+        with mock.patch.dict(os.environ, {"PANTHEON_RUNTIME_DEFAULT_ROLE": "viewer"}, clear=False):
+            res_desired = self.client.get(
+                "/api/runtime-fleet/desired-state?stage=paper",
+                headers={"Authorization": f"Bearer {roleless_token}"},
+            )
+            self.assertEqual(res_desired.status_code, 403)
+            self.assertEqual(res_desired.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+            res_bindings = self.client.get(
+                "/api/runtime-bindings",
+                headers={"Authorization": f"Bearer {roleless_token}"},
+            )
+            self.assertEqual(res_bindings.status_code, 200, res_bindings.get_data(as_text=True))
+            self.assertEqual(res_bindings.get_json()["count"], 1)
+            self.assertEqual(res_bindings.get_json()["bindings"][0]["binding_id"], "rtb-dev-001")
+
+            res_other = self.client.get(
+                "/api/runtime-bindings/rtb-other-001",
+                headers={"Authorization": f"Bearer {roleless_token}"},
+            )
+            self.assertEqual(res_other.status_code, 404)
+
+            res_foreign_hdr = self.client.get(
+                "/api/runtime-bindings",
+                headers={
+                    "Authorization": f"Bearer {roleless_token}",
+                    "X-Tenant-Id": "tenant-other",
+                },
+            )
+            self.assertEqual(res_foreign_hdr.status_code, 403)
+            self.assertEqual(res_foreign_hdr.get_json()["error"]["code"], "TENANT_SCOPE_FORBIDDEN")
+
     def test_internal_hs256_paper_caller_token_succeeds_and_invalid_hs256_fails_closed(self):
         now = int(time.time())
         internal_token = encode_jwt_hs256(
