@@ -8776,7 +8776,7 @@ def _project_persona_fleet_row_impl(
         "persona_id": persona_id,
         **mutation_projection,
         "name": persona.get("name") or persona_id,
-        "owner": raw_metadata.get("owner") or raw_metadata.get("owner_id") or "pathreon-management",
+        "owner": raw_metadata.get("owner") or raw_metadata.get("owner_id") or persona.get("owner") or "pathreon-management",
         "mode": deployment_stage,
         "status": health,
         "health": health,
@@ -14568,6 +14568,7 @@ def _build_persona_health_items_impl(
             "personaName": persona.get("name") or persona_id,
             "owner": metadata.get("owner")
             or metadata.get("owner_id")
+            or persona.get("owner")
             or "pathreon-management",
             "mode": deployment_stage,
             "status": health,

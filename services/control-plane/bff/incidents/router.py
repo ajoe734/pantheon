@@ -36,6 +36,7 @@ from collections import deque
 from datetime import datetime, timezone
 import json
 import logging
+import os
 import time
 from typing import (
     Any,
@@ -75,6 +76,20 @@ from services.control_plane.bff.models import (
 )
 
 log = logging.getLogger(__name__)
+
+# /bff/alerts fans out sequential owner reads (incidents, governance, runtimes);
+# the generic 0.6s management budget timed out to empty on hosted reads.
+_ALERTS_DEFAULT_READ_TIMEOUT_SECONDS = 3.0
+
+
+def _get_alerts_read_timeout() -> float:
+    raw = os.getenv("PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS")
+    if raw is None or not raw.strip():
+        return _ALERTS_DEFAULT_READ_TIMEOUT_SECONDS
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return _ALERTS_DEFAULT_READ_TIMEOUT_SECONDS
 
 
 def _default_page_slice(
@@ -846,13 +861,31 @@ def create_incident_router(
         snapshot_at = _utc_now()
         if run_management_read is not None:
             try:
-                return await run_management_read(_build_alerts_payload, snapshot_at)
-            except Exception:
+                return await run_management_read(
+                    _build_alerts_payload,
+                    snapshot_at,
+                    timeout_seconds=_get_alerts_read_timeout(),
+                )
+            except Exception as exc:
+                from services.control_plane.bff.personas.routes.common import (
+                    ManagementReadSaturated,
+                    ManagementReadTimeout,
+                )
+
+                if isinstance(exc, ManagementReadTimeout):
+                    reason = "read_timeout"
+                elif isinstance(exc, ManagementReadSaturated):
+                    reason = "read_saturated"
+                else:
+                    reason = "read_error"
+                log.warning(
+                    "bff.alerts degraded fallback: %s (%s)", reason, type(exc).__name__
+                )
                 payload = _service.management_alerts_degraded_payload(snapshot_at)
                 if isinstance(payload, dict) and "meta" in payload and isinstance(payload["meta"], dict):
                     surfaces = payload["meta"].get("surfaces")
                     if isinstance(surfaces, dict) and "alerts" in surfaces and isinstance(surfaces["alerts"], dict):
-                        surfaces["alerts"].setdefault("reason", "read_timeout")
+                        surfaces["alerts"]["reason"] = reason
                 return payload
         return _build_alerts_payload(snapshot_at)
 

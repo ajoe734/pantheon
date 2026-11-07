@@ -393,3 +393,91 @@ class TestPersonaCapitalRuntimeDomainPortDelegation:
         assert port.list_deployment_plans() == []
         assert port.list_runtime_bindings() == []
         assert port.get_persona("anything") is None
+
+
+# ---------------------------------------------------------------------------
+# 7. dataset_source calls only the reader of the requested dataset
+# ---------------------------------------------------------------------------
+
+_SINGLE_READER_DATASETS = {
+    "rankings": "ranking",
+    "ranking_formulas": "ranking",
+    "rebalances": "ranking",
+    "capital_allocations": "ranking",
+    "containments": "ranking",
+    "evolution_programs": "evolution",
+    "evolution_decisions": "evolution",
+}
+
+
+def _counting_domain(failing=()):
+    from types import SimpleNamespace
+
+    from ports.persona_capital_runtime import EvolutionProjectionPort, RankingProjectionPort
+
+    calls = {}
+
+    def reader(name):
+        def _read():
+            calls[name] = calls.get(name, 0) + 1
+            if name in failing:
+                raise RuntimeError(f"{name} owner down")
+            return [{"id": name}]
+
+        return _read
+
+    names = (
+        "rankings", "ranking_formulas", "persona_league", "rebalances",
+        "capital_allocations", "containments", "evolution_programs", "evolution_decisions",
+    )
+    readers = {n: reader(n) for n in names}
+    domain = PersonaCapitalRuntimeDomainPort(
+        ranking_port=RankingProjectionPort(
+            rankings_reader=readers["rankings"],
+            ranking_formulas_reader=readers["ranking_formulas"],
+            persona_league_reader=readers["persona_league"],
+            rebalances_reader=readers["rebalances"],
+            capital_allocations_reader=readers["capital_allocations"],
+            containments_reader=readers["containments"],
+        ),
+        evolution_port=EvolutionProjectionPort(
+            evolution_programs_reader=readers["evolution_programs"],
+            evolution_decisions_reader=readers["evolution_decisions"],
+        ),
+    )
+    stub = SimpleNamespace(
+        research_knowledge_source=SimpleNamespace(dataset_source=lambda dataset: "missing"),
+        persona_capital_runtime=domain,
+        _OPERATIONS_CONSULTATION_OWNED_DATASETS=frozenset(),
+    )
+    return stub, calls, readers
+
+
+def test_dataset_source_calls_only_the_requested_dataset_reader():
+    from ports.read_surface_ports import ReadSurfacePorts
+
+    for dataset in _SINGLE_READER_DATASETS:
+        stub, calls, _keepalive = _counting_domain()
+        assert ReadSurfacePorts.dataset_source(stub, dataset) == "service"
+        assert calls == {dataset: 1}, (dataset, calls)
+
+
+def test_dataset_source_stays_truthful_when_the_owner_fails():
+    from ports.read_surface_ports import ReadSurfacePorts
+
+    for dataset in _SINGLE_READER_DATASETS:
+        stub, calls, _keepalive = _counting_domain(failing=(dataset,))
+        assert ReadSurfacePorts.dataset_source(stub, dataset) == "unavailable"
+        assert calls == {dataset: 1}, (dataset, calls)
+
+
+def test_full_surface_status_still_reads_every_reader():
+    stub, calls, _keepalive = _counting_domain(failing=("rebalances",))
+    status = stub.persona_capital_runtime.ranking.get_surface_status()
+    assert status["surfaces"]["rebalances"]["status"] == "unavailable"
+    assert status["surfaces"]["rankings"]["status"] == "ok"
+    assert status["status"] == "degraded"
+    assert calls == {
+        "rankings": 1, "ranking_formulas": 1, "persona_league": 1,
+        "rebalances": 1, "capital_allocations": 1, "containments": 1,
+    }

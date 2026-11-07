@@ -161,7 +161,7 @@ def _fake_read_store() -> Any:
         def list_persona_league(self, **kwargs: Any) -> List[Dict[str, Any]]:
             return []
 
-        def list_incidents(self) -> List[Dict[str, Any]]:
+        def list_incidents(self, **kwargs: Any) -> List[Dict[str, Any]]:
             return []
 
         def list_evolution_decisions(self) -> List[Dict[str, Any]]:
@@ -192,6 +192,9 @@ def _fake_read_store() -> Any:
 
         def list_strategy_specs(self, **kwargs: Any) -> List[Dict[str, Any]]:
             return []
+
+        def count_strategy_persona_bindings(self) -> Dict[str, int]:
+            return {}
 
     return FakeReadStore()
 
@@ -292,3 +295,86 @@ def test_runtime_persona_and_main_share_the_same_bound_instance() -> None:
     items_direct = service.build_persona_health_items("2026-09-14T00:00:00Z")
     items_via_bound = bound("2026-09-14T00:00:00Z")
     assert items_direct == items_via_bound
+
+
+def test_v5_execution_persona_health_returns_top_level_owner_and_preserves_precedence_and_default() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.runtime.router import create_runtime_router
+
+    store = _fake_read_store()
+    personas_payload = [
+        {
+            "persona_id": "persona-chain-4923",
+            "id": "persona-chain-4923",
+            "name": "Chain 4923 Research Persona",
+            "owner": "operator-chain-4923-owner",
+            "lifecycle_state": "active",
+            "metadata": {
+                "data_scope": "regular",
+                "persona_class": "research",
+                "requested_by": "operator-chain-4923-owner",
+            },
+        },
+        {
+            "persona_id": "persona-meta-owner",
+            "id": "persona-meta-owner",
+            "name": "Meta Owner Precedence",
+            "owner": "top-level-owner-ignored",
+            "lifecycle_state": "active",
+            "metadata": {
+                "owner": "metadata-owner-wins",
+                "owner_id": "metadata-owner-id-second",
+            },
+        },
+        {
+            "persona_id": "persona-meta-owner-id",
+            "id": "persona-meta-owner-id",
+            "name": "Meta Owner ID Precedence",
+            "owner": "top-level-owner-ignored",
+            "lifecycle_state": "active",
+            "metadata": {
+                "owner_id": "metadata-owner-id-wins",
+            },
+        },
+        {
+            "persona_id": "persona-default-owner",
+            "id": "persona-default-owner",
+            "name": "Default Owner Fallback",
+            "lifecycle_state": "active",
+            "metadata": {},
+        },
+    ]
+    store.list_personas = lambda **kwargs: list(personas_payload)
+    service = _make_persona_service(read_store=store)
+
+    app = FastAPI()
+    app.include_router(
+        create_runtime_router(
+            read_surface=store,
+            dependencies={
+                "_extract_identity": lambda auth: {"roles": ["viewer", "operator", "admin"]},
+                "_require_read_role": lambda identity: None,
+                "_dataset_surface_status": lambda name, snapshot_at=None: {"status": "ok", "source": "in_memory"},
+                "_composed_dataset_surface_status": lambda name, items, snapshot_at=None, source="": {
+                    "status": "ok",
+                    "source": source,
+                },
+                "_build_persona_health_items": service.build_persona_health_items,
+                "utc_now": lambda: "2026-11-07T00:00:00Z",
+            },
+        )
+    )
+    client = TestClient(app)
+    resp = client.get(
+        "/bff/v5/execution/persona-health",
+        headers={"Authorization": "Bearer op:operator"},
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    by_id = {item["persona_id"]: item for item in items}
+    assert by_id["persona-chain-4923"]["owner"] == "operator-chain-4923-owner"
+    assert by_id["persona-meta-owner"]["owner"] == "metadata-owner-wins"
+    assert by_id["persona-meta-owner-id"]["owner"] == "metadata-owner-id-wins"
+    assert by_id["persona-default-owner"]["owner"] == "pathreon-management"
+

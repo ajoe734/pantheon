@@ -137,6 +137,19 @@ _RECOGNIZED_NON_LEGACY_RECORD_TYPES = frozenset(
     (_SNAPSHOT_RECORD_TYPE, _EVALUATION_RECORD_TYPE)
 )
 
+# Trusted constants (never request input) used verbatim in SQL so the planner
+# can match them against the partial index below.
+_SNAPSHOT_PREFIX_PREDICATE_SQL = (
+    f"left(record_id, {len(_SNAPSHOT_ID_PREFIX)}) = '{_SNAPSHOT_ID_PREFIX}'"
+)
+_LATEST_SNAPSHOT_INDEX_NAME = "rankings_snapshot_latest_idx"
+_LATEST_SNAPSHOT_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS {name} ON {table} "
+    "((COALESCE(payload ->> 'surface', '')), "
+    "(COALESCE(payload ->> 'created_at', '')) DESC, updated_at DESC) "
+    "WHERE " + _SNAPSHOT_PREFIX_PREDICATE_SQL
+)
+
 _SNAPSHOT_FIELDS: Tuple[str, ...] = (
     "record_type",
     "ranking_snapshot_id",
@@ -422,9 +435,40 @@ class RankingReadStore:
         )
         self._thread_lock = threading.RLock()
 
+    def _list_legacy_candidate_payloads(self) -> List[Dict[str, Any]]:
+        """Payloads of rows that may be legacy rankings.
+
+        Rows under the namespaced snapshot/evaluation ``record_id`` prefixes are
+        generation-3 rows the legacy CRUD surface always skips, so on a real
+        Postgres store they are excluded by the plain ``record_id`` column and
+        their (large, TOASTed) payloads are never fetched or decoded. A store
+        whose ``list_all`` has been injected (tests) keeps the full-scan path.
+        """
+
+        table = self._records_table
+        if not isinstance(table, PostgresJsonOwnerStore) or "list_all" in table.__dict__:
+            return table.list_all()
+        with table._connect() as conn:
+            cursor = conn.execute(
+                f"SELECT payload FROM {table.table} "
+                "WHERE left(record_id, %s) <> %s AND left(record_id, %s) <> %s "
+                "ORDER BY updated_at ASC",
+                (
+                    len(_SNAPSHOT_ID_PREFIX), _SNAPSHOT_ID_PREFIX,
+                    len(_EVALUATION_ID_PREFIX), _EVALUATION_ID_PREFIX,
+                ),
+            )
+            rows = cursor.fetchall()
+        payloads: List[Dict[str, Any]] = []
+        for row in rows:
+            decoded = table._decode_payload(row[0] if isinstance(row, tuple) else row.get("payload"))
+            if decoded is not None:
+                payloads.append(decoded)
+        return payloads
+
     def _refresh(self) -> Dict[str, RankingRecord]:
         records: Dict[str, RankingRecord] = {}
-        for payload in self._records_table.list_all():
+        for payload in self._list_legacy_candidate_payloads():
             # Generation 3 stores RankingSnapshotRecord/AllocationEvaluationRecord
             # rows in this same table under namespaced record ids, each tagged
             # with an explicit record_type envelope. Key presence of "record_type"
@@ -487,11 +531,16 @@ class RankingReadStore:
             ):
                 table_sql = self._records_table.table
                 with self._records_table._connect() as conn:
+                    # Snapshots are only ever written under the namespaced
+                    # record_id, so the plain-column prefix predicate bounds the
+                    # scan without touching any payload. The literal predicate and
+                    # ORDER BY match the partial index created by the write store
+                    # (see ``_LATEST_SNAPSHOT_INDEX_SQL``) so LIMIT 1 reads one row.
                     if clean_surface:
                         cursor = conn.execute(
                             f"""
                             SELECT payload FROM {table_sql}
-                            WHERE jsonb_typeof(payload) = 'object'
+                            WHERE {_SNAPSHOT_PREFIX_PREDICATE_SQL}
                               AND payload ->> 'record_type' = %s
                               AND COALESCE(payload ->> 'surface', '') = %s
                             ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC
@@ -503,7 +552,7 @@ class RankingReadStore:
                         cursor = conn.execute(
                             f"""
                             SELECT payload FROM {table_sql}
-                            WHERE jsonb_typeof(payload) = 'object'
+                            WHERE {_SNAPSHOT_PREFIX_PREDICATE_SQL}
                               AND payload ->> 'record_type' = %s
                             ORDER BY COALESCE(payload ->> 'created_at', '') DESC, updated_at DESC
                             LIMIT 1
@@ -545,6 +594,28 @@ class RankingWriteStore(RankingReadStore):
             dsn=dsn, table=table, owner_service="rankings-svc", bootstrap=bootstrap,
         )
         self._thread_lock = threading.RLock()
+        if bootstrap:
+            self._ensure_latest_snapshot_index()
+
+    def _ensure_latest_snapshot_index(self) -> None:
+        """Idempotently create the partial index behind the latest-snapshot read.
+
+        Purely additive; reads return identical rows with or without it.
+        """
+
+        index_name = _LATEST_SNAPSHOT_INDEX_NAME
+        sql = _LATEST_SNAPSHOT_INDEX_SQL.format(
+            name=f'"{index_name}"', table=self._records_table.table
+        )
+        with self._records_table._connect() as conn:
+            self._records_table.advisory_xact_lock(self._records_table.table_name, conn=conn)
+            try:
+                conn.execute(sql)
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") not in ("23505", "42P07"):
+                    raise
+                if hasattr(conn, "rollback"):
+                    conn.rollback()
 
     # ---- writes ----
 
@@ -629,6 +700,19 @@ class RankingWriteStore(RankingReadStore):
                 )
             return _decode_allocation_evaluation(canonical)
 
+
+
+def build_rankings_read_store(
+    dsn: Optional[str] = None,
+    table: Optional[str] = None,
+) -> RankingReadStore:
+    """Build a read-only Rankings store (never bootstraps or writes)."""
+
+    resolved_dsn = dsn or os.getenv("RANKING_STORE_DSN") or os.getenv("DATABASE_URL")
+    if not resolved_dsn:
+        raise ValueError("RANKING_STORE_DSN or DATABASE_URL is required for the Rankings write-owner store")
+    resolved_table = table or os.getenv("RANKING_STORE_TABLE", "rankings.rankings")
+    return RankingReadStore(dsn=resolved_dsn, table=resolved_table)
 
 
 def build_rankings_store(

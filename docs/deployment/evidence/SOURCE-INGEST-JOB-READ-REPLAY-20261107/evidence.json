@@ -1,0 +1,57 @@
+{
+  "task_id": "SOURCE-INGEST-JOB-READ-REPLAY-20261107",
+  "title": "Job detail replays the 28 MB ingest journal twice and hits the BFF 2 s limit",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-07T05:50:00Z",
+  "verification_scope": "functional_local_only_hosted_verification_by_coordinator",
+  "fix": {
+    "schedule_store_stat_key_guard": "JsonlIngestScheduleStore._reload_if_changed_unlocked checks (st_ino, st_size, st_mtime_ns) of ingest_schedule.jsonl against self._read_key (updated at the end of _reload_unlocked and _reload_if_changed_unlocked) across all read-only paths: get_run, get_job, list_runs, list_runs_page, get_receipt, list_receipts, read_freshness_snapshot, get_watermark, list_frontier, and get_frontier.",
+    "cross_process_and_inode_safety": "Any append by another store instance/process increases st_size and updates st_mtime_ns; replacing the journal file changes st_ino. Both invalidate self._read_key and trigger an immediate replay on the very next read.",
+    "job_detail_single_replay_bound": "JsonlIngestScheduleStore.get_job(ingest_run_id) reads (run, receipt) under one exclusive_file_lock critical section after a single _reload_if_changed_unlocked() check, and GET /api/source-ingest/jobs/{ingest_run_id} delegates to runtime.store.get_job(ingest_run_id), guaranteeing at most one journal replay per request even when the journal changed and zero replays when unchanged.",
+    "write_and_recovery_paths_preserved": "All write paths (upsert_run, update_watermark, upsert_receipt, enqueue_frontier, claim_due_frontier, claim_frontier, complete_frontier, replay_frontier, fail_frontier, recover_stale_running) continue calling _reload_unlocked(recover_incomplete=False) before appending, and reload() continues calling _reload_unlocked(recover_incomplete=True) to terminalize incomplete receipts."
+  },
+  "measurements_28mb_journal": {
+    "fixture": "12,100 real IngestRun (5 lifecycle events each) + 12,100 IngestReceipt records in ingest_schedule.jsonl (real line shapes via _seed_hosted_scale_journal)",
+    "journal_bytes": 29449658,
+    "journal_mb_decimal": 29.45,
+    "journal_mib_binary": 28.09,
+    "job_detail_endpoint": "GET /api/source-ingest/jobs/ingest-00001000",
+    "job_detail_body_bytes": 2222,
+    "before": {
+      "job_detail_replays_per_request": 2,
+      "job_detail_latency_s": 2.6237,
+      "bounded_list_page_endpoint": "GET /api/source-ingest/jobs?page_size=100",
+      "bounded_list_page_body_bytes": 220731,
+      "bounded_list_page_first_read_replays": 1,
+      "bounded_list_page_first_read_latency_s": 1.4192,
+      "bounded_list_page_after_store_init_or_other_read_replays": 1,
+      "bounded_list_page_after_store_init_or_other_read_latency_s": 1.5073,
+      "bounded_list_page_subsequent_unchanged_replays": 0,
+      "bounded_list_page_subsequent_unchanged_latency_s": 0.0344
+    },
+    "after": {
+      "job_detail_unchanged_replays_per_request": 0,
+      "job_detail_unchanged_latency_s": 0.0045,
+      "job_detail_when_journal_changed_replays_per_request": 1,
+      "job_detail_when_journal_changed_latency_s": 1.2643,
+      "bounded_list_page_endpoint": "GET /api/source-ingest/jobs?page_size=100",
+      "bounded_list_page_body_bytes": 220731,
+      "bounded_list_page_first_read_when_changed_replays": 1,
+      "bounded_list_page_first_read_when_changed_latency_s": 1.4388,
+      "bounded_list_page_after_store_init_or_other_read_replays": 0,
+      "bounded_list_page_after_store_init_or_other_read_latency_s": 0.0252,
+      "bounded_list_page_subsequent_unchanged_replays": 0,
+      "bounded_list_page_subsequent_unchanged_latency_s": 0.0339
+    }
+  },
+  "acceptance_map": {
+    "1_read_only_paths_zero_replays_when_unchanged": "services/source_ingestion/test_service.py::test_schedule_store_read_only_paths_do_not_replay_unchanged_journal",
+    "2_cross_instance_append_and_new_inode_replacement": "services/source_ingestion/test_service.py::test_schedule_store_cross_instance_append_and_inode_replacement",
+    "3_job_detail_at_most_one_replay_when_changed": "services/source_ingestion/test_service.py::test_get_job_endpoint_replays_at_most_once_per_request_when_journal_changed",
+    "4_write_paths_reload_and_incomplete_receipt_recovery": "services/source_ingestion/test_service.py::test_write_paths_reload_before_writing_and_recover_incomplete_receipts",
+    "5_28mb_journal_before_and_after_measurements": "Recorded in measurements_28mb_journal above; also covered by test_bounded_jobs_listing_at_hosted_scale_stays_small_and_fast",
+    "6_no_existing_test_weakened_or_deleted": "No existing test was weakened, deleted, or had any assertion changed; 4 new tests were added to services/source_ingestion/test_service.py."
+  },
+  "changed_assertions_justification": "None. All existing tests and assertions in services/source_ingestion/test_service.py remain intact without modification."
+}
