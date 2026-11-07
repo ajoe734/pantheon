@@ -1206,6 +1206,26 @@ def test_contradictory_row_tenant_claim_is_unresolved_siblings_kept(monkeypatch)
     assert sf == "unavailable" and srb == "unavailable"
 
 
+def test_strict_rollback_facade_keeps_own_rows_with_partial_provenance(monkeypatch):
+    rows = [
+        {"rollback_id": "r-own", "runtime_id": "rt1", "status": "completed", "evolution_decision_id": "d-rb"},
+        {"rollback_id": "r-legacy-other", "runtime_id": "rt-other"},
+    ]
+    _GovOwner(monkeypatch, {"freeze-orders": [], "rollbacks": rows}, decisions=_DECISIONS)
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            got = port.governance.read_rollbacks_strict("rt1")
+            assert [r["rollback_id"] for r in got] == ["r-own"]
+            assert got[0]["status"] == "unavailable" and got[0]["source_kind"] == "unavailable"
+            assert got[0]["owner_status"] == "completed" and got[0]["degradation_reason"]
+            with pytest.raises(RuntimeError):
+                port.governance.read_rollbacks_strict("rt-other")
+    finally:
+        authorization.reset(token)
+
+
 def test_strict_rollback_facade_raises_on_unresolved_but_empty_is_healthy(monkeypatch):
     legacy = [{"rollback_id": "r-legacy", "runtime_id": "rt1"}]
     _GovOwner(monkeypatch, {"freeze-orders": [], "rollbacks": legacy}, decisions=_DECISIONS)

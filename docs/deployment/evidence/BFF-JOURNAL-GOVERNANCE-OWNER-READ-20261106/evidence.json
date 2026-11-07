@@ -21,5 +21,10 @@
     "tenant_claim": "a row tenant_id that contradicts the verified caller tenant is unresolved (not visible), verified siblings preserved",
     "strict_rollbacks": "read_rollbacks_strict raises when any row is unresolved so ReadSurfacePorts.get_rollbacks/ManagementService.get_context_rollbacks report unavailable, never healthy zero; Journal list path keeps verified partial rows; healthy empty stays service/ok",
     "runs": "123 passed (three admitted files + management context observations)"
+  },
+  "ae800_original_ac5_fix": {
+    "strict_rollbacks": "read_rollbacks_strict no longer raises on a global unresolved count: runtime-matched verified rows are returned with record-level provenance (status/source_kind=unavailable, owner=governance, degradation_reason) that the existing ManagementService record-provenance seam reports as non-healthy; actual rollback state preserved as owner_status. Raises only when no verified row matches (all-unresolved never looks like healthy zero); healthy empty stays []/ok; foreign/unbound rows stay hidden.",
+    "seam": "no file outside the 6 admitted artifacts edited",
+    "runs": "124 passed (three files + management context observations) plus ManagementService end-to-end assertion in cutover test"
   }
 }

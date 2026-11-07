@@ -1146,13 +1146,30 @@ class DomainGovernancePort:
         if not self._rollback_owner_reads:
             return self.list_all_rollbacks(runtime_id=runtime_id)
         rows, unresolved = self._owner_scoped_records("all_rollbacks")
-        if unresolved:
-            # Existing strict consumers cannot carry partial provenance; surface it
-            # as an owner failure rather than a healthy zero / silently short list.
-            raise RuntimeError(
-                f"Governance rollback owner has {unresolved} row(s) with unverifiable tenant provenance"
-            )
-        return [r for r in rows if not runtime_id or r.get("runtime_id") == runtime_id]
+        matched = [r for r in rows if not runtime_id or r.get("runtime_id") == runtime_id]
+        if not unresolved:
+            return matched
+        reason = f"Governance rollback owner has {unresolved} row(s) with unverifiable tenant provenance"
+        if not matched:
+            # Nothing verified to show: unresolved siblings may hide this runtime's
+            # rows, so this must not look like a healthy zero.
+            raise RuntimeError(reason)
+        # Verified own rows stay visible; the unresolved siblings are reported as
+        # truthful non-healthy partial provenance through the record-level
+        # observation fields the existing ManagementService seam already honors.
+        return [
+            {
+                **r,
+                # The seam reads record "status" as observation status, so the
+                # owner's actual rollback state is preserved under owner_status.
+                "owner_status": r.get("status"),
+                "status": "unavailable",
+                "source_kind": "unavailable",
+                "owner": "governance",
+                "degradation_reason": reason,
+            }
+            for r in matched
+        ]
 
     def _owner_rows_or_empty(self, dataset: str) -> List[Dict[str, Any]]:
         # Journal callers cannot tolerate a raise; the failure is cached for the

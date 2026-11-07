@@ -625,9 +625,18 @@ def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(mon
     token = owner_reads.authorization.set("Bearer tok")
     try:
         rsp = ReadSurfacePorts()
-        # Unresolved sibling provenance (r3/r4) must not become a healthy/short strict list.
+        # Unresolved siblings (r3/r4) keep verified r1 visible but non-healthy.
+        partial = rsp.get_rollbacks("rt1")
+        assert [r["rollback_id"] for r in partial] == ["r1"]
+        assert partial[0]["status"] == "unavailable" and partial[0]["owner_status"] == "completed"
+        from services.control_plane.bff.management_read_models.service import ManagementService
+
+        mrows, obs = ManagementService(read_store=rsp).get_context_rollbacks("rt1")
+        assert [r["rollback_id"] for r in mrows] == ["r1"]
+        assert obs["status"] == "unavailable" and obs["source_kind"] == "unavailable"
+        # Nothing verified for a runtime while siblings are unresolved is not a healthy zero.
         with pytest.raises(RuntimeError):
-            rsp.get_rollbacks("rt1")
+            rsp.get_rollbacks("rt-none")
         assert [r["rollback_id"] for r in rsp.list_all_rollbacks()] == ["r1", "r2"]
         monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: rows[:2])
         assert [r["rollback_id"] for r in rsp.get_rollbacks("rt1")] == ["r1"]
