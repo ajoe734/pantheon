@@ -646,7 +646,7 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
         docker.call(*command)
         override.unlink()
 
-    recreated = []
+    recreated, started = [], []
     with tempfile.TemporaryDirectory(prefix=".restore-", dir=archive_root) as stage:
         compose_up(stage, {
             service: {
@@ -678,6 +678,7 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
                     if expected["state"] == "running" and containers[0]["status"] != "running":
                         check_lease()
                         docker.call("start", containers[0]["container_id"])
+                        started.append(service)
                     continue
                 wanted[expected["state"]].append(service)
             # One-shot init containers exit 0 by design, so no group uses
@@ -698,6 +699,8 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
         result["stack"] = readback_stack(stack, docker=docker, check_lease=check_lease,
                                          recreated=recreated, sleep=sleep, monotonic=monotonic,
                                          budget_seconds=readback_seconds)
+        result["recreated_services"] = sorted(recreated)
+        result["started_services"] = sorted(started)
     check_lease()
     return result
 

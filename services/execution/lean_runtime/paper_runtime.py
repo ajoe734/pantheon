@@ -551,6 +551,8 @@ class PaperExecutionAlgorithm:
                         "reject_reason": "sell_without_holdings",
                         "rejection_status": "rejected",
                         "order_status": "rejected",
+                        "risk_status": "rejected",
+                        "risk_reason": "sell_without_holdings",
                         "rejected_order_count": 1,
                         "requested_quantity": requested_quantity,
                         "holding_quantity": float(holding_quantity),
@@ -3423,6 +3425,10 @@ class PaperRuntimeService:
             signal_metadata.setdefault("symbol", event.symbol)
             signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
             occurred_at = str(event.metadata.get("timestamp") or event.created_at)
+            # The view fields belong to signal_generation; the instrument
+            # decision record belongs to trade_decision.
+            decision_metadata = dict(signal_metadata)
+            signal_metadata.pop("expression_decision", None)
             try:
                 signal_payload = self._emit_lifecycle_telemetry(
                     "signal_generation",
@@ -3458,7 +3464,7 @@ class PaperRuntimeService:
                 self._emit_lifecycle_telemetry(
                     "trade_decision",
                     {"action": "trade_decision_recorded"},
-                    signal_metadata,
+                    decision_metadata,
                     event_id=decision_event_id,
                     created_at=occurred_at,
                 )
@@ -3500,9 +3506,25 @@ class PaperRuntimeService:
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
-            for field in ("requested_quantity", "computed_quantity"):
+            for field in ("requested_quantity", "computed_quantity", "holding_quantity"):
                 if field in event.metadata:
                     metrics[field] = event.metadata[field]
+            is_sell_without_holdings_guard = (
+                not event.submitted_to_broker
+                and (
+                    telemetry_metadata.get("reason") == "sell_without_holdings"
+                    or telemetry_metadata.get("reject_reason") == "sell_without_holdings"
+                    or event.broker_submission_status == "sell_without_holdings"
+                )
+            )
+            if is_sell_without_holdings_guard:
+                risk_scope = (
+                    _clean_text(telemetry_metadata.get("signal_id")) or event.event_id
+                )
+                telemetry_metadata.setdefault(
+                    "risk_decision_id", f"paper-risk-{risk_scope}"
+                )
+                telemetry_metadata.setdefault("risk_status", "rejected")
         elif event.event_type == "paper_order_simulated":
             metrics = {
                 "noop_count": 1,
@@ -3514,6 +3536,12 @@ class PaperRuntimeService:
             for field in ("requested_quantity", "computed_quantity"):
                 if field in event.metadata:
                     metrics[field] = event.metadata[field]
+            if not event.submitted_to_broker and (
+                telemetry_metadata.get("decision_status") == "no_order"
+                or telemetry_metadata.get("order_status") == "not_submitted"
+                or bool(telemetry_metadata.get("noop_reason"))
+            ):
+                telemetry_metadata.setdefault("risk_status", "skipped")
         else:
             metrics = {
                 "fill_quantity": event.quantity,

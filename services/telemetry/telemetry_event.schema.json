@@ -448,7 +448,7 @@
     },
     "metadata": {
       "type": "object",
-      "description": "Optional additional metadata. Not part of the evidence contract.",
+      "description": "Optional additional metadata. Not part of the evidence contract. Instrument expression layer keys (strength, momentum, view_direction on signal_generation; the Chosen/NoTrade record as expression_decision plus instrument_id, kind, units, multiplier, reason_code and decision_id on trade_decision and later order events) travel here; they add no event type.",
       "additionalProperties": true
     }
   },

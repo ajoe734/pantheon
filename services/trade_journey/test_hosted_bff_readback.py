@@ -745,8 +745,8 @@ def _build_real_bff_app(projection_reader: StubProjectionReader) -> tuple[FastAP
             roles=["operator", "viewer"],
             mfa_verified=True,
             claims={
-                "tenant_id": "tenant-dev",
-                "allowed_tenants": ["tenant-dev"],
+                "tenant_id": str(projection_reader.identity["tenant_id"]),
+                "allowed_tenants": [str(projection_reader.identity["tenant_id"])],
             },
         )
 
@@ -868,4 +868,300 @@ def test_readback_detects_real_bff_drift_when_projection_schema_version_missing(
     assert code == 1
     assert artifact["failure"]["code"] == "bff_loop_surface_invalid"
     assert artifact["failure"]["message"] == "loop-run projection metadata mismatched"
+
+
+def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_holdings_journey(
+    tmp_path: Any,
+) -> None:
+    retained_identity = {
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "journey_id": "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f",
+        "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+        "loop_run_id": "lr-run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+        "signal_id": "sig-60872d6d0ca7a7522ea9153a11eb8de8",
+        "strategy_id": "strategy-persona-e0cd73f41c0fb27c36de",
+        "runtime_id": "rt-f45eb161",
+        "binding_id": "rb-8aceee4784be4ae581d51ab7ef2243c4",
+        "capital_pool_id": "pool-persona-paper-e0cd73f41c0fb27c36de",
+        "persona_id": "persona-034dad74863c32a796a4",
+        "persona_capital_binding_id": "pcb-persona-paper-e0cd73f41c0fb27c36de",
+        "artifact_id": "artifact-persona-paper-e0cd73f41c0fb27c36de",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-persona-paper-e0cd73f41c0fb27c36de",
+        "trace_id": "f553230a-a918-5a25-b41d-c86e9ccb19f3",
+    }
+    retained_events = [
+        {
+            "event_id": "192e0569-ee44-4e5a-9f21-d24415530353",
+            "event_type": "signal_generation",
+            "ingested_seq": 11210607,
+            "sequence_no": 1,
+        },
+        {
+            "event_id": "20476142-6e7a-5715-b20f-fa61022cf1aa",
+            "event_type": "trade_decision",
+            "ingested_seq": 11210608,
+            "sequence_no": 2,
+        },
+        {
+            "event_id": "483dede1-6213-4d7b-8df4-48d1ae30b747",
+            "event_type": "order_rejection",
+            "ingested_seq": 11210635,
+            "sequence_no": 3,
+        },
+    ]
+    f6_sha = "f6d40b77da32309498863a6d66debcc2449268e2"
+    controller = {
+        **CONTROLLER,
+        "deployment_sha": f6_sha,
+        "generation": 2155728,
+        "checkpoint": 11212948,
+        "source_high_watermark": 11212948,
+    }
+    source_artifact = {
+        "schema_version": SOURCE_SCHEMA,
+        "task_id": TASK_ID,
+        "outcome": "passed",
+        "expected_deployment_sha": f6_sha,
+        "proof": {
+            "source": {
+                "baseline_high_watermark": 11210574,
+                "source_high_watermark": 11212948,
+            },
+            "identity": dict(retained_identity),
+            "events": list(retained_events),
+            "projection": {
+                "backend": "postgres",
+                "generation": 2155728,
+                "deployment_sha": f6_sha,
+                "loop_status": "failed",
+            },
+        },
+    }
+
+    class RetainedStoredRowReader(StubProjectionReader):
+        def __init__(
+            self,
+            *,
+            include_reason: bool = True,
+            submission_extra: Optional[Dict[str, Any]] = None,
+        ) -> None:
+            super().__init__(
+                identity=retained_identity,
+                events=retained_events,
+                controller=controller,
+                loop_status="failed",
+            )
+            self.include_reason = include_reason
+            self.submission_extra = dict(submission_extra or {})
+
+        def get_journey(
+            self,
+            *,
+            tenant_id: str,
+            environment: str,
+            journey_id: str,
+        ) -> Optional[JourneyProjection]:
+            if (
+                tenant_id != self.identity["tenant_id"]
+                or environment != self.identity["environment"]
+                or journey_id != self.identity["journey_id"]
+            ):
+                return None
+            timeline_items = [
+                {
+                    "event_id": event["event_id"],
+                    "journey_id": journey_id,
+                    "stage": EXPECTED_STAGES[event["event_type"]],
+                    "event_type": event["event_type"],
+                    "stage_status": (
+                        "failed"
+                        if event["event_type"] == "order_rejection"
+                        else "succeeded"
+                    ),
+                    "status": (
+                        "failed"
+                        if event["event_type"] == "order_rejection"
+                        else "succeeded"
+                    ),
+                    "quantity": (
+                        0.0 if event["event_type"] == "order_rejection" else None
+                    ),
+                    "reason_code": (
+                        "sell_without_holdings"
+                        if (self.include_reason and event["event_type"] == "order_rejection")
+                        else None
+                    ),
+                    "submitted_to_broker": False,
+                    "occurred_at": (
+                        "2026-11-07T18:06:21.000000Z"
+                        if event["event_type"] == "order_rejection"
+                        else "2026-11-07T18:06:17.000000Z"
+                    ),
+                    "recorded_at": (
+                        "2026-11-07T18:06:23.815494Z"
+                        if event["event_type"] == "order_rejection"
+                        else "2026-11-07T18:06:19.506659Z"
+                    ),
+                    "evidence_refs": [],
+                    "input_refs": [],
+                    "output_refs": [],
+                    "policy_refs": [],
+                    **(
+                        self.submission_extra
+                        if event["event_type"] == "order_rejection"
+                        else {}
+                    ),
+                }
+                for event in self.events
+            ]
+            return JourneyProjection(
+                journey_id=journey_id,
+                tenant_id=tenant_id,
+                environment=environment,
+                timeline=timeline_items,
+                snapshot={
+                    "status": "failed",
+                    "created_at": "2026-11-07T18:06:17.000000Z",
+                    "updated_at": "2026-11-07T18:06:21.000000Z",
+                    "identifiers": {
+                        "tenant_id": [tenant_id],
+                        "journey_id": [journey_id],
+                        "run_id": [self.identity["run_id"]],
+                        "loop_run_id": [self.identity["loop_run_id"]],
+                        "signal_id": [self.identity["signal_id"]],
+                        "decision_id": ["dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a"],
+                    },
+                    "stages": {
+                        "signal_generation": {
+                            "status": "succeeded",
+                            "updated_at": "2026-11-07T18:06:17.000000Z",
+                            "revision": 1,
+                        },
+                        "trade_decision": {
+                            "status": "succeeded",
+                            "updated_at": "2026-11-07T18:06:17.000000Z",
+                            "revision": 2,
+                        },
+                        "order_submission": {
+                            "status": "failed",
+                            "updated_at": "2026-11-07T18:06:21.000000Z",
+                            "revision": 3,
+                        },
+                    },
+                    "completeness": {
+                        "missing_stages": [
+                            "research_rationale",
+                            "feature_hypothesis",
+                            "backtest_validation",
+                            "paper_graduation",
+                            "champion_challenger",
+                            "deployment_runtime",
+                            "risk_evaluation",
+                        ],
+                        "complete": False,
+                    },
+                },
+                graph_edges=[],
+                diagnostics=[
+                    {
+                        "code": "missing_stages",
+                        "stages": [
+                            "research_rationale",
+                            "feature_hypothesis",
+                            "backtest_validation",
+                            "paper_graduation",
+                            "champion_challenger",
+                            "deployment_runtime",
+                            "risk_evaluation",
+                        ],
+                    }
+                ],
+            )
+
+    def build_app(reader: StubProjectionReader) -> AppTestHttpClient:
+        app, _ = _build_real_bff_app(reader)
+        for route in list(app.routes):
+            if getattr(route, "path", None) == "/bff/version":
+                app.routes.remove(route)
+        app.get("/bff/version")(
+            create_version_handler(
+                source_commit_fn=lambda: f6_sha,
+                auth_stub_fn=lambda: False,
+                auth_mode_fn=lambda: "strict",
+                dev_login_fn=lambda: True,
+                environment="dev",
+            )
+        )
+        return AppTestHttpClient(
+            TestClient(app, base_url=BASE_URL, raise_server_exceptions=False)
+        )
+
+    source = tmp_path / "retained-source.json"
+    output = tmp_path / "retained-readback.json"
+    source.write_text(json.dumps(source_artifact), encoding="utf-8")
+
+    # 1. Repaired path: the retained Root 42397678868 sell_without_holdings 3-event
+    # journey is a formal complete record of a failed outcome.
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=f6_sha,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=build_app(RetainedStoredRowReader(include_reason=True)),
+    )
+    assert code == 0, artifact
+    assert artifact["outcome"] == "passed"
+    assert artifact["public_bff"]["loop_run"]["status"] == "failed"
+    assert artifact["public_bff"]["trade_journey"]["correlated_event_count"] == 3
+    assert artifact["public_bff"]["cross_surface"]["exact_event_ids"] is True
+
+    # 2. Unverified / broker-submitted failure without risk_evaluation remains partial
+    # and fails closed with bff_journey_truth_invalid (reproducing the pre-fix F6 gate failure).
+    bad_output = tmp_path / "unverified-readback.json"
+    bad_code, bad_artifact = readback.execute_readback(
+        source_path=source,
+        output=bad_output,
+        expected_sha=f6_sha,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=build_app(RetainedStoredRowReader(include_reason=False)),
+    )
+    assert bad_code == 1
+    assert bad_artifact["failure"]["code"] == "bff_journey_truth_invalid"
+
+    # 3. Contradictory broker/fill/ledger/reconciliation identifiers or invalid
+    # quantities on a sell_without_holdings rejection remain partial and fail closed.
+    for idx, contra_extra in enumerate(
+        [
+            {"broker_order_id": "broker-real"},
+            {"fill_id": "fill-real"},
+            {"filled_quantity": "invalid"},
+            {"metadata": {"reconciliation_id": "recon-nested"}},
+            {"metrics": {"fill_quantity": "invalid"}},
+        ],
+        start=1,
+    ):
+        contra_output = tmp_path / f"contra-readback-{idx}.json"
+        contra_code, contra_artifact = readback.execute_readback(
+            source_path=source,
+            output=contra_output,
+            expected_sha=f6_sha,
+            base_url=BASE_URL,
+            client_id="client-id",
+            client_secret="client-secret",
+            client=build_app(
+                RetainedStoredRowReader(
+                    include_reason=True, submission_extra=contra_extra
+                )
+            ),
+        )
+        assert contra_code == 1
+        assert contra_artifact["failure"]["code"] == "bff_journey_truth_invalid"
+
+
 

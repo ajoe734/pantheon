@@ -120,6 +120,16 @@ class InMemoryPendingSignalStore:
             self.enqueue(payload)
         self._processed: set[str] = set()
         self._execution_fences: dict[str, str] = {}
+        self._decision_records: dict[str, dict[str, Any]] = {}
+
+    def put_decision_record(self, decision_id: str, record: dict[str, Any]) -> dict[str, Any]:
+        """Persist the instrument decision once; return the record that won."""
+        stored = self._decision_records.setdefault(str(decision_id), json.loads(json.dumps(record)))
+        return json.loads(json.dumps(stored))
+
+    def get_decision_record(self, decision_id: str) -> dict[str, Any] | None:
+        stored = self._decision_records.get(str(decision_id))
+        return None if stored is None else json.loads(json.dumps(stored))
 
     def mark_processed(self, signal_id: str) -> None:
         self._processed.add(str(signal_id))
@@ -366,10 +376,29 @@ return moved
         self._visibility_timeout = max(float(visibility_timeout_seconds), 0.05)
         self._processed_ttl_seconds = 24 * 60 * 60
         self._processed_prefix = f"{queue_key}:processed:"
+        self._decision_prefix = f"{queue_key}:decision:"
+        self._decision_ttl_seconds = 30 * 24 * 60 * 60
         self._execution_prefix = f"{queue_key}:execution:"
         self._dlq_key = queue_key.replace(BINDING_QUEUE_KEY_PREFIX, BINDING_DLQ_KEY_PREFIX, 1)
         self._claim_tokens_by_signal_id: dict[str, list[str]] = {}
         self._claim_tokens_by_raw: dict[str, list[str]] = {}
+
+    def put_decision_record(self, decision_id: str, record: dict[str, Any]) -> dict[str, Any]:
+        """Persist the instrument decision once (SET NX); return the record that won.
+
+        Unlike the dedup markers this is not best-effort: a failure raises so no
+        order can be built from a decision that was not durably recorded.
+        """
+        key = self._decision_prefix + str(decision_id)
+        self._client.set(key, json.dumps(record, sort_keys=True), nx=True, ex=self._decision_ttl_seconds)
+        raw = self._client.get(key)
+        if raw is None:
+            raise RuntimeError(f"decision record {decision_id} was not persisted")
+        return json.loads(self._as_text(raw))
+
+    def get_decision_record(self, decision_id: str) -> dict[str, Any] | None:
+        raw = self._client.get(self._decision_prefix + str(decision_id))
+        return None if raw is None else json.loads(self._as_text(raw))
 
     def mark_processed(self, signal_id: str) -> None:
         try:

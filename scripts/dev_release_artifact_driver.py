@@ -272,6 +272,70 @@ def _owners(docker):
     return result
 
 
+def _validate_stack_owners(stack, owners=None):
+    services = stack.get("services") if isinstance(stack, dict) else None
+    if not isinstance(services, dict):
+        raise a.ArtifactError("invalid stack baseline services")
+    for service in OWNERS:
+        row = services.get(service)
+        if row is None:
+            if service != "dev-paper-principal-issuer":
+                raise a.ArtifactError("protected owner missing from stack baseline")
+            if owners is not None and owners.get(service) is not None:
+                raise a.ArtifactError("protected owner baseline disagrees with observed owners")
+            continue
+        if not isinstance(row, dict) or row.get("state") != "running":
+            raise a.ArtifactError("protected owner baseline state must be running")
+        if owners is not None:
+            observed = owners.get(service)
+            if not isinstance(observed, dict) or observed.get("image_id") != row.get("image_id"):
+                raise a.ArtifactError("protected owner baseline disagrees with observed owners")
+
+
+def _validate_owners(owners_before, owners_after, *, scope, outer, restored=None, cas=None):
+    if scope != "stack":
+        if owners_before != owners_after:
+            raise a.ArtifactError("protected owners changed during artifact restore/verify")
+        return
+    stack_readback = restored.get("stack") if isinstance(restored, dict) else None
+    recreated = set(restored.get("recreated_services", ())) if isinstance(restored, dict) else None
+    started = set(restored.get("started_services", ())) if isinstance(restored, dict) else None
+    if (cas is None or not isinstance(outer, dict) or outer.get("schema_version") != OUTER_SCHEMA_V2 or
+        not isinstance(stack_readback, dict) or stack_readback.get("scope") != "stack" or
+        not isinstance(stack_readback.get("services"), dict) or
+        recreated is None or started is None or recreated != cas.recreated_services):
+        raise a.ArtifactError("whole-stack owner validation requires a verified v2 stack restore")
+    stack = outer.get("stack_baseline")
+    _validate_stack_owners(stack, owners_after)
+    baseline_services = stack["services"]
+    readback_services = stack_readback["services"]
+    for service in OWNERS:
+        before, after = owners_before.get(service), owners_after.get(service)
+        if service not in baseline_services:
+            if service in readback_services or before is not None or after is not None:
+                raise a.ArtifactError("protected owners changed during artifact restore/verify")
+            continue
+        expected_image = baseline_services[service]["image_id"]
+        readback_row = readback_services.get(service)
+        if (not isinstance(readback_row, dict) or
+            readback_row.get("baseline_image_id") != expected_image or
+            readback_row.get("observed_image_id") != expected_image):
+            raise a.ArtifactError("protected owner stack readback mismatch")
+        if service in cas.recreated_services:
+            if before is not None and before["image_id"] == expected_image:
+                raise a.ArtifactError("protected owners changed during artifact restore/verify")
+            if after["restart_count"] != 0 or (before is not None and after["container_id"] == before["container_id"]):
+                raise a.ArtifactError("protected owners changed during artifact restore/verify")
+        elif service in started:
+            if (before is None or before["container_id"] not in cas.started_containers or
+                before["image_id"] != expected_image or after["container_id"] != before["container_id"] or
+                after["image_id"] != expected_image or after["restart_count"] != before["restart_count"] or
+                after["restart_count"] != 0):
+                raise a.ArtifactError("protected owners changed during artifact restore/verify")
+        elif after != before:
+            raise a.ArtifactError("protected owners changed during artifact restore/verify")
+
+
 def _validate_config(value):
     return a.validate_baseline_config(value)
 
@@ -565,6 +629,8 @@ class RestoreCAS:
         self.before = _service_snapshot(docker)
         self.replaced = False
         self.source_observations = set()
+        self.recreated_services = set()
+        self.started_containers = set()
         self.check()
 
     def check(self):
@@ -617,7 +683,12 @@ class RestoreCAS:
         mutating = args[:2] == ("image", "load") or (args[0] == "compose" and "up" in args)
         if mutating: self.check()
         result = self.docker.call(*args)
-        if args[0] == "compose" and "up" in args: self.replaced = True
+        if args[0] == "compose" and "up" in args:
+            self.replaced = True
+            tail_index = args.index("--wait-timeout") + 2 if "--wait-timeout" in args else args.index("--force-recreate") + 1
+            self.recreated_services.update(args[tail_index:])
+        elif args[:1] == ("start",) and len(args) == 2:
+            self.started_containers.add(args[1])
         return result
 
 
@@ -684,6 +755,7 @@ def _load(args, identity, manifest_path):
     if isinstance(outer, dict) and outer.get("schema_version") == OUTER_SCHEMA_V2:
         a._keys(outer, (*OUTER_KEYS, "stack_baseline"), "outer manifest")
         a.validate_stack(outer["stack_baseline"], bundle=outer["image_bundle"], source_sha=args.previous_backend_sha)
+        _validate_stack_owners(outer["stack_baseline"])
     else:
         a._keys(outer, OUTER_KEYS, "outer manifest")
     if (outer["schema_version"] not in (OUTER_SCHEMA, OUTER_SCHEMA_V2) or outer["environment"] != "dev" or
@@ -739,6 +811,7 @@ def run(args, *, docker, http, barrier):
                                   check_lease=barrier.check)
         stack = a.capture_stack(docker=docker, source_sha=args.previous_backend_sha, check_lease=barrier.check)
         a.validate_stack(stack, bundle=bundle, source_sha=args.previous_backend_sha)
+        _validate_stack_owners(stack, owners_before)
         a.verify_frontend(frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
         if _owners(docker) != owners_before: raise a.ArtifactError("protected owners changed during capture")
         if _config(docker) != config_before: raise a.ArtifactError("baseline configuration changed during capture")
@@ -795,6 +868,7 @@ def run(args, *, docker, http, barrier):
         compose_files = ((args.compose_file, compose_digest), (_candidate_paths(folder)[1], candidate["image_override_sha256"]))
     a.verify_frontend(target_frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
     owners_before = _owners(docker)
+    restored = cas = stack_readback = None
     if is_restore:
         if os.environ.get("PANTHEON_BFF_AUTH_STUB") != "false" or os.environ.get("PANTHEON_BFF_AUTH_MODE") != "strict":
             raise a.ArtifactError("restore caller did not inject the approved strict runtime environment")
@@ -820,7 +894,7 @@ def run(args, *, docker, http, barrier):
     public = _public(args, target_frontend, http, barrier, expected_backend_sha=target_sha)
     a.verify_frontend(target_frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
     owners_after = _owners(docker)
-    if owners_before != owners_after: raise a.ArtifactError("protected owners changed during artifact restore/verify")
+    _validate_owners(owners_before, owners_after, scope=scope, outer=outer, restored=restored, cas=cas)
     barrier.check()
     if args.command == "verify" and return_final:
         _publish(fe_seal, a.manifest_bytes(target_frontend))

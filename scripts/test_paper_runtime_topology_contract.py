@@ -25,6 +25,10 @@ def test_default_root_stack_uses_binding_scoped_paper_fleet() -> None:
     ]
     assert producer["environment"]["PANTHEON_LIVE_BROKER_ENABLED"] == "false"
     assert producer["environment"]["PANTHEON_CANARY_EXECUTION_ENABLED"] == "false"
+    # Layer C stays off by default; the cutover task flips it, not this stack.
+    assert producer["environment"]["PANTHEON_PAPER_EXPRESSION_LAYER"] == (
+        "${PANTHEON_PAPER_EXPRESSION_LAYER:-off}"
+    )
     assert services["pantheon-paper-runtime"]["profiles"] == [
         "static-paper-runtime"
     ]

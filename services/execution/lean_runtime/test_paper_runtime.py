@@ -336,6 +336,110 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         )
         return signal
 
+    def _expression_signal(self, binding, suffix, *, action, direction, metadata):
+        from services.execution.lean_runtime.signal_producer import build_decision_signals
+
+        [signal] = build_decision_signals(
+            {
+                "decision_id": f"decision-{suffix}",
+                "signal_id": f"signal-{suffix}",
+                "strategy_id": "strategy-paper",
+                "timestamp": self._signal()["timestamp"],
+                "tenant_id": "tenant-paper",
+                "environment": "paper",
+                "symbol": "0050.TW",
+                "action": action,
+                "direction": direction,
+                "quantity": 1,
+                "quantity_type": "SHARES",
+                "run_id": f"run-{suffix}",
+                "metadata": metadata,
+            },
+            binding_id=binding["binding_id"],
+            runtime_id=binding["runtime_id"],
+        )
+        return signal
+
+    def _run_expression_signal(self, signal, binding):
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+        service.drain_once()
+        service._consumer.flush_rebalance(signal["run_id"], service._algo)
+        return {event["event_type"]: event for event in telemetry.events}
+
+    def test_no_trade_expression_is_a_noop_with_view_and_record_metadata(self):
+        binding = self._binding()
+        record = {
+            "decision_id": "decision-nt",
+            "reason_code": "no_feasible_instrument",
+            "detail": "gross_limit",
+            "candidates_considered": ["eq:0050"],
+        }
+        signal = self._expression_signal(
+            binding,
+            "nt",
+            action="HOLD",
+            direction="SHORT",
+            metadata={
+                "strength": 0.6,
+                "momentum": -0.006,
+                "view_direction": "SHORT",
+                "expression_decision": record,
+                "reason_code": "no_feasible_instrument",
+            },
+        )
+        events = self._run_expression_signal(signal, binding)
+        generation = events["signal_generation"]["metadata"]
+        self.assertEqual(
+            (generation["strength"], generation["momentum"], generation["view_direction"]),
+            (0.6, -0.006, "SHORT"),
+        )
+        self.assertNotIn("expression_decision", generation)
+        self.assertEqual(events["trade_decision"]["metadata"]["expression_decision"], record)
+        noop = events["paper_order_simulated"]
+        self.assertEqual(noop["metrics"]["noop_count"], 1)
+        self.assertEqual(noop["metadata"]["expression_decision"], record)
+        self.assertNotIn("paper_fill_simulated", events)
+
+    def test_chosen_stock_future_is_rejected_without_a_fill(self):
+        binding = self._binding()
+        record = {
+            "decision_id": "decision-sf",
+            "instrument_id": "ssf:SRF:202611",
+            "side": "sell",
+            "units": 1,
+            "reason_code": "short_via_future",
+        }
+        signal = self._expression_signal(
+            binding,
+            "sf",
+            action="SELL",
+            direction="SHORT",
+            metadata={
+                "instrument_id": "ssf:SRF:202611",
+                "kind": "stock_future",
+                "units": 1,
+                "multiplier": 1000,
+                "reason_code": "short_via_future",
+                "expression_decision": record,
+            },
+        )
+        events = self._run_expression_signal(signal, binding)
+        self.assertEqual(events["trade_decision"]["metadata"]["expression_decision"], record)
+        rejection = events["order_rejection"]["metadata"]
+        self.assertEqual(rejection["reject_reason"], "instrument_not_supported_by_ledger")
+        self.assertEqual(rejection["instrument_id"], "ssf:SRF:202611")
+        self.assertEqual(rejection["multiplier"], 1000)
+        self.assertNotIn("paper_fill_simulated", events)
+        self.assertNotIn("position_snapshot", events)
+
     def test_binding_resolver_prefers_exact_worker_binding_for_shared_runtime(self):
         runtime_id = "paper-runtime-shared"
         other = self._binding()
@@ -2487,6 +2591,9 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             [event["metadata"]["sequence_no"] for event in lifecycle],
             [1, 2, 3],
         )
+        self.assertEqual(lifecycle[2]["metadata"].get("risk_status"), "skipped")
+        self.assertEqual(lifecycle[2]["metadata"].get("decision_status"), "no_order")
+        self.assertEqual(lifecycle[2]["metadata"].get("order_status"), "not_submitted")
 
 
 class PaperExecutionInputHardeningTest(unittest.TestCase):
@@ -4128,6 +4235,8 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         self.assertEqual(rej.broker_submission_status, "sell_without_holdings")
         self.assertFalse(rej.submitted_to_broker)
         self.assertEqual(rej.metadata.get("reason"), "sell_without_holdings")
+        self.assertEqual(rej.metadata.get("risk_status"), "rejected")
+        self.assertEqual(rej.metadata.get("risk_reason"), "sell_without_holdings")
         self.assertEqual(rej.metadata.get("requested_quantity"), 2.0)
         self.assertEqual(rej.metadata.get("holding_quantity"), 0.0)
         self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
@@ -4158,6 +4267,31 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         self.assertEqual(events[0].metadata.get("holding_quantity"), -1.0)
         self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
         self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+
+        # Pre-broker input rejections (e.g. unsupported quantity_type or invalid market fill)
+        # must NOT stamp risk_status="rejected".
+        events.clear()
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-bad-qtype",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            order_type="MARKET",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertEqual(events[0].broker_submission_status, "tw_unsupported_quantity_type")
+        self.assertIsNone(events[0].metadata.get("risk_status"))
+
+        events.clear()
+        algo.MarketOrder("2330.TW", 0.0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertEqual(events[0].metadata.get("reject_reason"), "invalid_market_fill")
+        self.assertIsNone(events[0].metadata.get("risk_status"))
+
 
     def test_sell_larger_than_holding_clamps_to_held_quantity_and_ends_at_zero(self):
         events = []
