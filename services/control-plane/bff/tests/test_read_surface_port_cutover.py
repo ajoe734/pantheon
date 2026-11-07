@@ -628,3 +628,21 @@ def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(mon
                 rsp.get_rollbacks()
     finally:
         owner_reads.authorization.reset(token)
+
+
+def test_rsp_get_rollbacks_has_no_loop_runs_fallback_on_narrow_port():
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    def _legacy_loop_runs():
+        raise AssertionError("retired loop_runs rollback route must not execute")
+
+    rsp = ReadSurfacePorts.__new__(ReadSurfacePorts)
+    rsp.lifecycle_telemetry_governance = SimpleNamespace(
+        list_loop_runs=_legacy_loop_runs,
+        list_all_rollbacks=lambda runtime_id=None, **kw: [
+            {"rollback_id": "rb-1", "runtime_id": "rt1", "status": "completed"}
+        ],
+    )
+    assert [r["rollback_id"] for r in rsp.get_rollbacks("rt1")] == ["rb-1"]

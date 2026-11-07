@@ -1251,12 +1251,7 @@ class ReadSurfacePorts:
         strict = getattr(gov, "read_rollbacks_strict", None)
         if callable(strict):
             return strict(runtime_id)
-        available, runs = self.lifecycle_telemetry_governance.list_loop_runs()
-        if not available:
-            raise RuntimeError("rollback read surface is unavailable or unconfigured.")
-        if runtime_id:
-            return [r for r in runs if r.get("runtime_id") == runtime_id]
-        return runs
+        return self.lifecycle_telemetry_governance.list_all_rollbacks(runtime_id=runtime_id)
 
     def list_all_rollbacks(self, **kwargs: Any) -> List[Dict[str, Any]]:
         # Canonical Governance rollback ledger (not loop_runs / incident-derived
