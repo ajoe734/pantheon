@@ -134,7 +134,7 @@ Candidate = {
   unit: 1 | 100 | 1000 | 2000,                         # shares per unit (contract unit for futures)
   multiplier: 1 | unit,                                 # PnL per 1.00 price move per unit
   price: float, price_date: "YYYY-MM-DD", price_basis: "stock_close_prev_session" | "futures_daily_settlement_prev_session",
-  initial_margin_per_unit: 0 | float, maintenance_margin_per_unit: 0 | float,
+  initial_margin_per_unit: float, maintenance_margin_per_unit: 0 | float,   # cash_share: initial = full payment (unit × price), maintenance 0; stock_future: exchange margin per contract
   fee_per_unit_per_side: float, tax_rate_per_side: float,   # from the reviewed constants file
   expiry: null | "YYYY-MM-DD", last_trading_day: null | "YYYY-MM-DD",
   liquidity: {volume: int, open_interest: int} | null,
@@ -216,13 +216,13 @@ Worked outcomes with `Date=20261106` data, equity 100,000, budget 2.0× (max gro
 | 0050 SHORT, strength 0.6 | `ssf:SRF:202611` 92.5 × 1,000 = 92,500 per unit, margin 8,700 | `max_units` = 2 (185,000 ≤ 200,000) | `N* = 0.6 × 200,000 = 120,000` → units = round(1.30) = 1 → `Chosen(SRF, sell, 1, short_via_future)`, margin 8,700 |
 | 2317 SHORT, strength 0.3 | `ssf:DHF:202611` 225 × 2,000 = 450,000 | `max_units` = 0 | `NoTrade(no_feasible_instrument, gross_limit)` |
 | 2330 LONG, strength 0.2 | `eq:2330` 2,135 × 1 | below `lever_min_strength` | `Chosen(eq:2330, buy, 1, long_cash)` |
-| 0050 LONG, strength 0.9 | `eq:0050` 92.5; `ssf:SRF:202611` | `N* = 180,000`; eq units = clamp(1946, 1, 2162) = 1,946 shares (score ≈ 0 + costs); SRF units = 2 (185,000, diff 5,000) | lowest score wins: shares if the cash fee+tax on 180,000 (≈ 0.1425% + 0.3% sell-side tax) exceeds SRF's diff-plus-costs, else SRF; the test fixes this with the constants file and asserts the chosen instrument. Either way the choice is a scored outcome, not a mapping |
+| 0050 LONG, strength 0.9 | `eq:0050` 92.5; `ssf:SRF:202611` | `N* = 180,000`; eq `max_units_by_risk` = 1,081 (100,000 cash ÷ 92.5, full payment) so eq units = clamp(1946, 1, 1081) = 1,081 shares (≈ 100,000, diff ≈ 80,000); SRF units = 2 (185,000, diff 5,000, margin 17,400) | SRF wins on score (diff 5,000 + costs versus ≈ 80,000 + costs) — the 2.0× limit does not let cash shares exceed cash; the choice is a scored outcome, not a mapping |
 
 The replay table of the design document §8 (E1–E3) remains the loss reference per instrument.
 
 ### 4.5 Risk gate (layer D)
 
-`max_units_by_risk(c)` = largest integer `n` with all of: `n × c.initial_margin_per_unit ≤ equity − margin_reserved`; `gross_after(n) ≤ max_leverage × equity`; `gross_after(n) ≤ gross_limit × equity`; `|net_after(n)| ≤ net_limit × equity` where set; `c.kind`'s asset class ∈ `allowed_asset_classes` and ∉ `forbidden_asset_classes`. Asset classes: `cash_share → "equity"`, `stock_future → "future"`.
+`max_units_by_risk(c)` = largest integer `n` with all of: `n × c.initial_margin_per_unit ≤ equity − margin_reserved` (for a cash share this is the full purchase price, so cash shares are never bought with borrowed cash; the 2.0× multiple applies to futures notional only through the margin test and the gross/leverage tests); `gross_after(n) ≤ max_leverage × equity`; `gross_after(n) ≤ gross_limit × equity`; `|net_after(n)| ≤ net_limit × equity` where set; `c.kind`'s asset class ∈ `allowed_asset_classes` and ∉ `forbidden_asset_classes`. Asset classes: `cash_share → "equity"`, `stock_future → "future"`.
 
 **Order-level gate**: inside `SubmitTaiwanBrokerOrder` before any ledger change, build a `RiskPolicyEvaluationContext` with `target_type = runtime_action`, `gross_exposure`, `net_exposure`, `leverage` (all as multiples of equity *after* the order, marked at the current D−1 price), `asset_classes = [class of the order]`, and call `RiskPolicyEvaluator().evaluate(policy, context)`; `REJECTED` → `order_rejection` with `reason ∈ {leverage_limit, gross_limit, net_limit, asset_class_not_allowed, insufficient_initial_margin, price_stale, instrument_not_in_candidates, sell_without_holdings}`. The policy is the persona pool's governed policy read through the existing capital reader; no limit is hardcoded. Today the paper path labels `risk_status=succeeded` after the fill (`paper_runtime.py` ~L3443); that label moves to the gate result.
 
@@ -299,6 +299,8 @@ All tasks target `ajoe734/pantheon` unless marked `execute-plans`. Full acceptan
 | T9 | `PAPER-PERSONA-INSTRUMENT-CUTOVER-20261107` | Human/Ops → Claude | T5, T6a, T7 | governed retire + re-provision of the personas with negative share history; flag on | operator-run; history intact; baseline count recorded |
 | T10 | `INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107` | Human/Ops → Claude | T1–T9 | one hosted run: decision → shares or contract → mark → settle across an expiry; rejection on the 2.0× limit; stale-price fail-closed; holdings and attribution in a real browser | hosted evidence; nothing earlier claims hosted behaviour |
 
+Verified against the live task store 2026-11-07: all 13 ids exist with the owners and reviewers shown. The store carries additional serialization dependencies that this table omits and that govern dispatch order: T4a also depends on `BFF-EVO-ALPHA-PAGE-TRUTH-20261107`; T6a on `BFF-EVO-ALPHA-PAGE-TRUTH-20261107`; T6b also on `FE-STRATEGY-OPERATIONAL-VIEW-20261107`, `FE-RISK-CENTER-ARCHIVED-POOLS-20261107`, `FE-EVO-ALPHA-PAGE-LABELS-20261107`; T8 on `BFF-EVO-ALPHA-PAGE-TRUTH-20261107`; T10 lists every task above it. The store is authoritative for dependencies; the table above is the functional order.
+
 Not opened by this plan (next stage, needs its own plan): view universe / trade-time underlying and direction (Q4), live Shioaji futures account routing, options / warrants / inverse-ETF candidate generators.
 
 ---
@@ -310,8 +312,8 @@ Not opened by this plan (next stage, needs its own plan): view universe / trade-
 3. **Baselines**: shipping leverage before T7 makes every adverse day a breach; the flag stays off until T7 and T9.
 4. **Shared files**: `paper_runtime.py` is touched by T1 and T5, `telemetry_event.schema.json` by T5 and T6a, `persona_provisioning_coordinator.py` by T4a only; the dependency order prevents parallel edits of the same file.
 5. Unverified external items carry over from design §15 and the earlier design §14 (publication time of `DailyMarketReportFut`, holiday shift of the last trading day, 交割手續費 at cash settlement, broker commission, margin-call timing, adjusted contracts, odd-lot session rules). Each task that depends on one records it as unverified rather than guessing.
-6. The §4.4 LONG/high-strength tie between many shares and a few contracts is decided by costs from the constants file; the test in T4b pins the outcome once the constants are reviewed in T2.
+6. The §4.4 LONG/high-strength choice between shares and contracts is a score outcome; the test in T4b pins it once the constants are reviewed in T2. (Owner correction 2026-11-07: the draft let cash shares reach 2.0× of equity; cash shares are now bounded by cash through `initial_margin_per_unit`, §4.2/§4.5.)
 
 ## 11. Sources
 
-Repository state read from `origin/dev` 63d124fcd on 2026-11-07. External references: QuantConnect Lean docs (Alpha key concepts; Portfolio Construction supported models), Freqtrade leverage documentation, Nautilus Trader overview, all read 2026-11-07. Official exchange data as cited in the two design documents (TAIFEX openapi `Date=20261106`, TWSE `STOCK_DAY_ALL` `Date=1151106`).
+Repository state read from `origin/dev` 63d124fcd (every path and symbol named in this document re-verified at that base) on 2026-11-07. External references: QuantConnect Lean docs (Alpha key concepts; Portfolio Construction supported models), Freqtrade leverage documentation, Nautilus Trader overview, all read 2026-11-07. Official exchange data as cited in the two design documents (TAIFEX openapi `Date=20261106`, TWSE `STOCK_DAY_ALL` `Date=1151106`).
