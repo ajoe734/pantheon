@@ -982,6 +982,36 @@ class BootstrapTests(OpsHarness):
     def test_stateful_start_failure_is_reported(self):
         self.assertIn("STATEFUL_START", self._run(FAKE_DOCKER_FAIL="compose").stderr)
 
+    def test_bootstrap_propagates_bff_oidc_and_role_map_to_owners(self):
+        secrets = self.tmp / "secrets.env"
+        pw = self.tmp / "pgpw"
+        secrets.write_text(
+            "PANTHEON_BFF_JWT_SECRET=s1\n"
+            "PANTHEON_RUNTIME_JWT_SECRET=s2\n"
+            "PANTHEON_DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db\n"
+            "PANTHEON_BFF_JWKS_URI=https://idp.example/jwks\n"
+            "PANTHEON_BFF_ROLE_MAP=pantheon-operator=operator;pantheon-viewer=viewer\n"
+            "PANTHEON_BFF_ROLE_MAP_MODE=strict\n"
+        )
+        pw.write_text("prod-db-pw\n")
+        secrets.chmod(0o600)
+        pw.chmod(0o600)
+        (self.tmp / "data").mkdir(exist_ok=True)
+        r = subprocess.run(
+            [str(BOOTSTRAP)],
+            env=self.env(PROD_SECRETS_ENV_FILE=str(secrets), PROD_POSTGRES_PASSWORD_FILE=str(pw)),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sec_out = secrets.read_text()
+        for prefix in ("PANTHEON_RUNTIME", "PANTHEON_TELEMETRY", "POLICY_LEARNING"):
+            self.assertIn(f"{prefix}_JWKS_URI=https://idp.example/jwks", sec_out)
+            self.assertIn(f"{prefix}_ROLE_MAP=pantheon-operator=operator;pantheon-viewer=viewer", sec_out)
+            self.assertIn(f"{prefix}_ROLE_MAP_MODE=strict", sec_out)
+            self.assertIn(f"{prefix}_OIDC_AUDIENCE=", sec_out)
+
 
 PROD_ENV = {
     "PROD_GCP_PROJECT_ID": "acme-trading-prod-01",
@@ -2233,6 +2263,44 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("prod_ops.sh", text)
         self.assertIn("bootstrap.sh", text)
         self.assertIn("lifecycle-projector", text)
+
+    def test_stage_and_prod_wire_owner_oidc_and_role_map_posture(self):
+        stage_svc = yaml.safe_load((REPO_ROOT / "deploy" / "staging" / "docker-compose.staging.yml").read_text())["services"]
+        prod_svc = yaml.safe_load(COMPOSE.read_text())["services"]
+        for name, svcs in (("stage", stage_svc), ("prod", prod_svc)):
+            for owner in ("runtime-manager", "governance", "deployment", "registry", "memory", "capital",
+                          "persona", "source-ingest", "training-session-svc", "research-orchestrator-svc"):
+                env = svcs[owner]["environment"]
+                self.assertIn("PANTHEON_BFF_OIDC_ISSUER", env, f"{name} {owner}")
+                self.assertIn("PANTHEON_BFF_OIDC_DISCOVERY_URL", env, f"{name} {owner}")
+                self.assertIn("PANTHEON_RUNTIME_OIDC_ISSUER", env, f"{name} {owner}")
+                self.assertIn("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL", env, f"{name} {owner}")
+            self.assertIn("PANTHEON_TELEMETRY_OIDC_ISSUER", svcs["telemetry"]["environment"], name)
+            self.assertIn("PANTHEON_TELEMETRY_OIDC_DISCOVERY_URL", svcs["telemetry"]["environment"], name)
+            self.assertIn("POLICY_LEARNING_OIDC_ISSUER", svcs["policy-learning-svc"]["environment"], name)
+            self.assertIn("POLICY_LEARNING_OIDC_DISCOVERY_URL", svcs["policy-learning-svc"]["environment"], name)
+        owner_crypto_inputs = (
+            ("services/runtime-manager/requirements.txt", "dependencies/locks/services-runtime-manager.txt"),
+            ("services/governance/requirements.txt", "dependencies/locks/services-governance.txt"),
+            ("services/deployment/requirements.txt", "dependencies/locks/services-deployment.txt"),
+            ("services/registry/requirements.txt", "dependencies/locks/services-registry.txt"),
+            ("services/memory/requirements.txt", "dependencies/locks/services-memory.txt"),
+            ("services/capital/requirements.txt", "dependencies/locks/services-capital.txt"),
+            ("services/control-plane/persona/requirements.txt", "dependencies/locks/services-control-plane-persona.txt"),
+            ("services/training-session/requirements.txt", "dependencies/locks/services-training-session.txt"),
+            ("services/policy-learning/requirements.txt", "dependencies/locks/services-policy-learning.txt"),
+            ("services/telemetry/requirements.txt", "dependencies/locks/services-telemetry.txt"),
+            ("services/source_ingestion/requirements.txt", "dependencies/locks/services-source_ingestion.txt"),
+            ("services/research/runtime-requirements.txt", "dependencies/locks/services-research.txt"),
+        )
+        for req_rel, lock_rel in owner_crypto_inputs:
+            req_text = (REPO_ROOT / req_rel).read_text(encoding="utf-8")
+            lock_text = (REPO_ROOT / lock_rel).read_text(encoding="utf-8")
+            self.assertRegex(req_text, r"(?m)^cryptography(?:==|>=|$)", req_rel)
+            self.assertRegex(lock_text, r"(?m)^cryptography==50\.0\.1(?:\s|$)", lock_rel)
+            self.assertRegex(lock_text, r"(?m)^cffi==2\.1\.1(?:\s|$)", lock_rel)
+            self.assertRegex(lock_text, r"(?m)^pycparser==3\.0(?:\s|$)", lock_rel)
+
 
 
 if __name__ == "__main__":

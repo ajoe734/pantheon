@@ -947,3 +947,107 @@ def test_strict_mode_every_registry_mutation_rejects_viewer_and_view_only_and_ke
         assert resp.status_code == 403, (read_role, method, path, resp.status_code, resp.text)
         assert "not authorized" in resp.json()["detail"].lower()
 
+
+def test_registry_auth_env_forwards_oidc_and_role_map_fallbacks(monkeypatch):
+    from .service import _registry_auth_env
+
+    monkeypatch.setenv("PANTHEON_BFF_JWKS_URI", "https://idp.example/bff/jwks")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "https://idp.example/.well-known/openid-configuration")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_ISSUER", "https://idp.example/issuer")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_AUDIENCE", "pantheon-stage-aud")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP", "pantheon-operator=operator;pantheon-viewer=viewer")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED", "true")
+
+    env = _registry_auth_env()
+    assert env["PANTHEON_RUNTIME_JWKS_URI"] == "https://idp.example/bff/jwks"
+    assert env["PANTHEON_RUNTIME_OIDC_DISCOVERY_URL"] == "https://idp.example/.well-known/openid-configuration"
+    assert env["PANTHEON_RUNTIME_OIDC_ISSUER"] == "https://idp.example/issuer"
+    assert env["PANTHEON_RUNTIME_OIDC_AUDIENCE"] == "pantheon-stage-aud"
+    assert env["PANTHEON_RUNTIME_ROLE_MAP"] == "pantheon-operator=operator;pantheon-viewer=viewer"
+    assert env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] == "strict"
+    assert env["PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED"] == "true"
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_ROLE_MAP", "runtime-op=operator")
+    assert _registry_auth_env()["PANTHEON_RUNTIME_ROLE_MAP"] == "runtime-op=operator"
+    monkeypatch.setenv("PANTHEON_REGISTRY_ROLE_MAP", "registry-op=operator")
+    assert _registry_auth_env()["PANTHEON_RUNTIME_ROLE_MAP"] == "registry-op=operator"
+
+
+def test_strict_mode_external_role_map_allows_mapped_operator_and_viewer(strict_client, monkeypatch):
+    monkeypatch.setenv(
+        "PANTHEON_RUNTIME_ROLE_MAP",
+        "pantheon-operator=operator;pantheon-viewer=viewer",
+    )
+    monkeypatch.setenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", "strict")
+
+    op_headers = _bearer(_jwt(sub="idp-op-1", roles=["pantheon-operator"], tenant="tenant-a"))
+    list_resp = strict_client.get(
+        "/api/registry/strategy-specs?exclude_state=draft&page_size=20",
+        headers=op_headers,
+    )
+    assert list_resp.status_code == 200, list_resp.text
+
+    viewer_headers = _bearer(_jwt(sub="idp-viewer-1", roles=["pantheon-viewer"], tenant="tenant-a"))
+    viewer_list = strict_client.get(
+        "/api/registry/strategy-specs?exclude_state=draft&page_size=20",
+        headers=viewer_headers,
+    )
+    assert viewer_list.status_code == 200, viewer_list.text
+
+    viewer_write = strict_client.post("/api/registry/entries", json=_ENTRY_PAYLOAD, headers=viewer_headers)
+    assert viewer_write.status_code == 403
+
+    unmapped_headers = _bearer(_jwt(sub="idp-unmapped-1", roles=["external-unmapped"], tenant="tenant-a"))
+    unmapped_resp = strict_client.get(
+        "/api/registry/strategy-specs?exclude_state=draft&page_size=20",
+        headers=unmapped_headers,
+    )
+    assert unmapped_resp.status_code == 403
+
+
+def test_dual_mode_shared_secret_preserves_canonical_internal_roles():
+    from services.runtime_auth_inbound import AuthError, validate_request_auth
+
+    dual_env = {
+        "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+        "PANTHEON_RUNTIME_JWT_SECRET": _JWT_SECRET,
+        "PANTHEON_RUNTIME_JWT_ISSUER": "pantheon-runtime-authority",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": "pantheon-runtime",
+        "PANTHEON_RUNTIME_OIDC_ISSUER": "https://securetoken.google.com/stage-proj",
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": "stage-proj",
+        "PANTHEON_RUNTIME_JWKS_URI": "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com",
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": "roles,role",
+        "PANTHEON_RUNTIME_ROLE_MAP": "pantheon-operator=operator;pantheon-viewer=viewer",
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": "strict",
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": "true",
+    }
+    internal_token = encode_jwt_hs256(
+        {
+            "sub": "paper-signal-producer",
+            "iss": "pantheon-runtime-authority",
+            "aud": "pantheon-runtime",
+            "roles": ["operator"],
+            "exp": int(time.time()) + 3600,
+        },
+        secret=_JWT_SECRET,
+    )
+    ctx = validate_request_auth(
+        authorization=f"Bearer {internal_token}",
+        required_roles=("operator", "admin", "viewer"),
+        env=dual_env,
+        allow_shared_secret=True,
+    )
+    assert ctx.actor_id == "paper-signal-producer"
+    assert "operator" in ctx.roles
+
+    with pytest.raises(AuthError) as exc_info:
+        validate_request_auth(
+            authorization=f"Bearer {internal_token}",
+            required_roles=("operator", "admin", "viewer"),
+            env=dual_env,
+            allow_shared_secret=False,
+        )
+    assert exc_info.value.status_code == 401
+
+

@@ -832,19 +832,21 @@ def validate_request_auth(
                 500,
             )
         elif secret:
+            hs256_dual_path = bool(jwks_uri or oidc_discovery_url) and allow_shared_secret
             claims = _verify_jwt_hs256(
                 token,
                 secret=secret,
                 issuer=issuer,
                 audience=audience,
             )
-            _enforce_verified_claim_requirements(claims, env=env)
+            if not hs256_dual_path:
+                _enforce_verified_claim_requirements(claims, env=env)
             ctx = _claims_to_context(
                 claims,
                 default_role=default_role,
-                role_claims=role_claims,
-                role_map=role_map,
-                role_map_mode=role_map_mode,
+                role_claims=_DEFAULT_ROLE_CLAIMS if hs256_dual_path else role_claims,
+                role_map=None if hs256_dual_path else role_map,
+                role_map_mode="passthrough" if hs256_dual_path else role_map_mode,
                 mfa_claims=mfa_claims,
                 mfa_values=mfa_values,
             )
@@ -911,6 +913,7 @@ def validate_request_auth(
 def require_authn(
     roles: Optional[Sequence[str]] = None,
     mfa_required: bool = False,
+    allow_shared_secret: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Flask decorator: validate Authorization/MFA headers and stash context.
 
@@ -930,6 +933,7 @@ def require_authn(
                     mfa_header=request.headers.get("X-MFA-Token", ""),
                     required_roles=roles,
                     mfa_required=mfa_required,
+                    allow_shared_secret=allow_shared_secret,
                 )
             except AuthError as exc:
                 payload, status = exc.as_response()

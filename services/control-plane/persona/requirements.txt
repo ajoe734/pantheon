@@ -8,3 +8,4 @@ jsonschema>=4.0
 # langchain-anthropic>=0.1.0  # add when LLM_BACKEND=anthropic is wired
 # langchain-openai>=0.1.0     # add when LLM_BACKEND=openai is wired
 redis>=5.0.0
+cryptography

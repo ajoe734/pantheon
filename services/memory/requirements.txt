@@ -3,3 +3,4 @@ uvicorn
 pydantic
 psycopg[binary]
 jsonschema>=4.0,<5.0
+cryptography

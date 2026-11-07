@@ -727,6 +727,33 @@ def test_memory_auth_persona_store_tenant_forgery_rejected(memory_client, monkey
     assert "Payload tenant does not match verified token tenant" in resp.text
 
 
+def test_memory_auth_env_forwards_oidc_and_role_map(memory_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWKS_URI", "https://idp.example/jwks")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_ISSUER", "https://idp.example/issuer")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_AUDIENCE", "pantheon-stage")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP", "pantheon-operator=operator;pantheon-viewer=viewer")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP_MODE", "strict")
+
+    env = main._memory_auth_env()
+    assert env["PANTHEON_RUNTIME_JWKS_URI"] == "https://idp.example/jwks"
+    assert env["PANTHEON_RUNTIME_OIDC_ISSUER"] == "https://idp.example/issuer"
+    assert env["PANTHEON_RUNTIME_OIDC_AUDIENCE"] == "pantheon-stage"
+    assert env["PANTHEON_RUNTIME_ROLE_MAP"] == "pantheon-operator=operator;pantheon-viewer=viewer"
+    assert env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] == "strict"
+
+    monkeypatch.delenv("PANTHEON_BFF_JWKS_URI", raising=False)
+    token = _make_jwt(sub="memory-operator-1", tenant_id="tenant-alpha", roles=["pantheon-operator"])
+    resp = memory_client.get(
+        "/api/memory/retrieve",
+        params=_retrieve_auth_params(actor_roles=["operator"]),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+
 if __name__ == "__main__":
     unittest.main()
 

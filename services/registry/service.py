@@ -237,6 +237,41 @@ def _registry_auth_env() -> dict[str, str]:
         "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_REGISTRY_ROLE_CLAIMS") or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", ""),
         "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_REGISTRY_MFA_CLAIMS") or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", ""),
         "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_REGISTRY_MFA_VALUES") or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", ""),
+        "PANTHEON_RUNTIME_JWKS_URI": (
+            os.getenv("PANTHEON_REGISTRY_JWKS_URI")
+            or os.getenv("PANTHEON_RUNTIME_JWKS_URI")
+            or os.getenv("PANTHEON_BFF_JWKS_URI", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": (
+            os.getenv("PANTHEON_REGISTRY_OIDC_DISCOVERY_URL")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL")
+            or os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_ISSUER": (
+            os.getenv("PANTHEON_REGISTRY_OIDC_ISSUER")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_ISSUER")
+            or os.getenv("PANTHEON_BFF_OIDC_ISSUER", "")
+        ),
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": (
+            os.getenv("PANTHEON_REGISTRY_OIDC_AUDIENCE")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_AUDIENCE")
+            or os.getenv("PANTHEON_BFF_OIDC_AUDIENCE", "")
+        ),
+        "PANTHEON_RUNTIME_ROLE_MAP": (
+            os.getenv("PANTHEON_REGISTRY_ROLE_MAP")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_MAP")
+            or os.getenv("PANTHEON_BFF_ROLE_MAP", "")
+        ),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": (
+            os.getenv("PANTHEON_REGISTRY_ROLE_MAP_MODE")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE")
+            or os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", "")
+        ),
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": (
+            os.getenv("PANTHEON_REGISTRY_REQUIRE_EMAIL_VERIFIED")
+            or os.getenv("PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED")
+            or os.getenv("PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED", "")
+        ),
     }
 
 

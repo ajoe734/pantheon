@@ -394,16 +394,22 @@ from pathlib import Path
 
 env_path = Path(sys.argv[1])
 issuer, audience, tenant_id, ttl_raw = sys.argv[2:6]
+public_oidc_aud = sys.argv[6].strip() if len(sys.argv) > 6 else ""
 ttl = int(ttl_raw)
 if not 0 < ttl <= 86400:
     raise SystemExit(f"runtime-manager token ttl {ttl} outside (0, 86400]")
 
 lines = env_path.read_text(encoding="utf-8").splitlines()
 secret = ""
+kv = {}
 for raw in lines:
     k, sep, v = raw.strip().partition("=")
-    if sep and k.strip() == "PANTHEON_RUNTIME_JWT_SECRET":
-        secret = v.strip().strip('"').strip("'")
+    if sep:
+        k_clean = k.strip()
+        v_clean = v.strip().strip('"').strip("'")
+        kv[k_clean] = v_clean
+        if k_clean == "PANTHEON_RUNTIME_JWT_SECRET":
+            secret = v_clean
 if not secret:
     raise SystemExit("PANTHEON_RUNTIME_JWT_SECRET missing; cannot derive runtime-manager token")
 
@@ -439,6 +445,29 @@ for raw in lines:
 if not replaced:
     out.append(f"PANTHEON_RUNTIME_MANAGER_TOKEN={token}")
 
+for suffix, default_val in (
+    ("OIDC_AUDIENCE", public_oidc_aud),
+    ("JWKS_URI", ""),
+    ("ROLE_CLAIMS", ""),
+    ("ROLE_MAP", ""),
+    ("ROLE_MAP_MODE", ""),
+    ("REQUIRE_EMAIL_VERIFIED", ""),
+):
+    shared_val = (
+        kv.get(f"PANTHEON_BFF_{suffix}")
+        or kv.get(f"PANTHEON_RUNTIME_{suffix}")
+        or default_val
+    )
+    if not shared_val:
+        continue
+    for prefix in ("PANTHEON_BFF", "PANTHEON_RUNTIME", "PANTHEON_TELEMETRY", "POLICY_LEARNING"):
+        if prefix == "POLICY_LEARNING" and suffix == "REQUIRE_EMAIL_VERIFIED":
+            continue
+        target_key = f"{prefix}_{suffix}"
+        if not kv.get(target_key):
+            out.append(f"{target_key}={shared_val}")
+            kv[target_key] = shared_val
+
 st = env_path.stat()
 fd, tmp = tempfile.mkstemp(dir=str(env_path.parent), prefix=".rm-token.")
 try:
@@ -461,6 +490,7 @@ run_priv python3 "${LOCAL_WORK_DIR}/mint_runtime_manager_token.py" \
   "${STAGING_JWT_AUDIENCE}" \
   "${STAGING_TENANT_ID}" \
   "${STAGING_TTL_SECONDS:-7200}" \
+  "${STAGING_PUBLIC_GCP_IDENTITY_AUDIENCE:-${STAGING_PUBLIC_GCP_IDENTITY_PROJECT_ID:-}}" \
   || fail "RUNTIME_TOKEN_MINT_FAILED" "Could not derive bounded runtime-manager caller token"
 
 # 5. Validate manifest owner closure & pre-pull immutable digest-pinned images (candidate + baseline).
