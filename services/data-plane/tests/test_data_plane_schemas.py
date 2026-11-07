@@ -271,6 +271,66 @@ class TestContractMaster(unittest.TestCase):
         self.assertTrue(_validate_schema("contract_master", con.to_dict()))
 
 
+class TestContractMasterFromSsfDataset(unittest.TestCase):
+    """ContractMaster read model for the normalized taifex_ssf_contracts dataset."""
+
+    @classmethod
+    def setUpClass(cls):
+        from services.source_ingestion.connectors.taiwan_official import taifex_ssf_normalized_rows
+
+        fixtures = Path(__file__).resolve().parents[2] / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
+
+        def load(name):
+            return json.loads((fixtures / f"{name}.json").read_text(encoding="utf-8"))
+
+        cls.rows = taifex_ssf_normalized_rows(
+            {
+                "SingleStockFuturesMargining": load("SingleStockFuturesMargining"),
+                "SingleStockFuturesETFMargining": load("SingleStockFuturesETFMargining"),
+                "DailyMarketReportFut": load("DailyMarketReportFut"),
+                "FinalSettlementPriceSSF": load("FinalSettlementPriceSSF"),
+                "stockLists": (fixtures / "stockLists.html").read_text(encoding="utf-8"),
+            }
+        )
+        cls.masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows(cls.rows)}
+
+    def test_rate_margin_contract(self):
+        con = self.masters["ssf:QFF:202611"]
+        self.assertEqual((con.underlying_id, con.market, con.venue), ("2330", "TW", "TAIFEX"))
+        self.assertEqual((con.contract_type, con.settlement_type, con.margin_type), ("future", "cash", "portfolio"))
+        self.assertEqual((con.multiplier, con.expiry), (100.0, "2026-11-18"))
+        meta = con.metadata_json
+        self.assertEqual(meta["initial_margin_rate"], 0.135)
+        self.assertEqual(meta["maintenance_margin_rate"], 0.1035)
+        self.assertEqual((meta["settlement_price"], meta["settlement_price_date"]), (2133.0, "2026-11-06"))
+        self.assertEqual(meta["tick_size_source"], "not_sourced")
+
+    def test_fixed_margin_contract(self):
+        con = self.masters["ssf:SRF:202611"]
+        self.assertEqual((con.underlying_id, con.multiplier, con.margin_type), ("0050", 1000.0, "fixed"))
+        self.assertEqual(con.metadata_json["initial_margin_amount"], 8700.0)
+        self.assertEqual(self.masters["ssf:NYF:202611"].multiplier, 10000.0)
+        self.assertEqual(self.masters["ssf:CDF:202611"].multiplier, 2000.0)
+
+    def test_every_record_validates_and_matches_the_schema(self):
+        self.assertGreater(len(self.masters), 10)
+        for con in self.masters.values():
+            valid, errors = ContractMaster.validate(con)
+            self.assertTrue(valid, errors)
+            self.assertEqual(_validate_schema("contract_master", con.to_dict()), [])
+            self.assertEqual(ContractMaster.from_dict(con.to_dict()).to_dict(), con.to_dict())
+
+    def test_latest_price_date_wins_per_contract(self):
+        newer = dict(next(r for r in self.rows if r["contract"] == "QFF" and r["contract_month"] == "202611"))
+        newer["price_date"], newer["settlement_price"] = "2026-11-09", 2150.0
+        masters = {m.contract_id: m for m in ContractMaster.from_ssf_normalized_rows([*self.rows, newer])}
+        self.assertEqual(masters["ssf:QFF:202611"].metadata_json["settlement_price"], 2150.0)
+
+    def test_no_second_contract_model_exists(self):
+        models = Path(__file__).resolve().parents[1] / "models"
+        self.assertEqual([p.name for p in models.glob("*contract*.py")], ["contract_master.py"])
+
+
 class TestMarketCalendarSession(unittest.TestCase):
     """MarketCalendarSession model and schema validation."""
 

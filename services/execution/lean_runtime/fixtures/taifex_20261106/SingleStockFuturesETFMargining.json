@@ -1,0 +1,252 @@
+[
+ {
+  "Contract": "NYF",
+  "UnderlyingSecurityCode": "0050",
+  "ContractName": "元大台灣50ETF期貨",
+  "UnderlyingOfSingleStockFutures": "元大台灣卓越50證券投資信託基金",
+  "ClearingMargin": "64000",
+  "MaintenanceMargin": "67000",
+  "InitialMargin": "87000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "SRF",
+  "UnderlyingSecurityCode": "0050",
+  "ContractName": "小型元大台灣50ETF期貨",
+  "UnderlyingOfSingleStockFutures": "元大台灣卓越50證券投資信託基金",
+  "ClearingMargin": "6400",
+  "MaintenanceMargin": "6700",
+  "InitialMargin": "8700",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "OAF",
+  "UnderlyingSecurityCode": "006205",
+  "ContractName": "富邦上証ETF期貨",
+  "UnderlyingOfSingleStockFutures": "富邦上証180證券投資信託基金",
+  "ClearingMargin": "21000",
+  "MaintenanceMargin": "22000",
+  "InitialMargin": "29000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "OBF",
+  "UnderlyingSecurityCode": "006206",
+  "ContractName": "元大上證50ETF期貨",
+  "UnderlyingOfSingleStockFutures": "元大中國傘型證券投資信託基金之上證50證券投資信託基金",
+  "ClearingMargin": "21000",
+  "MaintenanceMargin": "22000",
+  "InitialMargin": "29000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "OJF",
+  "UnderlyingSecurityCode": "00636",
+  "ContractName": "國泰中國A50ETF期貨",
+  "UnderlyingOfSingleStockFutures": "國泰富時中國A50證券投資信託基金",
+  "ClearingMargin": "15000",
+  "MaintenanceMargin": "16000",
+  "InitialMargin": "21000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "OKF",
+  "UnderlyingSecurityCode": "00639",
+  "ContractName": "富邦深100ETF期貨",
+  "UnderlyingOfSingleStockFutures": "富邦深証100證券投資信託基金",
+  "ClearingMargin": "9000",
+  "MaintenanceMargin": "10000",
+  "InitialMargin": "13000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "OOF",
+  "UnderlyingSecurityCode": "00643",
+  "ContractName": "群益深証中小ETF期貨",
+  "UnderlyingOfSingleStockFutures": "群益深証中小板證券投資信託基金",
+  "ClearingMargin": "11000",
+  "MaintenanceMargin": "12000",
+  "InitialMargin": "15000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "PFF",
+  "UnderlyingSecurityCode": "0056",
+  "ContractName": "元大高股息ETF期貨",
+  "UnderlyingOfSingleStockFutures": "元大台灣高股息證券投資信託基金",
+  "ClearingMargin": "22000",
+  "MaintenanceMargin": "23000",
+  "InitialMargin": "30000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "SSF",
+  "UnderlyingSecurityCode": "0056",
+  "ContractName": "小型元大高股息ETF期貨",
+  "UnderlyingOfSingleStockFutures": "元大台灣高股息證券投資信託基金",
+  "ClearingMargin": "2200",
+  "MaintenanceMargin": "2300",
+  "InitialMargin": "3000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "RIF",
+  "UnderlyingSecurityCode": "00878",
+  "ContractName": "國泰永續高股息ETF期貨",
+  "UnderlyingOfSingleStockFutures": "國泰台灣高股息傘型證券投資信託基金之台灣ESG永續高股息ETF證券投資信託基金",
+  "ClearingMargin": "15000",
+  "MaintenanceMargin": "16000",
+  "InitialMargin": "21000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "RXF",
+  "UnderlyingSecurityCode": "00885",
+  "ContractName": "富邦越南ETF期貨",
+  "UnderlyingOfSingleStockFutures": "富邦富時越南證券投資信託基金",
+  "ClearingMargin": "10000",
+  "MaintenanceMargin": "11000",
+  "InitialMargin": "14000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "RYF",
+  "UnderlyingSecurityCode": "00923",
+  "ContractName": "群益台ESG低碳50ETF期貨",
+  "UnderlyingOfSingleStockFutures": "群益台灣ESG低碳50ETF證券投資信託基金",
+  "ClearingMargin": "27000",
+  "MaintenanceMargin": "28000",
+  "InitialMargin": "37000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "RZF",
+  "UnderlyingSecurityCode": "00679B",
+  "ContractName": "元大美債20年ETF期貨",
+  "UnderlyingOfSingleStockFutures": "元大美國政府20年期(以上)債券證券投資信託基金",
+  "ClearingMargin": "14000",
+  "MaintenanceMargin": "15000",
+  "InitialMargin": "19000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "SGF",
+  "UnderlyingSecurityCode": "00893",
+  "ContractName": "國泰智能電動車ETF期貨",
+  "UnderlyingOfSingleStockFutures": "國泰全球智能電動車ETF證券投資信託基金",
+  "ClearingMargin": "23000",
+  "MaintenanceMargin": "24000",
+  "InitialMargin": "32000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "SIF",
+  "UnderlyingSecurityCode": "00719B",
+  "ContractName": "元大美債1-3ETF期貨",
+  "UnderlyingOfSingleStockFutures": "元大美國政府1至3年期債券ETF基金",
+  "ClearingMargin": "11000",
+  "MaintenanceMargin": "12000",
+  "InitialMargin": "15000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "SMF",
+  "UnderlyingSecurityCode": "00919",
+  "ContractName": "群益台灣精選高息ETF期貨",
+  "UnderlyingOfSingleStockFutures": "群益台灣精選高息ETF證券投資信託基金",
+  "ClearingMargin": "13000",
+  "MaintenanceMargin": "14000",
+  "InitialMargin": "18000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "SNF",
+  "UnderlyingSecurityCode": "00929",
+  "ContractName": "復華台灣科技優息ETF期貨",
+  "UnderlyingOfSingleStockFutures": "復華台灣科技優息ETF證券投資信託基金",
+  "ClearingMargin": "16000",
+  "MaintenanceMargin": "17000",
+  "InitialMargin": "22000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "SQF",
+  "UnderlyingSecurityCode": "00772B",
+  "ContractName": "中信高評級公司債ETF期貨",
+  "UnderlyingOfSingleStockFutures": "中國信託多元收益債券ETF傘型證券投資信託基金之中國信託10年期以上高評級美元公司債券ETF證券投資信託基金",
+  "ClearingMargin": "16000",
+  "MaintenanceMargin": "17000",
+  "InitialMargin": "22000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "SUF",
+  "UnderlyingSecurityCode": "00940",
+  "ContractName": "元大台灣價值高息ETF期貨",
+  "UnderlyingOfSingleStockFutures": "元大臺灣價值高息ETF證券投資信託基金",
+  "ClearingMargin": "6000",
+  "MaintenanceMargin": "7000",
+  "InitialMargin": "9000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "UJF",
+  "UnderlyingSecurityCode": "00937B",
+  "ContractName": "群益ESG投等債20+ETF期貨",
+  "UnderlyingOfSingleStockFutures": "群益ESG 20年期以上BBB投資等級公司債ETF證券投資信託基金",
+  "ClearingMargin": "8000",
+  "MaintenanceMargin": "9000",
+  "InitialMargin": "11000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "UKF",
+  "UnderlyingSecurityCode": "00687B",
+  "ContractName": "國泰20年美債ETF期貨",
+  "UnderlyingOfSingleStockFutures": "國泰20年期(以上)美國公債指數證券投資信託基金",
+  "ClearingMargin": "15000",
+  "MaintenanceMargin": "16000",
+  "InitialMargin": "21000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "URF",
+  "UnderlyingSecurityCode": "00757",
+  "ContractName": "統一FANG+ETF期貨",
+  "UnderlyingOfSingleStockFutures": "統一NYSE FANG+ ETF證券投資信託基金",
+  "ClearingMargin": "79000",
+  "MaintenanceMargin": "82000",
+  "InitialMargin": "107000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "USF",
+  "UnderlyingSecurityCode": "00757",
+  "ContractName": "小型統一FANG+ETF期貨",
+  "UnderlyingOfSingleStockFutures": "統一NYSE FANG+ ETF證券投資信託基金",
+  "ClearingMargin": "7900",
+  "MaintenanceMargin": "8200",
+  "InitialMargin": "10700",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "VHF",
+  "UnderlyingSecurityCode": "0052",
+  "ContractName": "富邦科技ETF期貨",
+  "UnderlyingOfSingleStockFutures": "富邦台灣科技指數證券投資信託基金",
+  "ClearingMargin": "41000",
+  "MaintenanceMargin": "43000",
+  "InitialMargin": "56000",
+  "Date": "20261106"
+ },
+ {
+  "Contract": "VWF",
+  "UnderlyingSecurityCode": "009816",
+  "ContractName": "凱基台灣TOP50ETF期貨",
+  "UnderlyingOfSingleStockFutures": "凱基台灣 TOP 50 ETF證券投資信託基金",
+  "ClearingMargin": "10000",
+  "MaintenanceMargin": "11000",
+  "InitialMargin": "14000",
+  "Date": "20261106"
+ }
+]

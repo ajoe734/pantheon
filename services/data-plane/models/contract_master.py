@@ -124,6 +124,76 @@ class ContractMaster:
             updated_at=data.get("updated_at") or _utc_now_iso(),
         )
 
+    @classmethod
+    def from_ssf_normalized_row(cls, row: dict[str, Any]) -> "ContractMaster":
+        """Build the master record for one ``taifex_ssf_contracts`` normalized row.
+
+        ``contract_id`` is ``ssf:<code>:<month>``; ``underlying_id`` is the
+        normalised security code; ``multiplier`` is the contract unit. Rate-based
+        margins are ``portfolio`` margin type, fixed amounts are ``fixed``. The
+        margin figures, the latest regular session settlement price and its date
+        go to ``metadata_json``. ``tick_size`` is not provided by any of the five
+        official sources read, so the placeholder 0.01 is recorded with
+        ``tick_size_source = "not_sourced"``.
+        """
+        fixed = row.get("margin_mode") == "fixed"
+        margin = (
+            {
+                "clearing_margin_amount": row.get("clearing_margin_amount"),
+                "maintenance_margin_amount": row.get("maintenance_margin_amount"),
+                "initial_margin_amount": row.get("initial_margin_amount"),
+            }
+            if fixed
+            else {
+                "margin_tier": row.get("margin_tier"),
+                "clearing_margin_rate": row.get("clearing_margin_rate"),
+                "maintenance_margin_rate": row.get("maintenance_margin_rate"),
+                "initial_margin_rate": row.get("initial_margin_rate"),
+            }
+        )
+        stamp = row.get("available_time") or _utc_now_iso()
+        return cls(
+            contract_id=f"ssf:{row['contract']}:{row['contract_month']}",
+            underlying_id=str(row["underlying_code"]),
+            market="TW",
+            venue="TAIFEX",
+            contract_type=ContractType.FUTURE.value,
+            expiry=str(row["last_trading_day"]),
+            multiplier=float(row["unit"]),
+            tick_size=0.01,
+            settlement_type=SettlementType.CASH.value,
+            margin_type=MarginType.FIXED.value if fixed else MarginType.PORTFOLIO.value,
+            metadata_json={
+                "dataset": "taifex_ssf_contracts",
+                "contract": row["contract"],
+                "contract_family": row.get("contract_family"),
+                "contract_month": row["contract_month"],
+                "contract_name": row.get("contract_name"),
+                "underlying_kind": row.get("underlying_kind"),
+                "margin_mode": row.get("margin_mode"),
+                **margin,
+                "settlement_price": row.get("settlement_price"),
+                "settlement_price_date": row.get("price_date"),
+                "margin_date": row.get("margin_date"),
+                "volume": row.get("volume"),
+                "open_interest": row.get("open_interest"),
+                "last_trading_day_basis": row.get("last_trading_day_basis"),
+                "tick_size_source": "not_sourced",
+            },
+            created_at=stamp,
+            updated_at=stamp,
+        )
+
+    @classmethod
+    def from_ssf_normalized_rows(cls, rows: Any) -> list["ContractMaster"]:
+        """Latest record per ``contract_id`` (newest ``price_date`` wins)."""
+        latest: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            key = f"ssf:{row['contract']}:{row['contract_month']}"
+            if key not in latest or str(row.get("price_date") or "") >= str(latest[key].get("price_date") or ""):
+                latest[key] = row
+        return [cls.from_ssf_normalized_row(latest[key]) for key in sorted(latest)]
+
     @staticmethod
     def validate(contract: "ContractMaster") -> tuple[bool, list[str]]:
         errors = []

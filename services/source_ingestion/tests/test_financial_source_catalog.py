@@ -165,3 +165,28 @@ def test_catalog_embeds_active_universe_scheduling_policy() -> None:
     assert "crypto-coingecko-spot" in policy["summary"]["candidate_detail_connector_ids"]
     assert "us-yahoo-daily-ohlcv" not in policy["summary"]["archive_baseline_connector_ids"]
     assert payload["summary"]["active_universe_rule_count"] == policy["summary"]["rule_count"]
+
+
+def test_taifex_ssf_contracts_dataset_is_cataloged_with_its_storage_policy() -> None:
+    entries = {entry.data_source_id: entry for entry in initial_financial_data_source_entries()}
+    payload = json.loads(json.dumps(financial_data_source_catalog_payload(), default=str))
+    taifex = json.loads(json.dumps(entries["ds-taifex-tw-derivatives-chip"].to_dict(), default=str))
+    datasets = {dataset["dataset_id"]: dataset for dataset in taifex["datasets"]}
+
+    assert {"taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts"} <= set(datasets)
+    ssf = datasets["taifex_ssf_contracts"]
+    assert ssf["storage_targets"] == ["raw/taifex/ssf", "normalized/taifex_ssf_contracts"]
+    assert ssf["metadata"]["raw_storage_policy"]["retention_days"] == 2555
+    assert ssf["metadata"]["raw_storage_policy"]["partition"] == "raw/taifex/ssf/date=YYYY-MM-DD/"
+    # The two existing chip datasets keep their market-level scope.
+    assert datasets["taifex_futures_chip"]["metadata"]["symbol_scope"] == "market_context_no_symbol_filter"
+    assert datasets["taifex_options_chip"]["metadata"]["symbol_scope"] == "market_context_no_symbol_filter"
+    assert payload["schema_version"] == "financial_data_source_catalog.v1"
+
+    template = next(
+        t for t in initial_financial_data_source_config_templates()
+        if t["template_id"] == "template-tw-taifex-futures-options-chip"
+    )
+    assert "taifex_ssf_contracts" in template["fetch"]["datasets"]
+    assert "taifex_ssf_contracts" in template["fetch"]["normalized_targets"]
+    assert "settlement_price" in template["fetch"]["expected_fields"]["taifex_ssf_contracts"]
