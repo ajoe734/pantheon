@@ -57,7 +57,6 @@ from .service import (
     _management_prune_camel_aliases,
     _management_record_id,
     evolution_journal_auto_proposal_counts,
-    evolution_journal_base_item,
     evolution_journal_csv_filter,
     evolution_journal_decision_evidence_class,
     evolution_journal_decision_item,
@@ -1116,7 +1115,7 @@ def create_evolution_router(
             )
             if dec_item is not None:
                 items.append(dec_item)
-            # Mutation review item projection
+            # Mutation review projection (nested into the decision row)
             dec_id = _management_record_id(dec, "decision_id", "id", "evolution_decision_id")
             if dec_id:
                 dec_by_id[dec_id] = dec
@@ -1167,29 +1166,10 @@ def create_evolution_router(
                     if field in dec:
                         proj[field] = dec[field]
 
-                mr_item = evolution_journal_base_item(
-                    entry_type="mutation_review",
-                    source_id=dec_id,
-                    title=f"Mutation review: {dec_id}",
-                    summary=str((proj.get("proposed_changes") or {}).get("summary") or dec.get("rationale") or ""),
-                    status=str(proj.get("decision_state") or "unknown").lower(),
-                    created_at=proj.get("created_at"),
-                    updated_at=dec.get("updated_at"),
-                    occurred_at=evolution_journal_timestamp(dec),
-                    risk_level=proj.get("risk_level"),
-                    action_type=proj.get("action_type"),
-                    target=evolution_journal_target(
-                        target_type=proj.get("target_type"),
-                        target_id=proj.get("target_id"),
-                        target_version=proj.get("target_version"),
-                    ),
-                    route=f"/management/evolution-journal?mutation_review={dec_id}",
-                    bff_detail_path=f"/api/v1/operator/mutation-review/{dec_id}",
-                )
-                mr_item["evidence_class"] = ev_class
-                mr_item["mutation_review"] = proj
-                mr_item["record"] = mr_item["mutation_review"]
-                items.append(mr_item)
+                # One journal row per decision: the derived mutation review
+                # projection rides inside the decision row, never as its own row.
+                if dec_item is not None:
+                    dec_item["mutation_review"] = proj
 
         for pm in postmortems:
             pm_item = evolution_journal_postmortem_item(pm)
@@ -1409,7 +1389,8 @@ def create_evolution_router(
                 filtered = [
                     it for it in filtered
                     if str(it.get("source_id") or "").lower() == mr_clean
-                    and it.get("entry_type") == "mutation_review"
+                    and it.get("entry_type") == "evolution_decision"
+                    and isinstance(it.get("mutation_review"), dict)
                 ]
 
         if decision:
@@ -1446,7 +1427,7 @@ def create_evolution_router(
             if end_idx < total:
                 next_page_token = str(end_idx)
         for it in page_items:
-            if it.get("entry_type") == "mutation_review":
+            if it.get("entry_type") == "evolution_decision" and isinstance(it.get("mutation_review"), dict):
                 dec_id = str(it.get("source_id") or "")
                 raw_dec = dec_by_id.get(dec_id) or {}
                 ev_class = it.get("evidence_class") or evolution_journal_decision_evidence_class(raw_dec)
@@ -1463,20 +1444,9 @@ def create_evolution_router(
                     if field in raw_dec and field not in full_proj:
                         full_proj[field] = raw_dec[field]
                 full_proj["evidence_class"] = ev_class
-                it["evidence_class"] = ev_class
+                # The decision row keeps its own record/status/summary/target;
+                # only the nested mutation_review is hydrated.
                 it["mutation_review"] = full_proj
-                it["record"] = full_proj
-                it["status"] = str(full_proj.get("decision_state") or it.get("status") or "unknown").lower()
-                it["summary"] = str((full_proj.get("proposed_changes") or {}).get("summary") or it.get("summary") or "")
-                it["risk_level"] = full_proj.get("risk_level") or it.get("risk_level")
-                it["action_type"] = full_proj.get("action_type") or it.get("action_type")
-                target_dict = evolution_journal_target(
-                    target_type=full_proj.get("target_type"),
-                    target_id=full_proj.get("target_id"),
-                    target_version=full_proj.get("target_version"),
-                )
-                if target_dict:
-                    it["target"] = target_dict
 
         meta = _snap_meta(snapshot_at)
         meta["surfaces"] = surfaces

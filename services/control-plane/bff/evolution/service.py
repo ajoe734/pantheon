@@ -637,9 +637,15 @@ def evolution_journal_filter_items(
     risk_levels = evolution_journal_csv_filter(risk_level)
     filtered = items
     if source_types:
+        # A mutation review is carried inside its decision row, so the
+        # mutation_review source type selects decision rows that carry one.
         filtered = [
             item for item in filtered
             if str(item.get("entry_type") or item.get("entryType") or "").lower() in source_types
+            or (
+                "mutation_review" in source_types
+                and isinstance(item.get("mutation_review"), dict)
+            )
         ]
     if statuses:
         filtered = [
@@ -666,7 +672,7 @@ def evolution_journal_item_is_history(item: Dict[str, Any]) -> bool:
         return True
     if entry_type == "postmortem":
         return str(item.get("status") or "").strip().lower() != "draft"
-    if entry_type in {"evolution_decision", "mutation_review"}:
+    if entry_type == "evolution_decision":
         status = str(item.get("status") or "").strip().lower()
         if status != "proposed":
             return True
@@ -824,6 +830,12 @@ def evolution_journal_read_postmortems(
 def evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
     by_type = _management_count_by(items, "entry_type")
     by_status = _management_count_by(items, "status")
+    # Decision rows that carry a mutation_review projection (one row per decision).
+    review_items = [
+        item for item in items
+        if item.get("entry_type") == "evolution_decision"
+        and isinstance(item.get("mutation_review"), dict)
+    ]
     by_risk_level = _management_count_by(items, "risk_level")
     latest_at = max(
         [str(item.get("occurred_at") or "") for item in items if item.get("occurred_at")],
@@ -833,14 +845,14 @@ def evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int) 
         "total_items": len(items),
         "returned_items": returned_count,
         "decision_count": by_type.get("evolution_decision", 0),
-        "mutation_review_count": by_type.get("mutation_review", 0),
+        "mutation_review_count": len(review_items),
         "postmortem_count": by_type.get("postmortem", 0),
         "rollback_count": by_type.get("rollback", 0),
         "freeze_order_count": by_type.get("freeze_order", 0),
         "pending_review_count": len([
-            item for item in items
-            if item.get("entry_type") == "mutation_review"
-            and str(item.get("status") or "").lower() in {"pending", "reviewed", "under_review", "in_review"}
+            item for item in review_items
+            if str(item["mutation_review"].get("decision_state") or "").lower()
+            in {"pending", "reviewed", "under_review", "in_review"}
         ]),
         "active_freeze_count": len([
             item for item in items
