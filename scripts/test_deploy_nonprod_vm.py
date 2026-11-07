@@ -2528,5 +2528,3 @@ def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
     )
     assert (fresh_res["status"], fresh_res["reason"]) == ("noop", "already_fresh")
     assert fresh_res["dataset"] == "taifex_ssf_contracts"
-
-

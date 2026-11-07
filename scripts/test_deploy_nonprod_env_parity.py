@@ -611,5 +611,3 @@ def test_source_refresh_taifex_and_twse_env_transport_and_unmerged_host_parity()
     init_block = source.split("SOURCE_REFRESH_CONNECTOR_ID=", 1)[1].split("DEV_APP_DB_USER=", 1)[0]
     assert '"${SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market"' in init_block
     assert "taifex.com.tw" not in init_block
-
-

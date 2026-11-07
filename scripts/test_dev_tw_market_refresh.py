@@ -409,6 +409,9 @@ if args[0] == "compose":
             for mid in matching:
                 print(mid)
             sys.exit(0)
+        if target == "source-ingest":
+            print(state.get("source_ingest_cid", "cid-source-ingest"))
+            sys.exit(0)
         print(f"cid-{{target}}")
         sys.exit(0)
     elif sub[0] == "images":
@@ -426,8 +429,12 @@ if args[0] == "compose":
         if "source-ingest" in services:
             if state.get("mutate_image_on_up"):
                 state["image_id"] = state["mutate_image_on_up"]
-            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny" and "mutate_env_on_restore" in state:
-                state["container_env"] = state["mutate_env_on_restore"]
+            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist":
+                state["source_ingest_cid"] = state.get("recreated_source_ingest_cid", "cid-source-ingest-recreated")
+            elif os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
+                state["source_ingest_cid"] = state.get("restored_source_ingest_cid", "cid-source-ingest-restored")
+                if "mutate_env_on_restore" in state:
+                    state["container_env"] = state["mutate_env_on_restore"]
             state_file.write_text(json.dumps(state))
         sys.exit(0)
     elif sub[0] == "rm":
@@ -541,6 +548,37 @@ elif args[0] == "cp":
         }}
     }})
     dest.write_text(json.dumps(projection_data))
+    sys.exit(0)
+
+elif args[0] == "exec":
+    target_cid = args[2] if len(args) > 2 and args[1] == "-i" else args[1]
+    cmd_args = args[3:] if len(args) > 2 and args[1] == "-i" else args[2:]
+    cmd_str = " ".join(cmd_args)
+    log_event("docker_exec", cid=target_cid, cmd=cmd_args)
+    live_source_cid = state.get("source_ingest_cid", "cid-source-ingest")
+    if target_cid != live_source_cid:
+        sys.stderr.write(f"Error response from daemon: No such container: {{target_cid}}\\n")
+        sys.exit(1)
+    if "controller_token" in cmd_str:
+        if state.get("fail_token_exec"):
+            sys.stderr.write("failed reading controller_token\\n")
+            sys.exit(1)
+        if state.get("empty_token_exec"):
+            sys.stdout.write("")
+            sys.exit(0)
+        print(state.get("controller_token", "stub-controller-token-12345"))
+        sys.exit(0)
+    if "desired_state.json" in cmd_str:
+        if state.get("fail_desired_state_exec"):
+            sys.stderr.write("failed writing desired_state.json\\n")
+            sys.exit(1)
+        payload_raw = sys.stdin.read()
+        if not payload_raw.strip():
+            sys.exit(1)
+        state["written_desired_state"] = json.loads(payload_raw)
+        state["written_desired_state_cid"] = target_cid
+        state_file.write_text(json.dumps(state))
+        sys.exit(0)
     sys.exit(0)
 
 sys.exit(0)
@@ -2203,6 +2241,18 @@ def test_refresh_entrypoint_taifex_connector_runs_bounded_pull_and_restores_egre
     assert active_schedules[0]["rules"][0]["dataset"] == "taifex_ssf_contracts"
     assert [m["symbol"] for m in active_schedules[0]["members"]] == ["2330"]
 
+    # Verify container ID was re-resolved after recreation and desired_state.json was written to recreated cid
+    assert recorded_state.get("written_desired_state_cid") == "cid-source-ingest-recreated"
+    written_desired = recorded_state.get("written_desired_state") or {}
+    assert any(
+        r.get("dataset") == "taifex_ssf_contracts"
+        and r.get("connector_candidates") == ["tw-taifex-futures-options-chip"]
+        for r in (written_desired.get("personas") or [{}])[0].get("required_data_sources", [])
+    )
+    exec_events = [e for e in events if e.get("event") == "docker_exec"]
+    assert len(exec_events) == 2
+    assert all(e.get("cid") == "cid-source-ingest-recreated" for e in exec_events)
+
     restore_up = next(
         e
         for e in events
@@ -2214,6 +2264,71 @@ def test_refresh_entrypoint_taifex_connector_runs_bounded_pull_and_restores_egre
     assert "SOURCE_INGEST_BOUNDED_DATASET" not in restore_up["env"]
     assert "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS" not in restore_up["env"]
     assert "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS" not in restore_up["env"]
+
+
+@pytest.mark.parametrize(
+    ("failure_flag", "expected_error"),
+    [
+        ("fail_token_exec", "failed to read controller_token from running source-ingest container cid-source-ingest-recreated"),
+        ("empty_token_exec", "empty controller_token for running source-ingest container cid-source-ingest-recreated"),
+        ("fail_desired_state_exec", "failed to write bounded desired_state.json into source-ingest container cid-source-ingest-recreated"),
+    ],
+)
+def test_refresh_entrypoint_taifex_fails_closed_on_token_or_desired_state_exec_failure(
+    tmp_path: Path, failure_flag: str, expected_error: str
+):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": [
+            "PANTHEON_EXTERNAL_EGRESS=deny",
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+            "PORT=8097",
+        ],
+        failure_flag: True,
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    test_env.pop("SOURCE_INGEST_CONTROLLER_TOKEN", None)
+    test_env.pop("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", None)
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(_deploy_script_without_readback(tmp_path)),
+            "--refresh-only",
+            "--force",
+            "--connector-id",
+            "tw-taifex-futures-options-chip",
+            "--allowed-hosts",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "--dataset",
+            "taifex_ssf_contracts",
+            "--output",
+            str(output_file),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected failure for {failure_flag}, got 0:\n{proc.stdout}"
+    assert expected_error in proc.stderr
+    assert "prepared bounded source refresh dataset" not in proc.stdout
+    assert not output_file.exists() or json.loads(output_file.read_text(encoding="utf-8")).get("status") != "completed"
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    assert not any(e.get("event") == "compose_run" for e in events)
+    assert any(
+        e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+        for e in events
+    )
 
 
 def test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforces_ssf_readback(tmp_path: Path):
@@ -2409,8 +2524,3 @@ def test_refresh_entrypoint_taifex_rejects_merged_or_wrong_hosts(tmp_path: Path,
         e.get("event") == "compose_up" and e.get("env", {}).get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
         for e in events
     )
-
-
-
-
-

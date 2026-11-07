@@ -2375,17 +2375,31 @@ prepare_bounded_source_refresh_dataset() {
     error "TAIFEX bounded refresh requires dataset taifex_ssf_contracts, got '${dataset:-missing}'"
   fi
 
+  local live_cid=""
+  live_cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+  if [[ -n "${live_cid}" ]]; then
+    cid="${live_cid}"
+  fi
+  [[ -n "${cid}" ]] || error "running source-ingest container not found for bounded dataset preparation"
+
   local controller_token="${SOURCE_INGEST_CONTROLLER_TOKEN:-}"
-  local token_file="${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-/data/source-ingest/controller_token}"
-  if [[ -z "${controller_token}" && -r "${token_file}" ]]; then
+  local token_file="${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}"
+  if [[ -z "${controller_token}" && -n "${token_file}" ]]; then
+    [[ -r "${token_file}" ]] || error "configured SOURCE_INGEST_CONTROLLER_TOKEN_FILE is not readable: ${token_file}"
     controller_token="$(tr -d '\r\n' < "${token_file}")"
   fi
-  if [[ -z "${controller_token}" && -n "${cid}" ]]; then
-    controller_token="$(docker exec "${cid}" sh -c 'cat /data/source-ingest/controller_token 2>/dev/null' | tr -d '\r\n' || true)"
+  if [[ -z "${controller_token}" ]]; then
+    local raw_token=""
+    raw_token="$(docker exec "${cid}" sh -c 'cat /data/source-ingest/controller_token' 2>/dev/null)" \
+      || error "failed to read controller_token from running source-ingest container ${cid}"
+    controller_token="$(printf '%s' "${raw_token}" | tr -d '\r\n')"
   fi
+  [[ -n "${controller_token}" ]] || error "empty controller_token for running source-ingest container ${cid}"
 
+  local api_url="${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}"
   local desired_state_json=""
   desired_state_json="$(
+    SOURCE_INGEST_API_URL="${api_url}" \
     SOURCE_INGEST_CONTROLLER_TOKEN="${controller_token}" \
     PYTHONPATH="${PANTHEON_REMOTE_DIR:-$(pwd)}:${PYTHONPATH:-}" \
       python3 - "${connector_id}" "${dataset}" "${active_symbols_csv}" <<'PREPARE_DATASET_PY'
@@ -2403,7 +2417,7 @@ from services.source_ingestion.active_universe import (
 )
 from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
 
-api_url = (os.environ.get("SOURCE_INGEST_API_URL") or "http://127.0.0.1:8097").rstrip("/")
+api_url = (os.environ.get("SOURCE_INGEST_API_URL") or "http://127.0.0.1:18097").rstrip("/")
 connector_id = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
 dataset = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
 active_symbols_csv = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
@@ -2411,6 +2425,8 @@ controller_token = (os.environ.get("SOURCE_INGEST_CONTROLLER_TOKEN") or "").stri
 
 if connector_id != "tw-taifex-futures-options-chip" or dataset != "taifex_ssf_contracts":
     raise SystemExit(f"Unsupported bounded dataset profile: connector_id={connector_id!r} dataset={dataset!r}")
+if not controller_token:
+    raise SystemExit("Missing SOURCE_INGEST_CONTROLLER_TOKEN for bounded source refresh dataset preparation")
 
 raw_symbols = [s.strip() for s in active_symbols_csv.split(",") if s.strip()]
 if not raw_symbols:
@@ -2609,9 +2625,10 @@ print(json.dumps(desired_payload))
 PREPARE_DATASET_PY
   )" || error "failed to prepare bounded source refresh dataset ${dataset} for ${connector_id}"
 
-  if [[ -n "${cid}" && -n "${desired_state_json}" ]]; then
-    printf '%s\n' "${desired_state_json}" | docker exec -i "${cid}" sh -c 'mkdir -p /data/source-ingest/bounded-refresh && cat > /data/source-ingest/bounded-refresh/desired_state.json' >/dev/null 2>&1 || true
-  fi
+  [[ -n "${desired_state_json}" ]] || error "bounded source refresh dataset preparation produced empty desired_state payload for ${connector_id}"
+  printf '%s\n' "${desired_state_json}" \
+    | docker exec -i "${cid}" sh -c 'mkdir -p /data/source-ingest/bounded-refresh && cat > /data/source-ingest/bounded-refresh/desired_state.json && test -s /data/source-ingest/bounded-refresh/desired_state.json' >/dev/null 2>&1 \
+    || error "failed to write bounded desired_state.json into source-ingest container ${cid}"
   info "prepared bounded source refresh dataset ${dataset} for ${connector_id} (symbols=${active_symbols_csv})"
 }
 
@@ -2775,6 +2792,8 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   local steady_stopped_at lease_wait
   steady_stopped_at="$(date +%s)"
   manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+  [[ -n "${cid}" ]] || error "running source-ingest container not found after bounded runtime recreation"
   lease_wait=$(( steady_lease_seconds + 1 - ($(date +%s) - steady_stopped_at) ))
   if (( steady_lease_seconds > 0 && lease_wait > 0 )); then
     info "waiting ${lease_wait}s for the stopped steady source controller lease to expire"
@@ -2782,7 +2801,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   fi
 
   recover_bounded_source_refresh_dlq "${force}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
-  prepare_bounded_source_refresh_dataset "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" "${cid:-}"
+  prepare_bounded_source_refresh_dataset "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" "${cid}"
 
   docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
 

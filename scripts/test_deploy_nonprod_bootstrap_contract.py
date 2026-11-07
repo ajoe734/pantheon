@@ -1093,4 +1093,3 @@ def test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_conn
     proc = _run_validate_source_refresh_profile(connector_id, allowed_hosts, dataset)
     assert proc.returncode != 0, f"Expected reject for {connector_id} ({allowed_hosts})"
     assert expected_err in proc.stderr
-

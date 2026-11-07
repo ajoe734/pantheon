@@ -754,173 +754,362 @@ def test_taifex_preflight_does_not_skip_on_fresh_twse_snapshot_when_ssf_missing_
 
 
 def test_prepare_bounded_source_refresh_dataset_wires_ssf_through_scheduler_and_adapter(
-    monkeypatch, tmp_path: Path
+    tmp_path: Path,
 ) -> None:
+    import sys
+
+    runner_code = """
+import importlib
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from io import BytesIO
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+tmp_dir = Path(sys.argv[1])
+root_dir = Path(sys.argv[2])
+
+data_dir = tmp_dir / "source-ingest-data"
+data_dir.mkdir(parents=True, exist_ok=True)
+token = "t" * 48
+(data_dir / "controller_token").write_text(token, encoding="utf-8")
+
+from services.source_ingestion.controller_state import ControllerStateStore
+from services.source_ingestion.controller_worker import _new_state
+
+ctrl_state = _new_state()
+ctrl_state.controller_id = "bounded-test:gen"
+ctrl_state.tenant_id = "tenant-dev"
+ctrl_state.sequence_no = 1
+ControllerStateStore(data_dir / "controller_state.json").save(ctrl_state)
+
+os.environ["SOURCE_INGEST_DATA_DIR"] = str(data_dir)
+os.environ["SOURCE_INGEST_CONTROLLER_TOKEN"] = token
+os.environ["PANTHEON_TENANT_ID"] = "tenant-dev"
+os.environ["PANTHEON_REMOTE_DIR"] = str(root_dir)
+# Leave SOURCE_INGEST_API_URL unset to exercise default host URL resolution (http://127.0.0.1:18097)
+os.environ.pop("SOURCE_INGEST_API_URL", None)
+
+import services.source_ingestion.main as si_main
+from services.source_ingestion import controller_worker
+from services.source_ingestion.connectors import taiwan_official as tw_official
+
+for attr in list(vars(si_main)):
+    if not attr.startswith("__"):
+        delattr(si_main, attr)
+importlib.reload(si_main)
+client = TestClient(si_main.app)
+
+real_urlopen = urllib.request.urlopen
+preparation_urls: list[str] = []
+
+
+class _FakeHTTPResponse:
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._buf = BytesIO(body)
+
+    def read(self) -> bytes:
+        return self._buf.read()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def fake_urlopen(req, timeout=30):
+    url = req.full_url if hasattr(req, "full_url") else str(req)
+    preparation_urls.append(url)
+    if url.startswith("http://127.0.0.1:18097"):
+        path = url[len("http://127.0.0.1:18097") :]
+        method = getattr(req, "get_method", lambda: "GET")()
+        headers = dict(req.header_items()) if hasattr(req, "header_items") else {}
+        data = req.data if hasattr(req, "data") else None
+        resp = client.request(method, path, headers=headers, content=data)
+        if resp.status_code >= 400:
+            raise urllib.error.HTTPError(
+                url, resp.status_code, resp.reason_phrase, resp.headers, BytesIO(resp.content)
+            )
+        return _FakeHTTPResponse(resp.status_code, resp.content)
+    return real_urlopen(req, timeout=timeout)
+
+
+urllib.request.urlopen = fake_urlopen
+
+deploy = (root_dir / "scripts" / "deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+marker = 'python3 - "${connector_id}" "${dataset}" "${active_symbols_csv}" <<\\'PREPARE_DATASET_PY\\'\\n'
+start = deploy.index(marker) + len(marker)
+end = deploy.index("\\nPREPARE_DATASET_PY\\n", start)
+prepare_py = deploy[start:end]
+
+old_argv = list(sys.argv)
+try:
+    sys.argv = ["prepare_dataset.py", "tw-taifex-futures-options-chip", "taifex_ssf_contracts", "2330.TW"]
+    ns: dict = {"__name__": "__main__"}
+    exec(compile(prepare_py, "prepare_bounded_source_refresh_dataset", "exec"), ns)
+finally:
+    sys.argv = old_argv
+
+assert preparation_urls == [
+    "http://127.0.0.1:18097/api/source-ingest/connectors",
+    "http://127.0.0.1:18097/api/source-ingest/connectors/tw-taifex-futures-options-chip/schedule",
+    "http://127.0.0.1:18097/api/source-ingest/active-universe/schedule",
+], f"Expected all three preparation requests to target default host URL 18097, got: {preparation_urls}"
+
+frontier_resp = client.get(
+    "/api/source-ingest/frontier",
+    headers={"Authorization": f"Bearer {token}"},
+)
+assert frontier_resp.status_code == 200
+frontier_items = [
+    item
+    for item in (frontier_resp.json().get("frontier") or [])
+    if item.get("connector_id") == "tw-taifex-futures-options-chip"
+]
+assert len(frontier_items) == 1
+assert frontier_items[0]["job_parameters"]["dataset"] == "taifex_ssf_contracts"
+assert frontier_items[0]["job_parameters"]["contracts"] == ["2330"]
+assert frontier_items[0]["job_parameters"]["symbols"] == ["2330"]
+
+ssf_fixtures = root_dir / "services" / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
+seen_urls: list[str] = []
+
+
+def fake_fetch_official(request, *, caller, timeout_seconds, max_bytes, parse):
+    seen_urls.append(request.full_url)
+    name = request.full_url.rsplit("/", 1)[-1]
+    if name == "stockLists":
+        return parse((ssf_fixtures / "stockLists.html").read_text(encoding="utf-8").encode("utf-8"))
+    raw = json.loads((ssf_fixtures / f"{name}.json").read_text(encoding="utf-8"))
+    return parse(b"\\xef\\xbb\\xbf" + json.dumps(raw).encode("utf-8"))
+
+
+tw_official._fetch_official = fake_fetch_official
+
+
+def fake_controller_request_json(url, *, method="GET", payload=None, bearer_token=None, timeout_seconds=30.0):
+    path = url[len("http://127.0.0.1:18097") :]
+    headers = {"Accept": "application/json"}
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+    resp = client.request(method, path, headers=headers, json=payload)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+controller_worker._request_json = fake_controller_request_json
+
+tick_result = controller_worker.run_schedule_tick(
+    api_url="http://127.0.0.1:18097",
+    max_concurrency=1,
+    timeout_seconds=30.0,
+    controller_token=token,
+    force_connector_ids=("tw-taifex-futures-options-chip",),
+    exclusive_connector_ids=("tw-taifex-futures-options-chip",),
+)
+assert tick_result["summary"]["total_ran"] == 1
+assert tick_result["summary"]["total_failed"] == 0
+
+assert seen_urls == [
+    "https://openapi.taifex.com.tw/v1/SingleStockFuturesMargining",
+    "https://openapi.taifex.com.tw/v1/SingleStockFuturesETFMargining",
+    "https://openapi.taifex.com.tw/v1/DailyMarketReportFut",
+    "https://openapi.taifex.com.tw/v1/FinalSettlementPriceSSF",
+    "https://www.taifex.com.tw/cht/2/stockLists",
+]
+assert not any("InstitutionalInvestors" in u for u in seen_urls)
+assert {u.split("/")[2] for u in seen_urls} == {"openapi.taifex.com.tw", "www.taifex.com.tw"}
+
+readback_resp = client.get(
+    "/api/source-ingest/controller/readback",
+    headers={"Authorization": f"Bearer {token}"},
+)
+assert readback_resp.status_code == 200
+taifex_row = next(
+    row
+    for row in (readback_resp.json().get("connectors") or [])
+    if row.get("connector_id") == "tw-taifex-futures-options-chip"
+)
+latest_rec = taifex_row["latest_source_record"]
+assert latest_rec["source_id"].startswith("tw-taifex:taifex_ssf_contracts:")
+assert latest_rec["provenance"]["dataset"] == "taifex_ssf_contracts"
+assert latest_rec["provenance"]["schema_hash"] == "tw_taifex_ssf_contracts.v1"
+assert latest_rec["provenance"]["symbol"] == "2330"
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT)
+    env.pop("SOURCE_INGEST_API_URL", None)
+    proc = subprocess.run(
+        [sys.executable, "-c", runner_code, str(tmp_path), str(ROOT)],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, f"Subprocess integration test failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+def test_prepare_bounded_source_refresh_dataset_re_resolves_cid_and_fails_closed_on_exec_failures(
+    tmp_path: Path,
+) -> None:
+    import http.server
     import json
-    import urllib.request
-    from io import BytesIO
-    from fastapi.testclient import TestClient
-    import services.source_ingestion.main as si_main
-    from services.source_ingestion import controller_worker
-    from services.source_ingestion.connectors import taiwan_official as tw_official
-    from services.source_ingestion.runtime import SourceIngestionRuntime
+    import threading
 
-    # Boot an isolated real SourceIngestionRuntime and FastAPI TestClient
-    import importlib
-    from services.source_ingestion.controller_state import ControllerStateStore
-    from services.source_ingestion.controller_worker import _new_state
-
-    data_dir = tmp_path / "source-ingest-data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    token = "t" * 48
-    (data_dir / "controller_token").write_text(token, encoding="utf-8")
-    ctrl_state = _new_state()
-    ctrl_state.controller_id = "bounded-test:gen"
-    ctrl_state.tenant_id = "tenant-dev"
-    ctrl_state.sequence_no = 1
-    ControllerStateStore(data_dir / "controller_state.json").save(ctrl_state)
-
-    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
-    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
-    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
-    monkeypatch.setenv("PANTHEON_REMOTE_DIR", str(ROOT))
-    monkeypatch.setenv("SOURCE_INGEST_API_URL", "http://source-ingest:8097")
-
-    for attr in list(vars(si_main)):
-        if not attr.startswith("__"):
-            delattr(si_main, attr)
-    importlib.reload(si_main)
-    client = TestClient(si_main.app)
-
-    # Intercept urllib.request.urlopen used by PREPARE_DATASET_PY and route to the real FastAPI app
-    real_urlopen = urllib.request.urlopen
-
-    class _FakeHTTPResponse:
-        def __init__(self, status: int, body: bytes) -> None:
-            self.status = status
-            self._buf = BytesIO(body)
-
-        def read(self) -> bytes:
-            return self._buf.read()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_urlopen(req, timeout=30):
-        url = req.full_url if hasattr(req, "full_url") else str(req)
-        if url.startswith("http://source-ingest:8097"):
-            path = url[len("http://source-ingest:8097") :]
-            method = getattr(req, "get_method", lambda: "GET")()
-            headers = dict(req.header_items()) if hasattr(req, "header_items") else {}
-            data = req.data if hasattr(req, "data") else None
-            resp = client.request(method, path, headers=headers, content=data)
-            if resp.status_code >= 400:
-                raise urllib.error.HTTPError(
-                    url, resp.status_code, resp.reason_phrase, resp.headers, BytesIO(resp.content)
-                )
-            return _FakeHTTPResponse(resp.status_code, resp.content)
-        return real_urlopen(req, timeout=timeout)
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-
-    # Extract and execute PREPARE_DATASET_PY from scripts/deploy_nonprod_vm.sh
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    marker = "python3 - \"${connector_id}\" \"${dataset}\" \"${active_symbols_csv}\" <<'PREPARE_DATASET_PY'\n"
-    start = deploy.index(marker) + len(marker)
-    end = deploy.index("\nPREPARE_DATASET_PY\n", start)
-    prepare_py = deploy[start:end]
+    start = deploy.index("prepare_bounded_source_refresh_dataset() {")
+    end = deploy.index("\n}\n\n# Proves the latest closed Taiwan session", start) + 2
+    func_def = deploy[start:end]
 
-    import sys as _sys
+    received_requests: list[tuple[str, str, str]] = []
 
-    old_argv = list(_sys.argv)
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _handle(self, method: str) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
+            received_requests.append((method, self.path, self.headers.get("Authorization", "")))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            if self.path == "/api/source-ingest/active-universe/schedule":
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "enqueued_count": 1,
+                            "enqueued_items": [
+                                {
+                                    "connector_id": "tw-taifex-futures-options-chip",
+                                    "job_parameters": {
+                                        "connector_id": "tw-taifex-futures-options-chip",
+                                        "dataset": "taifex_ssf_contracts",
+                                        "contracts": ["2330"],
+                                        "symbols": ["2330"],
+                                    },
+                                }
+                            ],
+                        }
+                    ).encode("utf-8")
+                )
+            else:
+                self.wfile.write(json.dumps({"ok": True, "echo": body}).encode("utf-8"))
+
+        def do_POST(self) -> None:
+            self._handle("POST")
+
+        def do_PUT(self) -> None:
+            self._handle("PUT")
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    state_path = tmp_path / "stub_state.json"
+    written_desired = tmp_path / "written_desired.json"
+
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        f"""#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+
+state = json.loads(Path({str(state_path)!r}).read_text(encoding="utf-8"))
+args = sys.argv[1:]
+if args[0] == "compose" and "ps" in args and args[-1] == "source-ingest":
+    print(state.get("live_cid", ""))
+    sys.exit(0)
+if args[0] == "exec":
+    cid = args[2] if args[1] == "-i" else args[1]
+    cmd = " ".join(args[3:] if args[1] == "-i" else args[2:])
+    if cid != state.get("live_cid"):
+        sys.stderr.write(f"Error: No such container: {{cid}}\\n")
+        sys.exit(1)
+    if "controller_token" in cmd:
+        if state.get("fail_token_exec"):
+            sys.stderr.write("exec token read failed\\n")
+            sys.exit(1)
+        print(state.get("token", ""))
+        sys.exit(0)
+    if "desired_state.json" in cmd:
+        if state.get("fail_desired_write"):
+            sys.stderr.write("exec desired_state write failed\\n")
+            sys.exit(1)
+        data = sys.stdin.read()
+        if not data.strip():
+            sys.exit(1)
+        Path({str(written_desired)!r}).write_text(data, encoding="utf-8")
+        sys.exit(0)
+sys.exit(1)
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+
+    def run_prepare(state_obj: dict, passed_cid: str = "obsolete-cid-before-recreate") -> subprocess.CompletedProcess[str]:
+        state_path.write_text(json.dumps(state_obj), encoding="utf-8")
+        script = f"""set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+{func_def}
+prepare_bounded_source_refresh_dataset "tw-taifex-futures-options-chip" "taifex_ssf_contracts" "2330.TW" "{passed_cid}"
+"""
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+        env["PYTHONPATH"] = str(ROOT)
+        env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+        env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{server.server_port}"
+        env.pop("SOURCE_INGEST_CONTROLLER_TOKEN", None)
+        env.pop("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", None)
+        return subprocess.run(
+            ["bash", "-c", script],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     try:
-        _sys.argv = ["prepare_dataset.py", "tw-taifex-futures-options-chip", "taifex_ssf_contracts", "2330.TW"]
-        ns: dict = {"__name__": "__main__"}
-        exec(compile(prepare_py, "prepare_bounded_source_refresh_dataset", "exec"), ns)
+        # 1. Obsolete passed cid is overridden by live compose ps cid; token read and desired_state write succeed
+        res_ok = run_prepare({"live_cid": "new-recreated-cid", "token": "tok-live-999"})
+        assert res_ok.returncode == 0, res_ok.stderr
+        assert "prepared bounded source refresh dataset taifex_ssf_contracts" in res_ok.stdout
+        assert written_desired.exists()
+        desired_obj = json.loads(written_desired.read_text(encoding="utf-8"))
+        assert any(
+            r.get("dataset") == "taifex_ssf_contracts"
+            for r in desired_obj["personas"][0]["required_data_sources"]
+        )
+        assert all(auth == "Bearer tok-live-999" for _, _, auth in received_requests)
+
+        # 2. Token docker exec failure must fail closed (non-zero) and never report prepared
+        res_tok_fail = run_prepare({"live_cid": "new-recreated-cid", "fail_token_exec": True})
+        assert res_tok_fail.returncode != 0
+        assert "failed to read controller_token" in res_tok_fail.stderr
+        assert "prepared bounded source refresh dataset" not in res_tok_fail.stdout
+
+        # 3. Empty controller token must fail closed
+        res_tok_empty = run_prepare({"live_cid": "new-recreated-cid", "token": ""})
+        assert res_tok_empty.returncode != 0
+        assert "empty controller_token" in res_tok_empty.stderr
+        assert "prepared bounded source refresh dataset" not in res_tok_empty.stdout
+
+        # 4. Desired-state docker exec write failure must fail closed (no || true swallow)
+        res_write_fail = run_prepare(
+            {"live_cid": "new-recreated-cid", "token": "tok-live-999", "fail_desired_write": True}
+        )
+        assert res_write_fail.returncode != 0
+        assert "failed to write bounded desired_state.json" in res_write_fail.stderr
+        assert "prepared bounded source refresh dataset" not in res_write_fail.stdout
     finally:
-        _sys.argv = old_argv
-
-    # Verify the frontier now holds an active-universe job with dataset=taifex_ssf_contracts and contracts=['2330']
-    frontier_resp = client.get(
-        "/api/source-ingest/frontier",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert frontier_resp.status_code == 200
-    frontier_items = [
-        item
-        for item in (frontier_resp.json().get("frontier") or [])
-        if item.get("connector_id") == "tw-taifex-futures-options-chip"
-    ]
-    assert len(frontier_items) == 1
-    assert frontier_items[0]["job_parameters"]["dataset"] == "taifex_ssf_contracts"
-    assert frontier_items[0]["job_parameters"]["contracts"] == ["2330"]
-    assert frontier_items[0]["job_parameters"]["symbols"] == ["2330"]
-
-    # Stub _fetch_official with the governed TAIFEX SSF fixtures and run controller_worker.run_schedule_tick
-    ssf_fixtures = ROOT / "services" / "execution" / "lean_runtime" / "fixtures" / "taifex_20261106"
-    seen_urls: list[str] = []
-
-    def fake_fetch_official(request, *, caller, timeout_seconds, max_bytes, parse):
-        seen_urls.append(request.full_url)
-        name = request.full_url.rsplit("/", 1)[-1]
-        if name == "stockLists":
-            return parse((ssf_fixtures / "stockLists.html").read_text(encoding="utf-8").encode("utf-8"))
-        raw = json.loads((ssf_fixtures / f"{name}.json").read_text(encoding="utf-8"))
-        return parse(b"\xef\xbb\xbf" + json.dumps(raw).encode("utf-8"))
-
-    monkeypatch.setattr(tw_official, "_fetch_official", fake_fetch_official)
-
-    def fake_controller_request_json(url, *, method="GET", payload=None, bearer_token=None, timeout_seconds=30.0):
-        path = url[len("http://source-ingest:8097") :]
-        headers = {"Accept": "application/json"}
-        if bearer_token:
-            headers["Authorization"] = f"Bearer {bearer_token}"
-        resp = client.request(method, path, headers=headers, json=payload)
-        assert resp.status_code == 200, resp.text
-        return resp.json()
-
-    monkeypatch.setattr(controller_worker, "_request_json", fake_controller_request_json)
-
-    tick_result = controller_worker.run_schedule_tick(
-        api_url="http://source-ingest:8097",
-        max_concurrency=1,
-        timeout_seconds=30.0,
-        controller_token=token,
-        force_connector_ids=("tw-taifex-futures-options-chip",),
-        exclusive_connector_ids=("tw-taifex-futures-options-chip",),
-    )
-    assert tick_result["summary"]["total_ran"] == 1
-    assert tick_result["summary"]["total_failed"] == 0
-
-    # Verify the 5 SSF endpoints were fetched and never taifex_futures_chip (InstitutionalInvestors)
-    assert seen_urls == [
-        "https://openapi.taifex.com.tw/v1/SingleStockFuturesMargining",
-        "https://openapi.taifex.com.tw/v1/SingleStockFuturesETFMargining",
-        "https://openapi.taifex.com.tw/v1/DailyMarketReportFut",
-        "https://openapi.taifex.com.tw/v1/FinalSettlementPriceSSF",
-        "https://www.taifex.com.tw/cht/2/stockLists",
-    ]
-    assert not any("InstitutionalInvestors" in u for u in seen_urls)
-    assert {u.split("/")[2] for u in seen_urls} == {"openapi.taifex.com.tw", "www.taifex.com.tw"}
-
-    # Verify controller readback has normalized taifex_ssf_contracts record with tw_taifex_ssf_contracts.v1 schema_hash
-    readback_resp = client.get(
-        "/api/source-ingest/controller/readback",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert readback_resp.status_code == 200
-    taifex_row = next(
-        row
-        for row in (readback_resp.json().get("connectors") or [])
-        if row.get("connector_id") == "tw-taifex-futures-options-chip"
-    )
-    latest_rec = taifex_row["latest_source_record"]
-    assert latest_rec["source_id"].startswith("tw-taifex:taifex_ssf_contracts:")
-    assert latest_rec["provenance"]["dataset"] == "taifex_ssf_contracts"
-    assert latest_rec["provenance"]["schema_hash"] == "tw_taifex_ssf_contracts.v1"
-    assert latest_rec["provenance"]["symbol"] == "2330"
-
-
+        server.shutdown()
