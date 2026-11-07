@@ -550,6 +550,22 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def _patch_evolution_decisions(monkeypatch, tenant="t-own"):
+    import urllib.error
+    from services.control_plane.bff.command_adapters import base
+
+    monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.test")
+    table = {"d-own": "t-own", "d-x": "t-x"}
+
+    def _evo(url, *, tenant_id=None, **_kw):
+        owner = table.get(url.rsplit("/", 1)[1])
+        if owner is None or owner != tenant_id:
+            raise urllib.error.HTTPError(url, 404, "nf", {}, None)
+        return {"tenant_id": owner}
+
+    monkeypatch.setattr(base, "evolution_owner_request", _evo)
+
+
 def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
     from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
     from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
@@ -557,7 +573,8 @@ def test_rsp_rollbacks_and_dataset_source_use_governance_owner(monkeypatch):
         DomainGovernancePort,
     )
 
-    rows = [{"rollback_id": "r1", "tenant_id": "t-own", "status": "completed"}, {"rollback_id": "r2", "tenant_id": "t-x"}]
+    rows = [{"rollback_id": "r1", "evolution_decision_id": "d-own", "status": "completed"}, {"rollback_id": "r2", "evolution_decision_id": "d-x", "tenant_id": "t-own"}]
+    _patch_evolution_decisions(monkeypatch)
     calls = []
     from services.control_plane.bff import command_executor
     from services.control_plane.bff.core import owner_reads
@@ -587,11 +604,12 @@ def test_rsp_get_rollbacks_reads_canonical_owner_and_raises_when_unavailable(mon
     from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
     rows = [
-        {"rollback_id": "r1", "tenant_id": "t-own", "runtime_id": "rt1", "status": "completed"},
-        {"rollback_id": "r2", "tenant_id": "t-own", "runtime_id": "rt2"},
-        {"rollback_id": "r3", "tenant_id": "t-x", "runtime_id": "rt1"},
-        {"rollback_id": "r4", "runtime_id": "rt1"},
+        {"rollback_id": "r1", "evolution_decision_id": "d-own", "runtime_id": "rt1", "status": "completed"},
+        {"rollback_id": "r2", "evolution_decision_id": "d-own", "runtime_id": "rt2"},
+        {"rollback_id": "r3", "evolution_decision_id": "d-x", "runtime_id": "rt1"},
+        {"rollback_id": "r4", "tenant_id": "t-own", "runtime_id": "rt1"},
     ]
+    _patch_evolution_decisions(monkeypatch)
     monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance.test")
     monkeypatch.setattr(owner_reads, "verified_caller_tenant", lambda payload=None, tenant_id=None: "t-own")
     monkeypatch.setattr(command_executor, "_get_json", lambda url, **kw: rows)

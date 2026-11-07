@@ -881,8 +881,11 @@ def test_helpers():
 class _GovOwner:
     """Fake Governance owner behind the real configured transport (command_executor._get_json)."""
 
-    def __init__(self, monkeypatch, payloads: Dict[str, Any], tenant: str = "t-own") -> None:
+    def __init__(self, monkeypatch, payloads: Dict[str, Any], tenant: str = "t-own", decisions: Any = None) -> None:
+        import urllib.error
+
         from services.control_plane.bff import command_executor
+        from services.control_plane.bff.command_adapters import base
         from services.control_plane.bff.core import owner_reads
 
         self.calls: List[Dict[str, Any]] = []
@@ -897,6 +900,31 @@ class _GovOwner:
             return value
 
         monkeypatch.setattr(command_executor, "_get_json", _get_json)
+
+        # Evolution owner: tenant-guarded decision read (foreign/unknown -> 404).
+        # Default: every decision id "d-<tenant>-*" belongs to that tenant.
+        self.decision_calls: List[Dict[str, Any]] = []
+        monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.test")
+
+        def _evolution(url, *, caller_token=None, method="GET", tenant_id=None, **_kw):
+            did = url.rsplit("/", 1)[1]
+            self.decision_calls.append({"id": did, "tenant": tenant_id, "auth": caller_token})
+            table = decisions if decisions is not None else {}
+            d = table.get(did)
+            if isinstance(d, Exception):
+                raise d
+            if d is None or d.get("tenant_id") != tenant_id:
+                raise urllib.error.HTTPError(url, 404, "nf", {}, None)
+            return d
+
+        monkeypatch.setattr(base, "evolution_owner_request", _evolution)
+
+
+_DECISIONS = {
+    "d-own": {"decision_id": "d-own", "tenant_id": "t-own", "target_id": "a1", "target_version": "v1"},
+    "d-own2": {"decision_id": "d-own2", "tenant_id": "t-own", "target_id": "a2", "target_version": "v1"},
+    "d-foreign": {"decision_id": "d-foreign", "tenant_id": "t-other", "target_id": "a9", "target_version": "v1"},
+}
 
 
 def _journal_port():
@@ -913,15 +941,21 @@ def _with_caller():
 def test_default_port_reads_governance_owner_scoped_to_verified_tenant(monkeypatch):
     owner = _GovOwner(monkeypatch, {
         "freeze-orders": [
-            {"freeze_order_id": "f-own", "status": "active", "tenant_id": "t-own", "created_at": "2026-11-02T00:00:00Z"},
-            {"freeze_order_id": "f-foreign", "status": "active", "tenant_id": "t-other"},
+            {"freeze_order_id": "f-own", "status": "active", "tenant_id": "t-own", "evolution_decision_id": "d-own",
+             "target_id": "a1", "target_version": "v1", "created_at": "2026-11-02T00:00:00Z"},
+            {"freeze_order_id": "f-foreign", "status": "active", "tenant_id": "t-other", "evolution_decision_id": "d-foreign"},
+            # Caller-written body claims the caller's tenant on a foreign decision: not proof.
+            {"freeze_order_id": "f-forged", "status": "active", "tenant_id": "t-own", "evolution_decision_id": "d-foreign",
+             "target_id": "a9", "target_version": "v1"},
+            # Claims own tenant but no decision binding: unverifiable, never visible.
+            {"freeze_order_id": "f-claim-only", "status": "active", "tenant_id": "t-own"},
             {"freeze_order_id": "f-legacy", "status": "active"},
         ],
         "rollbacks": [
-            {"rollback_id": "r-own", "runtime_id": "rt1", "status": "completed", "tenant_id": "t-own"},
-            {"rollback_id": "r-foreign", "runtime_id": "rt1", "tenant_id": "t-other"},
+            {"rollback_id": "r-own", "runtime_id": "rt1", "status": "completed", "evolution_decision_id": "d-own"},
+            {"rollback_id": "r-foreign", "runtime_id": "rt1", "evolution_decision_id": "d-foreign"},
         ],
-    })
+    }, decisions=_DECISIONS)
     port = _journal_port()
     token, authorization, scope = _with_caller()
     try:
@@ -936,6 +970,8 @@ def test_default_port_reads_governance_owner_scoped_to_verified_tenant(monkeypat
     assert [o["freeze_order_id"] for o in orders] == ["f-own"]
     assert [r["rollback_id"] for r in rollbacks] == ["r-own"]
     assert rollbacks[0]["status"] == "completed"
+    assert {c["id"] for c in owner.decision_calls} == {"d-own", "d-foreign"}  # one read per decision
+    assert all(c["tenant"] == "t-own" and c["auth"] == "caller-token" for c in owner.decision_calls)
     # Unresolved legacy row never fabricated into the tenant; source stays unverified.
     assert src_freeze == "unavailable"
     assert src_rb == "service"
@@ -967,7 +1003,7 @@ def test_default_port_healthy_empty_vs_error_vs_unconfigured(monkeypatch):
 
 
 def test_default_port_requires_caller_authorization(monkeypatch):
-    _GovOwner(monkeypatch, {"freeze-orders": [{"freeze_order_id": "f", "tenant_id": "t-own"}], "rollbacks": []})
+    _GovOwner(monkeypatch, {"freeze-orders": [{"freeze_order_id": "f", "evolution_decision_id": "d-own"}], "rollbacks": []}, decisions=_DECISIONS)
     port = _journal_port()
     assert port.list_freeze_orders() == []
     assert port.dataset_source("freeze_orders") == "unavailable"
@@ -980,9 +1016,9 @@ def test_injected_store_mode_unchanged():
 
 def test_default_port_uses_canonical_owner_url_not_legacy_alias(monkeypatch):
     owner = _GovOwner(monkeypatch, {
-        "freeze-orders": [{"freeze_order_id": "f-own", "tenant_id": "t-own"}],
-        "rollbacks": [{"rollback_id": "r-own", "tenant_id": "t-own", "runtime_id": "rt1"}],
-    })
+        "freeze-orders": [{"freeze_order_id": "f-own", "evolution_decision_id": "d-own", "target_id": "a1", "target_version": "v1"}],
+        "rollbacks": [{"rollback_id": "r-own", "evolution_decision_id": "d-own", "runtime_id": "rt1"}],
+    }, decisions=_DECISIONS)
     monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://evolution.test")
     port = _journal_port()
     token, authorization, scope = _with_caller()
@@ -996,7 +1032,7 @@ def test_default_port_uses_canonical_owner_url_not_legacy_alias(monkeypatch):
 
 
 def test_default_port_service_url_only_is_configured(monkeypatch):
-    owner = _GovOwner(monkeypatch, {"freeze-orders": [{"freeze_order_id": "f", "tenant_id": "t-own"}], "rollbacks": []})
+    owner = _GovOwner(monkeypatch, {"freeze-orders": [{"freeze_order_id": "f", "evolution_decision_id": "d-own", "target_id": "a1", "target_version": "v1"}], "rollbacks": []}, decisions=_DECISIONS)
     monkeypatch.delenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL")
     monkeypatch.setenv("PANTHEON_GOVERNANCE_SERVICE_URL", "http://svc.test")
     port = _journal_port()
@@ -1008,3 +1044,41 @@ def test_default_port_service_url_only_is_configured(monkeypatch):
     finally:
         authorization.reset(token)
     assert owner.calls[0]["url"].startswith("http://svc.test/")
+
+
+def test_decision_read_error_is_unavailable_not_hidden_or_healthy(monkeypatch):
+    import urllib.error
+
+    err = urllib.error.HTTPError("http://evolution.test/x", 503, "down", {}, None)
+    _GovOwner(
+        monkeypatch,
+        {"freeze-orders": [{"freeze_order_id": "f", "evolution_decision_id": "d-own"}], "rollbacks": []},
+        decisions={"d-own": err},
+    )
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            assert port.list_freeze_orders() == []
+            assert port.dataset_source("freeze_orders") == "unavailable"
+    finally:
+        authorization.reset(token)
+
+
+def test_freeze_row_target_mismatch_with_decision_is_unresolved(monkeypatch):
+    _GovOwner(
+        monkeypatch,
+        {"freeze-orders": [
+            {"freeze_order_id": "f-ok", "evolution_decision_id": "d-own", "target_id": "a1", "target_version": "v1"},
+            {"freeze_order_id": "f-bad", "evolution_decision_id": "d-own", "target_id": "zzz", "target_version": "v1"},
+        ], "rollbacks": []},
+        decisions=_DECISIONS,
+    )
+    port = _journal_port()
+    token, authorization, scope = _with_caller()
+    try:
+        with scope():
+            assert [o["freeze_order_id"] for o in port.list_freeze_orders()] == ["f-ok"]  # verified row stays visible
+            assert port.dataset_source("freeze_orders") == "unavailable"  # unresolved sibling keeps it partial
+    finally:
+        authorization.reset(token)

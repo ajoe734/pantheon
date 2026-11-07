@@ -1000,12 +1000,40 @@ class DomainGovernancePort:
         "all_rollbacks": "/api/governance/rollbacks",
     }
 
+    @staticmethod
+    def _owner_decision(
+        decision_id: str, token: str, tenant: str, timeout: Optional[float]
+    ) -> Optional[Dict[str, Any]]:
+        """Tenant-guarded Evolution decision read; None when not visible to the tenant."""
+        import urllib.error
+        from urllib.parse import quote
+
+        from services.control_plane.bff.command_adapters.base import evolution_owner_request, get_base_url
+
+        base = get_base_url("PANTHEON_EVOLUTION_API_URL")
+        try:
+            body = evolution_owner_request(
+                f"{base}/api/evolution/proposals/{quote(decision_id, safe='')}",
+                caller_token=token,
+                method="GET",
+                tenant_id=tenant,
+                **({"timeout": timeout} if timeout is not None else {}),
+            )
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        return body if isinstance(body, dict) else None
+
     def _owner_scoped_records(self, dataset: str) -> Tuple[List[Dict[str, Any]], int]:
         """Read one canonical Governance collection; return (visible rows, unresolved count).
 
-        Visible rows carry a ``tenant_id`` equal to the verified caller tenant.
-        Rows with no tenant binding are unresolved (never shown, never
-        assigned a tenant); rows bound to another tenant are hidden. Raises on
+        A row is visible only when its ``evolution_decision_id`` resolves, via the
+        Evolution owner's tenant-guarded read with the caller's tenant, to a
+        decision of the verified caller tenant (freeze rows must also match that
+        decision's target). The row's own ``tenant_id`` is client-writable and is
+        never proof. Rows without a decision binding are unresolved (never shown,
+        never assigned a tenant); rows bound to another tenant are hidden. Raises on
         unconfigured owner, missing caller auth, transport error or bad payload.
         """
         from services.control_plane.bff.command_adapters.base import governance_approval_url, http_request_json
@@ -1035,12 +1063,33 @@ class DomainGovernancePort:
                 raise RuntimeError(f"Invalid Governance owner collection for {dataset}")
             visible: List[Dict[str, Any]] = []
             unresolved = 0
+            decisions: Dict[str, Optional[Dict[str, Any]]] = {}
             for row in body:
-                row_tenant = str(row.get("tenant_id") or "").strip()
-                if not row_tenant:
+                # A row's own tenant_id is client-writable body data, never proof.
+                # Tenant is proven only by the Evolution owner's tenant-guarded
+                # read of the decision the row is bound to.
+                decision_id = str(row.get("evolution_decision_id") or "").strip()
+                if not decision_id:
                     unresolved += 1
-                elif row_tenant == tenant:
-                    visible.append(dict(row))
+                    continue
+                if decision_id not in decisions:
+                    decisions[decision_id] = self._owner_decision(decision_id, token, tenant, rem)
+                decision = decisions[decision_id]
+                if decision is None:
+                    # Not visible to the caller tenant (foreign or unknown): hidden.
+                    continue
+                if str(decision.get("tenant_id") or "").strip() != tenant:
+                    continue
+                claimed = str(row.get("tenant_id") or "").strip()
+                if claimed and claimed != tenant:
+                    continue
+                if dataset == "freeze_orders" and any(
+                    str(row.get(f) or "").strip() != str(decision.get(f) or "").strip()
+                    for f in ("target_id", "target_version")
+                ):
+                    unresolved += 1
+                    continue
+                visible.append(dict(row))
             return visible, unresolved
 
         return cached_owner_call(("governance_owner_records", dataset, url, token, tenant), _load)
