@@ -2234,25 +2234,6 @@ def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     return get_build_management_anomalies_payload()(snapshot_at)
 
 
-_HUMAN_INBOX_PAYLOAD_FN: Optional[Callable[..., Dict[str, Any]]] = None
-
-def get_human_inbox_payload() -> Callable[..., Dict[str, Any]]:
-    if _HUMAN_INBOX_PAYLOAD_FN is not None:
-        return _HUMAN_INBOX_PAYLOAD_FN
-    return lambda snapshot_at, **kwargs: {"items": [], "meta": {"surfaces": {}}}
-
-def set_human_inbox_payload(fn: Optional[Callable[..., Dict[str, Any]]]) -> None:
-    global _HUMAN_INBOX_PAYLOAD_FN
-    _HUMAN_INBOX_PAYLOAD_FN = fn
-
-def reset_human_inbox_payload() -> None:
-    global _HUMAN_INBOX_PAYLOAD_FN
-    _HUMAN_INBOX_PAYLOAD_FN = None
-
-def _human_inbox_payload(snapshot_at: str, **kwargs: Any) -> Dict[str, Any]:
-    return get_human_inbox_payload()(snapshot_at, **kwargs)
-
-
 _LIST_PERSONA_RECORDS_FN: Optional[Callable[..., List[Dict[str, Any]]]] = None
 
 def get_list_persona_records() -> Callable[..., List[Dict[str, Any]]]:
@@ -3063,7 +3044,6 @@ def wire_management_runtime_projections(
     management_telemetry_rollup: Optional[Callable[..., Dict[str, Any]]] = None,
     build_operator_alerts_payload: Optional[Callable[[str], Dict[str, Any]]] = None,
     build_management_anomalies_payload: Optional[Callable[[str], Dict[str, Any]]] = None,
-    human_inbox_payload: Optional[Callable[..., Dict[str, Any]]] = None,
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None,
     project_persona_fleet_item: Optional[Callable[..., Tuple[Dict[str, Any], List[Dict[str, Any]]]]] = None,
     dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -3099,8 +3079,6 @@ def wire_management_runtime_projections(
         set_build_operator_alerts_payload(build_operator_alerts_payload)
     if build_management_anomalies_payload is not None:
         set_build_management_anomalies_payload(build_management_anomalies_payload)
-    if human_inbox_payload is not None:
-        set_human_inbox_payload(human_inbox_payload)
     if list_persona_records is not None:
         set_list_persona_records(list_persona_records)
     if project_persona_fleet_item is not None:
@@ -4812,6 +4790,9 @@ def _mgmt_nl_unavailable_fleet_item(
     return item, [observation]
 
 
+_MGMT_NL_HUMAN_INBOX_PAGE_SIZE = 2000
+
+
 def _mgmt_nl_collect_context(
     focus: str,
     snapshot_at: str,
@@ -4901,9 +4882,12 @@ def _mgmt_nl_collect_context(
         try:
             alerts_payload = _build_operator_alerts_payload(snapshot_at)
             alerts = _deployment_scoped_record_filter(list(alerts_payload.get("alerts") or []))
-            human_inbox_payload = _human_inbox_payload(
-                snapshot_at, page_size=None, identity=identity
+            # Same builder as GET /bff/management/human-inbox, so a successful
+            # empty approval queue is ok here exactly as it is on that page.
+            human_inbox_payload = _management_ai_context_service.get_human_inbox(
+                page_size=_MGMT_NL_HUMAN_INBOX_PAGE_SIZE, identity=identity
             )
+            human_inbox_total = int((human_inbox_payload.get("page_info") or {}).get("total") or 0)
             inbox_items = _deployment_scoped_record_filter(
                 list(((human_inbox_payload.get("data") or {}).get("items")) or [])
             )
@@ -4926,7 +4910,7 @@ def _mgmt_nl_collect_context(
             snippets["cockpit"] = {
                 "trading_pulse_summary": trading_pulse.get("summary"),
                 "alerts_summary": _build_alert_summary(alerts),
-                "human_inbox_summary": {"total": len(inbox_items)},
+                "human_inbox_summary": {"total": human_inbox_total},
                 "anomalies_summary": {"total": len(anomalies)},
             }
             cockpit_owner_observation = _mgmt_nl_merge_owner_observations(

@@ -2183,7 +2183,10 @@ class ManagementService:
         kwargs: Optional[Dict[str, Any]] = None,
         load_records: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+        empty_read_is_ok: bool = False,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        # ``empty_read_is_ok`` is only for a caller whose load_records raises on
+        # a failed owner read, so that an empty list can only be a real empty.
         store = self._resolve_store()
         domain_status = self._resolve_domain_surface_status(subject_type, store)
         if domain_status is not None and domain_status.get("status") == "unavailable":
@@ -2231,6 +2234,8 @@ class ManagementService:
             status = "ok"
         elif domain_status is not None and domain_status.get("status") == "unavailable":
             status = "unavailable"
+        elif empty_read_is_ok and (domain_status is None or domain_status.get("status") == "ok"):
+            status = "ok"
         else:
             status = "degraded"
         return items, self._observation_from_items(
@@ -2375,12 +2380,22 @@ class ManagementService:
         # Ask the incidents owner for its own open definition. The owner holds
         # thousands of resolved rows; reading them all would put history into
         # the evidence entities and the provider prompt.
+        # The read raises on an owner failure (read_open_incidents asks the
+        # owner for raise_on_error), so a successful empty open list is a real
+        # empty and reads ok, while a failed read reads unavailable.
+        def _load_open_incidents() -> List[Dict[str, Any]]:
+            store = self._resolve_store()
+            if store is None or not hasattr(store, "list_incidents"):
+                raise RuntimeError("incidents read surface is unavailable or unconfigured")
+            return read_open_incidents(store)
+
         return self._typed_context_list(
             "list_incidents",
             subject_type="incidents",
             owner=owner,
-            kwargs={"open_only": True},
+            load_records=_load_open_incidents,
             record_filter=record_filter,
+            empty_read_is_ok=True,
         )
 
     def get_context_evolution_decisions(

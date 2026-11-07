@@ -533,7 +533,6 @@ def test_pm12_duplicate_helpers_resolve_from_service():
 def test_human_inbox_governance_seam_delegation():
     import importlib
     from services.control_plane.bff.governance.human_inbox import (
-        _human_inbox_payload,
         _human_inbox_priority,
     )
     bff_main = importlib.import_module("services.control_plane.bff.main")
@@ -542,7 +541,6 @@ def test_human_inbox_governance_seam_delegation():
     # GENUINE BLOCKER: identity checks on main.py's own module attributes require
     # importing main.py -- there is no seam standing in for main.py's own binding
     # of these names. Step 2 below exercises the real human_inbox seam directly.
-    assert bff_main._human_inbox_payload is _human_inbox_payload
     assert bff_main._human_inbox_priority is _human_inbox_priority
 
     # 2. Priority normalization handles sev/p prefixes
