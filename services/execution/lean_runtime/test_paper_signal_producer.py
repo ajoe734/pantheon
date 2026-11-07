@@ -2121,6 +2121,71 @@ class TestExpressionDecisionStep(unittest.TestCase):
         self._producer(Recording()).produce(self._binding(self._artifact()), self.NOW)
         self.assertEqual(order, ["persist", "enqueue"])
 
+    def test_restart_after_persist_before_enqueue_replays_without_builder_or_decider(self) -> None:
+        class CrashOnce(InMemoryPendingSignalStore):
+            armed = True
+
+            def enqueue(self, payload):
+                if self.armed:
+                    self.armed = False
+                    raise RuntimeError("crash after persistence")
+                return super().enqueue(payload)
+
+        store = CrashOnce()
+        binding = self._binding(self._artifact(bearish=True), closes=(100.0, 101.0))
+        with self.assertRaises(RuntimeError):
+            self._producer(store).produce(binding, self.NOW)
+        self.assertEqual(store.queue_depth(), 0)
+        calls: list[str] = []
+
+        def forbidden_builder(*a, **k):
+            calls.append("builder")
+            raise AssertionError("builder must not run on replay")
+
+        def forbidden_decider(*a, **k):
+            calls.append("decider")
+            raise AssertionError("decider must not run on replay")
+
+        restarted = self._producer(
+            store, candidates_builder=forbidden_builder, decider=forbidden_decider
+        )
+        self.assertEqual(restarted.produce(binding, "2026-11-09T10:31:00Z"), 1)
+        self.assertEqual(calls, [])
+        [signal] = store.get_pending()
+        self.assertEqual(signal["metadata"]["instrument_id"], "ssf:SRF:202611")
+
+    def test_consumed_no_trade_skips_without_builder_or_decider(self) -> None:
+        store = InMemoryPendingSignalStore()
+        binding = self._binding(self._artifact(bearish=True), closes=(100.0, 101.0))
+        producer = self._producer(store, candidates_builder=_expression_candidates(short_ok=False))
+        self.assertEqual(producer.produce(binding, self.NOW), 1)
+        [signal] = store.get_pending()
+        fence = store.begin_execution(signal)
+        store.complete_execution(signal["signal_id"], fence.token)
+        store.ack(signal)
+
+        def forbidden(*a, **k):
+            raise AssertionError("must not run for a consumed bar")
+
+        restarted = self._producer(store, candidates_builder=forbidden, decider=forbidden)
+        self.assertEqual(restarted.produce(binding, "2026-11-09T10:31:00Z"), 0)
+
+    def test_forbidden_field_on_no_trade_record_is_rejected(self) -> None:
+        for field in ("price", "initial_margin_per_unit"):
+            store = InMemoryPendingSignalStore()
+            bad = lambda view, c, b, bu, p, _f=field: {  # noqa: E731
+                "decision_id": view["decision_id"],
+                "reason_code": "flat_view",
+                _f: 1,
+            }
+            binding = self._binding(self._artifact())
+            self.assertEqual(self._producer(store, decider=bad).produce(binding, self.NOW), 1)
+            [signal] = store.get_pending()
+            record = signal["metadata"]["expression_decision"]
+            self.assertEqual(record["reason_code"], "instrument_not_in_candidates")
+            self.assertNotIn(field, record)
+            self.assertEqual(signal["action"], "HOLD")
+
     def test_store_that_cannot_persist_fails_closed(self) -> None:
         class Plain:
             def enqueue(self, payload):  # pragma: no cover - must not be reached

@@ -354,12 +354,13 @@ def enforce(
 
     if not isinstance(record, Mapping):
         return reject("decider output is not a mapping")
-    if is_no_trade(record):
-        return dict(record)
     for key in record:
         lowered = str(key).lower()
         if "price" in lowered or "margin" in lowered:
             return reject(f"decider supplied forbidden field {key!r}")
+    if is_no_trade(record):
+        return dict(record)
+    for key in record:
         if key not in _CHOSEN_KEYS:
             return reject(f"decider supplied unknown field {key!r}")
     by_id = {str(c.get("instrument_id")): c for c in candidates}

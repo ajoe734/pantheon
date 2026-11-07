@@ -425,6 +425,18 @@ class CurrentArtifactStrategy:
             "decision": record,
         }
 
+    @staticmethod
+    def _expression_base_view(view: Mapping[str, Any], decision_id: str, symbol: str) -> dict[str, Any]:
+        from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+
+        return {
+            "decision_id": decision_id,
+            "underlying": normalize_underlying_code(symbol),
+            "direction": view["direction"],
+            "strength": view.get("strength"),
+            "momentum": view.get("momentum"),
+        }
+
     def __call__(self, binding: Any, now_iso: str) -> dict[str, Any]:
         b_dict = _binding_dict_from_obj(binding)
         binding_id = _required_binding_text(b_dict, "binding_id")
@@ -625,17 +637,22 @@ class CurrentArtifactStrategy:
             },
         }
         if expression_enabled and view is not None and is_taiwan_venue_symbol(symbol):
-            out["expression"] = self._expression_step(
-                view=view,
-                decision_id=decision_id,
-                symbol=symbol,
-                closes=closes,
-                market_input=market_input,
-                strategy_artifact=strategy_artifact,
-                b_dict=b_dict,
-                metadata=metadata,
-                now_iso=now_iso,
-            )
+            # Lazy: the producer evaluates only after admission and a stored
+            # record lookup, so a restart never re-runs builder or decider.
+            out["expression"] = {
+                "view": self._expression_base_view(view, decision_id, symbol),
+                "evaluate": lambda: self._expression_step(
+                    view=view,
+                    decision_id=decision_id,
+                    symbol=symbol,
+                    closes=closes,
+                    market_input=market_input,
+                    strategy_artifact=strategy_artifact,
+                    b_dict=b_dict,
+                    metadata=metadata,
+                    now_iso=now_iso,
+                ),
+            }
         return out
 
     @staticmethod
@@ -1360,16 +1377,19 @@ class PaperSignalProducer:
                     )
                     return 0
                 stored = getter(decision_id)
+                expression_view = dict(expression["view"])
                 if stored is None:
+                    evaluated = expression["evaluate"]()
+                    expression_view = dict(evaluated["view"])
                     stored = putter(
                         decision_id,
                         {
-                            "record": dict(expression["decision"]),
-                            "kind": expression["view"].get("kind"),
-                            "multiplier": expression["view"].get("multiplier"),
+                            "record": dict(evaluated["decision"]),
+                            "kind": expression_view.get("kind"),
+                            "multiplier": expression_view.get("multiplier"),
                         },
                     )
-                apply_expression_record(out, expression["view"], stored)
+                apply_expression_record(out, expression_view, stored)
 
             if "metadata" not in out:
                 out["metadata"] = {}

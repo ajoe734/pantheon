@@ -12,13 +12,15 @@
     },
     {
       "command": "/tmp/civenv/bin/python -m pytest services/execution/lean_runtime services/source_ingestion/tests/test_latest_market_snapshot_state.py scripts/test_paper_runtime_topology_contract.py services/telemetry/test_paper_runtime_ingest_contract.py -q -x",
-      "result": "518 passed, 49 subtests passed",
+      "result": "524 passed, 49 subtests passed (re-run after review round 2)",
       "covers": "acceptance 5-7: flag off/legacy artifact/non-Taiwan symbol keep today's decision_id and signal_id and dict; flag on chooses cash or future with the envelope (instrument_id, kind, units, multiplier, reason_code, decision_id); NoTrade becomes HOLD noop (paper_order_simulated noop_count 1 with the record) and a restart does not retry the bar; decision persisted before enqueue; restart after persistence before fill reuses stored instrument and units; chosen stock_future rejected with instrument_not_supported_by_ledger and no fill; signal_generation carries strength/momentum/view_direction, trade_decision carries the record; compose default PANTHEON_PAPER_EXPRESSION_LAYER off"
     }
   ],
   "review_fixes": [
     "enforce() validates close_leg against trusted book holdings (same instrument, reducing side, units <= held); otherwise rejected with instrument_not_in_candidates; producer end-to-end regression added (TestExpressionDecisionStep.test_forged_close_leg_without_a_holding_cannot_place_an_order)",
-    "decide() scans opposite-direction holdings before the same-direction already_at_target no-op; tested in both orderings"
+    "decide() scans opposite-direction holdings before the same-direction already_at_target no-op; tested in both orderings",
+    "Round 2 P1: the strategy now attaches a lazy expression evaluator; PaperSignalProducer.produce evaluates candidates/decider only after admission and a stored-record lookup miss, so a restart replays the persisted record without builder or decider. Tests: test_restart_after_persist_before_enqueue_replays_without_builder_or_decider, test_consumed_no_trade_skips_without_builder_or_decider",
+    "Round 2 P2: enforce() rejects price/margin fields before the NoTrade early return; test_forbidden_field_on_no_trade_record_is_rejected covers price and initial_margin_per_unit"
   ],
   "design_notes": [
     "Producer inputs persona_book and risk_budget are read from binding metadata expression_inputs (or an injected provider); absent inputs fail closed to a NoTrade. No ledger reader exists in the producer yet, so production wiring of these inputs is left to the later ledger/gate task.",
