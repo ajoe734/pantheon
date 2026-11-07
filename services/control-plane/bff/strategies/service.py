@@ -16,7 +16,6 @@ from fastapi import HTTPException
 
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
-from .routes.common import project_strategy_rules
 
 try:
     from services.control_plane.bff.models import ErrorCode
@@ -402,6 +401,9 @@ class StrategiesService:
             return None, "unavailable"
         if getattr(result, "status", None) != "ok":
             return None, "unavailable"
+        # Lazy: routes.* import this module; a top-level import would form a cycle.
+        from .routes.common import project_strategy_rules
+
         return project_strategy_rules(
             list(getattr(result, "items", None) or []), strategy_id=strategy_id
         ), "ok"

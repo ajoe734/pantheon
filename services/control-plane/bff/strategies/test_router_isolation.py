@@ -77,3 +77,26 @@ def test_strategies_router_client_execution():
     resp = client.get("/bff/strategies/strat-1/specs", headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert len(resp.json()["data"]) == 1
+
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["service", "routes", "routes.common", "routes.collection", "routes.detail", "router"],
+)
+def test_strategies_modules_cold_import_in_any_entry_order(module):
+    """Each module must import first in a fresh interpreter (no service<->routes cycle)."""
+    result = subprocess.run(
+        [sys.executable, "-c", f"import services.control_plane.bff.strategies.{module}"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=str(Path(__file__).resolve().parents[4]),
+    )
+    assert result.returncode == 0, result.stderr
