@@ -171,7 +171,7 @@ class MockManagementReadStore:
     def list_incident_records(self) -> List[Dict[str, Any]]:
         return self.incident_records
 
-    def list_incidents(self) -> List[Dict[str, Any]]:
+    def list_incidents(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.incident_records
 
     def list_evidence_records(self) -> List[Dict[str, Any]]:
@@ -1518,7 +1518,7 @@ def test_risk_radar_parity_real_attribution_and_no_synthetic_data() -> None:
 def test_incident_timeline_parity_full_projection_and_sorting() -> None:
     """Verify Incident Timeline projects complete incident schema, severity buckets, and sorts properly."""
     class CustomIncidentStore:
-        def list_incidents(self) -> List[Dict[str, Any]]:
+        def list_incidents(self, **kwargs: Any) -> List[Dict[str, Any]]:
             return [
                 {
                     "incident_id": "inc-old",
@@ -1625,7 +1625,7 @@ def test_all_17_management_router_routes_mounted_and_accessible() -> None:
 def test_incident_timeline_semantic_parity_and_alias_normalization() -> None:
     """Verify incident timeline normalizes alias fields, builds links, source_refs, and lineage_ref with exact predecessor parity."""
     class ParityIncidentStore:
-        def list_incidents(self) -> List[Dict[str, Any]]:
+        def list_incidents(self, **kwargs: Any) -> List[Dict[str, Any]]:
             return [
                 {
                     "id": "inc-parity-1",

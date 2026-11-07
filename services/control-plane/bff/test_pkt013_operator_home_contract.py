@@ -138,7 +138,7 @@ def test_pkt013_operator_home_returns_unavailable_state_without_false_empty_dash
         def list_telemetry_summaries(self) -> Any:
             raise RuntimeError("down")
 
-        def list_incidents(self) -> Any:
+        def list_incidents(self, **kwargs: Any) -> Any:
             raise RuntimeError("down")
 
         def list_incident_alerts(self) -> Any:
