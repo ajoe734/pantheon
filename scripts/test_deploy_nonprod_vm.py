@@ -1924,6 +1924,9 @@ def _run_pinned_taiwan_preflight(
     *,
     force: bool = False,
     symbols: str | None = None,
+    connector_id: str | None = None,
+    dataset: str | None = None,
+    readback_connectors: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the real preflight heredoc at a pinned clock against per-symbol stub snapshots."""
     import http.server
@@ -1934,10 +1937,20 @@ def _run_pinned_taiwan_preflight(
     script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     body = script.split("<<'PREFLIGHT_PY'\n", 1)[1].split("\nPREFLIGHT_PY", 1)[0]
     requested: list[str] = []
+    requested_paths: list[str] = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            symbol = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)["symbol"][0]
+            requested_paths.append(self.path)
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/api/source-ingest/controller/readback":
+                payload = json.dumps({"connectors": readback_connectors or []}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            symbol = urllib.parse.parse_qs(parsed.query)["symbol"][0]
             requested.append(symbol)
             snap = snapshots.get(symbol)
             payload = json.dumps(snap if snap is not None else {"detail": "not found"}).encode()
@@ -1959,8 +1972,14 @@ def _run_pinned_taiwan_preflight(
     }
     env.pop("PANTHEON_DEV_PAPER_BASELINE_SYMBOL", None)
     env.pop("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", None)
+    env.pop("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", None)
+    env.pop("SOURCE_INGEST_BOUNDED_DATASET", None)
     if symbols is not None:
         env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] = symbols
+    if connector_id is not None:
+        env["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] = connector_id
+    if dataset is not None:
+        env["SOURCE_INGEST_BOUNDED_DATASET"] = dataset
     try:
         proc = subprocess.run(
             ["python3", "-c", f"import sys\nexec(compile({body!r}, 'preflight', 'exec'))\n", "true" if force else "false"],
@@ -1974,6 +1993,7 @@ def _run_pinned_taiwan_preflight(
         server.shutdown()
     result = json.loads(proc.stdout)
     result["_requested"] = requested
+    result["_requested_paths"] = requested_paths
     return result
 
 
@@ -2428,3 +2448,83 @@ def test_bounded_refresh_entrypoint_resolves_active_symbols_before_preflight() -
     preflight = body.index('check_taiwan_refresh_preflight "${force}"')
     no_symbols_skip = body.index("no_active_taiwan_symbols")
     assert resolve < preflight < no_symbols_skip
+
+
+def test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs() -> None:
+    deploy_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8"))
+    refresh_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "dev-tw-market-refresh.yml").read_text(encoding="utf-8"))
+
+    deploy_steps = deploy_wf["jobs"]["deploy-dev"]["steps"]
+    deploy_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(deploy_steps) if s.get("id")}
+    assert deploy_by_id["market_refresh"][0] < deploy_by_id["taifex_market_refresh"][0]
+    assert deploy_by_id["deploy"][0] < deploy_by_id["bounded_taifex_refresh"][0]
+    assert deploy_by_id["taifex_market_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert deploy_by_id["taifex_market_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert deploy_by_id["taifex_market_refresh"][1]["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+    assert deploy_by_id["bounded_taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert deploy_by_id["bounded_taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert "openapi.taifex.com.tw,www.taifex.com.tw" in deploy_by_id["bounded_taifex_refresh"][1]["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"]
+
+    refresh_steps = refresh_wf["jobs"]["refresh"]["steps"]
+    refresh_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(refresh_steps) if s.get("id")}
+    assert refresh_by_id["refresh"][0] < refresh_by_id["taifex_refresh"][0]
+    assert refresh_by_id["taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert refresh_by_id["taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert refresh_by_id["taifex_refresh"][1]["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+
+
+def test_deploy_script_source_refresh_allowed_hosts_never_appends_twse_to_taifex() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    init_block = source.split("SOURCE_REFRESH_MAX_CONCURRENCY=", 1)[1].split("DEV_APP_DB_USER=", 1)[0]
+    script = (
+        "set -euo pipefail\n"
+        'SOURCE_REFRESH_SELECTED="true"\n'
+        'SOURCE_REFRESH_ALLOWED_HOSTS="openapi.taifex.com.tw,www.taifex.com.tw"\n'
+        'SOURCE_INGEST_BOUNDED_CONNECTOR_ID="tw-taifex-futures-options-chip"\n'
+        'SOURCE_INGEST_BOUNDED_DATASET="taifex_ssf_contracts"\n'
+        "SOURCE_REFRESH_MAX_CONCURRENCY=" + init_block + "\n"
+        'printf "connector=%s\\ndataset=%s\\nhosts=%s\\n" '
+        '"${SOURCE_REFRESH_CONNECTOR_ID}" "${SOURCE_REFRESH_DATASET}" "${SOURCE_REFRESH_ALLOWED_HOSTS}"\n'
+    )
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False, cwd=ROOT)
+    assert proc.returncode == 0, proc.stderr
+    assert "connector=tw-taifex-futures-options-chip" in proc.stdout
+    assert "dataset=taifex_ssf_contracts" in proc.stdout
+    assert "hosts=openapi.taifex.com.tw,www.taifex.com.tw" in proc.stdout
+    assert "www.twse.com.tw" not in proc.stdout
+
+
+def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
+    fresh_twse = _stored_tw_snapshot("2026-11-06", "2026-11-06T07:10:00Z")
+
+    # Even when TWSE 2330.TW snapshot is fresh, TAIFEX preflight must proceed if SSF readback is missing
+    missing_res = _run_pinned_taiwan_preflight(
+        "2026-11-06T08:00:00Z",
+        {"2330.TW": fresh_twse},
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_ssf_contracts",
+        readback_connectors=[],
+    )
+    assert (missing_res["status"], missing_res["reason"]) == ("proceed", "dataset_missing")
+    assert any("/api/source-ingest/controller/readback" in p for p in missing_res["_requested_paths"])
+
+    # When TAIFEX SSF readback is fresh for the closed session, preflight returns noop/already_fresh
+    fresh_ssf = {
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"last_success_at": "2026-11-06T07:20:00Z"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc",
+            "status": "normalized",
+            "metadata": {"date": "2026-11-06", "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+            "provenance": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+        },
+    }
+    fresh_res = _run_pinned_taiwan_preflight(
+        "2026-11-06T08:00:00Z",
+        {"2330.TW": fresh_twse},
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_ssf_contracts",
+        readback_connectors=[fresh_ssf],
+    )
+    assert (fresh_res["status"], fresh_res["reason"]) == ("noop", "already_fresh")
+    assert fresh_res["dataset"] == "taifex_ssf_contracts"

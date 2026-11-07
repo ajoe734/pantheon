@@ -594,3 +594,20 @@ configure_management_ai_dev_kernel_env
     assert 'command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}")"' in ssh_bash_prefix
     assert 'command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}")"' in ssh_bash_prefix
 
+
+def test_source_refresh_taifex_and_twse_env_transport_and_unmerged_host_parity() -> None:
+    source = _read_deploy_script()
+    ssh_bash_body = source.split("ssh_bash() {\n", 1)[1].split("}\n\ncurl_with_retry()", 1)[0]
+    ssh_prefix = ssh_bash_body.split("  run_remote_payload() {\n", 1)[0]
+
+    assert 'command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${SOURCE_REFRESH_ALLOWED_HOSTS}")"' in ssh_prefix
+    assert 'command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_REFRESH_CONNECTOR_ID}")"' in ssh_prefix
+    assert 'command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_REFRESH_DATASET}")"' in ssh_prefix
+    assert 'PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}")' in ssh_bash_body
+    assert 'SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")' in ssh_bash_body
+    assert 'SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")' in ssh_bash_body
+
+    # Ensure TWSE www.twse.com.tw auto-append is strictly scoped to tw-twse-tpex-official-market
+    init_block = source.split("SOURCE_REFRESH_CONNECTOR_ID=", 1)[1].split("DEV_APP_DB_USER=", 1)[0]
+    assert '"${SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market"' in init_block
+    assert "taifex.com.tw" not in init_block
