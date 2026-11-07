@@ -1077,15 +1077,17 @@ def test_l12_bff_complete_registry_and_error_rate_spike(
             detail="first failure",
             observed_at="2026-07-27T18:40:02Z",
         ) is None
-        threshold = monitor.record_downstream_outcome(
+        assert monitor.record_downstream_outcome(
             target_name="source-ingest",
             ok=False,
             status_code=503,
             detail="spike",
             observed_at="2026-07-27T18:40:03Z",
-        )
+        ) is None
+        # Threshold evaluation and emission now run on the monitor flush.
+        threshold = asyncio.run(monitor.flush_outcomes())
 
-    assert threshold is not None
+    assert len(threshold) == 1
     error_events = [
         body
         for body in posted
@@ -1425,6 +1427,8 @@ def test_command_executor_post_and_get_json_integration_with_downstream_monitor(
     res_get = command_executor._get_json(f"{target_url}/api/status", auth_token=token)
     assert res_get == {"result": "success"}
 
+    # Request threads only buffer; the monitor loop persists on its flush.
+    asyncio.run(monitor.flush_outcomes())
     state = monitor.get_state()
     target_state = state["targets"].get("source-ingest")
     assert target_state is not None

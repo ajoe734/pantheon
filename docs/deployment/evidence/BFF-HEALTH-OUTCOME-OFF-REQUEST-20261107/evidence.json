@@ -3,13 +3,38 @@
   "status": "blocked_on_artifact_contract",
   "measurement": {
     "method": "command_executor._get_json against a local HTTP owner, monitor registered, sqlite BEGIN IMMEDIATE held 5 s by another connection; real code at HEAD (git archive) vs working tree",
-    "before_ms": {"unlocked": [68.0, 12.3, 12.5, 10.0, 11.4], "locked_5s": 5058.2},
-    "after_ms": {"unlocked": [40.2, 2.8, 2.5, 2.5, 2.2], "locked_5s": 2.4}
+    "before_ms": {
+      "unlocked": [
+        68.0,
+        12.3,
+        12.5,
+        10.0,
+        11.4
+      ],
+      "locked_5s": 5058.2
+    },
+    "after_ms": {
+      "unlocked": [
+        40.2,
+        2.8,
+        2.5,
+        2.5,
+        2.2
+      ],
+      "locked_5s": 2.4
+    }
   },
   "tests": {
-    "new": ["test_request_thread_outcome_does_not_wait_on_health_write_lock", "test_flushed_outcomes_equal_sum_of_recorded_samples", "test_failure_run_counts_consecutive_failures_across_flushes", "test_threshold_crossing_emits_once_from_flush_never_asyncio_run", "test_locked_flush_keeps_samples_and_pending_is_bounded"],
+    "new": [
+      "test_request_thread_outcome_does_not_wait_on_health_write_lock",
+      "test_flushed_outcomes_equal_sum_of_recorded_samples",
+      "test_failure_run_counts_consecutive_failures_across_flushes",
+      "test_threshold_crossing_emits_once_from_flush_never_asyncio_run",
+      "test_locked_flush_keeps_samples_and_pending_is_bounded"
+    ],
     "changed_assertion": "test_recorded_outcome_uses_one_connection_and_closes_it: request thread now opens zero connections (assert opened == []); the one-connection/closed assertions run after monitor.flush_outcomes_sync(). Rationale: persistence moved to the monitor flush by design.",
     "baseline_env_failures_unrelated": "6 tests fail identically before and after (asyncpg/evolution reader missing in local venv)"
   },
-  "blocker": "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py is outside the artifact contract but two tests there (test_l12_bff_complete_registry_and_error_rate_spike, test_command_executor_post_and_get_json_integration_with_downstream_monitor) assert synchronous persistence/emission from record_downstream_outcome and fail by design. Needed edit: call asyncio.run(monitor.flush_outcomes()) before reading state / evaluating the threshold."
+  "sentinel_contract_changes": "test_bff_v5_loop_sentinel_contract.py: test_l12_bff_complete_registry_and_error_rate_spike now asserts record_downstream_outcome returns None and awaits monitor.flush_outcomes() for the single threshold crossing (len==1); test_command_executor_post_and_get_json_integration_with_downstream_monitor awaits flush_outcomes() before get_state. Rationale: persistence/emission moved to monitor flush by design; no assertion weakened. Both pass; the 3 other failures in that file (persona_health 503, strict telemetry route, replay MFA 403) are unrelated to the health monitor.",
+  "blocker_resolved": "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py is outside the artifact contract but two tests there (test_l12_bff_complete_registry_and_error_rate_spike, test_command_executor_post_and_get_json_integration_with_downstream_monitor) assert synchronous persistence/emission from record_downstream_outcome and fail by design. Needed edit: call asyncio.run(monitor.flush_outcomes()) before reading state / evaluating the threshold."
 }
