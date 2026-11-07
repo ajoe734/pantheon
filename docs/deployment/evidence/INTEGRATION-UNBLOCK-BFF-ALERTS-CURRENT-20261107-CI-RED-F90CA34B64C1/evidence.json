@@ -1,0 +1,12 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-ALERTS-CURRENT-20261107-CI-RED-F90CA34B64C1",
+  "source_task": "BFF-ALERTS-CURRENT-20261107",
+  "source_pr": 7016,
+  "root_cause": "Transient Docker Hub 502 Bad Gateway while pulling postgres:16-alpine blobs (registry-1.docker.io) during 'docker compose up --wait postgres' in Import smoke services-feedback-Dockerfile (job 128328448802) and services-telemetry-Dockerfile (job 128328448679), run 42347521500. Image builds succeeded; no code defect in PR #7016 (changes are BFF incidents router/main/tests/docs only).",
+  "fix": "Re-ran failed jobs of run 42347521500 (gh run rerun --failed). No source change required.",
+  "verification": {
+    "services-feedback-Dockerfile": "pass (job 128331467448)",
+    "services-telemetry-Dockerfile": "pass (job 128331467454)"
+  },
+  "remaining": "Pantheon canonical review gate on PR #7016 awaits a review-proof tag (pantheon-review/approve/<head>); this is the normal review step, not a CI defect."
+}
