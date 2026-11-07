@@ -265,6 +265,55 @@ class BoundedPaperStrategy:
         return decision
 
 
+EXPRESSION_LAYER_ENV = "PANTHEON_PAPER_EXPRESSION_LAYER"
+SSF_NORMALIZED_ROOT_ENV = "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT"
+
+
+def expression_layer_enabled() -> bool:
+    """Global switch for layer C; anything but an explicit on-value is off."""
+    return os.getenv(EXPRESSION_LAYER_ENV, "off").strip().lower() in {"on", "1", "true", "yes"}
+
+
+def apply_expression_record(
+    decision: dict[str, Any],
+    view: Mapping[str, Any],
+    stored: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Carry a persisted Chosen/NoTrade record in the decision envelope.
+
+    ``stored`` is ``{"record", "kind", "multiplier"}`` as persisted before any
+    order.  The view fields always ride on the decision metadata.  A Chosen
+    record rewrites action/direction/quantity to the chosen instrument and
+    units; a NoTrade becomes a HOLD so the runtime publishes it as a noop and
+    consumes the bar.
+    """
+    from services.execution.lean_runtime.expression_policy import is_no_trade
+
+    record = dict(stored["record"])
+    metadata = decision.setdefault("metadata", {})
+    metadata["strength"] = view.get("strength")
+    metadata["momentum"] = view.get("momentum")
+    metadata["view_direction"] = view.get("direction")
+    metadata["decision_id"] = record.get("decision_id") or decision.get("decision_id")
+    metadata["expression_decision"] = record
+    metadata["reason_code"] = record.get("reason_code")
+    if is_no_trade(record):
+        decision["action"] = "HOLD"
+        return decision
+    side = str(record["side"])
+    closing = record.get("reason_code") == "close_leg"
+    decision["action"] = "BUY" if side == "buy" else "SELL"
+    # A closing leg takes the direction of the position it closes.
+    decision["direction"] = "LONG" if (side == "buy") != closing else "SHORT"
+    decision["quantity"] = int(record["units"])
+    decision["quantity_type"] = "SHARES"
+    metadata["instrument_id"] = str(record["instrument_id"])
+    metadata["kind"] = stored.get("kind")
+    metadata["units"] = int(record["units"])
+    metadata["multiplier"] = stored.get("multiplier") or 1
+    return decision
+
+
 class SignalDecisionUnavailable(RuntimeError):
     """A binding cannot produce a governed paper decision on this tick."""
 
@@ -285,6 +334,96 @@ class CurrentArtifactStrategy:
     _SUPPORTED_INTERPRETER = (
         "services.registry.strategy_artifact:evaluate_strategy_action"
     )
+
+    def __init__(
+        self,
+        *,
+        expression_layer: bool | None = None,
+        candidates_builder: Callable[..., list[dict[str, Any]]] | None = None,
+        decider: Callable[..., Any] | None = None,
+        expression_inputs: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    ) -> None:
+        self._expression_layer = expression_layer
+        self._candidates_builder = candidates_builder
+        self._decider = decider
+        self._expression_inputs = expression_inputs
+
+    def _expression_on(self) -> bool:
+        if self._expression_layer is not None:
+            return bool(self._expression_layer)
+        return expression_layer_enabled()
+
+    def _expression_step(
+        self,
+        *,
+        view: dict[str, Any],
+        decision_id: str,
+        symbol: str,
+        closes: Sequence[float],
+        market_input: Mapping[str, Any],
+        strategy_artifact: Mapping[str, Any],
+        b_dict: Mapping[str, Any],
+        metadata: Mapping[str, Any],
+        now_iso: str,
+    ) -> dict[str, Any]:
+        from services.execution.lean_runtime import expression_policy
+        from services.execution.lean_runtime.instrument_candidates import (
+            build_candidates,
+            normalize_underlying_code,
+        )
+
+        underlying = normalize_underlying_code(symbol)
+        if self._expression_inputs is not None:
+            inputs = dict(self._expression_inputs(b_dict) or {})
+        else:
+            inputs = dict(metadata.get("expression_inputs") or {})
+        book = dict(inputs.get("persona_book") or {})
+        budget = dict(inputs.get("risk_budget") or {})
+        event_time = str(market_input.get("event_time") or "").strip()
+        price_date = event_time[:10] or None
+        builder = self._candidates_builder or build_candidates
+        try:
+            candidates = builder(
+                underlying,
+                now_iso[:10],
+                book,
+                budget,
+                cash_price=float(closes[-1]),
+                cash_price_date=price_date,
+                normalized_root=os.getenv(SSF_NORMALIZED_ROOT_ENV) or None,
+                decision_id=decision_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - candidate failure fails closed to a NoTrade
+            log.warning("expression candidates unavailable for %s: %s", symbol, exc)
+            candidates = []
+        decision_view = {
+            "decision_id": decision_id,
+            "underlying": underlying,
+            "direction": view["direction"],
+            "strength": view.get("strength"),
+        }
+        params = dict(strategy_artifact["expression_policy"].get("parameters") or {})
+        record = expression_policy.decide_validated(
+            decision_view,
+            candidates,
+            book,
+            budget,
+            params,
+            decider=self._decider or expression_policy.decide,
+        )
+        chosen_candidate = next(
+            (c for c in candidates if c.get("instrument_id") == record.get("instrument_id")),
+            {},
+        )
+        return {
+            "view": {
+                **decision_view,
+                "momentum": view.get("momentum"),
+                "kind": chosen_candidate.get("kind"),
+                "multiplier": chosen_candidate.get("multiplier"),
+            },
+            "decision": record,
+        }
 
     def __call__(self, binding: Any, now_iso: str) -> dict[str, Any]:
         b_dict = _binding_dict_from_obj(binding)
@@ -374,7 +513,18 @@ class CurrentArtifactStrategy:
                 f"binding {binding_id} StrategyArtifact validation failed: {exc}",
             ) from exc
         try:
-            action = evaluate_strategy_action(strategy_artifact, closes)
+            expression_enabled = (
+                self._expression_on()
+                and strategy_artifact.get("expression_policy") is not None
+            )
+            if expression_enabled:
+                from services.registry.strategy_artifact import evaluate_strategy_view
+
+                view = evaluate_strategy_view(strategy_artifact, closes)
+                action = view["action"]
+            else:
+                view = None
+                action = evaluate_strategy_action(strategy_artifact, closes)
         except (StrategyArtifactValidationError, ValueError, TypeError) as exc:
             raise SignalDecisionUnavailable(
                 "market_input_invalid",
@@ -430,8 +580,9 @@ class CurrentArtifactStrategy:
         decision_digest = hashlib.sha256(
             json.dumps(decision_key, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        return {
-            "decision_id": f"dec-{binding_id}-{decision_digest[:24]}",
+        decision_id = f"dec-{binding_id}-{decision_digest[:24]}"
+        out = {
+            "decision_id": decision_id,
             "signal_id": f"sig-{decision_digest[:32]}",
             "strategy_id": strategy_id,
             "timestamp": now_iso,
@@ -473,6 +624,19 @@ class CurrentArtifactStrategy:
                 "is_real_capital": False,
             },
         }
+        if expression_enabled and view is not None and is_taiwan_venue_symbol(symbol):
+            out["expression"] = self._expression_step(
+                view=view,
+                decision_id=decision_id,
+                symbol=symbol,
+                closes=closes,
+                market_input=market_input,
+                strategy_artifact=strategy_artifact,
+                b_dict=b_dict,
+                metadata=metadata,
+                now_iso=now_iso,
+            )
+        return out
 
     @staticmethod
     def _validate_artifact_identity(
@@ -1182,6 +1346,30 @@ class PaperSignalProducer:
                     binding_id,
                 )
                 return 0
+
+            expression = out.pop("expression", None)
+            if isinstance(expression, Mapping):
+                # The instrument decision is durable before any order exists. A
+                # restart reuses the stored record instead of deciding again.
+                decision_id = str(out.get("decision_id") or "")
+                getter = getattr(store, "get_decision_record", None)
+                putter = getattr(store, "put_decision_record", None)
+                if not callable(getter) or not callable(putter):
+                    self._degraded_by_binding[binding_id] = (
+                        "expression_store_unsupported: pending store cannot persist decisions"
+                    )
+                    return 0
+                stored = getter(decision_id)
+                if stored is None:
+                    stored = putter(
+                        decision_id,
+                        {
+                            "record": dict(expression["decision"]),
+                            "kind": expression["view"].get("kind"),
+                            "multiplier": expression["view"].get("multiplier"),
+                        },
+                    )
+                apply_expression_record(out, expression["view"], stored)
 
             if "metadata" not in out:
                 out["metadata"] = {}

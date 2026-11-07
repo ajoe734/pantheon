@@ -982,5 +982,101 @@ class ExecutorBracketGuardEdgeCaseTests(unittest.TestCase):
         self.assertEqual(log["metadata"]["reason"], "not_entry_signal")
 
 
+class _TaiwanAlgo:
+    """Duck-typed runtime exposing the Taiwan broker boundary."""
+
+    def __init__(self):
+        self.submissions = []
+        self.order_rejections = []
+        self.signal_noops = []
+        self.context = {}
+        self.rejection_contexts = []
+
+    def SetCurrentSignalContext(self, metadata):  # noqa: N802
+        self.context = dict(metadata)
+
+    def ClearCurrentSignalContext(self):  # noqa: N802
+        self.context = {}
+
+    def SubmitTaiwanBrokerOrder(self, symbol, **kwargs):  # noqa: N802
+        self.submissions.append((symbol, kwargs))
+
+    def RecordOrderRejected(self, symbol, **kwargs):  # noqa: N802
+        self.order_rejections.append({"symbol": symbol, **kwargs})
+        self.rejection_contexts.append(dict(self.context))
+
+    def RecordSignalNoop(self, symbol, **kwargs):  # noqa: N802
+        self.signal_noops.append({"symbol": symbol, **kwargs})
+        self.rejection_contexts.append(dict(self.context))
+
+
+class ExpressionEnvelopeExecutorTests(unittest.TestCase):
+    def _signal(self, **metadata):
+        return {
+            "signal_id": "sig-expr-1",
+            "symbol": "0050.TW",
+            "action": "SELL",
+            "direction": "SHORT",
+            "quantity": 1,
+            "quantity_type": "SHARES",
+            "order_type": "MARKET",
+            "decision_id": "dec-expr-1",
+            "metadata": {"decision_id": "dec-expr-1", **metadata},
+        }
+
+    def test_chosen_stock_future_is_rejected_by_the_ledger_with_no_fill(self):
+        algo = _TaiwanAlgo()
+        record = {"decision_id": "dec-expr-1", "instrument_id": "ssf:SRF:202611", "units": 1}
+        execute(
+            self._signal(
+                instrument_id="ssf:SRF:202611",
+                kind="stock_future",
+                units=1,
+                multiplier=1000,
+                reason_code="short_via_future",
+                expression_decision=record,
+            ),
+            algo,
+        )
+        self.assertEqual(algo.submissions, [])
+        [rejection] = algo.order_rejections
+        self.assertEqual(rejection["reject_reason"], "instrument_not_supported_by_ledger")
+        self.assertEqual(rejection["computed_quantity"], 0.0)
+        self.assertFalse(rejection["submitted_to_broker"])
+        context = algo.rejection_contexts[0]
+        self.assertEqual(context["instrument_id"], "ssf:SRF:202611")
+        self.assertEqual(context["kind"], "stock_future")
+        self.assertEqual(context["multiplier"], 1000)
+        self.assertEqual(context["decision_id"], "dec-expr-1")
+        self.assertEqual(context["expression_decision"], record)
+
+    def test_cash_share_choice_flows_to_the_existing_broker_path(self):
+        algo = _TaiwanAlgo()
+        execute(
+            self._signal(instrument_id="eq:0050", kind="cash_share", units=1, multiplier=1, reason_code="long_cash"),
+            algo,
+        )
+        self.assertEqual(algo.order_rejections, [])
+        [(symbol, kwargs)] = algo.submissions
+        self.assertEqual((symbol, kwargs["side"], kwargs["quantity"]), ("0050.TW", "sell", 1))
+
+    def test_legacy_signal_without_a_kind_is_untouched(self):
+        algo = _TaiwanAlgo()
+        execute(self._signal(), algo)
+        self.assertEqual(len(algo.submissions), 1)
+        self.assertEqual(algo.order_rejections, [])
+
+    def test_no_trade_hold_carries_the_record_into_the_noop_event(self):
+        algo = _TaiwanAlgo()
+        signal = self._signal(expression_decision={"reason_code": "no_feasible_instrument"}, reason_code="no_feasible_instrument")
+        signal["action"] = "HOLD"
+        execute(signal, algo)
+        self.assertEqual(algo.submissions, [])
+        self.assertEqual(algo.signal_noops[0]["noop_reason"], "hold_signal")
+        self.assertEqual(
+            algo.rejection_contexts[0]["expression_decision"], {"reason_code": "no_feasible_instrument"}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

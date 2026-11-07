@@ -470,5 +470,61 @@ print("ok")
         self.assertEqual(proc.stdout.strip(), "ok")
 
 
+class TestExpressionEnvelope(unittest.TestCase):
+    def test_instrument_envelope_survives_build_decision_signals(self) -> None:
+        record = {"decision_id": "dec-1", "instrument_id": "ssf:SRF:202611", "units": 1}
+        [signal] = build_decision_signals(
+            {
+                "decision_id": "dec-1",
+                "signal_id": "sig-1",
+                "strategy_id": "s",
+                "symbol": "0050.TW",
+                "action": "SELL",
+                "direction": "SHORT",
+                "quantity": 1,
+                "quantity_type": "SHARES",
+                "metadata": {
+                    "instrument_id": "ssf:SRF:202611",
+                    "kind": "stock_future",
+                    "units": 1,
+                    "multiplier": 1000,
+                    "reason_code": "short_via_future",
+                    "expression_decision": record,
+                    "strength": 0.6,
+                    "momentum": -0.006,
+                    "view_direction": "SHORT",
+                },
+            },
+            now_iso=_NOW,
+        )
+        meta = signal["metadata"]
+        self.assertEqual(meta["instrument_id"], "ssf:SRF:202611")
+        self.assertEqual((meta["kind"], meta["units"], meta["multiplier"]), ("stock_future", 1, 1000))
+        self.assertEqual(meta["reason_code"], "short_via_future")
+        self.assertEqual(meta["decision_id"], "dec-1")
+        self.assertEqual(meta["expression_decision"], record)
+        self.assertEqual((meta["strength"], meta["view_direction"]), (0.6, "SHORT"))
+
+    def test_decision_record_is_first_write_wins_in_memory(self) -> None:
+        store = InMemoryPendingSignalStore()
+        self.assertIsNone(store.get_decision_record("d"))
+        self.assertEqual(store.put_decision_record("d", {"v": 1}), {"v": 1})
+        self.assertEqual(store.put_decision_record("d", {"v": 2}), {"v": 1})
+        self.assertEqual(store.get_decision_record("d"), {"v": 1})
+
+    def test_decision_record_redis_uses_set_nx_and_fails_loudly(self) -> None:
+        client = MagicMock()
+        client.get.return_value = '{"v": 1}'
+        store = RedisPendingSignalStore.__new__(RedisPendingSignalStore)
+        store._client = client
+        store._decision_prefix = "q:decision:"
+        store._decision_ttl_seconds = 60
+        self.assertEqual(store.put_decision_record("d", {"v": 1}), {"v": 1})
+        client.set.assert_called_once_with("q:decision:d", '{"v": 1}', nx=True, ex=60)
+        client.set.side_effect = RuntimeError("redis down")
+        with self.assertRaises(RuntimeError):
+            store.put_decision_record("d", {"v": 1})
+
+
 if __name__ == "__main__":
     unittest.main()

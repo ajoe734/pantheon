@@ -1921,3 +1921,243 @@ class TestDailyBarDecisionIdentity(unittest.TestCase):
         mock_redis.set.assert_not_called()
         mock_redis.setex.assert_not_called()
         mock_redis.delete.assert_not_called()
+
+
+def _expression_candidates(*, short_ok: bool = True):
+    """Candidate records shaped like instrument_candidates output (0050 fixture figures)."""
+
+    def build(underlying, as_of, book, budget, **kwargs):
+        cash = {
+            "instrument_id": f"eq:{underlying}",
+            "kind": "cash_share",
+            "underlying": underlying,
+            "side_capability": ["long"],
+            "unit": 1,
+            "multiplier": 1,
+            "price": kwargs["cash_price"],
+            "fee_per_unit_per_side": 0.0,
+            "tax_rate_per_side": 0.0,
+            "max_units_by_risk": 1081,
+            "source_refs": [],
+        }
+        future = {
+            "instrument_id": f"ssf:SRF:202611",
+            "kind": "stock_future",
+            "underlying": underlying,
+            "side_capability": ["long", "short"],
+            "unit": 1000,
+            "multiplier": 1000,
+            "price": 92.5,
+            "fee_per_unit_per_side": 20.0,
+            "tax_rate_per_side": 0.00002,
+            "max_units_by_risk": 2 if short_ok else 0,
+            "source_refs": [],
+        }
+        return [cash, future]
+
+    return build
+
+
+class TestExpressionDecisionStep(unittest.TestCase):
+    BAR = "2026-11-06T00:00:00+08:00"
+    NOW = "2026-11-09T10:30:00Z"
+    INPUTS = {"persona_book": {}, "risk_budget": {"available_cash": 100000.0, "gross_limit": 200000.0, "gross_used": 0.0}}
+
+    def _artifact(self, *, bearish: bool = False, expression: bool = True):
+        import copy
+
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact
+        from services.registry.test_strategy_artifact import _artifact_with_expression_policy
+
+        if expression:
+            art = copy.deepcopy(_artifact_with_expression_policy())
+            base = _artifact(bearish=bearish)
+            for key in ("artifact_id", "strategy_id"):
+                art[key] = base[key]
+            art["strategy_logic"] = base["strategy_logic"]
+        else:
+            art = _artifact(bearish=bearish)
+        art["parameters"]["symbols"] = ["0050.TW"]
+        return art
+
+    def _binding(self, art, *, closes=(100.0, 100.3), symbol="0050.TW"):
+        from services.execution.lean_runtime.test_current_artifact_signal import _binding
+
+        binding = _binding(art, binding_id="rb-expr", include_market_input=False)
+        binding["market_input"] = {
+            "symbol": symbol,
+            "closes": list(closes),
+            "source_ref": "source-ingest://normalized/tw-price/0050",
+            "observed_at": self.NOW,
+            "event_time": self.BAR,
+        }
+        return binding
+
+    def _strategy(self, **kwargs):
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+
+        kwargs.setdefault("expression_layer", True)
+        kwargs.setdefault("candidates_builder", _expression_candidates())
+        kwargs.setdefault("expression_inputs", lambda _b: self.INPUTS)
+        return CurrentArtifactStrategy(**kwargs)
+
+    def _producer(self, store, **kwargs):
+        return PaperSignalProducer(store_for=lambda _: store, strategy=self._strategy(**kwargs))
+
+    def test_flag_off_and_legacy_artifact_are_exactly_todays_decision(self) -> None:
+        art = self._artifact()
+        binding = self._binding(art)
+        off = self._strategy(expression_layer=False)(binding, self.NOW)
+        on = self._strategy()(binding, self.NOW)
+        self.assertNotIn("expression", off)
+        self.assertEqual(off["decision_id"], on["decision_id"])
+        self.assertEqual(off["signal_id"], on["signal_id"])
+        legacy = self._artifact(expression=False)
+        legacy_binding = self._binding(legacy)
+        legacy_off = self._strategy(expression_layer=False)(legacy_binding, self.NOW)
+        legacy_on = self._strategy()(legacy_binding, self.NOW)
+        self.assertEqual(legacy_off, legacy_on)
+        self.assertNotIn("expression", legacy_on)
+
+    def test_environment_flag_defaults_off(self) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+            expression_layer_enabled,
+        )
+
+        binding = self._binding(self._artifact())
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("PANTHEON_PAPER_EXPRESSION_LAYER", None)
+            self.assertFalse(expression_layer_enabled())
+            self.assertNotIn("expression", CurrentArtifactStrategy()(binding, self.NOW))
+        with patch.dict("os.environ", {"PANTHEON_PAPER_EXPRESSION_LAYER": "on"}):
+            self.assertTrue(expression_layer_enabled())
+
+    def test_non_taiwan_symbol_keeps_the_legacy_path_even_when_on(self) -> None:
+        art = self._artifact()
+        art["parameters"]["symbols"] = ["AAPL.US"]
+        binding = self._binding(art, symbol="AAPL.US")
+        self.assertNotIn("expression", self._strategy()(binding, self.NOW))
+
+    def test_weak_long_flows_to_the_cash_path_with_the_envelope(self) -> None:
+        store = InMemoryPendingSignalStore()
+        self.assertEqual(self._producer(store).produce(self._binding(self._artifact()), self.NOW), 1)
+        [signal] = store.get_pending()
+        meta = signal["metadata"]
+        self.assertEqual((signal["action"], signal["direction"], signal["quantity"]), ("BUY", "LONG", 1))
+        self.assertEqual(signal["quantity_type"], "SHARES")
+        self.assertEqual(meta["instrument_id"], "eq:0050")
+        self.assertEqual(meta["kind"], "cash_share")
+        self.assertEqual(meta["units"], 1)
+        self.assertEqual(meta["multiplier"], 1)
+        self.assertEqual(meta["reason_code"], "long_cash")
+        self.assertEqual(meta["decision_id"], meta["expression_decision"]["decision_id"])
+        self.assertEqual(meta["view_direction"], "LONG")
+        self.assertAlmostEqual(meta["strength"], 0.3)
+        self.assertIn("momentum", meta)
+
+    def test_short_view_chooses_the_future_and_carries_its_kind(self) -> None:
+        store = InMemoryPendingSignalStore()
+        art = self._artifact(bearish=True)
+        binding = self._binding(art, closes=(100.0, 101.0))
+        self.assertEqual(self._producer(store).produce(binding, self.NOW), 1)
+        [signal] = store.get_pending()
+        meta = signal["metadata"]
+        self.assertEqual((signal["action"], signal["direction"]), ("SELL", "SHORT"))
+        self.assertEqual(meta["instrument_id"], "ssf:SRF:202611")
+        self.assertEqual(meta["kind"], "stock_future")
+        self.assertEqual(meta["multiplier"], 1000)
+        self.assertEqual(meta["reason_code"], "short_via_future")
+
+    def test_no_trade_is_a_hold_and_a_restart_does_not_retry_the_bar(self) -> None:
+        store = InMemoryPendingSignalStore()
+        art = self._artifact(bearish=True)
+        binding = self._binding(art, closes=(100.0, 101.0))
+        producer = self._producer(store, candidates_builder=_expression_candidates(short_ok=False))
+        self.assertEqual(producer.produce(binding, self.NOW), 1)
+        [signal] = store.get_pending()
+        self.assertEqual(signal["action"], "HOLD")
+        self.assertEqual(signal["metadata"]["expression_decision"]["reason_code"], "no_feasible_instrument")
+        fence = store.begin_execution(signal)
+        self.assertTrue(store.complete_execution(signal["signal_id"], fence.token))
+        store.ack(signal)
+        restarted = self._producer(store)  # a restart that would now find a feasible future
+        self.assertEqual(restarted.produce(binding, "2026-11-09T10:31:00Z"), 0)
+        self.assertEqual(store.queue_depth(), 0)
+
+    def test_restart_after_persistence_before_fill_reuses_the_stored_decision(self) -> None:
+        store = InMemoryPendingSignalStore()
+        art = self._artifact(bearish=True)
+        binding = self._binding(art, closes=(100.0, 101.0))
+        self.assertEqual(self._producer(store).produce(binding, self.NOW), 1)
+        [first] = store.get_pending()
+        store.ack(first)  # queue claim lost; nothing filled, nothing processed
+        self.assertFalse(store.is_processed(first["signal_id"]))
+        stored = store.get_decision_record(first["metadata"]["decision_id"])
+        self.assertEqual(stored["record"]["instrument_id"], "ssf:SRF:202611")
+        # The restarted producer would decide differently (futures now infeasible) ...
+        restarted = self._producer(store, candidates_builder=_expression_candidates(short_ok=False))
+        self.assertEqual(restarted.produce(binding, "2026-11-09T10:31:00Z"), 1)
+        [second] = store.get_pending()
+        # ... but it reuses the persisted instrument and units.
+        self.assertEqual(second["metadata"]["instrument_id"], "ssf:SRF:202611")
+        self.assertEqual(second["metadata"]["units"], first["metadata"]["units"])
+        self.assertEqual(second["signal_id"], first["signal_id"])
+
+    def test_decision_is_persisted_before_the_signal_is_enqueued(self) -> None:
+        order: list[str] = []
+
+        class Recording(InMemoryPendingSignalStore):
+            def put_decision_record(self, decision_id, record):
+                order.append("persist")
+                return super().put_decision_record(decision_id, record)
+
+            def enqueue(self, payload):
+                order.append("enqueue")
+                return super().enqueue(payload)
+
+        self._producer(Recording()).produce(self._binding(self._artifact()), self.NOW)
+        self.assertEqual(order, ["persist", "enqueue"])
+
+    def test_store_that_cannot_persist_fails_closed(self) -> None:
+        class Plain:
+            def enqueue(self, payload):  # pragma: no cover - must not be reached
+                raise AssertionError("must not enqueue")
+
+            def is_processed(self, signal_id):
+                return False
+
+        producer = PaperSignalProducer(store_for=lambda _: Plain(), strategy=self._strategy())
+        self.assertEqual(producer.produce(self._binding(self._artifact()), self.NOW), 0)
+        self.assertIn("expression_store_unsupported", producer.degraded_bindings["rb-expr"])
+
+    def test_malformed_decider_cannot_place_an_order(self) -> None:
+        store = InMemoryPendingSignalStore()
+        bad = lambda view, candidates, book, budget, params: {  # noqa: E731
+            "decision_id": view["decision_id"],
+            "instrument_id": "ssf:ZZZ:202611",
+            "side": "buy",
+            "units": 5,
+            "reason_code": "long_lever",
+        }
+        self.assertEqual(self._producer(store, decider=bad).produce(self._binding(self._artifact()), self.NOW), 1)
+        [signal] = store.get_pending()
+        self.assertEqual(signal["action"], "HOLD")
+        self.assertEqual(signal["metadata"]["expression_decision"]["reason_code"], "instrument_not_in_candidates")
+        self.assertNotIn("instrument_id", signal["metadata"])
+
+    def test_missing_inputs_fail_closed_to_a_no_trade(self) -> None:
+        store = InMemoryPendingSignalStore()
+        art = self._artifact(bearish=True)
+        binding = self._binding(art, closes=(100.0, 101.0))
+        strategy = self._strategy(expression_inputs=lambda _b: {}, candidates_builder=None)
+        producer = PaperSignalProducer(store_for=lambda _: store, strategy=strategy)
+        self.assertEqual(producer.produce(binding, self.NOW), 1)
+        [signal] = store.get_pending()
+        self.assertEqual(signal["action"], "HOLD")
+        self.assertIn(
+            signal["metadata"]["expression_decision"]["reason_code"],
+            {"candidates_unavailable", "no_feasible_instrument"},
+        )
