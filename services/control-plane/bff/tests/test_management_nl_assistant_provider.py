@@ -1335,12 +1335,26 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         management_context = call["context_pack"]["backend"]["management_nl"]["data"]
         assert management_context["tenant_id"] == "tenant-alpha"
         assert management_context["summary_context"]["portfolio"]["total_pnl"] == 2.5
-        persona_health = call["context_pack"]["backend"]["persona_health"]
-        persona_ids = {item["persona_id"] for item in persona_health["items"]}
-        assert "persona-alpha" in persona_ids
-        assert "persona-beta" not in persona_ids
+        # The Management AI context no longer carries a second, hardcoded
+        # persona_health source: persona health reaches the provider only
+        # through persona_fleet, which keeps the same foreign tenant exclusion.
+        assert call["context_pack"]["backend"].get("persona_health") is None
         source_ids = {source["source_id"] for source in call["context_pack"]["sources"]}
-        assert "persona_health" in source_ids
+        assert "persona_health" not in source_ids
+
+        fleet_resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "How is the persona fleet?", "focus": "persona_fleet"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-enabled-fleet"},
+        )
+        assert fleet_resp.status_code == 202, fleet_resp.text
+        fleet_context = fake.calls[1]["context_pack"]["backend"]["management_nl"]["data"][
+            "summary_context"
+        ]["persona_fleet"]
+        fleet_persona_ids = {item["persona_id"] for item in fleet_context["items"]}
+        assert "persona-alpha" in fleet_persona_ids
+        assert "persona-beta" not in fleet_persona_ids
+        assert "persona-beta" not in json.dumps(fleet_context)
     finally:
         set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()

@@ -4213,6 +4213,21 @@ def _mgmt_nl_filter_tenant_records(
         for record in records
         if isinstance(record, dict) and _mgmt_nl_record_matches_tenant(record, tenant_id)
     ]
+def _mgmt_nl_persona_state(persona: Dict[str, Any]) -> str:
+    """Projected lifecycle state of one persona record, from the Persona owner's
+    own rule."""
+    from ..personas.service import _persona_record_projected_state
+
+    return _persona_record_projected_state(persona)
+def _mgmt_nl_persona_is_operational(state: str) -> bool:
+    from ..personas.service import _is_persona_lifecycle_operational
+
+    return _is_persona_lifecycle_operational(state)
+def _mgmt_nl_runtime_is_retired(binding: Dict[str, Any]) -> bool:
+    """The single retired-runtime rule of the trading pulse."""
+    from ..management_read_models.service import _trading_pulse_binding_is_retired
+
+    return _trading_pulse_binding_is_retired(binding)
 def _mgmt_nl_filter_deployment_scoped_records(
     records: List[Dict[str, Any]],
     tenant_id: Optional[str],
@@ -4773,15 +4788,13 @@ def _mgmt_nl_collect_context(
         # causes no telemetry, monitoring or rollback read and no observation.
         nonlocal _cached_runtime_bindings, retired_runtime_count
         if _cached_runtime_bindings is None:
-            from ..management_read_models.service import _trading_pulse_binding_is_retired
-
             all_bindings, bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
                 record_filter=_tenant_record_filter
             )
             current_bindings = [
                 binding
                 for binding in all_bindings
-                if not (isinstance(binding, dict) and _trading_pulse_binding_is_retired(binding))
+                if not (isinstance(binding, dict) and _mgmt_nl_runtime_is_retired(binding))
             ]
             retired_runtime_count = len(all_bindings) - len(current_bindings)
             _cached_runtime_bindings = (current_bindings, bindings_obs)
@@ -4941,21 +4954,16 @@ def _mgmt_nl_collect_context(
             )
             # Retired personas are history: they are counted, not projected, and
             # operational personas come first so the row cap cannot hide one.
-            from ..personas.service import (
-                _is_persona_lifecycle_operational,
-                _persona_record_projected_state,
-            )
-
             all_personas = list(personas)
             personas = [
                 persona
                 for persona in all_personas
-                if _persona_record_projected_state(persona) != "retired"
+                if _mgmt_nl_persona_state(persona) != "retired"
             ]
             retired_persona_count = len(all_personas) - len(personas)
             personas.sort(
-                key=lambda persona: not _is_persona_lifecycle_operational(
-                    _persona_record_projected_state(persona)
+                key=lambda persona: not _mgmt_nl_persona_is_operational(
+                    _mgmt_nl_persona_state(persona)
                 )
             )
             runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
@@ -5004,7 +5012,7 @@ def _mgmt_nl_collect_context(
             fleet_items = []
             fleet_item_states: List[str] = []
             fleet_owner_observations: List[Dict[str, Any]] = []
-            for persona in personas[:20]:
+            for persona in personas:
                 item, item_owner_observations = _project_persona_fleet_item(
                     persona,
                     all_runtime_bindings=runtime_bindings,
@@ -5013,8 +5021,9 @@ def _mgmt_nl_collect_context(
                     telemetry_by_runtime_id=telemetry_by_runtime_id,
                     tenant_id=tenant_id,
                 )
-                fleet_items.append(item)
-                fleet_item_states.append(_persona_record_projected_state(persona))
+                if len(fleet_items) < 20:
+                    fleet_items.append(item)
+                    fleet_item_states.append(_mgmt_nl_persona_state(persona))
                 # Telemetry observations are already carried once per unique
                 # runtime in telemetry_observations above; only the
                 # per-persona-only owners (bindings, teaching sessions) are
@@ -5037,7 +5046,7 @@ def _mgmt_nl_collect_context(
                 "retired_runtime_count": retired_runtime_count,
                 "by_lifecycle_state": _management_count_by(
                     [
-                        {"lifecycle_state": _persona_record_projected_state(persona)}
+                        {"lifecycle_state": _mgmt_nl_persona_state(persona)}
                         for persona in personas
                     ],
                     "lifecycle_state",
