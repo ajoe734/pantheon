@@ -1108,35 +1108,49 @@ def test_bff_persona_memory_found() -> None:
             facade_state.read_store = original
 
 
+def _memory_jwt(monkeypatch, tenant: str = "tenant-alpha") -> str:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "memory-auth-test-secret-0123456789abcdef"
+    for name in ("PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_BFF_JWT_SECRET"):
+        monkeypatch.setenv(name, secret)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    return encode_jwt_hs256(
+        {"sub": "op-mem", "operator_id": "op-mem", "roles": ["operator"], "tenant_id": tenant, "exp": 4102444800},
+        secret=secret,
+    )
+
+
+class _MemFakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self):
+        return json.dumps(self._payload).encode()
+
+
 def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def read(self):
-            return json.dumps(
-                {
-                    "hits": [
-                        {
-                            "type": "persona",
-                            "relevance_score": 0.93,
-                            "entry": {"memory_id": "pmem-1", "persona_id": captured["persona_id"]},
-                        },
-                        {"type": "institutional", "entry": {"entry_id": "inst-1"}},
-                    ],
-                    "authz": {"policy_version": "governance-authz.v1"},
-                }
-            ).encode()
-
     captured = {}
 
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        return FakeResponse()
+        captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+        return _MemFakeResponse(
+            {
+                "hits": [
+                    {"type": "persona", "relevance_score": 0.93,
+                     "entry": {"memory_id": "pmem-1", "persona_id": captured["persona_id"]}},
+                    {"type": "institutional", "entry": {"entry_id": "inst-1"}},
+                ],
+                "authz": {"policy_version": "governance-authz.v1"},
+            }
+        )
 
     with tempfile.TemporaryDirectory() as td:
         original = facade_state.read_store
@@ -1146,7 +1160,8 @@ def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
             client = _fresh_client(td)
             pid = _seed_persona(client, "Canonical Memory Persona")
             captured["persona_id"] = pid
-            resp = client.get(f"/bff/personas/{pid}/memory", headers=OPERATOR_HEADERS)
+            token = _memory_jwt(monkeypatch)
+            resp = client.get(f"/bff/personas/{pid}/memory", headers={"Authorization": f"Bearer {token}"})
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["data"] == [
@@ -1154,11 +1169,65 @@ def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
             ]
             assert body["meta"]["status"] == "ok"
             source = body["meta"]["memory_source"]
-            assert source["kind"] == "canonical_memory_plane"
             assert source["available"] is True
             assert source["workspace_is_source_of_truth"] is False
             assert "scope=persona" in captured["url"]
             assert f"persona_id={pid}" in captured["url"]
+            # Actual transport carries the caller's verified identity and tenant;
+            # roles are never asserted through the query string.
+            assert captured["headers"]["authorization"] == f"Bearer {token}"
+            assert captured["headers"]["x-tenant-id"] == "tenant-alpha"
+            assert "actor_roles=&" in captured["url"] or "actor_roles=" in captured["url"]
+            assert "operator" not in captured["url"].split("actor_roles=")[1].split("&")[0]
+        finally:
+            facade_state.read_store = original
+
+
+def test_bff_persona_memory_denied_stays_explicit(monkeypatch) -> None:
+    from urllib import error as urllib_error
+
+    def deny(request, timeout):
+        raise urllib_error.HTTPError(request.full_url, 403, "forbidden", {}, None)
+
+    with tempfile.TemporaryDirectory() as td:
+        original = facade_state.read_store
+        try:
+            monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory:8080")
+            monkeypatch.setattr(facade_state.urllib_request, "urlopen", deny)
+            client = _fresh_client(td)
+            pid = _seed_persona(client, "Denied Memory Persona")
+            token = _memory_jwt(monkeypatch)
+            resp = client.get(f"/bff/personas/{pid}/memory", headers={"Authorization": f"Bearer {token}"})
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["data"] == []
+            assert body["meta"]["status"] == "degraded"
+            src = body["meta"]["memory_source"]
+            assert src["available"] is False and src["fallback_used"] is False
+            assert src["reason"] == "memory_plane_access_denied" and src["http_status"] == 403
+        finally:
+            facade_state.read_store = original
+
+
+def test_bff_persona_memory_unbound_tenant_never_calls_memory(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory:8080")
+    monkeypatch.setattr(facade_state.urllib_request, "urlopen", lambda *a, **k: calls.append(a))
+    with tempfile.TemporaryDirectory() as td:
+        original = facade_state.read_store
+        try:
+            client = _fresh_client(td)
+            pid = _seed_persona(client, "Unbound Memory Persona")
+            token = _memory_jwt(monkeypatch)
+            resp = client.get(
+                f"/bff/personas/{pid}/memory",
+                headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-beta"},
+            )
+            assert resp.status_code == 200, resp.text
+            src = resp.json()["meta"]["memory_source"]
+            assert src["available"] is False
+            assert src["reason"] == "memory_plane_tenant_unbound"
+            assert calls == []
         finally:
             facade_state.read_store = original
 
