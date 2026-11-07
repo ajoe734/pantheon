@@ -565,6 +565,14 @@ class RuntimePort:
 # Ranking Projection Port (ACG-02-012) -- pure composition, no raw storage
 # ---------------------------------------------------------------------------
 
+
+def _surface_entry(name: str, reader: Any, read: Callable[[Any], Tuple[str, List[Dict[str, Any]]]]) -> Dict[str, Any]:
+    source, _records = read(reader)
+    if source in ("missing", "unavailable"):
+        return {"status": "unavailable", "source": source, "message": f"{name} reader is unavailable or unconfigured."}
+    return {"status": "ok", "source": source, "message": None}
+
+
 class RankingProjectionPort:
     """Pure DTO/projection composition over ranking, rebalance, allocation,
     containment, and persona-league datasets.
@@ -603,16 +611,26 @@ class RankingProjectionPort:
         except Exception as exc:
             return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
 
-    def get_surface_status(self) -> Dict[str, Any]:
-        surfaces = {}
-        for name, reader in (
+    def _surface_readers(self) -> Tuple[Tuple[str, Optional[Callable[[], List[Dict[str, Any]]]]], ...]:
+        return (
             ("rankings", self._rankings_reader),
             ("ranking_formulas", self._ranking_formulas_reader),
             ("persona_league", self._persona_league_reader),
             ("rebalances", self._rebalances_reader),
             ("capital_allocations", self._capital_allocations_reader),
             ("containments", self._containments_reader),
-        ):
+        )
+
+    def get_dataset_status(self, dataset: str) -> Dict[str, Any]:
+        """Status of exactly one dataset: only that dataset's reader is called."""
+        for name, reader in self._surface_readers():
+            if name == dataset:
+                return _surface_entry(name, reader, self._read)
+        raise KeyError(dataset)
+
+    def get_surface_status(self) -> Dict[str, Any]:
+        surfaces = {}
+        for name, reader in self._surface_readers():
             source, records = self._read(reader)
             if source in ("missing", "unavailable"):
                 surfaces[name] = {"status": "unavailable", "source": source, "message": f"{name} reader is unavailable or unconfigured."}
@@ -836,12 +854,22 @@ class EvolutionProjectionPort:
         except Exception as exc:
             return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
 
-    def get_surface_status(self) -> Dict[str, Any]:
-        surfaces = {}
-        for name, reader in (
+    def _surface_readers(self) -> Tuple[Tuple[str, Optional[Callable[[], List[Dict[str, Any]]]]], ...]:
+        return (
             ("evolution_programs", self._evolution_programs_reader),
             ("evolution_decisions", self._evolution_decisions_reader),
-        ):
+        )
+
+    def get_dataset_status(self, dataset: str) -> Dict[str, Any]:
+        """Status of exactly one dataset: only that dataset's reader is called."""
+        for name, reader in self._surface_readers():
+            if name == dataset:
+                return _surface_entry(name, reader, self._read)
+        raise KeyError(dataset)
+
+    def get_surface_status(self) -> Dict[str, Any]:
+        surfaces = {}
+        for name, reader in self._surface_readers():
             source, records = self._read(reader)
             if source in ("missing", "unavailable"):
                 surfaces[name] = {"status": "unavailable", "source": source, "message": f"{name} reader is unavailable or unconfigured."}

@@ -1,0 +1,42 @@
+{
+  "task_id": "BFF-RANKING-STATUS-BOUNDED-READ-20261107",
+  "verification_scope": "functional only; hosted verification is left to the operator acceptance task. No VM/SSH access, no operator keys, no rows deleted or pruned, no change to what is written.",
+  "measurement_setup": {
+    "database": "real PostgreSQL (pgserver 0.1.4 embedded) via psycopg 3.3.8, table rankings.rankings created by RankingWriteStore",
+    "rows": "1463 ranking_snapshot rows under ranking-snapshot:: record_ids, mixed quarterly/rolling surfaces, rising created_at with deliberate created_at ties, items lists of persona dicts",
+    "size": "285 MB of payload text, 72 MB stored (compressed) - 195 KB average text per row, smaller than the hosted 275 KB average / 400 MB, so the reported numbers understate the hosted gain",
+    "method": "each mode run in its own subprocess; peak memory = ru_maxrss"
+  },
+  "status_probe_before_after": {
+    "before": {"step": "PostgresJsonOwnerStore.list_all (select + json-decode every payload, then skip each) via RankingReadStore.list_rankings", "seconds": 20.581, "peak_rss_mib": 1635.2, "rows_decoded": 1463, "rows_returned": 0},
+    "after": {"step": "list_rankings with record_id prefix predicate on the plain column", "seconds": 0.264, "peak_rss_mib": 42.0, "rows_decoded": 0, "rows_returned": 0},
+    "other_slow_steps_removed": [
+      "dataset_source for rankings/ranking_formulas/rebalances/capital_allocations/containments/evolution_* ran get_surface_status, which called all six (resp. both) readers; ranking_formulas waited on the rankings reader. Now get_dataset_status calls exactly one reader.",
+      "rankings reader built RankingWriteStore (bootstrap on) per call; now build_rankings_read_store -> RankingReadStore(bootstrap=False, read_only=True)."
+    ]
+  },
+  "latest_snapshot": {
+    "decision": "partial expression index rankings_snapshot_latest_idx ON ((COALESCE(payload->>'surface','')), (COALESCE(payload->>'created_at','')) DESC, updated_at DESC) WHERE left(record_id,18)='ranking-snapshot::'. Created idempotently (IF NOT EXISTS, advisory lock) by RankingWriteStore bootstrap, same pattern as the existing count/family-keep indexes; additive, no data change.",
+    "why_not_updated_at_ordering": "created_at is a caller-supplied payload field (snapshot_record(created_at=...)), so equality with updated_at (insertion time) cannot be proven in general, only observed at one measurement time. The SQL keeps ORDER BY created_at DESC, updated_at DESC exactly, so results are identical by construction; the index only makes it cheap.",
+    "scope_note": "query now also restricts to the ranking-snapshot:: prefix (the only id snapshots are written under; hosted: every snapshot row has it). Without the index the query returns the same rows, only slower; no-surface (surface=None) calls are not index-served and remain a bounded prefix scan.",
+    "results_identical": {"quarterly": "same row as old SQL (s1462, includes created_at ties)", "rolling": "same row as old SQL (s1461)"},
+    "latency_seconds": {"quarterly": {"old": 2.729, "new": 0.066}, "rolling": {"old": 2.525, "new": 0.071}, "no_surface": {"old": 1.813, "new": 1.291}},
+    "explain_old_quarterly": "Seq Scan on rankings, filter on payload expressions, Buffers shared hit=48305, Execution Time 2655.729 ms",
+    "explain_new_quarterly": "Limit -> Index Scan using rankings_snapshot_latest_idx, Index Cond surface='quarterly', Buffers shared hit=21, Execution Time 1.060 ms"
+  },
+  "acceptance_mapping": {
+    "2": "test_persona_capital_runtime_ports.py::test_dataset_source_calls_only_the_requested_dataset_reader (counting readers for all eight; asserts calls == {dataset: 1}) for the five ranking/capital datasets and evolution_programs/evolution_decisions",
+    "3": "test_store.py::test_legacy_reads_never_fetch_namespaced_rows (SQL-interpreting Postgres fake: prefixed payloads never leave the store; every decoded payload is a legacy row) plus the real-Postgres run above (0 rows decoded)",
+    "4": "test_legacy_list_rankings_raises_on_mixed_envelope_masquerading_as_legacy, ..._unrecognized_record_type, ..._null_record_type_with_ranking_id all still pass for rows without a namespaced record_id",
+    "5": "test_get_latest_ranking_snapshot_selects_latest_by_surface_and_tie_breaks passes unchanged; real-Postgres comparison and EXPLAIN above",
+    "6": "test_dataset_source_stays_truthful_when_the_owner_fails (each failing reader -> unavailable) and test_full_surface_status_still_reads_every_reader (degraded when rebalances fails, capital statuses not constants)",
+    "7": "RankingWriteStore write paths untouched; existing conflict tests pass. Only addition is the idempotent index creation after bootstrap.",
+    "injected_list_all": "if list_all is injected on the table instance, _list_legacy_candidate_payloads and get_latest_ranking_snapshot keep the full-scan path"
+  },
+  "changed_assertions_justification": {
+    "test_legacy_list_rankings_raises_on_mixed_envelope_masquerading_as_legacy": "the mixed-envelope row was stored under ranking-snapshot::masquerade. Acceptance 3 requires that namespaced rows are never fetched, so the integrity check can only apply to non-namespaced ids; the row now uses record_id masquerade-row and the same RankingWriteOwnerError assertion. Behaviour for rows the legacy surface reads is unchanged.",
+    "fake connection in test_store.py": "extended (not weakened) to honour the new left(record_id) <> predicate and count those selects."
+  },
+  "tests_run": "pytest services/rankings services/foundation/tests/test_control_plane_postgres_owner_stores.py bff test_persona_capital_runtime_ports.py test_ranking_default_owner_integrity.py test_bff_capital_ranking_rebalance_contract.py: 115 passed",
+  "open_items": "retention of old snapshots remains an operator decision; nothing deleted. Hosted before/after to be confirmed by the operator acceptance task."
+}
