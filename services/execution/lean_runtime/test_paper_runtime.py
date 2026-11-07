@@ -2487,6 +2487,9 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             [event["metadata"]["sequence_no"] for event in lifecycle],
             [1, 2, 3],
         )
+        self.assertEqual(lifecycle[2]["metadata"].get("risk_status"), "skipped")
+        self.assertEqual(lifecycle[2]["metadata"].get("decision_status"), "no_order")
+        self.assertEqual(lifecycle[2]["metadata"].get("order_status"), "not_submitted")
 
 
 class PaperExecutionInputHardeningTest(unittest.TestCase):
@@ -4128,6 +4131,8 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         self.assertEqual(rej.broker_submission_status, "sell_without_holdings")
         self.assertFalse(rej.submitted_to_broker)
         self.assertEqual(rej.metadata.get("reason"), "sell_without_holdings")
+        self.assertEqual(rej.metadata.get("risk_status"), "rejected")
+        self.assertEqual(rej.metadata.get("risk_reason"), "sell_without_holdings")
         self.assertEqual(rej.metadata.get("requested_quantity"), 2.0)
         self.assertEqual(rej.metadata.get("holding_quantity"), 0.0)
         self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
@@ -4158,6 +4163,31 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         self.assertEqual(events[0].metadata.get("holding_quantity"), -1.0)
         self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
         self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+
+        # Pre-broker input rejections (e.g. unsupported quantity_type or invalid market fill)
+        # must NOT stamp risk_status="rejected".
+        events.clear()
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-bad-qtype",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            order_type="MARKET",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertEqual(events[0].broker_submission_status, "tw_unsupported_quantity_type")
+        self.assertIsNone(events[0].metadata.get("risk_status"))
+
+        events.clear()
+        algo.MarketOrder("2330.TW", 0.0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertEqual(events[0].metadata.get("reject_reason"), "invalid_market_fill")
+        self.assertIsNone(events[0].metadata.get("risk_status"))
+
 
     def test_sell_larger_than_holding_clamps_to_held_quantity_and_ends_at_zero(self):
         events = []

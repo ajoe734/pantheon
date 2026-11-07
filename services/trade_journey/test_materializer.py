@@ -139,3 +139,285 @@ def test_failure_injection_rejects_invalid_event_and_marks_failed_rebuild():
         materializer.rebuild([invalid])
     assert materializer.rebuild_status == "failed"
     assert materializer.projections == []
+
+
+def test_evaluated_prebroker_rejection_and_explicit_no_order_cover_risk_evaluation():
+    rejected = JourneyMaterializer()
+    rejected.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-2330"),
+        event("e2", "trade_decision", "succeeded", 2, decision_id="dec-2330"),
+        event(
+            "e3",
+            "order_submission",
+            "failed",
+            3,
+            event_type="order_rejection",
+            reason_code="sell_without_holdings",
+            submitted_to_broker=False,
+        ),
+    ])
+    rej_proj = rejected.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert rej_proj.snapshot["status"] == "failed"
+    assert rej_proj.snapshot["stages"]["risk_evaluation"]["status"] == "rejected"
+    assert "risk_evaluation" not in rej_proj.snapshot["completeness"]["missing_stages"]
+
+    noop = JourneyMaterializer()
+    noop.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-noop"),
+        event("e2", "trade_decision", "succeeded", 2, decision_id="dec-noop"),
+        event(
+            "e3",
+            "order_submission",
+            "skipped",
+            3,
+            event_type="paper_order_simulated",
+            reason_code="hold_signal",
+            submitted_to_broker=False,
+        ),
+    ])
+    noop_proj = noop.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert noop_proj.snapshot["status"] == "no_order"
+    assert noop_proj.snapshot["stages"]["risk_evaluation"]["status"] == "skipped"
+    assert "risk_evaluation" not in noop_proj.snapshot["completeness"]["missing_stages"]
+
+    decision_noop = JourneyMaterializer()
+    decision_noop.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-dec-noop"),
+        event("e2", "trade_decision", "skipped", 2, decision_id="dec-dec-noop", decision_status="no_order"),
+    ])
+    dec_proj = decision_noop.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert dec_proj.snapshot["status"] == "no_order"
+    assert "risk_evaluation" not in dec_proj.snapshot["completeness"]["missing_stages"]
+
+
+def test_missing_upstream_decision_or_unverified_submission_keeps_risk_missing():
+    missing_decision = JourneyMaterializer()
+    missing_decision.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-gap"),
+        event(
+            "e3",
+            "order_submission",
+            "failed",
+            3,
+            event_type="order_rejection",
+            reason_code="sell_without_holdings",
+            submitted_to_broker=False,
+        ),
+    ])
+    gap_proj = missing_decision.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert {"trade_decision", "risk_evaluation"} <= set(
+        gap_proj.snapshot["completeness"]["missing_stages"]
+    )
+
+    broker_err = JourneyMaterializer()
+    broker_err.rebuild([
+        event("e1", "signal_generation", "succeeded", 1, signal_id="sig-bkr"),
+        event("e2", "trade_decision", "succeeded", 2, decision_id="dec-bkr"),
+        event(
+            "e3",
+            "order_submission",
+            "failed",
+            3,
+            event_type="order_rejection",
+            reason_code="taiwan_broker_error",
+            submitted_to_broker=True,
+        ),
+    ])
+    bkr_proj = broker_err.get("tj_1", tenant_id="tenant-a", environment="paper")
+    assert "risk_evaluation" in bkr_proj.snapshot["completeness"]["missing_stages"]
+
+    for idx, unverified_terminal in enumerate(
+        [
+            {"event_type": "order_rejection", "submitted_to_broker": False},
+            {
+                "event_type": "order_rejection",
+                "reason_code": "transport_failed",
+                "submitted_to_broker": False,
+            },
+            {
+                "event_type": "order_submission",
+                "reason_code": "transport_failed",
+                "submitted_to_broker": False,
+            },
+            {
+                "event_type": "paper_order_simulated",
+                "stage_status": "skipped",
+                "submitted_to_broker": False,
+            },
+        ],
+        start=1,
+    ):
+        unverified = JourneyMaterializer()
+        unverified.rebuild([
+            event("e1", "signal_generation", "succeeded", 1, signal_id=f"sig-unv-{idx}"),
+            event("e2", "trade_decision", "succeeded", 2, decision_id=f"dec-unv-{idx}"),
+            {
+                **event("e3", "order_submission", "failed", 3),
+                **unverified_terminal,
+            },
+        ])
+        unv_proj = unverified.get("tj_1", tenant_id="tenant-a", environment="paper")
+        assert "risk_evaluation" in unv_proj.snapshot["completeness"]["missing_stages"]
+
+    for idx, (fill_qty, submitted) in enumerate([(5, False), (0, True)], start=1):
+        contradictory = JourneyMaterializer()
+        contradictory.rebuild([
+            event("s", "signal_generation", "succeeded", 1, signal_id=f"sig-contra-{idx}"),
+            event(
+                "d",
+                "trade_decision",
+                "skipped",
+                2,
+                decision_id=f"dec-contra-{idx}",
+                decision_status="no_order",
+            ),
+            event(
+                "o",
+                "order_submission",
+                "skipped",
+                3,
+                event_type="paper_order_simulated",
+                quantity=fill_qty,
+                submitted_to_broker=submitted,
+            ),
+        ])
+        contra_proj = contradictory.get("tj_1", tenant_id="tenant-a", environment="paper")
+        assert "risk_evaluation" not in contra_proj.snapshot["stages"]
+        assert "risk_evaluation" in contra_proj.snapshot["completeness"]["missing_stages"]
+
+    for idx, contra_extra in enumerate(
+        [
+            {"broker_order_id": "broker-real"},
+            {"broker_trade_id": "trade-real"},
+            {"ledger_entry_id": "ledger-real"},
+            {"reconciliation_id": "recon-real"},
+            {"fill_id": "fill-real"},
+            {"filled_quantity": "invalid"},
+            {"metadata": {"broker_order_id": "broker-nested"}},
+            {"metadata": {"fill_id": "fill-nested"}},
+            {"metadata": {"filled_quantity": "invalid"}},
+            {"metrics": {"reconciliation_id": "recon-nested"}},
+            {"metrics": {"fill_quantity": "invalid"}},
+            {"metrics": {"submitted_to_broker": True}},
+        ],
+        start=1,
+    ):
+        for mode_name, sub_event in (
+            (
+                "noop",
+                event(
+                    "o",
+                    "order_submission",
+                    "skipped",
+                    3,
+                    event_type="paper_order_simulated",
+                    decision_status="no_order",
+                    order_status="not_submitted",
+                    reason_code="hold_signal",
+                    quantity=0.0,
+                    submitted_to_broker=False,
+                    **contra_extra,
+                ),
+            ),
+            (
+                "reject",
+                event(
+                    "o",
+                    "order_submission",
+                    "failed",
+                    3,
+                    event_type="order_rejection",
+                    reason_code="sell_without_holdings",
+                    quantity=0.0,
+                    submitted_to_broker=False,
+                    **contra_extra,
+                ),
+            ),
+        ):
+            contra_mat = JourneyMaterializer()
+            contra_mat.rebuild([
+                event("s", "signal_generation", "succeeded", 1, signal_id=f"sig-c-{mode_name}-{idx}"),
+                event(
+                    "d",
+                    "trade_decision",
+                    "skipped" if mode_name == "noop" else "succeeded",
+                    2,
+                    decision_id=f"dec-c-{mode_name}-{idx}",
+                    decision_status="no_order" if mode_name == "noop" else "succeeded",
+                ),
+                sub_event,
+            ])
+            c_proj = contra_mat.get("tj_1", tenant_id="tenant-a", environment="paper")
+            assert "risk_evaluation" not in c_proj.snapshot["stages"]
+            assert "risk_evaluation" in c_proj.snapshot["completeness"]["missing_stages"]
+
+    for upstream_stage in ("signal_generation", "trade_decision"):
+        for extra_fill in (
+            {"fill_quantity": 5},
+            {"filled_quantity": 5},
+            {"metadata": {"fill_quantity": 5}},
+            {"metadata": {"filled_quantity": 5}},
+            {"metrics": {"fill_quantity": 5}},
+            {"metrics": {"filled_quantity": 5}},
+        ):
+            for mode_name, sub_event in (
+                (
+                    "noop",
+                    event(
+                        "o",
+                        "order_submission",
+                        "skipped",
+                        3,
+                        event_type="paper_order_simulated",
+                        decision_status="no_order",
+                        order_status="not_submitted",
+                        reason_code="hold_signal",
+                        quantity=0.0,
+                        submitted_to_broker=False,
+                    ),
+                ),
+                (
+                    "reject",
+                    event(
+                        "o",
+                        "order_submission",
+                        "failed",
+                        3,
+                        event_type="order_rejection",
+                        reason_code="sell_without_holdings",
+                        quantity=0.0,
+                        submitted_to_broker=False,
+                    ),
+                ),
+            ):
+                sig_ev = event(
+                    "s",
+                    "signal_generation",
+                    "succeeded",
+                    1,
+                    signal_id="sig-up",
+                    quantity=10,
+                    requested_quantity=10,
+                    **(extra_fill if upstream_stage == "signal_generation" else {}),
+                )
+                dec_ev = event(
+                    "d",
+                    "trade_decision",
+                    "skipped" if mode_name == "noop" else "succeeded",
+                    2,
+                    decision_id="dec-up",
+                    decision_status="no_order" if mode_name == "noop" else "succeeded",
+                    quantity=10,
+                    requested_quantity=10,
+                    **(extra_fill if upstream_stage == "trade_decision" else {}),
+                )
+                up_mat = JourneyMaterializer()
+                up_mat.rebuild([sig_ev, dec_ev, sub_event])
+                up_proj = up_mat.get("tj_1", tenant_id="tenant-a", environment="paper")
+                assert "risk_evaluation" not in up_proj.snapshot["stages"]
+                assert "risk_evaluation" in up_proj.snapshot["completeness"]["missing_stages"]
+
+
+
+
+

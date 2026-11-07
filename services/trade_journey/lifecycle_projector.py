@@ -189,6 +189,7 @@ _PASSTHROUGH_FIELDS = (
     "client_order_id",
     "order_id",
     "broker_order_id",
+    "fill_id",
     "broker_trade_id",
     "ledger_entry_id",
     "reconciliation_id",
@@ -908,32 +909,225 @@ class RelationalLifecycleProjector:
                 "correlation_envelope": source.get("correlation_envelope"),
                 **identity,
             }
-            is_no_holdings_reject = is_sell_without_holdings_rejection(source, metadata)
-            for field in _PASSTHROUGH_FIELDS:
-                if is_no_holdings_reject and field in {
-                    "client_order_id",
-                    "order_id",
+            metrics_map = (
+                source.get("metrics")
+                if isinstance(source.get("metrics"), Mapping)
+                else {}
+            )
+            broker_flags = (
+                source.get("submitted_to_broker"),
+                metadata.get("submitted_to_broker"),
+                metrics_map.get("submitted_to_broker"),
+            )
+            if any(flag is not None and flag is not False for flag in broker_flags):
+                submitted_to_broker: bool | None = True
+            elif any(flag is False for flag in broker_flags):
+                submitted_to_broker = False
+            else:
+                submitted_to_broker = None
+            nonzero_fill_qty: Any = None
+            nonzero_generic_qty: Any = None
+            has_invalid_qty = False
+            invalid_qty_fields: dict[str, Any] = {}
+            nonzero_fill_fields: dict[str, Any] = {}
+            for qty_field in ("fill_quantity", "filled_quantity", "quantity"):
+                for container in (metrics_map, source, metadata):
+                    raw_qty = container.get(qty_field)
+                    if raw_qty is None:
+                        continue
+                    if isinstance(raw_qty, bool):
+                        has_invalid_qty = True
+                        invalid_qty_fields.setdefault(qty_field, raw_qty)
+                        continue
+                    try:
+                        parsed_qty = float(raw_qty)
+                    except (TypeError, ValueError):
+                        has_invalid_qty = True
+                        invalid_qty_fields.setdefault(qty_field, raw_qty)
+                        continue
+                    if not math.isfinite(parsed_qty):
+                        has_invalid_qty = True
+                        invalid_qty_fields.setdefault(qty_field, str(raw_qty))
+                        continue
+                    if parsed_qty != 0.0:
+                        normalized_qty = (
+                            abs(raw_qty)
+                            if isinstance(raw_qty, (int, float))
+                            else parsed_qty
+                        )
+                        if qty_field in ("fill_quantity", "filled_quantity"):
+                            nonzero_fill_fields.setdefault(qty_field, normalized_qty)
+                            if nonzero_fill_qty is None:
+                                nonzero_fill_qty = normalized_qty
+                        elif nonzero_generic_qty is None:
+                            nonzero_generic_qty = normalized_qty
+            contradictory_identifiers = {
+                id_field: id_val
+                for id_field in (
                     "broker_order_id",
+                    "fill_id",
                     "broker_trade_id",
                     "ledger_entry_id",
                     "reconciliation_id",
-                }:
-                    continue
-                value = _first(source.get(field), metadata.get(field))
+                )
+                if (
+                    id_val := _first(
+                        source.get(id_field),
+                        metadata.get(id_field),
+                        metrics_map.get(id_field),
+                    )
+                )
+                is not None
+            }
+            has_contradictory_fill_or_broker = (
+                submitted_to_broker is True
+                or nonzero_fill_qty is not None
+                or has_invalid_qty
+                or bool(contradictory_identifiers)
+            )
+            is_no_holdings_reject = (
+                not has_contradictory_fill_or_broker
+                and nonzero_generic_qty is None
+                and is_sell_without_holdings_rejection(source, metadata)
+            )
+            is_noop = (
+                not has_contradictory_fill_or_broker
+                and nonzero_generic_qty is None
+                and is_noop_order(source, metadata)
+            )
+            reject_reason = _first(
+                source.get("reason_code"),
+                metadata.get("reason_code"),
+                source.get("reason"),
+                metadata.get("reason"),
+                source.get("reject_reason"),
+                metadata.get("reject_reason"),
+                source.get("broker_submission_status"),
+                metadata.get("broker_submission_status"),
+            )
+            explicit_noop_reason = _first(
+                source.get("noop_reason"),
+                metadata.get("noop_reason"),
+                source.get("filter_reason"),
+                metadata.get("filter_reason"),
+                source.get("reason_code"),
+                metadata.get("reason_code"),
+            )
+            is_explicit_no_trade = (
+                not is_no_holdings_reject
+                and is_noop
+                and status == "skipped"
+                and (
+                    str(
+                        _first(
+                            source.get("decision_status"),
+                            metadata.get("decision_status"),
+                        )
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                    == "no_order"
+                    or str(
+                        _first(
+                            source.get("order_status"),
+                            metadata.get("order_status"),
+                        )
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                    == "not_submitted"
+                    or explicit_noop_reason is not None
+                )
+            )
+            for field in _PASSTHROUGH_FIELDS:
+                value = _first(
+                    source.get(field),
+                    metadata.get(field),
+                    metrics_map.get(field),
+                )
                 if value is not None:
                     event[field] = value
+            if contradictory_identifiers:
+                event.update(contradictory_identifiers)
+            if submitted_to_broker is not None:
+                event["submitted_to_broker"] = submitted_to_broker
+            requested_qty = _first(
+                source.get("requested_quantity"),
+                metadata.get("requested_quantity"),
+                metrics_map.get("requested_quantity"),
+            )
+            if requested_qty is not None:
+                event["requested_quantity"] = requested_qty
+            holding_qty = _first(
+                source.get("holding_quantity"),
+                metadata.get("holding_quantity"),
+                metrics_map.get("holding_quantity"),
+            )
+            if holding_qty is not None:
+                event["holding_quantity"] = holding_qty
             if is_no_holdings_reject:
                 event["reason_code"] = "sell_without_holdings"
+                event["risk_status"] = "rejected"
+                event["submitted_to_broker"] = False
+                event["quantity"] = 0.0
+            elif source.get("event_type") in {"order_rejection", "order_rejection_simulated"}:
+                if reject_reason is not None:
+                    event["reason_code"] = str(reject_reason)
+            elif is_explicit_no_trade:
+                event["reason_code"] = str(explicit_noop_reason or "no_order")
+                event["decision_status"] = "no_order"
+                event["order_status"] = "not_submitted"
+                event["risk_status"] = "skipped"
+                event["submitted_to_broker"] = False
+                event["quantity"] = 0.0
+            elif (
+                source.get("event_type") == "trade_decision"
+                and not has_contradictory_fill_or_broker
+                and _stage_status(metadata.get("decision_status") or "succeeded")
+                == "skipped"
+            ):
+                event["decision_status"] = "no_order"
+                decision_reason = _first(
+                    source.get("reason_code"),
+                    metadata.get("reason_code"),
+                    source.get("noop_reason"),
+                    metadata.get("noop_reason"),
+                    source.get("reason"),
+                    metadata.get("reason"),
+                )
+                if decision_reason is not None:
+                    event["reason_code"] = str(decision_reason)
             if source.get("event_type") == FIXTURE_EVENT_TYPE:
                 for field in FIXTURE_PASSTHROUGH_FIELDS:
                     value = fixture_payload.get(field)
                     if value not in (None, "", [], {}):
                         event[field] = value
             metrics = source.get("metrics") if isinstance(source.get("metrics"), Mapping) else {}
-            if "quantity" not in event:
+            if "quantity" not in event and stage not in {"signal_generation", "trade_decision"}:
                 quantity = _first(metrics.get("fill_quantity"), source.get("position_qty"))
                 if quantity is not None:
                     event["quantity"] = abs(quantity) if isinstance(quantity, (int, float)) else quantity
+            if (
+                not (is_no_holdings_reject or is_explicit_no_trade)
+                and event.get("quantity") in (None, 0, 0.0)
+            ):
+                fallback_qty = (
+                    nonzero_generic_qty
+                    if stage in {"signal_generation", "trade_decision"}
+                    else (
+                        nonzero_generic_qty
+                        if nonzero_generic_qty is not None
+                        else nonzero_fill_qty
+                    )
+                )
+                if fallback_qty is not None:
+                    event["quantity"] = fallback_qty
+            if nonzero_fill_fields:
+                event.update(nonzero_fill_fields)
+            if invalid_qty_fields:
+                event.update(invalid_qty_fields)
             if "price" not in event and _clean(metrics.get("fill_price")) is not None:
                 event["price"] = metrics["fill_price"]
             result.append({key: value for key, value in event.items() if value is not None})
