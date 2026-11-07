@@ -100,7 +100,21 @@ def test_deploy_script_refresh_only_argument_parsing():
 
 class _MockSourceIngestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        state_file = getattr(self.server, "state_file", None)
+        state = json.loads(state_file.read_text(encoding="utf-8")) if (state_file and state_file.exists()) else {}
         if self.path.startswith("/api/source-ingest/snapshots/latest"):
+            import urllib.parse
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            sym = (qs.get("symbol") or [""])[0]
+            snapshots = state.get("snapshots") or {}
+            snap = snapshots.get(sym)
+            if snap is not None:
+                body = json.dumps(snap).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             self.send_response(404)
             self.end_headers()
             self.wfile.write(b'{"error": "not found"}')
@@ -108,8 +122,9 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({
-                "receipts": [{
+            receipts = state.get("receipts")
+            if receipts is None:
+                receipts = [{
                     "connector_id": "tw-twse-tpex-official-market",
                     "status": "completed",
                     "typed_failure": None,
@@ -119,23 +134,17 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
                     "finished_at": "2030-01-01T00:00:00Z",
                     "ingest_run_id": "run-1"
                 }]
-            }).encode("utf-8"))
+            self.wfile.write(json.dumps({"receipts": receipts}).encode("utf-8"))
         elif self.path.startswith("/api/source-ingest/controller/readback"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            state_file = getattr(self.server, "state_file", None)
-            unresolved = 0
-            total_dlq = 0
-            if state_file and state_file.exists():
-                state = json.loads(state_file.read_text(encoding="utf-8"))
-                dlq = state.get("dlq_entries") or []
-                total_dlq = len(dlq)
-                unresolved = sum(1 for e in dlq if e.get("status") in ("pending", "replay_failed", "schema_rejected"))
-            self.wfile.write(json.dumps({
-                "unresolved_dlq_count": unresolved,
-                "dlq_count": total_dlq,
-                "connectors": [{
+            dlq = state.get("dlq_entries") or []
+            total_dlq = len(dlq)
+            unresolved = sum(1 for e in dlq if e.get("status") in ("pending", "replay_failed", "schema_rejected"))
+            connectors = state.get("readback_connectors")
+            if connectors is None:
+                connectors = [{
                     "connector_id": "tw-twse-tpex-official-market",
                     "freshness": {
                         "latest_receipt": {"ingest_run_id": "run-1"},
@@ -146,6 +155,10 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
                         "source_id": "src-1"
                     }
                 }]
+            self.wfile.write(json.dumps({
+                "unresolved_dlq_count": unresolved,
+                "dlq_count": total_dlq,
+                "connectors": connectors,
             }).encode("utf-8"))
         elif self.path.startswith("/api/source-ingest/dlq"):
             self.send_response(200)
@@ -242,6 +255,68 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
                 "selected_entry_ids": replayed_entries[:1] if replayed_entries else [],
                 "correlated_resolutions": correlated_resolutions,
             }).encode("utf-8"))
+        elif self.path == "/api/source-ingest/connectors":
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len).decode("utf-8")) if content_len > 0 else {}
+            state_file = getattr(self.server, "state_file", None)
+            if state_file and state_file.exists():
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                state.setdefault("configured_connectors", []).append(body)
+                state_file.write_text(json.dumps(state), encoding="utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"connector": body.get("connector") or {}}).encode("utf-8"))
+        elif self.path == "/api/source-ingest/active-universe/schedule":
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len).decode("utf-8")) if content_len > 0 else {}
+            state_file = getattr(self.server, "state_file", None)
+            enqueued_items = []
+            for rule in body.get("rules") or []:
+                if not isinstance(rule, dict):
+                    continue
+                contracts = [
+                    str(m.get("symbol", "")).strip()
+                    for m in (body.get("members") or [])
+                    if isinstance(m, dict) and str(m.get("symbol", "")).strip()
+                ]
+                enqueued_items.append({
+                    "connector_id": rule.get("connector_id"),
+                    "job_parameters": {
+                        "connector_id": rule.get("connector_id"),
+                        "dataset": rule.get("dataset"),
+                        "contracts": contracts,
+                        "symbols": contracts,
+                    },
+                })
+            if state_file and state_file.exists():
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                state.setdefault("active_universe_schedules", []).append(body)
+                state_file.write_text(json.dumps(state), encoding="utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "enqueued_count": len(enqueued_items),
+                "enqueued_items": enqueued_items,
+            }).encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_PUT(self):
+        if self.path.startswith("/api/source-ingest/connectors/") and self.path.endswith("/schedule"):
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len).decode("utf-8")) if content_len > 0 else {}
+            state_file = getattr(self.server, "state_file", None)
+            if state_file and state_file.exists():
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                state.setdefault("configured_schedules", []).append({"path": self.path, **body})
+                state_file.write_text(json.dumps(state), encoding="utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"schedule": body}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
@@ -296,6 +371,16 @@ if args[0] == "compose":
                 sys.stderr.write(proc.stderr)
                 sys.exit(proc.returncode)
         else:
+            if "source-ingest-scheduler" in sub:
+                changed = False
+                if "post_run_receipts" in state:
+                    state["receipts"] = state["post_run_receipts"]
+                    changed = True
+                if "post_run_readback_connectors" in state:
+                    state["readback_connectors"] = state["post_run_readback_connectors"]
+                    changed = True
+                if changed:
+                    state_file.write_text(json.dumps(state), encoding="utf-8")
             log_event(
                 "compose_run",
                 args=sub,
@@ -324,6 +409,9 @@ if args[0] == "compose":
             for mid in matching:
                 print(mid)
             sys.exit(0)
+        if target == "source-ingest":
+            print(state.get("source_ingest_cid", "cid-source-ingest"))
+            sys.exit(0)
         print(f"cid-{{target}}")
         sys.exit(0)
     elif sub[0] == "images":
@@ -341,8 +429,12 @@ if args[0] == "compose":
         if "source-ingest" in services:
             if state.get("mutate_image_on_up"):
                 state["image_id"] = state["mutate_image_on_up"]
-            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny" and "mutate_env_on_restore" in state:
-                state["container_env"] = state["mutate_env_on_restore"]
+            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist":
+                state["source_ingest_cid"] = state.get("recreated_source_ingest_cid", "cid-source-ingest-recreated")
+            elif os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
+                state["source_ingest_cid"] = state.get("restored_source_ingest_cid", "cid-source-ingest-restored")
+                if "mutate_env_on_restore" in state:
+                    state["container_env"] = state["mutate_env_on_restore"]
             state_file.write_text(json.dumps(state))
         sys.exit(0)
     elif sub[0] == "rm":
@@ -456,6 +548,37 @@ elif args[0] == "cp":
         }}
     }})
     dest.write_text(json.dumps(projection_data))
+    sys.exit(0)
+
+elif args[0] == "exec":
+    target_cid = args[2] if len(args) > 2 and args[1] == "-i" else args[1]
+    cmd_args = args[3:] if len(args) > 2 and args[1] == "-i" else args[2:]
+    cmd_str = " ".join(cmd_args)
+    log_event("docker_exec", cid=target_cid, cmd=cmd_args)
+    live_source_cid = state.get("source_ingest_cid", "cid-source-ingest")
+    if target_cid != live_source_cid:
+        sys.stderr.write(f"Error response from daemon: No such container: {{target_cid}}\\n")
+        sys.exit(1)
+    if "controller_token" in cmd_str:
+        if state.get("fail_token_exec"):
+            sys.stderr.write("failed reading controller_token\\n")
+            sys.exit(1)
+        if state.get("empty_token_exec"):
+            sys.stdout.write("")
+            sys.exit(0)
+        print(state.get("controller_token", "stub-controller-token-12345"))
+        sys.exit(0)
+    if "desired_state.json" in cmd_str:
+        if state.get("fail_desired_state_exec"):
+            sys.stderr.write("failed writing desired_state.json\\n")
+            sys.exit(1)
+        payload_raw = sys.stdin.read()
+        if not payload_raw.strip():
+            sys.exit(1)
+        state["written_desired_state"] = json.loads(payload_raw)
+        state["written_desired_state_cid"] = target_cid
+        state_file.write_text(json.dumps(state))
+        sys.exit(0)
     sys.exit(0)
 
 sys.exit(0)
@@ -2012,6 +2135,392 @@ def test_bounded_refresh_steady_container_selection(tmp_path: Path, case: str):
         assert not any(e.get("event") == "compose_run" for e in events)
 
 
+def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts():
+    data = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = data["jobs"]["refresh"]["steps"]
+    by_id = {step.get("id"): (idx, step) for idx, step in enumerate(steps) if step.get("id")}
+
+    assert "refresh" in by_id, "Missing TWSE refresh step id=refresh"
+    assert "taifex_refresh" in by_id, "Missing TAIFEX refresh step id=taifex_refresh"
+    twse_idx, twse_step = by_id["refresh"]
+    taifex_idx, taifex_step = by_id["taifex_refresh"]
+    assert twse_idx < taifex_idx, "TAIFEX contract refresh must run after TWSE market refresh"
+
+    assert twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
+    assert twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
+    assert twse_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+
+    assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
+    assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+    assert taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+    assert "--connector-id tw-taifex-futures-options-chip" in taifex_step["run"]
+    assert "--allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw" in taifex_step["run"]
+    assert "--dataset taifex_ssf_contracts" in taifex_step["run"]
+
+    stop_step = next(s for s in steps if s.get("name") == "Stop heartbeat and release lease")
+    assert stop_step["env"]["REFRESH_OUTCOME"] == "${{ steps.refresh.outcome }}"
+    assert stop_step["env"]["TAIFEX_REFRESH_OUTCOME"] == "${{ steps.taifex_refresh.outcome }}"
+    assert '"${REFRESH_OUTCOME}" == "success" && "${TAIFEX_REFRESH_OUTCOME}" == "success"' in stop_step["run"]
+
+
+def test_refresh_entrypoint_taifex_connector_runs_bounded_pull_and_restores_egress_deny(tmp_path: Path):
+    initial_env = [
+        "PANTHEON_EXTERNAL_EGRESS=deny",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+        "PORT=8097",
+        "DATABASE_URL=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+    ]
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": initial_env,
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(_deploy_script_without_readback(tmp_path)),
+            "--refresh-only",
+            "--force",
+            "--connector-id",
+            "tw-taifex-futures-options-chip",
+            "--allowed-hosts",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "--dataset",
+            "taifex_ssf_contracts",
+            "--output",
+            str(output_file),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"TAIFEX refresh failed: {proc.stderr}\n{proc.stdout}"
+    assert output_file.exists()
+    out_data = json.loads(output_file.read_text(encoding="utf-8"))
+    assert out_data.get("status") == "completed"
+
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    bounded_up = next(
+        e
+        for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
+    )
+    assert bounded_up["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+    assert bounded_up["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
+
+    runs = [e for e in events if e.get("event") == "compose_run"]
+    assert len(runs) == 2
+    scheduler_run = next(r for r in runs if "source-ingest-scheduler" in r["args"])
+    assert "SOURCE_INGEST_BOUNDED_DATASET=taifex_ssf_contracts" in scheduler_run["args"]
+
+    recorded_state = json.loads(_state_file.read_text(encoding="utf-8"))
+    configured_conns = recorded_state.get("configured_connectors") or []
+    assert len(configured_conns) == 1
+    conn_payload = configured_conns[0]["connector"]
+    fetch_payload = configured_conns[0]["fetch"]
+    assert conn_payload["connector_id"] == "tw-taifex-futures-options-chip"
+    assert fetch_payload["adapter_config"]["dataset"] == "taifex_ssf_contracts"
+    assert fetch_payload["request"]["dataset"] == "taifex_ssf_contracts"
+    assert fetch_payload["adapter_config"]["contracts"] == ["2330"]
+
+    active_schedules = recorded_state.get("active_universe_schedules") or []
+    assert len(active_schedules) == 1
+    assert active_schedules[0]["enqueue"] is True
+    assert active_schedules[0]["rules"][0]["connector_id"] == "tw-taifex-futures-options-chip"
+    assert active_schedules[0]["rules"][0]["dataset"] == "taifex_ssf_contracts"
+    assert [m["symbol"] for m in active_schedules[0]["members"]] == ["2330"]
+
+    # Verify container ID was re-resolved after recreation and desired_state.json was written to recreated cid
+    assert recorded_state.get("written_desired_state_cid") == "cid-source-ingest-recreated"
+    written_desired = recorded_state.get("written_desired_state") or {}
+    assert any(
+        r.get("dataset") == "taifex_ssf_contracts"
+        and r.get("connector_candidates") == ["tw-taifex-futures-options-chip"]
+        for r in (written_desired.get("personas") or [{}])[0].get("required_data_sources", [])
+    )
+    exec_events = [e for e in events if e.get("event") == "docker_exec"]
+    assert len(exec_events) == 2
+    assert all(e.get("cid") == "cid-source-ingest-recreated" for e in exec_events)
+
+    restore_up = next(
+        e
+        for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+    )
+    assert restore_up["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == ""
+    assert "SOURCE_INGEST_BOUNDED_DATASET" not in restore_up["env"]
+    assert "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS" not in restore_up["env"]
+    assert "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS" not in restore_up["env"]
+
+
+@pytest.mark.parametrize(
+    ("failure_flag", "expected_error"),
+    [
+        ("fail_token_exec", "failed to read controller_token from running source-ingest container cid-source-ingest-recreated"),
+        ("empty_token_exec", "empty controller_token for running source-ingest container cid-source-ingest-recreated"),
+        ("fail_desired_state_exec", "failed to write bounded desired_state.json into source-ingest container cid-source-ingest-recreated"),
+    ],
+)
+def test_refresh_entrypoint_taifex_fails_closed_on_token_or_desired_state_exec_failure(
+    tmp_path: Path, failure_flag: str, expected_error: str
+):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": [
+            "PANTHEON_EXTERNAL_EGRESS=deny",
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+            "PORT=8097",
+        ],
+        failure_flag: True,
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    test_env.pop("SOURCE_INGEST_CONTROLLER_TOKEN", None)
+    test_env.pop("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", None)
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(_deploy_script_without_readback(tmp_path)),
+            "--refresh-only",
+            "--force",
+            "--connector-id",
+            "tw-taifex-futures-options-chip",
+            "--allowed-hosts",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "--dataset",
+            "taifex_ssf_contracts",
+            "--output",
+            str(output_file),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected failure for {failure_flag}, got 0:\n{proc.stdout}"
+    assert expected_error in proc.stderr
+    assert "prepared bounded source refresh dataset" not in proc.stdout
+    assert not output_file.exists() or json.loads(output_file.read_text(encoding="utf-8")).get("status") != "completed"
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    assert not any(e.get("event") == "compose_run" for e in events)
+    assert any(
+        e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+        for e in events
+    )
+
+
+def test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforces_ssf_readback(tmp_path: Path):
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    fresh_twse_snapshot = {
+        "snapshot_id": "snap-2026-11-06",
+        "event_time": "2026-11-06T06:30:00Z",
+        "observed_at": "2026-11-06T07:05:00Z",
+        "calendar_evidence": governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-11-06"),
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:receipt-2026-11-06"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    }
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": [
+            "PANTHEON_EXTERNAL_EGRESS=deny",
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+            "PORT=8097",
+            "DATABASE_URL=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+        ],
+        "snapshots": {"2330.TW": fresh_twse_snapshot},
+        "receipts": [],
+        "readback_connectors": [],
+        "post_run_receipts": [{
+            "connector_id": "tw-taifex-futures-options-chip",
+            "status": "completed",
+            "typed_failure": None,
+            "source_timestamp": "2026-11-06T07:15:00Z",
+            "source_timestamp_status": "valid",
+            "created_at": "2030-01-01T00:00:00Z",
+            "finished_at": "2030-01-01T00:00:00Z",
+            "ingest_run_id": "run-taifex-ssf-1",
+        }],
+        "post_run_readback_connectors": [{
+            "connector_id": "tw-taifex-futures-options-chip",
+            "desired_state": {"dataset": "taifex_ssf_contracts"},
+            "freshness": {
+                "latest_receipt": {"ingest_run_id": "run-taifex-ssf-1"},
+                "source_timestamp_status": "valid",
+                "last_success_at": "2030-01-01T00:00:00Z",
+            },
+            "latest_source_record": {
+                "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc123",
+                "status": "normalized",
+                "metadata": {
+                    "date": "2026-11-06",
+                    "dataset": "taifex_ssf_contracts",
+                    "schema_hash": "tw_taifex_ssf_contracts.v1",
+                },
+                "provenance": {
+                    "source_ingest_run_id": "run-taifex-ssf-1",
+                    "dataset": "taifex_ssf_contracts",
+                    "schema_hash": "tw_taifex_ssf_contracts.v1",
+                },
+            },
+        }],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    test_env["PANTHEON_REFRESH_PREFLIGHT_NOW"] = "2026-11-06T08:00:00Z"
+
+    # Run WITHOUT --force and WITH real verify_bounded_source_refresh_readback
+    proc = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY_SCRIPT),
+            "--refresh-only",
+            "--connector-id",
+            "tw-taifex-futures-options-chip",
+            "--allowed-hosts",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "--dataset",
+            "taifex_ssf_contracts",
+            "--output",
+            str(output_file),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Non-force TAIFEX refresh with real readback failed: {proc.stderr}\n{proc.stdout}"
+    out_data = json.loads(output_file.read_text(encoding="utf-8"))
+    assert out_data.get("status") == "completed"
+
+    # Now verify that if post-run readback returns taifex_futures_chip instead of taifex_ssf_contracts, readback verification fails closed
+    bad_state = json.loads(state_file.read_text(encoding="utf-8"))
+    bad_state["receipts"] = []
+    bad_state["readback_connectors"] = []
+    bad_state["post_run_readback_connectors"] = [{
+        "connector_id": "tw-taifex-futures-options-chip",
+        "desired_state": {"dataset": "taifex_futures_chip"},
+        "freshness": {
+            "latest_receipt": {"ingest_run_id": "run-taifex-ssf-1"},
+            "source_timestamp_status": "valid",
+        },
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_futures_chip:TX:foreign_investors:abc123",
+            "status": "normalized",
+            "metadata": {
+                "date": "2026-11-06",
+                "dataset": "taifex_futures_chip",
+                "schema_hash": "tw_taifex_futures_chip.v1",
+            },
+            "provenance": {
+                "source_ingest_run_id": "run-taifex-ssf-1",
+                "dataset": "taifex_futures_chip",
+                "schema_hash": "tw_taifex_futures_chip.v1",
+            },
+        },
+    }]
+    state_file.write_text(json.dumps(bad_state), encoding="utf-8")
+    bad_output = tmp_path / "bad_output.json"
+    proc_bad = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY_SCRIPT),
+            "--refresh-only",
+            "--connector-id",
+            "tw-taifex-futures-options-chip",
+            "--allowed-hosts",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "--dataset",
+            "taifex_ssf_contracts",
+            "--output",
+            str(bad_output),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc_bad.returncode != 0, "Expected TAIFEX refresh to fail closed when readback dataset is taifex_futures_chip"
+    assert "taifex_ssf_contracts" in proc_bad.stderr
 
 
 
+@pytest.mark.parametrize(
+    "bad_hosts",
+    [
+        "openapi.taifex.com.tw",
+        "www.taifex.com.tw",
+        "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw",
+        "*.taifex.com.tw,www.taifex.com.tw",
+    ],
+)
+def test_refresh_entrypoint_taifex_rejects_merged_or_wrong_hosts(tmp_path: Path, bad_hosts: str):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(_deploy_script_without_readback(tmp_path)),
+            "--refresh-only",
+            "--force",
+            "--connector-id",
+            "tw-taifex-futures-options-chip",
+            "--allowed-hosts",
+            bad_hosts,
+            "--dataset",
+            "taifex_ssf_contracts",
+            "--output",
+            str(output_file),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected TAIFEX refresh to reject hosts {bad_hosts}"
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line] if events_file.exists() else []
+    assert not any(
+        e.get("event") == "compose_up" and e.get("env", {}).get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
+        for e in events
+    )
