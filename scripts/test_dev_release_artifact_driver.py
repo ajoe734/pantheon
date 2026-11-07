@@ -48,6 +48,8 @@ class Docker(FakeDocker):
         self.owners = {service: {"container_id": f"{index + 100:064x}", "image_id": IDS[0],
                                  "started_at": "2026-09-09T00:00:00Z", "restart_count": 0}
                        for index, service in enumerate(d.OWNERS)}
+        self.owner_status = {}
+        self.recreate_seq = 0
         self.config = {**d.a.BASELINE_PRINCIPAL_CONFIG,
                        **dict.fromkeys(d.a.BASELINE_AUTH_FLAGS, "false")}
         self.baseline_config = None
@@ -61,6 +63,11 @@ class Docker(FakeDocker):
         self.build_contract_drift = None
 
     def call(self, *args):
+        if args[0] == "ps" and len(args) == 5:
+            self.calls.append(args)
+            cids = [f"{index + 1:064x}" for index in range(len(d.a.SERVICES))]
+            cids.extend(row["container_id"] for service in d.OWNERS if (row := self.owners.get(service)) is not None)
+            return "".join(cid + "\n" for cid in cids)
         if args[0] == "ps" and args[-1].rsplit("=", 1)[1] in d.OWNERS:
             self.calls.append(args)
             owner = self.owners[args[-1].rsplit("=", 1)[1]]
@@ -68,6 +75,14 @@ class Docker(FakeDocker):
         if args[0] == "ps" and args[-1].endswith("=persona-evaluator-agent"):
             self.calls.append(args)
             return "e" * 64
+        if args[0] == "inspect" and args[2] == d.a.STACK_FORMAT and int(args[-1], 16) > len(d.a.SERVICES):
+            self.calls.append(args)
+            service, row = next((s, r) for s, r in self.owners.items() if r and r["container_id"] == args[-1])
+            state = self.owner_status.get(service, {})
+            return json.dumps({"service": service, "oneoff": "False", "image_id": row["image_id"],
+                               "status": state.get("status", "running"), "exit_code": state.get("exit_code", 0),
+                               "health_test": state.get("health_test", ["CMD", "true"]),
+                               "health": state.get("health", "healthy")})
         if args[0] == "inspect" and args[2] == d.OWNER_FORMAT:
             self.calls.append(args)
             if int(args[-1], 16) <= 3:
@@ -75,6 +90,13 @@ class Docker(FakeDocker):
                 return json.dumps({"container_id": args[-1], "image_id": self.containers[service]["image_id"],
                                    "started_at": "2026-09-09T00:00:00Z", "restart_count": 0})
             return json.dumps(next(row for row in self.owners.values() if row and row["container_id"] == args[-1]))
+        if args[0] == "start":
+            self.calls.append(args)
+            service, row = next((s, r) for s, r in self.owners.items() if r and r["container_id"] == args[1])
+            self.recreate_seq += 1
+            self.owner_status[service] = {"status": "running", "health": "healthy"}
+            row["started_at"] = f"2026-09-09T00:02:{self.recreate_seq:02d}Z"
+            return ""
         if args[0] == "inspect" and args[2] == d.CONFIG_FORMAT:
             self.calls.append(args)
             return "\n".join(json.dumps(key + "=" + value) for key, value in self.config.items()
@@ -125,6 +147,16 @@ class Docker(FakeDocker):
         except primitive.ArtifactError as error:
             raise d.a.ArtifactError(str(error)) from None
         if args[0] == "compose":
+            for service, row in (self.override or {}).get("services", {}).items():
+                if service in self.owners:
+                    self.recreate_seq += 1
+                    self.owner_status[service] = {"status": "running", "health": "healthy"}
+                    self.owners[service] = {
+                        "container_id": f"{200 + self.recreate_seq:064x}",
+                        "image_id": row["image"],
+                        "started_at": f"2026-09-09T00:01:{self.recreate_seq:02d}Z",
+                        "restart_count": 0,
+                    }
             if self.http is not None:
                 self.http.source = os.environ["GIT_SHA"]
                 if self.http.recover_on_restore: self.http.version_failure = None
@@ -1582,9 +1614,20 @@ def test_main_reports_actual_restore_public_timeout_without_secret_leak(case, mo
 
 # --- Whole-stack compensation plumbing ------------------------------------
 
-def _drifted_candidate(case):
+def _drifted_candidate(case, *, owners=d.OWNERS):
     for service, row in case.docker.containers.items():
         row["image_id"] = case.docker.built[service]["image_id"]
+    for index, service in enumerate(owners):
+        if case.docker.owners.get(service) is None:
+            continue
+        cand_image = f"sha256:{index + 20:02x}" + "c" * 62
+        case.docker.images[cand_image] = {"id": cand_image, "revision": case.args.candidate_backend_sha, "repo_digests": None}
+        case.docker.owners[service] = {
+            "container_id": f"{index + 150:064x}",
+            "image_id": cand_image,
+            "started_at": "2026-09-09T00:00:30Z",
+            "restart_count": 0,
+        }
     case.http.source = case.args.candidate_backend_sha
 
 
@@ -1594,19 +1637,248 @@ def test_capture_seals_a_versioned_stack_baseline_beside_the_unchanged_three_ima
     assert captured["image_bundle"]["schema_version"] == d.a.SCHEMA
     assert set(captured["image_bundle"]["services"]) == set(d.a.SERVICES)
     stack = captured["stack_baseline"]
-    assert stack["schema_version"] == d.a.STACK_SCHEMA and set(stack["services"]) == set(d.a.SERVICES)
-    assert {s: r["image_id"] for s, r in stack["services"].items()} == dict(zip(d.a.SERVICES, IDS))
+    assert stack["schema_version"] == d.a.STACK_SCHEMA
+    assert set(stack["services"]) == set(d.a.SERVICES) | set(d.OWNERS)
+    assert {s: stack["services"][s]["image_id"] for s in d.a.SERVICES} == dict(zip(d.a.SERVICES, IDS))
+    assert {s: stack["services"][s]["image_id"] for s in d.OWNERS} == {s: IDS[0] for s in d.OWNERS}
 
 
 def test_baseline_restore_defaults_to_whole_stack_and_images_scope_keeps_three(case):
     seal(case)
     _drifted_candidate(case)
     result = execute(case, "restore")
-    assert set(result["stack"]["services"]) == set(d.a.SERVICES)
+    assert set(result["stack"]["services"]) == set(d.a.SERVICES) | set(d.OWNERS)
     assert all(row["baseline_image_id"] == row["observed_image_id"] for row in result["stack"]["services"].values())
     _drifted_candidate(case)
     case.args.scope = "images"
     assert "stack" not in execute(case, "restore")
+
+
+def test_reproduction_run_42397678868_whole_stack_restore_validates_intended_owner_transitions(case):
+    # Distinct per-owner baseline images held on host before capture.
+    baseline_owner_images = {}
+    for index, service in enumerate(d.OWNERS):
+        img = f"sha256:{index + 10:02x}" + "b" * 62
+        case.docker.images[img] = {"id": img, "revision": case.args.previous_backend_sha, "repo_digests": None}
+        case.docker.owners[service]["image_id"] = img
+        baseline_owner_images[service] = img
+    captured = seal(case)["manifest"]
+    owners_at_capture = {s: dict(r) for s, r in case.docker.owners.items() if r is not None}
+
+    # Candidate rollout replaces all 3 BFF services and all protected owners.
+    _drifted_candidate(case, owners=d.OWNERS)
+    owners_before = d._owners(case.docker)
+    for service in d.OWNERS:
+        assert owners_before[service]["image_id"] != baseline_owner_images[service]
+        assert owners_before[service]["container_id"] != owners_at_capture[service]["container_id"]
+
+    result = execute(case, "restore")
+    owners_after = result["owners"]
+    assert result["protected_owners_unchanged"] is True
+    # Reproduce why the old `owners_before != owners_after` check failed at line 823:
+    # every recreated application owner transitioned from its candidate container/image
+    # back to a newly recreated container running its exact sealed stack_baseline image.
+    assert owners_before != owners_after
+    for service in d.OWNERS:
+        assert owners_after[service]["image_id"] == baseline_owner_images[service]
+        assert owners_after[service]["image_id"] != owners_before[service]["image_id"]
+        assert owners_after[service]["container_id"] != owners_before[service]["container_id"]
+        assert owners_after[service]["started_at"] != owners_before[service]["started_at"]
+        assert owners_after[service]["restart_count"] == 0
+        assert result["stack"]["services"][service] == {
+            "baseline_image_id": baseline_owner_images[service],
+            "observed_image_id": baseline_owner_images[service],
+        }
+    # Image-only / verify scope would reject the same owners_before != owners_after delta.
+    with pytest.raises(d.a.ArtifactError, match="protected owners changed"):
+        d._validate_owners(owners_before, owners_after, scope="images", outer=captured)
+
+
+def test_whole_stack_restore_mixed_owners_requires_unchanged_identity_for_unrecreated_owners(case):
+    for index, service in enumerate(d.OWNERS):
+        img = f"sha256:{index + 10:02x}" + "b" * 62
+        case.docker.images[img] = {"id": img, "revision": case.args.previous_backend_sha, "repo_digests": None}
+        case.docker.owners[service]["image_id"] = img
+    seal(case)
+    transitioned = ("governance", "deployment", "capital")
+    unchanged = tuple(s for s in d.OWNERS if s not in transitioned)
+    _drifted_candidate(case, owners=transitioned)
+    owners_before = d._owners(case.docker)
+
+    result = execute(case, "restore")
+    owners_after = result["owners"]
+    for service in transitioned:
+        assert owners_after[service]["image_id"] != owners_before[service]["image_id"]
+        assert owners_after[service]["container_id"] != owners_before[service]["container_id"]
+        assert owners_after[service]["restart_count"] == 0
+    for service in unchanged:
+        assert owners_after[service] == owners_before[service]
+
+
+def test_whole_stack_restore_accepts_stopped_baseline_owner_started_in_place(case):
+    seal(case)
+    _drifted_candidate(case, owners=("governance",))
+    case.docker.owner_status["registry"] = {"status": "exited", "health": None}
+    owners_before = d._owners(case.docker)
+
+    result = execute(case, "restore")
+    owners_after = result["owners"]
+    assert owners_after["registry"]["container_id"] == owners_before["registry"]["container_id"]
+    assert owners_after["registry"]["image_id"] == owners_before["registry"]["image_id"]
+    assert owners_after["registry"]["restart_count"] == 0
+    assert owners_after["registry"]["started_at"] != owners_before["registry"]["started_at"]
+
+
+@pytest.mark.parametrize("fault", [
+    "untouched_owner_recreated",
+    "untouched_owner_started_at_changed",
+    "untouched_owner_restarted",
+    "recreated_owner_restarted",
+    "recreated_owner_same_cid",
+    "recreated_owner_wrong_image",
+    "untracked_owner_transition",
+])
+def test_whole_stack_restore_rejects_unintended_or_invalid_owner_transitions(case, fault):
+    for index, service in enumerate(d.OWNERS):
+        img = f"sha256:{index + 10:02x}" + "b" * 62
+        case.docker.images[img] = {"id": img, "revision": case.args.previous_backend_sha, "repo_digests": None}
+        case.docker.owners[service]["image_id"] = img
+    seal(case)
+    _drifted_candidate(case, owners=("governance",))
+    original_call = case.docker.call
+
+    def faulty_call(*args):
+        res = original_call(*args)
+        if args[0] == "compose" and "up" in args and "governance" in args:
+            if fault == "untouched_owner_recreated":
+                case.docker.owners["registry"]["container_id"] = "9" * 64
+            elif fault == "untouched_owner_started_at_changed":
+                case.docker.owners["registry"]["started_at"] = "2026-09-09T09:09:09Z"
+            elif fault == "untouched_owner_restarted":
+                case.docker.owners["registry"]["restart_count"] = 1
+            elif fault == "recreated_owner_restarted":
+                case.docker.owners["governance"]["restart_count"] = 1
+            elif fault == "recreated_owner_same_cid":
+                case.docker.owners["governance"]["container_id"] = f"{150:064x}"
+            elif fault == "recreated_owner_wrong_image":
+                wrong = "sha256:" + "e" * 64
+                case.docker.images[wrong] = {"id": wrong, "revision": case.args.previous_backend_sha, "repo_digests": None}
+                case.docker.owners["governance"]["image_id"] = wrong
+        return res
+
+    if fault == "untracked_owner_transition":
+        # Owner was on candidate image before restore, but compose up did not recreate it;
+        # then before _owners(docker) post-check it flips to baseline image out-of-band.
+        baseline_gov_img = json.loads(case.args.manifest.read_bytes())["stack_baseline"]["services"]["governance"]["image_id"]
+        def untracked(*args):
+            if args[0] == "inspect" and args[2] == d.a.STACK_FORMAT and int(args[-1], 16) > len(d.a.SERVICES):
+                service, row = next((s, r) for s, r in case.docker.owners.items() if r and r["container_id"] == args[-1])
+                if service == "governance":
+                    return json.dumps({"service": service, "oneoff": "False", "image_id": baseline_gov_img,
+                                       "status": "running", "exit_code": 0, "health_test": ["CMD", "true"], "health": "healthy"})
+            if args[0] == "ps" and args[-1].endswith("=governance") and any(c[0] == "compose" and "up" in c for c in case.docker.calls):
+                case.docker.owners["governance"] = {
+                    "container_id": "8" * 64, "image_id": baseline_gov_img,
+                    "started_at": "2026-09-09T00:05:00Z", "restart_count": 0,
+                }
+            return original_call(*args)
+        case.docker.call = untracked
+    else:
+        case.docker.call = faulty_call
+
+    with pytest.raises(d.a.ArtifactError):
+        execute(case, "restore")
+
+
+@pytest.mark.parametrize("mode", ["verify_baseline", "verify_final", "restore_images_scope", "restore_v1"])
+def test_verify_and_image_only_restore_reject_any_owner_transition(case, mode):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    if mode == "verify_final":
+        deploy_candidate_frontend(case)
+        for service, row in case.docker.built.items():
+            case.docker.containers[service]["image_id"] = row["image_id"]
+        case.http.source = case.args.candidate_backend_sha
+        case.args.compose_file = case.docker.candidate_compose
+        case.args.target = "final"
+    elif mode == "restore_images_scope":
+        _drifted_candidate(case)
+        case.args.scope = "images"
+    elif mode == "restore_v1":
+        _drifted_candidate(case, owners=())
+        outer = json.loads(case.args.manifest.read_bytes())
+        outer["schema_version"] = d.OUTER_SCHEMA
+        outer.pop("stack_baseline", None)
+        raw = d.a.manifest_bytes(outer)
+        (folder / "manifest.json").unlink()
+        d._publish(folder / "manifest.json", raw)
+        case.args.manifest_sha256 = hashlib.sha256(raw).hexdigest()
+        admit_doc = json.loads(case.args.candidate_image_manifest.read_bytes())
+        admit_doc["baseline_manifest_sha256"] = case.args.manifest_sha256
+        admit_raw = d.a.manifest_bytes(admit_doc)
+        case.args.candidate_image_manifest.unlink()
+        d._publish(case.args.candidate_image_manifest, admit_raw)
+        case.args.candidate_image_manifest_sha256 = hashlib.sha256(admit_raw).hexdigest()
+
+    original_owners = d._owners
+    calls = 0
+
+    def mutated_second_read(docker):
+        nonlocal calls
+        calls += 1
+        res = original_owners(docker)
+        if calls == 2:
+            res["governance"] = {**res["governance"], "container_id": "7" * 64, "started_at": "2026-09-09T00:09:00Z"}
+        return res
+
+    case.docker_owners_patch = mutated_second_read
+    d._owners = mutated_second_read
+    try:
+        with pytest.raises(d.a.ArtifactError, match="protected owners changed"):
+            execute(case, "verify" if mode.startswith("verify") else "restore")
+    finally:
+        d._owners = original_owners
+
+
+@pytest.mark.parametrize("malformed", [
+    "missing_required_owner",
+    "owner_completed_state",
+    "issuer_present_in_baseline_missing_after",
+    "issuer_missing_in_baseline_present_after",
+    "missing_cas",
+    "readback_mismatch",
+])
+def test_validate_owners_rejects_malformed_baseline_and_unverified_context(case, malformed):
+    captured = seal(case)["manifest"]
+    owners = d._owners(case.docker)
+    restored = {
+        "stack": {
+            "scope": "stack",
+            "services": {s: {"baseline_image_id": r["image_id"], "observed_image_id": r["image_id"]}
+                         for s, r in captured["stack_baseline"]["services"].items()},
+            "candidate_only_stopped": [],
+        },
+        "recreated_services": list(d.a.SERVICES),
+        "started_services": [],
+    }
+    cas = SimpleNamespace(recreated_services=set(d.a.SERVICES), started_containers=set())
+    if malformed == "missing_required_owner":
+        del captured["stack_baseline"]["services"]["governance"]
+    elif malformed == "owner_completed_state":
+        captured["stack_baseline"]["services"]["governance"]["state"] = "completed"
+        captured["stack_baseline"]["services"]["governance"]["has_healthcheck"] = False
+    elif malformed == "issuer_present_in_baseline_missing_after":
+        owners["dev-paper-principal-issuer"] = None
+    elif malformed == "issuer_missing_in_baseline_present_after":
+        del captured["stack_baseline"]["services"]["dev-paper-principal-issuer"]
+        del restored["stack"]["services"]["dev-paper-principal-issuer"]
+    elif malformed == "missing_cas":
+        cas = None
+    elif malformed == "readback_mismatch":
+        restored["stack"]["services"]["governance"]["observed_image_id"] = "sha256:" + "9" * 64
+
+    with pytest.raises(d.a.ArtifactError):
+        d._validate_owners(owners, owners, scope="stack", outer=captured, restored=restored, cas=cas)
 
 
 def test_restore_final_and_verify_never_use_whole_stack_scope(case):
@@ -1639,3 +1911,47 @@ def test_whole_stack_failure_prints_only_validated_service_names(case, monkeypat
     output = capsys.readouterr()
     assert output.out == d.MIXED_MARKER + '{"kind": "mixed", "services": ["svc-03", "svc-17"]}\n'
     assert "private-detail" not in output.out + output.err
+
+
+def test_main_whole_stack_owner_transition_publishes_readback_only_when_valid(case, monkeypatch, capsys):
+    from scripts import dev_artifact_compensation_evidence as comp
+
+    captured = seal(case)
+    _drifted_candidate(case)
+    case.args.command = "restore"
+    case.args.guard_channel_fd = 9
+    case.args.guard_max_silence_seconds = 10
+    monkeypatch.setattr(d, "parse_args", lambda _argv: case.args)
+    monkeypatch.setattr(d, "CancellationBarrier", lambda *_args, **_kwargs: case.barrier)
+    monkeypatch.setattr(d, "GuardedDocker", lambda _barrier: case.docker)
+    monkeypatch.setattr(d, "HTTP", lambda: case.http)
+
+    # First: invalid owner drift on a recreated owner fails closed with exit 75 and empty stdout.
+    case.docker.owner_drift = True
+    assert d.main([]) == 75
+    failed_out = capsys.readouterr()
+    assert failed_out.out == ""
+    err_record = json.loads(failed_out.err)
+    assert err_record["error_code"] == d.a.FAILURE_CODE
+    assert err_record["exit_code"] == 75
+    assert err_record["failure_kind"] == "contract"
+    assert err_record["failure_stage"] == "restore"
+    assert err_record["failure_location"].startswith("dev_release_artifact_driver.py:")
+
+    # Second: valid intended owner transition to sealed baseline images publishes complete readback.
+    case.docker.owner_drift = False
+    _drifted_candidate(case)
+    assert d.main([]) == 0
+    ok_out = capsys.readouterr()
+    assert ok_out.err == ""
+    readback = json.loads(ok_out.out)
+    evidence = {
+        "baseline": captured["manifest"],
+        "identity": captured["manifest"]["identity"],
+        "exports": {
+            comp.ENV_PREFIX + "OPERATION": "restore",
+            comp.ENV_PREFIX + "SCOPE": "stack",
+            comp.ENV_PREFIX + "MANIFEST_SHA256": captured["manifest_sha256"],
+        },
+    }
+    assert comp.validate_readback(readback, evidence, "restore") == readback

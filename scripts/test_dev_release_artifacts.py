@@ -73,7 +73,8 @@ class FakeDocker:
             paths = [args[i + 1] for i, value in enumerate(args) if value == "-f"]
             self.override = json.loads(Path(paths[-1]).read_text())
             for service, row in self.override["services"].items():
-                self.containers[service]["image_id"] = row["image"]
+                if service in self.containers:
+                    self.containers[service]["image_id"] = row["image"]
             if self.drift:
                 self.containers[artifacts.SERVICES[0]]["image_id"] = "sha256:" + "9" * 64
             return ""
@@ -688,6 +689,8 @@ def test_whole_stack_success_restores_all_54_and_keeps_tenant(stack_case):
     recreated = {name for call in docker.up_calls for name in call["names"]}
     # Already on its recorded image: untouched, never recreated.
     assert "svc-03" not in recreated and docker.containers["svc-03"] == before_kept
+    assert result["recreated_services"] == sorted(recreated)
+    assert result["started_services"] == []
     assert docker.containers["candidate-only"]["status"] == "exited"
     assert result["stack"]["candidate_only_stopped"] == ["candidate-only"]
     assert set(result["stack"]["services"]) == set(docker.names)
@@ -797,9 +800,11 @@ def test_stopped_service_on_recorded_image_is_started_not_recreated(stack_case):
     _, docker, _, _, _, _, _ = stack_case
     docker.mutate_to_candidate(keep=("svc-04",))
     docker.containers["svc-04"]["status"], docker.containers["svc-04"]["health"] = "exited", None
-    restore_stack(stack_case)
+    result, _ = restore_stack(stack_case)
     assert docker.containers["svc-04"]["status"] == "running"
     assert not any("svc-04" in call["names"] for call in docker.up_calls)
+    assert result["started_services"] == ["svc-04"]
+    assert "svc-04" not in result["recreated_services"]
 
 
 def test_three_image_restore_without_stack_leaves_the_rest_alone(stack_case):
