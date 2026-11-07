@@ -226,3 +226,37 @@ def test_missing_upstream_decision_or_unverified_submission_keeps_risk_missing()
     bkr_proj = broker_err.get("tj_1", tenant_id="tenant-a", environment="paper")
     assert "risk_evaluation" in bkr_proj.snapshot["completeness"]["missing_stages"]
 
+    for idx, unverified_terminal in enumerate(
+        [
+            {"event_type": "order_rejection", "submitted_to_broker": False},
+            {
+                "event_type": "order_rejection",
+                "reason_code": "transport_failed",
+                "submitted_to_broker": False,
+            },
+            {
+                "event_type": "order_submission",
+                "reason_code": "transport_failed",
+                "submitted_to_broker": False,
+            },
+            {
+                "event_type": "paper_order_simulated",
+                "stage_status": "skipped",
+                "submitted_to_broker": False,
+            },
+        ],
+        start=1,
+    ):
+        unverified = JourneyMaterializer()
+        unverified.rebuild([
+            event("e1", "signal_generation", "succeeded", 1, signal_id=f"sig-unv-{idx}"),
+            event("e2", "trade_decision", "succeeded", 2, decision_id=f"dec-unv-{idx}"),
+            {
+                **event("e3", "order_submission", "failed", 3),
+                **unverified_terminal,
+            },
+        ])
+        unv_proj = unverified.get("tj_1", tenant_id="tenant-a", environment="paper")
+        assert "risk_evaluation" in unv_proj.snapshot["completeness"]["missing_stages"]
+
+

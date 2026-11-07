@@ -874,22 +874,22 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
     tmp_path: Any,
 ) -> None:
     retained_identity = {
-        "tenant_id": "default",
+        "tenant_id": "tenant-dev",
         "environment": "paper",
         "journey_id": "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f",
-        "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4",
+        "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
         "loop_run_id": "lr-run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
-        "signal_id": "sig-20261107180614-f45eb161-4",
-        "strategy_id": "strategy-tw-session-momentum",
+        "signal_id": "sig-60872d6d0ca7a7522ea9153a11eb8de8",
+        "strategy_id": "strategy-persona-e0cd73f41c0fb27c36de",
         "runtime_id": "rt-f45eb161",
         "binding_id": "rb-8aceee4784be4ae581d51ab7ef2243c4",
-        "capital_pool_id": "cp-tw-paper-01",
-        "persona_id": "persona-tw-momentum",
-        "persona_capital_binding_id": "pcb-tw-paper-01",
-        "artifact_id": "art-tw-session-momentum",
+        "capital_pool_id": "pool-persona-paper-e0cd73f41c0fb27c36de",
+        "persona_id": "persona-034dad74863c32a796a4",
+        "persona_capital_binding_id": "pcb-persona-paper-e0cd73f41c0fb27c36de",
+        "artifact_id": "artifact-persona-paper-e0cd73f41c0fb27c36de",
         "artifact_version": "1.0.0",
-        "plan_id": "plan-tw-paper-01",
-        "trace_id": "a72a765e-9a40-4e0f-9a16-1481dc50bf40",
+        "plan_id": "plan-persona-paper-e0cd73f41c0fb27c36de",
+        "trace_id": "f553230a-a918-5a25-b41d-c86e9ccb19f3",
     }
     retained_events = [
         {
@@ -915,9 +915,9 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
     controller = {
         **CONTROLLER,
         "deployment_sha": f6_sha,
-        "generation": 64378,
-        "checkpoint": 11210636,
-        "source_high_watermark": 11210636,
+        "generation": 2155728,
+        "checkpoint": 11212948,
+        "source_high_watermark": 11212948,
     }
     source_artifact = {
         "schema_version": SOURCE_SCHEMA,
@@ -927,13 +927,13 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
         "proof": {
             "source": {
                 "baseline_high_watermark": 11210574,
-                "source_high_watermark": 11210636,
+                "source_high_watermark": 11212948,
             },
             "identity": dict(retained_identity),
             "events": list(retained_events),
             "projection": {
                 "backend": "postgres",
-                "generation": 64378,
+                "generation": 2155728,
                 "deployment_sha": f6_sha,
                 "loop_status": "failed",
             },
@@ -968,11 +968,7 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
                     "event_id": event["event_id"],
                     "journey_id": journey_id,
                     "stage": EXPECTED_STAGES[event["event_type"]],
-                    "event_type": (
-                        "order_rejection"
-                        if (self.include_reason or event["event_type"] != "order_rejection")
-                        else "order_submitted"
-                    ),
+                    "event_type": event["event_type"],
                     "stage_status": (
                         "failed"
                         if event["event_type"] == "order_rejection"
@@ -983,22 +979,31 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
                         if event["event_type"] == "order_rejection"
                         else "succeeded"
                     ),
+                    "quantity": (
+                        0.0 if event["event_type"] == "order_rejection" else None
+                    ),
                     "reason_code": (
                         "sell_without_holdings"
                         if (self.include_reason and event["event_type"] == "order_rejection")
                         else None
                     ),
-                    "submitted_to_broker": (
-                        False if self.include_reason else True
+                    "submitted_to_broker": False,
+                    "occurred_at": (
+                        "2026-11-07T18:06:21.000000Z"
+                        if event["event_type"] == "order_rejection"
+                        else "2026-11-07T18:06:17.000000Z"
                     ),
-                    "occurred_at": f"2026-11-07T18:06:1{index}Z",
-                    "recorded_at": f"2026-11-07T18:06:1{index}Z",
+                    "recorded_at": (
+                        "2026-11-07T18:06:23.815494Z"
+                        if event["event_type"] == "order_rejection"
+                        else "2026-11-07T18:06:19.506659Z"
+                    ),
                     "evidence_refs": [],
                     "input_refs": [],
                     "output_refs": [],
                     "policy_refs": [],
                 }
-                for index, event in enumerate(self.events, start=4)
+                for event in self.events
             ]
             return JourneyProjection(
                 journey_id=journey_id,
@@ -1007,30 +1012,31 @@ def test_readback_reproduces_and_verifies_retained_root42397678868_sell_without_
                 timeline=timeline_items,
                 snapshot={
                     "status": "failed",
-                    "created_at": "2026-11-07T18:06:14.700840Z",
-                    "updated_at": "2026-11-07T18:06:15.367903Z",
+                    "created_at": "2026-11-07T18:06:17.000000Z",
+                    "updated_at": "2026-11-07T18:06:21.000000Z",
                     "identifiers": {
                         "tenant_id": [tenant_id],
                         "journey_id": [journey_id],
+                        "run_id": [self.identity["run_id"]],
                         "loop_run_id": [self.identity["loop_run_id"]],
                         "signal_id": [self.identity["signal_id"]],
-                        "decision_id": ["dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9"],
+                        "decision_id": ["dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a"],
                     },
                     "stages": {
                         "signal_generation": {
                             "status": "succeeded",
-                            "updated_at": "2026-11-07T18:06:14.700840Z",
+                            "updated_at": "2026-11-07T18:06:17.000000Z",
                             "revision": 1,
                         },
                         "trade_decision": {
                             "status": "succeeded",
-                            "updated_at": "2026-11-07T18:06:14.700966Z",
-                            "revision": 1,
+                            "updated_at": "2026-11-07T18:06:17.000000Z",
+                            "revision": 2,
                         },
                         "order_submission": {
                             "status": "failed",
-                            "updated_at": "2026-11-07T18:06:15.367903Z",
-                            "revision": 1,
+                            "updated_at": "2026-11-07T18:06:21.000000Z",
+                            "revision": 3,
                         },
                     },
                     "completeness": {

@@ -433,7 +433,6 @@ class PaperExecutionAlgorithm:
             "reject_reason": reason,
             "rejection_status": "rejected",
             "order_status": "rejected",
-            "risk_status": "rejected" if not submitted_to_broker else "succeeded",
             "rejected_order_count": 1,
         }
         if metadata:
@@ -486,16 +485,8 @@ class PaperExecutionAlgorithm:
                 "order_rejection", str(symbol), 0.0, action,
                 broker_submission_status="tw_unsupported_quantity_type",
                 submitted_to_broker=False,
-                metadata={
-                    **base_metadata,
-                    "reason": "tw_unsupported_quantity_type",
-                    "reject_reason": "tw_unsupported_quantity_type",
-                    "rejection_status": "rejected",
-                    "order_status": "rejected",
-                    "risk_status": "rejected",
-                    "rejected_order_count": 1,
-                    "quantity_type": quantity_type,
-                },
+                metadata={**base_metadata, "rejected_order_count": 1,
+                          "quantity_type": quantity_type},
             )
             log.warning("[%s] TW order rejected: unsupported quantity_type=%s", signal_id, quantity_type)
             return
@@ -3511,10 +3502,18 @@ class PaperRuntimeService:
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
-            for field in ("requested_quantity", "computed_quantity"):
+            for field in ("requested_quantity", "computed_quantity", "holding_quantity"):
                 if field in event.metadata:
                     metrics[field] = event.metadata[field]
-            if not event.submitted_to_broker:
+            is_sell_without_holdings_guard = (
+                not event.submitted_to_broker
+                and (
+                    telemetry_metadata.get("reason") == "sell_without_holdings"
+                    or telemetry_metadata.get("reject_reason") == "sell_without_holdings"
+                    or event.broker_submission_status == "sell_without_holdings"
+                )
+            )
+            if is_sell_without_holdings_guard:
                 risk_scope = (
                     _clean_text(telemetry_metadata.get("signal_id")) or event.event_id
                 )
@@ -3533,7 +3532,7 @@ class PaperRuntimeService:
             for field in ("requested_quantity", "computed_quantity"):
                 if field in event.metadata:
                     metrics[field] = event.metadata[field]
-            if (
+            if not event.submitted_to_broker and (
                 telemetry_metadata.get("decision_status") == "no_order"
                 or telemetry_metadata.get("order_status") == "not_submitted"
                 or bool(telemetry_metadata.get("noop_reason"))

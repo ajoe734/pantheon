@@ -1335,13 +1335,13 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
             "signal_generation",
             "succeeded",
             1,
-            tenant="default",
-            signal_id="sig-20261107180614-f45eb161-4",
-            decision_id="dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+            tenant="tenant-dev",
+            signal_id="sig-60872d6d0ca7a7522ea9153a11eb8de8",
+            decision_id="dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
             symbol="2330.TW",
             side="sell",
-            quantity=1,
-            price=1055.0,
+            quantity=None,
+            price=None,
             broker_order_id=None,
             client_order_id=None,
         ),
@@ -1351,13 +1351,13 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
             "trade_decision",
             "succeeded",
             2,
-            tenant="default",
-            signal_id="sig-20261107180614-f45eb161-4",
-            decision_id="dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+            tenant="tenant-dev",
+            signal_id="sig-60872d6d0ca7a7522ea9153a11eb8de8",
+            decision_id="dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
             symbol="2330.TW",
             side="sell",
-            quantity=1,
-            price=1055.0,
+            quantity=None,
+            price=None,
             broker_order_id=None,
             client_order_id=None,
         ),
@@ -1367,16 +1367,16 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
             "order_submission",
             "failed",
             3,
-            tenant="default",
+            tenant="tenant-dev",
             event_type="order_rejection",
             reason_code="sell_without_holdings",
             submitted_to_broker=False,
-            signal_id="sig-20261107180614-f45eb161-4",
-            decision_id="dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+            signal_id="sig-60872d6d0ca7a7522ea9153a11eb8de8",
+            decision_id="dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
             symbol="2330.TW",
             side="sell",
-            quantity=1,
-            price=1055.0,
+            quantity=0.0,
+            price=None,
             broker_order_id=None,
             client_order_id=None,
         ),
@@ -1386,7 +1386,7 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
             "signal_generation",
             "succeeded",
             4,
-            tenant="default",
+            tenant="tenant-dev",
             signal_id="sig-noop-1",
             decision_id="dec-noop-1",
             broker_order_id=None,
@@ -1398,7 +1398,7 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
             "trade_decision",
             "succeeded",
             5,
-            tenant="default",
+            tenant="tenant-dev",
             signal_id="sig-noop-1",
             decision_id="dec-noop-1",
             broker_order_id=None,
@@ -1410,10 +1410,13 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
             "order_submission",
             "skipped",
             6,
-            tenant="default",
+            tenant="tenant-dev",
             event_type="paper_order_simulated",
             reason_code="hold_signal",
+            decision_status="no_order",
+            order_status="not_submitted",
             submitted_to_broker=False,
+            quantity=0.0,
             signal_id="sig-noop-1",
             decision_id="dec-noop-1",
             broker_order_id=None,
@@ -1423,7 +1426,7 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
     client, _ = _client_with(events)
 
     detail_resp = client.get(
-        f"/bff/management/trade-journeys/{retained_id}?tenant_id=default&environment=paper",
+        f"/bff/management/trade-journeys/{retained_id}?tenant_id=tenant-dev&environment=paper",
         headers=OPERATOR_HEADERS,
     )
     assert detail_resp.status_code == 200, detail_resp.text
@@ -1437,7 +1440,7 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
     assert detail_payload["data"]["event_count"] == 3
 
     noop_resp = client.get(
-        "/bff/management/trade-journeys/tj_no_order_1?tenant_id=default&environment=paper",
+        "/bff/management/trade-journeys/tj_no_order_1?tenant_id=tenant-dev&environment=paper",
         headers=OPERATOR_HEADERS,
     )
     assert noop_resp.status_code == 200, noop_resp.text
@@ -1449,7 +1452,7 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
     assert "risk_evaluation" not in noop_payload["data"]["completeness"]["missing_stages"]
 
     list_resp = client.get(
-        "/bff/management/trade-journeys?tenant_id=default&environment=paper",
+        "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper",
         headers=OPERATOR_HEADERS,
     )
     assert list_resp.status_code == 200, list_resp.text
@@ -1461,13 +1464,26 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
     }
 
     incomplete_events = [
-        _event("inc-1", "tj_inc", "signal_generation", "succeeded", 1, tenant="default"),
-        _event("inc-2", "tj_inc", "trade_decision", "succeeded", 2, tenant="default"),
-        _event("inc-3", "tj_inc", "order_submission", "succeeded", 3, tenant="default"),
+        _event("inc-1", "tj_inc", "signal_generation", "succeeded", 1, tenant="tenant-dev"),
+        _event("inc-2", "tj_inc", "trade_decision", "succeeded", 2, tenant="tenant-dev"),
+        _event(
+            "inc-3",
+            "tj_inc",
+            "order_submission",
+            "failed",
+            3,
+            tenant="tenant-dev",
+            event_type="order_rejection",
+            reason_code=None,
+            submitted_to_broker=False,
+            quantity=0.0,
+            broker_order_id=None,
+            client_order_id=None,
+        ),
     ]
     inc_client, _ = _client_with(incomplete_events)
     inc_resp = inc_client.get(
-        "/bff/management/trade-journeys/tj_inc?tenant_id=default&environment=paper",
+        "/bff/management/trade-journeys/tj_inc?tenant_id=tenant-dev&environment=paper",
         headers=OPERATOR_HEADERS,
     )
     assert inc_resp.status_code == 200
@@ -1475,4 +1491,18 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
     assert "risk_evaluation" in inc_data["completeness"]["missing_stages"]
     assert inc_data["read_state"] == "partial"
     assert inc_resp.json()["meta"]["read_state"] == "partial"
+
+    empty_timeline_snapshot = {
+        "status": "failed",
+        "stages": {
+            "signal_generation": {"status": "succeeded"},
+            "trade_decision": {"status": "succeeded"},
+            "order_submission": {"status": "failed"},
+        },
+        "identifiers": {"signal_id": ["sig-empty"], "decision_id": ["dec-empty"]},
+        "completeness": {"complete": False, "missing_stages": ["risk_evaluation"]},
+    }
+    empty_timeline_diagnostics = [{"code": "missing_stages", "stages": ["risk_evaluation"]}]
+    assert tj._read_state(empty_timeline_snapshot, empty_timeline_diagnostics, []) == "partial"
+
 

@@ -315,9 +315,30 @@ class JourneyMaterializer:
             return None
         order_status = order_stage.get("status")
         submission_events = [item for item in events if item.get("stage") == "order_submission"]
-        if not submission_events or any(item.get("submitted_to_broker") is True for item in submission_events):
+        if not submission_events or any(
+            item.get("submitted_to_broker") is True
+            or item.get("broker_order_id")
+            or item.get("fill_id")
+            or item.get("broker_trade_id")
+            or item.get("ledger_entry_id")
+            for item in submission_events
+        ):
             return None
-        if order_status == "skipped":
+        if order_status == "skipped" and (
+            stages.get("trade_decision", {}).get("status") == "skipped"
+            or any(
+                item.get("event_type") == "paper_order_simulated"
+                and item.get("submitted_to_broker") is not True
+                and item.get("quantity") in (None, 0, 0.0)
+                and (
+                    str(item.get("decision_status") or "").strip().lower() == "no_order"
+                    or str(item.get("order_status") or "").strip().lower() == "not_submitted"
+                    or str(item.get("risk_status") or "").strip().lower() == "skipped"
+                    or bool(item.get("noop_reason") or item.get("reason_code"))
+                )
+                for item in submission_events
+            )
+        ):
             return {
                 "status": "skipped",
                 "updated_at": order_stage["updated_at"],
@@ -325,14 +346,17 @@ class JourneyMaterializer:
             }
         if order_status in {"failed", "rejected"} and any(
             item.get("event_type") in {"order_rejection", "order_rejection_simulated"}
-            or item.get("risk_status") in {"rejected", "failed"}
-            or item.get("stage_status") == "rejected"
-            or bool(
+            and item.get("submitted_to_broker") is not True
+            and item.get("quantity") in (None, 0, 0.0)
+            and str(
                 item.get("reason_code")
                 or item.get("reject_reason")
                 or item.get("reason")
-                or item.get("risk_decision_id")
-            )
+                or item.get("risk_reason")
+                or item.get("broker_submission_status")
+                or ""
+            ).strip()
+            == "sell_without_holdings"
             for item in submission_events
         ):
             return {

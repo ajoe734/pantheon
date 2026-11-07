@@ -1915,30 +1915,30 @@ def test_retained_root42397678868_sell_without_holdings_and_no_order_project_com
     projector = RelationalLifecycleProjector(
         store,
         deployment_sha="f6d40b77da32309498863a6d66debcc2449268e2",
-        clock=lambda: "2026-11-07T18:06:16Z",
+        clock=lambda: "2026-11-07T18:06:24Z",
     )
     retained_identity = {
-        "tenant_id": "default",
+        "tenant_id": "tenant-dev",
         "environment": "paper",
         "journey_id": "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f",
-        "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4",
+        "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
         "loop_run_id": "lr-run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
-        "signal_id": "sig-20261107180614-f45eb161-4",
-        "strategy_id": "strategy-tw-session-momentum",
+        "signal_id": "sig-60872d6d0ca7a7522ea9153a11eb8de8",
+        "strategy_id": "strategy-persona-e0cd73f41c0fb27c36de",
         "runtime_id": "rt-f45eb161",
         "binding_id": "rb-8aceee4784be4ae581d51ab7ef2243c4",
-        "capital_pool_id": "cp-tw-paper-01",
-        "persona_id": "persona-tw-momentum",
-        "persona_capital_binding_id": "pcb-tw-paper-01",
-        "artifact_id": "art-tw-session-momentum",
+        "capital_pool_id": "pool-persona-paper-e0cd73f41c0fb27c36de",
+        "persona_id": "persona-034dad74863c32a796a4",
+        "persona_capital_binding_id": "pcb-persona-paper-e0cd73f41c0fb27c36de",
+        "artifact_id": "artifact-persona-paper-e0cd73f41c0fb27c36de",
         "artifact_version": "1.0.0",
-        "plan_id": "plan-tw-paper-01",
-        "trace_id": "a72a765e-9a40-4e0f-9a16-1481dc50bf40",
+        "plan_id": "plan-persona-paper-e0cd73f41c0fb27c36de",
+        "trace_id": "f553230a-a918-5a25-b41d-c86e9ccb19f3",
     }
     specs = [
-        ("192e0569-ee44-4e5a-9f21-d24415530353", "signal_generation", 1, 11210607, "2026-11-07T18:06:14.700840Z"),
-        ("20476142-6e7a-5715-b20f-fa61022cf1aa", "trade_decision", 2, 11210608, "2026-11-07T18:06:14.700966Z"),
-        ("483dede1-6213-4d7b-8df4-48d1ae30b747", "order_rejection", 3, 11210635, "2026-11-07T18:06:15.367903Z"),
+        ("192e0569-ee44-4e5a-9f21-d24415530353", "signal_generation", 1, 11210607, "2026-11-07T18:06:17.000000Z"),
+        ("20476142-6e7a-5715-b20f-fa61022cf1aa", "trade_decision", 2, 11210608, "2026-11-07T18:06:17.000000Z"),
+        ("483dede1-6213-4d7b-8df4-48d1ae30b747", "order_rejection", 3, 11210635, "2026-11-07T18:06:21.000000Z"),
     ]
     envelope = None
     retained_rows = []
@@ -1950,7 +1950,7 @@ def test_retained_root42397678868_sell_without_holdings_and_no_order_project_com
                     "environment": retained_identity["environment"],
                     "trace_id": retained_identity["trace_id"],
                 },
-                producer="execution.paper-runtime",
+                producer="execution.paper_runtime",
                 event_id=event_id,
                 journey_id=retained_identity["journey_id"],
                 now=created_at,
@@ -1958,7 +1958,7 @@ def test_retained_root42397678868_sell_without_holdings_and_no_order_project_com
             if envelope is None
             else propagate_envelope(
                 envelope,
-                producer="execution.paper-runtime",
+                producer="execution.paper_runtime",
                 event_id=event_id,
                 event_time=created_at,
             )
@@ -1967,14 +1967,12 @@ def test_retained_root42397678868_sell_without_holdings_and_no_order_project_com
             **retained_identity,
             "sequence_no": seq_no,
             "causal_parent_id": envelope["causation_event_id"],
-            "decision_id": "dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+            "decision_id": "dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
             "symbol": "2330.TW",
-            "side": "sell",
-            "quantity": 1.0,
-            "price": 1055.0,
         }
         if event_type == "order_rejection":
             metadata.update(
+                side="sell",
                 reason="sell_without_holdings",
                 reject_reason="sell_without_holdings",
                 broker_submission_status="sell_without_holdings",
@@ -2024,11 +2022,21 @@ def test_retained_root42397678868_sell_without_holdings_and_no_order_project_com
     diag_stages = journey.diagnostic_summary["diagnostics"][0]["stages"]
     assert "risk_evaluation" not in diag_stages
     assert mutation.loop_runs[0].status == "failed"
+    rejection_stage = next(
+        s.contract_fields for s in mutation.stages if s.stage_name == "order_submission"
+    )
+    assert rejection_stage["reason_code"] == "sell_without_holdings"
+    assert rejection_stage["quantity"] == 0.0
+    assert rejection_stage["requested_quantity"] == 1.0
+    assert rejection_stage["holding_quantity"] == 0.0
+    assert rejection_stage["submitted_to_broker"] is False
 
     noop_rows = _retry_rows(lifecycle_rows(), "tj-paper-noop-complete", first_seq=11210636, count=3)
     for row in noop_rows:
         row["payload"]["run_id"] = "run-paper-noop-001"
         row["payload"]["signal_id"] = "sig-paper-noop-001"
+        for field in ("client_order_id", "order_id", "reconciliation_id"):
+            row["payload"]["metadata"].pop(field, None)
         row["payload"]["metadata"].update(
             run_id="run-paper-noop-001",
             signal_id="sig-paper-noop-001",
@@ -2066,4 +2074,37 @@ def test_retained_root42397678868_sell_without_holdings_and_no_order_project_com
     )
     assert "risk_evaluation" not in noop_missing_diag["stages"]
     assert noop_mutation.loop_runs[0].status == "no_order"
+
+    # Negative check: pre-broker transport rejection without bounded guard proof
+    # must NOT fabricate risk_evaluation.
+    transport_rows = _retry_rows(
+        lifecycle_rows(), "tj-paper-transport-reject", first_seq=11210639, count=3
+    )
+    for row in transport_rows:
+        row["payload"]["run_id"] = "run-paper-transport-001"
+        row["payload"]["signal_id"] = "sig-paper-transport-001"
+        for field in ("client_order_id", "order_id", "reconciliation_id"):
+            row["payload"]["metadata"].pop(field, None)
+        row["payload"]["metadata"].update(
+            run_id="run-paper-transport-001",
+            signal_id="sig-paper-transport-001",
+            decision_id="dec-paper-transport-001",
+        )
+    transport_rows[2]["event_type"] = "order_rejection"
+    transport_rows[2]["payload"]["event_type"] = "order_rejection"
+    transport_rows[2]["payload"]["metadata"].update(
+        reason="transport_failed",
+        submitted_to_broker=False,
+    )
+    transport_rows[2]["payload"]["metrics"] = {
+        "fill_quantity": 0.0,
+        "submitted_to_broker": False,
+    }
+    transport_res = projector.project_records(
+        transport_rows, mode="live", source_high_watermark=11210641
+    )
+    assert transport_res.accepted == 3
+    transport_journey = store.mutations[-1].journeys[0]
+    assert "risk_evaluation" not in transport_journey.stage_coverage
+
 

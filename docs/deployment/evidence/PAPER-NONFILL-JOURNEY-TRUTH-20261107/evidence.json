@@ -11,15 +11,27 @@
     "merge_commit": "8c221214634de099291c18c13946927cc741f92e"
   },
   "root_42397678868_reproduction": {
+    "tenant_id": "tenant-dev",
+    "environment": "paper",
     "journey_id": "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f",
     "loop_run_id": "lr-run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
-    "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4",
+    "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
     "runtime_id": "rt-f45eb161",
     "binding_id": "rb-8aceee4784be4ae581d51ab7ef2243c4",
-    "signal_id": "sig-20261107180614-f45eb161-4",
-    "decision_id": "dec-192e0569-ee44-5b6d-8347-ac8a7e0bf5b9",
+    "signal_id": "sig-60872d6d0ca7a7522ea9153a11eb8de8",
+    "decision_id": "dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+    "strategy_id": "strategy-persona-e0cd73f41c0fb27c36de",
+    "capital_pool_id": "pool-persona-paper-e0cd73f41c0fb27c36de",
+    "persona_id": "persona-034dad74863c32a796a4",
+    "persona_capital_binding_id": "pcb-persona-paper-e0cd73f41c0fb27c36de",
+    "artifact_id": "artifact-persona-paper-e0cd73f41c0fb27c36de",
+    "artifact_version": "1.0.0",
+    "plan_id": "plan-persona-paper-e0cd73f41c0fb27c36de",
+    "trace_id": "f553230a-a918-5a25-b41d-c86e9ccb19f3",
+    "correlation_id": "1a4a4cf4-b26f-5604-944f-e6e4249531dc",
     "symbol": "2330.TW",
     "side": "sell",
+    "quantity": 0.0,
     "requested_quantity": 1.0,
     "holding_quantity": 0.0,
     "events": [
@@ -27,20 +39,27 @@
         "event_id": "192e0569-ee44-4e5a-9f21-d24415530353",
         "event_type": "signal_generation",
         "sequence_no": 1,
-        "ingested_seq": 11210607
+        "ingested_seq": 11210607,
+        "occurred_at": "2026-11-07T18:06:17.000000Z",
+        "recorded_at": "2026-11-07T18:06:19.506659Z"
       },
       {
         "event_id": "20476142-6e7a-5715-b20f-fa61022cf1aa",
         "event_type": "trade_decision",
         "sequence_no": 2,
-        "ingested_seq": 11210608
+        "ingested_seq": 11210608,
+        "occurred_at": "2026-11-07T18:06:17.000000Z",
+        "recorded_at": "2026-11-07T18:06:19.506659Z"
       },
       {
         "event_id": "483dede1-6213-4d7b-8df4-48d1ae30b747",
         "event_type": "order_rejection",
-        "reason": "sell_without_holdings",
+        "reason_code": "sell_without_holdings",
+        "quantity": 0.0,
         "sequence_no": 3,
-        "ingested_seq": 11210635
+        "ingested_seq": 11210635,
+        "occurred_at": "2026-11-07T18:06:21.000000Z",
+        "recorded_at": "2026-11-07T18:06:23.815494Z"
       }
     ],
     "candidate_f6_failure_evidence": {
@@ -48,7 +67,8 @@
       "source_probe_completed_at": "2026-11-07T18:07:13Z",
       "source_probe_outcome": "passed",
       "source_probe_loop_status": "failed",
-      "projection_generation": 64378,
+      "projection_generation": 2155728,
+      "projection_checkpoint": 11212948,
       "readback_failed_at": "2026-11-07T18:07:27Z",
       "failure_code": "bff_journey_truth_invalid",
       "failure_message": "Trade Journey was not formal complete truth"
@@ -86,10 +106,10 @@
     }
   },
   "repair_summary": {
-    "paper_runtime": "Stamps truthful risk_status=rejected and risk_decision_id on pre-broker order_rejection events (including sell_without_holdings) and risk_status=skipped on explicit no-trade paper_order_simulated events without fabricating fills, cash/position mutations, or extra telemetry events.",
-    "lifecycle_projector": "Propagates explicit pre-broker rejection (risk_status=rejected, reason_code, submitted_to_broker=false) and explicit no-trade (risk_status=skipped, decision_status=no_order, order_status=not_submitted, reason_code) contract fields while stripping post-decision order/fill/ledger/reconciliation identifiers.",
-    "materializer": "Records truthful risk_evaluation stage coverage (rejected for evaluated pre-broker order rejections, skipped for explicit no-order skips) only when required upstream signal_generation and trade_decision stages are present, no post-submission stages or fill/ledger/reconciliation identifiers exist, and explicit terminal non-fill evidence is present; rolls up explicit trade_decision skipped without order_submission as no_order.",
-    "bff_trade_journeys": "Normalizes non-fill terminal stage coverage and completeness across detail, list, timeline, graph, and evidence surfaces (including already-persisted journeys rows) while keeping incomplete/missing upstream decisions or unverified/broker-submitted order failures partial, anomalies degraded, and unavailable readers unavailable."
+    "paper_runtime": "Stamps truthful risk_status=rejected, risk_reason=sell_without_holdings, risk_decision_id, requested_quantity, and holding_quantity only on bounded pre-broker sell_without_holdings guard rejections and risk_status=skipped on explicit no-trade paper_order_simulated events without fabricating risk evaluations for malformed input, non-finite broker fills, or transport errors.",
+    "lifecycle_projector": "Propagates bounded sell_without_holdings rejection facts (reason_code=sell_without_holdings, risk_status=rejected, submitted_to_broker=false, quantity=0.0, requested_quantity, holding_quantity) and trusted explicit NoTrade facts (decision_status=no_order, order_status=not_submitted, risk_status=skipped, reason_code, submitted_to_broker=false) while stripping post-decision order/fill/ledger/reconciliation identifiers and never inferring risk denial from transport or bare rejections.",
+    "materializer": "Records truthful risk_evaluation stage coverage (rejected only for bounded pre-broker sell_without_holdings guard rejections with zero fill quantity and no broker submission; skipped only for explicit NoTrade skips with no_order/not_submitted/noop_reason proof) when required upstream signal_generation and trade_decision stages are present and no post-submission stages or order/fill/ledger/reconciliation identifiers exist.",
+    "bff_trade_journeys": "Normalizes non-fill terminal stage coverage and completeness across detail, list, timeline, graph, and evidence surfaces (including already-persisted journeys rows) only when timeline submission events prove bounded sell_without_holdings rejection or explicit NoTrade skip; empty timelines, missing upstream decisions, transport failures, and unverified/broker-submitted order failures remain partial."
   },
   "constraints_verified": {
     "hosted_bff_readback_production_assertions_untouched": true,
@@ -108,7 +128,8 @@
     "results": {
       "trade_journey_and_bff_suites": "139 passed, 2 skipped",
       "paper_runtime_suite": "98 passed, 27 subtests passed",
-      "total_passed": 237
+      "independent_review_negative_probe": "5 passed",
+      "total_passed": 242
     },
     "status": "passed"
   }

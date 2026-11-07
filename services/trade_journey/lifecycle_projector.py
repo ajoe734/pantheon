@@ -930,18 +930,43 @@ class RelationalLifecycleProjector:
                 source.get("broker_submission_status"),
                 metadata.get("broker_submission_status"),
             )
-            risk_status_raw = _first(
-                source.get("risk_status"), metadata.get("risk_status")
+            explicit_noop_reason = _first(
+                source.get("noop_reason"),
+                metadata.get("noop_reason"),
+                source.get("filter_reason"),
+                metadata.get("filter_reason"),
+                source.get("reason_code"),
+                metadata.get("reason_code"),
             )
-            is_evaluated_reject = is_no_holdings_reject or (
-                source.get("event_type") in {"order_rejection", "order_rejection_simulated"}
-                and submitted_to_broker is not True
+            is_explicit_no_trade = (
+                not is_no_holdings_reject
+                and is_noop
+                and status == "skipped"
                 and (
-                    reject_reason is not None
-                    or str(risk_status_raw or "").strip().lower() in {"rejected", "failed"}
+                    str(
+                        _first(
+                            source.get("decision_status"),
+                            metadata.get("decision_status"),
+                        )
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                    == "no_order"
+                    or str(
+                        _first(
+                            source.get("order_status"),
+                            metadata.get("order_status"),
+                        )
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                    == "not_submitted"
+                    or explicit_noop_reason is not None
                 )
             )
-            strip_order_identifiers = is_no_holdings_reject or is_noop
+            strip_order_identifiers = is_no_holdings_reject or is_explicit_no_trade
             for field in _PASSTHROUGH_FIELDS:
                 if strip_order_identifiers and field in {
                     "client_order_id",
@@ -955,34 +980,37 @@ class RelationalLifecycleProjector:
                 value = _first(source.get(field), metadata.get(field))
                 if value is not None:
                     event[field] = value
-            if is_evaluated_reject:
-                event["reason_code"] = (
-                    "sell_without_holdings"
-                    if is_no_holdings_reject
-                    else str(reject_reason or "order_rejected")
-                )
+            if is_no_holdings_reject:
+                event["reason_code"] = "sell_without_holdings"
                 event["risk_status"] = "rejected"
                 event["submitted_to_broker"] = False
-            elif (
-                source.get("event_type") in {"order_rejection", "order_rejection_simulated"}
-                and submitted_to_broker is True
-            ):
-                event["submitted_to_broker"] = True
+                event["quantity"] = 0.0
+                requested_qty = _first(
+                    source.get("requested_quantity"),
+                    metadata.get("requested_quantity"),
+                    metrics_map.get("requested_quantity"),
+                )
+                if requested_qty is not None:
+                    event["requested_quantity"] = requested_qty
+                holding_qty = _first(
+                    source.get("holding_quantity"),
+                    metadata.get("holding_quantity"),
+                    metrics_map.get("holding_quantity"),
+                )
+                if holding_qty is not None:
+                    event["holding_quantity"] = holding_qty
+            elif source.get("event_type") in {"order_rejection", "order_rejection_simulated"}:
+                if submitted_to_broker is not None:
+                    event["submitted_to_broker"] = bool(submitted_to_broker)
                 if reject_reason is not None:
                     event["reason_code"] = str(reject_reason)
-            elif is_noop:
-                noop_reason = _first(
-                    source.get("reason_code"),
-                    metadata.get("reason_code"),
-                    source.get("noop_reason"),
-                    metadata.get("noop_reason"),
-                    "no_order",
-                )
-                event["reason_code"] = str(noop_reason)
+            elif is_explicit_no_trade:
+                event["reason_code"] = str(explicit_noop_reason or "no_order")
                 event["decision_status"] = "no_order"
                 event["order_status"] = "not_submitted"
                 event["risk_status"] = "skipped"
                 event["submitted_to_broker"] = False
+                event["quantity"] = 0.0
             elif (
                 source.get("event_type") == "trade_decision"
                 and _stage_status(metadata.get("decision_status") or "succeeded")
