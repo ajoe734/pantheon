@@ -278,7 +278,7 @@ def test_alerts_timeout_returns_degraded_envelope_without_hanging() -> None:
         time.sleep(0.6)
         return {"alerts": [{"alert_id": "should-not-appear"}], "summary": {}, "meta": {}}
 
-    with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
+    with patch.dict(os.environ, {"PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS": "0.05"}):
         with _isolated_bff(build_operator_alerts_payload=slow_alerts_payload) as (client, _store):
             started = time.monotonic()
             response = client.get("/bff/alerts", headers=HEADERS)
@@ -291,6 +291,64 @@ def test_alerts_timeout_returns_degraded_envelope_without_hanging() -> None:
     surface = payload["meta"]["surfaces"]["alerts"]
     assert surface["status"] == "degraded"
     assert surface["source"] == "timeout_fallback"
+    assert surface["reason"] == "read_timeout"
+
+
+def test_alerts_budget_default_is_named_and_not_generic_0_6s() -> None:
+    from services.control_plane.bff.incidents import router as incidents_router
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS", None)
+        assert incidents_router._get_alerts_read_timeout() == 3.0
+    with patch.dict(os.environ, {"PANTHEON_BFF_ALERTS_READ_TIMEOUT_SECONDS": "1.25"}):
+        assert incidents_router._get_alerts_read_timeout() == 1.25
+    # a 1s read now completes under the alerts budget while the generic 0.6s would not
+    def one_second_payload(snapshot_at: str):
+        time.sleep(0.8)
+        return {"alerts": [{"alert_id": "kept"}], "summary": {}, "meta": {}}
+
+    with _isolated_bff(build_operator_alerts_payload=one_second_payload) as (client, _store):
+        response = client.get("/bff/alerts", headers=HEADERS)
+    assert response.json()["alerts"] == [{"alert_id": "kept"}]
+
+
+def test_alerts_fallback_reason_matches_failure_class(caplog) -> None:
+    import logging
+
+    def boom(snapshot_at: str):
+        raise RuntimeError("owner exploded")
+
+    with _isolated_bff(build_operator_alerts_payload=boom) as (client, _store):
+        with caplog.at_level(logging.WARNING):
+            response = client.get("/bff/alerts", headers=HEADERS)
+    surface = response.json()["meta"]["surfaces"]["alerts"]
+    assert response.status_code == 200
+    assert surface["source"] == "timeout_fallback"
+    assert surface["reason"] == "read_error"
+    assert sum("bff.alerts degraded fallback: read_error (RuntimeError)" in r.getMessage() for r in caplog.records) == 1
+
+    import threading
+    from services.control_plane.bff.personas.routes import common
+
+    class _Full(threading.BoundedSemaphore):
+        def acquire(self, blocking=True, timeout=None):
+            return False
+
+    def fast(snapshot_at: str):
+        return {"alerts": [], "summary": {}, "meta": {}}
+
+    saturated = _Full(1)
+    original = common._MANAGEMENT_READ_DEFAULT_SLOTS
+    common._MANAGEMENT_READ_DEFAULT_SLOTS = saturated
+    try:
+        with _isolated_bff(build_operator_alerts_payload=fast) as (client, _store):
+            response = client.get("/bff/alerts", headers=HEADERS)
+    finally:
+        common._MANAGEMENT_READ_DEFAULT_SLOTS = original
+    surface = response.json()["meta"]["surfaces"]["alerts"]
+    assert response.status_code == 200
+    assert surface["source"] == "timeout_fallback"
+    assert surface["reason"] == "read_saturated"
 
 
 def test_evidence_returns_normal_payload_when_fast() -> None:

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import tempfile
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -27,7 +29,9 @@ from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-trading:operator,reviewer"}
 
 
-def _fresh_client(td: str, *, include_gap: bool = False) -> TestClient:
+def _fresh_client(
+    td: str, *, include_gap: bool = False, drop_metric: str | None = None
+) -> TestClient:
     store = create_in_memory_read_surface_ports()
     runtime_bindings = [
         {
@@ -97,6 +101,9 @@ def _fresh_client(td: str, *, include_gap: bool = False) -> TestClient:
             "last_heartbeat_at": "2026-05-23T08:08:00Z",
         },
     }
+    if drop_metric:
+        for summary in telemetry_summaries.values():
+            summary[drop_metric] = None
     drift_reports = {
         "runtime-alpha": {
             "runtime_id": "runtime-alpha",
@@ -427,6 +434,33 @@ def test_trading_pulse_rankings_exclude_missing_metrics() -> None:
         ]
         assert data["summary"]["missing_metric_item_count"] == 4
         assert body["meta"]["surfaces"]["management_trading_pulse_rankings"]["status"] == "degraded"
+
+
+def _rankings_for_dropped_metric(metric: str) -> dict:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td, drop_metric=metric)
+        resp = client.get(
+            "/bff/management/trading-pulse/rankings?limit=5",
+            headers=OPERATOR_HEADERS,
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+
+def test_rankings_missing_sharpe_alone_does_not_degrade_surface() -> None:
+    body = _rankings_for_dropped_metric("sharpe_ratio")
+    blocks = {block["block_id"]: block for block in body["data"]["items"]}
+    assert blocks["sharpe-leaders"]["missing_metric_count"] == 2
+    assert blocks["sharpe-leaders"]["items"] == []
+    assert body["data"]["summary"]["missing_metric_item_count"] == 2
+    assert body["meta"]["surfaces"]["management_trading_pulse_rankings"]["status"] != "degraded"
+
+
+@pytest.mark.parametrize("metric", ["pnl", "drawdown", "fill_rate"])
+def test_rankings_missing_other_metric_still_degrades_surface(metric: str) -> None:
+    body = _rankings_for_dropped_metric(metric)
+    assert body["data"]["summary"]["missing_metric_item_count"] >= 2
+    assert body["meta"]["surfaces"]["management_trading_pulse_rankings"]["status"] == "degraded"
 
 
 def test_trading_pulse_routes_require_read_authentication() -> None:

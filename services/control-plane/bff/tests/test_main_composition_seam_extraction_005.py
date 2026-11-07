@@ -333,3 +333,168 @@ def test_management_nl_collaborator_seams():
     finally:
         reset_assistant_control_mode_store()
     assert get_assistant_control_mode_store() is None
+
+
+# --- BFF-ANOMALIES-OPEN-ONLY-20261107: main anomalies builder composition ---
+from services.control_plane.bff.ports.lifecycle_telemetry_governance import DomainIncidentPort
+from services.control_plane.bff.tests.test_management_incident_owner_semantics import (
+    _capturing_port,
+    _down,
+    _ports,
+)
+
+
+def test_main_anomalies_builder_requests_open_only_from_owner(monkeypatch) -> None:
+    from services.control_plane.bff import main as bff_main
+
+    port, requested = _capturing_port()
+    monkeypatch.setattr(bff_main, "read_store", _ports(port))
+    out = bff_main._build_management_anomalies_payload("2026-11-07T00:00:00Z")
+    assert requested and all(q.get("open_only") == ["true"] for q in requested)
+    ids = {i["id"] for i in out["items"] if i["kind"] == "incident"}
+    assert ids == {"inc-open", "inc-inv"}
+
+
+def test_main_anomalies_builder_marks_failed_owner_unavailable(monkeypatch) -> None:
+    from services.control_plane.bff import main as bff_main
+
+    port = DomainIncidentPort(incidents_api_url="http://incident-owner.invalid", opener=_down)
+    monkeypatch.setattr(bff_main, "read_store", _ports(port))
+    out = bff_main._build_management_anomalies_payload("2026-11-07T00:00:00Z")
+    assert out["meta"]["surfaces"]["incidents"]["status"] == "unavailable"
+    assert not [i for i in out["items"] if i["kind"] == "incident"]
+
+
+# --- BFF-ALERTS-CURRENT-20261107: live alert builder composition ---
+_RETIRED_FAILED_RUNTIMES = [
+    {"runtime_id": "rt-fae0166d", "persona_id": "persona-e3375f2f59c89158b0af", "status": "failed",
+     "effective_at": "2026-09-18T06:01:00Z", "retired_at": "2026-09-18T06:01:00Z"},
+    {"runtime_id": "rt-0354501c", "persona_id": "persona-a1d7cbb8ccff5e6bb8f9", "status": "failed",
+     "effective_at": "2026-09-18T08:54:00Z", "retired_at": "2026-09-18T08:55:00Z"},
+    {"runtime_id": "rt-43344296", "persona_id": "persona-1bb38f1d2c50b3430c27", "status": "failed",
+     "effective_at": "2026-10-13T14:02:00Z", "retired_at": "2026-10-13T14:02:00Z"},
+]
+
+
+class _RuntimeStore:
+    def __init__(self, bindings):
+        self.bindings = bindings
+        self.telemetry_reads = []
+
+    def list_runtime_bindings(self, **_):
+        return list(self.bindings)
+
+    def list_incidents(self, **_):
+        return []
+
+    def get_telemetry_summary(self, runtime_id):
+        self.telemetry_reads.append(runtime_id)
+        return None
+
+
+def _runtime_surface_ok(dataset, **_):
+    return {"status": "ok", "dataset": dataset, "source": "test"}
+
+
+def _patch_runtime_store(monkeypatch, bindings):
+    from services.control_plane.bff import main as bff_main
+
+    store = _RuntimeStore(bindings)
+    monkeypatch.setattr(bff_main, "read_store", store)
+    monkeypatch.setattr(bff_main, "_dataset_surface_status", _runtime_surface_ok)
+    return bff_main, store
+
+
+def test_retired_failed_runtimes_raise_no_alert_and_no_telemetry_read(monkeypatch) -> None:
+    bff_main, store = _patch_runtime_store(monkeypatch, _RETIRED_FAILED_RUNTIMES)
+    alerts, _ = bff_main._build_runtime_alerts("2026-11-07T00:00:00Z")
+    assert alerts == []
+    assert store.telemetry_reads == []
+    anomalies = bff_main._build_management_anomalies_payload("2026-11-07T00:00:00Z")
+    assert not [i for i in anomalies["items"] if i["kind"] == "runtime_alert"]
+
+
+def test_current_failed_error_degraded_paused_runtimes_keep_severity(monkeypatch) -> None:
+    rows = [{"runtime_id": f"rt-{s}", "status": s} for s in ("failed", "error", "degraded", "paused")]
+    bff_main, _ = _patch_runtime_store(monkeypatch, rows + _RETIRED_FAILED_RUNTIMES)
+    alerts, _ = bff_main._build_runtime_alerts("2026-11-07T00:00:00Z")
+    got = {a["alert_id"]: a["severity"] for a in alerts}
+    assert got == {
+        "alert-runtime-rt-failed": "critical",
+        "alert-runtime-rt-error": "critical",
+        "alert-runtime-rt-degraded": "high",
+        "alert-runtime-rt-paused": "medium",
+    }
+
+
+def _wire_real_surface_status(monkeypatch, bff_main) -> None:
+    from services.control_plane.bff.personas import service as personas_service
+
+    def _status(dataset, *, snapshot_at=None, **kw):
+        return personas_service._dataset_surface_status(
+            dataset, read_store=bff_main.read_store, snapshot_at=snapshot_at, **kw
+        )
+
+    monkeypatch.setattr(bff_main, "_dataset_surface_status", _status)
+
+
+def test_alert_builder_requests_open_only_and_alerts_investigating(monkeypatch) -> None:
+    from services.control_plane.bff import main as bff_main
+
+    port, requested = _capturing_port()
+    monkeypatch.setattr(bff_main, "read_store", _ports(port))
+    _wire_real_surface_status(monkeypatch, bff_main)
+    alerts, surface = bff_main._build_incident_alerts("2026-11-07T00:00:00Z")
+    assert surface["status"] != "unavailable"
+    assert requested and all(q.get("open_only") == ["true"] for q in requested)
+    assert {a["alert_id"] for a in alerts} == {"alert-incident-inc-open", "alert-incident-inc-inv"}
+
+
+def test_alert_builder_marks_failed_incident_owner_unavailable(monkeypatch) -> None:
+    from services.control_plane.bff import main as bff_main
+
+    port = DomainIncidentPort(incidents_api_url="http://incident-owner.invalid", opener=_down)
+    monkeypatch.setattr(bff_main, "read_store", _ports(port))
+    _wire_real_surface_status(monkeypatch, bff_main)
+    alerts, surface = bff_main._build_incident_alerts("2026-11-07T00:00:00Z")
+    assert alerts == []
+    assert surface["status"] == "unavailable"
+
+
+def test_retired_runtime_exclusion_holds_on_both_alert_list_routes(monkeypatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.control_plane.bff.auth import policy as auth_policy
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.incidents.router import create_incident_router
+
+    rows = [{"runtime_id": "rt-current", "status": "failed"}] + _RETIRED_FAILED_RUNTIMES
+    bff_main, store = _patch_runtime_store(monkeypatch, rows)
+    ok = {"status": "ok", "dataset": "x", "source": "test"}
+    monkeypatch.setattr(bff_main, "_build_incident_alerts", lambda _s: ([], dict(ok)))
+    monkeypatch.setattr(
+        bff_main, "_build_governance_alerts",
+        lambda _s: ([], {"review_queue": dict(ok), "approval_queue": dict(ok)}),
+    )
+    monkeypatch.setattr(bff_main, "_build_kill_switch_alerts", lambda _s: ([], dict(ok), None))
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+
+    app = FastAPI()
+    app.include_router(
+        create_incident_router(
+            build_operator_alerts_payload=bff_main._build_operator_alerts_payload,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+        )
+    )
+    register_error_handlers(app)
+    client = TestClient(app)
+    for path in ("/bff/alerts", "/bff/risk/alerts"):
+        resp = client.get(path, headers={"Authorization": "Bearer op-tester:operator"})
+        assert resp.status_code == 200, (path, resp.text)
+        ids = {a["alert_id"] for a in resp.json()["alerts"]}
+        assert ids == {"alert-runtime-rt-current"}, (path, ids)
+    assert not set(store.telemetry_reads) & {r["runtime_id"] for r in _RETIRED_FAILED_RUNTIMES}

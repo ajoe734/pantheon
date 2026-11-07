@@ -503,6 +503,17 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         self.assertEqual(summary["drawdown"], 0.08)
         self.assertEqual(summary["drawdown_at"], "2026-05-01T00:09:00+00:00")
 
+    def test_drawdown_snapshot_sharpe_ratio_projects_with_provenance(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        event = _event("drawdown_snapshot", created_at="2026-05-01T00:10:00Z")
+        event["metrics"] = {"drawdown_pct": 0.05, "sharpe_ratio": 1.75}
+
+        summary = store.project_event(event)
+
+        self.assertEqual(summary["sharpe_ratio"], 1.75)
+        self.assertEqual(summary["sharpe_ratio_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["sharpe_ratio_binding_id"], "rtb-paper-001")
+
     def test_performance_metrics_fall_back_to_created_at_for_legacy_events(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
         event = _event("drawdown_snapshot", created_at="2026-05-01T00:10:00Z")

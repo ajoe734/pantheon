@@ -1,0 +1,30 @@
+{
+  "task_id": "PAPER-ROLLING-SHARPE-20261107",
+  "base": "d77e03a05",
+  "changes": [
+    "performance_telemetry.py: RollingDrawdownTracker._rolling_sharpe_metrics (shared by observe and observe_unchanged_provenance); rolling_drawdown.v1 schema unchanged",
+    "management_read_models/service.py: rankings degraded override ignores block sharpe-leaders; block/summary missing_metric counts unchanged",
+    "paper_runtime.py unchanged: drawdown_snapshot already merges all tracker keys except drawdown_pct"
+  ],
+  "tests_added": [
+    "test_performance_telemetry.py::RollingSharpeTest (exact vector 11.2639458941423, 9 vs 10 returns, flat series, weekday gap, legacy state restore, observe/provenance agreement)",
+    "test_runtime_summary_projection.py::test_drawdown_snapshot_sharpe_ratio_projects_with_provenance",
+    "test_bff_b3_trading_pulse.py: sharpe-only missing does not degrade; pnl/drawdown/fill_rate missing still degrades"
+  ],
+  "commands": [
+    {"cmd": "/tmp/bffvenv/bin/python -m pytest services/telemetry/test_runtime_summary_projection.py services/execution/lean_runtime -q", "result": "481 passed, 13 skipped (before BFF test additions; unchanged code in these suites afterwards)"},
+    {"cmd": "/tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_management_read_models_router.py -q", "result": "54 passed before new tests; test_bff_b3_trading_pulse.py 17 passed after new tests"}
+  ],
+  "readers_checked": {
+    "services/reconciliation-drift/main.py": "drift checks iterate baseline_metrics only; APPROVED_BASELINE_KEYS holds only drawdown; copies sharpe into observed display, no incident path",
+    "services/reconciliation-drift/consumer.py": "lists sharpe_ratio as projected key only",
+    "services/evolution/threshold_sweep_worker.py": "no Sharpe",
+    "services/control-plane/governance/evolution_controller.py": "sharpe_pct_of_baseline fed only by services/evolution/seed_data.py",
+    "services/control-plane/bff/personas/service.py": "display average only",
+    "services/control-plane/bff/ports/lifecycle_telemetry_governance.py": "read-only summary passthrough",
+    "services/control-plane/bff/assistant/management_service.py": "read-only summary passthrough",
+    "services/registry/promotion/gate.py": "reads research eval_summary, not telemetry",
+    "order/fill/risk": "no code path reads the new value"
+  },
+  "hosted_environment_touched": false
+}

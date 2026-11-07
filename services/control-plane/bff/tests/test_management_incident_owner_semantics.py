@@ -43,3 +43,71 @@ def test_anomalies_incident_surface_reflects_owner_availability() -> None:
     assert missing["meta"]["surfaces"]["incidents"]["status"] == "unavailable"
     healthy = _service(DomainIncidentPort(incidents={})).get_management_anomalies()
     assert healthy["meta"]["surfaces"]["incidents"]["status"] == "ok"
+
+
+def _owner_rows():
+    return [
+        {"incident_id": "inc-open", "status": "open", "severity": "high"},
+        {"incident_id": "inc-inv", "status": "investigating", "severity": "medium"},
+        {"incident_id": "inc-res", "status": "resolved", "severity": "low"},
+        {"incident_id": "inc-closed", "status": "closed", "severity": "low"},
+    ]
+
+
+def _capturing_port():
+    import io
+    import json as _json
+    from urllib.parse import parse_qs, urlparse
+
+    requested: list[dict] = []
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    def opener(req, timeout=None):
+        query = parse_qs(urlparse(req.full_url).query)
+        requested.append(query)
+        rows = _owner_rows()
+        if query.get("open_only") == ["true"]:
+            rows = [r for r in rows if r["status"] in ("open", "investigating")]
+        return _Resp(_json.dumps(rows).encode("utf-8"))
+
+    port = DomainIncidentPort(incidents_api_url="http://incident-owner.invalid", opener=opener)
+    return port, requested
+
+
+def _ports(port) -> ReadSurfacePorts:
+    return ReadSurfacePorts(
+        lifecycle_telemetry_governance=CompositeLifecycleTelemetryGovernancePort(
+            incident_port=port, lifecycle_port=DomainLifecyclePort(loop_runs={})
+        )
+    )
+
+
+def test_management_service_anomalies_request_open_only_from_owner() -> None:
+    port, requested = _capturing_port()
+    out = ManagementService(read_store=_ports(port)).get_management_anomalies()
+    assert requested and all(q.get("open_only") == ["true"] for q in requested)
+    ids = {i["id"] for i in out["items"] if i["kind"] == "incident"}
+    assert ids == {"inc-open", "inc-inv"}
+    assert out["meta"]["surfaces"]["incidents"]["status"] == "ok"
+
+
+def test_investigating_only_tenant_is_degraded_and_counted_open() -> None:
+    svc = _service(
+        DomainIncidentPort(
+            incidents={"inc-1": {"incident_id": "inc-1", "status": "investigating", "severity": "high"}}
+        )
+    )
+    health = svc.get_operator_health_status()
+    group = next(
+        g for g in health.get("data", health)["groups"] if g["group_id"] == "incident"
+    )
+    assert group["status"] == "degraded"
+    assert group["details"]["open_incidents"] == 1
+    counts = svc.build_shell_summary_counts()
+    assert counts["counts"]["open_alerts"] == 1, counts

@@ -2554,3 +2554,357 @@ def test_evidence_items_route_returns_tenant_population_summary_and_excludes_ten
     }
     assert body_p1["summary"] == expected_summary
     assert body_p2["summary"] == expected_summary
+
+
+def test_schedule_store_read_only_paths_do_not_replay_unchanged_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.source_ingestion.connectors.base import IngestRun
+    from services.source_ingestion.scheduler import (
+        IngestReceipt,
+        JsonlIngestScheduleStore,
+        SourceWatermark,
+    )
+
+    journal_path = tmp_path / "ingest_schedule.jsonl"
+    store = JsonlIngestScheduleStore(journal_path)
+    writer = JsonlIngestScheduleStore(journal_path)
+
+    run = IngestRun(
+        ingest_run_id="ingest-readonly-001",
+        connector_id="conn-readonly",
+        source_type="paper",
+        trigger_type="scheduled",
+        trace_id="trace-readonly-001",
+        started_at="2026-11-07T00:00:00Z",
+    )
+    for state in ("fetching", "normalizing", "indexing", "completed"):
+        run.transition(state, message=f"transition {state}")
+    receipt = IngestReceipt(
+        ingest_run_id=run.ingest_run_id,
+        connector_id=run.connector_id,
+        status="completed",
+        trigger_type="scheduled",
+        trace_id=run.trace_id,
+        started_at="2026-11-07T00:00:00Z",
+        finished_at="2026-11-07T00:00:05Z",
+        raw_count=10,
+        normalized_count=10,
+        rejected_count=0,
+        watermark="wm-001",
+        source_timestamp="2026-11-07T00:00:00Z",
+        source_timestamp_status="valid",
+    )
+    watermark = SourceWatermark(
+        connector_id=run.connector_id,
+        source_type="paper",
+        value="wm-001",
+        updated_at="2026-11-07T00:00:05Z",
+        last_ingest_run_id=run.ingest_run_id,
+    )
+    writer.upsert_run(run)
+    writer.upsert_receipt(receipt)
+    writer.update_watermark(watermark)
+    frontier = writer.enqueue_frontier(connector_id=run.connector_id, trace_id="trace-frontier-001")
+
+    replays = 0
+    orig_reload = store._reload_unlocked
+
+    def counting_reload(*args, **kwargs):
+        nonlocal replays
+        replays += 1
+        return orig_reload(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_reload_unlocked", counting_reload)
+
+    # First read replays the changed journal once.
+    first_run = store.get_run(run.ingest_run_id)
+    assert first_run is not None and first_run.ingest_run_id == run.ingest_run_id
+    assert replays == 1
+
+    # After the first read, every read-only path must perform zero replays while the journal is unchanged.
+    replays_after_first = 0
+
+    def counting_after_first(*args, **kwargs):
+        nonlocal replays_after_first
+        replays_after_first += 1
+        return orig_reload(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_reload_unlocked", counting_after_first)
+
+    assert store.get_run(run.ingest_run_id) is not None
+    assert store.get_receipt(run.ingest_run_id) is not None
+    job_run, job_receipt = store.get_job(run.ingest_run_id)
+    assert job_run is not None and job_receipt is not None
+    assert [r.ingest_run_id for r in store.list_runs()] == [run.ingest_run_id]
+    page_runs, page_receipts, total = store.list_runs_page(limit=10, offset=0)
+    assert len(page_runs) == 1 and len(page_receipts) == 1 and total == 1
+    assert [r.ingest_run_id for r in store.list_receipts()] == [run.ingest_run_id]
+    assert [r.ingest_run_id for r in store.list_receipts(connector_id=run.connector_id)] == [run.ingest_run_id]
+    snapshot = store.read_freshness_snapshot()
+    assert len(snapshot["runs"]) == 1 and len(snapshot["receipts"]) == 1 and run.connector_id in snapshot["watermarks"]
+    wm = store.get_watermark(run.connector_id)
+    assert wm is not None and wm.value == "wm-001"
+    assert [f.frontier_id for f in store.list_frontier()] == [frontier.frontier_id]
+    assert store.get_frontier(frontier.frontier_id) is not None
+    assert replays_after_first == 0
+
+
+def test_schedule_store_cross_instance_append_and_inode_replacement(tmp_path: Path) -> None:
+    from services.source_ingestion.connectors.base import IngestRun
+    from services.source_ingestion.scheduler import IngestReceipt, JsonlIngestScheduleStore
+
+    journal_path = tmp_path / "ingest_schedule.jsonl"
+    store1 = JsonlIngestScheduleStore(journal_path)
+    store2 = JsonlIngestScheduleStore(journal_path)
+
+    run1 = IngestRun(
+        ingest_run_id="ingest-inst1-001",
+        connector_id="conn-a",
+        source_type="paper",
+        trigger_type="manual",
+        trace_id="trace-1",
+    )
+    store1.upsert_run(run1)
+    assert store1.get_run("ingest-inst1-001") is not None
+
+    # Appended run from second instance is returned on the very next read of the first instance.
+    run2 = IngestRun(
+        ingest_run_id="ingest-inst2-002",
+        connector_id="conn-b",
+        source_type="paper",
+        trigger_type="scheduled",
+        trace_id="trace-2",
+    )
+    store2.upsert_run(run2)
+    next_run = store1.get_run("ingest-inst2-002")
+    assert next_run is not None and next_run.connector_id == "conn-b"
+    assert {r.ingest_run_id for r in store1.list_runs()} == {"ingest-inst1-001", "ingest-inst2-002"}
+
+    # Appended receipt from second instance is returned on the very next read of the first instance.
+    receipt2 = IngestReceipt(
+        ingest_run_id="ingest-inst2-002",
+        connector_id="conn-b",
+        status="completed",
+        trigger_type="scheduled",
+        trace_id="trace-2",
+        started_at="2026-11-07T01:00:00Z",
+        finished_at="2026-11-07T01:00:02Z",
+        raw_count=3,
+        normalized_count=3,
+        rejected_count=0,
+        watermark="wm-2",
+        source_timestamp="2026-11-07T01:00:00Z",
+        source_timestamp_status="valid",
+    )
+    store2.upsert_receipt(receipt2)
+    next_receipt = store1.get_receipt("ingest-inst2-002")
+    assert next_receipt is not None and next_receipt.watermark == "wm-2"
+
+    # Replacing the file with a new inode forces a replay on the very next read.
+    old_inode = journal_path.stat().st_ino
+    replacement_path = tmp_path / "replacement_schedule.jsonl"
+    replacement_store = JsonlIngestScheduleStore(replacement_path)
+    run3 = IngestRun(
+        ingest_run_id="ingest-new-inode-003",
+        connector_id="conn-c",
+        source_type="paper",
+        trigger_type="manual",
+        trace_id="trace-3",
+    )
+    receipt3 = IngestReceipt(
+        ingest_run_id="ingest-new-inode-003",
+        connector_id="conn-c",
+        status="completed",
+        trigger_type="manual",
+        trace_id="trace-3",
+        started_at="2026-11-07T02:00:00Z",
+        finished_at="2026-11-07T02:00:01Z",
+        raw_count=1,
+        normalized_count=1,
+        rejected_count=0,
+        watermark="wm-3",
+        source_timestamp="2026-11-07T02:00:00Z",
+        source_timestamp_status="valid",
+    )
+    replacement_store.upsert_run(run3)
+    replacement_store.upsert_receipt(receipt3)
+    os.replace(replacement_path, journal_path)
+    assert journal_path.stat().st_ino != old_inode
+
+    replaced_run = store1.get_run("ingest-new-inode-003")
+    assert replaced_run is not None and replaced_run.connector_id == "conn-c"
+    assert store1.get_run("ingest-inst1-001") is None
+    replaced_receipt = store1.get_receipt("ingest-new-inode-003")
+    assert replaced_receipt is not None and replaced_receipt.watermark == "wm-3"
+
+
+def test_get_job_endpoint_replays_at_most_once_per_request_when_journal_changed(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.source_ingestion.connectors.base import IngestRun
+    from services.source_ingestion.scheduler import IngestReceipt, JsonlIngestScheduleStore
+
+    test_client, _, module = client
+    writer = JsonlIngestScheduleStore(module.store.path)
+
+    run = IngestRun(
+        ingest_run_id="ingest-job-detail-001",
+        connector_id="conn-detail",
+        source_type="paper",
+        trigger_type="scheduled",
+        trace_id="trace-detail-001",
+    )
+    for state in ("fetching", "normalizing", "indexing", "completed"):
+        run.transition(state, message=f"transition {state}")
+    receipt = IngestReceipt(
+        ingest_run_id=run.ingest_run_id,
+        connector_id=run.connector_id,
+        status="completed",
+        trigger_type="scheduled",
+        trace_id=run.trace_id,
+        started_at="2026-11-07T03:00:00Z",
+        finished_at="2026-11-07T03:00:04Z",
+        raw_count=5,
+        normalized_count=5,
+        rejected_count=0,
+        watermark="wm-detail-1",
+        source_timestamp="2026-11-07T03:00:00Z",
+        source_timestamp_status="valid",
+    )
+    writer.upsert_run(run)
+    writer.upsert_receipt(receipt)
+
+    replays = 0
+    orig_reload = module.store._reload_unlocked
+
+    def counting_reload(*args, **kwargs):
+        nonlocal replays
+        replays += 1
+        return orig_reload(*args, **kwargs)
+
+    monkeypatch.setattr(module.store, "_reload_unlocked", counting_reload)
+
+    # Journal changed since module.store last read: GET /api/source-ingest/jobs/{id} replays at most once.
+    resp1 = test_client.get(f"/api/source-ingest/jobs/{run.ingest_run_id}")
+    assert resp1.status_code == 200
+    body1 = resp1.json()
+    assert body1["run"]["ingest_run_id"] == run.ingest_run_id
+    assert body1["receipt"]["watermark"] == "wm-detail-1"
+    assert replays == 1
+
+    # Journal unchanged: next GET /api/source-ingest/jobs/{id} performs zero replays.
+    replays = 0
+    resp2 = test_client.get(f"/api/source-ingest/jobs/{run.ingest_run_id}")
+    assert resp2.status_code == 200
+    assert replays == 0
+
+    # Journal changed again via external append: next GET /api/source-ingest/jobs/{id} replays once and sees new receipt.
+    updated_receipt = IngestReceipt(
+        ingest_run_id=run.ingest_run_id,
+        connector_id=run.connector_id,
+        status="completed",
+        trigger_type="scheduled",
+        trace_id=run.trace_id,
+        started_at="2026-11-07T03:00:00Z",
+        finished_at="2026-11-07T03:00:09Z",
+        raw_count=5,
+        normalized_count=5,
+        rejected_count=0,
+        watermark="wm-detail-2",
+        source_timestamp="2026-11-07T03:00:00Z",
+        source_timestamp_status="valid",
+    )
+    writer.upsert_receipt(updated_receipt)
+    replays = 0
+    resp3 = test_client.get(f"/api/source-ingest/jobs/{run.ingest_run_id}")
+    assert resp3.status_code == 200
+    assert resp3.json()["receipt"]["watermark"] == "wm-detail-2"
+    assert replays == 1
+
+
+def test_write_paths_reload_before_writing_and_recover_incomplete_receipts(tmp_path: Path) -> None:
+    from services.source_ingestion.connectors.base import IngestRun
+    from services.source_ingestion.scheduler import IngestReceipt, JsonlIngestScheduleStore
+
+    journal_path = tmp_path / "ingest_schedule.jsonl"
+    store1 = JsonlIngestScheduleStore(journal_path)
+    store2 = JsonlIngestScheduleStore(journal_path)
+
+    run1 = IngestRun(
+        ingest_run_id="ingest-write-1",
+        connector_id="conn-1",
+        source_type="paper",
+        trigger_type="manual",
+        trace_id="trace-w1",
+    )
+    store1.upsert_run(run1)
+    assert store1.get_run("ingest-write-1") is not None
+
+    # Second process appends run2 while store1 has a warm read cache; store1 then writes run3 without reading first.
+    run2 = IngestRun(
+        ingest_run_id="ingest-write-2",
+        connector_id="conn-2",
+        source_type="paper",
+        trigger_type="manual",
+        trace_id="trace-w2",
+    )
+    store2.upsert_run(run2)
+
+    run3 = IngestRun(
+        ingest_run_id="ingest-write-3",
+        connector_id="conn-3",
+        source_type="paper",
+        trigger_type="manual",
+        trace_id="trace-w3",
+    )
+    store1.upsert_run(run3)
+
+    assert {r.ingest_run_id for r in store1.list_runs()} == {
+        "ingest-write-1",
+        "ingest-write-2",
+        "ingest-write-3",
+    }
+    store3 = JsonlIngestScheduleStore(journal_path)
+    assert {r.ingest_run_id for r in store3.list_runs()} == {
+        "ingest-write-1",
+        "ingest-write-2",
+        "ingest-write-3",
+    }
+
+    # Incomplete receipt recovery: completed run + processing receipt is terminalized on reload().
+    completed_run = IngestRun(
+        ingest_run_id="ingest-incomplete-receipt",
+        connector_id="conn-recover",
+        source_type="paper",
+        trigger_type="scheduled",
+        trace_id="trace-recover",
+    )
+    for state in ("fetching", "normalizing", "indexing", "completed"):
+        completed_run.transition(state, message=f"transition {state}")
+    processing_receipt = IngestReceipt(
+        ingest_run_id=completed_run.ingest_run_id,
+        connector_id=completed_run.connector_id,
+        status="processing",
+        trigger_type="scheduled",
+        trace_id=completed_run.trace_id,
+        started_at="2026-11-07T04:00:00Z",
+        finished_at=None,
+        raw_count=2,
+        normalized_count=2,
+        rejected_count=0,
+        watermark=None,
+        source_timestamp="2026-11-07T04:00:00Z",
+        source_timestamp_status="valid",
+    )
+    store2.upsert_run(completed_run)
+    store2.upsert_receipt(processing_receipt)
+
+    recovered_store = JsonlIngestScheduleStore(journal_path)
+    recovered_receipt = recovered_store.get_receipt(completed_run.ingest_run_id)
+    assert recovered_receipt is not None
+    assert recovered_receipt.status == "failed"
+    assert recovered_receipt.typed_failure is not None
+    assert recovered_receipt.typed_failure["code"] == "post_processing_interrupted"
+    assert recovered_receipt.typed_failure["error_type"] == "IncompleteReceiptRecovered"
+

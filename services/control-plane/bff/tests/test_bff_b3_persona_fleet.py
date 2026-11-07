@@ -1048,3 +1048,89 @@ def test_persona_fleet_returns_200_for_operator_and_viewer_with_read_surface_por
         viewer_resp = port_client.get("/bff/management/persona-fleet", headers=viewer_headers)
         assert viewer_resp.status_code == 200, viewer_resp.text
         assert "items" in viewer_resp.json()["data"]
+
+
+def test_persona_fleet_returns_top_level_owner_and_filters_by_q_when_metadata_lacks_owner() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id = "persona-chain-4923-research"
+        top_level_owner = "operator-chain-4923-owner"
+        client.app.state.store.create_persona(
+            persona_id=persona_id,
+            tenant_id="pantheon-dev",
+            name="Chain 4923 Research Persona",
+            owner=top_level_owner,
+            created_at="2026-11-07T00:00:00Z",
+            lifecycle_state="active",
+            metadata={
+                "data_scope": "regular",
+                "persona_class": "research",
+                "requested_by": top_level_owner,
+            },
+        )
+
+        resp = client.get("/bff/management/persona-fleet?page_size=100", headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        row = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
+        assert row["owner"] == top_level_owner
+
+        q_owner_resp = client.get(
+            f"/bff/management/persona-fleet?q={top_level_owner}&page_size=100",
+            headers=OPERATOR_HEADERS,
+        )
+        assert q_owner_resp.status_code == 200, q_owner_resp.text
+        q_owner_ids = {item["id"] for item in q_owner_resp.json()["data"]["items"]}
+        assert persona_id in q_owner_ids
+
+        q_default_resp = client.get(
+            "/bff/management/persona-fleet?q=pathreon-management&page_size=100",
+            headers=OPERATOR_HEADERS,
+        )
+        assert q_default_resp.status_code == 200, q_default_resp.text
+        q_default_ids = {item["id"] for item in q_default_resp.json()["data"]["items"]}
+        assert persona_id not in q_default_ids
+
+
+def test_persona_fleet_owner_precedence_and_default_fallback() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        store = client.app.state.store
+        store.create_persona(
+            persona_id="persona-owner-meta-owner",
+            tenant_id="pantheon-dev",
+            name="Meta Owner Precedence",
+            owner="top-level-owner-ignored",
+            created_at="2026-11-07T00:00:00Z",
+            lifecycle_state="active",
+            metadata={
+                "owner": "metadata-owner-wins",
+                "owner_id": "metadata-owner-id-second",
+            },
+        )
+        store.create_persona(
+            persona_id="persona-owner-meta-owner-id",
+            tenant_id="pantheon-dev",
+            name="Meta Owner ID Precedence",
+            owner="top-level-owner-ignored",
+            created_at="2026-11-07T00:00:00Z",
+            lifecycle_state="active",
+            metadata={
+                "owner_id": "metadata-owner-id-wins",
+            },
+        )
+        store.create_persona(
+            persona_id="persona-owner-default-fallback",
+            tenant_id="pantheon-dev",
+            name="Default Owner Fallback",
+            created_at="2026-11-07T00:00:00Z",
+            lifecycle_state="active",
+            metadata={"data_scope": "regular"},
+        )
+
+        resp = client.get("/bff/management/persona-fleet?page_size=100", headers=OPERATOR_HEADERS)
+        assert resp.status_code == 200, resp.text
+        by_id = {item["id"]: item for item in resp.json()["data"]["items"]}
+        assert by_id["persona-owner-meta-owner"]["owner"] == "metadata-owner-wins"
+        assert by_id["persona-owner-meta-owner-id"]["owner"] == "metadata-owner-id-wins"
+        assert by_id["persona-owner-default-fallback"]["owner"] == "pathreon-management"
+
