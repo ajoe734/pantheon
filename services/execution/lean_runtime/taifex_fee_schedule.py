@@ -70,3 +70,101 @@ def fee_row_for(underlying_kind: str, underlying_units_per_contract: int) -> Fee
             return ETF_1000_UNIT_UNDERLYING
         raise ValueError(f"no fee row for ETF futures with unit {underlying_units_per_contract}")
     raise ValueError(f"unsupported underlying kind: {underlying_kind}")
+
+
+KNOWN_ETF_CONTRACTS = frozenset({"SRF", "NYF", "OAF", "OBF", "OCF", "ODF", "OEF", "OFF", "OGF", "OHF", "OIF", "OJF", "OKF", "OLF", "OMF", "ONF", "OOF", "OPF", "OQF", "ORF"})
+
+
+def fee_row_for_contract(
+    contract: str | None = None,
+    *,
+    underlying: str | None = None,
+    underlying_kind: str | None = None,
+    multiplier: int | float = 2000,
+) -> FeeRow:
+    """Resolve the TAIFEX fee row from contract code, underlying code, or kind."""
+    resolved_kind = str(underlying_kind or "").strip().lower()
+    clean_contract = str(contract or "").strip().upper()
+    clean_underlying = str(underlying or "").strip().upper()
+    if resolved_kind not in ("stock", "etf"):
+        if clean_contract in KNOWN_ETF_CONTRACTS or clean_underlying.startswith("00"):
+            resolved_kind = "etf"
+        else:
+            resolved_kind = "stock"
+    unit = int(round(float(multiplier)))
+    if resolved_kind == "etf" and unit not in (1000, 10000):
+        unit = 1000
+    return fee_row_for(resolved_kind, unit)
+
+
+def compute_open_or_close_cost(
+    contract: str | None,
+    price: float,
+    contracts: int | float,
+    *,
+    multiplier: int | float = 2000,
+    underlying: str | None = None,
+    underlying_kind: str | None = None,
+    broker_fee_per_contract_per_side: float = 0.0,
+) -> dict[str, float]:
+    """Compute per-fill fee + transaction tax for opening or closing a futures position."""
+    row = fee_row_for_contract(
+        contract,
+        underlying=underlying,
+        underlying_kind=underlying_kind,
+        multiplier=multiplier,
+    )
+    qty_dec = abs(Decimal(str(contracts)))
+    price_dec = Decimal(str(price))
+    mult_dec = Decimal(str(multiplier))
+    broker_dec = Decimal(str(broker_fee_per_contract_per_side))
+    tax_rate_dec = Decimal(str(STOCK_FUTURES_TRANSACTION_TAX_RATE))
+
+    per_contract_fee = row.exchange_fee + row.clearing_fee + broker_dec
+    fee_dec = per_contract_fee * qty_dec
+    tax_dec = price_dec * mult_dec * qty_dec * tax_rate_dec
+    total_dec = fee_dec + tax_dec
+    return {
+        "exchange_fee": float(row.exchange_fee * qty_dec),
+        "clearing_fee": float(row.clearing_fee * qty_dec),
+        "broker_fee": float(broker_dec * qty_dec),
+        "fee": float(fee_dec),
+        "tax": float(tax_dec),
+        "total_cost": float(total_dec),
+    }
+
+
+def compute_settlement_cost(
+    contract: str | None,
+    final_settlement_price: float,
+    contracts: int | float,
+    *,
+    multiplier: int | float = 2000,
+    underlying: str | None = None,
+    underlying_kind: str | None = None,
+    broker_fee_per_contract_per_side: float = 0.0,
+) -> dict[str, float]:
+    """Compute cash-settlement delivery fee + transaction tax at expiry."""
+    row = fee_row_for_contract(
+        contract,
+        underlying=underlying,
+        underlying_kind=underlying_kind,
+        multiplier=multiplier,
+    )
+    qty_dec = abs(Decimal(str(contracts)))
+    price_dec = Decimal(str(final_settlement_price))
+    mult_dec = Decimal(str(multiplier))
+    broker_dec = Decimal(str(broker_fee_per_contract_per_side))
+    tax_rate_dec = Decimal(str(STOCK_FUTURES_TRANSACTION_TAX_RATE))
+
+    per_contract_fee = row.settlement_fee + broker_dec
+    fee_dec = per_contract_fee * qty_dec
+    tax_dec = price_dec * mult_dec * qty_dec * tax_rate_dec
+    total_dec = fee_dec + tax_dec
+    return {
+        "settlement_fee": float(row.settlement_fee * qty_dec),
+        "broker_fee": float(broker_dec * qty_dec),
+        "fee": float(fee_dec),
+        "tax": float(tax_dec),
+        "total_cost": float(total_dec),
+    }

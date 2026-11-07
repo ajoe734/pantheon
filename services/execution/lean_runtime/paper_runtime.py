@@ -53,9 +53,31 @@ from services.execution.lean_runtime.performance_telemetry import (
     value_portfolio,
 )
 from services.execution.lean_runtime.bootstrap_contract import ALLOWED_ENGINE_BRIDGE_REMOTES, ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
+from services.execution.lean_runtime.instrument_candidates import (
+    governed_twse_holidays,
+    is_trading_day,
+    last_trading_day,
+    lookup_final_settlement_price,
+    normalize_underlying_code,
+    parse_instrument_id,
+    previous_trading_day,
+)
 from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext, RuntimeContextError
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
+from services.execution.lean_runtime.taifex_fee_schedule import (
+    compute_open_or_close_cost,
+    compute_settlement_cost,
+)
+from services.broker.paper_simulation import simulate_paper_order
+from services.capital.capital_guard import load_risk_policy
+from services.capital.risk_policy import (
+    RiskPolicy,
+    RiskPolicyDecision,
+    RiskPolicyEvaluationContext,
+    RiskPolicyEvaluator,
+    RiskPolicyTargetType,
+)
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     propagate_envelope,
@@ -77,8 +99,52 @@ _CANONICAL_LIFECYCLE_EVENT_TYPES = frozenset(
         "paper_fill_simulated",
         "order_rejection",
         "position_snapshot",
+        "paper_futures_settled",
+        "paper_margin_call",
+        "paper_forced_liquidation",
     }
 )
+_PILOT_FUTURES_PROFILES: dict[str, dict[str, Any]] = {
+    "QFF": {
+        "underlying": "2330",
+        "multiplier": 100.0,
+        "margin_tier": "pct_tier_1",
+        "initial_rate": 0.135,
+        "maintenance_rate": 0.1035,
+        "underlying_kind": "stock",
+    },
+    "DHF": {
+        "underlying": "2317",
+        "multiplier": 2000.0,
+        "margin_tier": "pct_tier_1",
+        "initial_rate": 0.135,
+        "maintenance_rate": 0.1035,
+        "underlying_kind": "stock",
+    },
+    "SRF": {
+        "underlying": "0050",
+        "multiplier": 1000.0,
+        "margin_tier": "fixed_20261105",
+        "fixed_initial_margin": 8700.0,
+        "fixed_maintenance_margin": 6700.0,
+        "underlying_kind": "etf",
+    },
+}
+_PILOT_UNDERLYING_TO_CONTRACT: dict[str, str] = {
+    "2330": "QFF",
+    "2317": "DHF",
+    "0050": "SRF",
+}
+_DEFAULT_PAPER_RISK_POLICY_MAPPING: dict[str, Any] = {
+    "risk_policy_id": "rp-paper-default",
+    "name": "paper-default",
+    "version": "1.0",
+    "status": "active",
+    "gross_limit": 10.0,
+    "net_limit": 10.0,
+    "max_leverage": 10.0,
+    "allowed_asset_classes": ["equity", "future"],
+}
 _LIFECYCLE_UUID_NAMESPACE = uuid.UUID("1760784c-c9e0-47eb-b0aa-d37f58d892df")
 """Binding statuses at which the paper runtime must NOT execute signals.
 
@@ -293,6 +359,14 @@ class PaperExecutionAlgorithm:
         bracket_order_execution_enabled: bool = True,
         state_path: str | None = None,
         durable_fill_publication: bool = False,
+        persona_binding_id: str | None = None,
+        risk_policy: RiskPolicy | Mapping[str, Any] | None = None,
+        risk_policy_id: str | None = None,
+        risk_policy_loader: Callable[[str], RiskPolicy] | None = None,
+        broker_fee_per_contract_per_side: float = 0.0,
+        futures_costs_enabled: bool = True,
+        in_process_broker: bool = False,
+        holidays: Iterable[Any] | None = None,
     ) -> None:
         self._durable_fill_publication = bool(durable_fill_publication)
         self._pending_fill_publications: list[dict[str, Any]] = []
@@ -324,6 +398,33 @@ class PaperExecutionAlgorithm:
         self._performance_window_state: dict[str, Any] = {}
         self._pending_performance_pair: dict[str, Any] | None = None
         self._performance_binding_id: str | None = None
+        self._default_persona_binding_id: str | None = (
+            str(persona_binding_id).strip() if persona_binding_id else None
+        )
+        self._instrument_positions: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._realized_pnl: float = 0.0
+        self._total_costs: float = 0.0
+        self._injected_equity_capital: float = 0.0
+        self._margin_call_active: bool = False
+        self._margin_call_since: str | None = None
+        self._broker_fee_per_contract_per_side: float = float(
+            broker_fee_per_contract_per_side
+        )
+        self._futures_costs_enabled: bool = bool(futures_costs_enabled)
+        self._in_process_broker: bool = bool(in_process_broker)
+        self._holidays_override: tuple[Any, ...] | None = (
+            tuple(holidays) if holidays is not None else None
+        )
+        self._configured_risk_policy: RiskPolicy | None = None
+        self._configured_risk_policy_id: str | None = (
+            str(risk_policy_id).strip() if risk_policy_id else None
+        )
+        self._risk_policy_loader: Callable[[str], RiskPolicy] = (
+            risk_policy_loader or load_risk_policy
+        )
+        self._last_risk_gate_result: dict[str, Any] | None = None
+        if risk_policy is not None:
+            self.SetRiskPolicy(risk_policy)
         self._state_binding_error: str | None = None
         self._loaded_state_missing_binding_id = False
         self._state_path = Path(state_path) if state_path else None
@@ -396,6 +497,12 @@ class PaperExecutionAlgorithm:
         security.MarkAsOf = str(as_of) if as_of else None
         security.MarkSource = str(source) if source else None
         security.MarkAuthoritative = bool(authoritative and as_of and source)
+        self._update_instrument_marks_for_symbol(
+            str(symbol),
+            validated_price,
+            as_of=as_of,
+            source=source,
+        )
 
     def SetSecurityMark(  # noqa: N802
         self,
@@ -418,6 +525,853 @@ class PaperExecutionAlgorithm:
 
     def ClearCurrentSignalContext(self) -> None:  # noqa: N802
         self._current_signal_metadata = {}
+
+    def SetRiskPolicy(self, policy: RiskPolicy | Mapping[str, Any] | None) -> None:  # noqa: N802
+        if policy is None:
+            self._configured_risk_policy = None
+            return
+        if isinstance(policy, RiskPolicy):
+            self._configured_risk_policy = policy
+            return
+        if isinstance(policy, Mapping):
+            self._configured_risk_policy = RiskPolicy.from_mapping(policy)
+            return
+        raise TypeError(f"Unsupported risk_policy type: {type(policy).__name__}")
+
+    def _active_holidays(self) -> tuple[Any, ...]:
+        if self._holidays_override is not None:
+            return self._holidays_override
+        ctx_holidays = self._current_signal_metadata.get("holidays")
+        if isinstance(ctx_holidays, (list, tuple, set, frozenset)):
+            return tuple(ctx_holidays)
+        return tuple(governed_twse_holidays())
+
+    def _resolve_persona_binding_id(self, explicit_binding_id: str | None = None) -> str:
+        for candidate in (
+            explicit_binding_id,
+            self._current_signal_metadata.get("persona_capital_binding_id"),
+            self._current_signal_metadata.get("persona_binding_id"),
+            self._current_signal_metadata.get("binding_id"),
+            self._performance_binding_id,
+            self._default_persona_binding_id,
+        ):
+            cleaned = str(candidate or "").strip()
+            if cleaned:
+                return cleaned
+        return "default_binding"
+
+    @staticmethod
+    def _try_parse_instrument_id(value: Any) -> dict[str, Any] | None:
+        text = str(value or "").strip()
+        if not text or ":" not in text:
+            return None
+        try:
+            return parse_instrument_id(text)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _normalise_underlying_symbol(
+        symbol: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> str:
+        meta = metadata or {}
+        for key in ("underlying", "underlying_symbol", "contract_symbol"):
+            val = str(meta.get(key) or "").strip()
+            if val:
+                try:
+                    return normalize_underlying_code(val)
+                except Exception:
+                    return val
+        raw = str(symbol or "").strip()
+        parsed = PaperExecutionAlgorithm._try_parse_instrument_id(raw)
+        if parsed is not None:
+            if parsed["kind"] == "cash_share":
+                return str(parsed["underlying"])
+            contract = str(parsed["contract"])
+            if contract in _PILOT_FUTURES_PROFILES:
+                return str(_PILOT_FUTURES_PROFILES[contract]["underlying"])
+            return contract
+        try:
+            return normalize_underlying_code(raw)
+        except Exception:
+            return raw
+
+    @staticmethod
+    def _futures_contract_profile(
+        contract: str | None,
+        *,
+        underlying: str | None = None,
+        multiplier: float | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        meta = dict(metadata or {})
+        clean_contract = str(contract or "").strip().upper()
+        clean_underlying = str(underlying or "").strip().upper()
+        if not clean_contract and clean_underlying in _PILOT_UNDERLYING_TO_CONTRACT:
+            clean_contract = _PILOT_UNDERLYING_TO_CONTRACT[clean_underlying]
+        base = dict(_PILOT_FUTURES_PROFILES.get(clean_contract, {}))
+        if not clean_underlying and base.get("underlying"):
+            clean_underlying = str(base["underlying"])
+        resolved_mult = float(
+            multiplier
+            if multiplier is not None and float(multiplier) > 0
+            else meta.get("multiplier")
+            or base.get("multiplier")
+            or 2000.0
+        )
+        margin_tier = str(
+            meta.get("margin_tier") or base.get("margin_tier") or "pct_tier_1"
+        ).strip()
+        fixed_init = meta.get("fixed_initial_margin")
+        if fixed_init is None and margin_tier.startswith("fixed"):
+            fixed_init = meta.get("initial_margin") or base.get("fixed_initial_margin")
+        fixed_maint = meta.get("fixed_maintenance_margin")
+        if fixed_maint is None and margin_tier.startswith("fixed"):
+            fixed_maint = meta.get("maintenance_margin") or base.get("fixed_maintenance_margin")
+        init_rate = meta.get("initial_margin_rate")
+        if init_rate is None:
+            init_rate = meta.get("initial_rate") or base.get("initial_rate") or 0.135
+        maint_rate = meta.get("maintenance_margin_rate")
+        if maint_rate is None:
+            maint_rate = meta.get("maintenance_rate") or base.get("maintenance_rate") or 0.1035
+        underlying_kind = str(
+            meta.get("underlying_kind")
+            or base.get("underlying_kind")
+            or ("etf" if clean_underlying.startswith("00") or clean_contract == "SRF" else "stock")
+        )
+        return {
+            "contract": clean_contract or None,
+            "underlying": clean_underlying or None,
+            "multiplier": resolved_mult,
+            "margin_tier": margin_tier,
+            "fixed_initial_margin": float(fixed_init) if fixed_init is not None else None,
+            "fixed_maintenance_margin": float(fixed_maint) if fixed_maint is not None else None,
+            "initial_rate": float(init_rate),
+            "maintenance_rate": float(maint_rate),
+            "underlying_kind": underlying_kind,
+        }
+
+    @classmethod
+    def compute_futures_margin_per_contract(
+        cls,
+        contract: str | None,
+        price: float,
+        *,
+        multiplier: float | None = None,
+        underlying: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, float]:
+        """Compute initial and maintenance margin per contract at ``price``."""
+        prof = cls._futures_contract_profile(
+            contract,
+            underlying=underlying,
+            multiplier=multiplier,
+            metadata=metadata,
+        )
+        mult = float(prof["multiplier"])
+        notional = float(price) * mult
+        if prof["fixed_initial_margin"] is not None:
+            init_m = float(prof["fixed_initial_margin"])
+        else:
+            init_m = round(notional * float(prof["initial_rate"]), 6)
+        if prof["fixed_maintenance_margin"] is not None:
+            maint_m = float(prof["fixed_maintenance_margin"])
+        else:
+            maint_m = round(notional * float(prof["maintenance_rate"]), 6)
+        return {
+            "multiplier": mult,
+            "notional_per_contract": notional,
+            "initial_margin_per_contract": init_m,
+            "maintenance_margin_per_contract": maint_m,
+        }
+
+    @classmethod
+    def max_contracts_for_capital(
+        cls,
+        contract: str,
+        price: float,
+        capital: float,
+        *,
+        multiplier: float | None = None,
+        underlying: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> int:
+        margin_info = cls.compute_futures_margin_per_contract(
+            contract,
+            price,
+            multiplier=multiplier,
+            underlying=underlying,
+            metadata=metadata,
+        )
+        init_m = margin_info["initial_margin_per_contract"]
+        if init_m <= 0 or capital <= 0:
+            return 0
+        return int(math.floor(float(capital) / init_m))
+
+    def _update_instrument_marks_for_symbol(
+        self,
+        symbol: str,
+        price: float,
+        *,
+        as_of: str | None = None,
+        source: str | None = None,
+    ) -> None:
+        raw = str(symbol or "").strip()
+        parsed = self._try_parse_instrument_id(raw)
+        try:
+            norm_u = self._normalise_underlying_symbol(raw)
+        except Exception:
+            norm_u = raw
+        for (b_id, u_code, inst_id), pos in self._instrument_positions.items():
+            if abs(float(pos.get("quantity", 0.0))) <= 1e-12 and pos.get("status") != "settlement_pending":
+                continue
+            if parsed is not None and inst_id == parsed["instrument_id"]:
+                self._apply_mark_to_position(pos, price, as_of=as_of, source=source)
+            elif parsed is None and pos.get("kind") == "cash_share" and (
+                u_code == norm_u or pos.get("symbol") == raw or inst_id == f"eq:{norm_u}"
+            ):
+                self._apply_mark_to_position(pos, price, as_of=as_of, source=source)
+
+    def _apply_mark_to_position(
+        self,
+        pos: dict[str, Any],
+        price: float,
+        *,
+        as_of: str | None = None,
+        source: str | None = None,
+    ) -> None:
+        pos["mark_price"] = float(price)
+        if as_of is not None:
+            pos["mark_as_of"] = str(as_of)
+        if source is not None:
+            pos["mark_source"] = str(source)
+        qty = float(pos.get("quantity", 0.0))
+        mult = float(pos.get("multiplier", 1.0))
+        avg_entry = float(pos.get("average_entry_price", 0.0))
+        if abs(qty) <= 1e-12:
+            pos["unrealized_pnl"] = 0.0
+            pos["initial_margin_reserved"] = 0.0
+            pos["maintenance_margin_required"] = 0.0
+            return
+        pos["unrealized_pnl"] = qty * mult * (float(price) - avg_entry)
+        if pos.get("kind") == "stock_future":
+            margin_info = self.compute_futures_margin_per_contract(
+                pos.get("contract"),
+                float(price),
+                multiplier=mult,
+                underlying=pos.get("normalised_underlying"),
+                metadata=pos,
+            )
+            pos["initial_margin_per_contract"] = margin_info["initial_margin_per_contract"]
+            pos["maintenance_margin_per_contract"] = margin_info["maintenance_margin_per_contract"]
+            pos["initial_margin_reserved"] = abs(qty) * margin_info["initial_margin_per_contract"]
+            pos["maintenance_margin_required"] = abs(qty) * margin_info["maintenance_margin_per_contract"]
+
+    @property
+    def instrument_positions(self) -> dict[tuple[str, str, str], dict[str, Any]]:
+        """Active positions keyed by ``(persona_binding_id, normalised_underlying, instrument_id)``."""
+        return {
+            key: dict(pos)
+            for key, pos in self._instrument_positions.items()
+            if abs(float(pos.get("quantity", 0.0))) > 1e-12
+            or pos.get("status") == "settlement_pending"
+        }
+
+    def get_instrument_position(
+        self,
+        instrument_id: str,
+        *,
+        underlying: str | None = None,
+        persona_binding_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        target_inst = str(instrument_id or "").strip()
+        binding_filter = (
+            str(persona_binding_id).strip() if persona_binding_id is not None else None
+        )
+        underlying_filter = (
+            self._normalise_underlying_symbol(underlying)
+            if underlying is not None
+            else None
+        )
+        for (b_id, norm_u, inst_id), pos in self._instrument_positions.items():
+            if inst_id != target_inst:
+                continue
+            if binding_filter is not None and b_id != binding_filter:
+                continue
+            if underlying_filter is not None and norm_u != underlying_filter:
+                continue
+            return dict(pos)
+        return None
+
+    def exposure_by_underlying(
+        self,
+        underlying: str,
+        *,
+        persona_binding_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Report per-instrument exposure and net delta in shares (``Σ q × multiplier``)."""
+        norm_u = self._normalise_underlying_symbol(underlying)
+        binding_filter = (
+            str(persona_binding_id).strip() if persona_binding_id is not None else None
+        )
+        instruments: dict[str, dict[str, Any]] = {}
+        net_delta_shares = 0.0
+        gross_notional = 0.0
+        net_notional = 0.0
+        for (b_id, u_code, inst_id), pos in sorted(self._instrument_positions.items()):
+            if u_code != norm_u:
+                continue
+            if binding_filter is not None and b_id != binding_filter:
+                continue
+            qty = float(pos.get("quantity", 0.0))
+            if abs(qty) <= 1e-12 and pos.get("status") != "settlement_pending":
+                continue
+            mult = float(pos.get("multiplier", 1.0))
+            mark = float(pos.get("mark_price", 0.0))
+            delta_shares = qty * mult
+            signed_notional = delta_shares * mark
+            abs_notional = abs(delta_shares) * mark
+            net_delta_shares += delta_shares
+            gross_notional += abs_notional
+            net_notional += signed_notional
+            instruments[inst_id] = {
+                "key": (b_id, u_code, inst_id),
+                "persona_binding_id": b_id,
+                "normalised_underlying": u_code,
+                "instrument_id": inst_id,
+                "kind": pos.get("kind"),
+                "contract": pos.get("contract"),
+                "contract_month": pos.get("contract_month"),
+                "quantity": qty,
+                "multiplier": mult,
+                "delta_shares": delta_shares,
+                "average_entry_price": float(pos.get("average_entry_price", 0.0)),
+                "mark_price": mark,
+                "notional": abs_notional,
+                "signed_notional": signed_notional,
+                "unrealized_pnl": float(pos.get("unrealized_pnl", 0.0)),
+                "realized_pnl": float(pos.get("realized_pnl", 0.0)),
+                "costs": float(pos.get("costs", 0.0)),
+                "initial_margin_reserved": float(pos.get("initial_margin_reserved", 0.0)),
+                "maintenance_margin_required": float(pos.get("maintenance_margin_required", 0.0)),
+                "status": pos.get("status", "open"),
+            }
+        return {
+            "persona_binding_id": binding_filter or self._resolve_persona_binding_id(),
+            "normalised_underlying": norm_u,
+            "instruments": instruments,
+            "net_delta_shares": net_delta_shares,
+            "gross_notional": gross_notional,
+            "net_notional": net_notional,
+        }
+
+    def underlying_exposure_summary(
+        self,
+        underlying: str,
+        *,
+        persona_binding_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.exposure_by_underlying(
+            underlying,
+            persona_binding_id=persona_binding_id,
+        )
+
+    def ledger_reconciliation_snapshot(self) -> dict[str, Any]:
+        """Compute cash, realized, unrealized, costs, equity, and margin totals."""
+        equity_holdings_value = 0.0
+        futures_unrealized = 0.0
+        total_unrealized = 0.0
+        margin_reserved = 0.0
+        maintenance_required = 0.0
+        gross_notional = 0.0
+        signed_net_notional = 0.0
+        for pos in self._instrument_positions.values():
+            qty = float(pos.get("quantity", 0.0))
+            if abs(qty) <= 1e-12:
+                continue
+            mult = float(pos.get("multiplier", 1.0))
+            mark = float(pos.get("mark_price", 0.0))
+            avg_entry = float(pos.get("average_entry_price", 0.0))
+            unreal = qty * mult * (mark - avg_entry)
+            pos["unrealized_pnl"] = unreal
+            total_unrealized += unreal
+            signed_notional = qty * mult * mark
+            gross_notional += abs(signed_notional)
+            signed_net_notional += signed_notional
+            if pos.get("kind") == "stock_future":
+                futures_unrealized += unreal
+                margin_reserved += float(pos.get("initial_margin_reserved", 0.0))
+                maintenance_required += float(pos.get("maintenance_margin_required", 0.0))
+            else:
+                equity_holdings_value += qty * mult * mark
+
+        effective_cash = float(self._cash) - float(self._injected_equity_capital)
+        equity = effective_cash + equity_holdings_value + futures_unrealized
+        realized = float(self._realized_pnl)
+        costs = float(self._total_costs)
+        total_pnl = realized + total_unrealized - costs
+        free_margin = equity - margin_reserved
+        return {
+            "initial_cash": float(self._initial_cash),
+            "cash": float(self._cash),
+            "realized_pnl": realized,
+            "unrealized_pnl": total_unrealized,
+            "costs": costs,
+            "total_pnl": total_pnl,
+            "equity": equity,
+            "equity_minus_initial_cash": equity - float(self._initial_cash),
+            "margin_reserved": margin_reserved,
+            "free_margin": free_margin,
+            "maintenance_margin_required": maintenance_required,
+            "margin_to_equity": (margin_reserved / equity) if equity > 0 else 0.0,
+            "gross_notional": gross_notional,
+            "net_notional": abs(signed_net_notional),
+            "signed_net_notional": signed_net_notional,
+            "margin_call_active": bool(self._margin_call_active),
+        }
+
+    def assert_ledger_reconciliation(self) -> dict[str, Any]:
+        snap = self.ledger_reconciliation_snapshot()
+        lhs = snap["equity"] - snap["initial_cash"]
+        rhs = snap["realized_pnl"] + snap["unrealized_pnl"] - snap["costs"]
+        if not math.isclose(lhs, rhs, rel_tol=0.0, abs_tol=1e-5):
+            raise AssertionError(
+                f"Paper ledger reconciliation failed: equity - initial_cash ({lhs:.6f}) != "
+                f"realized + unrealized - costs ({rhs:.6f}); snapshot={snap}"
+            )
+        return snap
+
+    def _resolve_active_risk_policy(self) -> RiskPolicy:
+        ctx_policy = self._current_signal_metadata.get("risk_policy")
+        if isinstance(ctx_policy, RiskPolicy):
+            return ctx_policy
+        if isinstance(ctx_policy, Mapping):
+            return RiskPolicy.from_mapping(ctx_policy)
+        ctx_policy_id = str(
+            self._current_signal_metadata.get("risk_policy_id")
+            or self._configured_risk_policy_id
+            or ""
+        ).strip()
+        if ctx_policy_id:
+            return self._risk_policy_loader(ctx_policy_id)
+        if self._configured_risk_policy is not None:
+            return self._configured_risk_policy
+        return RiskPolicy.from_mapping(_DEFAULT_PAPER_RISK_POLICY_MAPPING)
+
+    def EvaluateOrderRiskGate(  # noqa: N802
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float | None,
+        instrument_id: str,
+        kind: str = "cash_share",
+        multiplier: float = 1.0,
+        contract: str | None = None,
+        contract_month: str | None = None,
+        price_basis: str | None = None,
+        price_source: str | None = None,
+        price_as_of: str | None = None,
+        persona_binding_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate the pre-trade order-level risk gate without mutating the ledger."""
+        binding_id = self._resolve_persona_binding_id(persona_binding_id)
+        norm_u = self._normalise_underlying_symbol(
+            symbol, self._current_signal_metadata
+        )
+        clean_kind = str(kind or "cash_share").strip().lower() or "cash_share"
+        signed_order_qty = float(quantity) if str(side).lower() == "buy" else -float(quantity)
+        key = (binding_id, norm_u, instrument_id)
+        existing_pos = self._instrument_positions.get(key)
+        q_before = float(existing_pos.get("quantity", 0.0)) if existing_pos else 0.0
+        if clean_kind == "cash_share" and existing_pos is None:
+            try:
+                native, exchange = normalize_taiwan_symbol(symbol)
+                q_before = self._taiwan_underlying_holding_quantity(native, exchange)
+            except Exception:
+                q_before = float(self._holding(symbol).Quantity)
+        q_after = q_before + signed_order_qty
+        is_opening_or_increasing = abs(q_after) > abs(q_before) + 1e-12
+
+        policy = self._resolve_active_risk_policy()
+        raw_decision_id = str(
+            self._current_signal_metadata.get("decision_id") or ""
+        ).strip()
+        holidays = self._active_holidays()
+
+        # 1. Check settlement_pending on this underlying
+        for (b_id, u_code, _inst_id), pos in self._instrument_positions.items():
+            if b_id == binding_id and u_code == norm_u and pos.get("status") == "settlement_pending":
+                decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                return {
+                    "accepted": False,
+                    "risk_status": "rejected",
+                    "reason": "settlement_pending",
+                    "required": 0.0,
+                    "available": 0.0,
+                    "limit": 0.0,
+                    "instrument_id": instrument_id,
+                    "decision_id": decision_id,
+                }
+
+        # 2. Check margin_call_active (blocks opening/increasing; allows reducing)
+        if self._margin_call_active and is_opening_or_increasing:
+            snap = self.ledger_reconciliation_snapshot()
+            decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+            return {
+                "accepted": False,
+                "risk_status": "rejected",
+                "reason": "margin_call_active",
+                "required": float(snap["maintenance_margin_required"]),
+                "available": float(snap["equity"]),
+                "limit": float(snap["maintenance_margin_required"]),
+                "instrument_id": instrument_id,
+                "decision_id": decision_id,
+            }
+
+        # 3. Check candidates membership & expiring contract on last_trading_day
+        candidates_raw = self._current_signal_metadata.get("candidates")
+        if candidates_raw is None:
+            candidates_raw = self._current_signal_metadata.get("admitted_candidates")
+        if isinstance(candidates_raw, (list, tuple, set, frozenset)):
+            admitted_ids: list[str] = []
+            for item in candidates_raw:
+                if isinstance(item, Mapping):
+                    cid = str(item.get("instrument_id") or "").strip()
+                    if cid:
+                        admitted_ids.append(cid)
+                elif isinstance(item, str) and item.strip():
+                    admitted_ids.append(item.strip())
+            if instrument_id not in admitted_ids:
+                decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                return {
+                    "accepted": False,
+                    "risk_status": "rejected",
+                    "reason": "instrument_not_in_candidates",
+                    "required": instrument_id,
+                    "available": admitted_ids,
+                    "limit": admitted_ids,
+                    "instrument_id": instrument_id,
+                    "decision_id": decision_id,
+                }
+
+        trade_date_raw = (
+            self._current_signal_metadata.get("trade_date")
+            or self._current_signal_metadata.get("as_of_date")
+            or self._current_signal_metadata.get("signal_date")
+        )
+        parsed_trade_date = None
+        if trade_date_raw:
+            try:
+                parsed_trade_date = datetime.fromisoformat(
+                    str(trade_date_raw).strip()[:10]
+                ).date()
+            except ValueError:
+                parsed_trade_date = None
+
+        if clean_kind == "stock_future" and contract_month and parsed_trade_date is not None:
+            try:
+                ltd = last_trading_day(str(contract_month), holidays)
+                if is_opening_or_increasing and parsed_trade_date >= ltd:
+                    decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                    return {
+                        "accepted": False,
+                        "risk_status": "rejected",
+                        "reason": "instrument_not_in_candidates",
+                        "required": instrument_id,
+                        "available": [],
+                        "limit": ltd.isoformat(),
+                        "instrument_id": instrument_id,
+                        "decision_id": decision_id,
+                    }
+            except Exception:
+                pass
+
+        # 4. Check price freshness and futures price basis
+        if clean_kind == "stock_future":
+            src_lower = str(price_source or "").strip().lower()
+            basis_lower = str(price_basis or "").strip().lower()
+            disallowed_stock_sources = {
+                "stock_close",
+                "equity_close",
+                "twse_close",
+                "tpex_close",
+                "underlying_close",
+            }
+            if (
+                self._current_signal_metadata.get("price_stale") is True
+                or price is None
+                or not math.isfinite(float(price))
+                or float(price) <= 0
+                or (basis_lower and basis_lower != "futures_daily_settlement_prev_session")
+                or src_lower in disallowed_stock_sources
+            ):
+                decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                return {
+                    "accepted": False,
+                    "risk_status": "rejected",
+                    "reason": "price_stale",
+                    "required": "futures_daily_settlement_prev_session",
+                    "available": basis_lower or src_lower or "missing",
+                    "limit": "futures_daily_settlement_prev_session",
+                    "instrument_id": instrument_id,
+                    "decision_id": decision_id,
+                }
+            price_date_raw = (
+                self._current_signal_metadata.get("price_date")
+                or self._current_signal_metadata.get("settlement_date")
+                or (
+                    str(price_as_of).strip()[:10]
+                    if price_as_of and len(str(price_as_of).strip()) == 10
+                    else None
+                )
+            )
+            if parsed_trade_date is not None and price_date_raw:
+                try:
+                    parsed_price_date = datetime.fromisoformat(
+                        str(price_date_raw).strip()[:10]
+                    ).date()
+                    expected_prev = previous_trading_day(parsed_trade_date, holidays)
+                    if parsed_price_date < expected_prev or parsed_price_date > parsed_trade_date:
+                        decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                        return {
+                            "accepted": False,
+                            "risk_status": "rejected",
+                            "reason": "price_stale",
+                            "required": expected_prev.isoformat(),
+                            "available": parsed_price_date.isoformat(),
+                            "limit": expected_prev.isoformat(),
+                            "instrument_id": instrument_id,
+                            "decision_id": decision_id,
+                        }
+                except ValueError:
+                    pass
+
+        ref_price = float(price or 0.0)
+        # 5. Compute post-order exposure and margin marked at ref_price
+        equity_holdings_after = 0.0
+        futures_unrealized_after = 0.0
+        gross_notional_after = 0.0
+        signed_net_notional_after = 0.0
+        margin_reserved_after = 0.0
+
+        seen_target = False
+        for pos_key, pos in self._instrument_positions.items():
+            if pos_key == key:
+                seen_target = True
+                qty_i = q_after
+                mult_i = float(multiplier)
+                mark_i = ref_price
+                avg_i = float(pos.get("average_entry_price", ref_price))
+                if abs(q_before) <= 1e-12:
+                    avg_i = ref_price
+                elif (q_before > 0 and signed_order_qty > 0) or (q_before < 0 and signed_order_qty < 0):
+                    avg_i = (abs(q_before) * avg_i + abs(signed_order_qty) * ref_price) / abs(q_after)
+                elif abs(signed_order_qty) > abs(q_before):
+                    avg_i = ref_price
+                kind_i = clean_kind
+                contract_i = contract or pos.get("contract")
+                u_i = norm_u
+                meta_i = {**pos, **self._current_signal_metadata}
+            else:
+                qty_i = float(pos.get("quantity", 0.0))
+                mult_i = float(pos.get("multiplier", 1.0))
+                mark_i = float(pos.get("mark_price", 0.0))
+                avg_i = float(pos.get("average_entry_price", mark_i))
+                kind_i = str(pos.get("kind", "cash_share"))
+                contract_i = pos.get("contract")
+                u_i = str(pos.get("normalised_underlying", ""))
+                meta_i = pos
+
+            if abs(qty_i) <= 1e-12:
+                continue
+            signed_notional_i = qty_i * mult_i * mark_i
+            gross_notional_after += abs(signed_notional_i)
+            signed_net_notional_after += signed_notional_i
+            unreal_i = qty_i * mult_i * (mark_i - avg_i)
+            if kind_i == "stock_future":
+                futures_unrealized_after += unreal_i
+                m_info = self.compute_futures_margin_per_contract(
+                    contract_i,
+                    mark_i,
+                    multiplier=mult_i,
+                    underlying=u_i,
+                    metadata=meta_i,
+                )
+                margin_reserved_after += abs(qty_i) * m_info["initial_margin_per_contract"]
+            else:
+                equity_holdings_after += qty_i * mult_i * mark_i
+
+        if not seen_target and abs(q_after) > 1e-12:
+            signed_notional_t = q_after * float(multiplier) * ref_price
+            gross_notional_after += abs(signed_notional_t)
+            signed_net_notional_after += signed_notional_t
+            if clean_kind == "stock_future":
+                m_info = self.compute_futures_margin_per_contract(
+                    contract,
+                    ref_price,
+                    multiplier=multiplier,
+                    underlying=norm_u,
+                    metadata=self._current_signal_metadata,
+                )
+                margin_reserved_after += abs(q_after) * m_info["initial_margin_per_contract"]
+            else:
+                equity_holdings_after += q_after * float(multiplier) * ref_price
+
+        # For cash_share orders, cash changes by -signed_order_qty * ref_price, which cancels
+        # with the change in equity_holdings_after at ref_price; so equity_after marked at
+        # ref_price equals current cash (adjusted for cash_share delta) + equity_holdings_after + futures_unrealized_after.
+        cash_after_order = float(self._cash) - float(self._injected_equity_capital)
+        if clean_kind == "cash_share":
+            cash_after_order -= signed_order_qty * float(multiplier) * ref_price
+        elif existing_pos is not None and abs(q_before) > 1e-12:
+            # If reducing/closing/flipping an existing future at ref_price, realized + unrealized
+            # at ref_price equals q_before * mult * (ref_price - avg_before)
+            avg_before = float(existing_pos.get("average_entry_price", ref_price))
+            total_pos_pnl_at_ref = q_before * float(multiplier) * (ref_price - avg_before)
+            futures_unrealized_after = (
+                futures_unrealized_after
+                - (
+                    q_after * float(multiplier) * (ref_price - (
+                        avg_before
+                        if (q_before > 0 and q_after > 0) or (q_before < 0 and q_after < 0)
+                        else ref_price
+                    ))
+                    if abs(q_after) > 1e-12 and not ((q_before > 0 and signed_order_qty > 0) or (q_before < 0 and signed_order_qty < 0))
+                    else 0.0
+                )
+                + (
+                    total_pos_pnl_at_ref
+                    if not ((q_before > 0 and signed_order_qty > 0) or (q_before < 0 and signed_order_qty < 0))
+                    else 0.0
+                )
+            )
+        equity_after = cash_after_order + equity_holdings_after + futures_unrealized_after
+        if equity_after > 0:
+            gross_mult = gross_notional_after / equity_after
+            net_mult = abs(signed_net_notional_after) / equity_after
+            leverage_mult = gross_notional_after / equity_after
+        else:
+            gross_mult = float("inf")
+            net_mult = float("inf")
+            leverage_mult = float("inf")
+
+        order_asset_classes = ["future"] if clean_kind == "stock_future" else ["equity"]
+        eval_ctx = RiskPolicyEvaluationContext(
+            target_type=RiskPolicyTargetType.RUNTIME_ACTION.value,
+            target_id=str(
+                raw_decision_id
+                or self._current_signal_metadata.get("signal_id")
+                or instrument_id
+            ),
+            capital_pool_id=str(
+                self._current_signal_metadata.get("capital_pool_id")
+                or self._taiwan_capital_pool_id()
+            ),
+            gross_exposure=gross_mult if math.isfinite(gross_mult) else 1e9,
+            net_exposure=net_mult if math.isfinite(net_mult) else 1e9,
+            leverage=leverage_mult if math.isfinite(leverage_mult) else 1e9,
+            asset_classes=order_asset_classes,
+            decision_id=raw_decision_id or None,
+            instrument_id=instrument_id,
+        )
+        evaluation = RiskPolicyEvaluator().evaluate(policy, eval_ctx)
+        decision_id = raw_decision_id or evaluation.trace_id or evaluation.target_id
+
+        failed_checks = [chk for chk in evaluation.checks if chk.status == "failed"]
+        failed_codes = {chk.code for chk in failed_checks}
+        failed_names = {chk.check_name for chk in failed_checks}
+        if (
+            "asset_class_not_allowed" in failed_codes
+            or "forbidden_asset_class" in failed_codes
+            or "asset_class" in failed_names
+        ):
+            return {
+                "accepted": False,
+                "risk_status": "rejected",
+                "reason": "asset_class_not_allowed",
+                "required": order_asset_classes,
+                "available": list(policy.allowed_asset_classes),
+                "limit": list(policy.allowed_asset_classes or policy.forbidden_asset_classes),
+                "instrument_id": instrument_id,
+                "decision_id": decision_id,
+                "evaluation": evaluation.to_dict(),
+            }
+
+        if (
+            clean_kind == "stock_future"
+            and is_opening_or_increasing
+            and margin_reserved_after > equity_after + 1e-9
+        ):
+            return {
+                "accepted": False,
+                "risk_status": "rejected",
+                "reason": "insufficient_initial_margin",
+                "required": float(margin_reserved_after),
+                "available": float(equity_after),
+                "limit": float(equity_after),
+                "instrument_id": instrument_id,
+                "decision_id": decision_id,
+                "evaluation": evaluation.to_dict(),
+            }
+
+        if evaluation.rejected:
+            code_to_reason = {
+                "leverage_limit_exceeded": (
+                    "leverage_limit",
+                    float(leverage_mult),
+                    float(policy.max_leverage) if policy.max_leverage is not None else 0.0,
+                ),
+                "gross_exposure_limit_exceeded": (
+                    "gross_limit",
+                    float(gross_mult),
+                    float(policy.gross_limit) if policy.gross_limit is not None else 0.0,
+                ),
+                "net_exposure_limit_exceeded": (
+                    "net_limit",
+                    float(net_mult),
+                    float(policy.net_limit) if policy.net_limit is not None else 0.0,
+                ),
+            }
+            for chk in failed_checks:
+                if chk.code in code_to_reason:
+                    reason_code, req_val, lim_val = code_to_reason[chk.code]
+                    return {
+                        "accepted": False,
+                        "risk_status": "rejected",
+                        "reason": reason_code,
+                        "required": req_val,
+                        "available": float(equity_after),
+                        "limit": lim_val,
+                        "instrument_id": instrument_id,
+                        "decision_id": decision_id,
+                        "evaluation": evaluation.to_dict(),
+                    }
+            return {
+                "accepted": False,
+                "risk_status": "rejected",
+                "reason": "leverage_limit",
+                "required": float(leverage_mult),
+                "available": float(equity_after),
+                "limit": float(policy.max_leverage or 0.0),
+                "instrument_id": instrument_id,
+                "decision_id": decision_id,
+                "evaluation": evaluation.to_dict(),
+            }
+
+        return {
+            "accepted": True,
+            "risk_status": "succeeded",
+            "reason": None,
+            "required": float(margin_reserved_after if clean_kind == "stock_future" else gross_mult),
+            "available": float(equity_after),
+            "limit": float(policy.max_leverage or policy.gross_limit or 0.0),
+            "instrument_id": instrument_id,
+            "decision_id": decision_id,
+            "evaluation": evaluation.to_dict(),
+        }
 
     def _reject_invalid_paper_fill(
         self,
@@ -458,29 +1412,89 @@ class PaperExecutionAlgorithm:
         action: str,
         order_type: str = "MARKET",
         limit_price: float | None = None,
+        instrument_id: str | None = None,
+        kind: str | None = None,
+        multiplier: float | None = None,
+        contract_month: str | None = None,
+        price_basis: str | None = None,
     ) -> None:
-        """Place a Taiwan paper order via the broker sidecar and record the fill.
+        """Place a Taiwan paper order (cash_share or stock_future) via risk gate and broker."""
+        parsed_sym = self._try_parse_instrument_id(str(symbol))
+        resolved_inst_id = str(
+            instrument_id
+            or self._current_signal_metadata.get("instrument_id")
+            or (parsed_sym["instrument_id"] if parsed_sym else "")
+        ).strip()
+        parsed_inst = self._try_parse_instrument_id(resolved_inst_id) if resolved_inst_id else None
+        resolved_kind = str(
+            kind
+            or self._current_signal_metadata.get("kind")
+            or self._current_signal_metadata.get("instrument_kind")
+            or (parsed_inst["kind"] if parsed_inst else "cash_share")
+        ).strip().lower()
+        if resolved_inst_id.startswith("ssf:"):
+            resolved_kind = "stock_future"
 
-        Taiwan venues are excluded from LEAN Symbol.Create(); execution is
-        delegated here to the paper broker (Shioaji sandbox boundary). The fill
-        is published on the same telemetry path as LEAN fills, tagged with the
-        broker order id under shioaji_trade_id. MARKET orders are priced only
-        from the admitted market price the signal context carries (market_price,
-        market_price_as_of, market_price_source); without it they are rejected.
-        """
-        native, exchange = normalize_taiwan_symbol(symbol)
-        base_metadata = {
+        if parsed_sym is not None and parsed_sym["kind"] == "stock_future":
+            contract_code = str(parsed_sym["contract"])
+            native = str(
+                self._current_signal_metadata.get("underlying")
+                or _PILOT_FUTURES_PROFILES.get(contract_code, {}).get("underlying")
+                or contract_code
+            )
+            exchange = "TAIFEX"
+        else:
+            native, exchange = normalize_taiwan_symbol(symbol)
+
+        if not resolved_inst_id:
+            resolved_inst_id = f"eq:{native}"
+
+        contract_code = None
+        resolved_month = str(
+            contract_month
+            or self._current_signal_metadata.get("contract_month")
+            or (parsed_inst.get("contract_month") if parsed_inst else "")
+            or ""
+        ).strip() or None
+        if resolved_kind == "stock_future":
+            contract_code = str(
+                (parsed_inst.get("contract") if parsed_inst else None)
+                or self._current_signal_metadata.get("contract")
+                or _PILOT_UNDERLYING_TO_CONTRACT.get(native, "")
+            ).strip().upper() or None
+            prof = self._futures_contract_profile(
+                contract_code,
+                underlying=native,
+                multiplier=multiplier,
+                metadata=self._current_signal_metadata,
+            )
+            resolved_multiplier = float(prof["multiplier"])
+            exchange = "TAIFEX"
+            sec_type = "future"
+        else:
+            resolved_multiplier = 1.0
+            sec_type = "equity"
+
+        base_metadata: dict[str, Any] = {
             "signal_id": signal_id,
             "adapter": "shioaji",
             "broker": "shioaji_paper",
             "venue": "shioaji_paper",
             "exchange": exchange,
-            "contract_symbol": native,
-            "sec_type": "equity",
+            "contract_symbol": contract_code or native,
+            "sec_type": sec_type,
             "currency": "TWD",
             "side": side,
+            "instrument_id": resolved_inst_id,
+            "kind": resolved_kind,
         }
-        if quantity_type != "SHARES":
+        if resolved_kind == "stock_future":
+            base_metadata["multiplier"] = resolved_multiplier
+            if resolved_month:
+                base_metadata["contract_month"] = resolved_month
+
+        allowed_qtypes = ("SHARES", "CONTRACTS") if resolved_kind == "stock_future" else ("SHARES",)
+        if quantity_type not in allowed_qtypes:
             self._publish(
                 "order_rejection", str(symbol), 0.0, action,
                 broker_submission_status="tw_unsupported_quantity_type",
@@ -492,51 +1506,102 @@ class PaperExecutionAlgorithm:
             return
 
         is_market = str(order_type or "MARKET").lower() == "market"
-        try:
-            qty = _finite_float(
-                quantity,
-                field="Taiwan order quantity",
-                positive=True,
-            )
-            if is_market:
-                market_price = _finite_float(
-                    self._current_signal_metadata.get("market_price"),
-                    field="Taiwan admitted market_price",
+        market_price: float | None = None
+        market_price_as_of = ""
+        market_price_source = ""
+        resolved_price_basis = str(
+            price_basis
+            or self._current_signal_metadata.get("price_basis")
+            or ("futures_daily_settlement_prev_session" if resolved_kind == "stock_future" else "")
+        ).strip() or None
+
+        if resolved_kind == "stock_future":
+            try:
+                qty = _finite_float(
+                    quantity,
+                    field="Taiwan futures order quantity",
                     positive=True,
                 )
-                market_price_as_of = str(
-                    self._current_signal_metadata.get("market_price_as_of") or ""
-                ).strip()
-                market_price_source = str(
-                    self._current_signal_metadata.get("market_price_source") or ""
-                ).strip()
-                if not market_price_as_of or not market_price_source:
-                    raise ValueError(
-                        "Taiwan MARKET order requires an admitted market price "
-                        "(market_price, market_price_as_of, market_price_source) "
-                        "from the signal"
+            except ValueError as exc:
+                self._reject_invalid_paper_fill(
+                    str(symbol),
+                    action,
+                    reason="invalid_taiwan_order_input",
+                    broker_submission_status="tw_invalid_order_input",
+                    metadata={**base_metadata, "diagnostic": str(exc)},
+                )
+                return
+            raw_fut_price = (
+                self._current_signal_metadata.get("futures_settlement_price")
+                or self._current_signal_metadata.get("settlement_price")
+                or self._current_signal_metadata.get("market_price")
+                or limit_price
+            )
+            try:
+                market_price = (
+                    _finite_float(raw_fut_price, field="futures settlement price", positive=True)
+                    if raw_fut_price is not None
+                    else None
+                )
+            except ValueError:
+                market_price = None
+            market_price_as_of = str(
+                self._current_signal_metadata.get("price_date")
+                or self._current_signal_metadata.get("settlement_date")
+                or self._current_signal_metadata.get("market_price_as_of")
+                or _iso_now()
+            ).strip()
+            market_price_source = str(
+                self._current_signal_metadata.get("market_price_source")
+                or "futures_daily_settlement_prev_session"
+            ).strip()
+            holding_quantity = 0.0
+        else:
+            try:
+                qty = _finite_float(
+                    quantity,
+                    field="Taiwan order quantity",
+                    positive=True,
+                )
+                if is_market:
+                    market_price = _finite_float(
+                        self._current_signal_metadata.get("market_price"),
+                        field="Taiwan admitted market_price",
+                        positive=True,
                     )
-            if limit_price is not None:
-                limit_price = _finite_float(
-                    limit_price,
-                    field="Taiwan limit price",
-                    positive=True,
+                    market_price_as_of = str(
+                        self._current_signal_metadata.get("market_price_as_of") or ""
+                    ).strip()
+                    market_price_source = str(
+                        self._current_signal_metadata.get("market_price_source") or ""
+                    ).strip()
+                    if not market_price_as_of or not market_price_source:
+                        raise ValueError(
+                            "Taiwan MARKET order requires an admitted market price "
+                            "(market_price, market_price_as_of, market_price_source) "
+                            "from the signal"
+                        )
+                if limit_price is not None:
+                    limit_price = _finite_float(
+                        limit_price,
+                        field="Taiwan limit price",
+                        positive=True,
+                    )
+                holding_quantity = self._taiwan_underlying_holding_quantity(native, exchange)
+            except ValueError as exc:
+                self._reject_invalid_paper_fill(
+                    str(symbol),
+                    action,
+                    reason="invalid_taiwan_order_input",
+                    broker_submission_status="tw_invalid_order_input",
+                    metadata={**base_metadata, "diagnostic": str(exc)},
                 )
-            holding_quantity = self._taiwan_underlying_holding_quantity(native, exchange)
-        except ValueError as exc:
-            self._reject_invalid_paper_fill(
-                str(symbol),
-                action,
-                reason="invalid_taiwan_order_input",
-                broker_submission_status="tw_invalid_order_input",
-                metadata={**base_metadata, "diagnostic": str(exc)},
-            )
-            log.warning("[%s] TW order rejected before broker: %s", signal_id, exc)
-            return
+                log.warning("[%s] TW order rejected before broker: %s", signal_id, exc)
+                return
 
         requested_quantity = float(qty)
         partial_clamped = False
-        if side == "sell":
+        if resolved_kind == "cash_share" and side == "sell":
             if holding_quantity <= 0:
                 self._publish(
                     "order_rejection",
@@ -570,8 +1635,67 @@ class PaperExecutionAlgorithm:
                 qty = float(holding_quantity)
                 partial_clamped = True
 
-        broker_url = os.getenv("PANTHEON_BROKER_PAPER_URL", "http://broker:8102").rstrip("/")
-        payload = {
+        gate_result = self.EvaluateOrderRiskGate(
+            symbol=str(symbol),
+            side=side,
+            quantity=qty,
+            price=market_price if market_price is not None else limit_price,
+            instrument_id=resolved_inst_id,
+            kind=resolved_kind,
+            multiplier=resolved_multiplier,
+            contract=contract_code,
+            contract_month=resolved_month,
+            price_basis=resolved_price_basis,
+            price_source=market_price_source,
+            price_as_of=market_price_as_of,
+        )
+        self._last_risk_gate_result = gate_result
+        if not gate_result["accepted"]:
+            reason = str(gate_result["reason"])
+            self._publish(
+                "order_rejection",
+                str(symbol),
+                0.0,
+                action,
+                broker_submission_status=reason,
+                submitted_to_broker=False,
+                metadata={
+                    **base_metadata,
+                    "reason": reason,
+                    "reject_reason": reason,
+                    "rejection_status": "rejected",
+                    "order_status": "rejected",
+                    "risk_status": "rejected",
+                    "risk_reason": reason,
+                    "risk_gate_evaluated": True,
+                    "required": gate_result["required"],
+                    "available": gate_result["available"],
+                    "limit": gate_result["limit"],
+                    "instrument_id": resolved_inst_id,
+                    "decision_id": gate_result["decision_id"],
+                    "risk_decision_id": gate_result["decision_id"],
+                    "rejected_order_count": 1,
+                    "requested_quantity": requested_quantity,
+                },
+            )
+            log.warning(
+                "[%s] TW order rejected by risk gate for %s (%s): reason=%s required=%s available=%s limit=%s",
+                signal_id,
+                symbol,
+                resolved_inst_id,
+                reason,
+                gate_result["required"],
+                gate_result["available"],
+                gate_result["limit"],
+            )
+            return
+
+        broker_url = (
+            "in-process"
+            if self._in_process_broker
+            else os.getenv("PANTHEON_BROKER_PAPER_URL", "http://broker:8102").rstrip("/")
+        )
+        payload: dict[str, Any] = {
             "capital_pool_id": os.getenv("PANTHEON_CAPITAL_POOL_ID", "") or self._taiwan_capital_pool_id(),
             "strategy_id": os.getenv("PANTHEON_STRATEGY_ID", "") or "strategy-tw-session-momentum",
             "client_order_id": str(signal_id),
@@ -579,14 +1703,21 @@ class PaperExecutionAlgorithm:
             "qty": qty,
             "side": side,
             "order_type": str(order_type or "MARKET").lower(),
+            "instrument_id": resolved_inst_id,
+            "kind": resolved_kind,
+            "multiplier": resolved_multiplier,
         }
+        if resolved_month:
+            payload["contract_month"] = resolved_month
+        if resolved_price_basis:
+            payload["price_basis"] = resolved_price_basis
         correlation_envelope = self._current_signal_metadata.get("correlation_envelope")
         if correlation_envelope is not None:
             payload["correlation_envelope"] = correlation_envelope
         if limit_price is not None:
             payload["limit_price"] = float(limit_price)
-        if is_market:
-            payload["market_price"] = market_price
+        if is_market and market_price is not None:
+            payload["market_price"] = float(market_price)
         try:
             order = self._post_broker_paper_order(broker_url, payload)
         except Exception as exc:
@@ -611,18 +1742,21 @@ class PaperExecutionAlgorithm:
                 field="Taiwan broker fill_qty",
                 positive=True,
             )
-            current_quantity = self._taiwan_underlying_holding_quantity(native, exchange)
-            if side == "sell" and fill_qty > current_quantity:
-                fill_qty = float(current_quantity)
-                partial_clamped = True
-            signed_fill_qty = fill_qty if side == "buy" else -fill_qty
-            current_cash = _finite_float(self._cash, field="Taiwan current cash")
-            next_quantity = current_quantity + signed_fill_qty
-            if side == "sell" and (next_quantity < 0 or abs(next_quantity) <= 1e-12):
-                next_quantity = 0.0
-            next_cash = current_cash - (signed_fill_qty * fill_price)
-            if not math.isfinite(next_quantity) or not math.isfinite(next_cash):
-                raise ValueError("Taiwan broker fill produces non-finite ledger values")
+            if resolved_kind == "cash_share":
+                current_quantity = self._taiwan_underlying_holding_quantity(native, exchange)
+                if side == "sell" and fill_qty > current_quantity:
+                    fill_qty = float(current_quantity)
+                    partial_clamped = True
+                signed_fill_qty = fill_qty if side == "buy" else -fill_qty
+                current_cash = _finite_float(self._cash, field="Taiwan current cash")
+                next_quantity = current_quantity + signed_fill_qty
+                if side == "sell" and (next_quantity < 0 or abs(next_quantity) <= 1e-12):
+                    next_quantity = 0.0
+                next_cash = current_cash - (signed_fill_qty * fill_price)
+                if not math.isfinite(next_quantity) or not math.isfinite(next_cash):
+                    raise ValueError("Taiwan broker fill produces non-finite ledger values")
+            else:
+                signed_fill_qty = fill_qty if side == "buy" else -fill_qty
         except ValueError as exc:
             self._reject_invalid_paper_fill(
                 str(symbol),
@@ -639,28 +1773,69 @@ class PaperExecutionAlgorithm:
             )
             log.error("[%s] TW broker returned invalid fill for %s: %s", signal_id, symbol, exc)
             return
+
         order_id = str(order.get("order_id") or "")
-        self._commit_fill(
-            str(symbol),
-            next_quantity=next_quantity,
-            next_cash=next_cash,
-            execution_price=fill_price,
-            price_as_of=(
-                market_price_as_of
-                if is_market
-                else str(order.get("filled_at") or order.get("updated_at") or _iso_now())
-            ),
-            price_source=market_price_source if is_market else "paper_limit_fill",
-        )
-        fill_metadata: dict[str, Any] = {
-            **base_metadata,
-            "broker_order_id": order_id,
-            "shioaji_trade_id": order_id,
-        }
-        if partial_clamped:
-            fill_metadata["paper_order_partial_clamped"] = True
-            fill_metadata["requested_quantity"] = float(requested_quantity)
-            fill_metadata["clamped_quantity"] = float(fill_qty)
+        if resolved_kind == "stock_future":
+            fut_fill_info = self._commit_futures_fill(
+                symbol=str(symbol),
+                underlying=native,
+                instrument_id=resolved_inst_id,
+                contract=contract_code,
+                contract_month=resolved_month,
+                multiplier=resolved_multiplier,
+                signed_fill_qty=signed_fill_qty,
+                fill_price=fill_price,
+                price_as_of=market_price_as_of or _iso_now(),
+                price_source=market_price_source or "futures_daily_settlement_prev_session",
+            )
+            fill_metadata = {
+                **base_metadata,
+                "broker_order_id": order_id,
+                "shioaji_trade_id": order_id,
+                "instrument_id": resolved_inst_id,
+                "kind": "stock_future",
+                "multiplier": resolved_multiplier,
+                "contract_month": resolved_month,
+                "fee": fut_fill_info["fee"],
+                "tax": fut_fill_info["tax"],
+                "initial_margin_reserved": fut_fill_info["initial_margin_reserved"],
+                "price_basis": "futures_daily_settlement_prev_session",
+                "position_quantity": fut_fill_info["position_quantity"],
+                "realized_pnl_delta": fut_fill_info["realized_delta"],
+                "risk_status": gate_result["risk_status"],
+                "risk_gate_status": gate_result["risk_status"],
+                "risk_decision_id": gate_result["decision_id"],
+                "decision_id": gate_result["decision_id"],
+            }
+        else:
+            self._commit_fill(
+                str(symbol),
+                next_quantity=next_quantity,
+                next_cash=next_cash,
+                execution_price=fill_price,
+                price_as_of=(
+                    market_price_as_of
+                    if is_market
+                    else str(order.get("filled_at") or order.get("updated_at") or _iso_now())
+                ),
+                price_source=market_price_source if is_market else "paper_limit_fill",
+            )
+            fill_metadata = {
+                **base_metadata,
+                "broker_order_id": order_id,
+                "shioaji_trade_id": order_id,
+                "instrument_id": resolved_inst_id,
+                "kind": "cash_share",
+                "multiplier": 1.0,
+                "risk_status": gate_result["risk_status"],
+                "risk_gate_status": gate_result["risk_status"],
+                "risk_decision_id": gate_result["decision_id"],
+                "decision_id": gate_result["decision_id"],
+            }
+            if partial_clamped:
+                fill_metadata["paper_order_partial_clamped"] = True
+                fill_metadata["requested_quantity"] = float(requested_quantity)
+                fill_metadata["clamped_quantity"] = float(fill_qty)
         self._publish(
             "paper_fill_simulated", str(symbol), signed_fill_qty, action,
             broker_submission_status="filled",
@@ -668,7 +1843,449 @@ class PaperExecutionAlgorithm:
             metadata=fill_metadata,
         )
         log.info("[%s] TW paper fill %s %s %.0f @ %.4f (order=%s)",
-                 signal_id, side, native, fill_qty, fill_price, order_id)
+                 signal_id, side, resolved_inst_id, fill_qty, fill_price, order_id)
+
+    def _commit_futures_fill(
+        self,
+        *,
+        symbol: str,
+        underlying: str,
+        instrument_id: str,
+        contract: str | None,
+        contract_month: str | None,
+        multiplier: float,
+        signed_fill_qty: float,
+        fill_price: float,
+        price_as_of: str,
+        price_source: str,
+    ) -> dict[str, Any]:
+        binding_id = self._resolve_persona_binding_id()
+        norm_u = self._normalise_underlying_symbol(underlying, self._current_signal_metadata)
+        key = (binding_id, norm_u, instrument_id)
+        existing = self._instrument_positions.get(key)
+        q_prev = float(existing.get("quantity", 0.0)) if existing else 0.0
+        avg_prev = float(existing.get("average_entry_price", 0.0)) if existing else 0.0
+        u = float(signed_fill_qty)
+        m = float(multiplier)
+        p_fill = float(fill_price)
+
+        if abs(q_prev) <= 1e-12 or (q_prev > 0 and u > 0) or (q_prev < 0 and u < 0):
+            realized_delta = 0.0
+            q_next = q_prev + u
+            avg_next = (
+                (abs(q_prev) * avg_prev + abs(u) * p_fill) / abs(q_next)
+                if abs(q_next) > 1e-12
+                else 0.0
+            )
+        elif abs(u) <= abs(q_prev) + 1e-12:
+            closed_c = min(abs(q_prev), abs(u))
+            sign_prev = 1.0 if q_prev > 0 else -1.0
+            realized_delta = closed_c * m * (p_fill - avg_prev) * sign_prev
+            q_next = q_prev + u
+            if abs(q_next) <= 1e-12:
+                q_next = 0.0
+                avg_next = 0.0
+            else:
+                avg_next = avg_prev
+        else:
+            closed_c = abs(q_prev)
+            sign_prev = 1.0 if q_prev > 0 else -1.0
+            realized_delta = closed_c * m * (p_fill - avg_prev) * sign_prev
+            q_next = q_prev + u
+            avg_next = p_fill
+
+        include_costs = bool(
+            self._current_signal_metadata.get(
+                "futures_costs_enabled", self._futures_costs_enabled
+            )
+        )
+        broker_fee = float(
+            self._current_signal_metadata.get(
+                "broker_fee_per_contract_per_side",
+                self._broker_fee_per_contract_per_side,
+            )
+        )
+        if include_costs:
+            cost_info = compute_open_or_close_cost(
+                contract,
+                p_fill,
+                abs(u),
+                multiplier=m,
+                underlying=norm_u,
+                broker_fee_per_contract_per_side=broker_fee,
+            )
+            fee = float(cost_info["fee"])
+            tax = float(cost_info["tax"])
+            cost_delta = float(cost_info["total_cost"])
+        else:
+            fee = 0.0
+            tax = 0.0
+            cost_delta = 0.0
+
+        margin_info = self.compute_futures_margin_per_contract(
+            contract,
+            p_fill,
+            multiplier=m,
+            underlying=norm_u,
+            metadata={**(existing or {}), **self._current_signal_metadata},
+        )
+        init_reserved = abs(q_next) * margin_info["initial_margin_per_contract"]
+        maint_required = abs(q_next) * margin_info["maintenance_margin_per_contract"]
+        unrealized_next = (
+            q_next * m * (p_fill - avg_next) if abs(q_next) > 1e-12 else 0.0
+        )
+
+        pos_record: dict[str, Any] = dict(existing or {})
+        pos_record.update(
+            {
+                "persona_binding_id": binding_id,
+                "normalised_underlying": norm_u,
+                "instrument_id": instrument_id,
+                "symbol": symbol,
+                "kind": "stock_future",
+                "contract": contract,
+                "contract_month": contract_month,
+                "quantity": q_next,
+                "multiplier": m,
+                "average_entry_price": avg_next,
+                "mark_price": p_fill,
+                "mark_as_of": price_as_of,
+                "mark_source": price_source,
+                "initial_margin_per_contract": margin_info["initial_margin_per_contract"],
+                "maintenance_margin_per_contract": margin_info["maintenance_margin_per_contract"],
+                "initial_margin_reserved": init_reserved,
+                "maintenance_margin_required": maint_required,
+                "unrealized_pnl": unrealized_next,
+                "realized_pnl": float(pos_record.get("realized_pnl", 0.0)) + realized_delta,
+                "costs": float(pos_record.get("costs", 0.0)) + cost_delta,
+                "status": "open" if abs(q_next) > 1e-12 else "closed",
+            }
+        )
+        self._instrument_positions[key] = pos_record
+        self._cash = float(self._cash) + realized_delta - cost_delta
+        self._realized_pnl += realized_delta
+        self._total_costs += cost_delta
+
+        self.SetSecurityPrice(
+            symbol,
+            p_fill,
+            as_of=price_as_of,
+            source=price_source,
+            authoritative=False,
+        )
+        if instrument_id != symbol:
+            self.SetSecurityPrice(
+                instrument_id,
+                p_fill,
+                as_of=price_as_of,
+                source=price_source,
+                authoritative=False,
+            )
+        self._record_fill()
+        snap = self.assert_ledger_reconciliation()
+        if self._margin_call_active and snap["equity"] >= snap["maintenance_margin_required"]:
+            self._margin_call_active = False
+            self._margin_call_since = None
+        return {
+            "fee": fee,
+            "tax": tax,
+            "cost_delta": cost_delta,
+            "realized_delta": realized_delta,
+            "initial_margin_reserved": init_reserved,
+            "maintenance_margin_required": maint_required,
+            "position_quantity": q_next,
+        }
+
+    def MarkFuturesSession(  # noqa: N802
+        self,
+        trade_date: Any,
+        settlement_prices: Mapping[str, float] | None = None,
+        *,
+        holidays: Iterable[Any] | None = None,
+        check_maintenance: bool = True,
+    ) -> dict[str, Any]:
+        """Mark open futures positions at session settlement and evaluate maintenance margin."""
+        prices = dict(settlement_prices or {})
+        date_str = (
+            trade_date.isoformat()
+            if hasattr(trade_date, "isoformat")
+            else str(trade_date or "").strip()
+        )
+        for (b_id, norm_u, inst_id), pos in list(self._instrument_positions.items()):
+            if pos.get("kind") != "stock_future":
+                continue
+            qty = float(pos.get("quantity", 0.0))
+            if abs(qty) <= 1e-12 and pos.get("status") != "settlement_pending":
+                continue
+            contract = str(pos.get("contract") or "")
+            mark_val = (
+                prices.get(inst_id)
+                or prices.get(contract)
+                or prices.get(norm_u)
+                or prices.get(str(pos.get("symbol") or ""))
+            )
+            if mark_val is not None:
+                self._apply_mark_to_position(
+                    pos,
+                    float(mark_val),
+                    as_of=date_str,
+                    source="futures_daily_settlement_prev_session",
+                )
+                self._security(inst_id).Price = float(mark_val)
+
+        snap = self.assert_ledger_reconciliation()
+        if not check_maintenance:
+            return snap
+
+        req_maint = float(snap["maintenance_margin_required"])
+        equity = float(snap["equity"])
+        if req_maint > 0 and equity + 1e-9 < req_maint:
+            if not self._margin_call_active:
+                self._margin_call_active = True
+                self._margin_call_since = date_str
+                self._publish(
+                    "paper_margin_call",
+                    "TAIFEX_FUTURES",
+                    0.0,
+                    "margin_call",
+                    broker_submission_status="not_submitted_margin_call",
+                    submitted_to_broker=False,
+                    metadata={
+                        "trade_date": date_str,
+                        "equity": equity,
+                        "maintenance_margin_required": req_maint,
+                        "initial_margin_reserved": float(snap["margin_reserved"]),
+                        "shortfall": req_maint - equity,
+                        "decision_status": "no_order",
+                        "order_status": "not_submitted",
+                        "risk_status": "skipped",
+                    },
+                )
+            else:
+                # Persistent maintenance breach at the next full session mark -> force-close
+                for key, pos in list(self._instrument_positions.items()):
+                    if pos.get("kind") != "stock_future":
+                        continue
+                    qty = float(pos.get("quantity", 0.0))
+                    if abs(qty) <= 1e-12:
+                        continue
+                    m = float(pos.get("multiplier", 1.0))
+                    p_liq = float(pos.get("mark_price", 0.0))
+                    avg_entry = float(pos.get("average_entry_price", p_liq))
+                    realized_delta = qty * m * (p_liq - avg_entry)
+                    if self._futures_costs_enabled:
+                        c_info = compute_open_or_close_cost(
+                            pos.get("contract"),
+                            p_liq,
+                            abs(qty),
+                            multiplier=m,
+                            underlying=pos.get("normalised_underlying"),
+                            broker_fee_per_contract_per_side=self._broker_fee_per_contract_per_side,
+                        )
+                        fee = float(c_info["fee"])
+                        tax = float(c_info["tax"])
+                        cost_delta = float(c_info["total_cost"])
+                    else:
+                        fee = 0.0
+                        tax = 0.0
+                        cost_delta = 0.0
+                    pos["quantity"] = 0.0
+                    pos["average_entry_price"] = 0.0
+                    pos["unrealized_pnl"] = 0.0
+                    pos["initial_margin_reserved"] = 0.0
+                    pos["maintenance_margin_required"] = 0.0
+                    pos["realized_pnl"] = float(pos.get("realized_pnl", 0.0)) + realized_delta
+                    pos["costs"] = float(pos.get("costs", 0.0)) + cost_delta
+                    pos["status"] = "closed"
+                    self._cash = float(self._cash) + realized_delta - cost_delta
+                    self._realized_pnl += realized_delta
+                    self._total_costs += cost_delta
+                    self._security(str(pos.get("symbol") or pos["instrument_id"])).Price = p_liq
+                    self._publish(
+                        "paper_forced_liquidation",
+                        str(pos.get("symbol") or pos["instrument_id"]),
+                        0.0,
+                        "forced_liquidation",
+                        broker_submission_status="not_submitted_forced_liquidation",
+                        submitted_to_broker=False,
+                        metadata={
+                            "trade_date": date_str,
+                            "instrument_id": pos["instrument_id"],
+                            "kind": "stock_future",
+                            "contract": pos.get("contract"),
+                            "contract_month": pos.get("contract_month"),
+                            "multiplier": m,
+                            "liquidated_quantity": -qty,
+                            "liquidation_price": p_liq,
+                            "realized_pnl": realized_delta,
+                            "fee": fee,
+                            "tax": tax,
+                            "equity_before_liquidation": equity,
+                            "maintenance_margin_required": req_maint,
+                            "reason": "persistent_maintenance_margin_breach",
+                            "decision_status": "no_order",
+                            "order_status": "not_submitted",
+                            "risk_status": "skipped",
+                        },
+                    )
+                self._margin_call_active = False
+                self._margin_call_since = None
+                snap = self.assert_ledger_reconciliation()
+        elif self._margin_call_active and equity + 1e-9 >= req_maint:
+            self._margin_call_active = False
+            self._margin_call_since = None
+
+        return self.ledger_reconciliation_snapshot()
+
+    def mark_futures_session(
+        self,
+        trade_date: Any,
+        settlement_prices: Mapping[str, float] | None = None,
+        *,
+        holidays: Iterable[Any] | None = None,
+        check_maintenance: bool = True,
+    ) -> dict[str, Any]:
+        return self.MarkFuturesSession(
+            trade_date,
+            settlement_prices,
+            holidays=holidays,
+            check_maintenance=check_maintenance,
+        )
+
+    def SettleExpiringFutures(  # noqa: N802
+        self,
+        trade_date: Any,
+        final_settlement_source: Any = None,
+        *,
+        holidays: Iterable[Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Cash-settle open futures contracts whose ``last_trading_day <= trade_date``."""
+        parsed_day = (
+            trade_date
+            if hasattr(trade_date, "year") and not isinstance(trade_date, datetime)
+            else datetime.fromisoformat(str(trade_date).strip()[:10]).date()
+        )
+        hol = tuple(holidays) if holidays is not None else self._active_holidays()
+        outcomes: list[dict[str, Any]] = []
+        for key, pos in list(self._instrument_positions.items()):
+            if pos.get("kind") != "stock_future":
+                continue
+            qty = float(pos.get("quantity", 0.0))
+            if abs(qty) <= 1e-12 and pos.get("status") != "settlement_pending":
+                continue
+            month = str(pos.get("contract_month") or "").strip()
+            contract = str(pos.get("contract") or "").strip()
+            if not month or not contract:
+                continue
+            ltd = last_trading_day(month, hol)
+            if parsed_day < ltd:
+                continue
+            lookup = lookup_final_settlement_price(
+                contract,
+                month,
+                final_settlement_source,
+                settlement_day=ltd,
+            )
+            if lookup is None:
+                pos["status"] = "settlement_pending"
+                outcomes.append(
+                    {
+                        "instrument_id": pos["instrument_id"],
+                        "contract": contract,
+                        "contract_month": month,
+                        "status": "settlement_pending",
+                        "last_trading_day": ltd.isoformat(),
+                    }
+                )
+                continue
+
+            p_final = float(lookup["final_settlement_price"])
+            m = float(pos.get("multiplier", 1.0))
+            avg_entry = float(pos.get("average_entry_price", p_final))
+            realized_delta = qty * m * (p_final - avg_entry)
+            if self._futures_costs_enabled:
+                s_cost = compute_settlement_cost(
+                    contract,
+                    p_final,
+                    abs(qty),
+                    multiplier=m,
+                    underlying=pos.get("normalised_underlying"),
+                    broker_fee_per_contract_per_side=self._broker_fee_per_contract_per_side,
+                )
+                settlement_fee = float(s_cost["settlement_fee"])
+                fee = float(s_cost["fee"])
+                tax = float(s_cost["tax"])
+                cost_delta = float(s_cost["total_cost"])
+            else:
+                settlement_fee = 0.0
+                fee = 0.0
+                tax = 0.0
+                cost_delta = 0.0
+
+            pos["quantity"] = 0.0
+            pos["average_entry_price"] = 0.0
+            pos["mark_price"] = p_final
+            pos["unrealized_pnl"] = 0.0
+            pos["initial_margin_reserved"] = 0.0
+            pos["maintenance_margin_required"] = 0.0
+            pos["realized_pnl"] = float(pos.get("realized_pnl", 0.0)) + realized_delta
+            pos["costs"] = float(pos.get("costs", 0.0)) + cost_delta
+            pos["status"] = "closed"
+
+            self._cash = float(self._cash) + realized_delta - cost_delta
+            self._realized_pnl += realized_delta
+            self._total_costs += cost_delta
+            sym_for_event = str(pos.get("symbol") or pos["instrument_id"])
+            self._security(sym_for_event).Price = p_final
+            self.assert_ledger_reconciliation()
+
+            settled_meta = {
+                "instrument_id": pos["instrument_id"],
+                "kind": "stock_future",
+                "contract": contract,
+                "contract_month": month,
+                "multiplier": m,
+                "settled_quantity": qty,
+                "final_settlement_price": p_final,
+                "settlement_day": ltd.isoformat(),
+                "realized_pnl": realized_delta,
+                "settlement_fee": settlement_fee,
+                "fee": fee,
+                "tax": tax,
+                "price_basis": "FinalSettlementPriceSSF",
+                "decision_status": "no_order",
+                "order_status": "not_submitted",
+                "risk_status": "skipped",
+            }
+            self._publish(
+                "paper_futures_settled",
+                sym_for_event,
+                0.0,
+                "futures_expiry_settled",
+                broker_submission_status="not_submitted_expiry_settlement",
+                submitted_to_broker=False,
+                metadata=settled_meta,
+            )
+            outcomes.append(
+                {
+                    **settled_meta,
+                    "status": "settled",
+                }
+            )
+        return outcomes
+
+    def settle_expiring_futures(
+        self,
+        trade_date: Any,
+        final_settlement_source: Any = None,
+        *,
+        holidays: Iterable[Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.SettleExpiringFutures(
+            trade_date,
+            final_settlement_source,
+            holidays=holidays,
+        )
 
     def _taiwan_capital_pool_id(self) -> str:
         binding = getattr(self, "_cached_binding", None) or {}
@@ -676,6 +2293,25 @@ class PaperExecutionAlgorithm:
 
     @staticmethod
     def _post_broker_paper_order(broker_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if broker_url == "in-process":
+            sim_order = simulate_paper_order(
+                capital_pool_id=str(payload.get("capital_pool_id") or "pool-tw-equity-paper"),
+                strategy_id=str(payload.get("strategy_id") or "strategy-tw-session-momentum"),
+                client_order_id=str(payload.get("client_order_id") or ""),
+                correlation_envelope=payload.get("correlation_envelope"),
+                symbol=str(payload["symbol"]),
+                qty=float(payload["qty"]),
+                side=str(payload["side"]),
+                order_type=str(payload.get("order_type") or "market"),
+                limit_price=payload.get("limit_price"),
+                market_price=payload.get("market_price"),
+                instrument_id=payload.get("instrument_id"),
+                kind=str(payload.get("kind") or "cash_share"),
+                multiplier=float(payload.get("multiplier") or 1.0),
+                contract_month=payload.get("contract_month"),
+                price_basis=payload.get("price_basis"),
+            )
+            return sim_order.to_dict()
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             broker_url + "/api/broker/paper/orders",
@@ -727,8 +2363,9 @@ class PaperExecutionAlgorithm:
             # snapshot for an uncommitted or rejected paper fill.
             event_metadata["ledger_committed"] = True
             event_metadata["ledger_fill_count"] = int(self._fill_count)
-            event_metadata["position_quantity"] = float(
-                self._holding(str(symbol)).Quantity
+            event_metadata.setdefault(
+                "position_quantity",
+                float(self._holding(str(symbol)).Quantity),
             )
             event_metadata["ledger_cash"] = float(self._cash)
             if self._reversal_info:
@@ -1472,6 +3109,10 @@ class PaperExecutionAlgorithm:
             "active_episodes": dict(self._active_episodes),
             "last_fill_episode_id": self._last_fill_episode_id,
             "reversal_info": self._reversal_info,
+            "instrument_positions": {k: dict(v) for k, v in self._instrument_positions.items()},
+            "realized_pnl": self._realized_pnl,
+            "total_costs": self._total_costs,
+            "injected_equity_capital": self._injected_equity_capital,
         }
         try:
             prev_qty = float(holding.Quantity) + sum(float(v) for v in alias_quantities.values())
@@ -1511,6 +3152,112 @@ class PaperExecutionAlgorithm:
                     "open_qty": new_qty,
                 }
 
+            eff_price = float(
+                execution_price if execution_price is not None else security.Price
+            )
+            pre_entry_price = (
+                float(holding_security.Price)
+                if (
+                    math.isfinite(float(holding_security.Price))
+                    and float(holding_security.Price) > 0
+                )
+                else eff_price
+            )
+            binding_id = self._resolve_persona_binding_id()
+            norm_u = self._normalise_underlying_symbol(
+                holding_symbol, self._current_signal_metadata
+            )
+            eq_inst_id = f"eq:{norm_u}"
+            eq_key = (binding_id, norm_u, eq_inst_id)
+            eq_pos = self._instrument_positions.get(eq_key)
+            if eq_pos is None and abs(prev_qty) > 1e-12:
+                eq_pos = {
+                    "persona_binding_id": binding_id,
+                    "normalised_underlying": norm_u,
+                    "instrument_id": eq_inst_id,
+                    "symbol": holding_symbol,
+                    "kind": "cash_share",
+                    "contract": None,
+                    "contract_month": None,
+                    "quantity": prev_qty,
+                    "multiplier": 1.0,
+                    "average_entry_price": pre_entry_price,
+                    "mark_price": pre_entry_price,
+                    "initial_margin_reserved": 0.0,
+                    "maintenance_margin_required": 0.0,
+                    "unrealized_pnl": 0.0,
+                    "realized_pnl": 0.0,
+                    "costs": 0.0,
+                    "status": "open",
+                }
+                self._instrument_positions[eq_key] = eq_pos
+                pre_snap = self.ledger_reconciliation_snapshot()
+                pre_gap = (pre_snap["equity"] - pre_snap["initial_cash"]) - (
+                    pre_snap["realized_pnl"] + pre_snap["unrealized_pnl"] - pre_snap["costs"]
+                )
+                if not math.isclose(pre_gap, 0.0, rel_tol=0.0, abs_tol=1e-9):
+                    self._injected_equity_capital += pre_gap
+            elif eq_pos is not None and not math.isclose(
+                float(eq_pos.get("quantity", 0.0)), prev_qty, rel_tol=0.0, abs_tol=1e-9
+            ):
+                eq_pos["quantity"] = prev_qty
+                if abs(prev_qty) > 1e-12 and float(eq_pos.get("average_entry_price", 0.0)) <= 0:
+                    eq_pos["average_entry_price"] = pre_entry_price
+                eq_pos["mark_price"] = pre_entry_price
+                pre_snap = self.ledger_reconciliation_snapshot()
+                pre_gap = (pre_snap["equity"] - pre_snap["initial_cash"]) - (
+                    pre_snap["realized_pnl"] + pre_snap["unrealized_pnl"] - pre_snap["costs"]
+                )
+                if not math.isclose(pre_gap, 0.0, rel_tol=0.0, abs_tol=1e-9):
+                    self._injected_equity_capital += pre_gap
+
+            u_eq = new_qty - prev_qty
+            avg_prev_eq = float(eq_pos.get("average_entry_price", 0.0)) if eq_pos else 0.0
+            if abs(prev_qty) <= 1e-12 or (prev_qty > 0 and u_eq > 0) or (prev_qty < 0 and u_eq < 0):
+                realized_delta_eq = 0.0
+                avg_next_eq = (
+                    (abs(prev_qty) * avg_prev_eq + abs(u_eq) * eff_price) / abs(new_qty)
+                    if abs(new_qty) > 1e-12
+                    else 0.0
+                )
+            elif abs(u_eq) <= abs(prev_qty) + 1e-12:
+                closed_c = min(abs(prev_qty), abs(u_eq))
+                sign_prev = 1.0 if prev_qty > 0 else -1.0
+                realized_delta_eq = closed_c * (eff_price - avg_prev_eq) * sign_prev
+                avg_next_eq = avg_prev_eq if abs(new_qty) > 1e-12 else 0.0
+            else:
+                closed_c = abs(prev_qty)
+                sign_prev = 1.0 if prev_qty > 0 else -1.0
+                realized_delta_eq = closed_c * (eff_price - avg_prev_eq) * sign_prev
+                avg_next_eq = eff_price
+
+            eq_record = dict(eq_pos or {})
+            eq_record.update(
+                {
+                    "persona_binding_id": binding_id,
+                    "normalised_underlying": norm_u,
+                    "instrument_id": eq_inst_id,
+                    "symbol": holding_symbol,
+                    "kind": "cash_share",
+                    "contract": None,
+                    "contract_month": None,
+                    "quantity": new_qty,
+                    "multiplier": 1.0,
+                    "average_entry_price": avg_next_eq,
+                    "mark_price": eff_price,
+                    "mark_as_of": price_as_of,
+                    "mark_source": price_source,
+                    "initial_margin_reserved": 0.0,
+                    "maintenance_margin_required": 0.0,
+                    "unrealized_pnl": 0.0,
+                    "realized_pnl": float(eq_record.get("realized_pnl", 0.0)) + realized_delta_eq,
+                    "costs": float(eq_record.get("costs", 0.0)),
+                    "status": "open" if abs(new_qty) > 1e-12 else "closed",
+                }
+            )
+            self._instrument_positions[eq_key] = eq_record
+            self._realized_pnl += realized_delta_eq
+
             if execution_price is not None:
                 self.SetSecurityPrice(
                     symbol,
@@ -1532,6 +3279,7 @@ class PaperExecutionAlgorithm:
             holding.Quantity = next_quantity
             self._cash = next_cash
             self._record_fill()
+            self.assert_ledger_reconciliation()
         except Exception:
             holding.Quantity = checkpoint["quantity"]
             for alias_sym, alias_qty in checkpoint["alias_quantities"].items():
@@ -1551,6 +3299,10 @@ class PaperExecutionAlgorithm:
             self._active_episodes = dict(checkpoint["active_episodes"])
             self._last_fill_episode_id = checkpoint["last_fill_episode_id"]
             self._reversal_info = checkpoint["reversal_info"]
+            self._instrument_positions = checkpoint["instrument_positions"]
+            self._realized_pnl = checkpoint["realized_pnl"]
+            self._total_costs = checkpoint["total_costs"]
+            self._injected_equity_capital = checkpoint["injected_equity_capital"]
             raise
 
     def _load_state(self) -> None:
@@ -3509,20 +5261,24 @@ class PaperRuntimeService:
             for field in ("requested_quantity", "computed_quantity", "holding_quantity"):
                 if field in event.metadata:
                     metrics[field] = event.metadata[field]
-            is_sell_without_holdings_guard = (
+            is_pre_broker_risk_rejection = (
                 not event.submitted_to_broker
                 and (
-                    telemetry_metadata.get("reason") == "sell_without_holdings"
+                    telemetry_metadata.get("risk_status") == "rejected"
+                    or telemetry_metadata.get("risk_gate_evaluated") is True
+                    or telemetry_metadata.get("reason") == "sell_without_holdings"
                     or telemetry_metadata.get("reject_reason") == "sell_without_holdings"
                     or event.broker_submission_status == "sell_without_holdings"
                 )
             )
-            if is_sell_without_holdings_guard:
+            if is_pre_broker_risk_rejection:
                 risk_scope = (
                     _clean_text(telemetry_metadata.get("signal_id")) or event.event_id
                 )
                 telemetry_metadata.setdefault(
-                    "risk_decision_id", f"paper-risk-{risk_scope}"
+                    "risk_decision_id",
+                    _clean_text(telemetry_metadata.get("decision_id"))
+                    or f"paper-risk-{risk_scope}",
                 )
                 telemetry_metadata.setdefault("risk_status", "rejected")
         elif event.event_type == "paper_order_simulated":
@@ -3578,8 +5334,21 @@ class PaperRuntimeService:
             risk_scope = (
                 _clean_text(telemetry_metadata.get("signal_id")) or event.event_id
             )
-            risk_metadata.setdefault("risk_decision_id", f"paper-risk-{risk_scope}")
-            risk_metadata.setdefault("risk_status", "succeeded")
+            algo_gate = getattr(self._algo, "_last_risk_gate_result", None) or {}
+            gate_decision_id = (
+                _clean_text(event.metadata.get("risk_decision_id"))
+                or _clean_text(telemetry_metadata.get("risk_decision_id"))
+                or _clean_text(algo_gate.get("decision_id"))
+                or f"paper-risk-{risk_scope}"
+            )
+            gate_risk_status = (
+                _clean_text(event.metadata.get("risk_gate_status"))
+                or _clean_text(telemetry_metadata.get("risk_status"))
+                or _clean_text(algo_gate.get("risk_status"))
+                or "succeeded"
+            )
+            risk_metadata["risk_decision_id"] = gate_decision_id
+            risk_metadata["risk_status"] = gate_risk_status
             self._emit_lifecycle_telemetry(
                 "risk_evaluation",
                 {

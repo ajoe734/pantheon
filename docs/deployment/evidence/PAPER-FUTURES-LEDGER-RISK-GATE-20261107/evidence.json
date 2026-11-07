@@ -1,0 +1,34 @@
+{
+  "task_id": "PAPER-FUTURES-LEDGER-RISK-GATE-20261107",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "hosted_behaviour_exercised": false,
+  "statement": "Functional evidence only. Hosted behaviour was not exercised (no hosted VM, SSH, broker sandbox, futures smoke, live order, real capital, or external provider call was run). Hosted verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_paper_runtime.py -k TestPaperFuturesLedgerAndRiskGate -v",
+      "result": "7 passed in 2.66s",
+      "covers": "acceptance 1-9: mixed-book positions keyed by (persona_binding_id, normalised_underlying, instrument_id) holding eq:2330 and ssf:QFF:202611 without netting and reporting net_delta_shares; stock-future initial margin reservation (30334.5, 63990, 8700), maximum contracts (3, 1, 11 at QFF@2247, DHF@237, SRF@97.35 on 100,000 capital), realized/unrealized PnL and ledger reconciliation (equity - initial_cash == realized + unrealized - costs); pre-trade RiskPolicyEvaluator.evaluate gate (leverage_limit, gross_limit, net_limit, asset_class_not_allowed, insufficient_initial_margin, price_stale, instrument_not_in_candidates) replacing hardcoded post-fill risk_status='succeeded'; SD section 8 replay table for E1, E2, E3 on 2330, 2317, 0050 (long and short) including DHF 104.5% peak margin/equity and rejecting further opening orders; stock-future fill payload with price_basis='futures_daily_settlement_prev_session', fee+tax (QFF open cost 9.494 = 5.0 + 4.494) and never using stock close as futures price; last-trading-day rollover and expiry settlement via governed_taiwan_calendar_evidence (2026-11-12 open -1 QFF@2247, 2026-11-16 mark 2230 -> +1700 unrealized, 2026-11-17 same-dir no-op, 2026-11-18 settle @2215.40 -> +3160 realized with paper_futures_settled, 2026-11-19 next signal opens 202612, plus missing settlement -> settlement_pending); maintenance margin breach -> paper_margin_call (rejecting opening orders with margin_call_active while accepting reducing orders) and next-session persistence -> paper_forced_liquidation; cash share sell_without_holdings and paper_order_partial_clamped preserved"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_paper_runtime.py -q",
+      "result": "107 passed, 27 subtests passed in 40.46s",
+      "covers": "acceptance 1-9: full paper_runtime test suite including existing cash-share ledger, lifecycle recovery, performance telemetry, and new futures ledger + order risk gate tests"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_instrument_candidates.py services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_expression_policy.py -q",
+      "result": "87 passed, 7 subtests passed in 22.49s",
+      "covers": "acceptance 5, 6, 8: TAIFEX SSF fee schedule helpers (fee_row_for_contract, compute_open_or_close_cost, compute_settlement_cost), governed_twse_holidays, is_trading_day, parse_instrument_id, lookup_final_settlement_price, and stock_future execution routing"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/broker/test_paper_simulation.py services/capital/test_risk_policy.py services/telemetry/test_paper_runtime_ingest_contract.py services/trade_journey/test_lifecycle_projector.py -q",
+      "result": "186 passed, 2 skipped in 102.92s",
+      "covers": "acceptance 3, 5, 7: paper simulation futures fill metadata, risk policy evaluation, telemetry schema + ingest acceptance and trade-journey terminal non-fill projection for paper_futures_settled, paper_margin_call, and paper_forced_liquidation"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py services/execution/lean_runtime/test_performance_telemetry.py services/execution/lean_runtime/test_bootstrap_contract.py services/execution/lean_runtime/test_runtime_context.py services/execution/lean_runtime/test_paper_runtime_smoke.py -q",
+      "result": "122 passed, 9 subtests passed in 61.32s",
+      "covers": "acceptance 9: existing paper runtime signal consumer, performance telemetry, bootstrap contract, runtime context, and smoke tests"
+    }
+  ]
+}

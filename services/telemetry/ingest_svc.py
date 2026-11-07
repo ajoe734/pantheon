@@ -96,6 +96,12 @@ TRADE_JOURNAL_EVENT_TYPES = frozenset({
     "trade_lesson.quarantined",
 })
 
+PAPER_FUTURES_LIFECYCLE_EVENT_TYPES = frozenset({
+    "paper_futures_settled",
+    "paper_margin_call",
+    "paper_forced_liquidation",
+})
+
 import jsonschema
 
 log = logging.getLogger(__name__)

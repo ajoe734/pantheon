@@ -58,6 +58,24 @@ _EXPRESSION_CONTEXT_KEYS = (
     "kind",
     "units",
     "multiplier",
+    "contract_month",
+    "contract_code",
+    "price_basis",
+    "price_date",
+    "initial_margin_per_unit",
+    "maintenance_margin_per_unit",
+    "fee_per_unit_per_side",
+    "tax_rate_per_side",
+    "expiry",
+    "last_trading_day",
+    "underlying_kind",
+    "broker_fee_per_contract_per_side",
+    "candidates",
+    "candidates_considered",
+    "risk_policy",
+    "risk_policy_id",
+    "as_of_trading_day",
+    "stand_in",
     "reason_code",
     "strength",
     "momentum",
@@ -66,7 +84,7 @@ _EXPRESSION_CONTEXT_KEYS = (
 )
 
 # Instrument kinds the paper ledger can fill today.
-_LEDGER_SUPPORTED_KINDS = frozenset({"cash_share"})
+_LEDGER_SUPPORTED_KINDS = frozenset({"cash_share", "stock_future"})
 
 _ORDER_ADAPTER_CONTEXT_KEYS = (
     "correlation_envelope",

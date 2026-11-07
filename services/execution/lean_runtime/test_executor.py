@@ -1024,8 +1024,15 @@ class ExpressionEnvelopeExecutorTests(unittest.TestCase):
             "metadata": {"decision_id": "dec-expr-1", **metadata},
         }
 
-    def test_chosen_stock_future_is_rejected_by_the_ledger_with_no_fill(self):
+    def test_chosen_stock_future_flows_to_taiwan_broker_order_with_expression_context(self):
         algo = _TaiwanAlgo()
+        captured_contexts = []
+
+        def _capture_submit(symbol, **kwargs):
+            captured_contexts.append(dict(algo.context))
+            algo.submissions.append((symbol, kwargs))
+
+        algo.SubmitTaiwanBrokerOrder = _capture_submit
         record = {"decision_id": "dec-expr-1", "instrument_id": "ssf:SRF:202611", "units": 1}
         execute(
             self._signal(
@@ -1033,7 +1040,33 @@ class ExpressionEnvelopeExecutorTests(unittest.TestCase):
                 kind="stock_future",
                 units=1,
                 multiplier=1000,
+                contract_month="202611",
                 reason_code="short_via_future",
+                expression_decision=record,
+            ),
+            algo,
+        )
+        self.assertEqual(algo.order_rejections, [])
+        [(symbol, kwargs)] = algo.submissions
+        self.assertEqual((symbol, kwargs["side"], kwargs["quantity"]), ("0050.TW", "sell", 1.0))
+        context = captured_contexts[0]
+        self.assertEqual(context["instrument_id"], "ssf:SRF:202611")
+        self.assertEqual(context["kind"], "stock_future")
+        self.assertEqual(context["multiplier"], 1000)
+        self.assertEqual(context["contract_month"], "202611")
+        self.assertEqual(context["decision_id"], "dec-expr-1")
+        self.assertEqual(context["expression_decision"], record)
+
+    def test_unsupported_instrument_kind_is_rejected_by_the_ledger_with_no_fill(self):
+        algo = _TaiwanAlgo()
+        record = {"decision_id": "dec-expr-1", "instrument_id": "opt:CDO:202611", "units": 1}
+        execute(
+            self._signal(
+                instrument_id="opt:CDO:202611",
+                kind="stock_option",
+                units=1,
+                multiplier=2000,
+                reason_code="short_via_option",
                 expression_decision=record,
             ),
             algo,
@@ -1044,9 +1077,9 @@ class ExpressionEnvelopeExecutorTests(unittest.TestCase):
         self.assertEqual(rejection["computed_quantity"], 0.0)
         self.assertFalse(rejection["submitted_to_broker"])
         context = algo.rejection_contexts[0]
-        self.assertEqual(context["instrument_id"], "ssf:SRF:202611")
-        self.assertEqual(context["kind"], "stock_future")
-        self.assertEqual(context["multiplier"], 1000)
+        self.assertEqual(context["instrument_id"], "opt:CDO:202611")
+        self.assertEqual(context["kind"], "stock_option")
+        self.assertEqual(context["multiplier"], 2000)
         self.assertEqual(context["decision_id"], "dec-expr-1")
         self.assertEqual(context["expression_decision"], record)
 
