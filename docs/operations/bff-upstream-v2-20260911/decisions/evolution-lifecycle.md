@@ -250,6 +250,20 @@ deployment.**
    id is derived from the decision). A child already registered is adopted. A
    run that cannot resume ends `failed` and names the failing step. A run that
    is not a retrain is not touched.
+7. **A retrain run is labelled by the work it runs and ends its task.** A
+   research run created for a `retrain` decision records adapter
+   `training_session_evaluation` with `requested_mode` and `dispatch_mode`
+   `training_evaluation` (the Training baseline and candidate evaluations the
+   executor runs), never `stub`, `manual` or unknown, and its queued event says
+   so. A run that is not a retrain keeps its stub identity and events. The
+   executor ends a run (`completed` with its `outcome`/`outcome_reason`, or
+   `failed` with the failing step) through the same terminal transition as
+   `POST /api/research-orchestrator/runs/{run_id}/complete`: the run gains a
+   `run_completed` event naming the outcome and reason or the failed step, and
+   its research task reaches the matching terminal status. On startup a task
+   still `running` whose retrain run is already terminal (left so by earlier
+   runs, which were labelled `stub`) is moved to that terminal status; the run
+   is not rewritten and no run, session or child is created.
 
 The executor writes no runtime binding, deployment plan or capital record and
 never advances `artifact_state` beyond `candidate`.

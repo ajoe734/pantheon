@@ -1289,6 +1289,12 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         else:
             gateway_ref = {"gateway_job_id": None, "error": "gateway_unavailable"}
 
+    is_retrain_dispatch = not rejected and _is_retrain_action(body.parameters)
+    if is_retrain_dispatch:
+        # The executor runs real Training evaluations; the run is labelled by that
+        # work, not by the payload's default stub identity.
+        adapter, requested_mode, dispatch_mode = _RETRAIN_ADAPTER, _RETRAIN_MODE, _RETRAIN_MODE
+
     events: List[Dict[str, Any]] = []
     if rejected:
         status = "rejected"
@@ -1300,11 +1306,12 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         events.append(_event(timestamp, "run_dispatched", summary, body.actor_id, run_id, events))
     else:
         status = "queued"
-        summary = (
-            f"Stage execution adapter '{adapter}' queued for authentic dispatch."
-            if is_stage_backend
-            else "Stub research orchestration run queued for bounded dispatch."
-        )
+        if is_retrain_dispatch:
+            summary = "Retrain run queued for Training evaluation of the baseline and the candidate."
+        elif is_stage_backend:
+            summary = f"Stage execution adapter '{adapter}' queued for authentic dispatch."
+        else:
+            summary = "Stub research orchestration run queued for bounded dispatch."
         events.append(_event(timestamp, "run_queued", summary, body.actor_id, run_id, events))
     stage_id_val = None
     if body.parameters.get("stage") and isinstance(body.parameters["stage"], dict):
@@ -1569,6 +1576,9 @@ def _execute_plan_stage(
 # MFA claim, and writes no runtime binding, deployment plan or capital record.
 
 _RETRAIN_ACTION_TYPE = "retrain"
+# Identity of a retrain run: the Training evaluation the executor actually runs.
+_RETRAIN_ADAPTER = "training_session_evaluation"
+_RETRAIN_MODE = "training_evaluation"
 _RETRAIN_SOURCE_SERVICE = "research-orchestrator"
 _RETRAIN_OUTCOMES = frozenset({"candidate_created", "no_candidate", "evaluation_rejected"})
 
@@ -2061,20 +2071,30 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
         try:
             _execute_retrain(run_id, params)
         except _RetrainFinished as done:
-            _retrain_record(run_id, status="completed", outcome=done.outcome, outcome_reason=done.reason)
+            _retrain_record(run_id, outcome=done.outcome, outcome_reason=done.reason)
+            _finish_run(
+                run_id, "completed",
+                f"Retrain completed: outcome={done.outcome}, outcome_reason={done.reason}.",
+                _RETRAIN_SOURCE_SERVICE,
+            )
         except _RetrainFailure as failure:
             _retrain_record(
-                run_id, status="failed", failed_step=failure.step,
+                run_id, failed_step=failure.step,
                 rejection={"reason": "retrain_failed", "step": failure.step, "detail": failure.detail},
+            )
+            _finish_run(
+                run_id, "failed", f"Retrain failed at step {failure.step}: {failure.detail}",
+                _RETRAIN_SOURCE_SERVICE,
             )
         except Exception as exc:  # noqa: BLE001 - every attempt must reach a terminal state.
             logger.exception("retrain executor crashed for %s", run_id)
-            run = rstore.get_run(run_id)
-            if run:
-                run["status"] = "failed"
-                run["failed_step"] = "executor"
-                run["rejection"] = {"reason": "retrain_failed", "step": "executor", "detail": f"{type(exc).__name__}: {exc}"}
-                rstore.put_run(run)
+            detail = f"{type(exc).__name__}: {exc}"
+            if rstore.get_run(run_id):
+                _retrain_record(
+                    run_id, failed_step="executor",
+                    rejection={"reason": "retrain_failed", "step": "executor", "detail": detail},
+                )
+                _finish_run(run_id, "failed", f"Retrain failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
         finally:
             with _retrain_active_lock:
                 _retrain_active_runs.discard(run_id)
@@ -2098,6 +2118,34 @@ def resume_retrain_runs() -> None:
         if record.get("cancellation_fence"):
             continue
         _trigger_retrain_execution(str(record["run_id"]), params)
+
+
+@app.on_event("startup")
+def repair_retrain_tasks_left_running() -> None:
+    """Bring a task left running by an earlier terminal retrain run to that status.
+
+    Only the task is written: the run, its events and its session are untouched,
+    and no run, session or child is created.  A task that still has an active
+    run is left running.
+    """
+    runs = store.list_runs()
+    active_tasks = {r.get("task_id") for r in runs if str(r.get("status") or "").lower() in ACTIVE_STATUSES}
+    latest: Dict[Any, Dict[str, Any]] = {}
+    for run in runs:
+        params = run.get("parameters") or {}
+        if (
+            not isinstance(params, dict)
+            or not _is_retrain_action(params)
+            or str(run.get("status") or "").lower() not in {"completed", "failed"}
+        ):
+            continue
+        current = latest.get(run.get("task_id"))
+        if current is None or str(run.get("updated_at") or "") >= str(current.get("updated_at") or ""):
+            latest[run.get("task_id")] = run
+    for task_id, run in latest.items():
+        task = store.get_task(task_id) if task_id else None
+        if task and task_id not in active_tasks and str(task.get("status") or "").lower() == "running":
+            _set_task_terminal(task_id, str(run["status"]).lower(), utc_now())
 
 
 @app.get("/api/research-orchestrator/runs")
@@ -2142,6 +2190,37 @@ def get_run_status(run_id: str) -> Dict[str, Any]:
     }
 
 
+def _set_task_terminal(task_id: Any, status: str, timestamp: str) -> None:
+    task = store.get_task(task_id)
+    if task:
+        task["status"] = status
+        task["updated_at"] = timestamp
+        store.put_task(task)
+
+
+def _finish_run(
+    run_id: str, status: str, summary: str, actor_id: str, completed_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The one terminal transition of a research run.
+
+    Appends ``run_completed``, sets the run's terminal status and brings its
+    research task to the same status.  ``POST .../complete`` and the retrain
+    executor both end a run through here.
+    """
+    run = get_run(run_id)
+    timestamp = completed_at or utc_now()
+    events = list(run.get("events") or [])
+    events.append(_event(timestamp, "run_completed", summary, actor_id, run_id, events))
+    run["status"] = status
+    run["completed_at"] = timestamp
+    run["updated_at"] = timestamp
+    run["events"] = events
+    _set_task_terminal(run["task_id"], status, timestamp)
+    store.put_run(run)
+    store.append_event(events[-1])
+    return run
+
+
 @app.post("/api/research-orchestrator/runs/{run_id}/complete")
 def complete_run(run_id: str, body: CompleteRunBody) -> Dict[str, Any]:
     run = get_run(run_id)
@@ -2171,21 +2250,7 @@ def complete_run(run_id: str, body: CompleteRunBody) -> Dict[str, Any]:
             status_code=409,
             detail="canceled research run cannot be completed; late completion fenced",
         )
-    timestamp = body.completed_at or utc_now()
-    events = list(run.get("events") or [])
-    events.append(_event(timestamp, "run_completed", body.summary, body.actor_id, run_id, events))
-    run["status"] = body.status
-    run["completed_at"] = timestamp
-    run["updated_at"] = timestamp
-    run["events"] = events
-    task = store.get_task(run["task_id"])
-    if task:
-        task["status"] = "completed" if body.status == "completed" else body.status
-        task["updated_at"] = timestamp
-        store.put_task(task)
-    store.put_run(run)
-    store.append_event(events[-1])
-    return run
+    return _finish_run(run_id, body.status, body.summary, body.actor_id, body.completed_at)
 
 
 @app.post("/api/research-orchestrator/runs/{run_id}/cancel")
