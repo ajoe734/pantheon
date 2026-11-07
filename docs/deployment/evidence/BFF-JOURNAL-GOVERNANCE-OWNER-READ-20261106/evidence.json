@@ -1,13 +1,28 @@
 {
   "task_id": "BFF-JOURNAL-GOVERNANCE-OWNER-READ-20261106",
   "scope": "source only; no hosted acceptance, no Freeze/Rollback writes",
-  "change": "{\"DomainGovernancePort\": \"owner_reads=True (Composite default) reads GET /api/governance/freeze-orders and /rollbacks via governance_approval_url (canonical owner resolver: APPROVAL_API_URL then SERVICE_URL; legacy PANTHEON_GOVERNANCE_API_URL ignored) + http_request_json with caller auth, remaining management deadline and request-scoped cached_owner_call\", \"tenant_policy\": \"row.tenant_id is client-writable body data and is NEVER proof. A row is visible only when its evolution_decision_id resolves, through the existing Evolution owner tenant-guarded GET /api/evolution/proposals/{id} (evolution_owner_request, caller-verified tenant; foreign/unknown -> 404 -> hidden), to a decision whose tenant_id equals the verified caller tenant, and any claimed row tenant_id agrees; freeze rows must also match the decision target_id/target_version (the same binding command_executor writes from receipt-binding). Rows without a decision binding (legacy, claim-only, caller-written) stay unresolved: never shown, never assigned a tenant, dataset source reported unavailable while verified own rows remain visible. No new issuer/store/writer/backfill. Decision reads are deduped per request via cached_owner_call\", \"ReadSurfacePorts\": \"get_rollbacks (raises on owner failure) and list_all_rollbacks now reads the canonical Governance ledger (no loop_runs pseudo-rollbacks, no swallow-to-empty); dataset_source(freeze_orders|all_rollbacks) reports the real owner outcome\", \"dataset_source\": {\"service\": \"owner read ok, all rows tenant-resolved (incl. healthy empty)\", \"missing\": \"governance URL not configured\", \"unavailable\": \"transport error/timeout/bad payload/no caller auth, or unresolved-provenance rows present\"}} | Retired ReadSurfacePorts.get_rollbacks list_loop_runs compatibility fallback; supported callers use canonical Governance rollback contract (strict owner read, else list_all_rollbacks). Regression: test_rsp_get_rollbacks_has_no_loop_runs_fallback_on_narrow_port.",
-  "known_limit": "unresolved-provenance is reported as source=unavailable (shared dataset formatter has no degraded value). Rollback rows written by command_executor carry no decision binding, so they remain unresolved/unknown until the owner records one; no backfill. Evolution decision read failures other than 404 mark the dataset unavailable. Rollback runtime ownership is only decision-target consistency; no Runtime/Deployment ownership read was added.",
+  "change": {
+    "DomainGovernancePort": "owner_reads=True default reads GET /api/governance/freeze-orders and /rollbacks via governance_approval_url with caller auth, remaining management deadline and request-scoped cached_owner_call (unchanged).",
+    "tenant_policy": "row.tenant_id / actor / metadata are never tenant proof. Rows carrying evolution_decision_id are visible only when the tenant-guarded Evolution owner GET /api/evolution/proposals/{id} resolves to a decision in the verified caller tenant (freeze rows also match target id/version; rollback rows per binding_v2). Rows WITHOUT evolution_decision_id: freeze rows stay unresolved; the normal producer-written rollback row (no decision binding) is proven by a server-scoped Runtime resource READ: every runtime_id/runtime_binding_id on the row must resolve to exactly one binding in the caller-tenant GET {PANTHEON_RUNTIME_MANAGER_URL}/api/runtime-bindings list (core.owner_reads.read_records, request-cached), with no contradictory row tenant claim. Missing/ambiguous/contradictory/failed lookup => unresolved (never shown, never assigned a tenant). No writer, backfill, new Evolution field or mandatory Plan GET. Commit d75994960.",
+    "ReadSurfacePorts": "get_rollbacks (raises on owner failure) and list_all_rollbacks now reads the canonical Governance ledger (no loop_runs pseudo-rollbacks, no swallow-to-empty); dataset_source(freeze_orders|all_rollbacks) reports the real owner outcome",
+    "dataset_source": {
+      "service": "owner read ok, all rows tenant-resolved (incl. healthy empty)",
+      "missing": "governance URL not configured",
+      "unavailable": "transport error/timeout/bad payload/no caller auth, or unresolved-provenance rows present"
+    },
+    "status_semantics": "Canonical row status/fields preserved unchanged; partial provenance surfaces as ManagementObservation degraded via same-request dataset_source (consumer_v5), not by rewriting status.",
+    "retired": "ReadSurfacePorts.get_rollbacks list_loop_runs fallback retired (regression test_rsp_get_rollbacks_has_no_loop_runs_fallback_on_narrow_port)."
+  },
+  "known_limit": "CURRENT: unresolved provenance (freeze rows without a decision binding, rollback rows whose Runtime binding cannot be proven in the caller tenant, Evolution/Runtime read failures) is reported source=unavailable / partial ManagementObservation while verified own rows remain visible with canonical status; unresolved rows are never shown or assigned a tenant. Hosted readback and operator Freeze test are not part of this source task. Earlier statements that normal command_executor rollback rows stay unknown until the owner records a binding, or that no Runtime read was added, are HISTORICAL and superseded by d75994960.",
   "tests": {
-    "test_lifecycle_telemetry_governance_ports.py": "port-level default configured transport: own/foreign/caller-forged tenant on foreign decision/claim-only/legacy, decision-read error, target mismatch, healthy empty, error/timeout/invalid, no auth, URL aliases, injected store unchanged",
-    "test_read_surface_port_cutover.py": "ReadSurfacePorts rollback facade reads canonical owner with decision-bound tenant proof",
-    "test_bff_b3_evolution_journal.py": "3 new mounted-HTTP Journal tests: real router+OwnerReadContextMiddleware+default ReadSurfacePorts+real owner transport (only urlopen faked); own/foreign/caller-extra/claim-only/legacy, healthy empty vs timeout, rollbacks",
-    "runs": "92 passed (three files) at the repaired head; added regressions: rollback target_id vs contradictory runtime_id, missing-tenant decision and 404-with-foreign-claim"
+    "current_validation": "At head 31cc71cf1 (production code identical to d75994960): /tmp/civenv pytest test_read_surface_port_cutover.py test_lifecycle_telemetry_governance_ports.py test_bff_b3_evolution_journal.py test_bff_management_cockpit.py test_mgmt_read_001_persona_fleet_owner_observations.py = 133 passed (re-run 2026-11-07 for this doc-only change).",
+    "recorded_independent_runs": "Reviewer/native runs recorded outside this file: 166 and 132 (source-only), independent 14 — valid for the unchanged production tree.",
+    "files": {
+      "test_lifecycle_telemetry_governance_ports.py": "default configured transport: own/foreign/forged tenant/claim-only/legacy, decision-read error, target mismatch, healthy empty, error/timeout/invalid, no auth, URL aliases, real-producer rollback via Runtime binding owner, unresolved when runtime owner fails/claims foreign",
+      "test_read_surface_port_cutover.py": "rollback facade reads canonical owner",
+      "test_bff_b3_evolution_journal.py": "mounted-HTTP Journal tests (only urlopen faked)"
+    },
+    "historical": "'92 passed' was the count at an early repaired head; superseded."
   },
   "hosted_acceptance": "unchanged, owned by EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104",
   "binding_v2": {
@@ -15,28 +30,36 @@
     "reuse": "core.owner_reads.read_evolution_object (existing tenant-bound, service-credential, request-cached, per-GET budget recompute); no parallel URL/timeout helper; no HTTP once remaining budget <= 0",
     "freeze_binding": "decision tenant==caller, action_type==freeze, target_id/version match, stored execution_result.execution_ref_id (if any) must equal the row's freeze_order_id; no executed-only gate, no receipt-binding GET",
     "rollback_binding": "decision tenant==caller, action_type in {freeze, force_risk_off} (existing follow-through; EvolutionActionType has no rollback); stored execution_ref_id (if any) must equal rollback_id, else every runtime identity on the row (runtime_id/runtime_binding_id/target_id) must equal decision target_id - a free-form target_id cannot override a contradictory runtime_id",
-    "404": "foreign/unknown indistinguishable: always unresolved (row tenant claim is never proof); decision object with missing/malformed tenant_id is unresolved, only positively foreign decisions are hidden"
+    "404": "foreign/unknown indistinguishable: always unresolved (row tenant claim is never proof); decision object with missing/malformed tenant_id is unresolved, only positively foreign decisions are hidden",
+    "status_note": "HISTORICAL (v2); rollback rule extended by d75994960: decision-less rollback rows resolve via Runtime binding owner read."
   },
   "review_fix_v3": {
     "tenant_claim": "a row tenant_id that contradicts the verified caller tenant is unresolved (not visible), verified siblings preserved",
-    "strict_rollbacks": "read_rollbacks_strict raises when any row is unresolved so ReadSurfacePorts.get_rollbacks/ManagementService.get_context_rollbacks report unavailable, never healthy zero; Journal list path keeps verified partial rows; healthy empty stays service/ok",
-    "runs": "123 passed (three admitted files + management context observations)"
+    "strict_rollbacks": "[historical, superseded by review_fix_v4] read_rollbacks_strict raises when any row is unresolved so ReadSurfacePorts.get_rollbacks/ManagementService.get_context_rollbacks report unavailable, never healthy zero; Journal list path keeps verified partial rows; healthy empty stays service/ok",
+    "status_note": "HISTORICAL/SUPERSEDED: 'strict raises on any unresolved row' replaced by v4; current: verified rows returned, raises only when no verified row matches."
   },
   "ae800_original_ac5_fix": {
     "strict_rollbacks": "SUPERSEDED by review_fix_v4: record-level status rewrite removed.",
-    "seam": "no file outside the 6 admitted artifacts edited",
-    "runs": "124 passed (three files + management context observations) plus ManagementService end-to-end assertion in cutover test"
+    "seam": "no file outside the 6 admitted artifacts edited"
   },
   "review_fix_v4": {
     "ac3": "read_rollbacks_strict returns verified own rows with canonical status/fields unchanged (no status/owner_status rewrite); runtime latest_rollback.status stays e.g. completed; list_all_rollbacks and get_rollbacks agree. Raises only when no verified row matches.",
     "partial_provenance": "reported separately via dataset_source('all_rollbacks') == 'unavailable' (Journal/dataset path). Domain status is not changed to signal partial provenance.",
-    "known_limit": "ManagementService.get_context_rollbacks record-provenance seam keys off record 'status', so it cannot express partial provenance for canonical-status rows without editing management_read_models/service.py (not admitted; minimal admission required if reviewer wants that observation to flag partial).",
-    "runs": "124 passed (three admitted files + management context observations); regression asserts runtime projection status and dataset_source together"
+    "status_note": "HISTORICAL; its known_limit (management seam cannot flag partial) is SUPERSEDED by consumer_v5."
   },
   "consumer_v5": {
     "change": "ManagementService.get_context_rollbacks consumes same-request store.dataset_source('all_rollbacks'): verified own rows kept unchanged (ids/status/fields); unavailable/missing source with rows => ManagementObservation degraded with reason; no rows => unavailable; service => ok (healthy empty stays ok). Stores without dataset_source keep legacy behavior. No alias, status overwrite, wrapper or global cache.",
     "prerequisite": "BFF-AI-CURRENT-STATE-20261107 merged (8b331f141); dev merged into task branch",
     "tests": "civenv pytest: cutover, governance ports, b3 journal, mgmt observations, cockpit, runtime_state_trades = 166 passed; management_read_models + persona_fleet + nl_assistant = 180 passed",
     "scope": "source only; not hosted acceptance"
-  }
+  },
+  "admitted_paths": [
+    "services/control-plane/bff/ports/lifecycle_telemetry_governance.py",
+    "services/control-plane/bff/ports/read_surface_ports.py",
+    "services/control-plane/bff/tests/test_lifecycle_telemetry_governance_ports.py",
+    "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+    "services/control-plane/bff/tests/test_read_surface_port_cutover.py",
+    "docs/deployment/evidence/BFF-JOURNAL-GOVERNANCE-OWNER-READ-20261106/evidence.json",
+    "services/control-plane/bff/management_read_models/service.py"
+  ]
 }
