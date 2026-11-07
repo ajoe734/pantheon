@@ -1,0 +1,213 @@
+{
+  "task_id": "MGMT-AI-TRUTH-ACCEPTANCE-20261107",
+  "title": "Hosted acceptance that Management AI health answers and the alert feed match the owners",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "verdict": "pass",
+  "measured_at": "2026-11-07T22:46:00Z to 2026-11-07T23:00:00Z",
+  "measured_by": "Human/Ops through a real admintest login on the hosted dev environment (Antigravity recorded the operator's hosted acceptance findings in git without rerunning hosted checks or accessing any VM/SSH)",
+  "operator_acceptance_text": "Pair: BFF 9a46cd188 (container GIT_SHA equal) and FE 4759795f3, deploy run https://github.com/ajoe734/pantheon/actions/runs/42416671176 success at 22:45Z. It contains BFF-ANOMALIES-OPEN-ONLY (#7014), BFF-ALERTS-CURRENT (#7016), BFF-AI-LOOP-HEALTH (#7022), BFF-AI-CURRENT-STATE (#7024), BFF-AI-FLEET-INBOX (#7031), BFF-AI-INBOX-OWNER (#7036) and execute-plans #959.\nE1 pass: the pair above, read from the public deployment.json and the container.\nE2 pass: 30 consecutive GET /bff/alerts through the admintest login gave 30 bff_composed ok, 0 timeout_fallback, 395-2356 ms. Each read returned 2 alerts: a critical alert for the open incident infra-bff-c0c7d46419976f1c51db4581 and a critical runtime alert for the current runtime rt-4b73b71a. The retired failed runtimes rt-fae0166d, rt-0354501c and rt-43344296 never appear.\nE3 pass: the question 目前 12 個 loop 的健康狀況如何？有哪些不正常？只要查詢，不要做任何變更。 was asked in the panel at 22:46Z. Claim table: 12 of 12 accepted and overall ok matches /bff/v5/loop-health (12 rows, 12 accepted); 11 ready and 1 ok (telemetry_reconciliation) matches the downstream statuses exactly; telemetry 4 bindings evaluated with 0 skipped and capital_pool_execution 4 of 4 match the 4 active runtimes; bff_health 33 of 33 matches; 2 critical active alerts (1 incident, 1 runtime) matches /bff/alerts. No healthy paper_running persona was called degraded and no retired runtime was called a current failure. The non-stream ask context for the same caller showed trading pulse 4 current runtimes and 138 retired, alerts 2 critical, human_inbox total 1 equal to GET /bff/management/human-inbox (1 item), anomalies 2, persona_fleet 10 current personas (paper_running 4, research_only 3, draft 3) with 140 retired and healthy 4, degraded 0, critical 0, which equals /bff/personas. Surfaces: management_cockpit ok, trading_pulse ok, portfolio_book ok, loop_health ok, persona_fleet degraded.\nE4 pass: the real open incident infra-bff-c0c7d46419976f1c51db4581 (high) appears in the answer as 1 incident alert, and the alert count of 2 matches the feed. Run 1 at 12:10Z also passed E4, with incident agent-2e0cc89b4ea8-0001.\nE5 pass: with the fallback payload intercepted the page shows 暫時無法取得警報資料。 and 0 rows. In run 2 a normal healthy empty load showed 目前沒有警報。. In run 3 the page's own first load hit a real read_timeout (BFF log: bff.alerts degraded fallback: read_timeout, once in 31 reads in 40 minutes) and the page showed the unavailable state, not an empty list.\nE6: no password or token was written anywhere.\nHistory: run 1 at 12:10Z on 004a9a4ec found that persona_fleet always raised a RuntimeError and that the inbox read the wrong layer, which became BFF-AI-FLEET-INBOX. Run 2 at 15:15Z on 1e4bc7ce5 found that an empty approval queue was called unavailable and that empty open incidents counted as degraded, which became BFF-AI-INBOX-OWNER. Run 3 passed.\nLimitations: persona_fleet stays degraded because the existing rule marks a persona whose sessions, teaching sessions, allowed actions, strategies or bindings are empty as degraded, which is normal for draft and research_only personas; this is out of scope and was reported to the operator. The answer's phrase about stale cache is unverified. The alerts route can still time out at its 3.0 second budget under page-load fan-out, but the page shows that honestly.",
+  "hosted_pair": {
+    "bff_commit": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
+    "bff_short": "9a46cd188",
+    "container_git_sha_equal": true,
+    "frontend_commit": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+    "frontend_short": "4759795f3",
+    "deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/42416671176",
+    "deploy_status": "success at 22:45Z",
+    "contains": [
+      {
+        "task_id": "BFF-ANOMALIES-OPEN-ONLY-20261107",
+        "repository": "ajoe734/pantheon",
+        "pr": 7014,
+        "merge_commit": "5f76058d9"
+      },
+      {
+        "task_id": "BFF-ALERTS-CURRENT-20261107",
+        "repository": "ajoe734/pantheon",
+        "pr": 7016,
+        "merge_commit": "992a3344a"
+      },
+      {
+        "task_id": "BFF-AI-LOOP-HEALTH-20261107",
+        "repository": "ajoe734/pantheon",
+        "pr": 7022,
+        "merge_commit": "b1ff41d8d"
+      },
+      {
+        "task_id": "BFF-AI-CURRENT-STATE-20261107",
+        "repository": "ajoe734/pantheon",
+        "pr": 7024,
+        "merge_commit": "8b331f141"
+      },
+      {
+        "task_id": "BFF-AI-FLEET-INBOX-20261107",
+        "repository": "ajoe734/pantheon",
+        "pr": 7031,
+        "merge_commit": "1e4bc7ce5"
+      },
+      {
+        "task_id": "BFF-AI-INBOX-OWNER-20261107",
+        "repository": "ajoe734/pantheon",
+        "pr": 7036,
+        "merge_commit": "d8fc86208"
+      },
+      {
+        "task_id": "FE-ALERTS-NOT-EMPTY-20261107",
+        "repository": "ajoe734/execute-plans",
+        "pr": 959,
+        "merge_commit": "257c5132c"
+      }
+    ]
+  },
+  "acceptance": {
+    "E1_accepted_pair": {
+      "status": "pass",
+      "summary": "BFF 9a46cd188 (container GIT_SHA equal) and FE 4759795f3, deploy run https://github.com/ajoe734/pantheon/actions/runs/42416671176 success at 22:45Z, read from the public deployment.json and the container."
+    },
+    "E2_alerts_consecutive_reads": {
+      "status": "pass",
+      "login": "admintest",
+      "consecutive_reads": 30,
+      "bff_composed_ok": 30,
+      "timeout_fallback": 0,
+      "latency_ms": "395-2356 ms",
+      "alerts_per_read": 2,
+      "alerts_returned": [
+        "critical alert for the open incident infra-bff-c0c7d46419976f1c51db4581",
+        "critical runtime alert for the current runtime rt-4b73b71a"
+      ],
+      "retired_failed_runtimes_absent": [
+        "rt-fae0166d",
+        "rt-0354501c",
+        "rt-43344296"
+      ]
+    },
+    "E3_management_ai_panel_and_owner_comparison": {
+      "status": "pass",
+      "asked_at": "2026-11-07T22:46:00Z",
+      "question": "目前 12 個 loop 的健康狀況如何？有哪些不正常？只要查詢，不要做任何變更。",
+      "answer_summary": "12 of 12 loops accepted and overall ok; 11 ready and 1 ok (telemetry_reconciliation); telemetry 4 bindings evaluated with 0 skipped and capital_pool_execution 4 of 4 active runtimes; bff_health 33 of 33; 2 critical active alerts (1 incident infra-bff-c0c7d46419976f1c51db4581, 1 runtime rt-4b73b71a). No healthy paper_running persona was called degraded and no retired runtime was called a current failure. Included an unverified phrase about stale cache.",
+      "claim_table": [
+        {
+          "claim": "12 of 12 accepted and overall ok",
+          "owner_surface": "GET /bff/v5/loop-health (12 rows, 12 accepted)",
+          "match": true
+        },
+        {
+          "claim": "11 ready and 1 ok (telemetry_reconciliation)",
+          "owner_surface": "GET /bff/v5/loop-health downstream statuses",
+          "match": true
+        },
+        {
+          "claim": "telemetry 4 bindings evaluated with 0 skipped and capital_pool_execution 4 of 4",
+          "owner_surface": "4 active runtimes",
+          "match": true
+        },
+        {
+          "claim": "bff_health 33 of 33",
+          "owner_surface": "GET /bff/v5/loop-health bff_health",
+          "match": true
+        },
+        {
+          "claim": "2 critical active alerts (1 incident, 1 runtime)",
+          "owner_surface": "GET /bff/alerts (2 critical alerts: open incident infra-bff-c0c7d46419976f1c51db4581 and current runtime rt-4b73b71a)",
+          "match": true
+        },
+        {
+          "claim": "No healthy paper_running persona called degraded",
+          "owner_surface": "GET /bff/personas (4 paper_running personas, healthy 4, degraded 0, critical 0)",
+          "match": true
+        },
+        {
+          "claim": "No retired runtime called a current failure",
+          "owner_surface": "Runtime bindings / trading pulse (4 current runtimes, 138 retired; retired failed runtimes rt-fae0166d, rt-0354501c, rt-43344296 excluded)",
+          "match": true
+        },
+        {
+          "claim": "Phrase about stale cache",
+          "owner_surface": "None",
+          "match": "unverified"
+        }
+      ],
+      "non_stream_ask_context": {
+        "trading_pulse": {
+          "current_runtimes": 4,
+          "retired_runtimes": 138
+        },
+        "alerts": {
+          "critical": 2
+        },
+        "human_inbox": {
+          "total": 1,
+          "matches_get_bff_management_human_inbox": true
+        },
+        "anomalies": 2,
+        "persona_fleet": {
+          "current_personas": 10,
+          "by_state": {
+            "paper_running": 4,
+            "research_only": 3,
+            "draft": 3
+          },
+          "retired_personas": 140,
+          "health_counts": {
+            "healthy": 4,
+            "degraded": 0,
+            "critical": 0
+          },
+          "matches_get_bff_personas": true
+        },
+        "surfaces": {
+          "management_cockpit": "ok",
+          "trading_pulse": "ok",
+          "portfolio_book": "ok",
+          "loop_health": "ok",
+          "persona_fleet": "degraded"
+        }
+      }
+    },
+    "E4_real_open_incident": {
+      "status": "pass",
+      "open_incident_id": "infra-bff-c0c7d46419976f1c51db4581",
+      "severity": "high",
+      "appears_in_answer": "1 incident alert",
+      "alert_count_in_answer": 2,
+      "matches_alert_feed": true,
+      "earlier_run_note": "Run 1 at 12:10Z also passed E4, with incident agent-2e0cc89b4ea8-0001."
+    },
+    "E5_alerts_page_browser_states": {
+      "status": "pass",
+      "intercepted_fallback_payload": {
+        "shown_text": "暫時無法取得警報資料。",
+        "rows": 0,
+        "state": "unavailable"
+      },
+      "run_2_normal_healthy_empty_load": {
+        "shown_text": "目前沒有警報。",
+        "state": "empty"
+      },
+      "run_3_real_read_timeout_on_first_load": {
+        "bff_log": "bff.alerts degraded fallback: read_timeout (once in 31 reads in 40 minutes)",
+        "shown_state": "unavailable (not an empty list)"
+      }
+    },
+    "E6_no_secrets_and_unverified_claims": {
+      "status": "pass",
+      "password_or_token_written": false,
+      "unverified_claims": [
+        "The answer's phrase about stale cache is unverified."
+      ]
+    }
+  },
+  "history": [
+    "Run 1 at 12:10Z on 004a9a4ec found that persona_fleet always raised a RuntimeError and that the inbox read the wrong layer, which became BFF-AI-FLEET-INBOX.",
+    "Run 2 at 15:15Z on 1e4bc7ce5 found that an empty approval queue was called unavailable and that empty open incidents counted as degraded, which became BFF-AI-INBOX-OWNER.",
+    "Run 3 on BFF 9a46cd188 and FE 4759795f3 passed."
+  ],
+  "limitations": [
+    "persona_fleet stays degraded because the existing rule marks a persona whose sessions, teaching sessions, allowed actions, strategies or bindings are empty as degraded, which is normal for draft and research_only personas; this is out of scope and was reported to the operator.",
+    "The answer's phrase about stale cache is unverified.",
+    "The alerts route can still time out at its 3.0 second budget under page-load fan-out, but the page shows that honestly."
+  ]
+}
