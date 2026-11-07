@@ -7,14 +7,14 @@
     "test_lifecycle_telemetry_governance_ports.py": "port-level default configured transport: own/foreign/caller-forged tenant on foreign decision/claim-only/legacy, decision-read error, target mismatch, healthy empty, error/timeout/invalid, no auth, URL aliases, injected store unchanged",
     "test_read_surface_port_cutover.py": "ReadSurfacePorts rollback facade reads canonical owner with decision-bound tenant proof",
     "test_bff_b3_evolution_journal.py": "3 new mounted-HTTP Journal tests: real router+OwnerReadContextMiddleware+default ReadSurfacePorts+real owner transport (only urlopen faked); own/foreign/caller-extra/claim-only/legacy, healthy empty vs timeout, rollbacks",
-    "runs": "90 passed (three files) at the repaired head; six frozen 1a2b counterexamples reproduced as tests in test_lifecycle_telemetry_governance_ports.py"
+    "runs": "92 passed (three files) at the repaired head; added regressions: rollback target_id vs contradictory runtime_id, missing-tenant decision and 404-with-foreign-claim"
   },
   "hosted_acceptance": "unchanged, owned by EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104",
   "binding_v2": {
     "per_item": "each decision resolves independently; non-404 failure/malformed/exhausted budget marks only that item unresolved, verified rows stay visible",
     "reuse": "core.owner_reads.read_evolution_object (existing tenant-bound, service-credential, request-cached, per-GET budget recompute); no parallel URL/timeout helper; no HTTP once remaining budget <= 0",
     "freeze_binding": "decision tenant==caller, action_type==freeze, target_id/version match, stored execution_result.execution_ref_id (if any) must equal the row's freeze_order_id; no executed-only gate, no receipt-binding GET",
-    "rollback_binding": "decision tenant==caller, action_type==rollback, decision target_id must equal row runtime_id/runtime_binding_id/target_id, execution_ref (if any) must equal rollback_id",
-    "404": "foreign/unknown indistinguishable: hidden only when the row itself claims another tenant, otherwise unresolved (source unavailable), never healthy zero"
+    "rollback_binding": "decision tenant==caller, action_type in {freeze, force_risk_off} (existing follow-through; EvolutionActionType has no rollback); stored execution_ref_id (if any) must equal rollback_id, else every runtime identity on the row (runtime_id/runtime_binding_id/target_id) must equal decision target_id - a free-form target_id cannot override a contradictory runtime_id",
+    "404": "foreign/unknown indistinguishable: always unresolved (row tenant claim is never proof); decision object with missing/malformed tenant_id is unresolved, only positively foreign decisions are hidden"
   }
 }

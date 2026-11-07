@@ -913,7 +913,7 @@ class _GovOwner:
             d = table.get(did)
             if isinstance(d, Exception):
                 raise d
-            if d is None or d.get("tenant_id") != tenant_id:
+            if d is None or (isinstance(d, dict) and "tenant_id" in d and d.get("tenant_id") != tenant_id):
                 raise urllib.error.HTTPError(url, 404, "nf", {}, None)
             return d
 
@@ -927,8 +927,8 @@ _DECISIONS = {
     "d-own": {"decision_id": "d-own", "tenant_id": "t-own", "target_id": "a1", "target_version": "v1", "action_type": "freeze"},
     "d-own2": {"decision_id": "d-own2", "tenant_id": "t-own", "target_id": "a2", "target_version": "v1", "action_type": "freeze"},
     "d-foreign": {"decision_id": "d-foreign", "tenant_id": "t-other", "target_id": "a9", "target_version": "v1", "action_type": "freeze"},
-    "d-rb": {"decision_id": "d-rb", "tenant_id": "t-own", "target_id": "rt1", "action_type": "rollback"},
-    "d-rb-foreign": {"decision_id": "d-rb-foreign", "tenant_id": "t-other", "target_id": "rt1", "action_type": "rollback"},
+    "d-rb": {"decision_id": "d-rb", "tenant_id": "t-own", "target_id": "rt1", "action_type": "force_risk_off"},
+    "d-rb-foreign": {"decision_id": "d-rb-foreign", "tenant_id": "t-other", "target_id": "rt1", "action_type": "force_risk_off"},
 }
 
 
@@ -979,7 +979,7 @@ def test_default_port_reads_governance_owner_scoped_to_verified_tenant(monkeypat
     assert all(c["tenant"] == "t-own" and c["auth"] == "caller-token" for c in owner.decision_calls)
     # Unresolved legacy row never fabricated into the tenant; source stays unverified.
     assert src_freeze == "unavailable"
-    assert src_rb == "service"
+    assert src_rb == "unavailable"  # foreign/unknown 404 is indistinguishable: conservatively unresolved
     assert all(c["auth"] == "caller-token" and c["tenant"] == "t-own" for c in owner.calls)
 
 
@@ -1132,6 +1132,21 @@ def test_rollback_cannot_borrow_unrelated_freeze_decision_or_foreign_runtime(mon
     ]
     (_, rb, _, srb), _o = _run(monkeypatch, {"freeze-orders": [], "rollbacks": rows}, _DECISIONS)
     assert rb == ["r-ok"] and srb == "unavailable"
+
+
+def test_rollback_target_id_cannot_override_contradictory_runtime_id(monkeypatch):
+    rows = [
+        {"rollback_id": "r-conflict", "runtime_id": "runtime-foreign", "target_id": "rt1", "evolution_decision_id": "d-rb"},
+        {"rollback_id": "r-ok", "runtime_id": "rt1", "evolution_decision_id": "d-rb"},
+    ]
+    (_, rb, _, srb), _o = _run(monkeypatch, {"freeze-orders": [], "rollbacks": rows}, _DECISIONS)
+    assert rb == ["r-ok"] and srb == "unavailable"
+
+
+def test_decision_missing_tenant_or_404_with_foreign_claim_is_unresolved_not_healthy(monkeypatch):
+    rows = [_frz("f-notenant", evolution_decision_id="d-empty"), _frz("f-claim", evolution_decision_id="nope", tenant_id="t-other")]
+    (f, _, sf, _), _o = _run(monkeypatch, {"freeze-orders": rows, "rollbacks": []}, {**_DECISIONS, "d-empty": {}})
+    assert f == [] and sf == "unavailable"
 
 
 def test_unknown_404_and_malformed_decision_are_not_healthy_empty(monkeypatch):

@@ -565,7 +565,7 @@ def _patch_evolution_decisions(monkeypatch, tenant="t-own"):
         owner = table.get(url.rsplit("/", 1)[1])
         if owner is None or owner[0] != tenant_id:
             raise urllib.error.HTTPError(url, 404, "nf", {}, None)
-        return {"tenant_id": owner[0], "action_type": "rollback", "target_id": owner[1]}
+        return {"tenant_id": owner[0], "action_type": "force_risk_off", "target_id": owner[1]}
 
     from services.control_plane.bff.core import owner_reads
 

@@ -1048,16 +1048,20 @@ class DomainGovernancePort:
             if ref and ref != _s(row.get("freeze_order_id") or row.get("id")):
                 return False
             return all(_s(row.get(f)) == _s(decision.get(f)) for f in ("target_id", "target_version"))
-        if _s(decision.get("action_type")) != "rollback":
+        # Existing canonical follow-through for a rollback is a freeze/force_risk_off
+        # decision (EvolutionActionType has no "rollback").
+        if _s(decision.get("action_type")) not in {"freeze", "force_risk_off"}:
             return False
-        if ref and ref != _s(row.get("rollback_id") or row.get("id")):
-            return False
+        rollback_id = _s(row.get("rollback_id") or row.get("id"))
+        if ref:
+            return bool(rollback_id) and ref == rollback_id
+        # No stored execution reference: require one consistent runtime identity.
+        # Every runtime identity the row carries must agree with the decision target;
+        # a free-form target_id can never override a contradictory runtime_id.
         target = _s(decision.get("target_id"))
-        return bool(target) and target in {
-            _s(row.get("runtime_id")),
-            _s(row.get("runtime_binding_id")),
-            _s(row.get("target_id")),
-        }
+        ids = [_s(row.get(f)) for f in ("runtime_id", "runtime_binding_id", "target_id")]
+        ids = [i for i in ids if i]
+        return bool(target) and bool(ids) and all(i == target for i in ids)
 
     def _owner_scoped_records(self, dataset: str) -> Tuple[List[Dict[str, Any]], int]:
         """Read one canonical Governance collection; return (visible rows, unresolved count).
@@ -1106,21 +1110,22 @@ class DomainGovernancePort:
                 if not decision_id:
                     unresolved += 1
                     continue
-                claimed = str(row.get("tenant_id") or "").strip()
                 try:
                     decision = self._owner_decision(decision_id)
                 except Exception:
                     unresolved += 1
                     continue
                 if decision is None:
-                    # 404 is foreign-or-unknown. A row that itself claims another
-                    # tenant is hidden; otherwise existence cannot be established.
-                    if not claimed or claimed == tenant:
-                        unresolved += 1
+                    # 404 is foreign-or-unknown and indistinguishable; the row's own
+                    # tenant claim is not proof, so stay conservatively unresolved.
+                    unresolved += 1
                     continue
-                if str(decision.get("tenant_id") or "").strip() != tenant:
+                decision_tenant = str(decision.get("tenant_id") or "").strip() if isinstance(decision, dict) else ""
+                if not decision_tenant:
+                    # Missing/malformed owner object cannot prove foreign ownership.
+                    unresolved += 1
                     continue
-                if claimed and claimed != tenant:
+                if decision_tenant != tenant:
                     continue
                 if not self._decision_binds_row(dataset, row, decision):
                     unresolved += 1
