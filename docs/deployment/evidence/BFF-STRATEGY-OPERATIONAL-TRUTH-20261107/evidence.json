@@ -110,10 +110,10 @@
   ],
   "cold_import_fix_20261107": {
     "cause": "service.py imported routes.common at top level; routes/__init__ -> collection -> service closed the cycle (partially initialized ImportError).",
-    "fix": "service.py imports project_strategy_rules lazily inside the rules method; dependency direction is now routes -> service only. No new module.",
-    "regression_test": "strategies/test_router_isolation.py::test_strategies_modules_cold_import_in_any_entry_order (fresh subprocess per entry module: service, routes, routes.common, routes.collection, routes.detail, router)",
-    "commands": "pytest strategies/test_router_isolation.py tests/test_strategy_operational_status.py tests/test_strategy_list_default_view.py tests/test_strategy_list_latency.py tests/test_strategy_metrics_truth.py test_bff_strategy_persona_contract.py test_kw05_strategy_spec_contract.py",
-    "result": "86 passed, 1 skipped, 2 failed (test_bff_personas_list_returns_200_and_dto_shape, test_bff_personas_create_then_subresources_round_trip: 403 TENANT_MISMATCH in this sandbox; identical failure with the fix reverted, unrelated persona routes)",
+    "fix": "project_strategy_rules (and ROLE_TRADING, ROLE_ROLLBACK_BASELINE) moved to strategies/service.py and re-exported in strategies/routes/common.py; service.py has zero imports from routes.* (dependency direction is strictly routes -> service). No new module.",
+    "regression_test": "strategies/test_router_isolation.py::test_strategies_modules_cold_import_in_any_entry_order (fresh subprocess per entry module: service, routes, routes.common, routes.collection, routes.detail, routes.seeds, router) + test_strategies_service_has_no_routes_import_dependency",
+    "commands": "pytest strategies/test_router_isolation.py tests/test_strategy_operational_status.py tests/test_strategy_list_default_view.py tests/test_strategy_list_latency.py tests/test_strategy_metrics_truth.py tests/test_bff_test_architecture.py",
+    "result": "102 passed, 1 skipped (cold import in any entry order + strict routes -> service dependency direction + all strategy operational status, default view, latency, metrics truth, and architecture inventory tests)",
     "ac6_open_conflict": "Default view with candidate set >200 returns operational_counts unavailable with explicit reason, preserving the baseline 5000 single-owner-read default contract. AC6 \"every response\" would require walking all pages on every default request. Needs coordinator decision; not silently weakened.",
     "hosted_verification": "not run"
   }

@@ -8,6 +8,12 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Opti
 from fastapi import HTTPException
 
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+from ..service import (
+    ROLE_ROLLBACK_BASELINE,
+    ROLE_TRADING,
+    StrategiesService,
+    project_strategy_rules,
+)
 
 
 try:
@@ -53,9 +59,6 @@ OPERATIONAL_STATUSES = (
 
 PERSONA_STATE_MISSING = "missing"
 PERSONA_STATE_UNKNOWN = "unknown"
-
-ROLE_TRADING = "trading"
-ROLE_ROLLBACK_BASELINE = "rollback_baseline"
 
 
 @dataclass(frozen=True)
@@ -150,77 +153,6 @@ def operational_counts(statuses: Iterable[str]) -> Dict[str, int]:
     for status in statuses:
         counts[status] = counts.get(status, 0) + 1
     return counts
-
-
-def _clean_dict(value: Any) -> Dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def project_strategy_rules(
-    entries: Any,
-    *,
-    strategy_id: str,
-) -> List[Dict[str, Any]]:
-    """One rule per approved execution_bundle of ``strategy_id``.
-
-    ``entries`` is the registry owner response of
-    ``GET /api/registry/strategies/{strategy_id}/strategy-artifacts``: a list
-    of RegistryEntryView (``{"entry": {...}}``) or bare entries. Role is
-    ``rollback_baseline`` only when the registry id is named in
-    ``lineage.parent_registry_ids`` of another approved bundle of the same
-    strategy. No registry id is ever derived by rewriting another id.
-    """
-    approved: List[Dict[str, Any]] = []
-    for item in entries if isinstance(entries, list) else []:
-        entry = item.get("entry") if isinstance(item, dict) and isinstance(item.get("entry"), dict) else item
-        if not isinstance(entry, dict):
-            continue
-        if entry.get("artifact_type") not in (None, "execution_bundle"):
-            continue
-        if str(entry.get("artifact_state") or "").strip().lower() != "approved":
-            continue
-        if str(entry.get("strategy_id") or "").strip() != strategy_id:
-            continue
-        registry_id = str(entry.get("registry_id") or "").strip()
-        if not registry_id:
-            continue
-        approved.append(entry)
-
-    parent_ids_by_bundle: Dict[str, List[str]] = {}
-    for entry in approved:
-        lineage = _clean_dict(entry.get("lineage"))
-        parents = lineage.get("parent_registry_ids")
-        parent_ids_by_bundle[str(entry["registry_id"])] = (
-            [str(p) for p in parents if str(p).strip()] if isinstance(parents, list) else []
-        )
-
-    rules: List[Dict[str, Any]] = []
-    for entry in approved:
-        registry_id = str(entry["registry_id"])
-        is_parent_of_other = any(
-            registry_id in parents
-            for other_id, parents in parent_ids_by_bundle.items()
-            if other_id != registry_id
-        )
-        metadata = _clean_dict(entry.get("metadata"))
-        artifact = _clean_dict(metadata.get("strategy_artifact"))
-        mutation = _clean_dict(artifact.get("mutation_surface"))
-        controls = mutation.get("controls")
-        immutable = mutation.get("immutable_parameters")
-        rules.append(
-            {
-                "registryId": registry_id,
-                "version": entry.get("version"),
-                "role": ROLE_ROLLBACK_BASELINE if is_parent_of_other else ROLE_TRADING,
-                "strategyLogic": _clean_dict(artifact.get("strategy_logic")),
-                "parameters": _clean_dict(artifact.get("parameters")),
-                "adjustableControls": list(controls) if isinstance(controls, list) else [],
-                "immutableParameters": list(immutable) if isinstance(immutable, list) else [],
-            }
-        )
-    return rules
-
-
 
 
 def _build_ranking_strategy_index(
