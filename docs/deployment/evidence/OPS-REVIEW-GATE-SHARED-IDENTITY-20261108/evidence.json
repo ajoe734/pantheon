@@ -3,7 +3,7 @@
   "title": "Restore the GitHub review proof gate under the shared GitHub account by recording decisions as comment reviews",
   "owner": "Antigravity2",
   "reviewer": "Claude",
-  "recorded_at_utc": "2026-11-08T04:38:00Z",
+  "recorded_at_utc": "2026-11-08T12:16:00Z",
   "design_note": {
     "root_cause_of_2026_09_08_shutdown": "OPS-REVIEW-PROOF-001 (commit 43a78c7ee) removed the fallback that allowed bridge_review_decision to proceed when GitHub refused self-approval (422 'Can not approve your own pull request'). Because every Pantheon worker shares the ajoe734 GitHub account, every approval failed and the operator disabled the bridge the same day (OPS-GITHUB-REVIEW-GATE-001).",
     "shared_identity_mode": "Added review_gate.github_review_identity accepting only 'shared' or 'independent' (missing defaults to 'independent'; common.validate_review_bridge_policy rejects any other value). In 'shared' mode, bridge_review_decision records both approve and reopen as a COMMENT pull request review (event='COMMENT', matched state='COMMENTED') on the exact PR head carrying the existing <!-- pantheon-review-bridge ... --> marker, never submits APPROVE or REQUEST_CHANGES, preserves intent ordering across approve/reopen retries, pushes the refs/tags/pantheon-review/<decision>/<head_sha> proof tag via _push_review_proof_tag, and dispatches canonical-review-gate.yml via _dispatch_canonical_review_gate_workflow. No PAT commit status is posted in either mode; the GitHub Actions workflow remains the sole issuer of the 'Pantheon canonical review gate' status.",
@@ -52,6 +52,11 @@
         "passed": 50,
         "subtests_passed": 0,
         "failed": 0
+      },
+      "scripts/git/test_task_review_merge_gate.py": {
+        "passed": 125,
+        "subtests_passed": 8,
+        "failed": 0
       }
     },
     "runs": [
@@ -89,6 +94,11 @@
         "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py -v",
         "exit_code": 0,
         "result": "124 passed (74 in test_provision_live_supervisor_config.py + 50 in test_check_config_drift.py)"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
+        "exit_code": 0,
+        "result": "125 passed, 8 subtests passed"
       }
     ]
   }
