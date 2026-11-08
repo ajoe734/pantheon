@@ -1199,6 +1199,106 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_paper_futures_settled_margin_call_and_forced_liquidation_ingest_and_project_terminal_nonfill(self):
+        from datetime import datetime, timezone
+        from services.trade_journey.lifecycle_noop_order import (
+            PAPER_FUTURES_TERMINAL_NONFILL_EVENT_TYPES,
+            is_noop_order,
+        )
+        from services.trade_journey.lifecycle_projector import (
+            LIFECYCLE_EVENT_TYPES,
+            LifecycleProjector,
+        )
+        from services.trade_journey.materializer import JourneyMaterializer
+
+        expected_types = (
+            "paper_futures_settled",
+            "paper_margin_call",
+            "paper_forced_liquidation",
+        )
+        for et in expected_types:
+            self.assertIn(et, PAPER_FUTURES_TERMINAL_NONFILL_EVENT_TYPES)
+            self.assertIn(et, LIFECYCLE_EVENT_TYPES)
+
+        async def scenario():
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            emitter = RuntimeTelemetryEmitter(_runtime_identity(), _FakeBindingResolver())
+            for idx, et in enumerate(expected_types, start=1):
+                journey_id = str(uuid.uuid4())
+                trace_id = str(uuid.uuid4())
+                ev = emitter.build_event(
+                    et,
+                    {"fill_quantity": 0.0},
+                    metadata={
+                        "symbol": "2330.TW",
+                        "instrument_id": "ssf:QFF:202611",
+                        "kind": "stock_future",
+                        "contract_month": "202611",
+                        "multiplier": 100.0,
+                        "decision_status": "no_order",
+                        "order_status": "not_submitted",
+                        "risk_status": "skipped",
+                        "submitted_to_broker": False,
+                        "run_id": f"run-fut-{idx}",
+                        "signal_id": f"sig-fut-{idx}",
+                        "sequence_no": 1,
+                    },
+                    event_id=str(uuid.uuid4()),
+                    created_at=f"2026-11-18T05:30:0{idx}Z",
+                )
+                self.assertTrue(await svc.ingest(ev))
+                self.assertTrue(is_noop_order(ev))
+                proj_ev = copy.deepcopy(ev)
+                proj_ev["correlation_envelope"] = {
+                    "schema_version": "trade-journey-envelope/1",
+                    "tenant_id": "tenant-paper-futures",
+                    "environment": "paper",
+                    "journey_id": journey_id,
+                    "correlation_id": journey_id,
+                    "trace_id": trace_id,
+                    "event_id": proj_ev["event_id"],
+                    "causation_event_id": str(uuid.uuid4()),
+                    "event_time": proj_ev["created_at"],
+                    "emitted_at": proj_ev["created_at"],
+                    "received_at": proj_ev["created_at"],
+                    "producer": "paper_runtime",
+                    "producer_revision": 1,
+                }
+                specs = LifecycleProjector._stage_specs(proj_ev)
+                self.assertEqual(
+                    specs,
+                    [("risk_evaluation", "skipped"), ("order_submission", "skipped")],
+                )
+                identity = LifecycleProjector._identity(proj_ev)
+                entry = {
+                    "event": proj_ev,
+                    "identity": identity,
+                    "sequence_no": 1,
+                    "ingested_seq": idx,
+                    "ingested_at": proj_ev["created_at"],
+                    "source_mode": "live",
+                    "accepted_live": True,
+                }
+                j_events = LifecycleProjector._journey_events(entry)
+                self.assertEqual(len(j_events), 2)
+                reducer = JourneyMaterializer(as_of=datetime.now(timezone.utc))
+                reducer.rebuild(j_events)
+                projection = reducer.get(
+                    journey_id,
+                    tenant_id=identity["tenant_id"],
+                    environment=identity["environment"],
+                )
+                self.assertIsNotNone(projection)
+                self.assertEqual(projection.snapshot["status"], "no_order")
+            await svc.stop(graceful=True)
+
+        asyncio.run(scenario())
 
 
 if __name__ == "__main__":
