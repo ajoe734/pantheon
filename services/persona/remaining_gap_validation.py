@@ -97,6 +97,22 @@ class RemainingGapCase:
     optimization_scenario: str
     broker_adapter: str
 
+# Reasons the paper order risk gate can reject an order for. Each rejection is
+# a terminal non-fill outcome. Kept equal to the hosted probe's set by a parity
+# test (services/trade_journey/test_hosted_lifecycle_probe.py).
+PAPER_GATE_REJECTION_REASONS = frozenset(
+    {
+        "sell_without_holdings",
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    }
+)
+
 
 class RemainingGapValidationError(ValueError):
     """Raised when a remaining-gap validation cannot build replayable evidence."""
@@ -210,7 +226,7 @@ def _run_lean_order_feedback_recovery(
         pending_store.enqueue(signal)
         second_snapshot = runtime.drain_once()
 
-    expected_event_type = _expected_lean_event_type(case)
+    expected_event_type = _expected_lean_event_type(case, telemetry.events)
     selected_event = _select_telemetry_event(telemetry.events, expected_event_type, case)
     writer = FeedbackStoreAdapter(feedback_store_path=str(feedback_path))
     stored = writer.ingest_telemetry_event(
@@ -623,10 +639,25 @@ def _lean_signal(case: RemainingGapCase) -> dict[str, Any]:
     return base
 
 
-def _expected_lean_event_type(case: RemainingGapCase) -> str:
-    if case.lean_lifecycle in {"market_fill_ack_recovered", "limit_fill_ack_recovered"}:
-        return "paper_fill_simulated"
-    return "paper_order_simulated"
+def _expected_lean_event_type(
+    case: RemainingGapCase,
+    events: list[dict[str, Any]] | None = None,
+) -> str:
+    expected = (
+        "paper_fill_simulated"
+        if case.lean_lifecycle in {"market_fill_ack_recovered", "limit_fill_ack_recovered"}
+        else "paper_order_simulated"
+    )
+    if events is not None and not any(event["event_type"] == expected for event in events):
+        # The order risk gate may end the lifecycle before any fill or no-op
+        # record exists; a gate rejection is a terminal outcome, not a failure.
+        if any(
+            event["event_type"] == "order_rejection"
+            and event.get("metadata", {}).get("reason") in PAPER_GATE_REJECTION_REASONS
+            for event in events
+        ):
+            return "order_rejection"
+    return expected
 
 
 def _select_telemetry_event(

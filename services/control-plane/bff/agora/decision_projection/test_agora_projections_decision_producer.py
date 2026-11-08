@@ -180,3 +180,72 @@ def test_decision_event_producer_projects_to_trading_room():
     assert decision.status_code == 201
     assert owner.get(url, headers=_write_headers()).json()["intent_ref"] == decision.json()["data"]["intent_ref"]
     assert _client(tr_store).get(url, headers=_write_headers()).status_code == 404
+
+
+def _project_with_instrument(*, instrument_kind=None, instrument_id=None, project_kind=None, key="idem-instr"):
+    proj_store = DecisionEventStore()
+    tr_store = TradingRoomStore()
+    producer = DecisionEventProducer(store=proj_store)
+    cmd = DecisionProjectionCommand(
+        idempotency_key=key,
+        strategy_id="strat-instr",
+        event_type="signal_eval",
+        signal_data={"confidence": 0.88, "expected_value": 2.5, "symbol": "2330.TWSE"},
+        risk_data={"max_drawdown": 0.02, "risk_score": 0.05, "risk_passed": True},
+        signal_as_of=_utc_now(),
+        risk_as_of=_utc_now(),
+        instrument_id=instrument_id,
+        instrument_kind=instrument_kind,
+    )
+    record = producer.produce_decision_event(
+        cmd, tenant_id="tenant-agora", user_id="operator-001", utc_now=_utc_now()
+    )
+    return producer, record, tr_store
+
+
+def test_decision_projection_subject_asset_class_follows_the_chosen_instrument():
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 4)."""
+    # A legacy cash-only decision carries no instrument and stays equity.
+    producer, record, tr_store = _project_with_instrument(key="idem-legacy")
+    event = producer.project_to_trading_room(
+        record, trading_room_store=tr_store, symbol="2330.TWSE"
+    )
+    assert event["subject"]["asset_class"] == "equity"
+    assert record.instrument_kind is None
+
+    producer, record, tr_store = _project_with_instrument(
+        instrument_kind="cash_share", instrument_id="eq:2330", key="idem-cash"
+    )
+    event = producer.project_to_trading_room(
+        record, trading_room_store=tr_store, symbol="2330.TWSE"
+    )
+    assert event["subject"]["asset_class"] == "equity"
+
+    # A chosen stock future keeps the underlying symbol but is not equity.
+    producer, record, tr_store = _project_with_instrument(
+        instrument_kind="stock_future", instrument_id="ssf:QFF:202611", key="idem-future"
+    )
+    assert record.instrument_id == "ssf:QFF:202611"
+    event = producer.project_to_trading_room(
+        record, trading_room_store=tr_store, symbol="2330.TWSE"
+    )
+    assert event["subject"]["symbol"] == "2330.TWSE"
+    assert event["subject"]["asset_class"] == "future"
+    loaded = tr_store.get_decision_event(record.decision_event_id)
+    assert loaded["subject"]["asset_class"] == "future"
+
+    # An explicit override at projection time wins over the stored record.
+    event = producer.project_to_trading_room(
+        record, trading_room_store=tr_store, symbol="2330.TWSE", instrument_kind="cash_share"
+    )
+    assert event["subject"]["asset_class"] == "equity"
+
+
+def test_decision_projection_rejects_an_unknown_instrument_kind():
+    producer, record, tr_store = _project_with_instrument(
+        instrument_kind="option", key="idem-option"
+    )
+    with pytest.raises(ValueError, match="unsupported instrument kind"):
+        producer.project_to_trading_room(
+            record, trading_room_store=tr_store, symbol="2330.TWSE"
+        )

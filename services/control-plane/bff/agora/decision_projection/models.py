@@ -51,6 +51,10 @@ class DecisionEventRecord(BaseModel):
     status: Literal["projected", "stale", "invalidated", "retained"] = "projected"
     created_at: str = Field(min_length=1)
     has_broker_authority: Literal[False] = False
+    # The instrument the persona's expression policy chose for this decision.
+    # Absent on a legacy cash-only decision.
+    instrument_id: Optional[str] = None
+    instrument_kind: Optional[str] = None
 
 
 class DecisionProjectionCommand(BaseModel):
@@ -66,3 +70,5 @@ class DecisionProjectionCommand(BaseModel):
     risk_as_of: str = Field(min_length=1)
     max_staleness_sec: float = 300.0
     evidence_refs: List[DecisionEventEvidenceRef] = Field(default_factory=list)
+    instrument_id: Optional[str] = None
+    instrument_kind: Optional[str] = None

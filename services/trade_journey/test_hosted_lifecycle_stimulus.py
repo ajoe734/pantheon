@@ -939,3 +939,171 @@ def test_committed_identity_accepts_sell_without_holdings_rejection_row(monkeypa
     assert identity["reason"] == "sell_without_holdings"
     assert identity["sequence_no"] == 3
 
+
+
+def _terminal_summary_get_json(binding, *, run_id, identity_overrides):
+    heartbeat_at = stimulus._utc_now()
+
+    def get_json(url: str, **_kwargs):
+        if "desired-state" in url:
+            return {"bindings": [binding]}
+        if "api/fleet/state" in url:
+            return {
+                "workers": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "capital_pool_id": binding["capital_pool_id"],
+                        "status": "running",
+                        "started_at": heartbeat_at,
+                        "last_heartbeat_at": heartbeat_at,
+                        "heartbeat_status": "active",
+                    }
+                ]
+            }
+        if "runtime-summaries" in url:
+            return {
+                "summaries": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "deployment_stage": "paper",
+                        "last_lifecycle_identity": {
+                            "run_id": run_id,
+                            "sequence_no": 3,
+                            "environment": "paper",
+                            "execution_mode": "paper",
+                            "deployment_stage": "paper",
+                            "source_mode": "live",
+                            **identity_overrides,
+                        },
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected GET {url}")
+
+    return get_json
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        pytest.param(
+            {
+                "event_id": "event-rejection-leverage-001",
+                "event_type": "order_rejection",
+                "reason": "leverage_limit",
+                "broker_submission_status": "leverage_limit",
+                "metadata": {"instrument_id": "ssf:QFF:202611", "reason": "leverage_limit"},
+            },
+            id="gate_rejection",
+        ),
+        pytest.param(
+            {
+                "event_id": "event-no-trade-001",
+                "event_type": "paper_order_simulated",
+                "broker_submission_status": "not_submitted_signal_noop",
+                "metadata": {
+                    "noop_reason": "already_at_target",
+                    "decision_status": "no_order",
+                    "order_status": "not_submitted",
+                },
+            },
+            id="recorded_no_trade",
+        ),
+    ],
+)
+def test_stimulus_accepts_gate_rejection_and_no_trade_terminals_without_reconciling(tmp_path, identity):
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 6)."""
+    binding = _binding()
+    now_iso = "2026-07-18T14:00:00Z"
+    run_id = f"run-{binding['binding_id']}-{now_iso}-1"
+    reconcile_calls: list[tuple[str, dict]] = []
+
+    def post_json(url: str, payload: dict, **_kwargs):
+        reconcile_calls.append((url, dict(payload)))
+        return {"lifecycle_append_results": []}
+
+    code, artifact, store, _posts = _run(
+        tmp_path,
+        binding=binding,
+        get_json=_terminal_summary_get_json(binding, run_id=run_id, identity_overrides=identity),
+        post_json=post_json,
+        execute_kwargs={"now_factory": lambda: now_iso},
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert reconcile_calls == []
+    assert artifact["stimulus"]["lifecycle_summary_event_id"] == identity["event_id"]
+    assert artifact["stimulus"]["reconciliation_status"] == "skipped_nonfill_terminal"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"event_type": "order_rejection", "reason": "tw_broker_error"},
+        {"event_type": "paper_order_simulated", "metadata": {}},
+    ],
+)
+def test_identity_that_is_not_a_recognised_nonfill_terminal_is_not_the_stimulus_target(overrides):
+    binding = _binding()
+    run_id = f"run-{binding['binding_id']}-2026-07-18T14:00:00Z-1"
+    identity = {
+        "event_id": "event-x",
+        "binding_id": binding["binding_id"],
+        "runtime_id": binding["runtime_id"],
+        "run_id": run_id,
+        "sequence_no": 3,
+        "environment": "paper",
+        "execution_mode": "paper",
+        "deployment_stage": "paper",
+        "source_mode": "live",
+        **overrides,
+    }
+    assert not stimulus._identity_is_target_position(
+        identity, binding=binding, run_id=run_id, require_identity_binding=True
+    )
+
+
+def test_committed_identity_accepts_recorded_no_trade_row(monkeypatch):
+    binding = _binding()
+    run_id = f"run-{binding['binding_id']}-2026-10-05T22:14:45Z-1"
+    event = {
+        "event_id": "event-committed-no-trade-001",
+        "event_type": "paper_order_simulated",
+        "binding_id": binding["binding_id"],
+        "runtime_id": binding["runtime_id"],
+        "run_id": run_id,
+        "environment": "paper",
+        "execution_mode": "paper",
+        "deployment_stage": "paper",
+        "source_mode": "live",
+        "metadata": {
+            "run_id": run_id,
+            "sequence_no": 3,
+            "noop_reason": "flat_view",
+            "decision_status": "no_order",
+        },
+    }
+    connection = _FakeAsyncpgConnection(
+        {
+            "event_id": event["event_id"],
+            "event_type": "paper_order_simulated",
+            "created_at": "2026-10-05T22:14:51Z",
+            "payload": json.dumps(event),
+        }
+    )
+
+    async def connect(_dsn: str):
+        return connection
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+
+    identity = stimulus.fetch_committed_lifecycle_identity(
+        "postgresql://unit-test-redacted", binding=binding, run_id=run_id
+    )
+
+    assert identity is not None
+    assert identity["event_id"] == event["event_id"]
+    assert identity["event_type"] == "paper_order_simulated"

@@ -42,6 +42,7 @@
         "paper_futures_settled",
         "paper_margin_call",
         "paper_forced_liquidation",
+        "persona_instrument_counterfactual",
         "fill_received",
         "order_submitted",
         "order_accepted",

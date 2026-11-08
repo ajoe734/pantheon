@@ -371,3 +371,105 @@ def test_evolution_child_checks_accept_expression_controls_and_reject_forbidden_
     with pytest.raises(StrategyArtifactValidationError):
         validate_evolution_child_artifact(parent, tampered_child)
 
+
+
+def _expression_parent_and_ids():
+    from services.control_plane.bff.persona_provisioning_coordinator import (
+        deterministic_provisioning_ids,
+    )
+    from services.control_plane.bff.test_persona_provisioning_coordinator import (
+        FakeOwnerTransport,
+        _coordinator,
+        _record_and_store,
+        _schedule_receipt,
+    )
+
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    _coordinator(store, transport, _schedule_receipt).coordinate(record)
+    ids = deterministic_provisioning_ids(record)
+    parent = transport.objects[
+        ("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")
+    ]["entry"]["metadata"]["strategy_artifact"]
+    return parent, ids
+
+
+def _replay_records():
+    """0050 SHORT/LONG decisions with recorded D-1 prices and marks (design E sequences)."""
+    from services.execution.lean_runtime.test_expression_replay import _cash, _fut, _record
+
+    cands = lambda: [_cash("0050", 104.95, 952), _fut("ssf:SRF:202611", "0050", 1000, 104.95, 8700.0, 2)]  # noqa: E731
+    marks = {"eq:0050": [92.5], "ssf:SRF:202611": [92.5]}
+    return [
+        _record("d-short", "0050", "SHORT", 1.0, cands(), 300000.0, marks),
+        _record("d-weak-long", "0050", "LONG", 0.6, cands(), 300000.0, {k: [110.0] for k in marks}),
+    ]
+
+
+def test_evolution_child_expression_change_is_replayed_before_qualification():
+    import pytest
+    from services.control_plane.bff.evolution.service import EvolutionService
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError,
+        mutate_strategy_artifact,
+    )
+
+    parent, ids = _expression_parent_and_ids()
+    svc = EvolutionService(_FakeReadStore())
+
+    def child_with(updates, n):
+        return mutate_strategy_artifact(
+            parent, parameter_updates=updates,
+            new_artifact_id=f"{ids.strategy_artifact_id}-evo-replay-{n}",
+            new_version=f"1.0.{n}", source_run_ids=[f"vbt-evo-replay-{n}"],
+            parent_registry_id=ids.strategy_artifact_id,
+        )
+
+    # Parent lever_min_strength 0.5: the weak LONG (0.6) uses the future. Raising the
+    # threshold above 0.6 makes it a cash share, which earns less on the recorded rise.
+    worse = child_with({"lever_min_strength": 0.9}, 1)
+    with pytest.raises(StrategyArtifactValidationError, match="child_replay_worse_than_parent"):
+        svc.propose_child_artifact(parent, worse, replay_records=_replay_records())
+
+    # Lowering it leaves the recorded outcomes at least as good: accepted with evidence.
+    better = child_with({"lever_min_strength": 0.3}, 2)
+    result = svc.propose_child_artifact(parent, better, replay_records=_replay_records())
+    assert result["valid"] is True
+    assert result["expression_replay"]["passed"] is True
+    assert result["expression_replay"]["evaluated_controls"] == ["lever_min_strength"]
+    assert result["expression_replay"]["child_total_pnl"] >= result["expression_replay"]["parent_total_pnl"]
+
+    # The pre-qualification path refuses an instrument-affecting change with no records.
+    with pytest.raises(StrategyArtifactValidationError, match="no_recorded_decisions"):
+        svc.propose_child_artifact(parent, better, replay_records=[])
+    # Controls that only reshape the view are not replayed (replay never recomputes direction).
+    view_only = child_with({"strength_scale_k": 1.5}, 3)
+    assert "expression_replay" not in svc.propose_child_artifact(parent, view_only, replay_records=[])
+    # Plain validation without records stays backward compatible and says it did not replay.
+    assert svc.validate_child_artifact(parent, better)["expression_replay"]["status"] == "not_evaluated"
+
+
+def test_evolution_child_that_raises_a_risk_limit_is_rejected():
+    import copy
+    import pytest
+    from services.control_plane.bff.evolution.service import validate_evolution_child_artifact
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError,
+        mutate_strategy_artifact,
+    )
+
+    parent, ids = _expression_parent_and_ids()
+    child = mutate_strategy_artifact(
+        parent, parameter_updates={"lever_min_strength": 0.4},
+        new_artifact_id=f"{ids.strategy_artifact_id}-evo-risk", new_version="1.0.9",
+        source_run_ids=["vbt-evo-risk"], parent_registry_id=ids.strategy_artifact_id,
+    )
+    for limit in ("max_leverage", "gross_limit", "net_limit"):
+        for section in ("parameters", "expression_policy"):
+            raised = copy.deepcopy(child)
+            target = raised["parameters"] if section == "parameters" else raised["expression_policy"]["parameters"]
+            target[limit] = 3.0  # the operator's limit is 2.0 in the pool policy
+            with pytest.raises(StrategyArtifactValidationError, match="risk limit|forbidden|schema|classified"):
+                validate_evolution_child_artifact(parent, raised)
+        with pytest.raises(StrategyArtifactValidationError):
+            validate_evolution_child_artifact(parent, child, parameter_changes={limit: 3.0})

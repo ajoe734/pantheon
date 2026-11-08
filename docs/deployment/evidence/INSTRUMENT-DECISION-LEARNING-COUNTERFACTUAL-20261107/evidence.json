@@ -1,0 +1,49 @@
+{
+  "task_id": "INSTRUMENT-DECISION-LEARNING-COUNTERFACTUAL-20261107",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "hosted_behaviour_exercised": false,
+  "statement": "Functional evidence only. Hosted behaviour was not exercised: no hosted VM, SSH, workflow dispatch, broker sandbox, futures smoke, live order, real capital or model provider call was run. Hosted verification belongs to INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "acceptance": {
+    "1": "services/execution/lean_runtime/expression_replay.py: replay(records, parameters) returns per decision Chosen/NoTrade, positions_after, margin_use, pnl_path at recorded marks and counterfactual_pnl for every non chosen candidate; deterministic, no network (test patches socket), direction taken as recorded. Tests reproduce the design E1-E3 table (2330 QFF +/-23,500 margin 31,995; 2317 DHF +/-42,000 margin 66,285 and no trade under the 3x cap; 0050 SRF +/-12,450 one unit, 2 SRF +/-24,900 margin 17,400 under the cap). The E rows are policy outcomes under the stated budgets, costs excluded as in the table. expression_policy.py gained shared sizing helpers (feasible_candidates, target_notional, clamped_units, round_trip_cost_per_unit) with decide() behaviour unchanged (test_expression_policy 15 passed).",
+    "2": "paper_signal_producer records metadata.expression_replay_input = {decision_id, view, candidates, book_before, budget, parameters} persisted with the decision record before any order; records_from_events rebuilds replay input from recorded event metadata; test rebuilds a SHORT 0050 day and the replayed choice, units and policy_parameters_digest equal the producer's.",
+    "3": "telemetry_event.schema.json enum gains persona_instrument_counterfactual; runtime_summary folds those events into summary.instrument_counterfactuals keyed (decision_id, instrument_id), redelivery overwrites, rows without keys ignored; fills, positions, trade counts and cost basis asserted unchanged and the field is absent when no rows exist. expression_replay.counterfactual_rows produces the rows (entry, mark, pnl_cf, costs, margin_use, underlying_entry/mark) with the same unit rule and costs.",
+    "4": "attribution.grade_instrument_decisions + service summary fields direction_hit_rate, instrument_regret, margin_use (and instrument_learning detail); BFF_API_CONTRACT.md documents them. Tests: correct LONG call (underlying 100->105) with a 1 share choice versus a 5,000 future is a direction hit with regret 4,995; a wrong call with the best instrument has regret 0; no trade regret is best cf minus 0; missing underlying prices are not graded; empty input gives null rates.",
+    "5": "evolution validate_evolution_child_artifact accepts the four expression controls (existing test unchanged and passing), rejects a child whose risk limit (max_leverage, gross_limit, net_limit) differs from the parent in parameters or expression_policy.parameters, and propose_child_artifact replays instrument-affecting changes (lever_min_strength, notional_fraction_at_full_strength) through program_qualification.expression_replay_gate on recorded decisions: lever_min_strength 0.9 is rejected child_replay_worse_than_parent, 0.3 accepted with evidence, empty records rejected no_recorded_decisions.",
+    "6": "This file."
+  },
+  "commands": [
+    {
+      "cmd": "pytest services/execution/lean_runtime/test_expression_replay.py services/execution/lean_runtime/test_expression_policy.py",
+      "result": "26 passed"
+    },
+    {
+      "cmd": "pytest services/execution/lean_runtime/test_paper_signal_producer.py",
+      "result": "93 passed"
+    },
+    {
+      "cmd": "pytest services/telemetry/test_runtime_summary_projection.py -k Counterfactual",
+      "result": "2 passed; the full file has 5 failed and 6 errors identically on the base commit (environment: missing auth/asyncpg dependencies), none introduced here"
+    },
+    {
+      "cmd": "pytest services/control-plane/bff/agora/performance",
+      "result": "46 passed"
+    },
+    {
+      "cmd": "pytest services/control-plane/bff/evolution/test_router.py services/evolution/test_program_qualification.py",
+      "result": "57 + 47 passed (combined runs: 57 passed; 47 passed)"
+    },
+    {
+      "cmd": "pytest services/execution/lean_runtime services/telemetry/test_trade_episode_projection.py services/telemetry/test_paper_runtime_ingest_contract.py services/control-plane/bff/agora services/control-plane/bff/evolution services/evolution/test_program_qualification.py -x",
+      "result": "stopped at agora/interaction test_worker idle_tick_truth (ModuleNotFoundError asyncpg); 667 passed before it. Rerun of agora+evolution with that test deselected: 391 passed, 1 failed (strategy_workshop reconstruction worker, ModuleNotFoundError cryptography). Both are environment failures in files this task does not touch."
+    }
+  ],
+  "not_run": [
+    "services/control-plane/bff full suite (test_bff_v5_loop_sentinel_contract import error in this environment)",
+    "trade_episode_projection.schema.json was not changed: the counterfactual rows ride the telemetry event schema and runtime summary, not the episode projection"
+  ],
+  "limitations": [
+    "Nothing yet emits persona_instrument_counterfactual events in production; this task provides the replay row builder, the event type, the summary fold and the attribution read. The emitter that grades after D+1 marks is not part of this task's artifact list.",
+    "Counterfactual q_cf follows the shared sizing rule (target notional clamped to the candidate's own max_units_by_risk); the cash-lever branch for LONG below lever_min_strength is honoured through target_notional."
+  ]
+}
