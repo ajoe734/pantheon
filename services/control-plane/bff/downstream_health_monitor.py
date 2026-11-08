@@ -1991,6 +1991,7 @@ class DownstreamHealthMonitor:
         self._pending_windows: Dict[tuple, Dict[str, Any]] = {}
         self._pending_probes: Dict[str, Dict[str, Any]] = {}
         self._pending_samples = 0
+        self._inflight_samples = 0
         self._pending_dropped = 0
         self._pending_max = max(
             1,
@@ -2271,7 +2272,7 @@ class DownstreamHealthMonitor:
     def pending_outcome_stats(self) -> Dict[str, int]:
         with self._pending_lock:
             return {
-                "pending_samples": self._pending_samples,
+                "pending_samples": self._pending_samples + self._inflight_samples,
                 "dropped_samples": self._pending_dropped,
                 "max_pending_samples": self._pending_max,
                 "flush_failures": self._flush_failures,
@@ -3052,7 +3053,7 @@ class DownstreamHealthMonitor:
         window_start = _window_start(timestamp, self._error_rate_window)
         latency = max(0.0, float(latency_ms))
         with self._pending_lock:
-            if self._pending_samples >= self._pending_max:
+            if self._pending_samples + self._inflight_samples >= self._pending_max:
                 self._pending_dropped += 1
                 return None
             agg = self._pending_windows.get((target_name, window_start))
@@ -3099,6 +3100,8 @@ class DownstreamHealthMonitor:
             self._pending_windows = {}
             self._pending_probes = {}
             self._pending_samples = 0
+            # Reserve capacity for the in-flight batch until commit/restore.
+            self._inflight_samples = samples
         return windows, probes, samples
 
     def _restore_pending(
@@ -3127,6 +3130,7 @@ class DownstreamHealthMonitor:
                     new["fail_run"] += old["fail_run"]
                     new["had_success"] = old["had_success"]
             self._pending_samples += samples
+            self._inflight_samples = 0
             self._flush_failures += 1
 
     def flush_outcomes_sync(self) -> List[Dict[str, Any]]:
@@ -3136,13 +3140,19 @@ class DownstreamHealthMonitor:
         """
         windows, probes, samples = self._take_pending()
         if not windows and not probes:
+            with self._pending_lock:
+                self._inflight_samples = 0
             return []
         try:
             touched = self._store.flush_outcomes(windows=windows, probes=probes)
-        except Exception as exc:  # noqa: BLE001
+        except BaseException as exc:  # noqa: BLE001
             self._restore_pending(windows, probes, samples)
+            if not isinstance(exc, Exception):
+                raise
             log.warning("outcome flush deferred: %s", exc)
             return []
+        with self._pending_lock:
+            self._inflight_samples = 0
         return [
             w
             for w in touched

@@ -36,5 +36,14 @@
     "baseline_env_failures_unrelated": "6 tests fail identically before and after (asyncpg/evolution reader missing in local venv)"
   },
   "sentinel_contract_changes": "test_bff_v5_loop_sentinel_contract.py: test_l12_bff_complete_registry_and_error_rate_spike now asserts record_downstream_outcome returns None and awaits monitor.flush_outcomes() for the single threshold crossing (len==1); test_command_executor_post_and_get_json_integration_with_downstream_monitor awaits flush_outcomes() before get_state. Rationale: persistence/emission moved to monitor flush by design; no assertion weakened. Both pass; the 3 other failures in that file (persona_health 503, strict telemetry route, replay MFA 403) are unrelated to the health monitor.",
-  "blocker_resolved": "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py is outside the artifact contract but two tests there (test_l12_bff_complete_registry_and_error_rate_spike, test_command_executor_post_and_get_json_integration_with_downstream_monitor) assert synchronous persistence/emission from record_downstream_outcome and fail by design. Needed edit: call asyncio.run(monitor.flush_outcomes()) before reading state / evaluating the threshold."
+  "blocker_resolved": "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py is outside the artifact contract but two tests there (test_l12_bff_complete_registry_and_error_rate_spike, test_command_executor_post_and_get_json_integration_with_downstream_monitor) assert synchronous persistence/emission from record_downstream_outcome and fail by design. Needed edit: call asyncio.run(monitor.flush_outcomes()) before reading state / evaluating the threshold.",
+  "review_round_2": {
+    "finding": "P1 pending_samples reset to zero during in-flight flush allowed unbounded accumulation (6,9,12 with max=3)",
+    "fix": "_inflight_samples reserves capacity from take until commit/restore; record drops when pending+inflight >= max; stats report pending+inflight",
+    "tests_added": [
+      "test_inflight_samples_reserve_capacity_across_locked_retries",
+      "test_monitor_loop_persists_request_outcomes_within_interval"
+    ],
+    "result": "115 passed in test_bff_downstream_health_monitor.py + test_downstream_health_monitor.py"
+  }
 }

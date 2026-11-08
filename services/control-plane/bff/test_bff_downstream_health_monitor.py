@@ -1489,3 +1489,90 @@ def test_locked_flush_keeps_samples_and_pending_is_bounded(tmp_path):
     del monitor._resolve_target_registry
     state = monitor.get_state()
     assert state["pending_outcomes"]["dropped_samples"] == 4
+
+
+def test_inflight_samples_reserve_capacity_across_locked_retries(tmp_path):
+    """Accepted + in-flight samples never exceed the bound while flushes fail."""
+    import sqlite3
+
+    monitor = _reg_monitor(tmp_path, pending_outcome_max=3)
+    ts = "2026-11-07T10:00:01Z"
+
+    def _record(n: int, ok: bool = False) -> None:
+        for _ in range(n):
+            monitor.record_downstream_outcome(
+                target_name="telemetry", ok=ok, status_code=503,
+                latency_ms=2.0, observed_at=ts,
+            )
+
+    def _locked_flush(**kw):
+        # Requests keep arriving while the flush is blocked on the lock.
+        _record(3)
+        stats = monitor.pending_outcome_stats()
+        assert stats["pending_samples"] <= 3
+        raise sqlite3.OperationalError("database is locked")
+
+    monitor._store.flush_outcomes = _locked_flush  # type: ignore[assignment]
+    _record(3)
+    for attempt in range(1, 4):
+        assert monitor.flush_outcomes_sync() == []
+        stats = monitor.pending_outcome_stats()
+        assert stats["pending_samples"] <= 3
+        assert stats["flush_failures"] == attempt
+        assert stats["dropped_samples"] == 3 * attempt
+    del monitor._store.flush_outcomes
+
+    # Real writer lock held by another connection, then released.
+    thread, release = _hold_write_lock(monitor._store.path, 30)
+    monitor._store.flush_outcomes = lambda **kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+        sqlite3.OperationalError("database is locked")
+    )
+    assert monitor.flush_outcomes_sync() == []
+    del monitor._store.flush_outcomes
+    release.set()
+    thread.join(5)
+
+    monitor.flush_outcomes_sync()
+    assert monitor.pending_outcome_stats()["pending_samples"] == 0
+    window = monitor._store.append_error_sample(
+        target_name="telemetry",
+        window_started_at=_window_start_for(monitor, ts),
+        ok=True, latency_ms=0.0, status_code=200, detail=None,
+        observed_at="2026-11-07T10:00:03Z",
+    )
+    assert window["sample_count"] == 4 and window["failure_count"] == 3
+
+
+def test_monitor_loop_persists_request_outcomes_within_interval(tmp_path):
+    monitor = _reg_monitor(tmp_path)
+    monitor._probe_interval = 0.05
+    monitor._probe_all = AsyncMock()  # type: ignore[assignment]
+    monitor._deliver_due_sync = lambda: None  # type: ignore[assignment]
+    ts = "2026-11-07T10:00:01Z"
+
+    async def _drive() -> None:
+        await monitor.start()
+        try:
+            for i in range(4):
+                monitor.record_downstream_outcome(
+                    target_name="telemetry", ok=i != 0, status_code=200 if i else 503,
+                    latency_ms=10.0 + i, observed_at=ts,
+                )
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if monitor.pending_outcome_stats()["pending_samples"] == 0:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            await monitor.stop()
+
+    asyncio.run(_drive())
+    assert monitor.pending_outcome_stats()["pending_samples"] == 0
+    window = monitor._store.append_error_sample(
+        target_name="telemetry",
+        window_started_at=_window_start_for(monitor, ts),
+        ok=True, latency_ms=0.0, status_code=200, detail=None,
+        observed_at="2026-11-07T10:00:03Z",
+    )
+    assert window["sample_count"] == 5 and window["failure_count"] == 1
+    assert window["latency_total_ms"] == pytest.approx(10 + 11 + 12 + 13)
