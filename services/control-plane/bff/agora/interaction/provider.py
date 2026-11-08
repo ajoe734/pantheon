@@ -311,6 +311,640 @@ def build_participant_admission(
     return participant, admission
 
 
+def _clean_ref_list(raw: Any, *, max_items: int = 20) -> List[str]:
+    if not isinstance(raw, list):
+        return []
+    out: List[str] = []
+    for item in raw:
+        val = str(item or "").strip()
+        if val and val not in out:
+            out.append(val)
+            if len(out) >= max_items:
+                break
+    return out
+
+
+def _extract_exact_bound_artifact_parameters(
+    *,
+    persona: Dict[str, Any],
+    active_rb: Optional[Dict[str, Any]],
+    read_store: Any,
+    tenant_id: str,
+) -> Dict[str, Any]:
+    """Resolve strategy parameters ONLY from the Persona's exact bound artifact.
+
+    Never infer or fabricate indicator/MA parameters from ``strategy_family``.
+    If no exact bound artifact or parameter payload is available, report
+    ``status="not_provided"``.
+    """
+    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+    strategy_family = persona.get("strategy_family")
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    rb_meta = (
+        active_rb.get("metadata")
+        if isinstance(active_rb, dict) and isinstance(active_rb.get("metadata"), dict)
+        else {}
+    )
+    obj_store = rb_meta.get("object_store") if isinstance(rb_meta.get("object_store"), dict) else {}
+    loader_att = (
+        rb_meta.get("authoritative_loader_attestation")
+        if isinstance(rb_meta.get("authoritative_loader_attestation"), dict)
+        else {}
+    )
+    prov_readback = (
+        metadata.get("provisioning_authoritative_readback")
+        if isinstance(metadata.get("provisioning_authoritative_readback"), dict)
+        else {}
+    )
+
+    bound_artifact_id = str(
+        (active_rb or {}).get("strategy_artifact_id")
+        or (active_rb or {}).get("artifact_id")
+        or rb_meta.get("strategy_artifact_id")
+        or rb_meta.get("artifact_id")
+        or obj_store.get("artifact_id")
+        or loader_att.get("artifact_id")
+        or persona.get("strategy_artifact_id")
+        or persona.get("artifact_id")
+        or metadata.get("strategy_artifact_id")
+        or metadata.get("artifact_id")
+        or prov_readback.get("strategy_artifact_id")
+        or prov_readback.get("artifact_id")
+        or ""
+    ).strip()
+
+    bound_version = str(
+        (active_rb or {}).get("strategy_version")
+        or rb_meta.get("strategy_version")
+        or obj_store.get("version")
+        or obj_store.get("sha256")
+        or loader_att.get("artifact_sha256")
+        or persona.get("strategy_version")
+        or metadata.get("strategy_version")
+        or ""
+    ).strip() or None
+
+    candidate_params: Optional[Dict[str, Any]] = None
+    source_ref: Optional[str] = None
+
+    # 1. Check authoritative bound artifact in read_store if bound_artifact_id exists
+    if bound_artifact_id and read_store is not None:
+        for reader_name in ("read_registry_strategy_artifact_detail", "get_strategy_artifact"):
+            reader = getattr(read_store, reader_name, None)
+            if not callable(reader):
+                continue
+            try:
+                art = reader(bound_artifact_id)
+            except Exception:
+                art = None
+            if not isinstance(art, dict):
+                continue
+            art_tenant = str(art.get("tenant_id") or "").strip()
+            if art_tenant and art_tenant != tenant_id:
+                continue
+            art_id = str(
+                art.get("artifact_id") or art.get("registry_id") or art.get("id") or ""
+            ).strip()
+            if art_id and art_id != bound_artifact_id:
+                continue
+            art_persona = str(
+                art.get("persona_id") or art.get("sponsor_persona_id") or ""
+            ).strip()
+            if art_persona and persona_id and art_persona != persona_id:
+                continue
+            bound_version = (
+                str(art.get("version_id") or art.get("version") or art.get("sha256") or "").strip()
+                or bound_version
+            )
+            for container in (
+                art.get("parameters"),
+                art.get("strategy_parameters"),
+                (art.get("spec") if isinstance(art.get("spec"), dict) else {}).get("parameters"),
+                (art.get("payload") if isinstance(art.get("payload"), dict) else {}).get("parameters"),
+                (art.get("metadata") if isinstance(art.get("metadata"), dict) else {}).get("parameters"),
+            ):
+                if isinstance(container, dict) and container:
+                    candidate_params = dict(container)
+                    source_ref = f"strategy_artifact:{bound_artifact_id}"
+                    break
+            if candidate_params:
+                break
+
+    # 2. Check exact runtime binding loader attestation / object_store payload if still not resolved
+    if candidate_params is None and bound_artifact_id:
+        for container in (
+            loader_att.get("parameters"),
+            loader_att.get("strategy_parameters"),
+            obj_store.get("parameters"),
+            obj_store.get("strategy_parameters"),
+            rb_meta.get("approved_strategy_parameters"),
+        ):
+            if isinstance(container, dict) and container:
+                candidate_params = dict(container)
+                source_ref = f"runtime_binding_artifact:{bound_artifact_id}"
+                break
+
+    if candidate_params is not None:
+        return {
+            "status": "bound_artifact_verified",
+            "artifact_id": bound_artifact_id,
+            "version": bound_version,
+            "strategy_family": strategy_family,
+            "parameters": json.loads(json.dumps(candidate_params, default=str)),
+            "source_ref": source_ref,
+        }
+
+    return {
+        "status": "not_provided",
+        "artifact_id": bound_artifact_id or None,
+        "version": bound_version,
+        "strategy_family": strategy_family,
+        "parameters": None,
+        "source_ref": f"strategy_artifact:{bound_artifact_id}" if bound_artifact_id else None,
+        "reason": (
+            "exact_bound_artifact_parameters_not_provided"
+            if bound_artifact_id
+            else "no_bound_strategy_artifact_id"
+        ),
+        "guidance": (
+            "Exact strategy parameters are not_provided in bounded operating evidence. "
+            "Do not infer or fabricate indicator/MA parameters from strategy_family."
+        ),
+    }
+
+
+def hydrate_persona_operating_context(
+    *,
+    persona: Dict[str, Any],
+    read_store: Any,
+    tenant_id: str,
+    captured_at: str,
+    evidence_cutoff: Optional[str] = None,
+    authorization: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Hydrate and freeze bounded operating evidence for a selected Persona.
+
+    All reads are strictly scoped to ``(tenant_id, persona_id)`` and bounded to
+    recent records. Missing or unavailable upstream surfaces are explicitly
+    reported as ``not_provided`` / ``unavailable`` and never as proof of zero
+    trades or positions.
+    """
+    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+    persona_tenant = str(persona.get("tenant_id") or "").strip()
+    if not tenant_id or (persona_tenant and persona_tenant != tenant_id):
+        raise ValueError("Persona tenant does not match the interaction tenant")
+
+    existing = persona.get("operating_context")
+    if (
+        isinstance(existing, dict)
+        and existing.get("schema_version") == "agora.persona-operating-context.v1"
+        and str(existing.get("persona_id") or "") == persona_id
+        and str(existing.get("tenant_id") or "") == tenant_id
+    ):
+        return json.loads(json.dumps(existing, default=str))
+
+    cutoff = str(evidence_cutoff or captured_at or utc_timestamp()).strip()
+    persona_version = _persona_version(persona)
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    prov_readback = (
+        metadata.get("provisioning_authoritative_readback")
+        if isinstance(metadata.get("provisioning_authoritative_readback"), dict)
+        else {}
+    )
+
+    candidate_rb_ids = {
+        str(val).strip()
+        for val in (
+            persona.get("runtime_binding_id"),
+            persona.get("runtime_id"),
+            metadata.get("runtime_binding_id"),
+            metadata.get("runtime_id"),
+            prov_readback.get("runtime_binding_id"),
+            prov_readback.get("runtime_id"),
+        )
+        if val and str(val).strip()
+    }
+    candidate_cap_binding_ids = {
+        str(val).strip()
+        for val in (
+            persona.get("persona_capital_binding_id"),
+            persona.get("binding_id"),
+            metadata.get("persona_capital_binding_id"),
+            metadata.get("binding_id"),
+            prov_readback.get("persona_capital_binding_id"),
+            prov_readback.get("binding_id"),
+        )
+        if val and str(val).strip()
+    }
+    candidate_pool_ids = {
+        str(val).strip()
+        for val in (
+            persona.get("capital_pool_id"),
+            persona.get("internal_paper_capital_pool_id"),
+            persona.get("legacy_paper_capital_pool_id"),
+            metadata.get("capital_pool_id"),
+            metadata.get("internal_paper_capital_pool_id"),
+            metadata.get("legacy_paper_capital_pool_id"),
+            prov_readback.get("capital_pool_id"),
+            prov_readback.get("internal_paper_capital_pool_id"),
+        )
+        if val and str(val).strip()
+    }
+    candidate_plan_ids = {
+        str(val).strip()
+        for val in (
+            persona.get("deployment_plan_id"),
+            persona.get("plan_id"),
+            metadata.get("deployment_plan_id"),
+            metadata.get("plan_id"),
+            prov_readback.get("deployment_plan_id"),
+            prov_readback.get("plan_id"),
+        )
+        if val and str(val).strip()
+    }
+
+    matched_rbs: List[Dict[str, Any]] = []
+    rb_surface_status = "unavailable"
+    if read_store is not None and callable(getattr(read_store, "list_runtime_bindings", None)):
+        try:
+            raw_rbs = read_store.list_runtime_bindings()
+            rb_surface_status = "available"
+        except Exception:
+            raw_rbs = None
+            rb_surface_status = "unavailable"
+        if isinstance(raw_rbs, list):
+            for rb in raw_rbs:
+                if not isinstance(rb, dict):
+                    continue
+                rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), dict) else {}
+                rb_tenant = str(rb.get("tenant_id") or rb_meta.get("tenant_id") or "").strip()
+                if rb_tenant and rb_tenant != tenant_id:
+                    continue
+                rb_persona = str(
+                    rb.get("persona_id")
+                    or rb_meta.get("persona_id")
+                    or rb_meta.get("sponsor_persona_id")
+                    or ""
+                ).strip()
+                if rb_persona and rb_persona != persona_id:
+                    continue
+                rb_id = str(
+                    rb.get("runtime_id") or rb.get("binding_id") or rb.get("id") or ""
+                ).strip()
+                rb_plan_id = str(rb.get("plan_id") or rb_meta.get("plan_id") or "").strip()
+                rb_cap_binding_id = str(
+                    rb.get("persona_capital_binding_id")
+                    or rb_meta.get("persona_capital_binding_id")
+                    or ""
+                ).strip()
+                rb_pool_id = str(
+                    rb.get("capital_pool_id") or rb_meta.get("capital_pool_id") or ""
+                ).strip()
+                if (
+                    rb_persona == persona_id
+                    or (rb_id and rb_id in candidate_rb_ids)
+                    or (rb_plan_id and rb_plan_id in candidate_plan_ids)
+                    or (rb_cap_binding_id and rb_cap_binding_id in candidate_cap_binding_ids)
+                    or (rb_pool_id and rb_pool_id in candidate_pool_ids)
+                ):
+                    matched_rbs.append(rb)
+
+    active_rb: Optional[Dict[str, Any]] = None
+    for rb in matched_rbs:
+        st = str(rb.get("status") or rb.get("state") or "").strip().lower()
+        if st in ("active", "running", "healthy", "paper_running"):
+            active_rb = rb
+            break
+    if active_rb is None and matched_rbs:
+        active_rb = matched_rbs[0]
+
+    rb_meta = (
+        active_rb.get("metadata")
+        if isinstance(active_rb, dict) and isinstance(active_rb.get("metadata"), dict)
+        else {}
+    )
+    active_runtime_id = (
+        str(active_rb.get("runtime_id") or active_rb.get("binding_id") or active_rb.get("id") or "").strip()
+        if isinstance(active_rb, dict)
+        else ""
+    )
+
+    if active_rb is not None:
+        runtime_binding_info: Dict[str, Any] = {
+            "status": "resolved",
+            "runtime_id": active_runtime_id or None,
+            "plan_id": str(active_rb.get("plan_id") or rb_meta.get("plan_id") or "").strip() or None,
+            "binding_status": str(active_rb.get("status") or active_rb.get("state") or "unknown").strip().lower(),
+            "health_status": str(active_rb.get("health_status") or rb_meta.get("health_status") or "not_provided").strip().lower(),
+            "environment": str(
+                active_rb.get("environment") or active_rb.get("mode") or rb_meta.get("environment") or "paper"
+            ).strip().lower(),
+            "capital_pool_id": str(
+                active_rb.get("capital_pool_id") or rb_meta.get("capital_pool_id") or ""
+            ).strip() or None,
+            "persona_capital_binding_id": str(
+                active_rb.get("persona_capital_binding_id") or rb_meta.get("persona_capital_binding_id") or ""
+            ).strip() or None,
+            "updated_at": active_rb.get("updated_at") or active_rb.get("created_at"),
+        }
+    elif rb_surface_status == "unavailable":
+        runtime_binding_info = {
+            "status": "unavailable",
+            "runtime_id": next(iter(sorted(candidate_rb_ids)), None),
+            "reason": "runtime_binding_read_surface_unavailable",
+        }
+    else:
+        runtime_binding_info = {
+            "status": "none_bound",
+            "runtime_id": None,
+            "reason": "no_matching_runtime_binding_for_persona",
+        }
+
+    lifecycle_maturity = str(persona.get("lifecycle_state") or "unknown").strip().lower()
+    paper_runtime_state = str(
+        persona.get("paper_runtime_state")
+        or metadata.get("paper_runtime_state")
+        or (
+            "paper_running"
+            if runtime_binding_info.get("status") == "resolved"
+            and runtime_binding_info.get("environment") == "paper"
+            and runtime_binding_info.get("binding_status") in ("active", "running", "healthy", "paper_running")
+            else "not_provided"
+        )
+    ).strip().lower()
+    execution_mode = (
+        str(runtime_binding_info.get("environment") or "paper")
+        if runtime_binding_info.get("status") == "resolved"
+        else ("paper" if paper_runtime_state in ("paper_running", "paper_active", "active") else "research")
+    )
+    operational_state = (
+        "paper_running"
+        if paper_runtime_state in ("paper_running", "paper_active")
+        or (
+            runtime_binding_info.get("status") == "resolved"
+            and execution_mode == "paper"
+            and runtime_binding_info.get("binding_status") in ("active", "running", "healthy", "paper_running")
+        )
+        else (paper_runtime_state if paper_runtime_state != "not_provided" else lifecycle_maturity)
+    )
+    lifecycle_and_execution = {
+        "lifecycle_maturity": lifecycle_maturity,
+        "execution_mode": execution_mode,
+        "operational_state": operational_state,
+        "paper_runtime_state": paper_runtime_state,
+    }
+
+    strategy_parameters_info = _extract_exact_bound_artifact_parameters(
+        persona=persona,
+        active_rb=active_rb,
+        read_store=read_store,
+        tenant_id=tenant_id,
+    )
+
+    telemetry_info: Dict[str, Any]
+    telemetry_not_provided: List[str] = []
+    telemetry_pos_refs: List[str] = []
+    if active_runtime_id and read_store is not None and callable(getattr(read_store, "get_telemetry_summary", None)):
+        try:
+            raw_telem = read_store.get_telemetry_summary(active_runtime_id)
+        except Exception:
+            raw_telem = None
+        if isinstance(raw_telem, dict):
+            telem_tenant = str(raw_telem.get("tenant_id") or "").strip()
+            telem_persona = str(raw_telem.get("persona_id") or "").strip()
+            if (telem_tenant and telem_tenant != tenant_id) or (telem_persona and telem_persona != persona_id):
+                telemetry_info = {
+                    "status": "unavailable",
+                    "runtime_id": active_runtime_id,
+                    "positions": None,
+                    "reason": "telemetry_scope_mismatch_excluded",
+                }
+            else:
+                raw_positions = raw_telem.get("positions")
+                bounded_positions: Optional[List[Dict[str, Any]]] = None
+                if isinstance(raw_positions, list):
+                    bounded_positions = []
+                    for pos in raw_positions[:10]:
+                        if not isinstance(pos, dict):
+                            continue
+                        bounded_positions.append({
+                            "symbol": pos.get("symbol") or pos.get("instrument"),
+                            "side": pos.get("side"),
+                            "quantity": pos.get("quantity") if pos.get("quantity") is not None else pos.get("net_quantity"),
+                            "avg_entry_price": pos.get("avg_entry_price") if pos.get("avg_entry_price") is not None else pos.get("entry_price"),
+                            "mark_price": pos.get("mark_price") if pos.get("mark_price") is not None else raw_telem.get("mark_price"),
+                            "mark_as_of": pos.get("mark_as_of") or raw_telem.get("mark_as_of") or raw_telem.get("updated_at"),
+                            "unrealized_pnl": pos.get("unrealized_pnl"),
+                            "realized_pnl": pos.get("realized_pnl"),
+                            "snapshot_ref": pos.get("snapshot_ref") or pos.get("position_snapshot_ref"),
+                        })
+                        snap_ref = str(pos.get("snapshot_ref") or pos.get("position_snapshot_ref") or "").strip()
+                        if snap_ref and snap_ref not in telemetry_pos_refs:
+                            telemetry_pos_refs.append(snap_ref)
+                else:
+                    telemetry_not_provided.append("positions")
+
+                for ref in _clean_ref_list(
+                    raw_telem.get("position_snapshot_refs") or raw_telem.get("position_risk_snapshot_refs")
+                ):
+                    if ref not in telemetry_pos_refs:
+                        telemetry_pos_refs.append(ref)
+
+                tracked_metrics = (
+                    "mark_price",
+                    "last_fill",
+                    "total_trades",
+                    "pnl",
+                    "realized_pnl",
+                    "unrealized_pnl",
+                    "return_percent",
+                    "drawdown",
+                    "fill_rate",
+                )
+                for field_name in tracked_metrics:
+                    if raw_telem.get(field_name) is None:
+                        telemetry_not_provided.append(field_name)
+
+                telemetry_info = {
+                    "status": "partial" if telemetry_not_provided else "complete",
+                    "runtime_id": active_runtime_id,
+                    "positions": bounded_positions,
+                    "position_snapshot_refs": telemetry_pos_refs,
+                    "mark_price": raw_telem.get("mark_price"),
+                    "mark_as_of": raw_telem.get("mark_as_of") or raw_telem.get("updated_at"),
+                    "mark_source_ref": raw_telem.get("mark_source_ref") or f"telemetry:{active_runtime_id}",
+                    "last_fill": raw_telem.get("last_fill"),
+                    "total_trades": raw_telem.get("total_trades"),
+                    "pnl": raw_telem.get("pnl"),
+                    "realized_pnl": raw_telem.get("realized_pnl"),
+                    "unrealized_pnl": raw_telem.get("unrealized_pnl"),
+                    "return_percent": raw_telem.get("return_percent"),
+                    "drawdown": raw_telem.get("drawdown"),
+                    "fill_rate": raw_telem.get("fill_rate"),
+                    "updated_at": raw_telem.get("updated_at"),
+                    "not_provided_fields": sorted(set(telemetry_not_provided)),
+                }
+        else:
+            telemetry_info = {
+                "status": "unavailable",
+                "runtime_id": active_runtime_id,
+                "positions": None,
+                "position_snapshot_refs": [],
+                "not_provided_fields": ["positions", "mark_price", "last_fill", "pnl", "realized_pnl", "return_percent"],
+                "reason": "telemetry_summary_not_found",
+            }
+    else:
+        telemetry_info = {
+            "status": "unavailable",
+            "runtime_id": active_runtime_id or None,
+            "positions": None,
+            "position_snapshot_refs": [],
+            "not_provided_fields": ["positions", "mark_price", "last_fill", "pnl", "realized_pnl", "return_percent"],
+            "reason": "no_bound_runtime_telemetry",
+        }
+
+    # Hydrate bounded recent trade journal episodes for the selected Persona
+    journal_info: Dict[str, Any]
+    store_episode_reader = (
+        getattr(read_store, "read_persona_operating_episodes", None)
+        or getattr(read_store, "list_persona_trade_episodes", None)
+        if read_store is not None
+        else None
+    )
+    if callable(store_episode_reader):
+        try:
+            raw_journal = store_episode_reader(
+                persona_id,
+                tenant_id=tenant_id,
+                limit=5,
+                evidence_cutoff=cutoff,
+            )
+        except TypeError:
+            raw_journal = store_episode_reader(persona_id)
+        if isinstance(raw_journal, dict) and "episodes" in raw_journal:
+            journal_info = json.loads(json.dumps(raw_journal, default=str))
+        elif isinstance(raw_journal, list):
+            from services.control_plane.bff.trade_journal import _normalize_episode_for_persona
+
+            norm_eps = []
+            for item in raw_journal:
+                if not isinstance(item, dict):
+                    continue
+                norm = _normalize_episode_for_persona(
+                    item,
+                    persona_id=persona_id,
+                    tenant_id=tenant_id,
+                    evidence_cutoff=cutoff,
+                )
+                if norm is not None:
+                    norm_eps.append(norm)
+            norm_eps = norm_eps[:5]
+            journal_info = {
+                "status": (
+                    "empty"
+                    if not norm_eps
+                    else (
+                        "partial"
+                        if any(ep.get("not_provided_fields") for ep in norm_eps)
+                        else "complete"
+                    )
+                ),
+                "source": "read_store.persona_trade_episodes",
+                "persona_id": persona_id,
+                "tenant_id": tenant_id,
+                "evidence_cutoff": cutoff,
+                "episode_count": len(norm_eps),
+                "open_episode_count": sum(
+                    1 for ep in norm_eps if str(ep.get("status") or "").lower() == "open"
+                ),
+                "episodes": norm_eps,
+                "reason": None if norm_eps else "no_persona_episodes_returned",
+            }
+        else:
+            journal_info = {
+                "status": "unavailable",
+                "source": "read_store.persona_trade_episodes",
+                "persona_id": persona_id,
+                "tenant_id": tenant_id,
+                "evidence_cutoff": cutoff,
+                "episode_count": None,
+                "open_episode_count": None,
+                "episodes": [],
+                "reason": "invalid_persona_episode_payload",
+            }
+    else:
+        from services.control_plane.bff.trade_journal import read_persona_operating_episodes
+
+        journal_info = read_persona_operating_episodes(
+            persona_id,
+            authorization,
+            tenant_id,
+            limit=5,
+            evidence_cutoff=cutoff,
+        )
+
+    owner_source_refs: List[Dict[str, Optional[str]]] = [
+        {"kind": "persona", "id": persona_id, "version": persona_version},
+    ]
+    if active_runtime_id:
+        owner_source_refs.append({
+            "kind": "performance_window",
+            "id": f"runtime_telemetry:{active_runtime_id}",
+            "version": str(telemetry_info.get("updated_at") or runtime_binding_info.get("updated_at") or cutoff),
+        })
+    for ep in journal_info.get("episodes") or []:
+        if not isinstance(ep, dict):
+            continue
+        ep_id = str(ep.get("episode_id") or "").strip()
+        if ep_id:
+            owner_source_refs.append({
+                "kind": "journal_entry",
+                "id": ep_id,
+                "version": str(ep.get("updated_at") or ep.get("opened_at") or cutoff),
+            })
+
+    position_snapshot_refs: List[str] = list(telemetry_pos_refs)
+    for ep in journal_info.get("episodes") or []:
+        if not isinstance(ep, dict):
+            continue
+        for ref in _clean_ref_list(ep.get("position_snapshot_refs")):
+            if ref not in position_snapshot_refs:
+                position_snapshot_refs.append(ref)
+
+    all_not_provided: List[str] = list(telemetry_info.get("not_provided_fields") or [])
+    if strategy_parameters_info.get("status") != "bound_artifact_verified":
+        all_not_provided.append("strategy_parameters")
+    for ep in journal_info.get("episodes") or []:
+        if isinstance(ep, dict):
+            for field_name in ep.get("not_provided_fields") or []:
+                all_not_provided.append(f"trade_journal.{field_name}")
+
+    return {
+        "schema_version": "agora.persona-operating-context.v1",
+        "persona_id": persona_id,
+        "persona_version": persona_version,
+        "tenant_id": tenant_id,
+        "captured_at": captured_at,
+        "evidence_cutoff": cutoff,
+        "lifecycle_and_execution": lifecycle_and_execution,
+        "runtime_binding": runtime_binding_info,
+        "strategy_parameters": strategy_parameters_info,
+        "telemetry_and_positions": telemetry_info,
+        "trade_journal": journal_info,
+        "owner_source_refs": owner_source_refs,
+        "position_snapshot_refs": position_snapshot_refs[:20],
+        "coverage": {
+            "runtime_binding": runtime_binding_info.get("status"),
+            "strategy_parameters": strategy_parameters_info.get("status"),
+            "telemetry_and_positions": telemetry_info.get("status"),
+            "trade_journal": journal_info.get("status"),
+            "not_provided_fields": sorted(set(all_not_provided)),
+            "missing_semantics": "not_provided_or_unavailable_never_proves_zero_records",
+        },
+        "authority": authority_boundary(),
+    }
+
+
 def build_provider_prompt(
     *,
     topic: str,
@@ -321,9 +955,19 @@ def build_provider_prompt(
     context_refs: List[Dict[str, Any]],
     tenant_id: str,
     submitted_at: str,
+    operating_context: Optional[Dict[str, Any]] = None,
 ) -> tuple[str, Dict[str, Any]]:
     metadata = persona_profile.get("metadata") if isinstance(persona_profile.get("metadata"), dict) else {}
-    frozen_persona_profile = {
+    resolved_operating_context = (
+        operating_context
+        if isinstance(operating_context, dict)
+        else (
+            persona_profile.get("operating_context")
+            if isinstance(persona_profile.get("operating_context"), dict)
+            else None
+        )
+    )
+    frozen_persona_profile: Dict[str, Any] = {
         "persona_id": participant["persona_id"],
         "persona_version": participant["persona_version"],
         "display_name": participant["display_name"],
@@ -332,7 +976,9 @@ def build_provider_prompt(
         "strategy_family": persona_profile.get("strategy_family"),
         "traits": persona_profile.get("traits") or metadata.get("traits") or {},
     }
-    context_pack = {
+    if resolved_operating_context is not None:
+        frozen_persona_profile["operating_context"] = resolved_operating_context
+    context_pack: Dict[str, Any] = {
         "schema_version": "agora.persona-opinion.request.v1",
         "interaction_id": interaction_id,
         "tenant_id": tenant_id,
@@ -347,12 +993,19 @@ def build_provider_prompt(
         "context_refs": context_refs,
         "authority": authority_boundary(),
     }
+    if resolved_operating_context is not None:
+        context_pack["operating_context"] = resolved_operating_context
     exact_context = json.dumps(context_pack, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     schema = provider_output_shape()
     prompt = (
         "Return exactly one JSON object and no markdown. Act only as the frozen selected Persona. "
         "Do not call tools or read/write memory. Do not submit orders, call brokers, change capital, "
         "bind runtime, promote lifecycle, mutate policy, or claim execution. "
+        "Ground any claims about your positions, fills, trade episodes, PnL, mark prices, runtime state, "
+        "or strategy parameters strictly in IMMUTABLE_TYPED_CONTEXT.operating_context; when a surface or "
+        "field is marked not_provided or unavailable, state that it is not_provided/unavailable rather "
+        "than claiming no trades or positions exist, and never invent indicator/MA parameters from "
+        "strategy_family. "
         f"Required output shape: {json.dumps(schema, separators=(',', ':'))}\n"
         "recommended_measures may be empty. If it is non-empty, every measure must include every "
         "field shown above, use at least one fully populated evidence_refs entry, carry the exact "
