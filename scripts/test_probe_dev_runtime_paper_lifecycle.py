@@ -89,6 +89,8 @@ class HonestCanonicalOwnerDouble:
         telemetry_broker_status: str = "filled",
         telemetry_event_type: str = "paper_fill_simulated",
         telemetry_rejection_reason: str | None = None,
+        telemetry_extra_metadata: dict[str, Any] | None = None,
+        telemetry_signal_driven: bool = True,
         telemetry_correlation_override: str | None = None,
         telemetry_stripped_mode: bool = False,
         trade_episode_produced: bool = True,
@@ -132,6 +134,8 @@ class HonestCanonicalOwnerDouble:
         self.telemetry_broker_status = telemetry_broker_status
         self.telemetry_event_type = telemetry_event_type
         self.telemetry_rejection_reason = telemetry_rejection_reason
+        self.telemetry_extra_metadata = dict(telemetry_extra_metadata or {})
+        self.telemetry_signal_driven = telemetry_signal_driven
         self.telemetry_correlation_override = telemetry_correlation_override
         self.telemetry_stripped_mode = telemetry_stripped_mode
         self.trade_episode_produced = trade_episode_produced
@@ -709,6 +713,12 @@ class HonestCanonicalOwnerDouble:
                 ev["metadata"]["reason"] = self.telemetry_rejection_reason
                 ev["metadata"]["requested_quantity"] = 1.0
                 ev["metadata"]["holding_quantity"] = 0.0
+            ev["metadata"].update(self.telemetry_extra_metadata)
+            if not self.telemetry_signal_driven:
+                # An expiry settlement is raised by the ledger, not by the stimulus.
+                ev.pop("correlation_envelope", None)
+                for key in ("correlation_envelope", "artifact_signal_not_smoke", "source_snapshot_driven"):
+                    ev["metadata"].pop(key, None)
             self.created_events[event_id] = ev
             return HttpResponse(200, ev, {}, url, method)
 
@@ -1712,3 +1722,121 @@ def test_paper_lifecycle_rejects_other_order_rejection_reasons() -> None:
     with pytest.raises(ProbeTimeoutError, match="Timed out waiting for telemetry fill event"):
         probe.run()
 
+
+
+def _run_terminal_probe(**double_kwargs: Any) -> dict[str, Any]:
+    def make() -> HonestCanonicalOwnerDouble:
+        return HonestCanonicalOwnerDouble(trade_episode_produced=False, **double_kwargs)
+
+    double = make()
+    config = _default_test_config(execute_paper_lifecycle=True)
+
+    def transport_factory() -> HonestCanonicalOwnerDouble:
+        fresh = make()
+        fresh.created_bindings = double.created_bindings
+        fresh.created_events = double.created_events
+        return fresh
+
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+    return probe.run(fresh_transport_factory=transport_factory)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    ],
+)
+def test_paper_lifecycle_accepts_every_risk_gate_rejection_terminal(reason: str) -> None:
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 6): gate rejections are terminals."""
+    evidence = _run_terminal_probe(
+        telemetry_event_type="order_rejection",
+        telemetry_rejection_reason=reason,
+        telemetry_broker_status=reason,
+        telemetry_extra_metadata={"instrument_id": "ssf:QFF:202611", "risk_status": "rejected"},
+    )
+    assert evidence["status"] == "passed"
+    loop9 = evidence["loops"]["loop_09_capital_artifact_execution"]
+    assert loop9["authority_readback"]["metadata"]["reason"] == reason
+    assert loop9["assertions"]["terminal_outcome"] == "rejection"
+    assert loop9["assertions"]["broker_submission_status"] == reason
+    assert evidence["durable_fresh_client_reload"]["verified"] is True
+
+
+def test_paper_lifecycle_rejection_whose_status_disagrees_with_reason_fails_closed() -> None:
+    double = HonestCanonicalOwnerDouble(
+        telemetry_event_type="order_rejection",
+        telemetry_rejection_reason="leverage_limit",
+        telemetry_broker_status="filled",
+        trade_episode_produced=False,
+    )
+    probe = DevRuntimePaperLifecycleProbe(_default_test_config(execute_paper_lifecycle=True), transport=double)
+    with pytest.raises(ProbeError, match="broker_submission_status must be 'leverage_limit'"):
+        probe.run()
+
+
+def test_paper_lifecycle_accepts_recorded_no_trade_terminal() -> None:
+    evidence = _run_terminal_probe(
+        telemetry_event_type="paper_order_simulated",
+        telemetry_broker_status="not_submitted_signal_noop",
+        telemetry_extra_metadata={
+            "noop_reason": "already_at_target",
+            "decision_status": "no_order",
+            "order_status": "not_submitted",
+        },
+    )
+    assert evidence["status"] == "passed"
+    loop9 = evidence["loops"]["loop_09_capital_artifact_execution"]
+    assert loop9["authority_readback"]["event_type"] == "paper_order_simulated"
+    assert loop9["assertions"]["terminal_outcome"] == "no_trade"
+    assert loop9["assertions"]["broker_submission_status"] == "not_submitted_signal_noop"
+
+
+def test_paper_lifecycle_paper_order_simulated_without_no_trade_evidence_is_not_a_terminal() -> None:
+    double = HonestCanonicalOwnerDouble(
+        telemetry_event_type="paper_order_simulated",
+        telemetry_broker_status="submitted",
+        trade_episode_produced=False,
+    )
+    config = _default_test_config(execute_paper_lifecycle=True, poll_timeout_seconds=0.1)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+    with pytest.raises(ProbeTimeoutError, match="Timed out waiting for telemetry fill event"):
+        probe.run()
+
+
+def test_paper_lifecycle_accepts_paper_futures_settled_terminal() -> None:
+    evidence = _run_terminal_probe(
+        telemetry_event_type="paper_futures_settled",
+        telemetry_broker_status="not_submitted_expiry_settlement",
+        telemetry_signal_driven=False,
+        telemetry_extra_metadata={
+            "instrument_id": "ssf:QFF:202611",
+            "kind": "stock_future",
+            "multiplier": 100.0,
+            "final_settlement_price": 2310.0,
+        },
+    )
+    assert evidence["status"] == "passed"
+    loop9 = evidence["loops"]["loop_09_capital_artifact_execution"]
+    assert loop9["assertions"]["terminal_outcome"] == "settlement"
+    assert loop9["assertions"]["source_snapshot_driven"] is False
+    assert loop9["authority_readback"]["metadata"]["instrument_id"] == "ssf:QFF:202611"
+
+
+def test_paper_lifecycle_settlement_still_requires_paper_only_flags() -> None:
+    double = HonestCanonicalOwnerDouble(
+        telemetry_event_type="paper_futures_settled",
+        telemetry_broker_status="not_submitted_expiry_settlement",
+        telemetry_signal_driven=False,
+        telemetry_real_capital=True,
+        trade_episode_produced=False,
+    )
+    probe = DevRuntimePaperLifecycleProbe(_default_test_config(execute_paper_lifecycle=True), transport=double)
+    with pytest.raises(RealCapitalOrOrderWriteForbiddenError):
+        probe.run()
