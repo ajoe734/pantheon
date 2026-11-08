@@ -3223,17 +3223,21 @@ def _project_persona_fleet_health(
         or metadata.get("provisioning_reconciliation_state")
         or ""
     ).strip().lower()
-    paper_runtime_state = str(metadata.get("paper_runtime_state") or "").strip().lower()
+    paper_runtime_state = str(
+        persona.get("paper_runtime_state") or metadata.get("paper_runtime_state") or ""
+    ).strip().lower()
 
     active_paper_bindings = [
         binding
         for binding in runtime_bindings
         if str(binding.get("status") or binding.get("state") or "").strip().lower()
-        in {"active", "ready", "running", "idle"}
+        in {"active", "ready", "running", "idle", "paper_running"}
         and str(
             binding.get("deployment_mode")
             or binding.get("deployment_stage")
             or binding.get("execution_mode")
+            or binding.get("environment")
+            or binding.get("mode")
             or binding.get("runtime_kind")
             or ""
         ).strip().lower()
@@ -3251,19 +3255,25 @@ def _project_persona_fleet_health(
                 binding.get("deployment_mode")
                 or binding.get("deployment_stage")
                 or binding.get("execution_mode")
+                or binding.get("environment")
+                or binding.get("mode")
                 or binding.get("runtime_kind")
                 or ""
             ).strip().lower()
             if cand:
                 raw_exec_mode = cand
                 break
+    if not raw_exec_mode and (
+        paper_runtime_state in {"running", "paper_running", "paper_active"} or active_paper_bindings
+    ):
+        raw_exec_mode = "paper"
     execution_mode = raw_exec_mode or "unknown"
 
     if admin_status in {"archived", "suspended", "retired", "frozen"}:
         operational_state = admin_status
     elif meta_lifecycle in {"provisioning", "provisioning_failed", "paper_running", "retired", "frozen", "suspended"}:
         operational_state = meta_lifecycle
-    elif paper_runtime_state == "running" and active_paper_bindings:
+    elif paper_runtime_state in {"running", "paper_running", "paper_active"} and active_paper_bindings:
         operational_state = "paper_running"
     elif lifecycle == "research_only" and raw_exec_mode == "paper" and active_paper_bindings:
         operational_state = "paper_running"
@@ -3280,7 +3290,7 @@ def _project_persona_fleet_health(
         and bool(active_paper_bindings)
         and (
             operational_state == "paper_running"
-            or paper_runtime_state == "running"
+            or paper_runtime_state in {"running", "paper_running", "paper_active"}
             or raw_exec_mode == "paper"
         )
     )

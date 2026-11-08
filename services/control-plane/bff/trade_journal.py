@@ -162,22 +162,28 @@ def read_persona_operating_episodes(
             "not_provided_fields": ["trade_episodes"],
         }
     if authorization:
-        try:
-            tenant = bound_tenant({}, clean_tenant_id, authorization)
-        except Exception:
-            return {
-                "status": "unavailable",
-                "reason": "tenant_binding_rejected",
-                "source": "telemetry_trade_episodes",
-                "tenant_id": clean_tenant_id,
-                "persona_id": clean_persona_id,
-                "episode_count": None,
-                "episodes": [],
-                "position_snapshot_refs": [],
-                "order_ids": [],
-                "fill_ids": [],
-                "not_provided_fields": ["trade_episodes"],
-            }
+        from .command_adapters.base import _token_tenants
+
+        primary_tok, allowed_tok = _token_tenants(authorization)
+        if primary_tok is not None or allowed_tok:
+            try:
+                tenant = bound_tenant({}, clean_tenant_id, authorization)
+            except Exception:
+                return {
+                    "status": "unavailable",
+                    "reason": "tenant_binding_rejected",
+                    "source": "telemetry_trade_episodes",
+                    "tenant_id": clean_tenant_id,
+                    "persona_id": clean_persona_id,
+                    "episode_count": None,
+                    "episodes": [],
+                    "position_snapshot_refs": [],
+                    "order_ids": [],
+                    "fill_ids": [],
+                    "not_provided_fields": ["trade_episodes"],
+                }
+        else:
+            tenant = clean_tenant_id
     else:
         tenant = clean_tenant_id
 
@@ -328,25 +334,32 @@ def read_persona_operating_episodes(
         ):
             any_partial = True
 
+        ep_id = str(view.get("trade_episode_id") or view.get("episode_id") or "").strip() or None
+        symbol_val = view.get("instrument_id") or view.get("symbol")
         bounded_episodes.append({
-            "trade_episode_id": view.get("trade_episode_id"),
+            "trade_episode_id": ep_id,
+            "episode_id": ep_id,
             "tenant_id": tenant,
             "persona_id": clean_persona_id,
             "runtime_id": view.get("runtime_id"),
             "runtime_binding_id": view.get("runtime_binding_id"),
             "strategy_id": view.get("strategy_id"),
             "strategy_version": view.get("strategy_version"),
-            "instrument_id": view.get("instrument_id"),
-            "environment": view.get("environment"),
+            "instrument_id": symbol_val,
+            "symbol": symbol_val,
+            "environment": view.get("environment") or view.get("execution_mode"),
             "execution_source": view.get("execution_source"),
-            "side": view.get("side"),
+            "side": view.get("side") or view.get("direction"),
             "status": view.get("status"),
-            "entry_at": view.get("entry_at"),
+            "entry_at": view.get("entry_at") or view.get("opened_at"),
             "exit_at": view.get("exit_at"),
+            "updated_at": view.get("updated_at") or view.get("entry_at") or view.get("opened_at"),
             "requested_quantity": view.get("requested_quantity"),
             "filled_quantity": view.get("filled_quantity"),
             "remaining_quantity": view.get("remaining_quantity"),
             "vwap": view.get("vwap"),
+            "mark_price": view.get("mark_price"),
+            "mark_as_of": view.get("mark_as_of"),
             "realized_pnl": view.get("realized_pnl"),
             "unrealized_pnl": view.get("unrealized_pnl"),
             "return_percent": view.get("return_percent"),
@@ -373,6 +386,9 @@ def read_persona_operating_episodes(
         for ep in bounded_episodes
         for field in (ep.get("not_provided_fields") or [])
     })
+    open_episode_count = sum(
+        1 for ep in bounded_episodes if str(ep.get("status") or "").strip().lower() == "open"
+    )
     return {
         "status": overall_status,
         "reason": None,
@@ -380,6 +396,7 @@ def read_persona_operating_episodes(
         "tenant_id": tenant,
         "persona_id": clean_persona_id,
         "episode_count": len(bounded_episodes),
+        "open_episode_count": open_episode_count,
         "episodes": bounded_episodes,
         "position_snapshot_refs": all_pos_refs[:20],
         "order_ids": all_order_ids[:20],

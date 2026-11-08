@@ -322,6 +322,16 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 known_plan_ids.add(val)
 
         all_candidate_binding_ids = persona_binding_ids | runtime_binding_ids
+        expected_tenant = str(
+            persona.get("tenant_id")
+            or persona_meta.get("tenant_id")
+            or ""
+        ).strip()
+        if not expected_tenant:
+            try:
+                expected_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None).get("id") or "").strip()
+            except Exception:
+                expected_tenant = ""
 
         def _record_tenant_matches(record: Dict[str, Any]) -> bool:
             rec_meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
@@ -333,7 +343,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 or rec_meta.get("tenantId")
                 or ""
             ).strip()
-            return not rec_tenant or rec_tenant == caller_tenant
+            return not rec_tenant or not expected_tenant or rec_tenant == expected_tenant
 
         def _plan_matches_persona(plan: Dict[str, Any]) -> bool:
             if not isinstance(plan, dict) or not _record_tenant_matches(plan):
@@ -447,7 +457,11 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             for plan in deployment_plans_for_persona:
                 if not isinstance(plan, dict):
                     continue
-                for plan_target in (plan.get("artifact_id"), plan.get("registry_id")):
+                for plan_target in (
+                    plan.get("artifact_id"),
+                    plan.get("strategy_artifact_id"),
+                    plan.get("registry_id"),
+                ):
                     val = str(plan_target or "").strip()
                     if val:
                         artifact_and_registry_ids.add(val)

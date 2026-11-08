@@ -1488,3 +1488,165 @@ def test_bff_rebalance_detail_unauthorized() -> None:
             assert resp.status_code == 401, resp.text
         finally:
             facade_state.read_store = original
+
+
+# ---------------------------------------------------------------------------
+# 15. GET /api/v1/operator/persona-management/{persona_id} Readiness & Linkage
+# ---------------------------------------------------------------------------
+
+def test_persona_management_resolves_bound_deployment_plans_approvals_and_paper_running_health() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = facade_state.read_store
+        try:
+            client = _fresh_client(td)
+            store = facade_state.read_store
+            persona_id = "persona-be19a1fac471247f2b2a"
+            runtime_id = "rb-677cd34c70a2b20c64b4"
+            plan_id = "plan-677cd34c70a2b20c64b4"
+            decision_id = "apv-677cd34c70a2b20c64b4"
+            artifact_id = "artifact-qinghe-r2"
+            pool_id = "pool-paper-qinghe-r2"
+            cap_binding_id = "pcb-qinghe-r2"
+
+            store._personas[persona_id] = {
+                "persona_id": persona_id,
+                "name": "青禾 R2",
+                "display_name": "青禾 R2",
+                "tenant_id": "tenant-default",
+                "lifecycle_state": "research_only",
+                "paper_runtime_state": "paper_running",
+                "strategy_family": "momentum",
+                "mandate": "Paper momentum validation",
+                "metadata": {
+                    "paper_runtime_state": "paper_running",
+                    "environment_ceiling": "paper",
+                    "persona_capital_binding_id": cap_binding_id,
+                    "capital_pool_id": pool_id,
+                    "runtime_binding_id": runtime_id,
+                    "strategy_artifact_id": artifact_id,
+                },
+            }
+            runtime_bindings = {
+                runtime_id: {
+                    "runtime_id": runtime_id,
+                    "binding_id": runtime_id,
+                    "tenant_id": "tenant-default",
+                    "persona_id": persona_id,
+                    "plan_id": plan_id,
+                    "status": "active",
+                    "health_status": "healthy",
+                    "environment": "paper",
+                    "capital_pool_id": pool_id,
+                    "persona_capital_binding_id": cap_binding_id,
+                    "strategy_artifact_id": artifact_id,
+                    "updated_at": "2026-11-07T08:00:00Z",
+                    "metadata": {
+                        "object_store": {"artifact_id": artifact_id},
+                    },
+                }
+            }
+            # DeploymentPlan linked via binding_id/capital_pool_id/approval_decision_id (no direct persona_id)
+            deployment_plans = {
+                plan_id: {
+                    "plan_id": plan_id,
+                    "tenant_id": "tenant-default",
+                    "binding_id": runtime_id,
+                    "capital_pool_id": pool_id,
+                    "approval_decision_id": decision_id,
+                    "strategy_artifact_id": artifact_id,
+                    "status": "active",
+                    "environment": "paper",
+                },
+                "plan-foreign": {
+                    "plan_id": "plan-foreign",
+                    "tenant_id": "tenant-other",
+                    "persona_id": persona_id,
+                    "binding_id": runtime_id,
+                },
+            }
+            # Terminal approved ApprovalDecision linked via decision_id and target_id=artifact_id
+            approval_decisions = {
+                decision_id: {
+                    "decision_id": decision_id,
+                    "tenant_id": "tenant-default",
+                    "status": "approved",
+                    "decision": "approved",
+                    "target_type": "strategy_artifact",
+                    "target_id": artifact_id,
+                    "decided_at": "2026-11-07T07:00:00Z",
+                },
+                "apv-foreign": {
+                    "decision_id": "apv-foreign",
+                    "tenant_id": "tenant-other",
+                    "persona_id": persona_id,
+                    "status": "approved",
+                },
+            }
+            rq = store.ports.ooda_management.review_queue
+            rq._approval_decisions_reader = lambda: list(approval_decisions.values())
+            rq._approval_decisions_by_id_reader = lambda ids: [
+                approval_decisions[i] for i in ids if i in approval_decisions
+            ]
+            store.list_runtime_bindings = lambda: list(runtime_bindings.values())
+            store.list_deployment_plans = lambda: list(deployment_plans.values())
+            store.get_deployment_plan = lambda pid: deployment_plans.get(str(pid))
+
+            resp = client.get(
+                f"/api/v1/operator/persona-management/{persona_id}",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            payload = resp.json()["data"]
+
+            # Governance lifecycle maturity stays research_only (never falsely promoted to paper_owner)
+            assert payload["persona"]["lifecycle_state"] == "research_only"
+
+            # Health separates lifecycle_maturity from current paper execution mode
+            health = payload["health"]
+            assert health["status"] == "healthy"
+            assert "persona_lifecycle_not_active" not in (health.get("reasons") or [])
+            assert health["lifecycle_maturity"] == "research_only"
+            assert health["execution_mode"] == "paper"
+            assert health["operational_state"] == "paper_running"
+
+            # Bound DeploymentPlan and terminal ApprovalDecision are resolved and tenant-filtered
+            plan_ids = [p.get("plan_id") or p.get("id") for p in payload["deploymentPlans"]]
+            assert plan_ids == [plan_id]
+            decision_ids = [a.get("decision_id") or a.get("id") for a in payload["approvals"]]
+            assert decision_ids == [decision_id]
+        finally:
+            facade_state.read_store = original
+
+
+def test_persona_management_keeps_unreconciled_research_only_degraded() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = facade_state.read_store
+        try:
+            client = _fresh_client(td)
+            store = facade_state.read_store
+            persona_id = "persona-research-unreconciled"
+            store._personas[persona_id] = {
+                "persona_id": persona_id,
+                "name": "Unreconciled Research",
+                "display_name": "Unreconciled Research",
+                "tenant_id": "tenant-default",
+                "lifecycle_state": "research_only",
+                "strategy_family": "mean_reversion",
+                "metadata": {},
+            }
+
+            resp = client.get(
+                f"/api/v1/operator/persona-management/{persona_id}",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            payload = resp.json()["data"]
+            assert payload["persona"]["lifecycle_state"] == "research_only"
+            health = payload["health"]
+            assert health["status"] == "degraded"
+            assert "persona_lifecycle_not_active" in (health.get("reasons") or [])
+            assert health["lifecycle_maturity"] == "research_only"
+            assert health["execution_mode"] == "unknown"
+        finally:
+            facade_state.read_store = original
+
