@@ -21,6 +21,7 @@ checked-out image after a compensation)::
 
 Scope (the served case is never inferred from recency):
 * ``accepted``    -> every release case except this run's case.
+* ``pre_restore`` -> pre-restore preparation; retires only this run's case before baseline restore health readback without claiming compensation or qualification succeeded.
 * ``compensated`` -> only this run's case; no other case is touched.
 """
 
@@ -36,7 +37,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 CASE_KEY_PREFIX = "dev-paper-release-"
-OUTCOMES = ("accepted", "compensated")
+OUTCOMES = ("accepted", "compensated", "pre_restore")
 SCHEMA_VERSION = "pantheon.dev-paper-release-case-retire.v2"
 RETIRABLE_CASE_STATES = frozenset(
     {"reserved", "provisioning", "succeeded", "failed", "compensated"}
@@ -98,8 +99,8 @@ def plan_retirement(
 ) -> dict[str, Any]:
     """Pure decision: which cases to retire.
 
-    accepted    -> every case except ``new_case_key``.
-    compensated -> only ``new_case_key``; nothing else, ever.
+    accepted                -> every case except ``new_case_key``.
+    pre_restore/compensated -> only ``new_case_key``; nothing else, ever.
     """
     if outcome not in OUTCOMES:
         raise RetireError(f"outcome must be one of {OUTCOMES}")
@@ -111,6 +112,7 @@ def plan_retirement(
         ]
     return {
         "outcome": outcome,
+        "preparation_only": outcome == "pre_restore",
         "new_case_key": new_case_key,
         "retire": [str(c.idempotency_key) for c in scope if c.state != RETIRED_STATE],
         "observe": [],
@@ -335,6 +337,7 @@ def _deadline_evidence(
         "dry_run": dry_run,
         "run_id": run_id,
         "outcome": outcome,
+        "preparation_only": outcome == "pre_restore",
         "new_case_key": new_case_key,
         "errors": {"deadline": f"budget ended during {stage}; no case was started"},
         "results": {},
@@ -414,8 +417,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.new_case_key and not args.new_case_key.startswith(CASE_KEY_PREFIX):
         parser.error(f"--new-case-key must start with {CASE_KEY_PREFIX!r}")
-    if args.outcome == "compensated" and not args.new_case_key and not args.dry_run:
-        parser.error("--new-case-key is required to retire on a compensated release")
+    if args.outcome != "accepted" and not args.new_case_key and not args.dry_run:
+        parser.error(f"--new-case-key is required to retire on a {args.outcome} release")
     if not 0 < args.timeout_seconds <= 600:
         parser.error("--timeout-seconds must be in (0, 600]")
     if args.poll_seconds < 0:
@@ -445,6 +448,9 @@ def _run(args: argparse.Namespace, box: dict[str, Any], progress: dict[str, Any]
             "status": "retire_case_unavailable",
             "dry_run": args.dry_run,
             "run_id": args.run_id,
+            "outcome": args.outcome,
+            "preparation_only": args.outcome == "pre_restore",
+            "new_case_key": args.new_case_key,
             "error": str(exc),
         }
     except Exception as exc:  # noqa: BLE001 - evidence, not a release failure
@@ -453,6 +459,9 @@ def _run(args: argparse.Namespace, box: dict[str, Any], progress: dict[str, Any]
             "status": "error",
             "dry_run": args.dry_run,
             "run_id": args.run_id,
+            "outcome": args.outcome,
+            "preparation_only": args.outcome == "pre_restore",
+            "new_case_key": args.new_case_key,
             "error": f"{exc.__class__.__name__}: {exc}",
         }
 
