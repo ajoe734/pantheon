@@ -69,6 +69,11 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
         "status": "superseded",
         "covered_by": "POST /bff/approvals/{decision_id}/decide",
     },
+    # Retired DP-01 deployment-plan list route stays mounted only to return 410.
+    "GET /api/v1/deployment-plans": {
+        "status": "superseded",
+        "covered_by": "GET /bff/deployments",
+    },
     # Track E OODA read routes are backend-owned first; frontend cards/drawer
     # activate in follow-on MGMT-OODA tasks.
     "GET /bff/strategies/{strategy_id}/ooda": {"family": "ooda-packet-foundation"},

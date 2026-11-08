@@ -520,3 +520,63 @@ def test_watchdog_during_replay_prints_within_budget(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and '"deadline_reached": true' in out
     assert retire.time.monotonic() - started < 3
+
+
+def test_pre_restore_retires_only_this_runs_case_and_records_preparation_only():
+    store = _store({KEYS[0]: "succeeded", KEYS[1]: "failed", KEYS[2]: "compensated"})
+    store.records.append(Rec("operator-case-alpha", "2026-10-05", state="succeeded", persona_id="p-op"))
+    store.records.append(Rec("manual-provisioning-1", "2026-10-06", state="provisioning", persona_id="p-manual"))
+    coord = Coordinator()
+    out = _run(store, coord, outcome="pre_restore", new_case_key=KEYS[3])
+    assert coord.calls == ["p-4"]
+    assert out["outcome"] == "pre_restore"
+    assert out["preparation_only"] is True
+    assert out["status"] == "retired"
+    assert out["retire"] == [KEYS[3]]
+    assert out["results"] == {KEYS[3]: "retired"}
+    assert [r.idempotency_key for r in store.records] == [
+        *KEYS,
+        "operator-case-alpha",
+        "manual-provisioning-1",
+    ]
+
+
+def test_pre_restore_no_case_or_already_retired_is_noop_and_accepted_refusal_unchanged():
+    coord = Coordinator()
+    out_missing = _run(_store(), coord, outcome="pre_restore", new_case_key="dev-paper-release-99-1")
+    assert coord.calls == []
+    assert out_missing["retire"] == []
+    assert out_missing["status"] == "retired"
+    assert out_missing["preparation_only"] is True
+
+    out_settled = _run(_store({KEYS[3]: "retired"}), coord, outcome="pre_restore", new_case_key=KEYS[3])
+    assert coord.calls == []
+    assert out_settled["already_retired"] == [KEYS[3]]
+    assert out_settled["status"] == "retired"
+
+    # Accepted cleanup is never broadened and retired is never aliased to succeeded.
+    out_accepted = _run(_store({KEYS[3]: "retired"}), coord, outcome="accepted", new_case_key=KEYS[3])
+    assert out_accepted["status"] == "refused"
+    assert out_accepted["executable"] is False
+    assert out_accepted["preparation_only"] is False
+    assert coord.calls == []
+
+
+def test_pre_restore_requires_new_case_key_and_records_truthful_error_evidence(monkeypatch, capsys):
+    with pytest.raises(SystemExit):
+        retire.parse_args(["--outcome", "pre_restore"])
+
+    monkeypatch.setattr(retire, "_PROCESS_START", retire.time.monotonic())
+    monkeypatch.setattr(
+        retire,
+        "_build_runtime",
+        lambda: (_ for _ in ()).throw(retire.RetireCaseUnavailable("missing retire_case")),
+    )
+    rc = retire.main(["--outcome", "pre_restore", "--new-case-key", KEYS[3], "--run-id", "42-1"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert '"outcome": "pre_restore"' in out
+    assert '"preparation_only": true' in out
+    assert f'"new_case_key": "{KEYS[3]}"' in out
+    assert '"status": "retire_case_unavailable"' in out
+

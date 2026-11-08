@@ -3,7 +3,7 @@
 Design unit:
 - OPGAP-DEPLOY-RELIABILITY-V2-20260830: Full domain router extraction handling 12
   deployment domain routes:
-  1. GET /api/v1/deployment-plans: Deployment plan list (DP-01)
+  1. GET /api/v1/deployment-plans: Retired (410); use /bff/deployments (DP-01)
   2. POST /api/v1/deployment-plans: Retired (410 ACTION_RETIRED); use the governed deployment owner
      approval -> /api/deployment/plans/validate -> /api/deployment/plans flow
   3. GET /api/v1/deployment-plans/{plan_id}: Deployment plan detail with stage truth
@@ -91,25 +91,11 @@ def create_deployment_router(
         capital_pool_id: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ):
-        """DP-01: Deployment plan list."""
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-
-        plans = service.queries.list_deployment_plans(
-            status=status,
-            capital_pool_id=capital_pool_id,
-            include_fixture_pack=False,
+        """DP-01: Deployment plan list (retired; use /bff/deployments)."""
+        return deprecated_bff_path_response(
+            route="/api/v1/deployment-plans",
+            replacement="/bff/deployments",
         )
-        snapshot_at = utc_now()
-        return {
-            "data": plans,
-            "meta": read_surface_meta(
-                "deployment_plans",
-                "deployment_plan_list",
-                snapshot_at=snapshot_at,
-                total=len(plans),
-            ),
-        }
 
     @router.post("/api/v1/deployment-plans", status_code=201)
     def create_deployment_plan_v1(

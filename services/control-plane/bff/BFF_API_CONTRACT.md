@@ -340,11 +340,11 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 
 **Canonical source**: BINDING_AND_DEPLOYMENT_SEMANTICS.md
 
-Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans. All requests rejected through the existing retired-command mechanism likewise use the client-visible error code `ACTION_RETIRED` (HTTP 410), not `VALIDATION_FAILED`.
+`GET /api/v1/deployment-plans` is retired and returns `410` through `deprecated_bff_path_response` with `/bff/deployments` as the replacement (`GET /bff/deployments` is the active deployment-plan list surface). Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans. All requests rejected through the existing retired-command mechanism likewise use the client-visible error code `ACTION_RETIRED` (HTTP 410), not `VALIDATION_FAILED`.
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/deployment-plans` | GET | DP-01 | `{ data: [DeploymentPlan], meta }` | `status`, `capital_pool_id` |
+| `/api/v1/deployment-plans` | GET | Retired (DP-01) | `410`; retired BFF path — use `GET /bff/deployments` | — |
 | `/api/v1/deployment-plans` | POST | Retired | `410 ACTION_RETIRED`; use approval then deployment owner validate/create | — |
 | `/api/v1/deployment-plans/{plan_id}` | GET | DP-02 | `{ data: DeploymentPlan + ApprovalDecision, meta }` | — |
 | `/api/v1/approval-decisions` | GET | DP-03 | `{ data: [ApprovalDecision], meta }` | `outcome`, `state` |

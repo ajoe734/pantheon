@@ -922,7 +922,8 @@
       "method": "GET",
       "path": "/api/v1/deployment-plans",
       "family": "api-v1",
-      "status": "implemented"
+      "status": "superseded",
+      "covered_by": "GET /bff/deployments"
     },
     {
       "method": "GET",
