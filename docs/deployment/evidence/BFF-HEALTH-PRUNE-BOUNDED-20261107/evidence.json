@@ -1,0 +1,158 @@
+{
+  "task_id": "BFF-HEALTH-PRUNE-BOUNDED-20261107",
+  "title": "Health retention prune holds the write lock for 5 to 33 s and never removes dead letters",
+  "status": "verified_local_functional",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "design_summary": {
+    "root_cause": "prune_retained_history previously executed SELECT dependency_ids_json FROM delivery_outbox WHERE status <> 'delivered' inside a BEGIN IMMEDIATE transaction, loading 882,978 non-delivered rows into Python and json.loads-parsing each row before running unindexed DELETE statements that only removed status='delivered' rows and never pruned dead_letter or quarantined rows.",
+    "fix": [
+      "Compute protected outbox_rowid values entirely in SQL inside temp.delivery_prune_protected using a WITH RECURSIVE CTE over active incident_mappings (status IN ('opening', 'open', 'resolving')) and retained delivery_outbox rows with non-empty dependencies via covering partial index delivery_outbox_deps_idx.",
+      "Extend 7-day retention pruning (604,800 s) to status IN ('delivered', 'dead_letter', 'quarantined') and delete bounded batches (_DELIVERY_PRUNE_BATCH_SIZE = 3,500) ordered by updated_at via partial index delivery_outbox_prune_idx.",
+      "Delete bounded batches from probe_windows (24 h retention), error_windows (24 h retention), and delivery_replay_audit (7 d retention) using covering indexes probe_windows_completed_idx, error_windows_observed_idx, and delivery_replay_audit_replayed_idx.",
+      "When any prune batch reaches _DELIVERY_PRUNE_BATCH_SIZE, DownstreamHealthMonitor.get_state() schedules the next prune after one probe interval (30 s on hosted dev) instead of waiting 300 s, returning to 300 s once the backlog drains.",
+      "Do not run VACUUM from code; operator compacts the hosted file once after the backlog drains."
+    ]
+  },
+  "acceptance_evidence": {
+    "ac1_write_lock_bound": {
+      "bound_ms": 500.0,
+      "before_warm_cache_ms": 4930.0,
+      "before_cold_cache_ms": 33000.0,
+      "seeded_row_shape": {
+        "body_json_bytes": 866,
+        "schema_version": "pantheon.infrastructure-health/1",
+        "event_type": "infrastructure_health",
+        "non_delivered_rows": 882978,
+        "dead_letter_rows": 872489,
+        "quarantined_rows": 10477,
+        "pending_rows": 12,
+        "non_delivered_dependency_ids_json_total_bytes": 2167626,
+        "non_delivered_dependency_distribution": {
+          "one_dependency_59_bytes_rows": 7030,
+          "two_dependencies_122_bytes_rows": 8,
+          "empty_array_2_bytes_rows": 875940
+        }
+      },
+      "benchmark_500k_rows": {
+        "outbox_rows_seeded": 500000,
+        "batch_size": 2000,
+        "batches_measured": 10,
+        "prune_hold_ms": [59.1, 82.0, 62.4, 50.8, 51.7, 59.1, 52.7, 52.5, 50.2, 50.2],
+        "longest_prune_hold_ms": 82.0
+      },
+      "benchmark_882978_rows_full_drain": {
+        "outbox_rows_seeded": 882978,
+        "batch_size": 3500,
+        "total_prune_transactions": 253,
+        "p50_prune_hold_ms": 81.1,
+        "p95_prune_hold_ms": 96.4,
+        "longest_prune_hold_ms": 114.0,
+        "concurrent_record_outcome_writer_max_wait_ms_under_500ms": true
+      }
+    },
+    "ac2_sql_protected_dependencies_and_bounded_reads": {
+      "python_non_delivered_row_loads": 0,
+      "query_plan_verification": [
+        "SEARCH retained USING COVERING INDEX delivery_outbox_deps_idx (status=?)",
+        "SEARCH retained USING COVERING INDEX delivery_outbox_deps_idx (status=? AND updated_at>?)",
+        "SEARCH outbox USING INDEX delivery_outbox_event_idx (event_id=?)",
+        "SEARCH outbox USING COVERING INDEX sqlite_autoindex_delivery_outbox_1 (delivery_id=?)",
+        "SEARCH delivery_outbox USING COVERING INDEX delivery_outbox_prune_idx (updated_at<?)",
+        "SEARCH delivery_outbox USING INTEGER PRIMARY KEY (rowid=?)"
+      ],
+      "bounded_vm_steps_test": "test_prune_computes_protected_dependencies_in_sql_and_reads_bounded_rows verifies via sqlite3 set_trace_callback and set_progress_handler that pruning 100 rows on 20,000 vs 2,000 non-delivered rows never executes SELECT dependency_ids_json FROM delivery_outbox WHERE status <> 'delivered' and keeps SQLite VM steps bounded."
+    },
+    "ac3_dead_letter_and_quarantined_retention_and_replay": {
+      "retention_seconds": 604800,
+      "retention_days": 7,
+      "batch_size": 3500,
+      "verified_by": "test_dead_letter_and_quarantined_retention_and_replay_within_retention proves dead_letter, quarantined, and delivered rows >7d old are deleted in bounded batches while dead_letter rows <7d old remain in delivery_outbox and are successfully replayed and delivered via monitor.replay_dead_letters."
+    },
+    "ac4_dependency_and_active_incident_protection": {
+      "protected_incident_statuses": ["opening", "open", "resolving"],
+      "protected_dependency_sources": [
+        "All direct and transitive dependency_ids_json referenced by rows with status IN ('pending', 'retry', 'claimed')",
+        "All direct and transitive dependency_ids_json referenced by rows with status IN ('delivered', 'dead_letter', 'quarantined') AND updated_at >= delivery_cutoff",
+        "All create_delivery_id and incident_open/incident_resolve rows for opening_event_id/last_event_id of incident_mappings with status IN ('opening', 'open', 'resolving'), plus their direct and transitive dependencies when not yet delivered"
+      ],
+      "verified_by": [
+        "test_prune_protects_dependencies_of_retained_rows_and_active_incidents",
+        "test_l12_bff_recovery_survives_delivered_history_retention"
+      ]
+    },
+    "ac5_hosted_backlog_drain": {
+      "hosted_dead_letter_backlog_rows": 872489,
+      "hosted_quarantined_backlog_rows": 10477,
+      "hosted_total_old_non_delivered_rows": 882966,
+      "batch_size": 3500,
+      "steady_state_telemetry_deliveries_per_day": 92398,
+      "empirical_back_to_back_drain": {
+        "rows_drained": 872489,
+        "prune_calls": 251,
+        "total_sql_wall_seconds": 20.67,
+        "p50_hold_ms": 81.1,
+        "p95_hold_ms": 96.4,
+        "max_hold_ms": 114.0
+      },
+      "hosted_drain_time_estimate": {
+        "accelerated_backlog_cadence_seconds": 30.0,
+        "steady_state_expiring_delivered_rows_per_30s_tick": 32.08,
+        "net_backlog_drained_per_30s_tick": 3467.92,
+        "dead_letter_872489_ticks": 252,
+        "dead_letter_872489_drain_minutes": 126.0,
+        "dead_letter_872489_drain_hours": 2.1,
+        "dead_letter_plus_quarantined_882966_ticks": 255,
+        "dead_letter_plus_quarantined_882966_drain_minutes": 127.5,
+        "dead_letter_plus_quarantined_882966_drain_hours": 2.125,
+        "unaccelerated_300s_cadence_comparison_hours": 23.17
+      }
+    },
+    "ac6_idempotent_startup_index_build_at_hosted_counts": {
+      "hosted_row_counts_seeded": {
+        "delivery_outbox": 1524593,
+        "delivery_outbox_breakdown": {
+          "dead_letter": 872489,
+          "delivered": 641615,
+          "quarantined": 10477,
+          "pending": 12
+        },
+        "probe_windows": 95009,
+        "error_windows": 9537
+      },
+      "new_index_build_time_ms": {
+        "delivery_outbox_prune_idx": 12295.78,
+        "delivery_outbox_deps_idx": 1436.21,
+        "probe_windows_completed_idx": 63.42,
+        "error_windows_observed_idx": 22.83,
+        "delivery_replay_audit_replayed_idx": 1.7
+      },
+      "total_new_index_build_time_ms": 13819.94,
+      "total_new_index_build_time_seconds": 13.82,
+      "subsequent_idempotent_initialize_ms": 174.7,
+      "verified_by": "test_prune_indexes_created_idempotently_at_startup"
+    },
+    "ac7_retention_periods_preserved": {
+      "delivery_history_retention_seconds": 604800,
+      "delivery_history_retention_days": 7,
+      "window_history_retention_seconds": 86400,
+      "window_history_retention_hours": 24
+    },
+    "ac8_existing_tests_integrity": {
+      "weakened_or_deleted_tests": [],
+      "changed_assertions": [],
+      "justification": "No existing test or assertion was modified, weakened, or deleted. All 118 pre-existing tests in test_downstream_health_monitor.py and test_bff_downstream_health_monitor.py plus test_l12_bff_recovery_survives_delivered_history_retention pass unchanged."
+    }
+  },
+  "tests": {
+    "new": [
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py::test_prune_indexes_created_idempotently_at_startup",
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py::test_prune_computes_protected_dependencies_in_sql_and_reads_bounded_rows",
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py::test_dead_letter_and_quarantined_retention_and_replay_within_retention",
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py::test_prune_protects_dependencies_of_retained_rows_and_active_incidents",
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py::test_get_state_accelerates_prune_cadence_while_backlog_batch_is_full",
+      "services/control-plane/bff/test_downstream_health_monitor.py::TestBoundedHealthPruneAtHostedScale::test_500k_plus_outbox_and_870k_dead_letter_backlog_drain_under_500ms"
+    ],
+    "suite_results": "124 passed in services/control-plane/bff/test_downstream_health_monitor.py and services/control-plane/bff/test_bff_downstream_health_monitor.py; test_l12_bff_recovery_survives_delivered_history_retention passed in services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py"
+  }
+}
