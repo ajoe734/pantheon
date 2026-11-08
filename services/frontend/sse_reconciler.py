@@ -392,7 +392,3 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> None:
             _deep_merge(base[key], value)
         else:
             base[key] = value
-
-
-# Compatibility alias for earlier test harnesses
-SSEReconciler = SseReconciler
