@@ -33,6 +33,7 @@ from .models import (
 )
 from .attribution import (
     TradingRoomPerformanceAttributionEnvelope,
+    grade_instrument_decisions,
     project_agora_performance_attribution_by_strategy,
 )
 from .store import PerformanceSuggestionStore
@@ -1225,6 +1226,26 @@ def pm12_attribution_metrics(facts: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def pm12_attribution_instrument_learning(sources: Dict[str, Any]) -> Dict[str, Any]:
+    """Direction-hit and instrument-regret grades from counterfactual rows.
+
+    Rows are the ``instrument_counterfactuals`` the telemetry runtime summary
+    folds from ``persona_instrument_counterfactual`` events. Read-only; when no
+    runtime carries rows every rate is ``None`` rather than a fabricated zero.
+    """
+    rows: List[Dict[str, Any]] = []
+    for runtime_id in sorted(sources.get("telemetry_by_runtime_id") or {}):
+        telemetry = sources["telemetry_by_runtime_id"][runtime_id]
+        if not isinstance(telemetry, dict):
+            continue
+        nested = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+        for row in telemetry.get("instrument_counterfactuals") or nested.get("instrument_counterfactuals") or []:
+            if isinstance(row, dict):
+                # Decision ids are only unique within a runtime.
+                rows.append({**row, "decision_id": f"{runtime_id}:{row.get('decision_id')}"})
+    return grade_instrument_decisions(rows)
+
+
 def pm12_attribution_instrument_breakdown(facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Group attribution facts by traded instrument.
 
@@ -1593,6 +1614,7 @@ def pm12_performance_attribution_response(
     }
     if surface_key != "performance_attribution":
         surfaces["performance_attribution"] = ranking_fn(attribution_surface, snapshot_at=snapshot_at)
+    learning = pm12_attribution_instrument_learning(sources)
     summary = {
         "period": period_key,
         "dimensions": dimensions,
@@ -1614,6 +1636,10 @@ def pm12_performance_attribution_response(
         "requested_period": period_scope["requested"],
         "period_windowed": period_scope["windowed"],
         "instrument_breakdown": pm12_attribution_instrument_breakdown(facts),
+        "direction_hit_rate": learning["direction_hit_rate"],
+        "instrument_regret": learning["instrument_regret"],
+        "margin_use": learning["margin_use"],
+        "instrument_learning": learning,
     }
     data = {
         "id": data_id,
