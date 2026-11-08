@@ -3666,3 +3666,168 @@ class TestPositionCostCurrencyBrokerProjection(unittest.TestCase):
             second_updated = second_store.backfill_open_position_costs(ep_store)
             self.assertEqual(second_updated, 0)
             self.assertEqual(summary_path.read_text(encoding="utf-8"), before_bytes)
+
+
+class TestInstrumentAwarePositionProjection(unittest.TestCase):
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 1).
+
+    Fill shapes mirror ``paper_runtime._publish`` for ``paper_fill_simulated``:
+    the event symbol is the underlying, the instrument identity rides in
+    metadata, and a cash share fill predating the futures ledger carries none.
+    """
+
+    _FUTURE_ID = "ssf:QFF:202611"
+
+    @classmethod
+    def _fill(
+        cls,
+        *,
+        lfc: int,
+        quantity: float,
+        price: float,
+        symbol: str = "2330.TWSE",
+        future: bool = False,
+        margin_after: float = 0.0,
+        carry_cash_instrument_fields: bool = False,
+    ) -> dict[str, Any]:
+        meta: dict[str, Any] = TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            ledger_fill_count=lfc,
+            broker="shioaji_paper",
+        )["metadata"]
+        meta["sec_type"] = "future" if future else "equity"
+        if future:
+            meta.update(
+                {
+                    "instrument_id": cls._FUTURE_ID,
+                    "kind": "stock_future",
+                    "multiplier": 100.0,
+                    "contract_month": "202611",
+                    "fee": 40.0,
+                    "tax": 10.0,
+                    "initial_margin_reserved": margin_after,
+                }
+            )
+        elif carry_cash_instrument_fields:
+            meta.update(
+                {
+                    "instrument_id": "eq:2330",
+                    "kind": "cash_share",
+                    "multiplier": 1.0,
+                }
+            )
+        event = TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            ledger_fill_count=lfc,
+            broker="shioaji_paper",
+            created_at=f"2026-11-05T01:0{lfc}:00Z",
+            extra_metadata={k: v for k, v in meta.items() if k not in ("symbol",)},
+        )
+        return event
+
+    def _store(self) -> RuntimeSummaryProjectionStore:
+        return RuntimeSummaryProjectionStore()
+
+    def test_cash_share_fill_reproduces_hosted_1106_hand_numbers(self) -> None:
+        store = self._store()
+        store.project_event(self._fill(lfc=1, quantity=-5.0, price=2299.0))
+        summary = store.project_event(
+            TestPositionCostCurrencyBrokerProjection._mark_snapshot(
+                symbol="2330.TWSE", price=2240.0, fill_count=1
+            )
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["quantity"], -5.0)
+        self.assertEqual(row["average_price"], 2299.0)
+        self.assertEqual(row["market_value"], -11200.0)
+        self.assertEqual(row["unrealized_pnl"], 295.0)
+        self.assertEqual(row["currency"], "TWD")
+        # A cash share row from a fill without instrument fields is unchanged.
+        for absent in ("instrument_id", "kind", "multiplier", "margin_reserved"):
+            self.assertNotIn(absent, row)
+
+    def test_stock_future_fill_scales_cost_and_realized_by_multiplier(self) -> None:
+        store = self._store()
+        store.project_event(self._fill(lfc=1, quantity=-5.0, price=2299.0))
+        # Buy 2 contracts @ 2300, then sell 1 @ 2350 closing half.
+        store.project_event(
+            self._fill(lfc=2, quantity=2.0, price=2300.0, future=True, margin_after=92000.0)
+        )
+        summary = store.project_event(
+            self._fill(lfc=3, quantity=-1.0, price=2350.0, future=True, margin_after=46000.0)
+        )
+        rows = {r.get("instrument_id", r["symbol"]): r for r in summary["positions"]}
+        # The future never nets into the underlying cash share row.
+        self.assertEqual(rows["2330.TWSE"]["quantity"], -5.0)
+        future = rows[self._FUTURE_ID]
+        self.assertEqual(future["symbol"], "2330.TWSE")
+        self.assertEqual(future["kind"], "stock_future")
+        self.assertEqual(future["quantity"], 1.0)
+        self.assertEqual(future["multiplier"], 100.0)
+        self.assertEqual(future["contract_month"], "202611")
+        self.assertEqual(future["margin_reserved"], 46000.0)
+        self.assertEqual(future["currency"], "TWD")
+        self.assertEqual(future["average_price"], 2300.0)
+        # realized = 1 contract * 100 * (2350 - 2300)
+        self.assertEqual(future["realized_pnl"], 5000.0)
+
+        # The futures mark is keyed by instrument_id but carries the same
+        # Taiwan market-calendar provenance as its underlying's mark.
+        mark_event = TestPositionCostCurrencyBrokerProjection._mark_snapshot(
+            symbol="2330.TWSE", price=2360.0, fill_count=3
+        )
+        mark_event["metadata"]["mark_refs"][0]["symbol"] = self._FUTURE_ID
+        marked = store.project_event(mark_event)
+        future = next(
+            r for r in marked["positions"] if r.get("instrument_id") == self._FUTURE_ID
+        )
+        # market value = 1 * 100 * 2360 ; unrealized = 1 * 100 * (2360 - 2300)
+        self.assertEqual(future["market_value"], 236000.0)
+        self.assertEqual(future["unrealized_pnl"], 6000.0)
+        cash = next(r for r in marked["positions"] if "instrument_id" not in r)
+        self.assertEqual(cash["quantity"], -5.0)
+        self.assertNotIn("market_value", cash)
+
+        group = marked["positions_by_underlying"]["2330.TWSE"]
+        self.assertEqual(group["net_delta_units"], -5.0 + 100.0)
+        self.assertEqual(
+            sorted(i.get("instrument_id", "cash") for i in group["instruments"]),
+            ["cash", self._FUTURE_ID],
+        )
+
+    def test_cash_fill_carrying_instrument_fields_keeps_symbol_key(self) -> None:
+        store = self._store()
+        summary = store.project_event(
+            self._fill(
+                lfc=1,
+                quantity=-5.0,
+                price=2299.0,
+                carry_cash_instrument_fields=True,
+            )
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["instrument_id"], "eq:2330")
+        self.assertEqual(row["kind"], "cash_share")
+        self.assertEqual(row["multiplier"], 1.0)
+        self.assertNotIn("margin_reserved", row)
+        self.assertEqual(row["average_price"], 2299.0)
+        self.assertIn("2330.TWSE", summary["_cost_by_symbol"])
+
+    def test_future_flip_realizes_only_closed_contracts_times_multiplier(self) -> None:
+        store = self._store()
+        store.project_event(
+            self._fill(lfc=1, quantity=1.0, price=2300.0, future=True, margin_after=46000.0)
+        )
+        summary = store.project_event(
+            self._fill(lfc=2, quantity=-3.0, price=2290.0, future=True, margin_after=92000.0)
+        )
+        row = summary["positions"][0]
+        self.assertEqual(row["quantity"], -2.0)
+        self.assertEqual(row["average_price"], 2290.0)
+        # closes 1 long contract: 1 * 100 * (2290 - 2300)
+        self.assertEqual(row["realized_pnl"], -1000.0)
+        self.assertEqual(row["margin_reserved"], 92000.0)
