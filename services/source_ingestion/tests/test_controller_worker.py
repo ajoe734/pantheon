@@ -29,6 +29,7 @@ from services.source_ingestion.controller_worker import (
     _validate_terminal_readback as _validate_terminal_readback_impl,
     run_controller_tick,
 )
+from services.source_ingestion.runtime import create_runtime
 
 
 CONNECTOR_ID = "tw-official-market-datasets"
@@ -1986,8 +1987,8 @@ def test_two_controller_ticks_preserve_active_persona_only_schedule(tmp_path: Pa
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
 
-    runtime = sim.create_runtime(data_dir=data_dir)
-    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    runtime = create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim.runtime, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
     app = sim.create_app(runtime)
 
     s = socket.socket()
@@ -2144,8 +2145,8 @@ def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchange
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
 
-    runtime = sim.create_runtime(data_dir=data_dir)
-    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    runtime = create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim.runtime, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
     app = sim.create_app(runtime)
 
     s = socket.socket()
@@ -2346,8 +2347,8 @@ def test_persona_finmind_only_merged_and_fails_closed_with_unsupported_1(tmp_pat
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
 
-    runtime = sim.create_runtime(data_dir=data_dir)
-    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    runtime = create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim.runtime, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
     app = sim.create_app(runtime)
 
     s = socket.socket()
@@ -2476,8 +2477,8 @@ def test_two_controller_ticks_preserve_active_persona_taiwan_schedule(tmp_path: 
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
 
-    runtime = sim.create_runtime(data_dir=data_dir)
-    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    runtime = create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim.runtime, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
     app = sim.create_app(runtime)
 
     s = socket.socket()
