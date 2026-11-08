@@ -70,13 +70,18 @@ from services.execution.lean_runtime.taifex_fee_schedule import (
     compute_settlement_cost,
 )
 from services.broker.paper_simulation import simulate_paper_order
-from services.capital.capital_guard import load_risk_policy
 from services.capital.risk_policy import (
     RiskPolicy,
     RiskPolicyDecision,
+    RiskPolicyError,
     RiskPolicyEvaluationContext,
     RiskPolicyEvaluator,
+    RiskPolicyLoadError,
     RiskPolicyTargetType,
+    load_risk_policy,
+    load_risk_policy_model,
+    normalize_risk_policy,
+    resolve_bound_pool_risk_policy,
 )
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
@@ -134,16 +139,6 @@ _PILOT_UNDERLYING_TO_CONTRACT: dict[str, str] = {
     "2330": "QFF",
     "2317": "DHF",
     "0050": "SRF",
-}
-_DEFAULT_PAPER_RISK_POLICY_MAPPING: dict[str, Any] = {
-    "risk_policy_id": "rp-paper-default",
-    "name": "paper-default",
-    "version": "1.0",
-    "status": "active",
-    "gross_limit": 10.0,
-    "net_limit": 10.0,
-    "max_leverage": 10.0,
-    "allowed_asset_classes": ["equity", "future"],
 }
 _LIFECYCLE_UUID_NAMESPACE = uuid.UUID("1760784c-c9e0-47eb-b0aa-d37f58d892df")
 """Binding statuses at which the paper runtime must NOT execute signals.
@@ -362,7 +357,11 @@ class PaperExecutionAlgorithm:
         persona_binding_id: str | None = None,
         risk_policy: RiskPolicy | Mapping[str, Any] | None = None,
         risk_policy_id: str | None = None,
-        risk_policy_loader: Callable[[str], RiskPolicy] | None = None,
+        risk_policy_ref: str | None = None,
+        risk_policy_loader: Callable[[str], RiskPolicy | Mapping[str, Any]] | None = None,
+        capital_pool_id: str | None = None,
+        capital_pool_reader: Callable[[str], Any] | None = None,
+        binding_resolver: Any = None,
         broker_fee_per_contract_per_side: float = 0.0,
         futures_costs_enabled: bool = True,
         in_process_broker: bool = False,
@@ -407,6 +406,8 @@ class PaperExecutionAlgorithm:
         self._injected_equity_capital: float = 0.0
         self._margin_call_active: bool = False
         self._margin_call_since: str | None = None
+        self._last_futures_mark_session_date: str | None = None
+        self._settled_futures_contracts: set[str] = set()
         self._broker_fee_per_contract_per_side: float = float(
             broker_fee_per_contract_per_side
         )
@@ -416,12 +417,17 @@ class PaperExecutionAlgorithm:
             tuple(holidays) if holidays is not None else None
         )
         self._configured_risk_policy: RiskPolicy | None = None
-        self._configured_risk_policy_id: str | None = (
-            str(risk_policy_id).strip() if risk_policy_id else None
-        )
-        self._risk_policy_loader: Callable[[str], RiskPolicy] = (
+        resolved_init_ref = str(risk_policy_ref or risk_policy_id or "").strip()
+        self._configured_risk_policy_id: str | None = resolved_init_ref or None
+        self._risk_policy_loader: Callable[[str], RiskPolicy | Mapping[str, Any]] = (
             risk_policy_loader or load_risk_policy
         )
+        self._capital_pool_id: str | None = (
+            str(capital_pool_id).strip() if capital_pool_id else None
+        )
+        self._capital_pool_reader: Callable[[str], Any] | None = capital_pool_reader
+        self._binding_resolver: Any = binding_resolver
+        self._bound_runtime_binding: dict[str, Any] | None = None
         self._last_risk_gate_result: dict[str, Any] | None = None
         if risk_policy is not None:
             self.SetRiskPolicy(risk_policy)
@@ -537,6 +543,22 @@ class PaperExecutionAlgorithm:
             self._configured_risk_policy = RiskPolicy.from_mapping(policy)
             return
         raise TypeError(f"Unsupported risk_policy type: {type(policy).__name__}")
+
+    def SetRiskPolicyRef(self, ref: str | None) -> None:  # noqa: N802
+        cleaned = str(ref or "").strip()
+        self._configured_risk_policy_id = cleaned or None
+
+    def SetCapitalPoolReader(self, reader: Callable[[str], Any] | None) -> None:  # noqa: N802
+        self._capital_pool_reader = reader
+
+    def BindRuntimeBinding(self, binding: Mapping[str, Any] | None) -> None:  # noqa: N802
+        if not isinstance(binding, Mapping):
+            self._bound_runtime_binding = None
+            return
+        self._bound_runtime_binding = dict(binding)
+        pool_id = str(binding.get("capital_pool_id") or "").strip()
+        if pool_id:
+            self._capital_pool_id = pool_id
 
     def _active_holidays(self) -> tuple[Any, ...]:
         if self._holidays_override is not None:
@@ -943,21 +965,46 @@ class PaperExecutionAlgorithm:
         return snap
 
     def _resolve_active_risk_policy(self) -> RiskPolicy:
-        ctx_policy = self._current_signal_metadata.get("risk_policy")
-        if isinstance(ctx_policy, RiskPolicy):
-            return ctx_policy
-        if isinstance(ctx_policy, Mapping):
-            return RiskPolicy.from_mapping(ctx_policy)
-        ctx_policy_id = str(
-            self._current_signal_metadata.get("risk_policy_id")
-            or self._configured_risk_policy_id
-            or ""
-        ).strip()
-        if ctx_policy_id:
-            return self._risk_policy_loader(ctx_policy_id)
         if self._configured_risk_policy is not None:
             return self._configured_risk_policy
-        return RiskPolicy.from_mapping(_DEFAULT_PAPER_RISK_POLICY_MAPPING)
+        binding: Mapping[str, Any] | None = self._bound_runtime_binding
+        if self._binding_resolver is not None:
+            resolver_fn = getattr(self._binding_resolver, "resolve", None)
+            if callable(resolver_fn):
+                resolved_b = resolver_fn()
+                if isinstance(resolved_b, Mapping):
+                    binding = resolved_b
+            elif callable(self._binding_resolver):
+                resolved_b = self._binding_resolver()
+                if isinstance(resolved_b, Mapping):
+                    binding = resolved_b
+        bound_policy = resolve_bound_pool_risk_policy(
+            capital_pool_id=self._capital_pool_id,
+            binding=binding,
+            capital_pool_reader=self._capital_pool_reader,
+            risk_policy_ref=self._configured_risk_policy_id,
+            risk_policy_loader=self._risk_policy_loader,
+        )
+        if bound_policy is not None:
+            return bound_policy
+        return RiskPolicy(risk_policy_id="paper-unbound")
+
+    @staticmethod
+    def _parse_strict_iso_date(raw: Any) -> Any:
+        if raw is None or isinstance(raw, bool):
+            return None
+        if hasattr(raw, "year") and hasattr(raw, "month") and hasattr(raw, "day") and not isinstance(raw, datetime):
+            return raw
+        text = str(raw).strip()
+        if len(text) < 10:
+            return None
+        date_part = text[:10]
+        if len(text) > 10 and text[10] not in ("T", " "):
+            return None
+        try:
+            return datetime.fromisoformat(date_part).date()
+        except ValueError:
+            return None
 
     def EvaluateOrderRiskGate(  # noqa: N802
         self,
@@ -993,12 +1040,30 @@ class PaperExecutionAlgorithm:
             except Exception:
                 q_before = float(self._holding(symbol).Quantity)
         q_after = q_before + signed_order_qty
-        is_opening_or_increasing = abs(q_after) > abs(q_before) + 1e-12
+        is_sign_reversal = (
+            abs(q_before) > 1e-12
+            and abs(q_after) > 1e-12
+            and ((q_before > 0 and q_after < 0) or (q_before < 0 and q_after > 0))
+        )
+        is_opening_or_increasing = (abs(q_after) > abs(q_before) + 1e-12) or is_sign_reversal
 
-        policy = self._resolve_active_risk_policy()
         raw_decision_id = str(
             self._current_signal_metadata.get("decision_id") or ""
         ).strip()
+        try:
+            policy = self._resolve_active_risk_policy()
+        except (RiskPolicyError, RiskPolicyLoadError, OSError, KeyError, ValueError, TypeError) as exc:
+            decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+            return {
+                "accepted": False,
+                "risk_status": "rejected",
+                "reason": "risk_policy_unavailable",
+                "required": str(self._configured_risk_policy_id or "bound_pool_risk_policy"),
+                "available": str(exc),
+                "limit": "valid_active_risk_policy",
+                "instrument_id": instrument_id,
+                "decision_id": decision_id,
+            }
         holidays = self._active_holidays()
 
         # 1. Check settlement_pending on this underlying
@@ -1016,7 +1081,7 @@ class PaperExecutionAlgorithm:
                     "decision_id": decision_id,
                 }
 
-        # 2. Check margin_call_active (blocks opening/increasing; allows reducing)
+        # 2. Check margin_call_active (blocks opening/increasing/reversing; allows pure reducing)
         if self._margin_call_active and is_opening_or_increasing:
             snap = self.ledger_reconciliation_snapshot()
             decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
@@ -1059,17 +1124,11 @@ class PaperExecutionAlgorithm:
 
         trade_date_raw = (
             self._current_signal_metadata.get("trade_date")
+            or self._current_signal_metadata.get("as_of_trading_day")
             or self._current_signal_metadata.get("as_of_date")
             or self._current_signal_metadata.get("signal_date")
         )
-        parsed_trade_date = None
-        if trade_date_raw:
-            try:
-                parsed_trade_date = datetime.fromisoformat(
-                    str(trade_date_raw).strip()[:10]
-                ).date()
-            except ValueError:
-                parsed_trade_date = None
+        parsed_trade_date = self._parse_strict_iso_date(trade_date_raw)
 
         if clean_kind == "stock_future" and contract_month and parsed_trade_date is not None:
             try:
@@ -1087,9 +1146,19 @@ class PaperExecutionAlgorithm:
                         "decision_id": decision_id,
                     }
             except Exception:
-                pass
+                decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                return {
+                    "accepted": False,
+                    "risk_status": "rejected",
+                    "reason": "instrument_not_in_candidates",
+                    "required": instrument_id,
+                    "available": [],
+                    "limit": str(contract_month),
+                    "instrument_id": instrument_id,
+                    "decision_id": decision_id,
+                }
 
-        # 4. Check price freshness and futures price basis
+        # 4. Check price freshness and futures price basis (strict D-1 settlement requirement)
         if clean_kind == "stock_future":
             src_lower = str(price_source or "").strip().lower()
             basis_lower = str(price_basis or "").strip().lower()
@@ -1105,7 +1174,7 @@ class PaperExecutionAlgorithm:
                 or price is None
                 or not math.isfinite(float(price))
                 or float(price) <= 0
-                or (basis_lower and basis_lower != "futures_daily_settlement_prev_session")
+                or basis_lower != "futures_daily_settlement_prev_session"
                 or src_lower in disallowed_stock_sources
             ):
                 decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
@@ -1122,32 +1191,34 @@ class PaperExecutionAlgorithm:
             price_date_raw = (
                 self._current_signal_metadata.get("price_date")
                 or self._current_signal_metadata.get("settlement_date")
-                or (
-                    str(price_as_of).strip()[:10]
-                    if price_as_of and len(str(price_as_of).strip()) == 10
-                    else None
-                )
+                or price_as_of
             )
-            if parsed_trade_date is not None and price_date_raw:
-                try:
-                    parsed_price_date = datetime.fromisoformat(
-                        str(price_date_raw).strip()[:10]
-                    ).date()
-                    expected_prev = previous_trading_day(parsed_trade_date, holidays)
-                    if parsed_price_date < expected_prev or parsed_price_date > parsed_trade_date:
-                        decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
-                        return {
-                            "accepted": False,
-                            "risk_status": "rejected",
-                            "reason": "price_stale",
-                            "required": expected_prev.isoformat(),
-                            "available": parsed_price_date.isoformat(),
-                            "limit": expected_prev.isoformat(),
-                            "instrument_id": instrument_id,
-                            "decision_id": decision_id,
-                        }
-                except ValueError:
-                    pass
+            parsed_price_date = self._parse_strict_iso_date(price_date_raw)
+            if parsed_trade_date is None or parsed_price_date is None:
+                decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                return {
+                    "accepted": False,
+                    "risk_status": "rejected",
+                    "reason": "price_stale",
+                    "required": "valid_d_minus_1_settlement_and_trade_date",
+                    "available": f"trade_date={trade_date_raw!r},price_date={price_date_raw!r}",
+                    "limit": "valid_d_minus_1_settlement_and_trade_date",
+                    "instrument_id": instrument_id,
+                    "decision_id": decision_id,
+                }
+            expected_prev = previous_trading_day(parsed_trade_date, holidays)
+            if parsed_price_date != expected_prev:
+                decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                return {
+                    "accepted": False,
+                    "risk_status": "rejected",
+                    "reason": "price_stale",
+                    "required": expected_prev.isoformat(),
+                    "available": parsed_price_date.isoformat(),
+                    "limit": expected_prev.isoformat(),
+                    "instrument_id": instrument_id,
+                    "decision_id": decision_id,
+                }
 
         ref_price = float(price or 0.0)
         # 5. Compute post-order exposure and margin marked at ref_price
@@ -1156,6 +1227,7 @@ class PaperExecutionAlgorithm:
         gross_notional_after = 0.0
         signed_net_notional_after = 0.0
         margin_reserved_after = 0.0
+        underlying_notional_after: dict[str, float] = {}
 
         seen_target = False
         for pos_key, pos in self._instrument_positions.items():
@@ -1190,6 +1262,8 @@ class PaperExecutionAlgorithm:
             signed_notional_i = qty_i * mult_i * mark_i
             gross_notional_after += abs(signed_notional_i)
             signed_net_notional_after += signed_notional_i
+            if u_i:
+                underlying_notional_after[u_i] = underlying_notional_after.get(u_i, 0.0) + abs(signed_notional_i)
             unreal_i = qty_i * mult_i * (mark_i - avg_i)
             if kind_i == "stock_future":
                 futures_unrealized_after += unreal_i
@@ -1208,6 +1282,8 @@ class PaperExecutionAlgorithm:
             signed_notional_t = q_after * float(multiplier) * ref_price
             gross_notional_after += abs(signed_notional_t)
             signed_net_notional_after += signed_notional_t
+            if norm_u:
+                underlying_notional_after[norm_u] = underlying_notional_after.get(norm_u, 0.0) + abs(signed_notional_t)
             if clean_kind == "stock_future":
                 m_info = self.compute_futures_margin_per_contract(
                     contract,
@@ -1253,10 +1329,14 @@ class PaperExecutionAlgorithm:
             gross_mult = gross_notional_after / equity_after
             net_mult = abs(signed_net_notional_after) / equity_after
             leverage_mult = gross_notional_after / equity_after
+            target_weights = {
+                u_key: val / equity_after for u_key, val in underlying_notional_after.items()
+            }
         else:
             gross_mult = float("inf")
             net_mult = float("inf")
             leverage_mult = float("inf")
+            target_weights = {u_key: 1e9 for u_key in underlying_notional_after}
 
         order_asset_classes = ["future"] if clean_kind == "stock_future" else ["equity"]
         eval_ctx = RiskPolicyEvaluationContext(
@@ -1267,9 +1347,11 @@ class PaperExecutionAlgorithm:
                 or instrument_id
             ),
             capital_pool_id=str(
-                self._current_signal_metadata.get("capital_pool_id")
+                self._capital_pool_id
+                or self._current_signal_metadata.get("capital_pool_id")
                 or self._taiwan_capital_pool_id()
             ),
+            target_weights=target_weights,
             gross_exposure=gross_mult if math.isfinite(gross_mult) else 1e9,
             net_exposure=net_mult if math.isfinite(net_mult) else 1e9,
             leverage=leverage_mult if math.isfinite(leverage_mult) else 1e9,
@@ -1318,7 +1400,18 @@ class PaperExecutionAlgorithm:
             }
 
         if evaluation.rejected:
+            max_single_w = max(target_weights.values(), default=0.0)
             code_to_reason = {
+                "pool_risk_policy": (
+                    "single_name_limit",
+                    float(max_single_w),
+                    float(policy.max_single_name_weight) if policy.max_single_name_weight is not None else 0.0,
+                ),
+                "max_single_name_weight_limit_exceeded": (
+                    "single_name_limit",
+                    float(max_single_w),
+                    float(policy.max_single_name_weight) if policy.max_single_name_weight is not None else 0.0,
+                ),
                 "leverage_limit_exceeded": (
                     "leverage_limit",
                     float(leverage_mult),
@@ -1336,8 +1429,15 @@ class PaperExecutionAlgorithm:
                 ),
             }
             for chk in failed_checks:
-                if chk.code in code_to_reason:
-                    reason_code, req_val, lim_val = code_to_reason[chk.code]
+                if chk.check_name == "max_single_name_weight" or chk.code in code_to_reason:
+                    reason_code, req_val, lim_val = code_to_reason.get(
+                        chk.code,
+                        (
+                            "single_name_limit",
+                            float(max_single_w),
+                            float(policy.max_single_name_weight or 0.0),
+                        ),
+                    )
                     return {
                         "accepted": False,
                         "risk_status": "rejected",
@@ -1449,10 +1549,24 @@ class PaperExecutionAlgorithm:
         if not resolved_inst_id:
             resolved_inst_id = f"eq:{native}"
 
+        matched_cand: Mapping[str, Any] = {}
+        raw_cands = (
+            self._current_signal_metadata.get("candidates")
+            or self._current_signal_metadata.get("admitted_candidates")
+        )
+        if isinstance(raw_cands, (list, tuple)):
+            for cand in raw_cands:
+                if not isinstance(cand, Mapping):
+                    continue
+                if str(cand.get("instrument_id") or "").strip() == resolved_inst_id:
+                    matched_cand = cand
+                    break
+
         contract_code = None
         resolved_month = str(
             contract_month
             or self._current_signal_metadata.get("contract_month")
+            or matched_cand.get("contract_month")
             or (parsed_inst.get("contract_month") if parsed_inst else "")
             or ""
         ).strip() or None
@@ -1460,13 +1574,14 @@ class PaperExecutionAlgorithm:
             contract_code = str(
                 (parsed_inst.get("contract") if parsed_inst else None)
                 or self._current_signal_metadata.get("contract")
+                or matched_cand.get("contract")
                 or _PILOT_UNDERLYING_TO_CONTRACT.get(native, "")
             ).strip().upper() or None
             prof = self._futures_contract_profile(
                 contract_code,
                 underlying=native,
-                multiplier=multiplier,
-                metadata=self._current_signal_metadata,
+                multiplier=multiplier or matched_cand.get("multiplier"),
+                metadata={** dict(matched_cand), **self._current_signal_metadata},
             )
             resolved_multiplier = float(prof["multiplier"])
             exchange = "TAIFEX"
@@ -1512,7 +1627,8 @@ class PaperExecutionAlgorithm:
         resolved_price_basis = str(
             price_basis
             or self._current_signal_metadata.get("price_basis")
-            or ("futures_daily_settlement_prev_session" if resolved_kind == "stock_future" else "")
+            or matched_cand.get("price_basis")
+            or ""
         ).strip() or None
 
         if resolved_kind == "stock_future":
@@ -1531,11 +1647,25 @@ class PaperExecutionAlgorithm:
                     metadata={**base_metadata, "diagnostic": str(exc)},
                 )
                 return
+            cand_settlement_price = (
+                matched_cand.get("futures_settlement_price")
+                if matched_cand.get("futures_settlement_price") is not None
+                else matched_cand.get("settlement_price")
+            )
+            if (
+                cand_settlement_price is None
+                and str(matched_cand.get("price_basis") or "").strip()
+                == "futures_daily_settlement_prev_session"
+            ):
+                cand_settlement_price = matched_cand.get("price")
             raw_fut_price = (
                 self._current_signal_metadata.get("futures_settlement_price")
-                or self._current_signal_metadata.get("settlement_price")
-                or self._current_signal_metadata.get("market_price")
-                or limit_price
+                if self._current_signal_metadata.get("futures_settlement_price") is not None
+                else (
+                    self._current_signal_metadata.get("settlement_price")
+                    if self._current_signal_metadata.get("settlement_price") is not None
+                    else cand_settlement_price
+                )
             )
             try:
                 market_price = (
@@ -1548,12 +1678,16 @@ class PaperExecutionAlgorithm:
             market_price_as_of = str(
                 self._current_signal_metadata.get("price_date")
                 or self._current_signal_metadata.get("settlement_date")
-                or self._current_signal_metadata.get("market_price_as_of")
-                or _iso_now()
+                or matched_cand.get("price_date")
+                or matched_cand.get("settlement_date")
+                or ""
             ).strip()
             market_price_source = str(
-                self._current_signal_metadata.get("market_price_source")
-                or "futures_daily_settlement_prev_session"
+                self._current_signal_metadata.get("price_source")
+                or self._current_signal_metadata.get("market_price_source")
+                or matched_cand.get("price_source")
+                or resolved_price_basis
+                or ""
             ).strip()
             holding_quantity = 0.0
         else:
@@ -1716,7 +1850,7 @@ class PaperExecutionAlgorithm:
             payload["correlation_envelope"] = correlation_envelope
         if limit_price is not None:
             payload["limit_price"] = float(limit_price)
-        if is_market and market_price is not None:
+        if (is_market or resolved_kind == "stock_future") and market_price is not None:
             payload["market_price"] = float(market_price)
         try:
             order = self._post_broker_paper_order(broker_url, payload)
@@ -1785,7 +1919,7 @@ class PaperExecutionAlgorithm:
                 multiplier=resolved_multiplier,
                 signed_fill_qty=signed_fill_qty,
                 fill_price=fill_price,
-                price_as_of=market_price_as_of or _iso_now(),
+                price_as_of=market_price_as_of,
                 price_source=market_price_source or "futures_daily_settlement_prev_session",
             )
             fill_metadata = {
@@ -1967,25 +2101,18 @@ class PaperExecutionAlgorithm:
         self._total_costs += cost_delta
 
         self.SetSecurityPrice(
-            symbol,
+            instrument_id,
             p_fill,
             as_of=price_as_of,
             source=price_source,
             authoritative=False,
         )
-        if instrument_id != symbol:
-            self.SetSecurityPrice(
-                instrument_id,
-                p_fill,
-                as_of=price_as_of,
-                source=price_source,
-                authoritative=False,
-            )
         self._record_fill()
         snap = self.assert_ledger_reconciliation()
         if self._margin_call_active and snap["equity"] >= snap["maintenance_margin_required"]:
             self._margin_call_active = False
             self._margin_call_since = None
+        self._persist_state()
         return {
             "fee": fee,
             "tax": tax,
@@ -2005,12 +2132,25 @@ class PaperExecutionAlgorithm:
         check_maintenance: bool = True,
     ) -> dict[str, Any]:
         """Mark open futures positions at session settlement and evaluate maintenance margin."""
+        parsed_day = self._parse_strict_iso_date(trade_date)
+        if parsed_day is None:
+            raise ValueError(
+                f"MarkFuturesSession requires a strict YYYY-MM-DD trade_date (got {trade_date!r})"
+            )
+        date_str = parsed_day.isoformat()
+        hol = tuple(holidays) if holidays is not None else self._active_holidays()
+
+        already_marked_this_session = False
+        if self._last_futures_mark_session_date:
+            prev_mark_day = self._parse_strict_iso_date(self._last_futures_mark_session_date)
+            if prev_mark_day is not None:
+                if parsed_day < prev_mark_day:
+                    return self.ledger_reconciliation_snapshot()
+                if parsed_day == prev_mark_day:
+                    already_marked_this_session = True
+
         prices = dict(settlement_prices or {})
-        date_str = (
-            trade_date.isoformat()
-            if hasattr(trade_date, "isoformat")
-            else str(trade_date or "").strip()
-        )
+        pending_updates: list[tuple[dict[str, Any], str, float]] = []
         for (b_id, norm_u, inst_id), pos in list(self._instrument_positions.items()):
             if pos.get("kind") != "stock_future":
                 continue
@@ -2018,25 +2158,46 @@ class PaperExecutionAlgorithm:
             if abs(qty) <= 1e-12 and pos.get("status") != "settlement_pending":
                 continue
             contract = str(pos.get("contract") or "")
-            mark_val = (
+            month = str(pos.get("contract_month") or "")
+            contract_month_key = f"{contract}:{month}" if contract and month else ""
+            raw_mark = (
                 prices.get(inst_id)
-                or prices.get(contract)
-                or prices.get(norm_u)
-                or prices.get(str(pos.get("symbol") or ""))
-            )
-            if mark_val is not None:
-                self._apply_mark_to_position(
-                    pos,
-                    float(mark_val),
-                    as_of=date_str,
-                    source="futures_daily_settlement_prev_session",
+                if inst_id in prices
+                else (
+                    prices.get(contract_month_key)
+                    if contract_month_key and contract_month_key in prices
+                    else prices.get(contract)
                 )
-                self._security(inst_id).Price = float(mark_val)
+            )
+            if raw_mark is None:
+                if abs(qty) > 1e-12:
+                    raise ValueError(
+                        f"MarkFuturesSession requires a settlement price for open futures contract {inst_id!r}"
+                    )
+                continue
+            mark_val = _finite_float(
+                raw_mark,
+                field=f"futures settlement price for {inst_id}",
+                positive=True,
+            )
+            pending_updates.append((pos, inst_id, mark_val))
+
+        for pos, inst_id, mark_val in pending_updates:
+            self._apply_mark_to_position(
+                pos,
+                mark_val,
+                as_of=date_str,
+                source="futures_daily_settlement_prev_session",
+            )
+            self._security(inst_id).Price = mark_val
 
         snap = self.assert_ledger_reconciliation()
-        if not check_maintenance:
+        if not check_maintenance or already_marked_this_session:
+            if check_maintenance:
+                self._persist_state()
             return snap
 
+        self._last_futures_mark_session_date = date_str
         req_maint = float(snap["maintenance_margin_required"])
         equity = float(snap["equity"])
         if req_maint > 0 and equity + 1e-9 < req_maint:
@@ -2062,79 +2223,87 @@ class PaperExecutionAlgorithm:
                     },
                 )
             else:
-                # Persistent maintenance breach at the next full session mark -> force-close
-                for key, pos in list(self._instrument_positions.items()):
-                    if pos.get("kind") != "stock_future":
-                        continue
-                    qty = float(pos.get("quantity", 0.0))
-                    if abs(qty) <= 1e-12:
-                        continue
-                    m = float(pos.get("multiplier", 1.0))
-                    p_liq = float(pos.get("mark_price", 0.0))
-                    avg_entry = float(pos.get("average_entry_price", p_liq))
-                    realized_delta = qty * m * (p_liq - avg_entry)
-                    if self._futures_costs_enabled:
-                        c_info = compute_open_or_close_cost(
-                            pos.get("contract"),
-                            p_liq,
-                            abs(qty),
-                            multiplier=m,
-                            underlying=pos.get("normalised_underlying"),
-                            broker_fee_per_contract_per_side=self._broker_fee_per_contract_per_side,
+                call_since_day = self._parse_strict_iso_date(self._margin_call_since)
+                is_next_trading_session = (
+                    call_since_day is not None
+                    and parsed_day > call_since_day
+                    and is_trading_day(parsed_day, hol)
+                )
+                if is_next_trading_session:
+                    # Persistent maintenance breach at the next full trading session mark -> force-close
+                    for key, pos in list(self._instrument_positions.items()):
+                        if pos.get("kind") != "stock_future":
+                            continue
+                        qty = float(pos.get("quantity", 0.0))
+                        if abs(qty) <= 1e-12:
+                            continue
+                        m = float(pos.get("multiplier", 1.0))
+                        p_liq = float(pos.get("mark_price", 0.0))
+                        avg_entry = float(pos.get("average_entry_price", p_liq))
+                        realized_delta = qty * m * (p_liq - avg_entry)
+                        if self._futures_costs_enabled:
+                            c_info = compute_open_or_close_cost(
+                                pos.get("contract"),
+                                p_liq,
+                                abs(qty),
+                                multiplier=m,
+                                underlying=pos.get("normalised_underlying"),
+                                broker_fee_per_contract_per_side=self._broker_fee_per_contract_per_side,
+                            )
+                            fee = float(c_info["fee"])
+                            tax = float(c_info["tax"])
+                            cost_delta = float(c_info["total_cost"])
+                        else:
+                            fee = 0.0
+                            tax = 0.0
+                            cost_delta = 0.0
+                        pos["quantity"] = 0.0
+                        pos["average_entry_price"] = 0.0
+                        pos["unrealized_pnl"] = 0.0
+                        pos["initial_margin_reserved"] = 0.0
+                        pos["maintenance_margin_required"] = 0.0
+                        pos["realized_pnl"] = float(pos.get("realized_pnl", 0.0)) + realized_delta
+                        pos["costs"] = float(pos.get("costs", 0.0)) + cost_delta
+                        pos["status"] = "closed"
+                        self._cash = float(self._cash) + realized_delta - cost_delta
+                        self._realized_pnl += realized_delta
+                        self._total_costs += cost_delta
+                        self._security(str(pos["instrument_id"])).Price = p_liq
+                        self._publish(
+                            "paper_forced_liquidation",
+                            str(pos.get("symbol") or pos["instrument_id"]),
+                            0.0,
+                            "forced_liquidation",
+                            broker_submission_status="not_submitted_forced_liquidation",
+                            submitted_to_broker=False,
+                            metadata={
+                                "trade_date": date_str,
+                                "instrument_id": pos["instrument_id"],
+                                "kind": "stock_future",
+                                "contract": pos.get("contract"),
+                                "contract_month": pos.get("contract_month"),
+                                "multiplier": m,
+                                "liquidated_quantity": -qty,
+                                "liquidation_price": p_liq,
+                                "realized_pnl": realized_delta,
+                                "fee": fee,
+                                "tax": tax,
+                                "equity_before_liquidation": equity,
+                                "maintenance_margin_required": req_maint,
+                                "reason": "persistent_maintenance_margin_breach",
+                                "decision_status": "no_order",
+                                "order_status": "not_submitted",
+                                "risk_status": "skipped",
+                            },
                         )
-                        fee = float(c_info["fee"])
-                        tax = float(c_info["tax"])
-                        cost_delta = float(c_info["total_cost"])
-                    else:
-                        fee = 0.0
-                        tax = 0.0
-                        cost_delta = 0.0
-                    pos["quantity"] = 0.0
-                    pos["average_entry_price"] = 0.0
-                    pos["unrealized_pnl"] = 0.0
-                    pos["initial_margin_reserved"] = 0.0
-                    pos["maintenance_margin_required"] = 0.0
-                    pos["realized_pnl"] = float(pos.get("realized_pnl", 0.0)) + realized_delta
-                    pos["costs"] = float(pos.get("costs", 0.0)) + cost_delta
-                    pos["status"] = "closed"
-                    self._cash = float(self._cash) + realized_delta - cost_delta
-                    self._realized_pnl += realized_delta
-                    self._total_costs += cost_delta
-                    self._security(str(pos.get("symbol") or pos["instrument_id"])).Price = p_liq
-                    self._publish(
-                        "paper_forced_liquidation",
-                        str(pos.get("symbol") or pos["instrument_id"]),
-                        0.0,
-                        "forced_liquidation",
-                        broker_submission_status="not_submitted_forced_liquidation",
-                        submitted_to_broker=False,
-                        metadata={
-                            "trade_date": date_str,
-                            "instrument_id": pos["instrument_id"],
-                            "kind": "stock_future",
-                            "contract": pos.get("contract"),
-                            "contract_month": pos.get("contract_month"),
-                            "multiplier": m,
-                            "liquidated_quantity": -qty,
-                            "liquidation_price": p_liq,
-                            "realized_pnl": realized_delta,
-                            "fee": fee,
-                            "tax": tax,
-                            "equity_before_liquidation": equity,
-                            "maintenance_margin_required": req_maint,
-                            "reason": "persistent_maintenance_margin_breach",
-                            "decision_status": "no_order",
-                            "order_status": "not_submitted",
-                            "risk_status": "skipped",
-                        },
-                    )
-                self._margin_call_active = False
-                self._margin_call_since = None
-                snap = self.assert_ledger_reconciliation()
+                    self._margin_call_active = False
+                    self._margin_call_since = None
+                    snap = self.assert_ledger_reconciliation()
         elif self._margin_call_active and equity + 1e-9 >= req_maint:
             self._margin_call_active = False
             self._margin_call_since = None
 
+        self._persist_state()
         return self.ledger_reconciliation_snapshot()
 
     def mark_futures_session(
@@ -2160,22 +2329,26 @@ class PaperExecutionAlgorithm:
         holidays: Iterable[Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Cash-settle open futures contracts whose ``last_trading_day <= trade_date``."""
-        parsed_day = (
-            trade_date
-            if hasattr(trade_date, "year") and not isinstance(trade_date, datetime)
-            else datetime.fromisoformat(str(trade_date).strip()[:10]).date()
-        )
+        parsed_day = self._parse_strict_iso_date(trade_date)
+        if parsed_day is None:
+            raise ValueError(
+                f"SettleExpiringFutures requires a strict YYYY-MM-DD trade_date (got {trade_date!r})"
+            )
         hol = tuple(holidays) if holidays is not None else self._active_holidays()
         outcomes: list[dict[str, Any]] = []
-        for key, pos in list(self._instrument_positions.items()):
+        state_mutated = False
+        for (b_id, _norm_u, inst_id), pos in list(self._instrument_positions.items()):
             if pos.get("kind") != "stock_future":
-                continue
-            qty = float(pos.get("quantity", 0.0))
-            if abs(qty) <= 1e-12 and pos.get("status") != "settlement_pending":
                 continue
             month = str(pos.get("contract_month") or "").strip()
             contract = str(pos.get("contract") or "").strip()
             if not month or not contract:
+                continue
+            settle_key = f"{b_id}:{inst_id}:{month}"
+            if settle_key in self._settled_futures_contracts:
+                continue
+            qty = float(pos.get("quantity", 0.0))
+            if abs(qty) <= 1e-12 and pos.get("status") != "settlement_pending":
                 continue
             ltd = last_trading_day(month, hol)
             if parsed_day < ltd:
@@ -2188,6 +2361,7 @@ class PaperExecutionAlgorithm:
             )
             if lookup is None:
                 pos["status"] = "settlement_pending"
+                state_mutated = True
                 outcomes.append(
                     {
                         "instrument_id": pos["instrument_id"],
@@ -2236,7 +2410,9 @@ class PaperExecutionAlgorithm:
             self._realized_pnl += realized_delta
             self._total_costs += cost_delta
             sym_for_event = str(pos.get("symbol") or pos["instrument_id"])
-            self._security(sym_for_event).Price = p_final
+            self._security(str(pos["instrument_id"])).Price = p_final
+            self._settled_futures_contracts.add(settle_key)
+            state_mutated = True
             self.assert_ledger_reconciliation()
 
             settled_meta = {
@@ -2272,6 +2448,8 @@ class PaperExecutionAlgorithm:
                     "status": "settled",
                 }
             )
+        if state_mutated:
+            self._persist_state()
         return outcomes
 
     def settle_expiring_futures(
@@ -2345,7 +2523,15 @@ class PaperExecutionAlgorithm:
         if self._event_sink is None:
             self._reversal_info = None
             return
-        security = self._security(symbol)
+        event_metadata = dict(self._current_signal_metadata)
+        if metadata:
+            event_metadata.update(metadata)
+        price_lookup_symbol = (
+            str(event_metadata["instrument_id"])
+            if event_metadata.get("kind") == "stock_future" and event_metadata.get("instrument_id")
+            else symbol
+        )
+        security = self._security(price_lookup_symbol)
         try:
             event_quantity = _finite_float(quantity, field="event quantity")
         except ValueError:
@@ -2354,9 +2540,6 @@ class PaperExecutionAlgorithm:
             event_price = _finite_float(security.Price, field="event fill price")
         except ValueError:
             event_price = 0.0
-        event_metadata = dict(self._current_signal_metadata)
-        if metadata:
-            event_metadata.update(metadata)
         if event_type == "paper_fill_simulated":
             # All fill publishers call `_commit_fill` first.  This marker makes
             # the ordering explicit so downstream code never emits a position
@@ -2775,14 +2958,45 @@ class PaperExecutionAlgorithm:
                     "price": self._security(symbol).Price,
                 }
             )
+        for (_b_id, norm_u, inst_id), pos in sorted(
+            self._instrument_positions.items(), key=lambda item: item[0][2]
+        ):
+            if pos.get("kind") != "stock_future":
+                continue
+            qty = float(pos.get("quantity", 0.0))
+            if abs(qty) <= 1e-12:
+                continue
+            sec_price = float(self._security(inst_id).Price)
+            mark_price = sec_price if sec_price > 0 else float(pos.get("mark_price", 0.0))
+            positions.append(
+                {
+                    "symbol": inst_id,
+                    "underlying_symbol": str(pos.get("symbol") or norm_u),
+                    "instrument_id": inst_id,
+                    "kind": "stock_future",
+                    "contract": pos.get("contract"),
+                    "contract_month": pos.get("contract_month"),
+                    "quantity": qty,
+                    "multiplier": float(pos.get("multiplier", 1.0)),
+                    "average_entry_price": float(pos.get("average_entry_price", 0.0)),
+                    "price": mark_price,
+                    "initial_margin_reserved": float(pos.get("initial_margin_reserved", 0.0)),
+                    "maintenance_margin_required": float(pos.get("maintenance_margin_required", 0.0)),
+                    "unrealized_pnl": float(pos.get("unrealized_pnl", 0.0)),
+                }
+            )
         return positions
 
     def mark_symbols(self) -> list[str]:
-        return [
+        symbols = {
             symbol
-            for symbol, holding in sorted(self.Portfolio.items())
+            for symbol, holding in self.Portfolio.items()
             if abs(float(holding.Quantity)) > 1e-12
-        ]
+        }
+        for (_b_id, _norm_u, inst_id), pos in self._instrument_positions.items():
+            if pos.get("kind") == "stock_future" and abs(float(pos.get("quantity", 0.0))) > 1e-12:
+                symbols.add(inst_id)
+        return sorted(symbols)
 
     def apply_market_marks(self, marks: Mapping[str, MarketMark]) -> None:
         for symbol, mark in marks.items():
@@ -2792,6 +3006,14 @@ class PaperExecutionAlgorithm:
                 as_of=mark.as_of,
                 source=mark.source_ref,
             )
+            for (_b_id, _norm_u, inst_id), pos in self._instrument_positions.items():
+                if inst_id == symbol and pos.get("kind") == "stock_future":
+                    self._apply_mark_to_position(
+                        pos,
+                        mark.price,
+                        as_of=mark.as_of,
+                        source=mark.source_ref,
+                    )
 
     def authoritative_marks(self) -> dict[str, MarketMark]:
         marks: dict[str, MarketMark] = {}
@@ -2814,6 +3036,11 @@ class PaperExecutionAlgorithm:
             "initial_cash": float(self._initial_cash),
             "cash": float(self._cash),
             "positions": self.positions(),
+            "instrument_positions": self.instrument_positions,
+            "realized_pnl": float(self._realized_pnl),
+            "total_costs": float(self._total_costs),
+            "margin_call_active": bool(self._margin_call_active),
+            "margin_call_since": self._margin_call_since,
             "fill_count": int(self._fill_count),
             "ledger_started_at": self._ledger_started_at,
             "first_fill_at": self._first_fill_at,
@@ -2824,6 +3051,17 @@ class PaperExecutionAlgorithm:
             "state_load_error": self._state_load_error,
             "state_binding_error": self._state_binding_error,
         }
+
+    def _rekey_default_instrument_positions(self, binding_id: str) -> None:
+        if not binding_id or binding_id == "default":
+            return
+        rekeyed: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for (b_id, norm_u, inst_id), pos in self._instrument_positions.items():
+            eff_b = binding_id if b_id in ("", "default") else b_id
+            rec = dict(pos)
+            rec["persona_binding_id"] = eff_b
+            rekeyed[(eff_b, norm_u, inst_id)] = rec
+        self._instrument_positions = rekeyed
 
     def BindPerformanceBinding(self, binding_id: str | None) -> bool:  # noqa: N802
         if self._state_load_error:
@@ -2842,11 +3080,13 @@ class PaperExecutionAlgorithm:
                 )
                 return False
             self._state_binding_error = None
+            self._rekey_default_instrument_positions(candidate)
             if self._state_error:
                 self._persist_state()
             return self._state_error is None
         self._performance_binding_id = candidate
         self._state_binding_error = None
+        self._rekey_default_instrument_positions(candidate)
         self._persist_state()
         return self._state_error is None
 
@@ -3378,16 +3618,82 @@ class PaperExecutionAlgorithm:
             )
             first_fill_at_raw = payload.get("first_fill_at")
             last_fill_at_raw = payload.get("last_fill_at")
+            binding_value = payload.get("binding_id")
+            if binding_value is not None and not isinstance(binding_value, str):
+                raise ValueError("paper performance ledger binding_id must be a string")
+            normalized_binding_id = str(binding_value or "").strip()
+
+            raw_instrument_positions = payload.get("instrument_positions")
+            restored_instrument_positions: dict[tuple[str, str, str], dict[str, Any]] = {}
+            open_futures_count = 0
+            if raw_instrument_positions is not None:
+                if not isinstance(raw_instrument_positions, list):
+                    raise ValueError("paper performance ledger instrument_positions must be a list")
+                for raw_pos in raw_instrument_positions:
+                    if not isinstance(raw_pos, dict):
+                        raise ValueError("paper performance ledger instrument_position entry must be an object")
+                    json.dumps(raw_pos, allow_nan=False)
+                    inst_id = str(raw_pos.get("instrument_id") or "").strip()
+                    norm_u = str(raw_pos.get("normalised_underlying") or "").strip()
+                    if not inst_id or not norm_u:
+                        raise ValueError("paper performance ledger instrument_position lacks instrument_id or normalised_underlying")
+                    b_id = str(raw_pos.get("persona_binding_id") or normalized_binding_id or "default").strip()
+                    rec = dict(raw_pos)
+                    rec["persona_binding_id"] = b_id
+                    rec["normalised_underlying"] = norm_u
+                    rec["instrument_id"] = inst_id
+                    qty_val = _finite_float(rec.get("quantity", 0.0), field=f"instrument_position quantity for {inst_id}")
+                    rec["quantity"] = qty_val
+                    mark_val = _finite_float(rec.get("mark_price", 0.0), field=f"instrument_position mark_price for {inst_id}")
+                    rec["mark_price"] = mark_val
+                    if rec.get("kind") == "stock_future" and abs(qty_val) > 1e-12:
+                        open_futures_count += 1
+                    if mark_val > 0 and inst_id not in restored_prices:
+                        restored_prices[inst_id] = mark_val
+                    restored_instrument_positions[(b_id, norm_u, inst_id)] = rec
+
+            restored_realized_pnl = _finite_float(
+                payload.get("realized_pnl", 0.0),
+                field="paper performance ledger realized_pnl",
+            )
+            restored_total_costs = _finite_float(
+                payload.get("total_costs", 0.0),
+                field="paper performance ledger total_costs",
+            )
+            restored_injected_equity = _finite_float(
+                payload.get("injected_equity_capital", 0.0),
+                field="paper performance ledger injected_equity_capital",
+            )
+            raw_margin_call_active = payload.get("margin_call_active", False)
+            if not isinstance(raw_margin_call_active, bool):
+                raise ValueError("paper performance ledger margin_call_active must be a boolean")
+            raw_margin_call_since = payload.get("margin_call_since")
+            if raw_margin_call_since is not None and not isinstance(raw_margin_call_since, str):
+                raise ValueError("paper performance ledger margin_call_since must be a string or null")
+            raw_last_futures_mark = payload.get("last_futures_mark_session_date")
+            if raw_last_futures_mark is not None and not isinstance(raw_last_futures_mark, str):
+                raise ValueError("paper performance ledger last_futures_mark_session_date must be a string or null")
+            raw_settled_contracts = payload.get("settled_futures_contracts", [])
+            if not isinstance(raw_settled_contracts, list) or not all(
+                isinstance(item, str) for item in raw_settled_contracts
+            ):
+                raise ValueError("paper performance ledger settled_futures_contracts must be a list of strings")
+
             if fill_count == 0:
                 if first_fill_at_raw is not None or last_fill_at_raw is not None:
                     raise ValueError(
                         "paper performance ledger without fills must not have fill timestamps"
                     )
-                if restored:
+                if restored or open_futures_count > 0:
                     raise ValueError(
                         "paper performance ledger without fills cannot contain holdings"
                     )
-                if not math.isclose(cash, initial_cash, rel_tol=0.0, abs_tol=1e-9):
+                if not math.isclose(
+                    cash,
+                    initial_cash + restored_realized_pnl - restored_total_costs,
+                    rel_tol=0.0,
+                    abs_tol=1e-9,
+                ):
                     raise ValueError(
                         "paper performance ledger without fills must retain initial cash"
                     )
@@ -3416,10 +3722,41 @@ class PaperExecutionAlgorithm:
                         "paper performance ledger holdings lack execution prices: "
                         f"{missing_execution_prices}"
                     )
-                if len(restored) > fill_count:
+                if len(restored) + open_futures_count > fill_count:
                     raise ValueError(
                         "paper performance ledger has more open symbols than recorded fills"
                     )
+
+            if raw_instrument_positions is None and (restored or fill_count > 0):
+                b_id_legacy = normalized_binding_id or "default"
+                legacy_mv = 0.0
+                for sym, holding_obj in restored.items():
+                    qty_val = float(holding_obj.Quantity)
+                    px_val = float(restored_prices.get(sym, 0.0))
+                    legacy_mv += qty_val * px_val
+                    norm_u = self._normalise_underlying_symbol(sym)
+                    eq_inst_id = f"eq:{norm_u}"
+                    restored_instrument_positions[(b_id_legacy, norm_u, eq_inst_id)] = {
+                        "persona_binding_id": b_id_legacy,
+                        "normalised_underlying": norm_u,
+                        "instrument_id": eq_inst_id,
+                        "symbol": sym,
+                        "kind": "cash_share",
+                        "contract": None,
+                        "contract_month": None,
+                        "quantity": qty_val,
+                        "multiplier": 1.0,
+                        "average_entry_price": px_val,
+                        "mark_price": px_val,
+                        "initial_margin_reserved": 0.0,
+                        "maintenance_margin_required": 0.0,
+                        "unrealized_pnl": 0.0,
+                        "realized_pnl": 0.0,
+                        "costs": 0.0,
+                        "status": "open" if abs(qty_val) > 1e-12 else "closed",
+                    }
+                if "realized_pnl" not in payload and "injected_equity_capital" not in payload:
+                    restored_realized_pnl = (cash + legacy_mv) - initial_cash
 
             performance_window = payload.get("performance_window", {})
             if not isinstance(performance_window, dict):
@@ -3428,10 +3765,6 @@ class PaperExecutionAlgorithm:
             # in the persisted auxiliary state before mutating the live ledger.
             json.dumps(performance_window, allow_nan=False)
 
-            binding_value = payload.get("binding_id")
-            if binding_value is not None and not isinstance(binding_value, str):
-                raise ValueError("paper performance ledger binding_id must be a string")
-            normalized_binding_id = str(binding_value or "").strip()
             pending_performance_pair = payload.get("pending_performance_pair")
             if pending_performance_pair is not None:
                 if not normalized_binding_id:
@@ -3473,6 +3806,16 @@ class PaperExecutionAlgorithm:
             self._initial_cash = initial_cash
             self._cash = cash
             self.Portfolio = restored
+            self._instrument_positions = restored_instrument_positions
+            self._realized_pnl = restored_realized_pnl
+            self._total_costs = restored_total_costs
+            self._injected_equity_capital = restored_injected_equity
+            self._margin_call_active = bool(raw_margin_call_active)
+            self._margin_call_since = str(raw_margin_call_since).strip() if raw_margin_call_since else None
+            self._last_futures_mark_session_date = (
+                str(raw_last_futures_mark).strip() if raw_last_futures_mark else None
+            )
+            self._settled_futures_contracts = set(raw_settled_contracts)
             self._active_episodes = restored_episodes
             self.Securities = {}
             for symbol, price in restored_prices.items():
@@ -3532,6 +3875,20 @@ class PaperExecutionAlgorithm:
                 for symbol, security in sorted(self.Securities.items())
                 if math.isfinite(float(security.Price)) and float(security.Price) > 0
             },
+            "instrument_positions": [
+                dict(pos)
+                for _key, pos in sorted(
+                    self._instrument_positions.items(),
+                    key=lambda item: item[0],
+                )
+            ],
+            "realized_pnl": float(self._realized_pnl),
+            "total_costs": float(self._total_costs),
+            "injected_equity_capital": float(self._injected_equity_capital),
+            "margin_call_active": bool(self._margin_call_active),
+            "margin_call_since": self._margin_call_since,
+            "last_futures_mark_session_date": self._last_futures_mark_session_date,
+            "settled_futures_contracts": sorted(self._settled_futures_contracts),
         }
         temporary: Path | None = None
         directory_fd: int | None = None
@@ -3576,6 +3933,17 @@ class PaperExecutionAlgorithm:
         portfolio_value = self._cash
         for symbol, holding in self.Portfolio.items():
             portfolio_value += holding.Quantity * self._security(symbol).Price
+        for (_b_id, _norm_u, inst_id), pos in self._instrument_positions.items():
+            if pos.get("kind") != "stock_future":
+                continue
+            qty = float(pos.get("quantity", 0.0))
+            if abs(qty) <= 1e-12:
+                continue
+            m = float(pos.get("multiplier", 1.0))
+            avg_entry = float(pos.get("average_entry_price", 0.0))
+            sec_price = float(self._security(inst_id).Price)
+            mark_p = sec_price if sec_price > 0 else float(pos.get("mark_price", avg_entry))
+            portfolio_value += qty * m * (mark_p - avg_entry)
         return float(portfolio_value - self._initial_cash)
 
 
@@ -4551,7 +4919,10 @@ class PaperRuntimeService:
         poll_interval_seconds: float | None = None,
         max_batch_size: int | None = None,
         lifecycle_outbox_path: str | os.PathLike[str] | None = None,
+        final_settlement_source: Any = None,
+        capital_pool_reader: Callable[[str], Mapping[str, Any] | None] | None = None,
     ) -> None:
+        self._final_settlement_source = final_settlement_source
         if runtime_context is None:
             mf, stg = os.getenv("PANTHEON_RUNTIME_CONTEXT_MANIFEST"), os.getenv("PANTHEON_DEPLOYMENT_STAGE") or os.getenv("PANTHEON_RUNTIME_MODE")
             try:
@@ -4660,6 +5031,9 @@ class PaperRuntimeService:
             ),
             state_path=performance_state_path,
             durable_fill_publication=True,
+            capital_pool_id=self._identity.capital_pool_id or None,
+            binding_resolver=self._binding_resolver,
+            capital_pool_reader=capital_pool_reader,
         )
         self._performance_state_restore_error: str | None = None
         try:
@@ -4753,6 +5127,7 @@ class PaperRuntimeService:
                     raise RuntimeError(
                         "RuntimeBinding is required before paper execution can drain signals"
                     )
+                self._algo.BindRuntimeBinding(binding)
                 binding_id = str(
                     binding.get("binding_id")
                     or binding.get("runtime_binding_id")
@@ -4790,6 +5165,7 @@ class PaperRuntimeService:
                 else:
                     self._last_skipped_status = None
                     self._consumer.drain(algo=self._algo)
+                    self._maybe_process_futures_lifecycle()
                     self._last_drain_at = _iso_now()
                     self._last_error = None
             except Exception as exc:  # noqa: BLE001
@@ -4808,6 +5184,91 @@ class PaperRuntimeService:
                 # failure through the normal heartbeat diagnostics path.
                 self._maybe_emit_heartbeat()
             return self.snapshot()
+
+    def _maybe_process_futures_lifecycle(self) -> None:
+        has_futures = any(
+            pos.get("kind") == "stock_future"
+            and (
+                abs(float(pos.get("quantity", 0.0))) > 1e-12
+                or pos.get("status") == "settlement_pending"
+            )
+            for pos in self._algo._instrument_positions.values()
+        )
+        if not has_futures:
+            return
+        meta = self._algo._current_signal_metadata
+        session_date = (
+            os.getenv("PANTHEON_FUTURES_SESSION_DATE", "").strip()
+            or str(
+                meta.get("trade_date")
+                or meta.get("as_of_date")
+                or meta.get("signal_date")
+                or ""
+            ).strip()
+        )
+        if not session_date or self._algo._parse_strict_iso_date(session_date) is None:
+            return
+        final_source = (
+            meta.get("final_settlement_source")
+            if meta.get("final_settlement_source") is not None
+            else self._final_settlement_source
+        )
+        if final_source is not None:
+            self._algo.SettleExpiringFutures(session_date, final_source)
+        settlement_prices = meta.get("session_settlement_prices")
+        if isinstance(settlement_prices, Mapping) and settlement_prices:
+            self._algo.MarkFuturesSession(session_date, settlement_prices)
+
+    def process_futures_session(
+        self,
+        trade_date: Any,
+        settlement_prices: Mapping[str, float] | None = None,
+        *,
+        final_settlement_source: Any = None,
+        holidays: Iterable[Any] | None = None,
+        check_maintenance: bool = True,
+    ) -> dict[str, Any]:
+        """Run deterministic futures expiry settlement and session mark-to-market on the runtime ledger."""
+        with self._lock:
+            binding = self._binding_resolver.resolve()
+            if binding:
+                self._algo.BindRuntimeBinding(binding)
+                binding_id = str(
+                    binding.get("binding_id")
+                    or binding.get("runtime_binding_id")
+                    or ""
+                )
+                if binding_id:
+                    self._algo.BindPerformanceBinding(binding_id)
+            effective_source = (
+                final_settlement_source
+                if final_settlement_source is not None
+                else self._final_settlement_source
+            )
+            settled = self._algo.SettleExpiringFutures(
+                trade_date,
+                effective_source,
+                holidays=holidays,
+            )
+            has_open_futures = any(
+                pos.get("kind") == "stock_future"
+                and abs(float(pos.get("quantity", 0.0))) > 1e-12
+                for pos in self._algo._instrument_positions.values()
+            )
+            if settlement_prices is not None or has_open_futures:
+                reconciliation = self._algo.MarkFuturesSession(
+                    trade_date,
+                    settlement_prices,
+                    holidays=holidays,
+                    check_maintenance=check_maintenance,
+                )
+            else:
+                reconciliation = self._algo.ledger_reconciliation_snapshot()
+            return {
+                "settled_contracts": settled,
+                "reconciliation": reconciliation,
+                "positions": self._algo.positions(),
+            }
 
     def pool_access_violation(self, requested_pool_id: str | None) -> dict[str, Any] | None:
         requested = str(requested_pool_id or "").strip()

@@ -58,10 +58,18 @@ _EXPRESSION_CONTEXT_KEYS = (
     "kind",
     "units",
     "multiplier",
+    "contract",
     "contract_month",
     "contract_code",
+    "underlying",
+    "underlying_symbol",
     "price_basis",
     "price_date",
+    "settlement_date",
+    "futures_settlement_price",
+    "settlement_price",
+    "price_source",
+    "price_stale",
     "initial_margin_per_unit",
     "maintenance_margin_per_unit",
     "fee_per_unit_per_side",
@@ -71,10 +79,13 @@ _EXPRESSION_CONTEXT_KEYS = (
     "underlying_kind",
     "broker_fee_per_contract_per_side",
     "candidates",
+    "admitted_candidates",
     "candidates_considered",
-    "risk_policy",
-    "risk_policy_id",
     "as_of_trading_day",
+    "trade_date",
+    "as_of_date",
+    "signal_date",
+    "holidays",
     "stand_in",
     "reason_code",
     "strength",
@@ -377,8 +388,58 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
             context[key] = value
     for key in _EXPRESSION_CONTEXT_KEYS:
         value = metadata.get(key)
+        if value in (None, "", [], {}):
+            value = signal.get(key)
         if value not in (None, "", [], {}):
             context[key] = value
+    expr_dec = context.get("expression_decision")
+    if isinstance(expr_dec, dict):
+        for key in (
+            "instrument_id",
+            "kind",
+            "multiplier",
+            "contract",
+            "contract_code",
+            "contract_month",
+            "price_basis",
+            "price_date",
+            "settlement_date",
+            "futures_settlement_price",
+            "settlement_price",
+            "as_of_trading_day",
+            "trade_date",
+            "candidates_considered",
+        ):
+            if key not in context and expr_dec.get(key) not in (None, "", [], {}):
+                context[key] = expr_dec[key]
+    cand_list = context.get("candidates") or context.get("admitted_candidates")
+    chosen_inst = str(context.get("instrument_id") or "").strip()
+    if isinstance(cand_list, (list, tuple)) and chosen_inst:
+        for cand in cand_list:
+            if isinstance(cand, dict) and str(cand.get("instrument_id") or "").strip() == chosen_inst:
+                for src_k, dst_k in (
+                    ("kind", "kind"),
+                    ("contract", "contract"),
+                    ("contract_month", "contract_month"),
+                    ("multiplier", "multiplier"),
+                    ("price_basis", "price_basis"),
+                    ("price_date", "price_date"),
+                    ("settlement_date", "settlement_date"),
+                    ("futures_settlement_price", "futures_settlement_price"),
+                    ("settlement_price", "settlement_price"),
+                ):
+                    if dst_k not in context and cand.get(src_k) not in (None, "", [], {}):
+                        context[dst_k] = cand[src_k]
+                if (
+                    str(cand.get("kind") or context.get("kind") or "") == "stock_future"
+                    and str(cand.get("price_basis") or context.get("price_basis") or "")
+                    == "futures_daily_settlement_prev_session"
+                    and "futures_settlement_price" not in context
+                    and "settlement_price" not in context
+                    and cand.get("price") not in (None, "")
+                ):
+                    context["futures_settlement_price"] = cand["price"]
+                break
     decision_id = signal.get("decision_id") or metadata.get("decision_id")
     if decision_id not in (None, ""):
         context["decision_id"] = decision_id
