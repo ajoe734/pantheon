@@ -548,6 +548,7 @@ def _governance_auth_env() -> Dict[str, str]:
         "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP_MODE") or os.getenv("PANTHEON_BFF_ROLE_MAP_MODE") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", ""),
         "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_MFA_CLAIMS") or os.getenv("PANTHEON_BFF_MFA_CLAIMS") or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", ""),
         "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_GOVERNANCE_MFA_VALUES") or os.getenv("PANTHEON_BFF_MFA_VALUES") or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", ""),
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": os.getenv("PANTHEON_GOVERNANCE_REQUIRE_EMAIL_VERIFIED") or os.getenv("PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED") or os.getenv("PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED", ""),
     }
 
 
@@ -1313,7 +1314,8 @@ def _approval_principal(authorization: Optional[str]) -> AuthContext:
         raise HTTPException(503, 'Governance expected issuer and audience must be configured')
     try:
         ctx = validate_request_auth(authorization=authorization, mfa_header=None,
-                                    required_roles=(), mfa_required=False, env=env)
+                                    required_roles=(), mfa_required=False, env=env,
+                                    allow_shared_secret=True)
         claims = ctx.claims
         exp = claims.get('exp')
         if (ctx.token_kind != 'jwt' or not isinstance(claims.get('sub'), str)

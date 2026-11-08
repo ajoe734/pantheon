@@ -333,29 +333,33 @@
       "method": "GET",
       "path": "/bff/ranking/formulas",
       "family": "capital-ranking-rebalance",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-003"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-FINAL-COMPAT-20261107",
+      "reason": "Retired 410 notification wrapper removed in BFF-FINAL-COMPAT-20261107; canonical route is GET /bff/ranking-formulas."
     },
     {
       "method": "POST",
       "path": "/bff/ranking/formulas",
       "family": "capital-ranking-rebalance",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-003"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-FINAL-COMPAT-20261107",
+      "reason": "Retired 410 notification wrapper removed in BFF-FINAL-COMPAT-20261107; canonical route is POST /bff/ranking-formulas."
     },
     {
       "method": "GET",
       "path": "/bff/ranking/formulas/{formulaId}",
       "family": "capital-ranking-rebalance",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-003"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-FINAL-COMPAT-20261107",
+      "reason": "Retired 410 notification wrapper removed in BFF-FINAL-COMPAT-20261107; canonical route is GET /bff/ranking-formulas/{formula_id}."
     },
     {
       "method": "PATCH",
       "path": "/bff/ranking/formulas/{formulaId}",
       "family": "capital-ranking-rebalance",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-003"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-FINAL-COMPAT-20261107",
+      "reason": "Retired 410 notification wrapper removed in BFF-FINAL-COMPAT-20261107; canonical route is PATCH /bff/ranking-formulas/{formula_id}."
     },
     {
       "method": "POST",

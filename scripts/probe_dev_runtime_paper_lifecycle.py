@@ -949,7 +949,6 @@ class DevRuntimePaperLifecycleProbe:
             "artifact_type": "execution_bundle",
             "artifact_state": "approved",
             "deployment_stage": "paper",
-            "promotion_state": "paper",
             "checksum": checksum,
             "created_at": utc_now(),
         }

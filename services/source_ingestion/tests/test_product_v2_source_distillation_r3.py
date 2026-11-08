@@ -31,6 +31,24 @@ from services.source_ingestion.distillation_controller import (
 from services.source_ingestion.distillation_worker import DistillationJobQueue, DistillationJobStatus, make_distillation_worker
 from services.source_ingestion import main as main_module
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore, StrategySpecSeedStatus
+from services.source_ingestion.configured import ConfiguredConnectorFetcher
+from services.foundation import DeadLetterQueue
+from services.knowledge.evidence import EvidenceBundleBuilder
+from services.source_ingestion.ingest_manager import IngestManager
+from services.source_ingestion.scheduler import IngestionScheduler
+from services.source_ingestion.configured import JsonlConfiguredConnectorStore
+from services.source_ingestion.configured import JsonlConnectorScheduleStore
+from services.source_ingestion.scheduler import JsonlIngestScheduleStore
+from services.source_ingestion.registry.llm_proposal_adapter import LLMSourceProposalAdapter
+from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+from services.source_ingestion.api_models import PersonaSourceProvisioningRequest
+from services.source_ingestion.requirement_state import RequirementSnapshotStore
+from services.source_ingestion.api_models import RunScheduledRequest
+from services.source_ingestion.registry.proposals import SourceChangeProposalStore
+from services.source_ingestion.source_health import SourceHealthStore
+from services.source_ingestion.source_health import SourceUsageDailyStore
+from services.source_ingestion.pg_store import build_source_evidence_repository
+from services.source_ingestion.controller_auth import load_controller_token
 
 
 def _read_headers(tenant: str = "tenant-r3") -> dict[str, str]:
@@ -96,61 +114,61 @@ def test_durable_source_to_distillation_r3_product_path(
     reconcile_lock_path = data_dir / "reconcile.lock"
     controller_token_path = data_dir / "controller_token"
 
-    monkeypatch.setattr(main_module, "DATA_DIR", data_dir)
-    monkeypatch.setattr(main_module, "PROPOSAL_STORE_PATH", proposal_store_path)
-    monkeypatch.setattr(main_module, "SCHEDULE_STORE_PATH", schedule_store_path)
-    monkeypatch.setattr(main_module, "CONNECTOR_STORE_PATH", connector_store_path)
-    monkeypatch.setattr(main_module, "SOURCE_EVIDENCE_STORE_PATH", evidence_store_path)
-    monkeypatch.setattr(main_module, "DLQ_STORE_PATH", dlq_store_path)
-    monkeypatch.setattr(main_module, "AUDIT_STORE_PATH", audit_store_path)
-    monkeypatch.setattr(main_module, "CONNECTOR_SCHEDULE_CONFIG_PATH", schedule_config_path)
-    monkeypatch.setattr(main_module, "SOURCE_HEALTH_STORE_PATH", source_health_path)
-    monkeypatch.setattr(main_module, "SOURCE_USAGE_STORE_PATH", source_usage_path)
-    monkeypatch.setattr(main_module, "MARKET_DATA_STORAGE_ROOT", market_data_root)
-    monkeypatch.setattr(main_module, "CONTROLLER_STATE_PATH", controller_state_path)
-    monkeypatch.setattr(main_module, "REQUIREMENT_STATE_PATH", requirement_state_path)
-    monkeypatch.setattr(main_module, "RECONCILE_TRANSACTION_LOCK_PATH", reconcile_lock_path)
-    monkeypatch.setattr(main_module, "CONTROLLER_TOKEN_PATH", controller_token_path)
+    monkeypatch.setattr(main_module.runtime, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main_module.runtime, "PROPOSAL_STORE_PATH", proposal_store_path)
+    monkeypatch.setattr(main_module.runtime, "SCHEDULE_STORE_PATH", schedule_store_path)
+    monkeypatch.setattr(main_module.runtime, "CONNECTOR_STORE_PATH", connector_store_path)
+    monkeypatch.setattr(main_module.runtime, "SOURCE_EVIDENCE_STORE_PATH", evidence_store_path)
+    monkeypatch.setattr(main_module.runtime, "DLQ_STORE_PATH", dlq_store_path)
+    monkeypatch.setattr(main_module.runtime, "AUDIT_STORE_PATH", audit_store_path)
+    monkeypatch.setattr(main_module.runtime, "CONNECTOR_SCHEDULE_CONFIG_PATH", schedule_config_path)
+    monkeypatch.setattr(main_module.runtime, "SOURCE_HEALTH_STORE_PATH", source_health_path)
+    monkeypatch.setattr(main_module.runtime, "SOURCE_USAGE_STORE_PATH", source_usage_path)
+    monkeypatch.setattr(main_module.runtime, "MARKET_DATA_STORAGE_ROOT", market_data_root)
+    monkeypatch.setattr(main_module.runtime, "CONTROLLER_STATE_PATH", controller_state_path)
+    monkeypatch.setattr(main_module.runtime, "REQUIREMENT_STATE_PATH", requirement_state_path)
+    monkeypatch.setattr(main_module.runtime, "RECONCILE_TRANSACTION_LOCK_PATH", reconcile_lock_path)
+    monkeypatch.setattr(main_module.runtime, "CONTROLLER_TOKEN_PATH", controller_token_path)
 
     # Re-initialize stores & components
-    proposal_store = main_module.SourceChangeProposalStore.from_jsonl(proposal_store_path)
-    llm_proposal_adapter = main_module.LLMSourceProposalAdapter(proposal_store)
-    store = main_module.JsonlIngestScheduleStore(schedule_store_path)
-    connector_store = main_module.JsonlConfiguredConnectorStore(connector_store_path)
-    schedule_config_store = main_module.JsonlConnectorScheduleStore(schedule_config_path)
-    configured_fetcher = main_module.ConfiguredConnectorFetcher(connector_store)
-    evidence_repository = main_module.build_source_evidence_repository(evidence_store_path)
-    evidence_builder = main_module.EvidenceBundleBuilder(evidence_repository)
-    dead_letter_queue = main_module.DeadLetterQueue(dlq_store_path)
+    proposal_store = SourceChangeProposalStore.from_jsonl(proposal_store_path)
+    llm_proposal_adapter = LLMSourceProposalAdapter(proposal_store)
+    store = JsonlIngestScheduleStore(schedule_store_path)
+    connector_store = JsonlConfiguredConnectorStore(connector_store_path)
+    schedule_config_store = JsonlConnectorScheduleStore(schedule_config_path)
+    configured_fetcher = ConfiguredConnectorFetcher(connector_store)
+    evidence_repository = build_source_evidence_repository(evidence_store_path)
+    evidence_builder = EvidenceBundleBuilder(evidence_repository)
+    dead_letter_queue = DeadLetterQueue(dlq_store_path)
     dead_letter_queue.load_from_spill()
-    manager = main_module.IngestManager()
-    scheduler = main_module.IngestionScheduler(
+    manager = IngestManager()
+    scheduler = IngestionScheduler(
         manager=manager,
         store=store,
         dead_letter_queue=dead_letter_queue,
     )
-    source_health_store = main_module.SourceHealthStore.from_jsonl(source_health_path)
-    source_usage_store = main_module.SourceUsageDailyStore.from_jsonl(source_usage_path)
-    requirement_snapshot_store = main_module.RequirementSnapshotStore(requirement_state_path)
-    controller_token = main_module.load_controller_token(token_path=controller_token_path, create=True)
-    market_data_storage_writer = main_module.MarketDataStorageWriter(market_data_root)
+    source_health_store = SourceHealthStore.from_jsonl(source_health_path)
+    source_usage_store = SourceUsageDailyStore.from_jsonl(source_usage_path)
+    requirement_snapshot_store = RequirementSnapshotStore(requirement_state_path)
+    controller_token = load_controller_token(token_path=controller_token_path, create=True)
+    market_data_storage_writer = MarketDataStorageWriter(market_data_root)
 
-    monkeypatch.setattr(main_module, "proposal_store", proposal_store)
-    monkeypatch.setattr(main_module, "llm_proposal_adapter", llm_proposal_adapter)
-    monkeypatch.setattr(main_module, "store", store)
-    monkeypatch.setattr(main_module, "connector_store", connector_store)
-    monkeypatch.setattr(main_module, "schedule_config_store", schedule_config_store)
-    monkeypatch.setattr(main_module, "configured_fetcher", configured_fetcher)
-    monkeypatch.setattr(main_module, "evidence_repository", evidence_repository)
-    monkeypatch.setattr(main_module, "evidence_builder", evidence_builder)
-    monkeypatch.setattr(main_module, "dead_letter_queue", dead_letter_queue)
-    monkeypatch.setattr(main_module, "manager", manager)
-    monkeypatch.setattr(main_module, "scheduler", scheduler)
-    monkeypatch.setattr(main_module, "source_health_store", source_health_store)
-    monkeypatch.setattr(main_module, "source_usage_store", source_usage_store)
-    monkeypatch.setattr(main_module, "requirement_snapshot_store", requirement_snapshot_store)
-    monkeypatch.setattr(main_module, "controller_token", controller_token)
-    monkeypatch.setattr(main_module, "market_data_storage_writer", market_data_storage_writer)
+    monkeypatch.setattr(main_module.runtime, "proposal_store", proposal_store)
+    monkeypatch.setattr(main_module.runtime, "llm_proposal_adapter", llm_proposal_adapter)
+    monkeypatch.setattr(main_module.runtime, "store", store)
+    monkeypatch.setattr(main_module.runtime, "connector_store", connector_store)
+    monkeypatch.setattr(main_module.runtime, "schedule_config_store", schedule_config_store)
+    monkeypatch.setattr(main_module.runtime, "configured_fetcher", configured_fetcher)
+    monkeypatch.setattr(main_module.runtime, "evidence_repository", evidence_repository)
+    monkeypatch.setattr(main_module.runtime, "evidence_builder", evidence_builder)
+    monkeypatch.setattr(main_module.runtime, "dead_letter_queue", dead_letter_queue)
+    monkeypatch.setattr(main_module.runtime, "manager", manager)
+    monkeypatch.setattr(main_module.runtime, "scheduler", scheduler)
+    monkeypatch.setattr(main_module.runtime, "source_health_store", source_health_store)
+    monkeypatch.setattr(main_module.runtime, "source_usage_store", source_usage_store)
+    monkeypatch.setattr(main_module.runtime, "requirement_snapshot_store", requirement_snapshot_store)
+    monkeypatch.setattr(main_module.runtime, "controller_token", controller_token)
+    monkeypatch.setattr(main_module.runtime, "market_data_storage_writer", market_data_storage_writer)
     monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret")
 
     # 2. Ingest real SourceRecord via service HTTP API
@@ -279,7 +297,7 @@ daily
                 "policy_gates": ["public-source-only"],
             }],
         },)
-        digest = main_module._desired_state_digest(list(personas))
+        digest = main_module.runtime._desired_state_digest(list(personas))
         now_str = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         return personas, {
             "authority": "file:///desired-state.json",
@@ -291,25 +309,25 @@ daily
         }
 
     def fake_reconcile_desired_state(**kwargs: Any):
-        return main_module.reconcile_persona_source_provisioning(
-            main_module.PersonaSourceProvisioningRequest(
+        return main_module.runtime.reconcile_persona_source_provisioning(
+            PersonaSourceProvisioningRequest(
                 personas=list(kwargs["personas"]),
                 authoritative_snapshot=True,
                 desired_state_sha256=kwargs["desired_state_sha256"],
                 source_authority=kwargs.get("source_authority"),
                 dry_run=False,
             ),
-            authorization=f"Bearer {main_module.controller_token}",
+            authorization=f"Bearer {main_module.runtime.controller_token}",
         )
 
     def fake_run_schedule_tick(**kwargs: Any):
-        return main_module.run_scheduled_connectors(
-            main_module.RunScheduledRequest(
+        return main_module.runtime.run_scheduled_connectors(
+            RunScheduledRequest(
                 max_concurrency=kwargs.get("max_concurrency", 2),
                 force_connector_ids=list(kwargs.get("force_connector_ids") or []),
                 exclusive_connector_ids=list(kwargs.get("exclusive_connector_ids") or []),
             ),
-            authorization=f"Bearer {main_module.controller_token}",
+            authorization=f"Bearer {main_module.runtime.controller_token}",
         )
 
     def fake_read_actual_state(*args: Any, **kwargs: Any):
@@ -319,7 +337,7 @@ daily
             actual["controller_state"]["sequence_no"] = state.sequence_no
             actual["controller_state"]["deployment"] = _deployment()
         actual["requirement_snapshot"] = {
-            "desired_state_sha256": main_module._desired_state_digest(list(fake_load_desired_state()[0])),
+            "desired_state_sha256": main_module.runtime._desired_state_digest(list(fake_load_desired_state()[0])),
             "authoritative": True,
             "sequence": 1,
         }

@@ -376,7 +376,6 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                 payload={"title": "Persona drift review", "body": "Escalate.", "visibility": "private"},
                 identity=identity,
                 idempotency_key="agora-journal-idem-1",
-                x_idempotency_key=None,
             )
             entry = created["data"]
             self.assertEqual(entry["canonicalWriteAuthority"], "governance-decision-journal-svc")
@@ -406,7 +405,6 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                 payload={"title": "Should not persist", "body": ""},
                 identity=identity,
                 idempotency_key="agora-journal-idem-2",
-                x_idempotency_key=None,
             )
         self.assertEqual(ctx.exception.status_code, 503)
 
@@ -434,7 +432,6 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                     claims={"tenant_id": "tenant-a"},
                 ),
                 idempotency_key="same-key",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -445,7 +442,6 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                     claims={"tenant_id": "tenant-b"},
                 ),
                 idempotency_key="same-key",
-                x_idempotency_key=None,
                 tenant_id="tenant-b",
                 user_id="bob",
             )
@@ -461,7 +457,6 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                     claims={"tenant_id": "tenant-a"},
                 ),
                 idempotency_key="same-key",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -473,7 +468,6 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                     claims={"tenant_id": "tenant-a"},
                 ),
                 idempotency_key="same-key",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -490,7 +484,6 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                     claims={"tenant_id": "tenant-a"},
                 ),
                 idempotency_key="conflict-key",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -502,8 +495,7 @@ class TestAgoraServiceUsesCanonicalDecisionJournalOwner(unittest.TestCase):
                         claims={"tenant_id": "tenant-a"},
                     ),
                     idempotency_key="conflict-key",
-                    x_idempotency_key=None,
-                    tenant_id="tenant-a",
+                        tenant_id="tenant-a",
                     user_id="alice",
                 )
             self.assertEqual(ctx.exception.status_code, 409)
@@ -636,8 +628,7 @@ sys.exit(0)
                         claims={"tenant_id": "tenant-a"},
                     ),
                     idempotency_key="same-key",
-                    x_idempotency_key=None,
-                    tenant_id="tenant-a",
+                        tenant_id="tenant-a",
                 )["data"]["id"]
 
             with patch.object(owner, "check_create_idempotency", side_effect=synchronized_read):
@@ -704,7 +695,6 @@ sys.exit(0)
                 "    payload={'title': 'Initial', 'body': 'body'},\n"
                 "    identity=OperatorIdentity(operator_id='alice', roles=['operator'], mfa_verified=True, claims={'tenant_id': 'tenant'}),\n"
                 "    idempotency_key='request-1',\n"
-                "    x_idempotency_key=None,\n"
                 "    tenant_id='tenant',\n"
                 "    user_id='alice',\n"
                 ")\n"
@@ -725,7 +715,6 @@ sys.exit(0)
                     claims={"tenant_id": "tenant"},
                 ),
                 idempotency_key="request-1",
-                x_idempotency_key=None,
                 tenant_id="tenant",
                 user_id="alice",
             )
@@ -755,7 +744,6 @@ sys.exit(0)
                     claims={"tenant_id": "tenant-a"},
                 ),
                 idempotency_key="request-1",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -810,7 +798,6 @@ sys.exit(0)
                 payload={"id": "entry-a", "title": "First", "body": "Body 1"},
                 identity=identity,
                 idempotency_key="request-a",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -822,7 +809,6 @@ sys.exit(0)
                 payload={"id": "entry-a", "title": "First", "body": "Body 1"},
                 identity=identity,
                 idempotency_key="request-a",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -833,7 +819,6 @@ sys.exit(0)
                 payload={"id": "request-a", "title": "Second", "body": "Body 2"},
                 identity=identity,
                 idempotency_key="request-b",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -865,7 +850,6 @@ sys.exit(0)
                 payload={"id": "entry-a", "title": "First", "body": "Body 1"},
                 identity=identity,
                 idempotency_key="request-a",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -877,7 +861,6 @@ sys.exit(0)
                 payload={"id": "request-a", "title": "Second", "body": "Body 2"},
                 identity=identity,
                 idempotency_key="request-b",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -900,7 +883,6 @@ sys.exit(0)
                 payload={"id": "key-x", "title": "Title", "body": "Body"},
                 identity=identity,
                 idempotency_key="key-y",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -930,7 +912,6 @@ sys.exit(0)
                 payload={"id": "entry-z", "title": "Z", "body": "Z"},
                 identity=identity,
                 idempotency_key="key-x",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -942,7 +923,6 @@ sys.exit(0)
                 payload={"id": "entry-z", "title": "Z", "body": "Z"},
                 identity=identity,
                 idempotency_key="key-x",
-                x_idempotency_key=None,
                 tenant_id="tenant-a",
                 user_id="alice",
             )
@@ -967,7 +947,6 @@ sys.exit(0)
                 tenant_id="tenant:alice",
                 user_id="bob",
                 idempotency_key="key",
-                x_idempotency_key=None,
             )
             second = service.create_journal_entry(
                 payload=payload,
@@ -978,7 +957,6 @@ sys.exit(0)
                 tenant_id="tenant",
                 user_id="alice:bob",
                 idempotency_key="key",
-                x_idempotency_key=None,
             )
             self.assertNotEqual(first["data"]["id"], second["data"]["id"], "different tenant/user returned the first principal record")
             self.assertEqual(second["data"]["tenant_id"], "tenant")
@@ -1137,7 +1115,6 @@ sys.exit(0)
                 tenant_id="tenant-a",
                 user_id="alice",
                 idempotency_key="recreate-1",
-                x_idempotency_key=None,
             )
             self.assertEqual(res["data"]["body"], "COMMITTED PRIVATE BODY")
             self.assertEqual(res["data"]["visibility"], "private")
@@ -1307,8 +1284,7 @@ patch_entry(
                             payload={"id": f"entry-{name}", "title": f"Title {name}", "body": "Body"},
                             identity=identity,
                             idempotency_key=f"create-{name}",
-                            x_idempotency_key=None,
-                            tenant_id=scope.tenant_id,
+                                        tenant_id=scope.tenant_id,
                             user_id=scope.user_id,
                         )
                         self.assertIsNotNone(created)
@@ -1380,8 +1356,7 @@ patch_entry(
                             payload={"id": "entry-env", "title": "Env Title", "body": "Body"},
                             identity=identity,
                             idempotency_key="create-env",
-                            x_idempotency_key=None,
-                            tenant_id=scope.tenant_id,
+                                        tenant_id=scope.tenant_id,
                             user_id=scope.user_id,
                         )
                         self.assertEqual(created["data"]["tenant_id"], "tenant-env-override")
@@ -1610,8 +1585,7 @@ patch_entry(
                     payload={"id": "entry-alice", "title": "Alice Private", "body": "Secret", "visibility": "private"},
                     identity=alice_identity,
                     idempotency_key="create-alice",
-                    x_idempotency_key=None,
-                    tenant_id=alice_scope.tenant_id,
+                        tenant_id=alice_scope.tenant_id,
                     user_id=alice_scope.user_id,
                 )
 

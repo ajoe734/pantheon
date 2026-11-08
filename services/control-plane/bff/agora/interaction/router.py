@@ -23,6 +23,7 @@ from .provider import (
     _persona_version,
     authority_boundary,
     build_participant_admission,
+    hydrate_persona_operating_context,
     is_persona_operational,
 )
 from .runner import drain_interaction_outbox, run_selected_persona_interaction
@@ -796,6 +797,11 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             else:
                 capability_snapshot = get_read_store().get_capability_snapshot_for_persona(persona_id)
             captured_at = str((context_binding or {}).get("resolved_at") or utc_now())
+            evidence_cutoff_str = (
+                body.context_snapshot.evidence_cutoff.isoformat().replace("+00:00", "Z")
+                if body.context_snapshot is not None
+                else str((context_binding or {}).get("evidence_cutoff") or captured_at)
+            )
             try:
                 canonical_participant, admission = build_participant_admission(
                     persona=persona,
@@ -803,6 +809,14 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     environment=advice_environment,
                     tenant_id=resolved.tenant_id,
                     captured_at=captured_at,
+                )
+                operating_context = hydrate_persona_operating_context(
+                    persona=persona,
+                    read_store=get_read_store(),
+                    tenant_id=resolved.tenant_id,
+                    captured_at=captured_at,
+                    evidence_cutoff=evidence_cutoff_str,
+                    authorization=authorization,
                 )
             except ValueError as exc:
                 from services.control_plane.bff.models import ErrorCode
@@ -818,10 +832,13 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                         "Submitted Persona snapshot is no longer canonical",
                         "participant_snapshot_mismatch:" + ",".join(mismatched),
                     )
+            persona_profile_frozen = json.loads(json.dumps(persona, default=str))
+            persona_profile_frozen["operating_context"] = operating_context
             frozen_entries.append({
-                "persona_profile": json.loads(json.dumps(persona, default=str)),
+                "persona_profile": persona_profile_frozen,
                 "participant": canonical_participant,
                 "admission": admission,
+                "operating_context": operating_context,
             })
 
         def build() -> Dict[str, Any]:
@@ -959,6 +976,39 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 "captured_at": submitted_at,
             }
         accepted_at = utc_now()
+        frozen_operating_by_persona = {
+            entry["participant"]["persona_id"]: entry["operating_context"]
+            for entry in frozen_entries
+            if isinstance(entry.get("operating_context"), dict)
+        }
+        existing_ref_keys = {
+            (str(ref.get("kind") or ""), str(ref.get("id") or ""))
+            for ref in (context_snapshot.get("context_refs") or [])
+            if isinstance(ref, dict)
+        }
+        existing_pos_refs = list(context_snapshot.get("position_risk_snapshot_refs") or [])
+        for entry in frozen_entries:
+            op_ctx = entry.get("operating_context")
+            if not isinstance(op_ctx, dict):
+                continue
+            for owner_ref in op_ctx.get("owner_source_refs") or []:
+                if not isinstance(owner_ref, dict):
+                    continue
+                kind_val = str(owner_ref.get("kind") or "").strip()
+                id_val = str(owner_ref.get("id") or "").strip()
+                ver_val = str(owner_ref.get("version") or "").strip() or None
+                if kind_val and id_val and (kind_val, id_val) not in existing_ref_keys:
+                    context_snapshot.setdefault("context_refs", []).append(
+                        {"kind": kind_val, "id": id_val, "version": ver_val}
+                    )
+                    existing_ref_keys.add((kind_val, id_val))
+                if kind_val == "journal_entry" and id_val and not context_snapshot.get("journal_ref"):
+                    context_snapshot["journal_ref"] = id_val
+            for pos_ref in op_ctx.get("position_snapshot_refs") or []:
+                pos_str = str(pos_ref or "").strip()
+                if pos_str and pos_str not in existing_pos_refs:
+                    existing_pos_refs.append(pos_str)
+        context_snapshot["position_risk_snapshot_refs"] = existing_pos_refs
         record = {
             "interaction_id": data["interaction_id"],
             "workshop_id": body.workshop_id,
@@ -982,9 +1032,10 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
             "authority": authority_boundary(),
             "_legacy_shape": not body.is_v19,
-            **({"_legacy_environment": body.environment} if not body.is_v19 else {}),
+            **({"_legacy_environment": body.environment, "operating_context": frozen_operating_by_persona} if not body.is_v19 else {}),
             **({"_context_binding": context_binding} if context_binding else {}),
             "_frozen_personas": frozen_entries,
+            "_operating_context": frozen_operating_by_persona,
             **({key: data[key] for key in ("proposal_id", "proposal_ref", "proposal_refs", "proposal", "proposal_etag") if key in data}),
         }
         if getattr(body, "demo_run_id", None):

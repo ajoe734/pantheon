@@ -508,13 +508,29 @@ def value_portfolio(
             diagnostic={**base_diagnostic, "code": "performance_no_fills"},
         )
 
-    normalized_positions: list[tuple[str, float]] = []
+    normalized_positions: list[dict[str, Any]] = []
     for position in positions:
-        symbol = str(position.get("symbol") or "").strip()
+        symbol = str(position.get("symbol") or position.get("instrument_id") or "").strip()
         quantity = _finite(position.get("quantity"))
         if not symbol or quantity is None or abs(quantity) <= 1e-12:
             continue
-        normalized_positions.append((symbol, quantity))
+        kind = str(
+            position.get("kind")
+            or ("stock_future" if symbol.startswith("ssf:") else "cash_share")
+        ).strip().lower()
+        multiplier = _finite(position.get("multiplier"))
+        if multiplier is None or multiplier <= 0:
+            multiplier = 1.0
+        avg_entry = _finite(position.get("average_entry_price"))
+        normalized_positions.append(
+            {
+                "symbol": symbol,
+                "quantity": quantity,
+                "kind": kind,
+                "multiplier": multiplier,
+                "average_entry_price": avg_entry,
+            }
+        )
 
     ledger_as_of = _parse_rfc3339(last_fill_at)
     if normalized_positions and ledger_as_of is None:
@@ -524,7 +540,7 @@ def value_portfolio(
             diagnostic={**base_diagnostic, "code": "open_book_missing_fill_as_of"},
         )
 
-    missing = sorted(symbol for symbol, _ in normalized_positions if symbol not in marks)
+    missing = sorted(pos["symbol"] for pos in normalized_positions if pos["symbol"] not in marks)
     if missing:
         return ValuationResult(
             status="marks_unavailable",
@@ -547,7 +563,12 @@ def value_portfolio(
         )
     reference_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     stale: list[str] = []
-    for symbol, quantity in normalized_positions:
+    for pos in normalized_positions:
+        symbol = pos["symbol"]
+        quantity = pos["quantity"]
+        kind = pos["kind"]
+        multiplier = pos["multiplier"]
+        avg_entry = pos["average_entry_price"]
         mark = marks[symbol]
         observed = _parse_rfc3339(mark.as_of)
         if not math.isfinite(mark.price) or mark.price <= 0 or observed is None:
@@ -569,7 +590,20 @@ def value_portfolio(
         ):
             stale.append(symbol)
             continue
-        portfolio_value += quantity * mark.price
+        if kind == "stock_future":
+            if avg_entry is None or avg_entry <= 0:
+                return ValuationResult(
+                    status="invalid_ledger",
+                    sample=None,
+                    diagnostic={
+                        **base_diagnostic,
+                        "code": "futures_position_missing_entry_price",
+                        "missing_symbols": [symbol],
+                    },
+                )
+            portfolio_value += quantity * multiplier * (mark.price - avg_entry)
+        else:
+            portfolio_value += quantity * multiplier * mark.price
         used_marks.append(mark)
 
     if stale:

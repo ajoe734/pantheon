@@ -346,7 +346,7 @@ def test_openclaw_ops_endpoints(client: TestClient):
 
 
 def test_openclaw_session_create_and_cancel(client: TestClient):
-    headers = {**OPERATOR_HEADERS, "X-Idempotency-Key": "idem-openclaw-001"}
+    headers = {**OPERATOR_HEADERS, "Idempotency-Key": "idem-openclaw-001"}
     create_payload = {
         "agent_id": "assistant-trader",
         "session_type": "agora_servant",
@@ -363,7 +363,7 @@ def test_openclaw_session_create_and_cancel(client: TestClient):
     assert res_data["data"]["session"]["session_type"] == "agora_servant"
 
     # Cancel session
-    cancel_headers = {**OPERATOR_HEADERS, "X-Idempotency-Key": "idem-openclaw-cancel-001"}
+    cancel_headers = {**OPERATOR_HEADERS, "Idempotency-Key": "idem-openclaw-cancel-001"}
     cancel_resp = client.post(
         f"/api/v1/operator/openclaw/sessions/{session_id}/cancel",
         headers=cancel_headers,
@@ -696,7 +696,7 @@ def test_openclaw_role_rejection(client: TestClient):
     resp = client.post(
         "/api/v1/operator/openclaw/sessions",
         json={"agent_id": "test"},
-        headers={**VIEWER_HEADERS, "X-Idempotency-Key": "idem-view-01"},
+        headers={**VIEWER_HEADERS, "Idempotency-Key": "idem-view-01"},
     )
     assert resp.status_code == 403
 
@@ -839,7 +839,7 @@ def test_tools_skills_channels_404(client: TestClient):
 
 
 def test_openclaw_session_validation_failures(client: TestClient):
-    headers = {**OPERATOR_HEADERS, "X-Idempotency-Key": "idem-val-fail-001"}
+    headers = {**OPERATOR_HEADERS, "Idempotency-Key": "idem-val-fail-001"}
 
     # Missing agent_id
     resp1 = client.post(
@@ -926,7 +926,7 @@ def test_standalone_exported_router_unauthenticated_and_rbac():
     assert inv_resp.json()["detail"]["error"]["code"] == "AUTH_REQUIRED"
 
     # 3. Viewer token on OpenClaw session write should receive 403 FORBIDDEN
-    viewer_headers = {"Authorization": "Bearer viewer-only:viewer", "X-Idempotency-Key": "key-1"}
+    viewer_headers = {"Authorization": "Bearer viewer-only:viewer", "Idempotency-Key": "key-1"}
     forb_resp = standalone_client.post(
         "/api/v1/operator/openclaw/sessions",
         json={"agent_id": "ag-1", "session_type": "agora_servant"},

@@ -38,7 +38,7 @@ def create_personas_router(
     dataset_surface_status_fn: Optional[Callable[..., Dict[str, Any]]] = None,
     raise_if_read_surface_unavailable_fn: Optional[Callable[..., None]] = None,
     reject_body_idempotency_key_fn: Optional[Callable[[Dict[str, Any]], None]] = None,
-    resolve_final_idempotency_key_fn: Optional[Callable[[Optional[str], Optional[str]], str]] = None,
+    resolve_final_idempotency_key_fn: Optional[Callable[[Optional[str]], str]] = None,
     submit_persona_action_fn: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Build the canonical Persona Management domain router.

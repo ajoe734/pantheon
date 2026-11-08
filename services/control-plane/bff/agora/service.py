@@ -244,19 +244,14 @@ class AgoraService:
         return self._get_audit_store()
 
     def _record_agora_audit_event(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Write an Agora audit event through its mutation-owned store.
+        """Write an Agora audit event through the mutation-owned audit store.
 
-        The read-surface ports deliberately stay read-only.  The fallback keeps
-        compatibility with focused unit-test doubles that still expose the
-        legacy method, while production wiring always supplies ``audit_store``.
+        Read-surface ports stay read-only; there is no fallback to them.
         """
         writer = self.audit_store
-        if writer is not None and hasattr(writer, "record_agora_audit_event"):
-            return writer.record_agora_audit_event(event)
-        legacy = self.read_store
-        if legacy is not None and hasattr(legacy, "record_agora_audit_event"):
-            return legacy.record_agora_audit_event(event)
-        return None
+        if writer is None:
+            return None
+        return writer.record_agora_audit_event(event)
 
     @property
     def command_store(self) -> Any:
@@ -320,15 +315,15 @@ class AgoraService:
     def resolve_final_idempotency_key(
         self,
         idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str],
+        *_ignored: Any,
     ) -> str:
-        key = str(idempotency_key or x_idempotency_key or "").strip()
+        key = str(idempotency_key or "").strip()
         if not key:
             raise self.bff_error(
                 400,
                 ErrorCode.VALIDATION_FAILED,
                 "Idempotency-Key header is required",
-                "Request must include a non-empty Idempotency-Key or X-Idempotency-Key header",
+                "Request must include a non-empty Idempotency-Key header",
                 precondition_failed="Idempotency-Key",
             )
         return key
@@ -940,13 +935,12 @@ class AgoraService:
         payload: Dict[str, Any],
         identity: OperatorIdentity,
         idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str],
         x_dry_run: Optional[str] = None,
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> Any:
         self.reject_body_idempotency_key(payload)
-        resolved_key = self.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = self.resolve_final_idempotency_key(idempotency_key)
         if identity is None:
             raise self.bff_error(401, ErrorCode.AUTH_REQUIRED, "Journal entry creation requires a verified identity")
         body_tenant = str(payload.get("tenant_id") or payload.get("tenantId") or "").strip()

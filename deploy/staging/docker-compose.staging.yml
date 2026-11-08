@@ -36,6 +36,11 @@ x-core-env: &core_env
   PANTHEON_RUNTIME_JWT_AUDIENCE: ${STAGING_JWT_AUDIENCE:?staging jwt audience required}
   PANTHEON_RUNTIME_OIDC_ISSUER: ${STAGING_IDP_ISSUER:?staging idp issuer required}
   PANTHEON_RUNTIME_OIDC_DISCOVERY_URL: ${STAGING_IDP_ISSUER:?staging idp issuer required}/.well-known/openid-configuration
+  PANTHEON_GOVERNANCE_AUTH_MODE: strict
+  PANTHEON_GOVERNANCE_JWT_ISSUER: ${STAGING_JWT_ISSUER:?staging jwt issuer required}
+  PANTHEON_GOVERNANCE_JWT_AUDIENCE: ${STAGING_JWT_AUDIENCE:?staging jwt audience required}
+  PANTHEON_GOVERNANCE_OIDC_ISSUER: ${STAGING_IDP_ISSUER:?staging idp issuer required}
+  PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL: ${STAGING_IDP_ISSUER:?staging idp issuer required}/.well-known/openid-configuration
 
 x-product-owner: &product_owner
   pull_policy: never
@@ -209,6 +214,8 @@ services:
       PANTHEON_BFF_CORS_ORIGINS: ${STAGING_BFF_CORS_ORIGINS:?staging FE origin required}
       PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: postgres
       LIFECYCLE_PROJECTOR_WRITER_BACKEND: postgres
+      PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND: postgres
+      PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA: bff
       # Shared durable Agora stores: must match agora-interaction-worker so requests/readbacks do not diverge.
       AGORA_WORKSHOP_STORE_BACKEND: postgres
       AGORA_WORKSHOP_STORE_SCHEMA: agora

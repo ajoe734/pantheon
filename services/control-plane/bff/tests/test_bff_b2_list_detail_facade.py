@@ -656,7 +656,7 @@ def _create_app() -> FastAPI:
         split_csv_query=lambda q: q.split(",") if q else None,
         meta_staleness=lambda: None,
         stable_json_hash=_stable_json_hash,
-        resolve_final_idempotency_key=lambda ik, xik: str(ik or xik or ""),
+        resolve_final_idempotency_key=lambda ik: str(ik or ""),
         reject_body_idempotency_key=lambda p: None,
         request_dry_run_requested=lambda: False,
         publish_event=lambda *a, **kw: "ev-1",
@@ -1108,35 +1108,49 @@ def test_bff_persona_memory_found() -> None:
             facade_state.read_store = original
 
 
+def _memory_jwt(monkeypatch, tenant: str = "tenant-alpha") -> str:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "memory-auth-test-secret-0123456789abcdef"
+    for name in ("PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_BFF_JWT_SECRET"):
+        monkeypatch.setenv(name, secret)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    return encode_jwt_hs256(
+        {"sub": "op-mem", "operator_id": "op-mem", "roles": ["operator"], "tenant_id": tenant, "exp": 4102444800},
+        secret=secret,
+    )
+
+
+class _MemFakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self):
+        return json.dumps(self._payload).encode()
+
+
 def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def read(self):
-            return json.dumps(
-                {
-                    "hits": [
-                        {
-                            "type": "persona",
-                            "relevance_score": 0.93,
-                            "entry": {"memory_id": "pmem-1", "persona_id": captured["persona_id"]},
-                        },
-                        {"type": "institutional", "entry": {"entry_id": "inst-1"}},
-                    ],
-                    "authz": {"policy_version": "governance-authz.v1"},
-                }
-            ).encode()
-
     captured = {}
 
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        return FakeResponse()
+        captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+        return _MemFakeResponse(
+            {
+                "hits": [
+                    {"type": "persona", "relevance_score": 0.93,
+                     "entry": {"memory_id": "pmem-1", "persona_id": captured["persona_id"]}},
+                    {"type": "institutional", "entry": {"entry_id": "inst-1"}},
+                ],
+                "authz": {"policy_version": "governance-authz.v1"},
+            }
+        )
 
     with tempfile.TemporaryDirectory() as td:
         original = facade_state.read_store
@@ -1146,7 +1160,8 @@ def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
             client = _fresh_client(td)
             pid = _seed_persona(client, "Canonical Memory Persona")
             captured["persona_id"] = pid
-            resp = client.get(f"/bff/personas/{pid}/memory", headers=OPERATOR_HEADERS)
+            token = _memory_jwt(monkeypatch)
+            resp = client.get(f"/bff/personas/{pid}/memory", headers={"Authorization": f"Bearer {token}"})
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["data"] == [
@@ -1154,11 +1169,65 @@ def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
             ]
             assert body["meta"]["status"] == "ok"
             source = body["meta"]["memory_source"]
-            assert source["kind"] == "canonical_memory_plane"
             assert source["available"] is True
             assert source["workspace_is_source_of_truth"] is False
             assert "scope=persona" in captured["url"]
             assert f"persona_id={pid}" in captured["url"]
+            # Actual transport carries the caller's verified identity and tenant;
+            # roles are never asserted through the query string.
+            assert captured["headers"]["authorization"] == f"Bearer {token}"
+            assert captured["headers"]["x-tenant-id"] == "tenant-alpha"
+            assert "actor_roles=&" in captured["url"] or "actor_roles=" in captured["url"]
+            assert "operator" not in captured["url"].split("actor_roles=")[1].split("&")[0]
+        finally:
+            facade_state.read_store = original
+
+
+def test_bff_persona_memory_denied_stays_explicit(monkeypatch) -> None:
+    from urllib import error as urllib_error
+
+    def deny(request, timeout):
+        raise urllib_error.HTTPError(request.full_url, 403, "forbidden", {}, None)
+
+    with tempfile.TemporaryDirectory() as td:
+        original = facade_state.read_store
+        try:
+            monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory:8080")
+            monkeypatch.setattr(facade_state.urllib_request, "urlopen", deny)
+            client = _fresh_client(td)
+            pid = _seed_persona(client, "Denied Memory Persona")
+            token = _memory_jwt(monkeypatch)
+            resp = client.get(f"/bff/personas/{pid}/memory", headers={"Authorization": f"Bearer {token}"})
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["data"] == []
+            assert body["meta"]["status"] == "degraded"
+            src = body["meta"]["memory_source"]
+            assert src["available"] is False and src["fallback_used"] is False
+            assert src["reason"] == "memory_plane_access_denied" and src["http_status"] == 403
+        finally:
+            facade_state.read_store = original
+
+
+def test_bff_persona_memory_unbound_tenant_never_calls_memory(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory:8080")
+    monkeypatch.setattr(facade_state.urllib_request, "urlopen", lambda *a, **k: calls.append(a))
+    with tempfile.TemporaryDirectory() as td:
+        original = facade_state.read_store
+        try:
+            client = _fresh_client(td)
+            pid = _seed_persona(client, "Unbound Memory Persona")
+            token = _memory_jwt(monkeypatch)
+            resp = client.get(
+                f"/bff/personas/{pid}/memory",
+                headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-beta"},
+            )
+            assert resp.status_code == 200, resp.text
+            src = resp.json()["meta"]["memory_source"]
+            assert src["available"] is False
+            assert src["reason"] == "memory_plane_tenant_unbound"
+            assert calls == []
         finally:
             facade_state.read_store = original
 
@@ -1419,3 +1488,165 @@ def test_bff_rebalance_detail_unauthorized() -> None:
             assert resp.status_code == 401, resp.text
         finally:
             facade_state.read_store = original
+
+
+# ---------------------------------------------------------------------------
+# 15. GET /api/v1/operator/persona-management/{persona_id} Readiness & Linkage
+# ---------------------------------------------------------------------------
+
+def test_persona_management_resolves_bound_deployment_plans_approvals_and_paper_running_health() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = facade_state.read_store
+        try:
+            client = _fresh_client(td)
+            store = facade_state.read_store
+            persona_id = "persona-be19a1fac471247f2b2a"
+            runtime_id = "rb-677cd34c70a2b20c64b4"
+            plan_id = "plan-677cd34c70a2b20c64b4"
+            decision_id = "apv-677cd34c70a2b20c64b4"
+            artifact_id = "artifact-qinghe-r2"
+            pool_id = "pool-paper-qinghe-r2"
+            cap_binding_id = "pcb-qinghe-r2"
+
+            store._personas[persona_id] = {
+                "persona_id": persona_id,
+                "name": "青禾 R2",
+                "display_name": "青禾 R2",
+                "tenant_id": "tenant-default",
+                "lifecycle_state": "research_only",
+                "paper_runtime_state": "paper_running",
+                "strategy_family": "momentum",
+                "mandate": "Paper momentum validation",
+                "metadata": {
+                    "paper_runtime_state": "paper_running",
+                    "environment_ceiling": "paper",
+                    "persona_capital_binding_id": cap_binding_id,
+                    "capital_pool_id": pool_id,
+                    "runtime_binding_id": runtime_id,
+                    "strategy_artifact_id": artifact_id,
+                },
+            }
+            runtime_bindings = {
+                runtime_id: {
+                    "runtime_id": runtime_id,
+                    "binding_id": runtime_id,
+                    "tenant_id": "tenant-default",
+                    "persona_id": persona_id,
+                    "plan_id": plan_id,
+                    "status": "active",
+                    "health_status": "healthy",
+                    "environment": "paper",
+                    "capital_pool_id": pool_id,
+                    "persona_capital_binding_id": cap_binding_id,
+                    "strategy_artifact_id": artifact_id,
+                    "updated_at": "2026-11-07T08:00:00Z",
+                    "metadata": {
+                        "object_store": {"artifact_id": artifact_id},
+                    },
+                }
+            }
+            # DeploymentPlan linked via binding_id/capital_pool_id/approval_decision_id (no direct persona_id)
+            deployment_plans = {
+                plan_id: {
+                    "plan_id": plan_id,
+                    "tenant_id": "tenant-default",
+                    "binding_id": runtime_id,
+                    "capital_pool_id": pool_id,
+                    "approval_decision_id": decision_id,
+                    "strategy_artifact_id": artifact_id,
+                    "status": "active",
+                    "environment": "paper",
+                },
+                "plan-foreign": {
+                    "plan_id": "plan-foreign",
+                    "tenant_id": "tenant-other",
+                    "persona_id": persona_id,
+                    "binding_id": runtime_id,
+                },
+            }
+            # Terminal approved ApprovalDecision linked via decision_id and target_id=artifact_id
+            approval_decisions = {
+                decision_id: {
+                    "decision_id": decision_id,
+                    "tenant_id": "tenant-default",
+                    "status": "approved",
+                    "decision": "approved",
+                    "target_type": "strategy_artifact",
+                    "target_id": artifact_id,
+                    "decided_at": "2026-11-07T07:00:00Z",
+                },
+                "apv-foreign": {
+                    "decision_id": "apv-foreign",
+                    "tenant_id": "tenant-other",
+                    "persona_id": persona_id,
+                    "status": "approved",
+                },
+            }
+            rq = store.ports.ooda_management.review_queue
+            rq._approval_decisions_reader = lambda: list(approval_decisions.values())
+            rq._approval_decisions_by_id_reader = lambda ids: [
+                approval_decisions[i] for i in ids if i in approval_decisions
+            ]
+            store.list_runtime_bindings = lambda: list(runtime_bindings.values())
+            store.list_deployment_plans = lambda: list(deployment_plans.values())
+            store.get_deployment_plan = lambda pid: deployment_plans.get(str(pid))
+
+            resp = client.get(
+                f"/api/v1/operator/persona-management/{persona_id}",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            payload = resp.json()["data"]
+
+            # Governance lifecycle maturity stays research_only (never falsely promoted to paper_owner)
+            assert payload["persona"]["lifecycle_state"] == "research_only"
+
+            # Health separates lifecycle_maturity from current paper execution mode
+            health = payload["health"]
+            assert health["status"] == "healthy"
+            assert "persona_lifecycle_not_active" not in (health.get("reasons") or [])
+            assert health["lifecycle_maturity"] == "research_only"
+            assert health["execution_mode"] == "paper"
+            assert health["operational_state"] == "paper_running"
+
+            # Bound DeploymentPlan and terminal ApprovalDecision are resolved and tenant-filtered
+            plan_ids = [p.get("plan_id") or p.get("id") for p in payload["deploymentPlans"]]
+            assert plan_ids == [plan_id]
+            decision_ids = [a.get("decision_id") or a.get("id") for a in payload["approvals"]]
+            assert decision_ids == [decision_id]
+        finally:
+            facade_state.read_store = original
+
+
+def test_persona_management_keeps_unreconciled_research_only_degraded() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = facade_state.read_store
+        try:
+            client = _fresh_client(td)
+            store = facade_state.read_store
+            persona_id = "persona-research-unreconciled"
+            store._personas[persona_id] = {
+                "persona_id": persona_id,
+                "name": "Unreconciled Research",
+                "display_name": "Unreconciled Research",
+                "tenant_id": "tenant-default",
+                "lifecycle_state": "research_only",
+                "strategy_family": "mean_reversion",
+                "metadata": {},
+            }
+
+            resp = client.get(
+                f"/api/v1/operator/persona-management/{persona_id}",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            payload = resp.json()["data"]
+            assert payload["persona"]["lifecycle_state"] == "research_only"
+            health = payload["health"]
+            assert health["status"] == "degraded"
+            assert "persona_lifecycle_not_active" in (health.get("reasons") or [])
+            assert health["lifecycle_maturity"] == "research_only"
+            assert health["execution_mode"] == "unknown"
+        finally:
+            facade_state.read_store = original
+

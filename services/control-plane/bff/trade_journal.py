@@ -130,6 +130,281 @@ def read_context_episode(episode_id: str, authorization: str | None, tenant_id: 
     return dict(row)
 
 
+def read_persona_operating_episodes(
+    persona_id: str,
+    authorization: str | None,
+    tenant_id: str,
+    *,
+    limit: int = 5,
+    evidence_cutoff: str | None = None,
+) -> dict[str, Any]:
+    """Read bounded recent trade episodes for one Persona from the Telemetry owner.
+
+    Enforces strict tenant_id and persona_id isolation, bounds ID lists, and
+    never treats an unconfigured or failing Telemetry owner as proof that no
+    trades exist.
+    """
+    clean_persona_id = str(persona_id or "").strip()
+    clean_tenant_id = str(tenant_id or "").strip()
+    bounded_limit = max(1, min(int(limit or 5), 10))
+    if not clean_persona_id or not clean_tenant_id:
+        return {
+            "status": "unavailable",
+            "reason": "persona_or_tenant_missing",
+            "source": "telemetry_trade_episodes",
+            "tenant_id": clean_tenant_id or None,
+            "persona_id": clean_persona_id or None,
+            "episode_count": None,
+            "episodes": [],
+            "position_snapshot_refs": [],
+            "order_ids": [],
+            "fill_ids": [],
+            "not_provided_fields": ["trade_episodes"],
+        }
+    if authorization:
+        from .command_adapters.base import _token_tenants
+
+        primary_tok, allowed_tok = _token_tenants(authorization)
+        if primary_tok is not None or allowed_tok:
+            try:
+                tenant = bound_tenant({}, clean_tenant_id, authorization)
+            except Exception:
+                return {
+                    "status": "unavailable",
+                    "reason": "tenant_binding_rejected",
+                    "source": "telemetry_trade_episodes",
+                    "tenant_id": clean_tenant_id,
+                    "persona_id": clean_persona_id,
+                    "episode_count": None,
+                    "episodes": [],
+                    "position_snapshot_refs": [],
+                    "order_ids": [],
+                    "fill_ids": [],
+                    "not_provided_fields": ["trade_episodes"],
+                }
+        else:
+            tenant = clean_tenant_id
+    else:
+        tenant = clean_tenant_id
+
+    base = os.getenv("PANTHEON_TELEMETRY_API_URL", "").strip().rstrip("/")
+    if not base:
+        return {
+            "status": "unavailable",
+            "reason": "telemetry_owner_unconfigured",
+            "source": "telemetry_trade_episodes",
+            "tenant_id": tenant,
+            "persona_id": clean_persona_id,
+            "episode_count": None,
+            "episodes": [],
+            "position_snapshot_refs": [],
+            "order_ids": [],
+            "fill_ids": [],
+            "not_provided_fields": ["trade_episodes"],
+        }
+
+    query = urlencode({"persona_id": clean_persona_id, "limit": bounded_limit})
+    try:
+        status, body = _http_call(
+            f"{base}/api/telemetry/trade-episodes?{query}",
+            None,
+            {"Authorization": authorization or "", "X-Tenant-Id": tenant},
+            method="GET",
+        )
+    except Exception:
+        return {
+            "status": "unavailable",
+            "reason": "telemetry_owner_unreachable",
+            "source": "telemetry_trade_episodes",
+            "tenant_id": tenant,
+            "persona_id": clean_persona_id,
+            "episode_count": None,
+            "episodes": [],
+            "position_snapshot_refs": [],
+            "order_ids": [],
+            "fill_ids": [],
+            "not_provided_fields": ["trade_episodes"],
+        }
+
+    if status != 200 or not isinstance(body, Mapping):
+        return {
+            "status": "unavailable",
+            "reason": f"telemetry_owner_http_{status}",
+            "source": "telemetry_trade_episodes",
+            "tenant_id": tenant,
+            "persona_id": clean_persona_id,
+            "episode_count": None,
+            "episodes": [],
+            "position_snapshot_refs": [],
+            "order_ids": [],
+            "fill_ids": [],
+            "not_provided_fields": ["trade_episodes"],
+        }
+
+    rows = body.get("projections")
+    if not isinstance(rows, list):
+        return {
+            "status": "unavailable",
+            "reason": "invalid_telemetry_projection_payload",
+            "source": "telemetry_trade_episodes",
+            "tenant_id": tenant,
+            "persona_id": clean_persona_id,
+            "episode_count": None,
+            "episodes": [],
+            "position_snapshot_refs": [],
+            "order_ids": [],
+            "fill_ids": [],
+            "not_provided_fields": ["trade_episodes"],
+        }
+
+    for row in rows:
+        if (
+            not isinstance(row, Mapping)
+            or str(row.get("persona_id") or "").strip() != clean_persona_id
+            or str(row.get("tenant_id") or "").strip() != tenant
+        ):
+            return {
+                "status": "unavailable",
+                "reason": "cross_tenant_or_persona_mismatch_rejected",
+                "source": "telemetry_trade_episodes",
+                "tenant_id": tenant,
+                "persona_id": clean_persona_id,
+                "episode_count": None,
+                "episodes": [],
+                "position_snapshot_refs": [],
+                "order_ids": [],
+                "fill_ids": [],
+                "not_provided_fields": ["trade_episodes"],
+            }
+
+    bounded_episodes: list[dict[str, Any]] = []
+    all_pos_refs: list[str] = []
+    all_order_ids: list[str] = []
+    all_fill_ids: list[str] = []
+    any_partial = False
+    measure_keys = (
+        "realized_pnl",
+        "unrealized_pnl",
+        "return_percent",
+        "exit_at",
+        "max_adverse_excursion",
+        "max_favorable_excursion",
+        "holding_duration_seconds",
+    )
+
+    for raw_row in rows[:bounded_limit]:
+        try:
+            view = _episode_view(raw_row)
+        except (TypeError, ValueError):
+            return {
+                "status": "unavailable",
+                "reason": "invalid_telemetry_episode_schema",
+                "source": "telemetry_trade_episodes",
+                "tenant_id": tenant,
+                "persona_id": clean_persona_id,
+                "episode_count": None,
+                "episodes": [],
+                "position_snapshot_refs": [],
+                "order_ids": [],
+                "fill_ids": [],
+                "not_provided_fields": ["trade_episodes"],
+            }
+        entry_at = str(view.get("entry_at") or "").strip()
+        if evidence_cutoff and entry_at and entry_at > str(evidence_cutoff).strip():
+            continue
+        order_ids = [str(x).strip() for x in (view.get("order_ids") or []) if str(x).strip()][:20]
+        fill_ids = [str(x).strip() for x in (view.get("fill_ids") or []) if str(x).strip()][:20]
+        pos_refs = [str(x).strip() for x in (view.get("position_snapshot_refs") or []) if str(x).strip()][:20]
+        for oid in order_ids:
+            if oid not in all_order_ids:
+                all_order_ids.append(oid)
+        for fid in fill_ids:
+            if fid not in all_fill_ids:
+                all_fill_ids.append(fid)
+        for pref in pos_refs:
+            if pref not in all_pos_refs:
+                all_pos_refs.append(pref)
+
+        ep_not_provided = [k for k in measure_keys if view.get(k) is None]
+        missing_refs = [str(x) for x in (view.get("missing_refs") or []) if str(x)]
+        cov = view.get("coverage") if isinstance(view.get("coverage"), Mapping) else {}
+        if missing_refs or ep_not_provided or any(
+            isinstance(sec, Mapping) and sec.get("state") != "complete"
+            for sec in cov.values()
+        ):
+            any_partial = True
+
+        ep_id = str(view.get("trade_episode_id") or view.get("episode_id") or "").strip() or None
+        symbol_val = view.get("instrument_id") or view.get("symbol")
+        bounded_episodes.append({
+            "trade_episode_id": ep_id,
+            "episode_id": ep_id,
+            "tenant_id": tenant,
+            "persona_id": clean_persona_id,
+            "runtime_id": view.get("runtime_id"),
+            "runtime_binding_id": view.get("runtime_binding_id"),
+            "strategy_id": view.get("strategy_id"),
+            "strategy_version": view.get("strategy_version"),
+            "instrument_id": symbol_val,
+            "symbol": symbol_val,
+            "environment": view.get("environment") or view.get("execution_mode"),
+            "execution_source": view.get("execution_source"),
+            "side": view.get("side") or view.get("direction"),
+            "status": view.get("status"),
+            "entry_at": view.get("entry_at") or view.get("opened_at"),
+            "exit_at": view.get("exit_at"),
+            "updated_at": view.get("updated_at") or view.get("entry_at") or view.get("opened_at"),
+            "requested_quantity": view.get("requested_quantity"),
+            "filled_quantity": view.get("filled_quantity"),
+            "remaining_quantity": view.get("remaining_quantity"),
+            "vwap": view.get("vwap"),
+            "mark_price": view.get("mark_price"),
+            "mark_as_of": view.get("mark_as_of"),
+            "realized_pnl": view.get("realized_pnl"),
+            "unrealized_pnl": view.get("unrealized_pnl"),
+            "return_percent": view.get("return_percent"),
+            "holding_duration_seconds": view.get("holding_duration_seconds"),
+            "max_adverse_excursion": view.get("max_adverse_excursion"),
+            "max_favorable_excursion": view.get("max_favorable_excursion"),
+            "order_ids": order_ids,
+            "fill_ids": fill_ids,
+            "position_snapshot_refs": pos_refs,
+            "missing_refs": missing_refs,
+            "coverage": dict(cov),
+            "not_provided_fields": ep_not_provided,
+        })
+
+    if not bounded_episodes:
+        overall_status = "empty"
+    elif any_partial:
+        overall_status = "partial"
+    else:
+        overall_status = "complete"
+
+    top_not_provided = sorted({
+        field
+        for ep in bounded_episodes
+        for field in (ep.get("not_provided_fields") or [])
+    })
+    open_episode_count = sum(
+        1 for ep in bounded_episodes if str(ep.get("status") or "").strip().lower() == "open"
+    )
+    return {
+        "status": overall_status,
+        "reason": None,
+        "source": "telemetry_trade_episodes",
+        "tenant_id": tenant,
+        "persona_id": clean_persona_id,
+        "episode_count": len(bounded_episodes),
+        "open_episode_count": open_episode_count,
+        "episodes": bounded_episodes,
+        "position_snapshot_refs": all_pos_refs[:20],
+        "order_ids": all_order_ids[:20],
+        "fill_ids": all_fill_ids[:20],
+        "not_provided_fields": top_not_provided,
+    }
+
+
 def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
     legacy = os.getenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "").strip().rstrip("/")
     if legacy:

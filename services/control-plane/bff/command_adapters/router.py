@@ -143,7 +143,6 @@ def create_command_adapters_router(
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
         x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Submit an operator command (final BFF contract)."""
         return svc.submit_final_command(
@@ -156,7 +155,6 @@ def create_command_adapters_router(
             x_request_id=x_request_id,
             x_confirm_token=x_confirm_token,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     # 4. Command Confirmation (submit token)
@@ -164,7 +162,6 @@ def create_command_adapters_router(
     async def bff_command_confirmation(
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF: submit a command confirmation token."""
@@ -178,7 +175,6 @@ def create_command_adapters_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     # 5. Command Confirmation Status Read
@@ -198,7 +194,6 @@ def create_command_adapters_router(
         request: Request,
         response: Response,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
         x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
@@ -216,7 +211,6 @@ def create_command_adapters_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             x_correlation_id=x_correlation_id,
             x_request_id=x_request_id,
             x_dry_run=x_dry_run,
@@ -229,7 +223,6 @@ def create_command_adapters_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Create a new confirm token."""
         identity = svc.extract_identity(authorization)
@@ -237,7 +230,6 @@ def create_command_adapters_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     # 8. Get Confirm Token Status
@@ -257,7 +249,6 @@ def create_command_adapters_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Redeem a confirm token."""
         identity = svc.extract_identity(authorization)
@@ -266,7 +257,6 @@ def create_command_adapters_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     # 10. Delete Confirm Token
@@ -276,7 +266,6 @@ def create_command_adapters_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Delete a confirm token."""
         identity = svc.extract_identity(authorization)
@@ -285,7 +274,6 @@ def create_command_adapters_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     return router

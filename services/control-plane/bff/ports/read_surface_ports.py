@@ -1119,8 +1119,17 @@ class ReadSurfacePorts:
         if not decision_id:
             return None
         did_str = str(decision_id).strip()
-        if hasattr(self.ooda_management, "review_queue") and hasattr(self.ooda_management.review_queue, "_approval_decisions_reader"):
-            reader = self.ooda_management.review_queue._approval_decisions_reader
+        if hasattr(self.ooda_management, "review_queue"):
+            rq = self.ooda_management.review_queue
+            by_id_reader = getattr(rq, "_approval_decisions_by_id_reader", None)
+            if callable(by_id_reader):
+                try:
+                    for item in by_id_reader([did_str]) or []:
+                        if isinstance(item, dict) and str(item.get("decision_id") or item.get("id") or "").strip() == did_str:
+                            return item
+                except Exception:
+                    pass
+            reader = getattr(rq, "_approval_decisions_reader", None)
             if callable(reader):
                 for item in reader() or []:
                     if str(item.get("decision_id") or item.get("id") or "").strip() == did_str:
@@ -1131,6 +1140,22 @@ class ReadSurfacePorts:
         return None
 
     def list_approval_decisions(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if not kwargs and hasattr(self.ooda_management, "review_queue"):
+            reader = getattr(self.ooda_management.review_queue, "_approval_decisions_reader", None)
+            if callable(reader):
+                raw_decisions = [item for item in (reader() or []) if isinstance(item, dict)]
+                if raw_decisions:
+                    seen_ids = {
+                        str(item.get("decision_id") or item.get("id") or "").strip()
+                        for item in raw_decisions
+                    } - {""}
+                    queue_items = [
+                        item
+                        for item in (self.ooda_management.list_approval_queue_items() or [])
+                        if isinstance(item, dict)
+                        and str(item.get("decision_id") or item.get("id") or item.get("item_id") or "").strip() not in seen_ids
+                    ]
+                    return [*raw_decisions, *queue_items]
         return self.ooda_management.list_approval_queue_items(**kwargs)
 
     def get_review_summary(

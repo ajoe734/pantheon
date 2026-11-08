@@ -239,6 +239,29 @@ rejected candidate while `deployment.json` still showed the old pair accepted.
   section: "the stack is mixed" for mismatches or "compensation NOT proven" for
   missing images. The run fails; database migrations are not rolled back.
 
+## Compensation drill
+
+**Run:** dispatch `nonprod-deploy` for dev/root with `compensation_drill=true`,
+strict auth, a requested pair different from the served pair, and none of
+`isolated_provider_qualification`, `hosted_all12_chain`,
+`run_exact_artifact_roundtrip` or `bootstrap_empty_host`; any of those (or a
+non strict profile) is rejected before mutation, and a requested pair equal to
+the served pair is refused before the lease because restoring identical images
+proves nothing. Record the result as a drill against item 4 of
+HOSTED-DEPLOY-WINDOW-ATTRIBUTION-ACCEPTANCE-20261106.
+
+**Flow:** candidate deploy and seal, then the step "Intentional compensation
+drill failure after candidate stack is up" fails (no VM access), then the one
+existing compensation step and per-service readback run unchanged. The job
+summary and the `pantheon-dev-compensation-drill-<run>-<attempt>` marker state
+that the run was a drill; no second compensation path exists.
+
+**Proves:** after a failure that follows a changed stack, compensation restores
+the whole recorded stack to the hosted baseline. **Does not prove:** recovery
+from an unplanned failure point, or database migration rollback. The run name
+is `Dev compensation drill ...`, so `auto_deploy_dev_pair` never counts it as a
+failed attempt of the pair.
+
 ## Remote cancellation and limitations
 
 The runner and SSH sender stay in the pinned guard's process group. A remote

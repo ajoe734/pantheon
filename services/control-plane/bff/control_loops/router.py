@@ -261,7 +261,6 @@ def create_control_loops_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _operator_identity(authorization)
         _reject_body_key(payload)
@@ -312,7 +311,6 @@ def create_control_loops_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             terminal_on_persist=terminal_on_persist,
             trusted_evidence_producer=trusted_evidence_producer,
         )

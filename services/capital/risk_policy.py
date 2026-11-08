@@ -6,12 +6,15 @@ consume this module as the shared evaluator contract instead of interpreting
 """
 from __future__ import annotations
 
+import json
 import math
+import os
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 
@@ -25,6 +28,10 @@ class RiskPolicyError(ValueError):
     def __init__(self, message: str, *, evaluation: "RiskPolicyEvaluation | None" = None) -> None:
         super().__init__(message)
         self.evaluation = evaluation
+
+
+class RiskPolicyLoadError(RuntimeError):
+    """Raised when a risk policy file or bound capital pool policy reference cannot be loaded."""
 
 
 class RiskPolicyDecision(str, Enum):
@@ -965,3 +972,208 @@ def _limit_for_key(limit: Mapping[str, float] | float, key: str) -> float | None
     if isinstance(limit, Mapping):
         return _optional_float(limit.get(key, limit.get("*")))
     return _optional_float(limit)
+
+
+def load_risk_policy(ref: str, *, policy_dir: str | os.PathLike[str] | None = None) -> Mapping[str, Any]:
+    """Load a raw RiskPolicy JSON mapping from ``CAPITAL_RISK_POLICY_DIR`` (stdlib-only)."""
+    clean_ref = str(ref or "").strip()
+    if policy_dir is not None:
+        root = Path(str(policy_dir).strip())
+    elif os.getenv("CAPITAL_RISK_POLICY_DIR", "").strip():
+        root = Path(os.getenv("CAPITAL_RISK_POLICY_DIR", "").strip())
+    else:
+        repo_config_dir = Path(__file__).resolve().parents[2] / "config" / "risk_policies"
+        local_dir = Path(__file__).parent / "risk_policies"
+        root = repo_config_dir if repo_config_dir.exists() else local_dir
+    if not clean_ref or "/" in clean_ref or "\\" in clean_ref or clean_ref.startswith("."):
+        raise RiskPolicyLoadError("risk policy source is not configured for this reference")
+    path = root / f"{clean_ref}.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RiskPolicyLoadError(f"Risk policy {clean_ref!r} unavailable at {path}: {exc}") from exc
+    if not isinstance(raw, Mapping):
+        raise RiskPolicyLoadError(f"Malformed risk policy {clean_ref!r}: expected a JSON object")
+    normalized = dict(raw)
+    exposure_limits = normalized.get("exposure_limits")
+    if isinstance(exposure_limits, Mapping):
+        for k, v in exposure_limits.items():
+            normalized.setdefault(k, v)
+    return normalized
+
+
+def normalize_risk_policy(
+    policy: "RiskPolicy | Mapping[str, Any]",
+    *,
+    default_id: str | None = None,
+) -> RiskPolicy:
+    """Normalize a ``RiskPolicy`` or JSON mapping into a validated ``RiskPolicy`` model."""
+    if isinstance(policy, RiskPolicy):
+        return policy
+    if isinstance(policy, Mapping):
+        payload = dict(policy)
+        exposure_limits = payload.get("exposure_limits")
+        if isinstance(exposure_limits, Mapping):
+            for k, v in exposure_limits.items():
+                payload.setdefault(k, v)
+        if default_id and not any(payload.get(k) for k in ("risk_policy_id", "policy_id", "risk_policy_ref")):
+            payload["risk_policy_id"] = default_id
+        return RiskPolicy.from_mapping(payload)
+    raise RiskPolicyError(f"Malformed risk policy: expected RiskPolicy or mapping, got {type(policy).__name__}")
+
+
+def load_risk_policy_model(
+    ref: str,
+    *,
+    policy_dir: str | os.PathLike[str] | None = None,
+    loader: Callable[[str], Any] | None = None,
+) -> RiskPolicy:
+    """Load and parse a ``RiskPolicy`` model by reference."""
+    clean_ref = str(ref or "").strip()
+    if not clean_ref:
+        raise RiskPolicyLoadError("risk_policy_ref is empty")
+    raw = loader(clean_ref) if loader is not None else load_risk_policy(clean_ref, policy_dir=policy_dir)
+    return normalize_risk_policy(raw, default_id=clean_ref)
+
+
+def _configured_pool_store_paths(explicit_path: str | os.PathLike[str] | None = None) -> list[tuple[Path, bool]]:
+    candidates: list[tuple[Path, bool]] = []
+    if explicit_path is not None and str(explicit_path).strip():
+        candidates.append((Path(str(explicit_path).strip()), True))
+    env_store = os.getenv("PANTHEON_CAPITAL_POOL_STORE_PATH", "").strip()
+    if env_store:
+        candidates.append((Path(env_store), True))
+    for env_key in ("CAPITAL_DATA_DIR", "PANTHEON_GOVERNANCE_DATA_DIR", "DEPLOYMENT_DATA_DIR"):
+        env_dir = os.getenv(env_key, "").strip()
+        if env_dir:
+            candidates.append((Path(env_dir) / "capital_pools.json", False))
+    return candidates
+
+
+def read_capital_pool_record(
+    pool_id: str | None,
+    *,
+    pool_store_path: str | os.PathLike[str] | None = None,
+) -> dict[str, Any] | None:
+    """Read a bound CapitalPool record from configured JSON stores without third-party imports."""
+    clean_pool_id = str(pool_id or "").strip()
+    for path, explicit in _configured_pool_store_paths(pool_store_path):
+        if not path.exists():
+            if explicit:
+                raise RiskPolicyLoadError(f"Capital pool store not found at {path}")
+            continue
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RiskPolicyLoadError(f"Capital pool store unreadable at {path}: {exc}") from exc
+        records: list[Mapping[str, Any]] = []
+        if isinstance(raw, list):
+            records = [item for item in raw if isinstance(item, Mapping)]
+        elif isinstance(raw, Mapping):
+            if isinstance(raw.get("pools"), list):
+                records = [item for item in raw["pools"] if isinstance(item, Mapping)]
+            elif isinstance(raw.get("items"), list):
+                records = [item for item in raw["items"] if isinstance(item, Mapping)]
+            elif clean_pool_id and isinstance(raw.get(clean_pool_id), Mapping):
+                return dict(raw[clean_pool_id])
+            elif "pool_id" in raw or "capital_pool_id" in raw:
+                records = [raw]
+            else:
+                records = [val for val in raw.values() if isinstance(val, Mapping)]
+        else:
+            raise RiskPolicyLoadError(f"Capital pool store at {path} must be a JSON list or object")
+
+        if clean_pool_id:
+            for item in records:
+                item_id = str(item.get("pool_id") or item.get("capital_pool_id") or "").strip()
+                if item_id == clean_pool_id:
+                    return dict(item)
+            raise RiskPolicyLoadError(f"Capital pool {clean_pool_id!r} not found in {path}")
+        if len(records) == 1:
+            return dict(records[0])
+    return None
+
+
+def resolve_bound_pool_risk_policy(
+    *,
+    capital_pool_id: str | None = None,
+    binding: Mapping[str, Any] | None = None,
+    capital_pool_reader: Callable[[str], Any] | None = None,
+    risk_policy_ref: str | None = None,
+    risk_policy_loader: Callable[[str], Any] | None = None,
+    pool_store_path: str | os.PathLike[str] | None = None,
+) -> RiskPolicy | None:
+    """Resolve and load the bound CapitalPool's active ``RiskPolicy`` (never from signal metadata)."""
+    b_map = dict(binding) if isinstance(binding, Mapping) else {}
+    resolved_pool_id = str(
+        b_map.get("capital_pool_id")
+        or capital_pool_id
+        or os.getenv("PANTHEON_CAPITAL_POOL_ID", "")
+    ).strip()
+
+    resolved_ref: str | None = None
+    if capital_pool_reader is not None:
+        pool_obj = capital_pool_reader(resolved_pool_id)
+        if isinstance(pool_obj, RiskPolicy):
+            return pool_obj
+        if isinstance(pool_obj, str) and pool_obj.strip():
+            resolved_ref = pool_obj.strip()
+        elif isinstance(pool_obj, Mapping):
+            ref_from_pool = _first_text_or_none(pool_obj, "risk_policy_ref")
+            if ref_from_pool:
+                resolved_ref = ref_from_pool
+            else:
+                pool_meta = pool_obj.get("metadata") if isinstance(pool_obj.get("metadata"), Mapping) else {}
+                nested_policy = pool_obj.get("risk_policy") or pool_meta.get("risk_policy")
+                if isinstance(nested_policy, (RiskPolicy, Mapping)):
+                    return normalize_risk_policy(nested_policy)
+                ref_id = _first_text_or_none(pool_obj, "risk_policy_id")
+                if ref_id and ("pool_id" in pool_obj or "capital_pool_id" in pool_obj):
+                    resolved_ref = ref_id
+                else:
+                    return normalize_risk_policy(pool_obj)
+        else:
+            ref_attr = getattr(pool_obj, "risk_policy_ref", None)
+            if ref_attr is not None and str(ref_attr).strip():
+                resolved_ref = str(ref_attr).strip()
+            else:
+                obj_meta = getattr(pool_obj, "metadata", None)
+                if isinstance(obj_meta, Mapping) and isinstance(obj_meta.get("risk_policy"), (RiskPolicy, Mapping)):
+                    return normalize_risk_policy(obj_meta["risk_policy"])
+
+    if not resolved_ref:
+        pool_record = read_capital_pool_record(resolved_pool_id, pool_store_path=pool_store_path)
+        if pool_record is not None:
+            ref_from_record = _first_text_or_none(pool_record, "risk_policy_ref")
+            if ref_from_record:
+                resolved_ref = ref_from_record
+            else:
+                rec_meta = pool_record.get("metadata") if isinstance(pool_record.get("metadata"), Mapping) else {}
+                nested = pool_record.get("risk_policy") or rec_meta.get("risk_policy")
+                if isinstance(nested, (RiskPolicy, Mapping)):
+                    return normalize_risk_policy(nested)
+                resolved_ref = _first_text_or_none(pool_record, "risk_policy_id")
+
+    if not resolved_ref and b_map:
+        pool_sub = b_map.get("capital_pool") if isinstance(b_map.get("capital_pool"), Mapping) else {}
+        b_meta = b_map.get("metadata") if isinstance(b_map.get("metadata"), Mapping) else {}
+        inline_b_policy = b_map.get("risk_policy") or pool_sub.get("risk_policy")
+        if isinstance(inline_b_policy, (RiskPolicy, Mapping)):
+            return normalize_risk_policy(inline_b_policy)
+        resolved_ref = (
+            _first_text_or_none(b_map, "risk_policy_ref", "risk_policy_id")
+            or _first_text_or_none(pool_sub, "risk_policy_ref", "risk_policy_id")
+            or _first_text_or_none(b_meta, "risk_policy_ref", "risk_policy_id")
+        )
+
+    if not resolved_ref:
+        resolved_ref = (
+            _optional_text(risk_policy_ref)
+            or _optional_text(os.getenv("PANTHEON_RISK_POLICY_REF"))
+            or _optional_text(os.getenv("CAPITAL_RISK_POLICY_REF"))
+        )
+
+    if resolved_ref:
+        return load_risk_policy_model(resolved_ref, loader=risk_policy_loader)
+    return None
+

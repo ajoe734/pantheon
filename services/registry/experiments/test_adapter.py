@@ -346,10 +346,10 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
             with self.assertRaises(EnvironmentError):
                 selected_backend()
 
-    def test_selected_backend_accepts_wandb_with_deferred_prep_flag(self):
+    def test_selected_backend_accepts_wandb_with_offline_store_flag(self):
         env = {
             "EXPERIMENT_BACKEND": "wandb",
-            "PANTHEON_ENABLE_WANDB_DEFERRED_PREP": "1",
+            "PANTHEON_ENABLE_WANDB_OFFLINE_STORE": "1",
             "PANTHEON_WANDB_MODE": "dryrun",
         }
         with patch.dict(os.environ, env, clear=False):
@@ -363,7 +363,7 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
     def test_selected_backend_rejects_online_wandb_mode(self):
         env = {
             "EXPERIMENT_BACKEND": "wandb",
-            "PANTHEON_ENABLE_WANDB_DEFERRED_PREP": "1",
+            "PANTHEON_ENABLE_WANDB_OFFLINE_STORE": "1",
             "PANTHEON_WANDB_MODE": "online",
         }
         with patch.dict(os.environ, env, clear=False):

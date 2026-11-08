@@ -17086,7 +17086,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             config = {
                 "paths": {
                     "root": str(central),
-                    "state_file": str(central / ".orchestrator" / "state.json"),
+                    "state_file": str(central / ".orchestrator" / "worker-runtime" / "state.json"),
                     "status_file": str(central / "ai-status.json"),
                     "activity_log": str(central / "ai-activity-log.jsonl"),
                     "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
@@ -17239,7 +17239,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     "worker_worktrees": {"leases": {"TASK-RECOVERY-001": {"task_id": "TASK-RECOVERY-001", "workspace_task_id": "TASK-RECOVERY-001", "branch": "task/TASK-RECOVERY-001", "path": str(worktree), "repository_id": "pantheon", "status_root": str(central), "last_queue_event_id": queue_event_id, "last_target_agent": "Codex2", "last_used_at": "2026-09-06T17:00:00Z"}}},
                     "queue": {"events": {queue_event_id: {"status": "running", "intent": {"event_id": queue_event_id, "task_id": "TASK-RECOVERY-001", "task_generation": 1, "target_agent": "codex2_1"}}}},
                 }
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(st_data, indent=2) + "\n")
 
                 for _ in range(50):
@@ -17274,7 +17275,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 self.assertTrue(changed)
                 self.assertEqual(worker_rec["status"], "completed")
 
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 restart_script = (
                     "import sys, json\n"
                     "sys.path.insert(0, sys.argv[1])\n"
@@ -17293,7 +17295,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     capture_output=True, text=True, check=True
                 )
 
-                st_data = json.loads((central / ".orchestrator" / "state.json").read_text())
+                st_data = json.loads((central / ".orchestrator" / "worker-runtime" / "state.json").read_text())
                 st_data["delivery_health"] = {
                     "version": 1,
                     "endpoints": {
@@ -17401,7 +17403,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     "path": str(worktree),
                 }
                 st_data["queue"]["events"][succ_queue_event_id]["status"] = "running"
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(st_data, indent=2) + "\n")
 
                 succ_proc.wait(timeout=10)
@@ -17469,7 +17472,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             config = {
                 "paths": {
                     "root": str(central),
-                    "state_file": str(central / ".orchestrator" / "state.json"),
+                    "state_file": str(central / ".orchestrator" / "worker-runtime" / "state.json"),
                     "status_file": str(central / "ai-status.json"),
                     "activity_log": str(central / "ai-activity-log.jsonl"),
                     "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
@@ -17621,7 +17624,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     "worker_worktrees": {"leases": {"TASK-QUEUE-001": {"task_id": "TASK-QUEUE-001", "workspace_task_id": "TASK-QUEUE-001", "branch": "task/TASK-QUEUE-001", "path": str(worktree), "repository_id": "pantheon", "status_root": str(central), "last_queue_event_id": queue_event_id, "last_target_agent": "Codex2", "last_used_at": "2026-09-06T17:00:00Z"}}},
                     "queue": {"events": {queue_event_id: {"status": "running", "intent": {"event_id": queue_event_id, "task_id": "TASK-QUEUE-001", "task_generation": 1, "target_agent": "codex2_1"}}}},
                 }
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(st_data, indent=2) + "\n")
 
                 for _ in range(50):
@@ -17654,7 +17658,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 self.assertTrue(changed)
                 self.assertEqual(worker_rec["status"], "completed")
 
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 restart_script = (
                     "import sys, json\n"
                     "sys.path.insert(0, sys.argv[1])\n"
@@ -17673,7 +17678,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     capture_output=True, text=True, check=True
                 )
 
-                st_data = json.loads((central / ".orchestrator" / "state.json").read_text())
+                st_data = json.loads((central / ".orchestrator" / "worker-runtime" / "state.json").read_text())
                 st_data["delivery_health"] = {
                     "version": 1,
                     "endpoints": {
@@ -17723,13 +17728,14 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     self.assertFalse(planned_repeat)
                     self.assertEqual(len(sink2), 0)
 
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 subprocess.run(
                     [sys.executable, "-c", restart_script, str(central), str(central / ".orchestrator"), json.dumps(config)],
                     capture_output=True, text=True, check=True
                 )
 
-                boot_state = json.loads((central / ".orchestrator" / "state.json").read_text())
+                boot_state = json.loads((central / ".orchestrator" / "worker-runtime" / "state.json").read_text())
                 boot_queued = boot_state.get("queue", {}).get("events", {})
                 self.assertIn(succ_event_id, boot_queued)
                 boot_succ = boot_queued[succ_event_id]
@@ -17888,7 +17894,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             config = {
                 "paths": {
                     "root": str(central),
-                    "state_file": str(central / ".orchestrator" / "state.json"),
+                    "state_file": str(central / ".orchestrator" / "worker-runtime" / "state.json"),
                     "status_file": str(central / "ai-status.json"),
                     "activity_log": str(central / "ai-activity-log.jsonl"),
                     "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
@@ -18055,7 +18061,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     "worker_worktrees": {"leases": {"TASK-QUEUE-001": {"task_id": "TASK-QUEUE-001", "workspace_task_id": "TASK-QUEUE-001", "branch": "task/TASK-QUEUE-001", "path": str(worktree), "repository_id": "pantheon", "status_root": str(central), "last_queue_event_id": queue_event_id, "last_target_agent": "Codex2", "last_used_at": "2026-09-06T17:00:00Z"}}},
                     "queue": {"events": {queue_event_id: {"status": "running", "intent": {"event_id": queue_event_id, "task_id": "TASK-QUEUE-001", "task_generation": 1, "target_agent": "codex2_1"}}}},
                 }
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(st_data, indent=2) + "\n")
 
                 for _ in range(50):
@@ -18084,7 +18091,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 self.assertTrue(changed)
                 self.assertEqual(worker_rec["status"], "completed")
 
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 restart_script = (
                     "import sys, json\n"
                     "sys.path.insert(0, sys.argv[1])\n"
@@ -18104,7 +18112,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 )
                 self.assertEqual(proc_res0.returncode, 0, f"Restart subprocess 0 failed (exit {proc_res0.returncode}):\nSTDOUT:\n{proc_res0.stdout}\nSTDERR:\n{proc_res0.stderr}")
 
-                st_data = json.loads((central / ".orchestrator" / "state.json").read_text())
+                st_data = json.loads((central / ".orchestrator" / "worker-runtime" / "state.json").read_text())
                 st_data["delivery_health"] = {
                     "version": 1,
                     "endpoints": {
@@ -18129,14 +18137,15 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 self.assertEqual(len(new_event_ids), 1)
                 succ_event_id = new_event_ids[0]
 
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 proc_res1 = subprocess.run(
                     [sys.executable, "-c", restart_script, str(central), str(central / ".orchestrator"), json.dumps(config)],
                     capture_output=True, text=True
                 )
                 self.assertEqual(proc_res1.returncode, 0, f"Restart subprocess 1 failed (exit {proc_res1.returncode}):\nSTDOUT:\n{proc_res1.stdout}\nSTDERR:\n{proc_res1.stderr}")
 
-                boot_state = json.loads((central / ".orchestrator" / "state.json").read_text())
+                boot_state = json.loads((central / ".orchestrator" / "worker-runtime" / "state.json").read_text())
                 self.assertIn(succ_event_id, boot_state["queue"]["events"])
                 boot_state["delivery_health"] = st_data["delivery_health"]
 
@@ -18275,13 +18284,14 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 self.assertEqual(len([w for w in boot_state.get("workers", {}).values() if w.get("task_id") == "TASK-QUEUE-001" and w.get("status") == "running"]), 1)
 
                 # Persist boot_state to disk and verify restart retains the running worker and started queue event
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(boot_state, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(boot_state, indent=2) + "\n")
                 proc_res = subprocess.run(
                     [sys.executable, "-c", restart_script, str(central), str(central / ".orchestrator"), json.dumps(config)],
                     capture_output=True, text=True
                 )
                 self.assertEqual(proc_res.returncode, 0, f"Restart subprocess failed (exit {proc_res.returncode}):\nSTDOUT:\n{proc_res.stdout}\nSTDERR:\n{proc_res.stderr}")
-                restarted_state = json.loads((central / ".orchestrator" / "state.json").read_text())
+                restarted_state = json.loads((central / ".orchestrator" / "worker-runtime" / "state.json").read_text())
                 self.assertEqual(restarted_state["queue"]["events"][succ_event_id]["status"], "started")
                 self.assertIn(new_worker_rec["run_id"], restarted_state.get("workers", {}))
             finally:
@@ -19636,7 +19646,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             config = {
                 "paths": {
                     "root": str(central),
-                    "state_file": str(central / ".orchestrator" / "state.json"),
+                    "state_file": str(central / ".orchestrator" / "worker-runtime" / "state.json"),
                     "status_file": str(central / "ai-status.json"),
                     "activity_log": str(central / "ai-activity-log.jsonl"),
                     "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
@@ -19780,7 +19790,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     "worker_worktrees": {"leases": {"TASK-CRASH-RETRY-001": {"task_id": "TASK-CRASH-RETRY-001", "workspace_task_id": "TASK-CRASH-RETRY-001", "branch": "task/TASK-CRASH-RETRY-001", "path": str(worktree), "repository_id": "pantheon", "status_root": str(central), "last_queue_event_id": queue_event_id, "last_target_agent": "Codex2", "last_used_at": "2026-09-06T17:00:00Z"}}},
                     "queue": {"events": {queue_event_id: {"status": "running", "intent": {"event_id": queue_event_id, "task_id": "TASK-CRASH-RETRY-001", "task_generation": 1, "target_agent": "codex2_1"}}}},
                 }
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(st_data, indent=2) + "\n")
 
                 for _ in range(50):
@@ -19810,7 +19821,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 self.assertTrue(changed)
                 self.assertEqual(worker_rec["status"], "completed")
 
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 restart_script = (
                     "import sys, json\n"
                     "sys.path.insert(0, sys.argv[1])\n"
@@ -19829,7 +19841,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     capture_output=True, text=True, check=True
                 )
 
-                st_data = json.loads((central / ".orchestrator" / "state.json").read_text())
+                st_data = json.loads((central / ".orchestrator" / "worker-runtime" / "state.json").read_text())
                 st_data["delivery_health"] = {
                     "version": 1,
                     "endpoints": {
@@ -19852,13 +19864,14 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 self.assertEqual(len(new_event_ids), 1)
                 succ_event_id = new_event_ids[0]
 
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 subprocess.run(
                     [sys.executable, "-c", restart_script, str(central), str(central / ".orchestrator"), json.dumps(config)],
                     capture_output=True, text=True, check=True
                 )
 
-                state_disk2 = json.loads((central / ".orchestrator" / "state.json").read_text())
+                state_disk2 = json.loads((central / ".orchestrator" / "worker-runtime" / "state.json").read_text())
                 state_disk2["delivery_health"] = st_data["delivery_health"]
                 self.assertIn(succ_event_id, state_disk2["queue"]["events"])
 
@@ -19947,7 +19960,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     "status_root": str(central), "path": str(worktree),
                 }
                 state_disk2["queue"]["events"][succ_event_id]["status"] = "running"
-                (central / ".orchestrator" / "state.json").write_text(json.dumps(state_disk2, indent=2) + "\n")
+                (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+                (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(state_disk2, indent=2) + "\n")
                 (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(state_disk2, indent=2) + "\n")
 
                 succ_proc.wait(timeout=10)
@@ -20243,7 +20257,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "status_file = sys.argv[3]\n"
                 "try:\n"
                 "    with supervisor.canonical_task_state_lock_file(status_file, shared=False, nonblocking=True):\n"
-                "        snap = task_state_store.load_snapshot(journal, refresh_checkpoint=False)\n"
+                "        snap = task_state_store.load_snapshot(journal, observational=True)\n"
                 "        task_item = snap['state']['tasks'][0]\n"
                 "        task_item['delivery_binding']['evidence_manifest']['blob_sha'] = 'f' * 40\n"
                 "        task_state_store.append_state_commit(journal, snap['state'], source='concurrent drift')\n"
@@ -20346,7 +20360,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                         governance_activity_events=[e],
                     )
                     # Mutate canonical task before final CAS revalidation
-                    snap = rewrite_task_state_store.load_snapshot(str(journal), refresh_checkpoint=False)
+                    snap = rewrite_task_state_store.load_snapshot(str(journal), observational=True)
                     task_item = snap["state"]["tasks"][0]
                     task_item["delivery_binding"]["evidence_manifest"]["blob_sha"] = "f" * 40
                     rewrite_task_state_store.append_state_commit(

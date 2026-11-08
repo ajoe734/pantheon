@@ -13,7 +13,6 @@ See services/registry/experiments/WANDB_ACTIVATION.md for the full gate.
 import os
 
 EXPERIMENT_BACKEND: str = (os.getenv("EXPERIMENT_BACKEND", "mlflow").strip().lower() or "mlflow")
-WANDB_DEFERRED_PREP_FLAG = "PANTHEON_ENABLE_WANDB_DEFERRED_PREP"
 WANDB_OFFLINE_STORE_FLAG = "PANTHEON_ENABLE_WANDB_OFFLINE_STORE"
 WANDB_ONLINE_SYNC_FLAG = "PANTHEON_WANDB_ONLINE_SYNC_ENABLED"
 WANDB_MODE_ENV = "PANTHEON_WANDB_MODE"
@@ -28,11 +27,7 @@ def _is_truthy(value: str | None) -> bool:
 
 
 def is_wandb_offline_store_enabled() -> bool:
-    return _is_truthy(os.getenv(WANDB_OFFLINE_STORE_FLAG)) or _is_truthy(os.getenv(WANDB_DEFERRED_PREP_FLAG))
-
-
-def is_wandb_deferred_prep_enabled() -> bool:
-    return is_wandb_offline_store_enabled()
+    return _is_truthy(os.getenv(WANDB_OFFLINE_STORE_FLAG))
 
 
 def is_wandb_online_sync_enabled() -> bool:
@@ -68,8 +63,7 @@ def selected_backend(default: str = "mlflow") -> str:
         if mode in _OFFLINE_WANDB_MODES and not is_wandb_offline_store_enabled():
             raise EnvironmentError(
                 "EXPERIMENT_BACKEND='wandb' offline local store requires "
-                f"{WANDB_OFFLINE_STORE_FLAG}=1. "
-                f"{WANDB_DEFERRED_PREP_FLAG}=1 is accepted only as a compatibility alias."
+                f"{WANDB_OFFLINE_STORE_FLAG}=1."
             )
         if mode == "online" and not is_wandb_online_sync_enabled():
             raise EnvironmentError(

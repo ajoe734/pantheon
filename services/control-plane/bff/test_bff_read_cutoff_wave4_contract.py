@@ -25,6 +25,7 @@ from services.control_plane.bff.personas.service import (
     utc_now,
 )
 from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.tools_integrations.service import deprecated_bff_path_response
 
 
 AUTH = {"Authorization": "Bearer operator_001"}
@@ -67,6 +68,7 @@ class ReadCutoffWave4TestReadPorts(ReadSurfacePorts):
         super().__init__()
         self._allow_local_snapshot_fallback = allow_local_snapshot_fallback
         self._data = seed_data if seed_data is not None else (_local_read_cutoff_data() if allow_local_snapshot_fallback else {})
+        self.list_deployment_plans_calls = 0
 
     def dataset_source(self, dataset: str, **kwargs: Any) -> str:
         if self._allow_local_snapshot_fallback:
@@ -96,6 +98,7 @@ class ReadCutoffWave4TestReadPorts(ReadSurfacePorts):
         }
 
     def list_deployment_plans(self, status: str | None = None, capital_pool_id: str | None = None, include_fixture_pack: bool = True, **kwargs: Any) -> list[dict[str, Any]]:
+        self.list_deployment_plans_calls += 1
         if not self._allow_local_snapshot_fallback:
             return []
         ds = self._data.get("deployment_plans", {})
@@ -182,14 +185,14 @@ def _make_client(store: ReadSurfacePorts) -> TestClient:
         split_csv_query=lambda val: val.split(",") if val else None,
         meta_staleness=lambda: None,
         stable_json_hash=lambda val: "hash",
-        resolve_final_idempotency_key=lambda r, h: r or h or "key",
+        resolve_final_idempotency_key=lambda r: r or "key",
         reject_body_idempotency_key=lambda p: None,
         request_dry_run_requested=lambda *a, **kw: False,
         publish_event=lambda *a, **kw: "event-id",
         sse_buffers={},
         sse_subscribers={},
         gov_bff_action_command=lambda *a, **kw: {},
-        deprecated_bff_path_response=lambda *a, **kw: None,
+        deprecated_bff_path_response=deprecated_bff_path_response,
         sem_command_response=lambda *a, **kw: {},
         stream_generic_events=lambda *a, **kw: iter(()),
         surface_degradation_reason=lambda surf, **kw: _surface_degradation_reason(
@@ -217,13 +220,14 @@ def test_prod_catalog_read_does_not_mask_cutoff_with_local_snapshot(monkeypatch)
     client = _make_client(store)
     list_response = client.get("/api/v1/deployment-plans", headers=AUTH)
 
-    assert list_response.status_code == 200
+    assert list_response.status_code == 410
+    assert list_response.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
     list_payload = list_response.json()
-    assert list_payload["data"] == []
-    surface = list_payload["meta"]["surfaces"]["deployment_plan_list"]
-    assert surface["status"] == "unavailable"
-    assert surface["source"] == "missing"
-    assert list_payload["meta"]["degradation"]["reason"] == "deployment plan list is currently unavailable."
+    list_details = list_payload["detail"]["error"]["details"]
+    assert list_details["route"] == "/api/v1/deployment-plans"
+    assert list_details["replacement"] == "/bff/deployments"
+    assert list_payload["meta"]["deprecation"]["replacement"] == "/bff/deployments"
+    assert store.list_deployment_plans_calls == 0
 
     detail_response = client.get("/api/v1/deployment-plans/plan-F-042", headers=AUTH)
     assert detail_response.status_code == 503
@@ -239,10 +243,11 @@ def test_dev_catalog_snapshot_fallback_is_explicitly_degraded(monkeypatch) -> No
     client = _make_client(store)
     response = client.get("/api/v1/deployment-plans", headers=AUTH)
 
-    assert response.status_code == 200
+    assert response.status_code == 410
+    assert response.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
     payload = response.json()
-    assert [plan["plan_id"] for plan in payload["data"]] == ["plan-F-042"]
-    surface = payload["meta"]["surfaces"]["deployment_plan_list"]
-    assert surface["status"] == "degraded"
-    assert surface["source"] == "local_snapshot"
-    assert "local BFF snapshot fallback" in surface["note"]
+    details = payload["detail"]["error"]["details"]
+    assert details["route"] == "/api/v1/deployment-plans"
+    assert details["replacement"] == "/bff/deployments"
+    assert payload["meta"]["deprecation"]["replacement"] == "/bff/deployments"
+    assert store.list_deployment_plans_calls == 0

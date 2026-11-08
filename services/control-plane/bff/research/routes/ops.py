@@ -98,7 +98,7 @@ def build_ops_router(ctx: ResearchRouteContext) -> APIRouter:
             name.removeprefix("command_"),
             payload,
             identity,
-            request.headers.get("x-idempotency-key"),
+            request.headers.get("idempotency-key"),
             request.path_params,
         )
         return await result if inspect.isawaitable(result) else result

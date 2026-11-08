@@ -101,11 +101,10 @@ def create_research_experiments_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
-        resolved_key = (idempotency_key or x_idempotency_key or "").strip()
+        resolved_key = (idempotency_key or "").strip()
         return service.create_experiment(
             payload,
             actor_id=identity.operator_id,
@@ -128,11 +127,10 @@ def create_research_experiments_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
-        resolved_key = (idempotency_key or x_idempotency_key or "").strip()
+        resolved_key = (idempotency_key or "").strip()
         clean_id = experiment_id.strip()
         service.require_experiment(clean_id)
         if submit_experiment_action is None:

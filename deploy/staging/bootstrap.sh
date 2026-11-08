@@ -344,7 +344,12 @@ for req in (
 ):
     if not kv.get(req):
         raise SystemExit(f"missing required secret key {req}")
-for dsn_key in ("TELEMETRY_DB_DSN", "LIFECYCLE_PROJECTOR_PROJECTION_DSN", *PRODUCT_DSN_KEYS):
+for dsn_key in (
+    "TELEMETRY_DB_DSN",
+    "LIFECYCLE_PROJECTOR_PROJECTION_DSN",
+    *PRODUCT_DSN_KEYS,
+    *(("PANTHEON_PERSONA_PROVISIONING_STORE_DSN",) if kv.get("PANTHEON_PERSONA_PROVISIONING_STORE_DSN") else ()),
+):
     dsn_base, _, dsn_query = kv[dsn_key].partition("?")
     dsn_path = dsn_base.rstrip("/")
     if dsn_query:
@@ -460,13 +465,25 @@ for suffix, default_val in (
     )
     if not shared_val:
         continue
-    for prefix in ("PANTHEON_BFF", "PANTHEON_RUNTIME", "PANTHEON_TELEMETRY", "POLICY_LEARNING"):
+    for prefix in ("PANTHEON_BFF", "PANTHEON_RUNTIME", "PANTHEON_GOVERNANCE", "PANTHEON_TELEMETRY", "POLICY_LEARNING"):
         if prefix == "POLICY_LEARNING" and suffix == "REQUIRE_EMAIL_VERIFIED":
             continue
         target_key = f"{prefix}_{suffix}"
         if not kv.get(target_key):
             out.append(f"{target_key}={shared_val}")
             kv[target_key] = shared_val
+
+if not kv.get("PANTHEON_GOVERNANCE_JWT_SECRET"):
+    gov_secret = kv.get("PANTHEON_RUNTIME_JWT_SECRET") or kv.get("PANTHEON_BFF_JWT_SECRET") or ""
+    if gov_secret:
+        out.append(f"PANTHEON_GOVERNANCE_JWT_SECRET={gov_secret}")
+        kv["PANTHEON_GOVERNANCE_JWT_SECRET"] = gov_secret
+
+if not kv.get("PANTHEON_PERSONA_PROVISIONING_STORE_DSN"):
+    persona_prov_dsn = kv.get("DATABASE_URL") or kv.get("PANTHEON_DATABASE_URL") or ""
+    if persona_prov_dsn:
+        out.append(f"PANTHEON_PERSONA_PROVISIONING_STORE_DSN={persona_prov_dsn}")
+        kv["PANTHEON_PERSONA_PROVISIONING_STORE_DSN"] = persona_prov_dsn
 
 st = env_path.stat()
 fd, tmp = tempfile.mkstemp(dir=str(env_path.parent), prefix=".rm-token.")

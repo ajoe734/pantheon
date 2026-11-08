@@ -434,11 +434,43 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         events = self._run_expression_signal(signal, binding)
         self.assertEqual(events["trade_decision"]["metadata"]["expression_decision"], record)
         rejection = events["order_rejection"]["metadata"]
-        self.assertEqual(rejection["reject_reason"], "instrument_not_supported_by_ledger")
+        self.assertEqual(rejection["reject_reason"], "price_stale")
+        self.assertEqual(rejection["reason"], "price_stale")
         self.assertEqual(rejection["instrument_id"], "ssf:SRF:202611")
         self.assertEqual(rejection["multiplier"], 1000)
         self.assertNotIn("paper_fill_simulated", events)
         self.assertNotIn("position_snapshot", events)
+
+        unsupported_record = {
+            "decision_id": "decision-opt",
+            "instrument_id": "opt:CDO:202611",
+            "side": "sell",
+            "units": 1,
+            "reason_code": "short_via_option",
+        }
+        unsupported_signal = self._expression_signal(
+            binding,
+            "opt",
+            action="SELL",
+            direction="SHORT",
+            metadata={
+                "instrument_id": "opt:CDO:202611",
+                "kind": "stock_option",
+                "units": 1,
+                "multiplier": 2000,
+                "reason_code": "short_via_option",
+                "expression_decision": unsupported_record,
+            },
+        )
+        unsupported_events = self._run_expression_signal(unsupported_signal, binding)
+        unsupported_rejection = unsupported_events["order_rejection"]["metadata"]
+        self.assertEqual(
+            unsupported_rejection["reject_reason"], "instrument_not_supported_by_ledger"
+        )
+        self.assertEqual(unsupported_rejection["instrument_id"], "opt:CDO:202611")
+        self.assertEqual(unsupported_rejection["multiplier"], 2000)
+        self.assertNotIn("paper_fill_simulated", unsupported_events)
+        self.assertNotIn("position_snapshot", unsupported_events)
 
     def test_binding_resolver_prefers_exact_worker_binding_for_shared_runtime(self):
         runtime_id = "paper-runtime-shared"
@@ -4459,6 +4491,1514 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
                         0.0,
                         f"Non-positive ledger position {pos} at step {idx}",
                     )
+
+
+class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
+    """Acceptance tests for PAPER-FUTURES-LEDGER-RISK-GATE-20261107 (Layers D & E)."""
+
+    def test_ac1_mixed_book_holds_equity_and_futures_without_netting_and_reports_net_delta(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=500_000.0,
+            event_sink=events.append,
+            persona_binding_id="pcb-tw-2330",
+            in_process_broker=True,
+        )
+        # Buy 50 cash shares of 2330 @ 2250
+        algo.SetCurrentSignalContext(
+            {
+                "persona_capital_binding_id": "pcb-tw-2330",
+                "instrument_id": "eq:2330",
+                "kind": "cash_share",
+                "market_price": 2250.0,
+                "market_price_as_of": "2026-11-06T05:30:00Z",
+                "market_price_source": "source-ingest://snapshots/twse-2330",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-eq-buy-50",
+            side="buy",
+            quantity=50.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+
+        # Short 1 QFF (multiplier 100) @ 2247 in the same binding
+        algo.SetCurrentSignalContext(
+            {
+                "persona_capital_binding_id": "pcb-tw-2330",
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-ssf-sell-1",
+            side="sell",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+
+        # Both positions exist simultaneously in the book keyed by (persona_binding_id, normalised_underlying, instrument_id)
+        positions = algo.instrument_positions
+        eq_key = ("pcb-tw-2330", "2330", "eq:2330")
+        ssf_key = ("pcb-tw-2330", "2330", "ssf:QFF:202611")
+        self.assertIn(eq_key, positions)
+        self.assertIn(ssf_key, positions)
+        self.assertEqual(positions[eq_key]["quantity"], 50.0)
+        self.assertEqual(positions[eq_key]["multiplier"], 1.0)
+        self.assertEqual(positions[ssf_key]["quantity"], -1.0)
+        self.assertEqual(positions[ssf_key]["multiplier"], 100.0)
+
+        exposure = algo.exposure_by_underlying("2330", persona_binding_id="pcb-tw-2330")
+        self.assertEqual(set(exposure["instruments"].keys()), {"eq:2330", "ssf:QFF:202611"})
+        self.assertEqual(exposure["instruments"]["eq:2330"]["delta_shares"], 50.0)
+        self.assertEqual(exposure["instruments"]["ssf:QFF:202611"]["delta_shares"], -100.0)
+        # Net delta in shares = Σ q * multiplier = 50*1 + (-1)*100 = -50 shares
+        self.assertEqual(exposure["net_delta_shares"], -50.0)
+        algo.assert_ledger_reconciliation()
+
+    def test_ac2_worked_numbers_and_futures_accounting_reconciliation_invariant(self):
+        # Worked numbers at Date=20261105 on 100,000 capital:
+        # QFF @ 2247 -> initial margin 30334.5, max contracts 3
+        # DHF @ 237  -> initial margin 63990.0, max contracts 1
+        # SRF @ 97.35 -> initial margin 8700.0, max contracts 11
+        qff_margin = PaperExecutionAlgorithm.compute_futures_margin_per_contract("QFF", 2247.0)
+        dhf_margin = PaperExecutionAlgorithm.compute_futures_margin_per_contract("DHF", 237.0)
+        srf_margin = PaperExecutionAlgorithm.compute_futures_margin_per_contract("SRF", 97.35)
+        self.assertAlmostEqual(qff_margin["initial_margin_per_contract"], 30334.5, places=4)
+        self.assertAlmostEqual(dhf_margin["initial_margin_per_contract"], 63990.0, places=4)
+        self.assertAlmostEqual(srf_margin["initial_margin_per_contract"], 8700.0, places=4)
+        self.assertEqual(PaperExecutionAlgorithm.max_contracts_for_capital("QFF", 2247.0, 100_000.0), 3)
+        self.assertEqual(PaperExecutionAlgorithm.max_contracts_for_capital("DHF", 237.0, 100_000.0), 1)
+        self.assertEqual(PaperExecutionAlgorithm.max_contracts_for_capital("SRF", 97.35, 100_000.0), 11)
+
+        # Open, add, partial reduce, flip, and close lifecycle verifying reconciliation after every fill
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            persona_binding_id="pcb-qff",
+            in_process_broker=True,
+        )
+        # 1. Open +1 QFF @ 2247: credits no cash (only deducts open cost 9.494), reserves 30334.5
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-open-1",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        snap1 = algo.assert_ledger_reconciliation()
+        self.assertAlmostEqual(snap1["costs"], 9.494, places=6)
+        self.assertAlmostEqual(snap1["cash"], 100_000.0 - 9.494, places=6)
+        self.assertAlmostEqual(snap1["margin_reserved"], 30334.5, places=4)
+        self.assertAlmostEqual(snap1["realized_pnl"], 0.0, places=6)
+        self.assertAlmostEqual(snap1["unrealized_pnl"], 0.0, places=6)
+        self.assertAlmostEqual(snap1["equity"], snap1["cash"] + snap1["unrealized_pnl"], places=6)
+
+        # 2. Mark to 2267 -> unrealized PnL = 1 * 100 * (2267 - 2247) = +2000
+        algo.MarkFuturesSession("2026-11-06", {"ssf:QFF:202611": 2267.0}, check_maintenance=False)
+        snap_mark = algo.assert_ledger_reconciliation()
+        self.assertAlmostEqual(snap_mark["unrealized_pnl"], 2000.0, places=4)
+        self.assertAlmostEqual(snap_mark["equity"], snap_mark["cash"] + 2000.0, places=4)
+
+        # 3. Close 1 QFF @ 2267 -> realized PnL = +2000, unrealized = 0, margin = 0
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2267.0,
+                "price_date": "2026-11-06",
+                "trade_date": "2026-11-09",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-close-1",
+            side="sell",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+        snap2 = algo.assert_ledger_reconciliation()
+        self.assertAlmostEqual(snap2["realized_pnl"], 2000.0, places=4)
+        self.assertAlmostEqual(snap2["unrealized_pnl"], 0.0, places=4)
+        self.assertAlmostEqual(snap2["margin_reserved"], 0.0, places=4)
+        self.assertAlmostEqual(
+            snap2["equity"] - snap2["initial_cash"],
+            snap2["realized_pnl"] + snap2["unrealized_pnl"] - snap2["costs"],
+            places=6,
+        )
+
+    def test_ac3_risk_gate_evaluates_policy_from_capital_reader_and_rejects_all_reasons_without_fill(self):
+        from services.capital.risk_policy import RiskPolicy
+
+        loaded_policies = {
+            "rp-leverage-cap": {
+                "risk_policy_id": "rp-leverage-cap",
+                "version": "1.0",
+                "status": "active",
+                "max_leverage": 2.0,
+                "gross_limit": 5.0,
+                "net_limit": 5.0,
+                "allowed_asset_classes": ["equity", "future"],
+            },
+            "rp-gross-cap": {
+                "risk_policy_id": "rp-gross-cap",
+                "version": "1.0",
+                "status": "active",
+                "max_leverage": 5.0,
+                "gross_limit": 1.8,
+                "net_limit": 5.0,
+                "allowed_asset_classes": ["equity", "future"],
+            },
+            "rp-net-cap": {
+                "risk_policy_id": "rp-net-cap",
+                "version": "1.0",
+                "status": "active",
+                "max_leverage": 5.0,
+                "gross_limit": 5.0,
+                "net_limit": 1.5,
+                "allowed_asset_classes": ["equity", "future"],
+            },
+            "rp-equity-only": {
+                "risk_policy_id": "rp-equity-only",
+                "version": "1.0",
+                "status": "active",
+                "max_leverage": 5.0,
+                "gross_limit": 5.0,
+                "net_limit": 5.0,
+                "allowed_asset_classes": ["equity"],
+            },
+        }
+        loader_calls = []
+
+        def fake_loader(policy_id: str) -> RiskPolicy:
+            loader_calls.append(policy_id)
+            return RiskPolicy.from_mapping(loaded_policies[policy_id])
+
+        events = []
+        active_policy_ref = {"ref": "rp-leverage-cap"}
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            capital_pool_id="pool-test-futures",
+            capital_pool_reader=lambda pool_id: {
+                "capital_pool_id": pool_id,
+                "risk_policy_ref": active_policy_ref["ref"],
+            },
+            risk_policy_loader=fake_loader,
+            in_process_broker=True,
+        )
+
+        def submit_qff(sig_id: str, policy_ref: str, extra_ctx: dict | None = None):
+            active_policy_ref["ref"] = policy_ref
+            base_ctx = {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+                "decision_id": f"dec-{sig_id}",
+            }
+            if extra_ctx:
+                base_ctx.update(extra_ctx)
+            algo.SetCurrentSignalContext(base_ctx)
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id=sig_id,
+                side="buy",
+                quantity=1.0,
+                quantity_type="CONTRACTS",
+                action="BUY",
+            )
+
+        # 1. leverage_limit (1 QFF @ 2247 = 2.247x > 2.0x)
+        submit_qff("s-lev", "rp-leverage-cap")
+        # 2. gross_limit (2.247x > 1.8x)
+        submit_qff("s-gross", "rp-gross-cap")
+        # 3. net_limit (2.247x > 1.5x)
+        submit_qff("s-net", "rp-net-cap")
+        # 4. asset_class_not_allowed (future not in ["equity"])
+        submit_qff("s-asset", "rp-equity-only")
+        # 5. instrument_not_in_candidates
+        submit_qff(
+            "s-cand",
+            "rp-gross-cap",
+            {
+                "candidates": [{"instrument_id": "eq:2330"}],
+            },
+        )
+        # 6. price_stale (price_date 2026-11-03 < prev trading day 2026-11-05; or stock_close basis)
+        submit_qff(
+            "s-stale",
+            "rp-leverage-cap",
+            {
+                "price_date": "2026-11-03",
+                "trade_date": "2026-11-06",
+            },
+        )
+        # 7. insufficient_initial_margin (4 QFF @ 2247 requires 121,338 > 100,000 equity)
+        active_policy_ref["ref"] = "rp-gross-cap"
+        loaded_policies["rp-gross-cap"]["gross_limit"] = 10.0
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+                "decision_id": "dec-s-margin",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="s-margin",
+            side="buy",
+            quantity=4.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+
+        self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+        self.assertEqual(algo.instrument_positions, {})
+        self.assertEqual(len(events), 7)
+        expected_reasons = [
+            "leverage_limit",
+            "gross_limit",
+            "net_limit",
+            "asset_class_not_allowed",
+            "instrument_not_in_candidates",
+            "price_stale",
+            "insufficient_initial_margin",
+        ]
+        for ev, exp_reason in zip(events, expected_reasons):
+            self.assertEqual(ev.event_type, "order_rejection")
+            self.assertFalse(ev.submitted_to_broker)
+            self.assertEqual(ev.metadata.get("reason"), exp_reason)
+            self.assertEqual(ev.metadata.get("risk_status"), "rejected")
+            self.assertIn("required", ev.metadata)
+            self.assertIn("available", ev.metadata)
+            self.assertIn("limit", ev.metadata)
+            self.assertEqual(ev.metadata.get("instrument_id"), "ssf:QFF:202611")
+            self.assertTrue(ev.metadata.get("decision_id"))
+        self.assertEqual(
+            loader_calls[:4],
+            ["rp-leverage-cap", "rp-gross-cap", "rp-net-cap", "rp-equity-only"],
+        )
+
+    def test_ac4_sd_section_8_replay_table_e1_e2_e3_long_and_short_and_dhf_margin_rejection(self):
+        import math
+
+        # Prices from SD_PERSONA_INSTRUMENT_DECISION_2026-11-07.md §8
+        series = {
+            "2330": [2370.0, 2330.0, 2295.0, 2260.0, 2240.0, 2135.0],
+            "2317": [245.5, 251.0, 245.5, 240.0, 235.0, 224.5],
+            "0050": [104.95, 104.1, 100.6, 99.85, 97.15, 92.5],
+        }
+        ssf_specs = {
+            "2330": ("ssf:QFF:202611", "QFF", 100.0),
+            "2317": ("ssf:DHF:202611", "DHF", 2000.0),
+            "0050": ("ssf:SRF:202611", "SRF", 1000.0),
+        }
+
+        def replay_case(underlying: str, mode: str, side: str) -> dict:
+            prices = series[underlying]
+            entry_price = prices[0]
+            inst_id, contract, mult = ssf_specs[underlying]
+            policy_map = {
+                "risk_policy_id": f"rp-{mode}",
+                "version": "1.0",
+                "status": "active",
+                "max_leverage": 3.0 if mode == "E3" else 10.0,
+                "gross_limit": 3.0 if mode == "E3" else 10.0,
+                "net_limit": 3.0 if mode == "E3" else 10.0,
+                "allowed_asset_classes": ["equity", "future"],
+            }
+            algo = PaperExecutionAlgorithm(
+                initial_cash=100_000.0,
+                risk_policy=policy_map,
+                futures_costs_enabled=False,
+                in_process_broker=True,
+            )
+            if mode == "E1":
+                if side == "sell":
+                    # Short cash share is not allowed (0 units)
+                    return {
+                        "margin_at_entry": 0.0,
+                        "pnl_last": 0.0,
+                        "worst_equity": 100_000.0,
+                        "peak_margin_over_equity": 0.0,
+                        "breach": False,
+                    }
+                algo.SetCurrentSignalContext(
+                    {
+                        "instrument_id": f"eq:{underlying}",
+                        "kind": "cash_share",
+                        "market_price": entry_price,
+                        "market_price_as_of": "2026-10-30T05:30:00Z",
+                        "market_price_source": "source-ingest://twse",
+                    }
+                )
+                algo.SubmitTaiwanBrokerOrder(
+                    f"{underlying}.TW",
+                    signal_id=f"e1-{underlying}-{side}",
+                    side=side,
+                    quantity=1.0,
+                    quantity_type="SHARES",
+                    action=side.upper(),
+                )
+                worst_eq = 100_000.0
+                for p in prices:
+                    algo.SetSecurityPrice(f"{underlying}.TW", p)
+                    snap = algo.assert_ledger_reconciliation()
+                    worst_eq = min(worst_eq, snap["equity"])
+                last_snap = algo.ledger_reconciliation_snapshot()
+                return {
+                    "margin_at_entry": 0.0,
+                    "pnl_last": last_snap["unrealized_pnl"],
+                    "worst_equity": worst_eq,
+                    "peak_margin_over_equity": 0.0,
+                    "breach": False,
+                }
+
+            qty = 1.0
+            if mode == "E3":
+                # Floor((3.0 * 100,000) / (entry_price * mult))
+                max_by_cap = int(math.floor((3.0 * 100_000.0) / (entry_price * mult)))
+                if max_by_cap <= 0:
+                    # Verify that submitting 1 contract under E3 is rejected by the risk gate
+                    algo.SetCurrentSignalContext(
+                        {
+                            "instrument_id": inst_id,
+                            "kind": "stock_future",
+                            "contract": contract,
+                            "contract_month": "202611",
+                            "multiplier": mult,
+                            "price_basis": "futures_daily_settlement_prev_session",
+                            "futures_settlement_price": entry_price,
+                            "price_date": "2026-10-30",
+                            "trade_date": "2026-11-02",
+                        }
+                    )
+                    algo.SubmitTaiwanBrokerOrder(
+                        f"{underlying}.TW",
+                        signal_id=f"e3-rej-{underlying}",
+                        side=side,
+                        quantity=1.0,
+                        quantity_type="CONTRACTS",
+                        action=side.upper(),
+                    )
+                    self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+                    return {
+                        "margin_at_entry": 0.0,
+                        "pnl_last": 0.0,
+                        "worst_equity": 100_000.0,
+                        "peak_margin_over_equity": 0.0,
+                        "breach": False,
+                    }
+                qty = float(min(max_by_cap, 2 if underlying == "0050" else 1))
+
+            algo.SetCurrentSignalContext(
+                {
+                    "instrument_id": inst_id,
+                    "kind": "stock_future",
+                    "contract": contract,
+                    "contract_month": "202611",
+                    "multiplier": mult,
+                    "price_basis": "futures_daily_settlement_prev_session",
+                    "futures_settlement_price": entry_price,
+                    "price_date": "2026-10-30",
+                    "trade_date": "2026-11-02",
+                }
+            )
+            algo.SubmitTaiwanBrokerOrder(
+                f"{underlying}.TW",
+                signal_id=f"{mode}-{underlying}-{side}",
+                side=side,
+                quantity=qty,
+                quantity_type="CONTRACTS",
+                action=side.upper(),
+            )
+            entry_snap = algo.assert_ledger_reconciliation()
+            margin_at_entry = entry_snap["margin_reserved"]
+            worst_eq = entry_snap["equity"]
+            peak_m_over_e = entry_snap["margin_to_equity"]
+            breach = False
+            session_dates = [
+                "2026-11-02",
+                "2026-11-03",
+                "2026-11-04",
+                "2026-11-05",
+                "2026-11-06",
+                "2026-11-09",
+            ]
+            for s_date, p in zip(session_dates, prices):
+                snap = algo.MarkFuturesSession(s_date, {inst_id: p})
+                worst_eq = min(worst_eq, snap["equity"])
+                peak_m_over_e = max(peak_m_over_e, snap["margin_to_equity"])
+                if snap["margin_call_active"]:
+                    breach = True
+            last_snap = algo.ledger_reconciliation_snapshot()
+            return {
+                "algo": algo,
+                "margin_at_entry": margin_at_entry,
+                "pnl_last": last_snap["unrealized_pnl"],
+                "worst_equity": worst_eq,
+                "peak_margin_over_equity": peak_m_over_e,
+                "breach": breach,
+            }
+
+        # Verify 2330 E1, E2, E3
+        r_2330_e1_l = replay_case("2330", "E1", "buy")
+        self.assertAlmostEqual(r_2330_e1_l["pnl_last"], -235.0)
+        self.assertAlmostEqual(r_2330_e1_l["worst_equity"], 99_765.0)
+
+        r_2330_e2_l = replay_case("2330", "E2", "buy")
+        r_2330_e2_s = replay_case("2330", "E2", "sell")
+        self.assertAlmostEqual(r_2330_e2_l["margin_at_entry"], 31_995.0)
+        self.assertAlmostEqual(r_2330_e2_l["pnl_last"], -23_500.0)
+        self.assertAlmostEqual(r_2330_e2_s["pnl_last"], 23_500.0)
+        self.assertAlmostEqual(r_2330_e2_l["worst_equity"], 76_500.0)
+        self.assertAlmostEqual(r_2330_e2_s["worst_equity"], 100_000.0)
+        self.assertAlmostEqual(r_2330_e2_l["peak_margin_over_equity"] * 100, 37.7, places=1)
+        self.assertAlmostEqual(r_2330_e2_s["peak_margin_over_equity"] * 100, 32.0, places=1)
+        self.assertFalse(r_2330_e2_l["breach"])
+        self.assertFalse(r_2330_e2_s["breach"])
+
+        r_2330_e3_l = replay_case("2330", "E3", "buy")
+        self.assertAlmostEqual(r_2330_e3_l["margin_at_entry"], 31_995.0)
+        self.assertAlmostEqual(r_2330_e3_l["pnl_last"], -23_500.0)
+
+        # Verify 2317 E1, E2, E3
+        r_2317_e1_l = replay_case("2317", "E1", "buy")
+        self.assertAlmostEqual(r_2317_e1_l["pnl_last"], -21.0)
+        self.assertAlmostEqual(r_2317_e1_l["worst_equity"], 99_979.0)
+
+        r_2317_e2_l = replay_case("2317", "E2", "buy")
+        r_2317_e2_s = replay_case("2317", "E2", "sell")
+        self.assertAlmostEqual(r_2317_e2_l["margin_at_entry"], 66_285.0)
+        self.assertAlmostEqual(r_2317_e2_l["pnl_last"], -42_000.0)
+        self.assertAlmostEqual(r_2317_e2_s["pnl_last"], 42_000.0)
+        self.assertAlmostEqual(r_2317_e2_l["worst_equity"], 58_000.0)
+        self.assertAlmostEqual(r_2317_e2_s["worst_equity"], 89_000.0)
+        self.assertAlmostEqual(r_2317_e2_l["peak_margin_over_equity"] * 100, 104.5, places=1)
+        self.assertAlmostEqual(r_2317_e2_s["peak_margin_over_equity"] * 100, 76.1, places=1)
+        self.assertFalse(r_2317_e2_l["breach"])
+        self.assertFalse(r_2317_e2_s["breach"])
+
+        # In 2317 E2 long at 224.5 (peak margin ÷ equity = 104.5%), a further opening order is rejected
+        # with insufficient_initial_margin!
+        dhf_algo = r_2317_e2_l["algo"]
+        rej_events = []
+        dhf_algo._event_sink = rej_events.append
+        dhf_algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:DHF:202611",
+                "kind": "stock_future",
+                "contract": "DHF",
+                "contract_month": "202611",
+                "multiplier": 2000.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 224.5,
+                "price_date": "2026-11-09",
+                "trade_date": "2026-11-10",
+            }
+        )
+        dhf_algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="dhf-further-open",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        self.assertEqual(len(rej_events), 1)
+        self.assertEqual(rej_events[0].event_type, "order_rejection")
+        self.assertEqual(rej_events[0].metadata.get("reason"), "insufficient_initial_margin")
+
+        r_2317_e3_l = replay_case("2317", "E3", "buy")
+        self.assertEqual(r_2317_e3_l["margin_at_entry"], 0.0)
+        self.assertEqual(r_2317_e3_l["pnl_last"], 0.0)
+
+        # Verify 0050 E1, E2, E3
+        r_0050_e1_l = replay_case("0050", "E1", "buy")
+        self.assertAlmostEqual(r_0050_e1_l["pnl_last"], -12.45, places=2)
+        self.assertAlmostEqual(r_0050_e1_l["worst_equity"], 99_987.55, places=2)
+
+        r_0050_e2_l = replay_case("0050", "E2", "buy")
+        r_0050_e2_s = replay_case("0050", "E2", "sell")
+        self.assertAlmostEqual(r_0050_e2_l["margin_at_entry"], 8_700.0)
+        self.assertAlmostEqual(r_0050_e2_l["pnl_last"], -12_450.0)
+        self.assertAlmostEqual(r_0050_e2_s["pnl_last"], 12_450.0)
+        self.assertAlmostEqual(r_0050_e2_l["worst_equity"], 87_550.0)
+        self.assertAlmostEqual(r_0050_e2_s["worst_equity"], 100_000.0)
+        self.assertAlmostEqual(r_0050_e2_l["peak_margin_over_equity"] * 100, 9.9, places=1)
+        self.assertAlmostEqual(r_0050_e2_s["peak_margin_over_equity"] * 100, 8.7, places=1)
+
+        r_0050_e3_l = replay_case("0050", "E3", "buy")
+        r_0050_e3_s = replay_case("0050", "E3", "sell")
+        self.assertAlmostEqual(r_0050_e3_l["margin_at_entry"], 17_400.0)
+        self.assertAlmostEqual(r_0050_e3_l["pnl_last"], -24_900.0)
+        self.assertAlmostEqual(r_0050_e3_s["pnl_last"], 24_900.0)
+        self.assertAlmostEqual(r_0050_e3_l["worst_equity"], 75_100.0)
+        self.assertAlmostEqual(r_0050_e3_s["worst_equity"], 100_000.0)
+        self.assertAlmostEqual(r_0050_e3_l["peak_margin_over_equity"] * 100, 23.2, places=1)
+        self.assertAlmostEqual(r_0050_e3_s["peak_margin_over_equity"] * 100, 17.4, places=1)
+
+    def test_ac5_and_ac8_futures_fill_metadata_price_basis_and_qff_9_494_open_cost(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            in_process_broker=True,
+        )
+        # Attempt to use stock_close as futures price -> rejected with price_stale
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "stock_close",
+                "market_price": 2255.0,
+                "market_price_source": "stock_close",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-stock-close-as-fut",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertEqual(events[0].metadata.get("reason"), "price_stale")
+        self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+
+        # Valid D-1 regular-session settlement of 2247 -> fills with exact cost 9.494
+        events.clear()
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-valid-qff",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 1)
+        fill = events[0]
+        self.assertEqual(fill.event_type, "paper_fill_simulated")
+        self.assertEqual(fill.fill_price, 2247.0)
+        self.assertEqual(fill.metadata.get("instrument_id"), "ssf:QFF:202611")
+        self.assertEqual(fill.metadata.get("kind"), "stock_future")
+        self.assertEqual(fill.metadata.get("multiplier"), 100.0)
+        self.assertEqual(fill.metadata.get("contract_month"), "202611")
+        self.assertAlmostEqual(fill.metadata.get("fee"), 5.0, places=6)
+        self.assertAlmostEqual(fill.metadata.get("tax"), 4.494, places=6)
+        self.assertAlmostEqual(fill.metadata.get("fee") + fill.metadata.get("tax"), 9.494, places=6)
+        self.assertAlmostEqual(fill.metadata.get("initial_margin_reserved"), 30334.5, places=4)
+        self.assertEqual(fill.metadata.get("price_basis"), "futures_daily_settlement_prev_session")
+        snap = algo.assert_ledger_reconciliation()
+        self.assertAlmostEqual(snap["costs"], 9.494, places=6)
+        self.assertAlmostEqual(
+            snap["total_pnl"],
+            snap["realized_pnl"] + snap["unrealized_pnl"] - snap["costs"],
+            places=6,
+        )
+
+    def test_ac6_november_2026_expiry_settlement_example_and_settlement_pending_guard(self):
+        from services.execution.lean_runtime.instrument_candidates import (
+            governed_twse_holidays,
+            last_trading_day,
+        )
+
+        holidays = governed_twse_holidays("2026-11-18")
+        self.assertEqual(last_trading_day("202611", holidays).isoformat(), "2026-11-18")
+
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            persona_binding_id="pcb-nov-2026",
+            in_process_broker=True,
+            holidays=holidays,
+        )
+
+        # 2026-11-12 (Thu): Open -1 ssf:QFF:202611 @ 2247 (2026-11-11 settlement)
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-11",
+                "trade_date": "2026-11-12",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-20261112-open",
+            side="sell",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202611")["quantity"], -1.0)
+
+        # 2026-11-16 (Mon): Mark to 2026-11-13 (Fri) settlement 2230 -> unrealized +1700
+        snap_1116 = algo.MarkFuturesSession("2026-11-16", {"ssf:QFF:202611": 2230.0})
+        self.assertAlmostEqual(snap_1116["unrealized_pnl"], 1700.0, places=4)
+
+        # 2026-11-17 (Tue): Same-direction SELL signal -> no-op
+        algo.RecordSignalNoop(
+            "2330.TW",
+            signal_id="sig-20261117-noop",
+            noop_reason="same_direction_hold",
+            requested_quantity=1.0,
+            quantity_type="CONTRACTS",
+            order_type="MARKET",
+            broker_submission_status="not_submitted_signal_noop",
+            submitted_to_broker=False,
+        )
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202611")["quantity"], -1.0)
+
+        # 2026-11-18 (Wed, last trading day): No new position opens in expiring 202611
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2225.0,
+                "price_date": "2026-11-17",
+                "trade_date": "2026-11-18",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-20261118-expiring-open",
+            side="sell",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata.get("reason"), "instrument_not_in_candidates")
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202611")["quantity"], -1.0)
+
+        # First test missing FinalSettlementPriceSSF on 2026-11-18 -> status becomes settlement_pending
+        pending_outcomes = algo.SettleExpiringFutures("2026-11-18", final_settlement_source=None)
+        self.assertEqual(len(pending_outcomes), 1)
+        self.assertEqual(pending_outcomes[0]["status"], "settlement_pending")
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202611")["status"], "settlement_pending")
+
+        # While settlement_pending, new orders on 2330 are rejected with reason="settlement_pending"
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202612",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202612",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2220.0,
+                "price_date": "2026-11-17",
+                "trade_date": "2026-11-18",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-while-pending",
+            side="sell",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata.get("reason"), "settlement_pending")
+
+        # Now provide FinalSettlementPriceSSF = 2215.40 on 2026-11-18 -> settles at +3160 realized PnL
+        settled_outcomes = algo.SettleExpiringFutures(
+            "2026-11-18",
+            final_settlement_source=[
+                {
+                    "Date": "20261118",
+                    "ContractCode": "QFF",
+                    "SettlementMonth": "202611",
+                    "SettlementPrice": "2215.40",
+                }
+            ],
+        )
+        self.assertEqual(len(settled_outcomes), 1)
+        self.assertEqual(settled_outcomes[0]["status"], "settled")
+        self.assertAlmostEqual(settled_outcomes[0]["realized_pnl"], 3160.0, places=4)
+        # Delivery/settlement fee = 2.0, settlement tax = 2215.40 * 100 * 0.00002 = 4.4308
+        self.assertAlmostEqual(settled_outcomes[0]["settlement_fee"], 2.0, places=6)
+        self.assertAlmostEqual(settled_outcomes[0]["tax"], 4.4308, places=6)
+        self.assertEqual(events[-1].event_type, "paper_futures_settled")
+        snap_1118 = algo.assert_ledger_reconciliation()
+        self.assertAlmostEqual(snap_1118["realized_pnl"], 3160.0, places=4)
+        self.assertAlmostEqual(snap_1118["unrealized_pnl"], 0.0, places=4)
+        self.assertAlmostEqual(snap_1118["margin_reserved"], 0.0, places=4)
+        # Total costs = open (9.494) + settlement (6.4308) = 15.9248
+        self.assertAlmostEqual(snap_1118["costs"], 9.494 + 6.4308, places=6)
+        self.assertAlmostEqual(snap_1118["total_pnl"], 3160.0 - 15.9248, places=6)
+
+        # 2026-11-19 (Thu): Next signal opens 202612
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202612",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202612",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2220.0,
+                "price_date": "2026-11-18",
+                "trade_date": "2026-11-19",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-20261119-open-dec",
+            side="sell",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(events[-1].metadata.get("instrument_id"), "ssf:QFF:202612")
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202612")["quantity"], -1.0)
+        algo.assert_ledger_reconciliation()
+
+    def test_ac7_maintenance_margin_breach_margin_call_and_forced_liquidation(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            futures_costs_enabled=False,
+            in_process_broker=True,
+        )
+        # Open +2 QFF @ 2247 (initial margin = 60,669 <= 100,000)
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-open-2-qff",
+            side="buy",
+            quantity=2.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+
+        # Mark 1 at 1950: unrealized = 2 * 100 * (1950 - 2247) = -59,400 -> equity = 40,600
+        # Maintenance required = 2 * 1950 * 100 * 0.1035 = 40,365 -> still above maintenance (40,600 >= 40,365)
+        # Mark at 1940: unrealized = 2 * 100 * (1940 - 2247) = -61,400 -> equity = 38,600
+        # Maintenance required = 2 * 1940 * 100 * 0.1035 = 40,158 -> breach! (38,600 < 40,158)
+        snap_call = algo.MarkFuturesSession("2026-11-09", {"ssf:QFF:202611": 1940.0})
+        self.assertTrue(snap_call["margin_call_active"])
+        self.assertEqual(events[-1].event_type, "paper_margin_call")
+
+        # While margin_call_active, an opening/increasing order is rejected with reason="margin_call_active"
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 1940.0,
+                "price_date": "2026-11-09",
+                "trade_date": "2026-11-10",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-add-during-call",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata.get("reason"), "margin_call_active")
+
+        # Persistent breach at the next full trading session mark triggers paper_forced_liquidation!
+        snap_liq = algo.MarkFuturesSession("2026-11-10", {"ssf:QFF:202611": 1935.0})
+        self.assertFalse(snap_liq["margin_call_active"])
+        self.assertEqual(events[-1].event_type, "paper_forced_liquidation")
+        self.assertEqual(events[-1].metadata.get("liquidated_quantity"), -2.0)
+        self.assertEqual(events[-1].metadata.get("liquidation_price"), 1935.0)
+        self.assertEqual(algo.instrument_positions, {})
+        self.assertAlmostEqual(snap_liq["realized_pnl"], -62_400.0, places=4)
+        self.assertAlmostEqual(snap_liq["equity"], 37_600.0, places=4)
+
+        # Also verify that a reducing order during margin_call_active is accepted
+        algo2 = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            futures_costs_enabled=False,
+            in_process_broker=True,
+        )
+        algo2.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo2.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="s-open-2",
+            side="buy",
+            quantity=2.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        algo2.MarkFuturesSession("2026-11-09", {"ssf:QFF:202611": 1940.0})
+        self.assertTrue(algo2.ledger_reconciliation_snapshot()["margin_call_active"])
+        algo2.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 1940.0,
+                "price_date": "2026-11-09",
+                "trade_date": "2026-11-10",
+            }
+        )
+        algo2.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="s-reduce-1",
+            side="sell",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+        self.assertEqual(algo2.get_instrument_position("ssf:QFF:202611")["quantity"], 1.0)
+        # After reducing to 1 contract, maintenance is 20,079 <= 38,600 equity, so margin call clears
+        self.assertFalse(algo2.ledger_reconciliation_snapshot()["margin_call_active"])
+
+    def test_p1_1_and_2_real_json_policy_loader_bound_pool_resolution_and_signal_override_ignored(self):
+        from unittest import mock
+        from services.capital.risk_policy import load_risk_policy, resolve_bound_pool_risk_policy
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_dir = Path(tmpdir) / "risk_policies"
+            policy_dir.mkdir(parents=True, exist_ok=True)
+            (policy_dir / "paper-tw-equities-500k-v1.json").write_text(
+                json.dumps(
+                    {
+                        "risk_policy_id": "paper-tw-equities-500k-v1",
+                        "version": "1.0",
+                        "status": "active",
+                        "allowed_stages": ["paper"],
+                        "allowed_asset_classes": ["equity"],
+                        "exposure_limits": {
+                            "gross_limit": 1.0,
+                            "net_limit": 1.0,
+                            "max_leverage": 1.0,
+                            "max_single_name_weight": 0.25,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (policy_dir / "paper-tw-futures-500k-v1.json").write_text(
+                json.dumps(
+                    {
+                        "risk_policy_id": "paper-tw-futures-500k-v1",
+                        "version": "1.0",
+                        "status": "active",
+                        "allowed_stages": ["paper"],
+                        "allowed_asset_classes": ["equity", "future"],
+                        "exposure_limits": {
+                            "gross_limit": 2.0,
+                            "net_limit": 2.0,
+                            "max_leverage": 2.0,
+                            "max_single_name_weight": 0.60,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            pool_store_path = Path(tmpdir) / "capital_pools.json"
+            pool_store_path.write_text(
+                json.dumps(
+                    {
+                        "pools": [
+                            {
+                                "pool_id": "pool-tw-equity-paper",
+                                "risk_policy_ref": "paper-tw-equities-500k-v1",
+                                "status": "active",
+                            },
+                            {
+                                "pool_id": "pool-tw-futures-paper",
+                                "risk_policy_ref": "paper-tw-futures-500k-v1",
+                                "status": "active",
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CAPITAL_RISK_POLICY_DIR": str(policy_dir),
+                    "PANTHEON_CAPITAL_POOL_STORE_PATH": str(pool_store_path),
+                },
+            ):
+                # Real JSON policy files under CAPITAL_RISK_POLICY_DIR load and normalize nested exposure_limits
+                eq_policy = load_risk_policy("paper-tw-equities-500k-v1")
+                self.assertEqual(eq_policy["allowed_asset_classes"], ["equity"])
+                self.assertEqual(eq_policy["max_single_name_weight"], 0.25)
+
+                fut_policy = resolve_bound_pool_risk_policy(capital_pool_id="pool-tw-futures-paper")
+                self.assertIsNotNone(fut_policy)
+                self.assertEqual(fut_policy.risk_policy_id, "paper-tw-futures-500k-v1")
+                self.assertEqual(fut_policy.allowed_asset_classes, ("equity", "future"))
+
+                # Bound equity-only pool (pool-tw-equity-paper -> paper-tw-equities-500k-v1) rejects futures
+                # even if signal metadata tries to override risk_policy / risk_policy_id!
+                events = []
+                algo = PaperExecutionAlgorithm(
+                    initial_cash=500_000.0,
+                    event_sink=events.append,
+                    capital_pool_id="pool-tw-equity-paper",
+                    in_process_broker=True,
+                )
+                algo.SetCurrentSignalContext(
+                    {
+                        "instrument_id": "ssf:QFF:202611",
+                        "kind": "stock_future",
+                        "contract": "QFF",
+                        "contract_month": "202611",
+                        "multiplier": 100.0,
+                        "price_basis": "futures_daily_settlement_prev_session",
+                        "futures_settlement_price": 2247.0,
+                        "price_date": "2026-11-05",
+                        "trade_date": "2026-11-06",
+                        # Attacker/caller attempts to override policy via signal metadata:
+                        "risk_policy_id": "paper-tw-futures-500k-v1",
+                        "risk_policy": {
+                            "risk_policy_id": "forged-policy",
+                            "allowed_asset_classes": ["equity", "future"],
+                            "max_leverage": 10.0,
+                        },
+                    }
+                )
+                algo.SubmitTaiwanBrokerOrder(
+                    "2330.TW",
+                    signal_id="sig-forged-policy",
+                    side="buy",
+                    quantity=1.0,
+                    quantity_type="CONTRACTS",
+                    action="BUY",
+                )
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0].event_type, "order_rejection")
+                self.assertEqual(events[0].metadata.get("reason"), "asset_class_not_allowed")
+
+                # Bound pool with missing/corrupt policy ref fails closed with risk_policy_unavailable
+                events.clear()
+                algo_bad_policy = PaperExecutionAlgorithm(
+                    initial_cash=500_000.0,
+                    event_sink=events.append,
+                    capital_pool_id="pool-missing-policy",
+                    capital_pool_reader=lambda pid: {
+                        "capital_pool_id": pid,
+                        "risk_policy_ref": "nonexistent-policy-v99",
+                    },
+                    in_process_broker=True,
+                )
+                algo_bad_policy.SetCurrentSignalContext(
+                    {
+                        "instrument_id": "ssf:QFF:202611",
+                        "kind": "stock_future",
+                        "contract": "QFF",
+                        "contract_month": "202611",
+                        "multiplier": 100.0,
+                        "price_basis": "futures_daily_settlement_prev_session",
+                        "futures_settlement_price": 2247.0,
+                        "price_date": "2026-11-05",
+                        "trade_date": "2026-11-06",
+                    }
+                )
+                algo_bad_policy.SubmitTaiwanBrokerOrder(
+                    "2330.TW",
+                    signal_id="sig-missing-policy",
+                    side="buy",
+                    quantity=1.0,
+                    quantity_type="CONTRACTS",
+                    action="BUY",
+                )
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0].event_type, "order_rejection")
+                self.assertEqual(events[0].metadata.get("reason"), "risk_policy_unavailable")
+
+    def test_p1_3_strict_d_minus_1_settlement_date_and_no_market_price_fallback(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=500_000.0,
+            event_sink=events.append,
+            capital_pool_id="pool-tw-futures-paper",
+            in_process_broker=True,
+        )
+        # 1. Missing price_basis and only market_price supplied -> rejected with price_stale
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:SRF:202611",
+                "kind": "stock_future",
+                "contract": "SRF",
+                "contract_month": "202611",
+                "multiplier": 1000.0,
+                "market_price": 104.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "0050.TW",
+            signal_id="sig-no-basis-no-settlement",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata.get("reason"), "price_stale")
+
+        # 2. Same-day settlement price (price_date == trade_date) -> rejected with price_stale (look-ahead guard)
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:SRF:202611",
+                "kind": "stock_future",
+                "contract": "SRF",
+                "contract_month": "202611",
+                "multiplier": 1000.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 104.0,
+                "price_date": "2026-11-06",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "0050.TW",
+            signal_id="sig-same-day-settlement",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata.get("reason"), "price_stale")
+
+        # 3. Missing trade_date or malformed price_date -> rejected with price_stale
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:SRF:202611",
+                "kind": "stock_future",
+                "contract": "SRF",
+                "contract_month": "202611",
+                "multiplier": 1000.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 104.0,
+                "price_date": "not-a-date",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "0050.TW",
+            signal_id="sig-malformed-date",
+            side="buy",
+            quantity=1.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata.get("reason"), "price_stale")
+        self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+
+    def test_p1_4_sign_reversal_orders_enforced_as_opening_new_exposure_leg(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            futures_costs_enabled=False,
+            in_process_broker=True,
+        )
+        # Open +2 QFF @ 2247
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-open-2",
+            side="buy",
+            quantity=2.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202611")["quantity"], 2.0)
+
+        # Trigger margin call on 2026-11-09 at 1940
+        algo.MarkFuturesSession("2026-11-09", {"ssf:QFF:202611": 1940.0})
+        self.assertTrue(algo.ledger_reconciliation_snapshot()["margin_call_active"])
+
+        # Sign-reversal order (+2 with -3 SELL -> -1) while margin_call_active must be REJECTED!
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 1940.0,
+                "price_date": "2026-11-09",
+                "trade_date": "2026-11-10",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-reversal-during-margin-call",
+            side="sell",
+            quantity=3.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata.get("reason"), "margin_call_active")
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202611")["quantity"], 2.0)
+
+        # Sign-reversal order on last_trading_day (2026-11-18) must be rejected with instrument_not_in_candidates!
+        algo.MarkFuturesSession("2026-11-10", {"ssf:QFF:202611": 2250.0})
+        self.assertFalse(algo.ledger_reconciliation_snapshot()["margin_call_active"])
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2250.0,
+                "price_date": "2026-11-17",
+                "trade_date": "2026-11-18",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-reversal-on-ltd",
+            side="sell",
+            quantity=3.0,
+            quantity_type="CONTRACTS",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata.get("reason"), "instrument_not_in_candidates")
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202611")["quantity"], 2.0)
+
+    def test_p1_5_mark_futures_session_idempotency_and_service_lifecycle(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            futures_costs_enabled=False,
+            in_process_broker=True,
+        )
+        algo.SetCurrentSignalContext(
+            {
+                "instrument_id": "ssf:QFF:202611",
+                "kind": "stock_future",
+                "contract": "QFF",
+                "contract_month": "202611",
+                "multiplier": 100.0,
+                "price_basis": "futures_daily_settlement_prev_session",
+                "futures_settlement_price": 2247.0,
+                "price_date": "2026-11-05",
+                "trade_date": "2026-11-06",
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-open-2",
+            side="buy",
+            quantity=2.0,
+            quantity_type="CONTRACTS",
+            action="BUY",
+        )
+        # Missing settlement price for open contract raises ValueError
+        with self.assertRaises(ValueError):
+            algo.MarkFuturesSession("2026-11-09", {})
+
+        # First mark on 2026-11-09 breaches maintenance -> margin_call_active
+        snap1 = algo.MarkFuturesSession("2026-11-09", {"ssf:QFF:202611": 1940.0})
+        self.assertTrue(snap1["margin_call_active"])
+        self.assertEqual(events[-1].event_type, "paper_margin_call")
+
+        # Duplicate mark on the same session date 2026-11-09 must NOT escalate to forced liquidation!
+        snap_dup = algo.MarkFuturesSession("2026-11-09", {"ssf:QFF:202611": 1940.0})
+        self.assertTrue(snap_dup["margin_call_active"])
+        self.assertEqual(algo.get_instrument_position("ssf:QFF:202611")["quantity"], 2.0)
+        self.assertEqual(events[-1].event_type, "paper_margin_call")
+
+    def test_p1_6_and_7_durable_futures_ledger_reload_legacy_migration_and_mixed_book_isolation(self):
+        from services.execution.lean_runtime.performance_telemetry import (
+            MarketMark,
+            value_portfolio,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "paper-ledger.json"
+            pool_reader = lambda pid: {
+                "capital_pool_id": pid,
+                "risk_policy": {
+                    "risk_policy_id": "rp-futures-2x",
+                    "allowed_stages": ["paper"],
+                    "allowed_asset_classes": ["equity", "future"],
+                    "gross_limit": 2.0,
+                    "net_limit": 2.0,
+                    "max_leverage": 2.0,
+                },
+            }
+            algo = PaperExecutionAlgorithm(
+                initial_cash=500_000.0,
+                state_path=str(state_path),
+                capital_pool_id="pool-tw-futures-paper",
+                capital_pool_reader=pool_reader,
+                in_process_broker=True,
+            )
+            self.assertTrue(algo.BindPerformanceBinding("binding-mixed-001"))
+
+            # 1. Buy 100 cash shares of 2330 @ 1000
+            algo.SetCurrentSignalContext(
+                {
+                    "instrument_id": "eq:2330",
+                    "kind": "cash_share",
+                    "market_price": 1000.0,
+                    "market_price_as_of": "2026-11-06T01:30:00Z",
+                    "market_price_source": "source-ingest://twse/2330",
+                }
+            )
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="sig-cash-2330",
+                side="buy",
+                quantity=100.0,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+
+            # 2. Short 1 QFF future on 2330 @ 2247 (different price scale from cash share!)
+            algo.SetCurrentSignalContext(
+                {
+                    "instrument_id": "ssf:QFF:202611",
+                    "kind": "stock_future",
+                    "contract": "QFF",
+                    "contract_month": "202611",
+                    "multiplier": 100.0,
+                    "price_basis": "futures_daily_settlement_prev_session",
+                    "futures_settlement_price": 2247.0,
+                    "price_date": "2026-11-05",
+                    "trade_date": "2026-11-06",
+                }
+            )
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="sig-fut-qff",
+                side="sell",
+                quantity=1.0,
+                quantity_type="CONTRACTS",
+                action="SELL",
+            )
+
+            # Underlying equity mark must remain 1000.0, not overwritten with 2247.0!
+            self.assertEqual(algo.Securities["2330.TW"].Price, 1000.0)
+            self.assertEqual(algo.Securities["ssf:QFF:202611"].Price, 2247.0)
+            self.assertEqual(sorted(algo.mark_symbols()), ["2330.TW", "ssf:QFF:202611"])
+
+            # 3. Reload from disk into a fresh PaperExecutionAlgorithm instance
+            restored = PaperExecutionAlgorithm(
+                initial_cash=1.0,
+                state_path=str(state_path),
+                capital_pool_id="pool-tw-futures-paper",
+                capital_pool_reader=pool_reader,
+                in_process_broker=True,
+            )
+            self.assertTrue(restored.BindPerformanceBinding("binding-mixed-001"))
+            self.assertIsNotNone(restored.get_instrument_position("ssf:QFF:202611"))
+            self.assertEqual(restored.get_instrument_position("ssf:QFF:202611")["quantity"], -1.0)
+            restored_snap = restored.assert_ledger_reconciliation()
+            self.assertAlmostEqual(restored_snap["costs"], 9.494, places=6)
+
+            # 4. Value mixed portfolio with authoritative marks (2330.TW @ 1010 -> +1000, QFF @ 2237 -> +1000)
+            ledger = restored.performance_ledger()
+            valuation = value_portfolio(
+                initial_cash=ledger["initial_cash"],
+                cash=ledger["cash"],
+                positions=ledger["positions"],
+                marks={
+                    "2330.TW": MarketMark(
+                        symbol="2330.TW",
+                        price=1010.0,
+                        as_of="2026-11-06T06:00:00Z",
+                        source_ref="source-ingest://twse/2330",
+                        observed_at="2026-11-06T06:00:00Z",
+                        lineage={
+                            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:test"],
+                            "connector_ids": ["tw-twse-tpex-official-market"],
+                        },
+                    ),
+                    "ssf:QFF:202611": MarketMark(
+                        symbol="ssf:QFF:202611",
+                        price=2237.0,
+                        as_of="2026-11-06T06:00:00Z",
+                        source_ref="source-ingest://taifex/QFF",
+                    ),
+                },
+                fill_count=ledger["fill_count"],
+                last_fill_at=ledger["last_fill_at"],
+                now=datetime(2026, 11, 6, 6, 5, 0, tzinfo=timezone.utc),
+            )
+            self.assertEqual(valuation.status, "valued")
+            self.assertAlmostEqual(valuation.sample.pnl, 2000.0 - 9.494, places=4)
+
+            # 5. Legacy cash-only ledger migration: remove instrument_positions from JSON and reload
+            legacy_path = Path(tmpdir) / "legacy-cash-ledger.json"
+            legacy_payload = {
+                "schema_version": "paper_performance_ledger.v1",
+                "binding_id": "binding-legacy-001",
+                "initial_cash": 100_000.0,
+                "cash": 50_000.0,
+                "fill_count": 1,
+                "ledger_started_at": "2026-11-06T01:00:00Z",
+                "first_fill_at": "2026-11-06T01:05:00Z",
+                "last_fill_at": "2026-11-06T01:05:00Z",
+                "performance_window": {},
+                "pending_performance_pair": None,
+                "pending_fill_publications": [],
+                "holdings": {"2330.TW": 50.0},
+                "open_episodes": {"2330.TW": "ep-legacy-1"},
+                "execution_prices": {"2330.TW": 1000.0},
+            }
+            legacy_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+            migrated = PaperExecutionAlgorithm(
+                state_path=str(legacy_path),
+                in_process_broker=True,
+            )
+            self.assertTrue(migrated.BindPerformanceBinding("binding-legacy-001"))
+            migrated.assert_ledger_reconciliation()
+            # Subsequent sell of the legacy holding reconciles cleanly
+            migrated.SetCurrentSignalContext(
+                {
+                    "instrument_id": "eq:2330",
+                    "kind": "cash_share",
+                    "market_price": 1020.0,
+                    "market_price_as_of": "2026-11-06T02:00:00Z",
+                    "market_price_source": "source-ingest://twse/2330",
+                }
+            )
+            migrated.SubmitTaiwanBrokerOrder(
+                "2330.TW",
+                signal_id="sig-legacy-sell",
+                side="sell",
+                quantity=50.0,
+                quantity_type="SHARES",
+                action="SELL",
+            )
+            mig_snap = migrated.assert_ledger_reconciliation()
+            self.assertAlmostEqual(mig_snap["realized_pnl"], 1000.0, places=4)
+            self.assertAlmostEqual(mig_snap["equity"], 101_000.0, places=4)
 
 
 if __name__ == "__main__":

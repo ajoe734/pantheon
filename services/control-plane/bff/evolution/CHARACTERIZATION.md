@@ -103,7 +103,7 @@ built against.
   staleness/telemetry metadata than the defaults here; the defaults exist
   only so this module is importable and testable standalone. Wiring must
   pass the real implementations for parity.
-- Idempotency-Key / X-Idempotency-Key header handling and the
+- Idempotency-Key header handling and the
   `_GOV_BFF_IDEMPOTENCY` cross-route replay cache are intentionally not
   reproduced in `create_evolution_program` / `patch_evolution_program`
   here; the cutover task should decide whether to inject that cache too or

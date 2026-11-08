@@ -29,9 +29,7 @@ def test_default_root_stack_uses_binding_scoped_paper_fleet() -> None:
     assert producer["environment"]["PANTHEON_PAPER_EXPRESSION_LAYER"] == (
         "${PANTHEON_PAPER_EXPRESSION_LAYER:-off}"
     )
-    assert services["pantheon-paper-runtime"]["profiles"] == [
-        "static-paper-runtime"
-    ]
+    assert "pantheon-paper-runtime" not in services
 
     telemetry_token = services["telemetry"]["environment"][
         "PANTHEON_TELEMETRY_SERVICE_TOKEN"
@@ -51,7 +49,7 @@ def test_default_root_stack_uses_binding_scoped_paper_fleet() -> None:
     ] == "${PANTHEON_TELEMETRY_SERVICE_TENANTS:-" + tenant + "}"
 
 
-def test_dev_deploy_retires_static_worker_and_verifies_fleet() -> None:
+def test_dev_deploy_has_no_static_worker_and_verifies_fleet() -> None:
     deploy = DEPLOY.read_text(encoding="utf-8")
     root_case = deploy[deploy.index("  root)\n") : deploy.index("\n  bff)\n")]
     default_profiles = next(
@@ -63,12 +61,12 @@ def test_dev_deploy_retires_static_worker_and_verifies_fleet() -> None:
     )
 
     assert "static-paper-runtime" not in default_profiles
-    assert "retire_legacy_static_paper_runtime()" in deploy
+    assert "retire_legacy_static_paper_runtime" not in deploy
+    assert "static-paper-runtime" not in deploy
     assert "verify_dev_paper_fleet()" in deploy
     assert "http://127.0.0.1:18011/readyz" in deploy
     assert 'worker.get("heartbeat_status") == "active"' in deploy
     compose_up = root_case.index("run_dev_candidate_compose up -d \\\n")
-    assert compose_up < root_case.index("retire_legacy_static_paper_runtime")
     assert compose_up < root_case.index("verify_dev_paper_fleet")
 
 

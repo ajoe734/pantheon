@@ -6,8 +6,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 BFF_ROOT = Path(__file__).resolve().parents[1]
 from services.control_plane.bff.deployment.router import create_deployment_router
+from services.control_plane.bff.tools_integrations.service import deprecated_bff_path_response
 
 
 def _page_slice(
@@ -18,9 +22,9 @@ def _page_slice(
     return items, None
 
 
-def _build_router():
+def _build_router(queries: Any = None):
     return create_deployment_router(
-        queries=object(),
+        queries=object() if queries is None else queries,
         extract_identity=lambda _authorization: object(),
         require_read_role=lambda _identity: None,
         require_operator_role=lambda _identity: None,
@@ -36,14 +40,14 @@ def _build_router():
         split_csv_query=lambda value: value.split(",") if value else None,
         meta_staleness=lambda: None,
         stable_json_hash=lambda payload: "hash",
-        resolve_final_idempotency_key=lambda resolved, header: resolved or header or "key",
+        resolve_final_idempotency_key=lambda resolved: resolved or "key",
         reject_body_idempotency_key=lambda _payload: None,
         request_dry_run_requested=lambda *_args, **_kwargs: False,
         publish_event=lambda *_args, **_kwargs: "event-id",
         sse_buffers={},
         sse_subscribers={},
         gov_bff_action_command=lambda *_args, **_kwargs: {},
-        deprecated_bff_path_response=lambda *_args, **_kwargs: None,
+        deprecated_bff_path_response=deprecated_bff_path_response,
         sem_command_response=lambda *_args, **_kwargs: {},
         stream_generic_events=lambda *_args, **_kwargs: iter(()),
         surface_degradation_reason=lambda *_args, **_kwargs: None,
@@ -116,6 +120,28 @@ def test_deployment_service_accepts_typed_queries() -> None:
     )
     assert service.queries is mock_queries
     assert not hasattr(service, "read_store")
+
+
+def test_deployment_plans_list_route_returns_410_and_never_reads_plans() -> None:
+    class _ForbiddenListQueries:
+        def list_deployment_plans(self, *_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
+            raise AssertionError("GET /api/v1/deployment-plans must not call list_deployment_plans")
+
+    app = FastAPI()
+    app.include_router(_build_router(queries=_ForbiddenListQueries()))
+    client = TestClient(app)
+
+    response = client.get("/api/v1/deployment-plans?page_size=200")
+    assert response.status_code == 410
+    assert response.headers["X-Deprecated"] == "true"
+    assert response.headers["Deprecation"] == "true"
+    assert response.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
+    payload = response.json()
+    details = payload["detail"]["error"]["details"]
+    assert details["route"] == "/api/v1/deployment-plans"
+    assert details["replacement"] == "/bff/deployments"
+    assert payload["meta"]["deprecation"]["replacement"] == "/bff/deployments"
+
 
 
 def test_main_composes_deployment_router_with_queries_not_closure() -> None:

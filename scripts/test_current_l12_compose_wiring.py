@@ -317,17 +317,15 @@ def test_default_owner_services_are_not_hidden_behind_profiles() -> None:
             "dormant-smoke",
             "openclaw-activation-ready-e2e",
             "lifecycle-capacity-benchmark",
-            "static-paper-runtime",
         }
     } == set()
 
 
-def test_benchmark_and_static_fallback_opt_in_are_preserved() -> None:
+def test_benchmark_opt_in_is_preserved_and_static_paper_runtime_retired() -> None:
     benchmark = SERVICES["lifecycle-projector-capacity-benchmark"]
     assert benchmark.get("profiles") == ["lifecycle-capacity-benchmark"]
 
-    static_paper = SERVICES["pantheon-paper-runtime"]
-    assert static_paper.get("profiles") == ["static-paper-runtime"]
+    assert "pantheon-paper-runtime" not in SERVICES
 
     projector = SERVICES["source-ingest-agora-projector"]
     assert set(projector.get("profiles", [])) == {"source-ingest-scheduler", "workers"}
