@@ -342,6 +342,7 @@ class PersonaMemoryStore:
         relevance_scope: Optional[str] = None,
         tags: Optional[Iterable[str]] = None,
         limit: int = 10,
+        tenant_id: Optional[str] = None,
     ) -> List[PersonaRetrievalHit]:
         if limit <= 0:
             return []
@@ -357,6 +358,10 @@ class PersonaMemoryStore:
             relevance_scope=relevance_scope,
             active_only=True,
         ):
+            # Tenant filter must precede ranking/limit so foreign or untagged
+            # higher-ranked records cannot crowd out owned entries.
+            if tenant_id is not None and entry.tenant_id != tenant_id:
+                continue
             haystack_parts = [
                 entry.content.get("summary", ""),
                 " ".join(entry.content.get("tags", []) or []),

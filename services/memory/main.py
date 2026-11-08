@@ -695,6 +695,7 @@ async def retrieve_memory(
                     relevance_scope=persona_relevance_scope,
                     tags=tag_values,
                     limit=persona_fetch_limit,
+                    tenant_id=persona_tenant,
                 ):
                     if persona_tenant is not None and hit.entry.tenant_id != persona_tenant:
                         continue
@@ -709,6 +710,7 @@ async def retrieve_memory(
                     relevance_scope=persona_relevance_scope,
                     tags=tag_values,
                     limit=persona_fetch_limit,
+                    tenant_id=persona_tenant,
                 ):
                     if persona_tenant is not None and hit.entry.tenant_id != persona_tenant:
                         continue

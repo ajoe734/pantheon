@@ -911,3 +911,49 @@ def test_memory_retrieve_persona_entries_are_tenant_scoped(memory_client, monkey
     assert resp.status_code == 200 and not any(
         h["entry"]["memory_id"] in ids.values() for h in resp.json()["hits"]
     )
+
+
+def test_persona_retrieve_tenant_filter_precedes_ranking_limit(memory_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    owned_id = None
+    for tenant, count, reuse in [("tenant-alpha", 1, 0), ("tenant-beta", 100, 1000)]:
+        token = _make_jwt(tenant_id=tenant, roles=["operator"])
+        for _ in range(count):
+            entry = _persona_auth_payload(tenant_id=tenant, reuse_count=reuse)
+            response = memory_client.post(
+                "/api/memory/persona-entries", json=entry,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response.status_code == 201, response.text
+            if tenant == "tenant-alpha":
+                owned_id = entry["memory_id"]
+    response = memory_client.get(
+        "/api/memory/retrieve",
+        params=_retrieve_auth_params(scope="persona", persona_id="persona-alpha", query=""),
+        headers={"Authorization": f"Bearer {_make_jwt(tenant_id='tenant-alpha', roles=['operator'])}"},
+    )
+    assert response.status_code == 200, response.text
+    assert owned_id in {h["entry"]["memory_id"] for h in response.json()["hits"]}
+
+
+def test_persona_retrieve_backend_context_uses_verified_tenant(memory_client, monkeypatch):
+    from services.memory import search_retrieval
+
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    seen = []
+
+    class Backend:
+        def search(self, **kwargs):
+            seen.append(kwargs["context"].tenant_id)
+            return []
+
+    monkeypatch.setattr(search_retrieval, "get_search_retrieval_backend", lambda: Backend())
+    response = memory_client.get(
+        "/api/memory/retrieve",
+        params=_retrieve_auth_params(scope="persona", persona_id="persona-alpha", query="lesson"),
+        headers={"Authorization": f"Bearer {_make_jwt(tenant_id='tenant-alpha', roles=['operator'])}"},
+    )
+    assert response.status_code == 200, response.text
+    assert seen == ["tenant-alpha"], seen
