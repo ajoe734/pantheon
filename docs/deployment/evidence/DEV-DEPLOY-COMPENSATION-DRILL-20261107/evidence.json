@@ -6,10 +6,11 @@
   "changes": [
     "nonprod-deploy.yml: compensation_drill input (default false), distinct run-name, validation in deploy/isolated/hosted-chain jobs, served-pair refusal before lease, drill step between candidate seal and paper baseline, compensation conditions include the drill, drill labelled in summary and marker artifact",
     "auto_deploy_dev_pair.py: drill_title mirror; drill run never matches pair_title",
-    "tests: 5 contract tests (branch-ci wired) and 4 auto_deploy tests"
+    "tests: 5 contract tests (branch-ci wired) and 4 auto_deploy tests",
+    "fix: deploy_compensation uses ${COMPENSATION_DRILL:-false} (no unbound variable); drill rejects component bff; compensation readback artifact stamped compensation_drill=true"
   ],
   "tests": {
     "scripts/test_auto_deploy_dev_pair.py": "all pass",
-    "scripts/test_dev_environment_lease_deploy_contract.py": "new tests pass; remaining failures are pre-existing in this sandbox and identical to the unmodified base"
+    "scripts/test_dev_environment_lease_deploy_contract.py": "four deploy_compensation regression tests pass again without COMPENSATION_DRILL in env"
   }
 }

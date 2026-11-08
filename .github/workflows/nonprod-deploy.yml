@@ -260,6 +260,10 @@ jobs:
             echo "Compensation drill is rejected together with the isolated gate, the hosted chain, the exact artifact roundtrip, an empty host bootstrap or a non strict auth profile." >&2
             exit 1
           fi
+          if [[ "${COMPENSATION_DRILL}" == "true" && "${TARGET_COMPONENT}" != "auto" && "${TARGET_COMPONENT}" != "root" ]]; then
+            echo "Compensation drill is a dev root only drill and is rejected for component ${TARGET_COMPONENT}." >&2
+            exit 1
+          fi
           trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
           [[ "${trusted_ref}" =~ ^[0-9a-f]{40}$ ]]
           if [[ "${sha}" != "${trusted_ref}" || "${GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}" ]]; then
@@ -2517,9 +2521,9 @@ jobs:
           actual_fe="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_FE_URL}/deployment.json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("frontendSha") or d.get("commit") or "")')"
           [[ "${actual_fe}" == "${PANTHEON_ROLLBACK_FRONTEND_SHA}" ]]
           echo "Artifact ${PANTHEON_DEV_ARTIFACT_OPERATION} proved exact prior images and FE bytes: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
-          if [[ "${COMPENSATION_DRILL}" == "true" ]]; then
+          if [[ "${COMPENSATION_DRILL:-false}" == "true" ]]; then
             echo "- compensation evidence label: COMPENSATION DRILL (intentional failure injected after the candidate stack was up)" >> "${GITHUB_STEP_SUMMARY}"
-            python3 -c 'import json,pathlib,sys; m=pathlib.Path(sys.argv[2]); m.write_text(json.dumps({**json.loads(m.read_text()), "readback_file": pathlib.Path(sys.argv[1]).name, "compensation_completed": True}) + "\n") if m.is_file() else None' "${EVIDENCE_DIR}/dev-compensation-artifact-readback.json" "${EVIDENCE_DIR}/compensation-drill.json"
+            python3 -c 'import json,pathlib,sys; r=pathlib.Path(sys.argv[1]); r.write_text(json.dumps({**json.loads(r.read_text()), "compensation_drill": True}) + "\n"); m=pathlib.Path(sys.argv[2]); m.write_text(json.dumps({**json.loads(m.read_text()), "readback_file": r.name, "compensation_completed": True}) + "\n") if m.is_file() else None' "${EVIDENCE_DIR}/dev-compensation-artifact-readback.json" "${EVIDENCE_DIR}/compensation-drill.json"
           fi
 
       - name: Upload validated dev compensation artifact readback
