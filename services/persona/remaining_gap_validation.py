@@ -22,6 +22,7 @@ from services.execution.lean_runtime.pending_signal_store import InMemoryPending
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.shioaji_adapter import ShioajiAdapter, ShioajiConfig, ShioajiOrderIntent
 from services.memory.institutional_memory_store import InstitutionalMemoryStore
+from services.trade_journey.lifecycle_noop_order import PAPER_GATE_REJECTION_REASONS
 from services.memory.learn_feedback_writeback import write_learn_feedback
 from services.memory.persona_memory_store import PersonaMemoryStore
 from services.research.vectorbt.adapter import BacktestConfig, StubVectorbtBackend, run_vectorbt_workflow
@@ -210,7 +211,7 @@ def _run_lean_order_feedback_recovery(
         pending_store.enqueue(signal)
         second_snapshot = runtime.drain_once()
 
-    expected_event_type = _expected_lean_event_type(case)
+    expected_event_type = _expected_lean_event_type(case, telemetry.events)
     selected_event = _select_telemetry_event(telemetry.events, expected_event_type, case)
     writer = FeedbackStoreAdapter(feedback_store_path=str(feedback_path))
     stored = writer.ingest_telemetry_event(
@@ -623,10 +624,25 @@ def _lean_signal(case: RemainingGapCase) -> dict[str, Any]:
     return base
 
 
-def _expected_lean_event_type(case: RemainingGapCase) -> str:
-    if case.lean_lifecycle in {"market_fill_ack_recovered", "limit_fill_ack_recovered"}:
-        return "paper_fill_simulated"
-    return "paper_order_simulated"
+def _expected_lean_event_type(
+    case: RemainingGapCase,
+    events: list[dict[str, Any]] | None = None,
+) -> str:
+    expected = (
+        "paper_fill_simulated"
+        if case.lean_lifecycle in {"market_fill_ack_recovered", "limit_fill_ack_recovered"}
+        else "paper_order_simulated"
+    )
+    if events is not None and not any(event["event_type"] == expected for event in events):
+        # The order risk gate may end the lifecycle before any fill or no-op
+        # record exists; a gate rejection is a terminal outcome, not a failure.
+        if any(
+            event["event_type"] == "order_rejection"
+            and event.get("metadata", {}).get("reason") in PAPER_GATE_REJECTION_REASONS
+            for event in events
+        ):
+            return "order_rejection"
+    return expected
 
 
 def _select_telemetry_event(

@@ -41,6 +41,7 @@ from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.memory.institutional_memory_store import InstitutionalMemoryStore
+from services.trade_journey.lifecycle_noop_order import PAPER_GATE_REJECTION_REASONS
 from services.memory.learn_feedback_writeback import write_learn_feedback
 from services.memory.persona_memory_store import PersonaMemoryStore
 from services.persona.ooda_cycle_runtime import (
@@ -4936,6 +4937,31 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
             "input_hash": broker_adapter_followup["input_hash"],
         },
     }
+
+
+def classify_paper_terminal_events(events: Sequence[Mapping[str, Any]]) -> dict[str, list[Any]]:
+    """Split paper runtime telemetry into fills, gate rejections and no trades.
+
+    A ``paper_fill_simulated`` quantity is signed (negative for a sell or short),
+    so a fill is recognised by a non-zero quantity rather than a positive one. A
+    rejection counts only for a risk-gate reason, and a ``paper_order_simulated``
+    counts as a no trade only when it records a no-order decision.
+    """
+    fills: list[Any] = []
+    rejections: list[Any] = []
+    no_trades: list[Any] = []
+    for event in events:
+        event_type = event.get("event_type")
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+        if event_type == "paper_fill_simulated":
+            fills.append(event)
+        elif event_type == "order_rejection" and metadata.get("reason") in PAPER_GATE_REJECTION_REASONS:
+            rejections.append(event)
+        elif event_type == "paper_order_simulated" and (
+            metadata.get("noop_reason") or metadata.get("decision_status") == "no_order"
+        ):
+            no_trades.append(event)
+    return {"fills": fills, "rejections": rejections, "no_trades": no_trades}
 
 
 def _portfolio_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
@@ -10112,13 +10138,27 @@ def _execute_signals(
         max_batch_size=len(signals),
     )
     snapshot = runtime.drain_once()
-    fills = [event for event in telemetry.events if event["event_type"] == "paper_fill_simulated"]
-    if len(fills) != len(signals):
-        raise AssertionError(f"{case_id} expected {len(signals)} fills, got {len(fills)}: {snapshot}")
+    outcomes = classify_paper_terminal_events(telemetry.events)
+    fills = outcomes["fills"]
+    # A signal may end in a fill or in a risk-gate rejection / recorded no trade;
+    # anything else (or a missing outcome) is still a failure.
+    if len(fills) != len(signals) and (
+        len(fills) + len(outcomes["rejections"]) + len(outcomes["no_trades"]) != len(signals)
+    ):
+        raise AssertionError(
+            f"{case_id} expected {len(signals)} terminal outcomes, got "
+            f"{len(fills)} fills, {len(outcomes['rejections'])} rejections, "
+            f"{len(outcomes['no_trades'])} no trades: {snapshot}"
+        )
     return {
         "snapshot": snapshot,
         "fill_events": fills,
-        "filled": all(abs(float(event["metrics"].get("fill_quantity") or 0.0)) > 0.0 for event in fills),
+        "rejection_events": outcomes["rejections"],
+        "no_trade_events": outcomes["no_trades"],
+        # Signed: a short fill reports a negative quantity.
+        # A book that only rejected or skipped has not traded.
+        "filled": bool(fills)
+        and all(abs(float(event["metrics"].get("fill_quantity") or 0.0)) > 0.0 for event in fills),
         "fill_count": len(fills),
         "expected_fill_count": len(signals),
         "fill_rate": round(len(fills) / max(len(signals), 1), 6),
