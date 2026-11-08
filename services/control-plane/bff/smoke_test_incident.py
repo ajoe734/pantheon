@@ -245,7 +245,7 @@ def _incident_command_payload(command: str, params: dict, target_id: str = "runt
 def _command_headers(auth: str, key: str) -> dict:
     return {
         "Authorization": auth,
-        "X-Idempotency-Key": key,
+        "Idempotency-Key": key,
     }
 
 

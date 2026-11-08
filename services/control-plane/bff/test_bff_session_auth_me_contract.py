@@ -314,7 +314,7 @@ def test_bff_auth_refresh_returns_session_dto_without_command_receipt(monkeypatc
     assert "receipt" not in data
 
 
-def test_bff_auth_refresh_replays_by_idempotency_alias(monkeypatch) -> None:
+def test_bff_auth_refresh_replays_by_idempotency_key_and_ignores_retired_alias(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
@@ -322,7 +322,8 @@ def test_bff_auth_refresh_replays_by_idempotency_alias(monkeypatch) -> None:
     client = TestClient(bff_main.app)
     headers = {
         "Authorization": OPERATOR_TOKEN,
-        "X-Idempotency-Key": "refresh-alias-op-2",
+        "Idempotency-Key": "refresh-canonical-op-2",
+        "X-Idempotency-Key": "retired-alias-ignored",
     }
     first = client.post("/bff/auth/refresh", json={}, headers=headers)
     second = client.post("/bff/auth/refresh", json={}, headers=headers)
@@ -331,7 +332,7 @@ def test_bff_auth_refresh_replays_by_idempotency_alias(monkeypatch) -> None:
     assert second.status_code == 200, second.text
     first_payload = first.json()
     second_payload = second.json()
-    assert second_payload["meta"]["idempotency"]["idempotencyKey"] == "refresh-alias-op-2"
+    assert second_payload["meta"]["idempotency"]["idempotencyKey"] == "refresh-canonical-op-2"
     assert second_payload["meta"]["idempotency"]["replayed"] is True
     assert second_payload["data"]["operation"]["operation_id"] == first_payload["data"]["operation"]["operation_id"]
     assert second_payload["data"]["operation"]["performed_at"] == first_payload["data"]["operation"]["performed_at"]

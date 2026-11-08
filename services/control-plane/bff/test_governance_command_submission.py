@@ -359,7 +359,7 @@ ADMIN_MFA_TOKEN = "Bearer op-admin:admin:mfa"
 def _command_headers(token: str, key: str, trace: str | None = None) -> dict[str, str]:
     headers = {
         "Authorization": token,
-        "X-Idempotency-Key": key,
+        "Idempotency-Key": key,
     }
     if trace:
         headers["X-Trace-Id"] = trace
@@ -426,7 +426,7 @@ def test_submit_command_records_foundation_context_and_replays_idempotency() -> 
             "Authorization": APPROVER_TOKEN,
             "X-Trace-Id": "trace-bff-001",
             "X-Correlation-Id": "corr-bff-001",
-            "X-Idempotency-Key": "idmp-bff-001",
+            "Idempotency-Key": "idmp-bff-001",
         }
         body = {
             "command": "ApproveDecision",
@@ -467,7 +467,7 @@ def test_submit_command_policy_denial_returns_foundation_error_envelope() -> Non
             headers={
                 "Authorization": OPERATOR_TOKEN,
                 "X-Trace-Id": "trace-bff-deny",
-                "X-Idempotency-Key": "idmp-bff-deny",
+                "Idempotency-Key": "idmp-bff-deny",
             },
             json={
                 "command": "ApproveDecision",
@@ -494,7 +494,7 @@ def test_submit_command_validation_error_returns_foundation_error_envelope() -> 
             headers={
                 "Authorization": APPROVER_TOKEN,
                 "X-Trace-Id": "trace-bff-validation",
-                "X-Idempotency-Key": "idmp-bff-validation",
+                "Idempotency-Key": "idmp-bff-validation",
             },
             json={
                 "command": "ApproveDecision",
@@ -992,8 +992,8 @@ def test_bff_v1_commands_accepts_idempotency_key_header() -> None:
         assert trace["request_id"] == "req-final-key-001"
 
 
-def test_bff_v1_commands_accepts_x_idempotency_key_as_alias() -> None:
-    """X-Idempotency-Key is accepted as a compatibility alias on the final route."""
+def test_bff_v1_commands_rejects_retired_x_idempotency_key_alias() -> None:
+    """X-Idempotency-Key alone is rejected after alias retirement on the final route."""
     with tempfile.TemporaryDirectory() as td:
         h = _Harness(td)
         response = h.client.post(
@@ -1004,14 +1004,15 @@ def test_bff_v1_commands_accepts_x_idempotency_key_as_alias() -> None:
             },
             json=_FINAL_BODY,
         )
-        assert response.status_code == 202, response.text
-        payload = response.json()
-        assert "data" in payload
-        assert payload["meta"]["idempotency"]["idempotencyKey"] == "final-alias-key-001"
+        assert response.status_code == 400, response.text
+        detail = _error_detail(response)
+        assert detail["error"]["code"] == "VALIDATION_FAILED"
+        assert detail["error"]["details"]["precondition_failed"] == "idempotency_key"
+        assert h.command_store._get_all_commands() == []
 
 
 def test_bff_v1_commands_canonical_key_takes_precedence_over_alias() -> None:
-    """When both headers are present, Idempotency-Key takes precedence."""
+    """When both headers are present, Idempotency-Key is used and X-Idempotency-Key is ignored."""
     with tempfile.TemporaryDirectory() as td:
         h = _Harness(td)
         response = h.client.post(
@@ -1032,7 +1033,7 @@ def test_bff_v1_commands_canonical_key_takes_precedence_over_alias() -> None:
 
 
 def test_bff_v1_commands_rejects_missing_idempotency_key() -> None:
-    """Both Idempotency-Key and X-Idempotency-Key absent → 400 INVALID_PARAMS."""
+    """Missing Idempotency-Key → 400 VALIDATION_FAILED."""
     with tempfile.TemporaryDirectory() as td:
         h = _Harness(td)
         response = h.client.post(
@@ -1163,7 +1164,7 @@ def test_legacy_api_v1_commands_post_is_retired() -> None:
             "/api/v1/operator/commands",
             headers={
                 "Authorization": APPROVER_TOKEN,
-                "X-Idempotency-Key": "legacy-key-001",
+                "Idempotency-Key": "legacy-key-001",
             },
             json={
                 "command": "ApproveDecision",

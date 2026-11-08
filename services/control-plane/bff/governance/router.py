@@ -244,13 +244,11 @@ def create_governance_router(
         except (urllib.error.URLError, OSError, RuntimeError, AttributeError, ValueError, TypeError):
             _fail(503, "DEPENDENCY_UNAVAILABLE", "Governance approval owner unavailable", "Governance approval owner unreachable")
 
-    def _idempotency_key(primary: Optional[str], alternate: Optional[str], *, required: bool = False) -> str:
-        first, second = str(primary or "").strip(), str(alternate or "").strip()
-        if first and second and first != second:
-            _fail(422, "VALIDATION_FAILED", "Conflicting idempotency headers", "Idempotency-Key and X-Idempotency-Key must match when both are provided", precondition_failed="idempotency_key")
-        if required and not (first or second):
+    def _idempotency_key(primary: Optional[str], *, required: bool = False) -> str:
+        first = str(primary or "").strip()
+        if required and not first:
             _fail(422, "VALIDATION_FAILED", "Idempotency-Key is required", "Approval writes need a stable Idempotency-Key", precondition_failed="idempotency_key")
-        return first or second or str(uuid.uuid4())
+        return first or str(uuid.uuid4())
 
     def _publish_decision(aid: str, res: Dict[str, Any], ident: Any) -> None:
         if publish_event is not None:
@@ -303,13 +301,12 @@ def create_governance_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ) -> Any:
         _extract(authorization)
         if str(x_dry_run or "").strip().lower() in {"1", "true", "yes"}:
             _fail(501, "NOT_IMPLEMENTED", "Dry-run is not supported by the Governance owner", "Unsupported approval action", precondition_failed="unsupported_action")
-        key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
+        key = _idempotency_key(idempotency_key, required=True)
         return await _forward(approval_owner.propose, authorization, payload, key)
 
     @router.get("/api/v1/approval-decisions/{decision_id}")
@@ -979,7 +976,6 @@ def create_governance_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
         _identity(authorization, operator=True)
         _fail(410, "ACTION_RETIRED", "Review creation has no executing owner",
@@ -1013,7 +1009,6 @@ def create_governance_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
         identity = _identity(authorization, operator=True)
         clean_action = re.sub(r"[^a-z0-9]", "", str(action_id or "").strip().lower())
@@ -1033,7 +1028,7 @@ def create_governance_router(
         clean_id = review_id.strip()
         params = dict(payload)
         params["decision"] = vote_verb
-        key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
+        key = _idempotency_key(idempotency_key, required=True)
         return await _service().submit_governance_action(
             action_kind="review", target_id=clean_id, action_id=vote_verb,
             payload=params, identity=identity, idempotency_key=key,
@@ -1115,12 +1110,11 @@ def create_governance_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
         identity = _extract(authorization)
         clean_id = approval_id.strip()
         result = await _forward(approval_owner.decide, authorization, clean_id, payload,
-                                _idempotency_key(idempotency_key, x_idempotency_key, required=True))
+                                _idempotency_key(idempotency_key, required=True))
         _publish_decision(clean_id, result, identity)
         return JSONResponse(status_code=202, content=result)
 
@@ -1129,7 +1123,6 @@ def create_governance_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> JSONResponse:
         _extract(authorization)
         _reject_body_idempotency_key(payload)
@@ -1138,7 +1131,7 @@ def create_governance_router(
             _fail(422, "VALIDATION_FAILED", "decisions must be a non-empty list", "The decisions field must contain at least one item", precondition_failed="decisions")
         if len(decisions) > 50:
             _fail(422, "VALIDATION_FAILED", "batch-decide accepts at most 50 items", f"Received {len(decisions)} items", precondition_failed="decisions")
-        batch_key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
+        batch_key = _idempotency_key(idempotency_key, required=True)
         results: List[Dict[str, Any]] = []
         for index, item in enumerate(decisions):
             if not isinstance(item, dict) or not str(item.get("id") or "").strip():

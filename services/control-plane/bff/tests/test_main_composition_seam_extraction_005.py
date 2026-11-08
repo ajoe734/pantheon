@@ -274,11 +274,8 @@ def test_live_imported_high_risk_classifier():
 
 def test_live_imported_idempotency_and_hash_helpers():
     """Verify _resolve_final_idempotency_key and _stable_json_hash directly."""
-    key = _resolve_final_idempotency_key("canonical-key", None)
+    key = _resolve_final_idempotency_key("canonical-key")
     assert key == "canonical-key"
-
-    alias_key = _resolve_final_idempotency_key(None, "alias-key")
-    assert alias_key == "alias-key"
 
     h1 = _stable_json_hash({"b": 2, "a": 1})
     h2 = _stable_json_hash({"a": 1, "b": 2})

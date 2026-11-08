@@ -170,9 +170,9 @@ def _default_require_operator_role(identity: Any) -> None:
 
 def _default_resolve_idempotency_key(
     idempotency_key: Optional[str] = None,
-    x_idempotency_key: Optional[str] = None,
+    *_ignored: Any,
 ) -> str:
-    key = idempotency_key or x_idempotency_key or ""
+    key = idempotency_key or ""
     return key.strip() or str(uuid.uuid4())
 
 
@@ -674,13 +674,12 @@ def create_incident_router(
         action_id: str,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: submit an action against a risk alert."""
         identity = _extract_ident(authorization)
         _require_operator(identity)
-        resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_key(idempotency_key)
         payload: Dict[str, Any] = {}
         try:
             payload = await request.json()
@@ -755,13 +754,12 @@ def create_incident_router(
     async def bff_create_incident(
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: create a new incident record."""
         identity = _extract_ident(authorization)
         _require_operator(identity)
-        resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_key(idempotency_key)
         payload: Dict[str, Any] = {}
         try:
             payload = await request.json()
@@ -811,13 +809,12 @@ def create_incident_router(
         action_id: str,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: submit an action against an incident."""
         identity = _extract_ident(authorization)
         _require_operator(identity)
-        resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_key(idempotency_key)
         payload: Dict[str, Any] = {}
         try:
             payload = await request.json()
@@ -926,7 +923,6 @@ def create_incident_router(
         alert_id: str,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: acknowledge an operator alert."""
@@ -941,7 +937,7 @@ def create_incident_router(
         _reject_key(payload)
 
         clean_id = alert_id.strip()
-        resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_key(idempotency_key)
         request_hash = _stable_json_hash({"alert_id": clean_id, "action": "acknowledge", "payload": payload})
         operator_id = getattr(identity, "operator_id", "operator")
 
@@ -1190,7 +1186,6 @@ def create_incident_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         """BFF: trigger audit export command."""
         identity = _extract_ident(authorization)
@@ -1209,7 +1204,6 @@ def create_incident_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ):
         """BFF: semantic commands for incident & alert mutations."""
@@ -1217,7 +1211,7 @@ def create_incident_router(
         _require_operator(identity)
         snapshot_at = _utc_now()
         is_dry_run = request_dry_run_requested(x_dry_run) if request_dry_run_requested else bool(x_dry_run and x_dry_run.strip().lower() in ("1", "true", "yes"))
-        resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_key(idempotency_key)
         route_path = str(getattr(request.scope.get("route"), "path", "") or request.url.path)
 
         if is_dry_run:

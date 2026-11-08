@@ -722,7 +722,7 @@ def test_cw03_record_sponsor_decision_executes_and_updates_projection() -> None:
             "/bff/v1/commands",
             headers={
                 "Authorization": OPERATOR_AUTH,
-                "X-Idempotency-Key": "idmp-cw03-record-sponsor-decision",
+                "Idempotency-Key": "idmp-cw03-record-sponsor-decision",
             },
             json={
                 "command_type": "RecordSponsorDecision",

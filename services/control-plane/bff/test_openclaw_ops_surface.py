@@ -366,7 +366,7 @@ def test_openclaw_session_commands_require_auth_role_and_idempotency(monkeypatch
         "/api/v1/operator/openclaw/sessions",
         headers={
             "Authorization": VIEWER_AUTH,
-            "X-Idempotency-Key": "idmp-openclaw-1",
+            "Idempotency-Key": "idmp-openclaw-1",
         },
         json=body,
     )
@@ -404,7 +404,7 @@ def test_openclaw_session_create_forwards_operator_and_idempotency(monkeypatch) 
             "/api/v1/operator/openclaw/sessions",
             headers={
                 "Authorization": OPERATOR_AUTH,
-                "X-Idempotency-Key": "idmp-openclaw-create",
+                "Idempotency-Key": "idmp-openclaw-create",
             },
             json={
                 "agent_id": "agent-alpha",

@@ -85,7 +85,6 @@ _CORS_ALLOW_HEADERS: List[str] = [
     "Last-Event-ID",
     "X-Correlation-Id",
     "X-Dry-Run",
-    "X-Idempotency-Key",
     "X-Locale",
     "X-MFA-Token",
     "X-Request-Id",

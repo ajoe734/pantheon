@@ -4,7 +4,7 @@ Covers:
 1. Every read route: list, catalog, detail, runs, receipts, command receipt
 2. Every write route: create, validate, canary, enable, disable, degrade, resume, change_schedule, replace, retire
 3. RBAC and operator/admin role enforcement
-4. X-Idempotency-Key and expected revision enforcement
+4. Idempotency-Key and expected revision enforcement
 5. Confirmation requirements for enable, replace, retire
 6. AllowedActions state machine enforcement
 7. Inline secret rejection and response secret redaction
@@ -42,11 +42,11 @@ from services.control_plane.bff.source_management_client import (
 
 OPERATOR_HEADERS = {
     "Authorization": "Bearer op-srcm-001:operator,admin",
-    "X-Idempotency-Key": "idemp-test-001",
+    "Idempotency-Key": "idemp-test-001",
 }
 VIEWER_HEADERS = {
     "Authorization": "Bearer viewer-001:viewer",
-    "X-Idempotency-Key": "idemp-test-002",
+    "Idempotency-Key": "idemp-test-002",
 }
 
 
@@ -718,7 +718,7 @@ def test_missing_idempotency_key_rejected(bff_client: TestClient, fake_client: F
     body = {"expectedRevision": 1, "reason": "Validate without idempotency key"}
     resp = bff_client.post("/bff/management/data-sources/src-twse-01/actions/validate", json=body, headers=headers)
     assert resp.status_code == 400
-    assert "X-Idempotency-Key" in resp.text
+    assert "Idempotency-Key" in resp.text
 
 
 def test_stale_expected_revision_returns_409(bff_client: TestClient, fake_client: FakeSourceManagementClient) -> None:

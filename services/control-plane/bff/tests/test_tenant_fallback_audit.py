@@ -2259,7 +2259,7 @@ def _build_admission_entries_app(tmp_path, ports):
         split_csv_query=lambda value: [],
         meta_staleness=lambda: None,
         stable_json_hash=lambda body: "unused",
-        resolve_final_idempotency_key=lambda key, other: key or other,
+        resolve_final_idempotency_key=lambda key: key,
         reject_body_idempotency_key=lambda payload: None,
         request_dry_run_requested=lambda *args: False,
         publish_event=lambda *args: None,

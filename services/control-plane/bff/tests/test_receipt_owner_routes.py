@@ -178,7 +178,7 @@ def mounted(owner, tmp_path):
         raise_if_read_surface_unavailable=lambda *args, **kwargs: None,
         aggregate_group_surface=lambda *args, **kwargs: {}, split_csv_query=lambda value: [],
         meta_staleness=lambda: None, stable_json_hash=lambda body: "unused",
-        resolve_final_idempotency_key=lambda key, other: key or other,
+        resolve_final_idempotency_key=lambda key: key,
         reject_body_idempotency_key=lambda payload: None, request_dry_run_requested=lambda *args: False,
         publish_event=lambda *args: None, sse_buffers={}, sse_subscribers={},
         gov_bff_action_command=svc.submit_resource_action,

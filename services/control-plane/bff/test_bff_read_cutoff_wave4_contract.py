@@ -185,7 +185,7 @@ def _make_client(store: ReadSurfacePorts) -> TestClient:
         split_csv_query=lambda val: val.split(",") if val else None,
         meta_staleness=lambda: None,
         stable_json_hash=lambda val: "hash",
-        resolve_final_idempotency_key=lambda r, h: r or h or "key",
+        resolve_final_idempotency_key=lambda r: r or "key",
         reject_body_idempotency_key=lambda p: None,
         request_dry_run_requested=lambda *a, **kw: False,
         publish_event=lambda *a, **kw: "event-id",

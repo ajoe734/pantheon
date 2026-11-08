@@ -6806,7 +6806,6 @@ async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
@@ -6821,7 +6820,6 @@ async def bff_management_nl_ask(
             payload=payload,
             authorization=authorization,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             x_tenant_id=x_tenant_id,
             x_pantheon_tenant=x_pantheon_tenant,
             x_dry_run=x_dry_run,
@@ -6838,7 +6836,6 @@ async def _bff_management_nl_ask_impl(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
@@ -6895,7 +6892,7 @@ async def _bff_management_nl_ask_impl(
     ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
     allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
     if _request_dry_run_requested(x_dry_run):
         return _dry_run_success_response(
@@ -7342,7 +7339,6 @@ async def bff_management_nl_ask_stream(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
 ):
@@ -7356,7 +7352,6 @@ async def bff_management_nl_ask_stream(
             payload=payload,
             authorization=authorization,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             x_tenant_id=x_tenant_id,
             x_pantheon_tenant=x_pantheon_tenant,
         )
@@ -7372,7 +7367,6 @@ async def _bff_management_nl_ask_stream_impl(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
 ):
@@ -7424,7 +7418,7 @@ async def _bff_management_nl_ask_stream_impl(
     # BFF-MANAGEMENT-NL-SEAM-CORRECTIVE-001: admission happens once, for both
     # the control-command and provider-answer paths, before either does any
     # work -- exactly mirroring bff_management_nl_ask's ordering.
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
     command_scope = _mgmt_nl_command_scope(
         actor_id=identity.operator_id,

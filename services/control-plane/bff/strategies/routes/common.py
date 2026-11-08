@@ -469,7 +469,7 @@ class StrategyRouteContext:
     page_slice: Callable[..., Any] = default_page_slice
     read_surface_meta: Callable[..., Dict[str, Any]] = default_read_surface_meta
     reject_body_idempotency_key: Callable[[Dict[str, Any]], None] = lambda p: None
-    resolve_final_idempotency_key: Callable[..., str] = lambda ik, xik: str(ik or xik or "")
+    resolve_final_idempotency_key: Callable[..., str] = lambda ik: str(ik or "")
     stable_json_hash: Callable[[Dict[str, Any]], str] = lambda d: ""
     request_dry_run_requested: Callable[[], bool] = lambda: False
     dry_run_success_response: Callable[..., Any] = lambda *a, **kw: {}

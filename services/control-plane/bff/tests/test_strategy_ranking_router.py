@@ -114,22 +114,16 @@ def _stable_json_hash(payload: Dict[str, Any]) -> str:
 
 def _resolve_final_idempotency_key(
     idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
+    *_ignored: Any,
 ) -> str:
     canonical = str(idempotency_key or "").strip()
     if canonical:
         return canonical
-    alias = str(x_idempotency_key or "").strip()
-    if alias:
-        return alias
     raise bff_error(
         400,
         ErrorCode.VALIDATION_FAILED,
         "Idempotency-Key is required for operator commands",
-        (
-            "Final contract routes require a non-empty Idempotency-Key header; "
-            "X-Idempotency-Key is accepted as a temporary compatibility alias"
-        ),
+        "Final contract routes require a non-empty Idempotency-Key header",
         precondition_failed="idempotency_key",
         suggestion="Retry with Idempotency-Key set to a stable client retry key",
     )
@@ -170,52 +164,6 @@ def _make_strategy_persona_idempotency_check(store: Dict[str, Any]):
     return _check
 
 
-_PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
-_PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
-
-
-def _deprecated_bff_path_response(*, route: str, replacement: str):
-    from starlette.responses import JSONResponse
-
-    message = f"{route} is deprecated; use {replacement}."
-    headers = {
-        "Deprecation": "true",
-        "Sunset": _PATH_DEDUPE_SUNSET_HTTP_DATE,
-        "Link": f'<{replacement}>; rel="successor-version"',
-        "Warning": f'299 - "{message}"',
-        "X-Deprecated": "true",
-        "X-Deprecated-At": _PATH_DEDUPE_DEPRECATED_SINCE,
-        "X-Pantheon-Deprecated-Route": route,
-        "X-Pantheon-Replacement-Route": replacement,
-    }
-    return JSONResponse(
-        status_code=410,
-        headers=headers,
-        content={
-            "detail": {
-                "error": {
-                    "code": ErrorCode.OPERATION_NOT_ALLOWED.value,
-                    "message": "Deprecated BFF route",
-                    "details": {
-                        "reason": "route_deprecated",
-                        "route": route,
-                        "replacement": replacement,
-                        "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                    },
-                }
-            },
-            "meta": {
-                "deprecated": True,
-                "deprecation": {
-                    "route": route,
-                    "replacement": replacement,
-                    "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                },
-            },
-        },
-    )
-
-
 def _build_app(read_store, strategy_write_owner) -> FastAPI:
     app = FastAPI()
     app.state.read_store = read_store
@@ -254,7 +202,6 @@ def _build_app(read_store, strategy_write_owner) -> FastAPI:
             utc_now=_utc_now,
             page_slice=default_page_slice,
             read_surface_meta=default_read_surface_meta,
-            deprecated_bff_path_response=_deprecated_bff_path_response,
         )
     )
     return app
@@ -462,14 +409,24 @@ def test_bff_strategy_patch_updates_overlay_fields() -> None:
         assert data["state"] == "deployed"  # lifecycle map: active -> deployed
 
 
-def test_bff_deprecated_ranking_formulas_list_returns_410() -> None:
+def test_bff_retired_ranking_formulas_wrappers_removed_and_action_guard_kept() -> None:
     with _client() as client:
-        resp = client.get("/bff/ranking/formulas", headers=OPERATOR_HEADERS)
-        assert resp.status_code == 410
-        detail = resp.json()["detail"]
-        assert detail["error"]["details"]["route"] == "/bff/ranking/formulas"
-        assert detail["error"]["details"]["replacement"] == "/bff/ranking-formulas"
-        assert resp.headers.get("X-Deprecated") == "true"
+        for method, path in (
+            ("get", "/bff/ranking/formulas"),
+            ("post", "/bff/ranking/formulas"),
+            ("get", "/bff/ranking/formulas/formula-1"),
+            ("patch", "/bff/ranking/formulas/formula-1"),
+        ):
+            resp = getattr(client, method)(path, headers=OPERATOR_HEADERS)
+            assert resp.status_code in {404, 405}, resp.text
+
+        action_resp = client.post(
+            "/bff/ranking/formulas/formula-1/actions/promote",
+            headers=OPERATOR_HEADERS,
+        )
+        assert action_resp.status_code == 410, action_resp.text
+        detail = action_resp.json()["detail"]
+        assert detail["error"]["code"] == "ACTION_RETIRED"
 
 
 def test_bff_rankings_list_returns_200() -> None:

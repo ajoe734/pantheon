@@ -399,7 +399,7 @@ def test_command_admission_enforces_containment_confirm_and_two_man(tmp_path):
         missing_confirm = harness.client.post(
             "/bff/v1/commands",
             json=command,
-            headers={**HEADERS, "X-Idempotency-Key": "containment-no-confirm"},
+            headers={**HEADERS, "Idempotency-Key": "containment-no-confirm"},
         )
         assert missing_confirm.status_code == 428, missing_confirm.text
         assert "CONFIRM_TOKEN_MISSING" in missing_confirm.text
@@ -422,7 +422,7 @@ def test_command_admission_enforces_containment_confirm_and_two_man(tmp_path):
             headers={
                 **HEADERS,
                 "X-Confirm-Token": "ct-containment",
-                "X-Idempotency-Key": "containment-no-two-man",
+                "Idempotency-Key": "containment-no-two-man",
             },
         )
         assert missing_two_man.status_code == 409, missing_two_man.text
@@ -445,7 +445,7 @@ def test_command_admission_enforces_containment_confirm_and_two_man(tmp_path):
             },
             headers={
                 **HEADERS,
-                "X-Idempotency-Key": "containment-promote",
+                "Idempotency-Key": "containment-promote",
             },
         )
         assert forbidden.status_code == 422, forbidden.text
@@ -456,7 +456,6 @@ def test_command_admission_enforces_containment_confirm_and_two_man(tmp_path):
     ("route", "idempotency_header"),
     [
         ("/bff/v1/commands", "Idempotency-Key"),
-        ("/bff/v1/commands", "X-Idempotency-Key"),
     ],
 )
 def test_containment_admissions_execute_authoritative_persona_freeze(
@@ -612,7 +611,6 @@ def test_concurrent_new_keys_cannot_reuse_one_containment_confirm_token(tmp_path
     ("route", "idempotency_header"),
     [
         ("/bff/v1/commands", "Idempotency-Key"),
-        ("/bff/v1/commands", "X-Idempotency-Key"),
     ],
 )
 def test_containment_admissions_reject_params_target_redirect(
@@ -652,7 +650,6 @@ def test_containment_admissions_reject_params_target_redirect(
     ("route", "idempotency_header"),
     [
         ("/bff/v1/commands", "Idempotency-Key"),
-        ("/bff/v1/commands", "X-Idempotency-Key"),
     ],
 )
 def test_containment_admissions_require_persona_target_type(

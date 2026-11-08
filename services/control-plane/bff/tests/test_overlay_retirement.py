@@ -351,7 +351,7 @@ def test_jobs_router_reads_strictly_canonical_read_store(monkeypatch: pytest.Mon
             dataset_surface_status=lambda *a, **k: {"status": "ok"},
             raise_if_read_surface_unavailable=lambda *a, **k: None,
             reject_body_idempotency_key=lambda payload: None,
-            resolve_final_idempotency_key=lambda ik, xik: str(ik or xik or ""),
+            resolve_final_idempotency_key=lambda ik: str(ik or ""),
             submit_job_action=lambda *a, **k: {},
         )
     )

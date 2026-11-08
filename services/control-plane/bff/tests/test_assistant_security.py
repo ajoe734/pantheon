@@ -394,13 +394,13 @@ def test_control_mode_commands_replay_stably_and_validate_aliases_and_tenant(
     assert conflict.status_code == 409
     assert conflict.json()["error"]["details"]["reason"] == "idempotency_payload_conflict"
 
-    alias_conflict = client.post(
+    retired_alias = client.post(
         "/bff/assistant/control-mode/activate",
         json=payload,
-        headers={**headers, "X-Idempotency-Key": "different-alias"},
+        headers={**OPERATOR_TOOL_HEADERS, "X-Idempotency-Key": "different-alias"},
     )
-    assert alias_conflict.status_code == 400
-    assert alias_conflict.json()["error"]["details"]["reason"] == "idempotency_header_conflict"
+    assert retired_alias.status_code == 400
+    assert retired_alias.json()["error"]["details"]["reason"] == "idempotency_key_required"
 
     missing_deactivate = client.post(
         "/bff/assistant/control-mode/deactivate",
@@ -413,7 +413,7 @@ def test_control_mode_commands_replay_stably_and_validate_aliases_and_tenant(
 
     deactivate_headers = {
         **OPERATOR_TOOL_HEADERS,
-        "X-Idempotency-Key": "deactivate-stable",
+        "Idempotency-Key": "deactivate-stable",
     }
     deactivate = client.post(
         "/bff/assistant/control-mode/deactivate",

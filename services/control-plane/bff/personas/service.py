@@ -14029,7 +14029,6 @@ def _sem_command_response(
     payload: Dict[str, Any],
     identity: OperatorIdentity,
     idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str] = None,
     status_code: int = 202,
     server_generated_target: bool = False,
     trusted_evidence_producer: Optional[str] = None,
@@ -14058,7 +14057,6 @@ def _sem_command_response(
         payload=payload,
         identity=identity,
         idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
         status_code=status_code,
         server_generated_target=server_generated_target,
         trusted_evidence_producer=trusted_evidence_producer,
@@ -15444,10 +15442,9 @@ class PersonaService:
         payload: Dict[str, Any],
         identity: Any,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute the PATCH persona command objective and manage persistence and idempotency."""
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key)
         caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
         raw = self.get_persona(persona_id)
         if not raw:

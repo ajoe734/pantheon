@@ -98,15 +98,11 @@ def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
     get_cases = [
         ("/bff/mcp/servers", "/bff/mcp-servers"),
         ("/bff/mcp/servers/server-1", "/bff/mcp-servers/{server_id}"),
-        ("/bff/ranking/formulas", "/bff/ranking-formulas"),
-        ("/bff/ranking/formulas/formula-1", "/bff/ranking-formulas/{formula_id}"),
     ]
     for path, replacement in get_cases:
         _assert_deprecated(client.get(path, headers=OPERATOR_HEADERS), replacement)
 
     write_cases = [
-        ("post", "/bff/ranking/formulas", "/bff/ranking-formulas"),
-        ("patch", "/bff/ranking/formulas/formula-1", "/bff/ranking-formulas/{formula_id}"),
         (
             "post",
             "/bff/mcp/tools/tool-1/actions/enable",
@@ -116,6 +112,18 @@ def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
     for method, path, replacement in write_cases:
         response = getattr(client, method)(path, headers=OPERATOR_HEADERS)
         _assert_deprecated(response, replacement)
+
+    # The four immediate /bff/ranking/formulas* deprecation notification
+    # wrappers were removed in BFF-FINAL-COMPAT-20261107 after execute-plans
+    # migrated exclusively to /bff/ranking-formulas*.
+    for method, path in (
+        ("get", "/bff/ranking/formulas"),
+        ("post", "/bff/ranking/formulas"),
+        ("get", "/bff/ranking/formulas/formula-1"),
+        ("patch", "/bff/ranking/formulas/formula-1"),
+    ):
+        response = getattr(client, method)(path, headers=OPERATOR_HEADERS)
+        assert response.status_code in {404, 405}, response.text
 
     # The nested ranking promote family is not a deprecated-path alias: the
     # RankingFormulaAction command has no executor and fails before admission
