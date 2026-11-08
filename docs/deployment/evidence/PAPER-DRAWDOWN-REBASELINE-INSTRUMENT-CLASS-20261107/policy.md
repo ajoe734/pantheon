@@ -40,5 +40,10 @@ Any newly minted successor `artifact_id` created during cutover (`PAPER-PERSONA-
 ## Reviewer Decision {#reviewer-decision}
 
 - **Governance reference**: `SD_PERSONA_INSTRUMENT_DECISION_2026-11-07.md` §8 & §10 (T7) and `EVOLUTION_REVIEW_AND_THRESHOLDS.md` §6.1 / §7.1.
-- **Assigned Reviewer**: `Codex`.
-- **Decision status**: Scoped per-artifact, per-instrument-class `expected_drawdown` values derived deterministically from the §8 fill sequences (`2330`: `cash_share=0.00235`, `stock_future=0.235`; `0050`: `cash_share=0.0001245`, `stock_future=0.1245`; `2317`: `cash_share=0.00021`, `stock_future=0.42`) at `100,000` TWD capital and `1` unit per signal with trigger multiple `1.25`, subject to governed reviewer sign-off (`Codex` / Reviewer on Duty) and telemetry runtime-summary instrument-class field coordination with `INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107`.
+- **Reviewer**: `Codex` (Reviewer on Duty for `PAPER-DRAWDOWN-REBASELINE-INSTRUMENT-CLASS-20261107`).
+- **Coordinated runtime summary field**: `instrument_class` / `instrument_kind` at summary top level or unambiguous `kind` (`cash_share` | `stock_future`) on `positions[]` / `positions_by_underlying.<symbol>.instruments[]` as projected by `services/telemetry/runtime_summary.py` (`INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107`).
+- **Reviewer decision**: APPROVED for `services/evolution/config/threshold_sweep_baselines.json` (`baselines_by_instrument_class`) at `100,000` TWD capital, `1` unit per signal, and trigger multiple `1.25`:
+  - `artifact-persona-paper-298e138c136c9840b0e4` (`2330.TWSE` / `QFF`): `cash_share` `expected_drawdown = 0.00235` (`1.25x` trigger `= 0.0029375`), `stock_future` `expected_drawdown = 0.235` (`1.25x` trigger `= 0.29375`).
+  - `artifact-persona-paper-01390a4b72713295b001` (`0050.TWSE` / `SRF`): `cash_share` `expected_drawdown = 0.0001245` (`1.25x` trigger `= 0.000155625`), `stock_future` `expected_drawdown = 0.1245` (`1.25x` trigger `= 0.155625`).
+  - `artifact-persona-paper-8ae996980eeccb80d928` (`2317.TWSE` / `DHF`): `cash_share` `expected_drawdown = 0.00021` (`1.25x` trigger `= 0.0002625`), `stock_future` `expected_drawdown = 0.42` (`1.25x` trigger `= 0.525`).
+  - All seven existing entries in `baselines` remain unchanged, and no baseline is fabricated for any artifact or instrument class without an approved value.

@@ -432,7 +432,11 @@ def _summary_instrument_class(summary: Mapping[str, Any]) -> tuple[str | None, s
         for pos in positions:
             if not isinstance(pos, Mapping):
                 continue
-            raw_kind = pos.get("instrument_class") or pos.get("kind")
+            raw_kind = (
+                pos.get("instrument_class")
+                or pos.get("instrument_kind")
+                or pos.get("kind")
+            )
             if isinstance(raw_kind, str) and raw_kind.strip():
                 discovered.add(raw_kind.strip())
 
@@ -447,7 +451,11 @@ def _summary_instrument_class(summary: Mapping[str, Any]) -> tuple[str | None, s
             for inst in instruments:
                 if not isinstance(inst, Mapping):
                     continue
-                raw_kind = inst.get("instrument_class") or inst.get("kind")
+                raw_kind = (
+                    inst.get("instrument_class")
+                    or inst.get("instrument_kind")
+                    or inst.get("kind")
+                )
                 if isinstance(raw_kind, str) and raw_kind.strip():
                     discovered.add(raw_kind.strip())
 
