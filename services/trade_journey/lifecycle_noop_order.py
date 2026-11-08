@@ -7,6 +7,20 @@ from typing import Any, Mapping
 
 
 SELL_WITHOUT_HOLDINGS_REASON = "sell_without_holdings"
+# Reasons the paper order risk gate can reject an order for. Each rejection is
+# a terminal non-fill outcome, never an unreconciled order.
+PAPER_GATE_REJECTION_REASONS = frozenset(
+    {
+        SELL_WITHOUT_HOLDINGS_REASON,
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    }
+)
 PAPER_FUTURES_TERMINAL_NONFILL_EVENT_TYPES = frozenset(
     {
         "paper_futures_settled",

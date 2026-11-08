@@ -2559,3 +2559,139 @@ def test_probe_rejects_other_order_rejection_reasons(tmp_path):
 
 
 
+
+
+def _terminal_rows(event_type: str, *, reason: str | None = None, metadata: dict | None = None) -> list[dict]:
+    """Real three-event terminal chain (signal, decision, terminal) for one outcome."""
+    rows = _sell_without_holdings_rejection_rows(reason=reason or "sell_without_holdings")
+    terminal = rows[2]
+    terminal["event_type"] = event_type
+    payload = terminal["payload"]
+    payload["event_type"] = event_type
+    meta = payload["metadata"]
+    if event_type != "order_rejection":
+        for key in ("reason", "holding_quantity", "requested_quantity"):
+            meta.pop(key, None)
+        payload.pop("broker_submission_status", None)
+        meta.pop("broker_submission_status", None)
+    meta.update(metadata or {})
+    return rows
+
+
+def _rewrite_generation(tmp_path, rows, *, stage_status: str, loop_status: str, reason_code: str | None):
+    root, _ = _publish(tmp_path, rows=rows)
+    gen_dir = (root / "current").resolve(strict=True)
+    journeys = json.loads((gen_dir / "trade_journey_events.json").read_text(encoding="utf-8"))
+    for ev in journeys["events"]:
+        if ev.get("stage") == "order_submission":
+            ev["stage_status"] = stage_status
+            if reason_code:
+                ev["reason_code"] = reason_code
+    loops = json.loads((gen_dir / "loop_runs.json").read_text(encoding="utf-8"))
+    for rec in loops["records"].values():
+        rec["status"] = loop_status
+        rec["is_terminal"] = True
+        rec["fill_event_count"] = 0
+    manifest = json.loads((gen_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest["journey_sha256"] = _fingerprint(journeys)
+    manifest["loop_runs_sha256"] = _fingerprint(loops)
+    (gen_dir / "trade_journey_events.json").write_text(json.dumps(journeys), encoding="utf-8")
+    (gen_dir / "loop_runs.json").write_text(json.dumps(loops), encoding="utf-8")
+    (gen_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    ],
+)
+def test_probe_accepts_every_risk_gate_order_rejection_chain(tmp_path, reason):
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 6)."""
+    rows = _terminal_rows(
+        "order_rejection",
+        reason=reason,
+        metadata={"instrument_id": "ssf:QFF:202611", "risk_status": "rejected"},
+    )
+    root = _rewrite_generation(tmp_path, rows, stage_status="rejected", loop_status="failed", reason_code=reason)
+
+    code, artifact = _execute(tmp_path, root=root, rows=rows)
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert [ev["event_type"] for ev in artifact["proof"]["events"]][-1] == "order_rejection"
+    assert artifact["proof"]["events"][-1]["rejection_reason"] == reason
+    assert artifact["proof"]["projection"]["loop_status"] == "failed"
+
+
+def test_probe_accepts_recorded_no_trade_chain(tmp_path):
+    rows = _terminal_rows(
+        "paper_order_simulated",
+        metadata={
+            "noop_reason": "already_at_target",
+            "decision_status": "no_order",
+            "order_status": "not_submitted",
+            "broker_submission_status": "not_submitted_signal_noop",
+        },
+    )
+    root = _rewrite_generation(tmp_path, rows, stage_status="skipped", loop_status="no_order", reason_code="already_at_target")
+
+    code, artifact = _execute(tmp_path, root=root, rows=rows)
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert [ev["event_type"] for ev in artifact["proof"]["events"]] == [
+        "signal_generation",
+        "trade_decision",
+        "paper_order_simulated",
+    ]
+    assert artifact["proof"]["projection"]["loop_status"] == "no_order"
+
+
+def test_probe_rejects_paper_order_simulated_without_no_trade_evidence(tmp_path):
+    rows = _terminal_rows("paper_order_simulated")
+    root = _rewrite_generation(tmp_path, rows, stage_status="skipped", loop_status="no_order", reason_code=None)
+
+    code, artifact = _execute(tmp_path, root=root, rows=rows)
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "no_complete_paper_aggregate"
+
+
+def test_probe_accepts_paper_futures_settled_terminal(tmp_path):
+    rows = _terminal_rows(
+        "paper_futures_settled",
+        metadata={
+            "instrument_id": "ssf:QFF:202611",
+            "kind": "stock_future",
+            "multiplier": 100.0,
+            "final_settlement_price": 2310.0,
+            "order_status": "not_submitted",
+            "decision_status": "no_order",
+            "broker_submission_status": "not_submitted_expiry_settlement",
+        },
+    )
+    root = _rewrite_generation(tmp_path, rows, stage_status="skipped", loop_status="no_order", reason_code=None)
+
+    code, artifact = _execute(tmp_path, root=root, rows=rows)
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["proof"]["events"][-1]["event_type"] == "paper_futures_settled"
+
+
+def test_probe_rejection_loop_must_stay_failed_even_for_gate_reasons(tmp_path):
+    rows = _terminal_rows("order_rejection", reason="leverage_limit")
+    root = _rewrite_generation(tmp_path, rows, stage_status="rejected", loop_status="no_order", reason_code="leverage_limit")
+
+    code, artifact = _execute(tmp_path, root=root, rows=rows)
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "loop_run_not_terminal"
