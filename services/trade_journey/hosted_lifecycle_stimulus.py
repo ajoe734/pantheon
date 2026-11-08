@@ -28,6 +28,7 @@ from services.execution.lean_runtime.pending_signal_store import (
 )
 from services.execution.lean_runtime.signal_producer import DecisionSignalProducer
 from services.trade_journey.hosted_lifecycle_probe import _atomic_write_json
+from services.trade_journey.lifecycle_noop_order import PAPER_GATE_REJECTION_REASONS
 from services.trade_journey.telemetry_rows import decode_event_payload
 
 
@@ -292,6 +293,26 @@ def _is_sell_without_holdings_identity(identity: Mapping[str, Any]) -> bool:
     return reason == "sell_without_holdings"
 
 
+# Static, code-owned reason constants (never request data), so safe to inline.
+_GATE_REASON_SQL_LIST = ", ".join(
+    "'" + reason.replace("'", "''") + "'" for reason in sorted(PAPER_GATE_REJECTION_REASONS)
+)
+
+
+def _is_nonfill_terminal_identity(identity: Mapping[str, Any]) -> bool:
+    """A journey-ending event that never fills: a gate rejection or a recorded no trade."""
+    event_type = _clean(identity.get("event_type"))
+    metadata = identity.get("metadata") if isinstance(identity.get("metadata"), Mapping) else {}
+    if event_type == "order_rejection":
+        reason = _clean(identity.get("reason") or metadata.get("reason"))
+        return reason in PAPER_GATE_REJECTION_REASONS
+    if event_type == "paper_order_simulated":
+        return bool(_clean(metadata.get("noop_reason"))) or (
+            _clean(metadata.get("decision_status")) == "no_order"
+        )
+    return False
+
+
 def _identity_is_target_position(
     identity: Mapping[str, Any],
     *,
@@ -312,7 +333,7 @@ def _identity_is_target_position(
     event_type = _clean(identity.get("event_type"))
     is_valid_terminal = (
         (event_type == "position_snapshot" and sequence_no >= 5)
-        or (_is_sell_without_holdings_identity(identity) and sequence_no >= 3)
+        or (_is_nonfill_terminal_identity(identity) and sequence_no >= 3)
     )
     return (
         _clean(identity.get("run_id")) == run_id
@@ -343,7 +364,7 @@ def fetch_committed_lifecycle_identity(
             conn = await asyncpg.connect(telemetry_db_dsn)
             try:
                 row = await conn.fetchrow(
-                    """
+                    f"""
                     SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload
                     FROM telemetry_events
                     WHERE (
@@ -351,8 +372,15 @@ def fetch_committed_lifecycle_identity(
                         OR (
                           event_type = 'order_rejection'
                           AND (
-                            payload::jsonb -> 'metadata' ->> 'reason' = 'sell_without_holdings'
-                            OR payload::jsonb ->> 'reason' = 'sell_without_holdings'
+                            payload::jsonb -> 'metadata' ->> 'reason' IN ({_GATE_REASON_SQL_LIST})
+                            OR payload::jsonb ->> 'reason' IN ({_GATE_REASON_SQL_LIST})
+                          )
+                        )
+                        OR (
+                          event_type = 'paper_order_simulated'
+                          AND (
+                            COALESCE(payload::jsonb -> 'metadata' ->> 'noop_reason', '') <> ''
+                            OR payload::jsonb -> 'metadata' ->> 'decision_status' = 'no_order'
                           )
                         )
                       )
@@ -999,11 +1027,17 @@ def run_stimulus(
             ) from exc
         raise
     tick_id = f"loop-prod-tel-002-{enqueued['run_id']}"
-    if _is_sell_without_holdings_identity(identity):
+    if _is_nonfill_terminal_identity(identity):
+        # Nothing was submitted or filled, so there is no order to reconcile.
         receipt: Mapping[str, Any] = {
             "binding_id": _clean(binding.get("binding_id")),
             "event_id": "",
-            "status": "skipped_sell_without_holdings",
+            "status": (
+                "skipped_sell_without_holdings"
+                if _is_sell_without_holdings_identity(identity)
+                else "skipped_nonfill_terminal"
+            ),
+            "terminal_event_type": _clean(identity.get("event_type")),
         }
     else:
         receipt = trigger_reconciliation(
