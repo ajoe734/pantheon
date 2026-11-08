@@ -540,14 +540,16 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
     assert "deploy" in deploy_by_id
     assert "taifex_market_refresh" in deploy_by_id
     assert "bounded_taifex_refresh" in deploy_by_id
+    assert "taifex_market_refresh_upload" in deploy_by_id
     assert "paper_bootstrap" in deploy_by_id
     m_twse_idx, m_twse_step = deploy_by_id["market_refresh"]
     d_twse_idx, d_twse_step = deploy_by_id["deploy"]
     m_taifex_idx, m_taifex_step = deploy_by_id["taifex_market_refresh"]
     d_taifex_idx, d_taifex_step = deploy_by_id["bounded_taifex_refresh"]
+    taifex_upload_idx, taifex_upload_step = deploy_by_id["taifex_market_refresh_upload"]
     paper_idx, _ = deploy_by_id["paper_bootstrap"]
-    assert m_twse_idx < d_twse_idx < m_taifex_idx < d_taifex_idx < paper_idx, (
-        "TWSE market_refresh must stay before stack mutation while TAIFEX refresh runs after candidate stack deploy"
+    assert m_twse_idx < d_twse_idx < m_taifex_idx < d_taifex_idx < taifex_upload_idx < paper_idx, (
+        "TWSE market_refresh must stay before stack mutation while TAIFEX refresh and its evidence upload run after candidate stack deploy"
     )
     assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert m_twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
@@ -558,6 +560,7 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
     assert m_taifex_step.get("continue-on-error") is True
     assert "--non-blocking" in m_taifex_step["run"]
     assert "taifex-market-refresh.json" in m_taifex_step["run"]
+    assert "if log_text:\n    print(log_text)" in m_taifex_step["run"]
 
     assert d_twse_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-twse-tpex-official-market"
     assert d_twse_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "tw_price_daily"
@@ -565,9 +568,14 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
     assert d_taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
     assert "openapi.taifex.com.tw,www.taifex.com.tw" in d_taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"]
     assert d_taifex_step.get("continue-on-error") is True
+    assert "--force" in d_taifex_step["run"]
     assert "--non-blocking" in d_taifex_step["run"]
+    assert "if log_text:\n    print(log_text)" in d_taifex_step["run"]
+    assert "always()" in taifex_upload_step["if"]
+    assert taifex_upload_step["with"]["path"].endswith("/taifex-market-refresh.json")
     assert taifex_step.get("continue-on-error") is True
     assert "--non-blocking" in taifex_step["run"]
+    assert "if log_text:\n    print(log_text)" in taifex_step["run"]
 
     # Every workflow step with SOURCE_INGEST_BOUNDED_CONNECTOR_ID must use a single fixed value per run
     for wf_steps in (refresh_steps, deploy_steps):

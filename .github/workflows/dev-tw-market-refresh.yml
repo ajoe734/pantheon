@@ -157,33 +157,22 @@ jobs:
           .lease-controller/scripts/run_with_dev_environment_lease.sh \
             ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${REFRESH_OUTPUT_PATH}" || refresh_rc=$?
           python3 - "${REFRESH_OUTPUT_PATH}" "${refresh_rc}" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          outcome_path = pathlib.Path(sys.argv[1])
-          rc = int(sys.argv[2])
+          import json, pathlib, sys
+          outcome_path, rc = pathlib.Path(sys.argv[1]), int(sys.argv[2])
           payload = {}
           if outcome_path.is_file():
               try:
                   parsed = json.loads(outcome_path.read_text(encoding="utf-8"))
-                  if isinstance(parsed, dict):
-                      payload.update(parsed)
+                  payload.update(parsed if isinstance(parsed, dict) else {})
               except Exception:
                   pass
           status = str(payload.get("status") or ("failed" if rc != 0 else "completed"))
           reason = str(payload.get("reason") or ("refreshed" if status == "completed" else f"exit_{rc}"))
           log_text = str(payload.get("log") or "")
-          payload.update(
-              {
-                  "connector_id": "tw-taifex-futures-options-chip",
-                  "dataset": "taifex_ssf_contracts",
-                  "log": log_text,
-                  "reason": reason,
-                  "status": status,
-              }
-          )
+          payload.update({"connector_id": "tw-taifex-futures-options-chip", "dataset": "taifex_ssf_contracts", "log": log_text, "reason": reason, "status": status})
           outcome_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+          if log_text:
+              print(log_text)
           print(f"TAIFEX contract refresh outcome recorded: status={status} reason={reason}")
           PY
 

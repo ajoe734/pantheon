@@ -1602,39 +1602,27 @@ jobs:
             bash "${deploy_script}" --refresh-only --non-blocking --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${outcome_dir}/taifex-refresh.json" || refresh_rc=$?
           lease_token=""
           python3 - "${outcome_dir}/taifex-refresh.json" "${EVIDENCE_DIR:-}" "${refresh_rc}" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          outcome_path = pathlib.Path(sys.argv[1])
-          evidence_dir = sys.argv[2]
-          rc = int(sys.argv[3])
+          import json, pathlib, sys
+          outcome_path, evidence_dir, rc = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
           payload = {}
           if outcome_path.is_file():
               try:
                   parsed = json.loads(outcome_path.read_text(encoding="utf-8"))
-                  if isinstance(parsed, dict):
-                      payload.update(parsed)
+                  payload.update(parsed if isinstance(parsed, dict) else {})
               except Exception:
                   pass
           status = str(payload.get("status") or ("failed" if rc != 0 else "completed"))
           reason = str(payload.get("reason") or ("refreshed" if status == "completed" else f"exit_{rc}"))
           log_text = str(payload.get("log") or "")
-          payload.update(
-              {
-                  "connector_id": "tw-taifex-futures-options-chip",
-                  "dataset": "taifex_ssf_contracts",
-                  "log": log_text,
-                  "reason": reason,
-                  "status": status,
-              }
-          )
+          payload.update({"connector_id": "tw-taifex-futures-options-chip", "dataset": "taifex_ssf_contracts", "log": log_text, "reason": reason, "status": status})
           serialized = json.dumps(payload, sort_keys=True) + "\n"
           outcome_path.write_text(serialized, encoding="utf-8")
           if evidence_dir:
               ev_dir = pathlib.Path(evidence_dir)
               ev_dir.mkdir(parents=True, exist_ok=True)
               (ev_dir / "taifex-market-refresh.json").write_text(serialized, encoding="utf-8")
+          if log_text:
+              print(log_text)
           print(f"TAIFEX contract dataset refresh outcome recorded: status={status} reason={reason}")
           PY
 
@@ -1697,47 +1685,48 @@ jobs:
           outcome_dir="${RUNNER_TEMP}/pantheon-bounded-taifex-refresh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           install -d -m 0700 "${outcome_dir}"
           deploy_script="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh"
+          # --force honours operator-requested run_bounded_source_refresh (no weekend/freshness skip),
+          # while --non-blocking and continue-on-error ensure TAIFEX refresh never blocks the release
+          # or triggers deploy compensation per AC2; outcome is recorded in taifex-market-refresh.json.
           refresh_rc=0
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             "${controller}/scripts/run_with_dev_environment_lease.sh" \
-            bash "${deploy_script}" --refresh-only --non-blocking --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${outcome_dir}/taifex-refresh.json" || refresh_rc=$?
+            bash "${deploy_script}" --refresh-only --force --non-blocking --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${outcome_dir}/taifex-refresh.json" || refresh_rc=$?
           lease_token=""
           python3 - "${outcome_dir}/taifex-refresh.json" "${EVIDENCE_DIR:-}" "${refresh_rc}" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          outcome_path = pathlib.Path(sys.argv[1])
-          evidence_dir = sys.argv[2]
-          rc = int(sys.argv[3])
+          import json, pathlib, sys
+          outcome_path, evidence_dir, rc = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
           payload = {}
           if outcome_path.is_file():
               try:
                   parsed = json.loads(outcome_path.read_text(encoding="utf-8"))
-                  if isinstance(parsed, dict):
-                      payload.update(parsed)
+                  payload.update(parsed if isinstance(parsed, dict) else {})
               except Exception:
                   pass
           status = str(payload.get("status") or ("failed" if rc != 0 else "completed"))
           reason = str(payload.get("reason") or ("refreshed" if status == "completed" else f"exit_{rc}"))
           log_text = str(payload.get("log") or "")
-          payload.update(
-              {
-                  "connector_id": "tw-taifex-futures-options-chip",
-                  "dataset": "taifex_ssf_contracts",
-                  "log": log_text,
-                  "reason": reason,
-                  "status": status,
-              }
-          )
+          payload.update({"connector_id": "tw-taifex-futures-options-chip", "dataset": "taifex_ssf_contracts", "log": log_text, "reason": reason, "status": status})
           serialized = json.dumps(payload, sort_keys=True) + "\n"
           outcome_path.write_text(serialized, encoding="utf-8")
           if evidence_dir:
               ev_dir = pathlib.Path(evidence_dir)
               ev_dir.mkdir(parents=True, exist_ok=True)
               (ev_dir / "taifex-market-refresh.json").write_text(serialized, encoding="utf-8")
+          if log_text:
+              print(log_text)
           print(f"Bounded TAIFEX contract dataset refresh outcome recorded: status={status} reason={reason}")
           PY
+
+      - name: Upload TAIFEX contract refresh evidence
+        id: taifex_market_refresh_upload
+        if: ${{ always() && (steps.taifex_market_refresh.conclusion != 'skipped' || steps.bounded_taifex_refresh.conclusion != 'skipped') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-taifex-market-refresh-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}/taifex-market-refresh.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Intentional compensation drill failure after candidate stack is up
         id: compensation_drill
