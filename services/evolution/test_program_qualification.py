@@ -1176,3 +1176,27 @@ def test_fresh_evidence_still_fails_with_advancing_clock(rig, mutation, reason):
     _, item = _fresh_evidence_item(rig, _advancing_clock(6), summary)
     assert item["first_failing_criterion"] == "fresh_evidence"
     assert reason in criterion(item, "fresh_evidence")["reason"]
+
+
+def test_expression_replay_gate_is_deterministic_and_fails_closed():
+    from services.evolution.program_qualification import (
+        EXPRESSION_REPLAY_POLICY_CONTROLS,
+        expression_replay_gate,
+    )
+    from services.execution.lean_runtime.test_expression_replay import _cash, _fut, _record
+
+    assert EXPRESSION_REPLAY_POLICY_CONTROLS == ("lever_min_strength", "notional_fraction_at_full_strength")
+    cands = [_cash("0050", 104.95, 952), _fut("ssf:SRF:202611", "0050", 1000, 104.95, 8700.0, 2)]
+    marks = {"eq:0050": [92.5], "ssf:SRF:202611": [92.5]}
+    records = [_record("d1", "0050", "SHORT", 1.0, cands, 300000.0, marks)]
+    parent = {"lever_min_strength": 0.5}
+
+    same = expression_replay_gate(parent, parent, records)
+    assert same == expression_replay_gate(parent, parent, records)
+    assert same["passed"] is True and same["child_total_pnl"] == same["parent_total_pnl"]
+    assert expression_replay_gate(parent, parent, [])["reason"] == "no_recorded_decisions"
+    unmarked = [{**records[0], "marks": {}}]
+    assert expression_replay_gate(parent, parent, unmarked)["reason"] == "no_marked_decisions"
+    # A smaller notional fraction earns less on the recorded fall: the child is worse.
+    smaller = expression_replay_gate(parent, {"notional_fraction_at_full_strength": 0.1}, records)
+    assert smaller["passed"] is False and smaller["reason"] == "child_replay_worse_than_parent"

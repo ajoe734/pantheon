@@ -65,6 +65,31 @@
       "type": "string",
       "enum": ["long", "short"]
     },
+    "underlying_symbol": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Underlying symbol when instrument_id names a derivative contract."
+    },
+    "instrument_kind": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Kind of the traded instrument as reported by the fill."
+    },
+    "multiplier": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Contract multiplier applied to quantity times price; 1 for a cash share."
+    },
+    "contract_month": {
+      "type": "string",
+      "pattern": "^[0-9]{6}$",
+      "description": "YYYYMM contract month of a stock future."
+    },
+    "reason_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Closed-vocabulary expression reason code of the instrument decision."
+    },
     "status": {
       "type": "string",
       "enum": [
