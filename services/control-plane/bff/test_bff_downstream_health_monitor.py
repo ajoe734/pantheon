@@ -715,6 +715,130 @@ class TestRecoveryTracking:
         assert monitor._store.get_incident("capital")["status"] == "resolved"
         assert "capital" not in monitor._open_incident_ids
 
+    def test_probe_all_resolves_at_next_reconcile_when_telemetry_dead_letters_before_resolve(self):
+        """BFF-HEALTH-RESOLVE-BLOCKED-DEP-20261108: hosted 2026-11-07 sequence."""
+        from services.control_plane.bff.downstream_health_monitor import DownstreamTarget
+
+        monitor = DownstreamHealthMonitor(
+            telemetry_url="http://tel:8080",
+            telemetry_service_jwt="jwt-token",
+            incidents_url="http://inc:8090",
+            tenant_id="tenant-test",
+            probe_interval_seconds=60,
+            failure_threshold=1,
+            delivery_max_attempts=5,
+            delivery_backoff_seconds=0.1,
+        )
+        monitor._resolve_target_registry = lambda: {  # type: ignore[assignment]
+            "governance": DownstreamTarget(
+                name="governance", base_url="http://gov:8080", health_path="/__health__"
+            ),
+        }
+
+        # 1. Outage opens the incident; telemetry and incidents are reachable.
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            return_value=(True, 201),
+        ):
+            _run(
+                monitor._handle_probe_result(
+                    DownstreamProbeResult(
+                        target_name="governance", ok=False, status_code=0,
+                        latency_ms=10.0, checked_at="2026-11-07T18:14:02Z",
+                        failure_reason="URLError: [Errno -3] Temporary failure in name resolution",
+                        consecutive_failures=1,
+                    )
+                )
+            )
+            monitor._deliver_due_sync()
+        inc_id = monitor._store.get_incident("governance")["incident_id"]
+
+        # 2. Target recovers while telemetry is unreachable past the retry
+        # window; the incidents service accepts only what it is sent.
+        def telemetry_down(url, body, timeout):
+            if "/api/incidents/" in url:
+                return True, 200
+            return False, -1
+
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            side_effect=telemetry_down,
+        ):
+            _run(
+                monitor._handle_probe_result(
+                    DownstreamProbeResult(
+                        target_name="governance", ok=True, status_code=200,
+                        latency_ms=3.0, checked_at="2026-11-07T18:15:30Z",
+                    )
+                )
+            )
+            for _ in range(6):
+                with monitor._store._connect() as conn:
+                    conn.execute("UPDATE delivery_outbox SET next_attempt_at=0")
+                monitor._deliver_due_sync()
+
+        rows = monitor.list_delivery_records()
+        telemetry = [
+            r for r in rows
+            if r["channel"] == "telemetry" and r["status"] == "dead_letter"
+        ]
+        resolve = next(r for r in rows if r["channel"] == "incident_resolve")
+        assert telemetry and telemetry[0]["last_error"] == "network_error"
+        assert resolve["status"] == "pending"
+        assert any(
+            d.startswith("telemetry:") for d in resolve["dependency_ids"]
+        )
+        assert monitor._store.get_incident("governance")["status"] == "resolving"
+        assert (
+            monitor._store.has_active_incident_delivery(
+                target_name="governance", incident_id=inc_id
+            )
+            is False
+        )
+
+        # 3. Next reconcile resolves it (orphan_recovered), well before the
+        # 6 hour age bound; the resolve row is still pending (not quarantined).
+        reconcile_calls: List[Dict[str, Any]] = []
+
+        def mock_post(url, body, timeout):
+            if "/api/incidents/reconcile-infrastructure-health" in url:
+                reconcile_calls.append({"url": url, "body": body})
+            return True, 200
+
+        with (
+            patch(
+                "services.control_plane.bff.downstream_health_monitor._probe_http",
+                return_value=(True, 200, ""),
+            ),
+            patch(
+                "services.control_plane.bff.downstream_health_monitor._post_json",
+                side_effect=mock_post,
+            ),
+        ):
+            _run(monitor._probe_all())
+
+        assert len(reconcile_calls) == 1
+        assert reconcile_calls[0]["body"]["healthy_components"] == ["governance"]
+        assert reconcile_calls[0]["body"]["referenced_incident_ids"] == []
+        assert reconcile_calls[0]["body"]["resolution_reason"] == "orphan_recovered"
+        assert monitor._store.get_incident("governance")["status"] == "resolved"
+
+        # 4. Replaying the dead telemetry and the blocked resolve is harmless.
+        monitor._store.replay_dead_letters(
+            actor_id="op", approval_ref="ref", reason="replay", channel="telemetry"
+        )
+        with patch(
+            "services.control_plane.bff.downstream_health_monitor._post_json",
+            return_value=(True, 200),
+        ):
+            for _ in range(3):
+                with monitor._store._connect() as conn:
+                    conn.execute("UPDATE delivery_outbox SET next_attempt_at=0")
+                monitor._deliver_due_sync()
+        after = {r["channel"]: r for r in monitor.list_delivery_records()}
+        assert after["incident_resolve"]["status"] == "delivered"
+        assert monitor._store.get_incident("governance")["status"] == "resolved"
+
 
 # ---------------------------------------------------------------------------
 # BFF route contract tests

@@ -1374,6 +1374,11 @@ class _DurableHealthStore:
         target_name: str,
         incident_id: str,
     ) -> bool:
+        # An incident_resolve row whose dependency can never be delivered
+        # (dead_letter, quarantined or missing) is blocked forever by
+        # claim_due, so it is not in-flight work. Dependencies are looked up
+        # by delivery_id (primary key); incident_open is intentionally
+        # unchanged.
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -1382,6 +1387,18 @@ class _DurableHealthStore:
                   AND channel IN ('incident_open', 'incident_resolve')
                   AND status IN ('pending', 'retry', 'claimed')
                   AND (url LIKE ? OR body_json LIKE ?)
+                  AND NOT (
+                    channel = 'incident_resolve'
+                    AND EXISTS (
+                      SELECT 1
+                      FROM json_each(delivery_outbox.dependency_ids_json)
+                        AS dependency
+                      LEFT JOIN delivery_outbox AS upstream
+                        ON upstream.delivery_id = dependency.value
+                      WHERE upstream.delivery_id IS NULL
+                         OR upstream.status IN ('dead_letter', 'quarantined')
+                    )
+                  )
                 LIMIT 1
                 """,
                 (

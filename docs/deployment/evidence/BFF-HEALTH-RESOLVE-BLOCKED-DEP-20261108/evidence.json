@@ -1,0 +1,34 @@
+{
+  "task_id": "BFF-HEALTH-RESOLVE-BLOCKED-DEP-20261108",
+  "change_class": "corrective",
+  "summary": "_DurableHealthStore.has_active_incident_delivery no longer counts a pending/retry/claimed incident_resolve delivery as active when any dependency id is dead_letter, quarantined or missing (looked up by delivery_id primary key). The next orphan reconcile then resolves the incident with orphan_recovered once the target is healthy. claim_due, incident_open handling, telemetry retry policy, the 6h age bound and quarantine are unchanged; no second outbox or loop.",
+  "before_counts_from_task_brief": {
+    "incident_resolve_quarantined_per_day": {"2026-11-05": 24, "2026-11-06": 26, "2026-11-07": 40},
+    "incident_resolve_delivered_per_day": {"2026-11-05": 32, "2026-11-06": 36, "2026-11-07": 40},
+    "telemetry_dead_letter_per_day": {"2026-11-05": 136, "2026-11-06": 172, "2026-11-07": 318},
+    "outbox_rows": 1482430,
+    "outbox_dead_letter": 872694
+  },
+  "commands": [
+    {
+      "cmd": "pytest services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_downstream_health_monitor.py -q",
+      "result": "144 passed, 3 failed; the 3 failures are TestLoop12RealWriterCapture, ModuleNotFoundError: asyncpg in the scratch venv (environment, unrelated to this change)"
+    },
+    {
+      "cmd": "pytest ... -k 'next_reconcile or BlockedByDead' with downstream_health_monitor.py reverted to the base commit (fix removed, not committed)",
+      "result": "8 failed, 15 passed: the hosted-sequence regression test and the dead-dependency cases fail without the fix"
+    },
+    {
+      "cmd": "pytest ... -k 'next_reconcile or BlockedByDead' with the fix",
+      "result": "all pass"
+    }
+  ],
+  "acceptance_mapping": {
+    "1_3": "test_resolve_activity_follows_dependency_status, test_missing_dependency_row_is_not_active, test_probe_all_resolves_at_next_reconcile_when_telemetry_dead_letters_before_resolve (real channel names and dependency ids; unhealthy-target case covered by the existing reconcile test)",
+    "2": "test_resolve_activity_follows_dependency_status (pending/retry/claimed/delivered stay active), test_claim_due_never_sends_before_a_live_dependency",
+    "4": "regression test step 4 replays dead telemetry via replay_dead_letters; resolve is delivered and incident stays resolved",
+    "6": "test_dependency_lookup_uses_primary_key asserts the EXPLAIN QUERY PLAN uses sqlite_autoindex_delivery_outbox_1",
+    "7": "test_incident_open_with_dead_dependency_stays_active; diff touches only has_active_incident_delivery"
+  },
+  "hosted_verification": "NOT RUN. No hosted result is claimed; the coordinator measures the quarantined resolve count after deployment."
+}
