@@ -1,0 +1,36 @@
+{
+  "task_id": "DEV-STACK-RESTORE-OWNER-IDENTITY-20261107",
+  "kind": "functional-contract-evidence",
+  "hosted_verification": "not run; source-only tooling repair; model fixtures are not proof that the actual failed Dev compensation on the VM completed; actual current-environment verification remains with the existing operator",
+  "no_vm_or_ssh_access": true,
+  "plan_artifact": {
+    "path": "docs/04/pantheon_paper_nonfill_journey_2026-11-07/STACK_RESTORE_PLAN.md",
+    "sha256": "639d7d75cdedbe190cc3042fc3c9a5ef5e3a625683107fdbee0137a27b7f66d9",
+    "raw_log_reference": "/tmp/pantheon-goal-continue-20261105/root42397678868-paper-probe/core-completed-full.log",
+    "raw_log_sha256": "ede173831dd54a7cf0a600ac9ff3ffe079f23e888999decb3597157316886ab3"
+  },
+  "reproduction": {
+    "observed_failure": "Dev Run 42397678868 paper readback failed at 18:07:27Z; whole-stack compensation restored at least the BFF to e9a1a196805663b175423964c2ccdc21bf2d24ea and failed at 18:17:18Z with DEV_ARTIFACT_OPERATION_FAILED (exit_code=75, failure_kind=contract, failure_stage=restore, failure_location=dev_release_artifact_driver.py:823)",
+    "root_cause": "During whole-stack restore (scope=stack), restore_images intentionally recreates application owners in OWNERS (governance, registry, deployment, runtime-manager, deployment-outbox-consumer, capital, and optional dev-paper-principal-issuer) whose running image differs from stack_baseline onto their sealed baseline images, changing their container_id, image_id, and started_at between owners_before and owners_after. The driver previously enforced an unconditional owners_before != owners_after check inherited from three-image restore/verify.",
+    "fixture_gap_closed": "Driver test fixture Docker previously excluded OWNERS from project-wide docker ps (5-arg) and compose up, so stack_baseline in driver tests only contained the three BFF/worker/scheduler services and never exercised owner recreation during whole-stack restore."
+  },
+  "design": {
+    "primitive_tracking": "scripts/dev_release_artifacts.py::restore_images records recreated_services and started_services alongside stack readback when stack is provided, while keeping three-image restore output keys unchanged",
+    "cas_tracking": "scripts/dev_release_artifact_driver.py::RestoreCAS records recreated_services from governed compose up invocations and started_containers from governed docker start invocations",
+    "baseline_validation": "scripts/dev_release_artifact_driver.py::_validate_stack_owners verifies that all required OWNERS are present in stack_baseline with state=running (and optional dev-paper-principal-issuer is either absent when None or running when present) during capture, v2 manifest load, and stack restore",
+    "owner_transition_validation": "scripts/dev_release_artifact_driver.py::_validate_owners keeps strict owners_before == owners_after equality for all non-stack operations (verify, restore-final, target=final, scope=images, v1 baseline). For verified v2 whole-stack baseline restore (scope=stack), it requires every active owner after restore to match its exact stack_baseline and stack_readback image_id; permits container/image/started_at change only for owners that were not on expected_image before restore and were recreated by the governed restore (requiring new container_id and restart_count == 0) or stopped baseline owners started in place (requiring same container_id, expected_image, and restart_count == 0); and requires exact owners_after[service] == owners_before[service] for any owner already running on its baseline image."
+  },
+  "acceptance_tests": {
+    "1_reproduction": "scripts/test_dev_release_artifact_driver.py::test_reproduction_run_42397678868_whole_stack_restore_validates_intended_owner_transitions",
+    "2_stack_restore_owner_validation": "scripts/test_dev_release_artifact_driver.py::test_whole_stack_restore_mixed_owners_requires_unchanged_identity_for_unrecreated_owners; scripts/test_dev_release_artifact_driver.py::test_whole_stack_restore_accepts_stopped_baseline_owner_started_in_place; scripts/test_dev_release_artifacts.py::test_whole_stack_success_restores_all_54_and_keeps_tenant; scripts/test_dev_release_artifacts.py::test_stopped_service_on_recorded_image_is_started_not_recreated",
+    "3_unchanged_owner_and_negative_regressions": "scripts/test_dev_release_artifact_driver.py::test_verify_and_image_only_restore_reject_any_owner_transition; scripts/test_dev_release_artifact_driver.py::test_whole_stack_restore_rejects_unintended_or_invalid_owner_transitions; scripts/test_dev_release_artifact_driver.py::test_validate_owners_rejects_malformed_baseline_and_unverified_context",
+    "4_persistent_data_and_boundary_invariants": "scripts/test_dev_release_artifacts.py::test_whole_stack_success_restores_all_54_and_keeps_tenant; scripts/test_dev_release_artifact_driver.py::test_whole_stack_restore_mixed_owners_requires_unchanged_identity_for_unrecreated_owners",
+    "5_failure_propagation_and_readback_gate": "scripts/test_dev_release_artifact_driver.py::test_main_whole_stack_owner_transition_publishes_readback_only_when_valid; scripts/test_dev_release_artifact_driver.py::test_failed_post_restore_readback_never_reports_success"
+  },
+  "verification": {
+    "scripts/test_dev_release_artifacts.py": "103 passed, 1 skipped",
+    "scripts/test_dev_release_artifact_driver.py": "286 passed",
+    "scripts/test_capture_dev_artifact_baseline.py + scripts/test_dev_artifact_compensation_evidence.py": "282 passed"
+  },
+  "changed_assertions": "none weakened; test_capture_seals_a_versioned_stack_baseline_beside_the_unchanged_three_image_bundle and test_baseline_restore_defaults_to_whole_stack_and_images_scope_keeps_three updated to expect stack_baseline/readback to cover both d.a.SERVICES and d.OWNERS now that Docker fixture includes OWNERS in project-wide Compose listing"
+}

@@ -1,0 +1,136 @@
+{
+  "task_id": "PAPER-NONFILL-JOURNEY-TRUTH-20261107",
+  "title": "Repair truthful causal completeness for Paper rejection and no-trade journeys",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "prerequisite": {
+    "task_id": "PAPER-LEDGER-NO-NEGATIVE-SHARES-20261107",
+    "status": "done",
+    "satisfied": true,
+    "pr": 7038,
+    "merge_commit": "8c221214634de099291c18c13946927cc741f92e"
+  },
+  "root_42397678868_reproduction": {
+    "tenant_id": "tenant-dev",
+    "environment": "paper",
+    "journey_id": "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f",
+    "loop_run_id": "lr-run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+    "run_id": "run-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+    "runtime_id": "rt-f45eb161",
+    "binding_id": "rb-8aceee4784be4ae581d51ab7ef2243c4",
+    "signal_id": "sig-60872d6d0ca7a7522ea9153a11eb8de8",
+    "decision_id": "dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+    "strategy_id": "strategy-persona-e0cd73f41c0fb27c36de",
+    "capital_pool_id": "pool-persona-paper-e0cd73f41c0fb27c36de",
+    "persona_id": "persona-034dad74863c32a796a4",
+    "persona_capital_binding_id": "pcb-persona-paper-e0cd73f41c0fb27c36de",
+    "artifact_id": "artifact-persona-paper-e0cd73f41c0fb27c36de",
+    "artifact_version": "1.0.0",
+    "plan_id": "plan-persona-paper-e0cd73f41c0fb27c36de",
+    "trace_id": "f553230a-a918-5a25-b41d-c86e9ccb19f3",
+    "correlation_id": "1a4a4cf4-b26f-5604-944f-e6e4249531dc",
+    "symbol": "2330.TW",
+    "side": "sell",
+    "quantity": 0.0,
+    "requested_quantity": 1.0,
+    "holding_quantity": 0.0,
+    "events": [
+      {
+        "event_id": "192e0569-ee44-4e5a-9f21-d24415530353",
+        "event_type": "signal_generation",
+        "sequence_no": 1,
+        "ingested_seq": 11210607,
+        "occurred_at": "2026-11-07T18:06:17.000000Z",
+        "recorded_at": "2026-11-07T18:06:19.506659Z"
+      },
+      {
+        "event_id": "20476142-6e7a-5715-b20f-fa61022cf1aa",
+        "event_type": "trade_decision",
+        "sequence_no": 2,
+        "ingested_seq": 11210608,
+        "occurred_at": "2026-11-07T18:06:17.000000Z",
+        "recorded_at": "2026-11-07T18:06:19.506659Z"
+      },
+      {
+        "event_id": "483dede1-6213-4d7b-8df4-48d1ae30b747",
+        "event_type": "order_rejection",
+        "reason_code": "sell_without_holdings",
+        "quantity": 0.0,
+        "sequence_no": 3,
+        "ingested_seq": 11210635,
+        "occurred_at": "2026-11-07T18:06:21.000000Z",
+        "recorded_at": "2026-11-07T18:06:23.815494Z"
+      }
+    ],
+    "candidate_f6_failure_evidence": {
+      "candidate_bff_sha": "f6d40b77da32309498863a6d66debcc2449268e2",
+      "source_probe_completed_at": "2026-11-07T18:07:13Z",
+      "source_probe_outcome": "passed",
+      "source_probe_loop_status": "failed",
+      "projection_generation": 2155728,
+      "projection_checkpoint": 11212948,
+      "readback_failed_at": "2026-11-07T18:07:27Z",
+      "failure_code": "bff_journey_truth_invalid",
+      "failure_message": "Trade Journey was not formal complete truth"
+    },
+    "after_restore_e9_readback_diagnosis": {
+      "restored_bff_sha": "e9a1a196805663b175423964c2ccdc21bf2d24ea",
+      "diagnosed_at": "2026-11-07T18:16:35Z",
+      "e9_f6_bff_helper_bytes_identical": true,
+      "why_risk_evaluation_was_missing": "paper_runtime.py emitted a separate risk_evaluation telemetry event only for committed_fill and canonical_lifecycle, while pre-broker order_rejection (sell_without_holdings) and explicit no-trade paper_order_simulated mapped directly to order_submission (index 9 of STAGES). Because risk_evaluation (index 8 of STAGES) is an observable stage before order_submission, JourneyMaterializer._missing_stages and TradeJourneyProjectionStore._projection_from_journey included risk_evaluation in completeness.missing_stages, causing trade_journeys._read_state to downgrade both detail and list surfaces from formal to partial.",
+      "pre_fix_result": {
+        "status": "failed",
+        "read_state": "partial",
+        "meta_read_state": "partial",
+        "missing_stages": [
+          "research_rationale",
+          "feature_hypothesis",
+          "backtest_validation",
+          "paper_graduation",
+          "champion_challenger",
+          "deployment_runtime",
+          "risk_evaluation"
+        ]
+      }
+    },
+    "post_fix_result": {
+      "status": "failed",
+      "flags_rejected": true,
+      "read_state": "formal",
+      "meta_read_state": "formal",
+      "risk_evaluation_stage_status": "rejected",
+      "order_submission_stage_status": "failed",
+      "missing_observable_stages": [],
+      "correlated_event_count": 3,
+      "hosted_bff_readback_outcome": "passed"
+    }
+  },
+  "repair_summary": {
+    "paper_runtime": "Stamps truthful risk_status=rejected, risk_reason=sell_without_holdings, risk_decision_id, requested_quantity, and holding_quantity only on bounded pre-broker sell_without_holdings guard rejections and risk_status=skipped on explicit no-trade paper_order_simulated events without fabricating risk evaluations for malformed input, non-finite broker fills, or transport errors.",
+    "lifecycle_projector": "Propagates bounded sell_without_holdings rejection facts (reason_code=sell_without_holdings, risk_status=rejected, submitted_to_broker=false, quantity=0.0, requested_quantity, holding_quantity) and trusted explicit NoTrade facts (decision_status=no_order, order_status=not_submitted, risk_status=skipped, reason_code, submitted_to_broker=false) while preserving all contradictory broker_order_id/fill_id/broker_trade_id/ledger_entry_id/reconciliation_id identifiers, broker submission flags, non-zero fill_quantity/filled_quantity fields across every source container (top-level, metadata, metrics) on every projected stage independently of intended/requested generic quantity, and invalid quantities without stripping identifiers or inferring risk denial/skip on contradictory, transport, or bare rejections.",
+    "materializer": "Enforces universal no-fill, no-broker, and zero-quantity guards across all journey events (including nested metadata/metrics and upstream signal_generation/trade_decision fill_quantity/filled_quantity fields) before either skipped-decision or explicit-terminal inference, recording truthful risk_evaluation stage coverage (rejected only for bounded pre-broker sell_without_holdings guard rejections with zero fill quantity and no broker submission; skipped only for verified paper_order_simulated NoTrade skips with zero fill quantity and no broker submission) when required upstream signal_generation and trade_decision stages are present and no post-submission stages, invalid quantities, or broker/fill/ledger/reconciliation identifiers exist.",
+    "bff_trade_journeys": "Enforces universal no-fill, no-broker, and zero-quantity guards across all timeline events (including nested metadata/metrics and upstream signal_generation/trade_decision fill_quantity/filled_quantity fields) before either skipped-decision or explicit-terminal normalization across detail, list, timeline, graph, and evidence surfaces (including already-persisted journeys rows); contradictory non-zero or invalid quantities, broker/fill/ledger/reconciliation identifiers, broker-submitted flags, empty timelines, missing upstream decisions, transport failures, and unverified order failures remain partial."
+  },
+  "constraints_verified": {
+    "hosted_bff_readback_production_assertions_untouched": true,
+    "repair_plan_copied_byte_for_byte": true,
+    "no_futures_broker_vm_ssh_cloud_or_provider_calls": true,
+    "no_datastore_hand_edits": true
+  },
+  "validation": {
+    "pytest_suites": [
+      "services/trade_journey/test_materializer.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "services/trade_journey/test_hosted_bff_readback.py",
+      "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "services/execution/lean_runtime/test_paper_runtime.py"
+    ],
+    "results": {
+      "trade_journey_and_bff_suites": "220 passed, 2 skipped",
+      "paper_runtime_suite": "98 passed, 27 subtests passed",
+      "independent_review_negative_probes": "24 passed",
+      "total_passed": 318
+    },
+    "status": "passed"
+  }
+}

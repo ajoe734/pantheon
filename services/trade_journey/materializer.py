@@ -215,6 +215,10 @@ class JourneyMaterializer:
                 corrections.append(event)
             explicit_cancel |= event.get("event_type") in {"cancel", "order_cancelled"}
 
+        inferred_risk = self._inferred_nonfill_risk_stage(stages, events, identifiers)
+        if inferred_risk is not None:
+            stages["risk_evaluation"] = inferred_risk
+
         diagnostics: list[dict[str, Any]] = []
         drifted = [event for event in events if abs(float(event.get("clock_skew_seconds", 0))) > CLOCK_DRIFT_THRESHOLD_SECONDS]
         if drifted:
@@ -284,9 +288,150 @@ class JourneyMaterializer:
             return "partially_filled"
         if statuses.get("order_submission") == "succeeded" and statuses.get("fill_management") == "active":
             return "executing"
-        if statuses.get("order_submission") == "skipped":
+        if statuses.get("order_submission") == "skipped" or (
+            statuses.get("trade_decision") == "skipped" and "order_submission" not in statuses
+        ):
             return "no_order"
         return "open" if stages else "incomplete"
+
+    @staticmethod
+    def _is_nonfill_unsubmitted_event(
+        item: Mapping[str, Any], *, check_quantity_zero: bool = True
+    ) -> bool:
+        metrics = item.get("metrics") if isinstance(item.get("metrics"), Mapping) else {}
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+        for flag in (
+            item.get("submitted_to_broker"),
+            metrics.get("submitted_to_broker"),
+            metadata.get("submitted_to_broker"),
+        ):
+            if flag is not None and flag is not False:
+                return False
+        for field in (
+            "broker_order_id",
+            "fill_id",
+            "broker_trade_id",
+            "ledger_entry_id",
+            "reconciliation_id",
+        ):
+            if (
+                item.get(field) not in (None, "", [], {})
+                or metadata.get(field) not in (None, "", [], {})
+                or metrics.get(field) not in (None, "", [], {})
+            ):
+                return False
+        for raw_qty in (
+            item.get("fill_quantity"),
+            item.get("filled_quantity"),
+            metrics.get("fill_quantity"),
+            metrics.get("filled_quantity"),
+            metadata.get("fill_quantity"),
+            metadata.get("filled_quantity"),
+        ):
+            if raw_qty is None:
+                continue
+            if isinstance(raw_qty, bool):
+                return False
+            try:
+                parsed_qty = float(raw_qty)
+            except (TypeError, ValueError):
+                return False
+            if parsed_qty != 0.0 or parsed_qty != parsed_qty or parsed_qty in (float("inf"), float("-inf")):
+                return False
+        for raw_qty in (
+            item.get("quantity"),
+            metrics.get("quantity"),
+            metadata.get("quantity"),
+        ):
+            if raw_qty is None:
+                continue
+            if isinstance(raw_qty, bool):
+                return False
+            try:
+                parsed_qty = float(raw_qty)
+            except (TypeError, ValueError):
+                return False
+            if parsed_qty != parsed_qty or parsed_qty in (float("inf"), float("-inf")):
+                return False
+            if check_quantity_zero and parsed_qty != 0.0:
+                return False
+        return True
+
+    @classmethod
+    def _inferred_nonfill_risk_stage(
+        cls,
+        stages: Mapping[str, Mapping[str, Any]],
+        events: list[dict[str, Any]],
+        identifiers: Mapping[str, set[str]],
+    ) -> dict[str, Any] | None:
+        if "risk_evaluation" in stages:
+            return None
+        if stages.get("signal_generation", {}).get("status") != "succeeded":
+            return None
+        if stages.get("trade_decision", {}).get("status") not in {"succeeded", "skipped"}:
+            return None
+        if {"broker_acknowledgement", "fill_management", "ledger_booking", "reconciliation"} & set(stages):
+            return None
+        if {
+            "broker_order_id",
+            "fill_id",
+            "broker_trade_id",
+            "ledger_entry_id",
+            "reconciliation_id",
+        } & set(identifiers):
+            return None
+        if not all(
+            cls._is_nonfill_unsubmitted_event(
+                item, check_quantity_zero=(item.get("stage") == "order_submission")
+            )
+            for item in events
+        ):
+            return None
+        order_stage = stages.get("order_submission")
+        if not isinstance(order_stage, Mapping):
+            return None
+        order_status = order_stage.get("status")
+        submission_events = [item for item in events if item.get("stage") == "order_submission"]
+        if not submission_events:
+            return None
+        if (
+            order_status == "skipped"
+            and all(item.get("event_type") == "paper_order_simulated" for item in submission_events)
+            and (
+                stages.get("trade_decision", {}).get("status") == "skipped"
+                or any(
+                    str(item.get("decision_status") or "").strip().lower() == "no_order"
+                    or str(item.get("order_status") or "").strip().lower() == "not_submitted"
+                    or str(item.get("risk_status") or "").strip().lower() == "skipped"
+                    or bool(item.get("noop_reason") or item.get("reason_code"))
+                    for item in submission_events
+                )
+            )
+        ):
+            return {
+                "status": "skipped",
+                "updated_at": order_stage["updated_at"],
+                "revision": order_stage.get("revision", 1),
+            }
+        if order_status in {"failed", "rejected"} and any(
+            item.get("event_type") in {"order_rejection", "order_rejection_simulated"}
+            and str(
+                item.get("reason_code")
+                or item.get("reject_reason")
+                or item.get("reason")
+                or item.get("risk_reason")
+                or item.get("broker_submission_status")
+                or ""
+            ).strip()
+            == "sell_without_holdings"
+            for item in submission_events
+        ):
+            return {
+                "status": "rejected",
+                "updated_at": order_stage["updated_at"],
+                "revision": order_stage.get("revision", 1),
+            }
+        return None
 
     @staticmethod
     def deadline_status(stages: Mapping[str, Any], last_occurred: datetime, as_of: datetime,

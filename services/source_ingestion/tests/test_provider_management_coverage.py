@@ -68,9 +68,32 @@ def _load_schema(relative_path: str) -> dict[str, Any]:
         return json.load(f)
 
 
-def _sample_payload_for_adapter(adapter_token: str, dataset: str | None = None) -> list[dict[str, Any]]:
+def _sample_payload_for_adapter(adapter_token: str, dataset: str | None = None) -> Any:
     """Return a minimal valid raw payload for adapter normalized schema verification."""
     if "TaifexDerivativesChipAdapter" in adapter_token:
+        if dataset == "taifex_ssf_contracts":
+            return {
+                "SingleStockFuturesMargining": [{
+                    "Contract": "QFF",
+                    "UnderlyingSecurityCode": "2330",
+                    "ContractName": "小型台積電期貨",
+                    "GroupLevel": "級距1",
+                    "ClearingMarginRate": "10.00%",
+                    "MaintenanceMarginRate": "10.35%",
+                    "InitialMarginRate": "13.50%",
+                    "Date": "20261106",
+                }],
+                "DailyMarketReportFut": [{
+                    "Date": "20261106",
+                    "Contract": "QFF",
+                    "ContractMonth(Week)": "202611",
+                    "Volume": "126386",
+                    "SettlementPrice": "2133",
+                    "OpenInterest": "65034",
+                    "TradingSession": "一般",
+                }],
+                "stockLists": {"QF": {"family": "QF", "underlying_code": "2330", "unit": 100, "is_etf": False}},
+            }
         if dataset == "taifex_options_chip":
             return [{
                 "Date": "2026-08-24",

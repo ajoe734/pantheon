@@ -1324,3 +1324,368 @@ def test_lifecycle_proj_bff_postgres_page_query_is_scoped_and_bounded() -> None:
     assert "tenant_id=%s AND environment=%s AND status=%s" in count_sql
     assert " LIMIT " not in count_sql
     assert count_params == ("tenant-a", "paper", "open")
+
+
+def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_while_incomplete_stays_partial() -> None:
+    retained_id = "tj_294b657b-1d64-50d8-b2bf-03e9f3c26a6f"
+    events = [
+        _event(
+            "192e0569-ee44-4e5a-9f21-d24415530353",
+            retained_id,
+            "signal_generation",
+            "succeeded",
+            1,
+            tenant="tenant-dev",
+            signal_id="sig-60872d6d0ca7a7522ea9153a11eb8de8",
+            decision_id="dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+            symbol="2330.TW",
+            side="sell",
+            quantity=None,
+            price=None,
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "20476142-6e7a-5715-b20f-fa61022cf1aa",
+            retained_id,
+            "trade_decision",
+            "succeeded",
+            2,
+            tenant="tenant-dev",
+            signal_id="sig-60872d6d0ca7a7522ea9153a11eb8de8",
+            decision_id="dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+            symbol="2330.TW",
+            side="sell",
+            quantity=None,
+            price=None,
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "483dede1-6213-4d7b-8df4-48d1ae30b747",
+            retained_id,
+            "order_submission",
+            "failed",
+            3,
+            tenant="tenant-dev",
+            event_type="order_rejection",
+            reason_code="sell_without_holdings",
+            submitted_to_broker=False,
+            signal_id="sig-60872d6d0ca7a7522ea9153a11eb8de8",
+            decision_id="dec-rb-8aceee4784be4ae581d51ab7ef2243c4-60872d6d0ca7a7522ea9153a",
+            symbol="2330.TW",
+            side="sell",
+            quantity=0.0,
+            price=None,
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "noop-1",
+            "tj_no_order_1",
+            "signal_generation",
+            "succeeded",
+            4,
+            tenant="tenant-dev",
+            signal_id="sig-noop-1",
+            decision_id="dec-noop-1",
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "noop-2",
+            "tj_no_order_1",
+            "trade_decision",
+            "succeeded",
+            5,
+            tenant="tenant-dev",
+            signal_id="sig-noop-1",
+            decision_id="dec-noop-1",
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+        _event(
+            "noop-3",
+            "tj_no_order_1",
+            "order_submission",
+            "skipped",
+            6,
+            tenant="tenant-dev",
+            event_type="paper_order_simulated",
+            reason_code="hold_signal",
+            decision_status="no_order",
+            order_status="not_submitted",
+            submitted_to_broker=False,
+            quantity=0.0,
+            signal_id="sig-noop-1",
+            decision_id="dec-noop-1",
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+    ]
+    client, _ = _client_with(events)
+
+    detail_resp = client.get(
+        f"/bff/management/trade-journeys/{retained_id}?tenant_id=tenant-dev&environment=paper",
+        headers=OPERATOR_HEADERS,
+    )
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail_payload = detail_resp.json()
+    assert detail_payload["data"]["status"] == "failed"
+    assert detail_payload["data"]["flags"]["rejected"] is True
+    assert detail_payload["data"]["read_state"] == "formal"
+    assert detail_payload["meta"]["read_state"] == "formal"
+    assert detail_payload["data"]["stages"]["risk_evaluation"]["status"] == "rejected"
+    assert "risk_evaluation" not in detail_payload["data"]["completeness"]["missing_stages"]
+    assert detail_payload["data"]["event_count"] == 3
+
+    noop_resp = client.get(
+        "/bff/management/trade-journeys/tj_no_order_1?tenant_id=tenant-dev&environment=paper",
+        headers=OPERATOR_HEADERS,
+    )
+    assert noop_resp.status_code == 200, noop_resp.text
+    noop_payload = noop_resp.json()
+    assert noop_payload["data"]["status"] == "no_order"
+    assert noop_payload["data"]["read_state"] == "formal"
+    assert noop_payload["meta"]["read_state"] == "formal"
+    assert noop_payload["data"]["stages"]["risk_evaluation"]["status"] == "skipped"
+    assert "risk_evaluation" not in noop_payload["data"]["completeness"]["missing_stages"]
+
+    list_resp = client.get(
+        "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper",
+        headers=OPERATOR_HEADERS,
+    )
+    assert list_resp.status_code == 200, list_resp.text
+    list_payload = list_resp.json()
+    assert list_payload["meta"]["read_state"] == "formal"
+    assert {item["journey_id"]: item["read_state"] for item in list_payload["data"]["items"]} == {
+        retained_id: "formal",
+        "tj_no_order_1": "formal",
+    }
+
+    incomplete_events = [
+        _event("inc-1", "tj_inc", "signal_generation", "succeeded", 1, tenant="tenant-dev"),
+        _event("inc-2", "tj_inc", "trade_decision", "succeeded", 2, tenant="tenant-dev"),
+        _event(
+            "inc-3",
+            "tj_inc",
+            "order_submission",
+            "failed",
+            3,
+            tenant="tenant-dev",
+            event_type="order_rejection",
+            reason_code=None,
+            submitted_to_broker=False,
+            quantity=0.0,
+            broker_order_id=None,
+            client_order_id=None,
+        ),
+    ]
+    inc_client, _ = _client_with(incomplete_events)
+    inc_resp = inc_client.get(
+        "/bff/management/trade-journeys/tj_inc?tenant_id=tenant-dev&environment=paper",
+        headers=OPERATOR_HEADERS,
+    )
+    assert inc_resp.status_code == 200
+    inc_data = inc_resp.json()["data"]
+    assert "risk_evaluation" in inc_data["completeness"]["missing_stages"]
+    assert inc_data["read_state"] == "partial"
+    assert inc_resp.json()["meta"]["read_state"] == "partial"
+
+    empty_timeline_snapshot = {
+        "status": "failed",
+        "stages": {
+            "signal_generation": {"status": "succeeded"},
+            "trade_decision": {"status": "succeeded"},
+            "order_submission": {"status": "failed"},
+        },
+        "identifiers": {"signal_id": ["sig-empty"], "decision_id": ["dec-empty"]},
+        "completeness": {"complete": False, "missing_stages": ["risk_evaluation"]},
+    }
+    empty_timeline_diagnostics = [{"code": "missing_stages", "stages": ["risk_evaluation"]}]
+    assert tj._read_state(empty_timeline_snapshot, empty_timeline_diagnostics, []) == "partial"
+
+    persisted_no_order_snapshot = {
+        "status": "no_order",
+        "stages": {
+            "signal_generation": {"status": "succeeded"},
+            "trade_decision": {"status": "skipped"},
+            "order_submission": {"status": "skipped"},
+        },
+        "identifiers": {},
+        "completeness": {"complete": False, "missing_stages": ["risk_evaluation"]},
+    }
+    for fill_qty, submitted in ((5, False), (0, True)):
+        contradictory_timeline = [
+            _event(
+                "contra-o",
+                "tj_contra",
+                "order_submission",
+                "skipped",
+                3,
+                tenant="tenant-dev",
+                event_type="paper_order_simulated",
+                quantity=fill_qty,
+                submitted_to_broker=submitted,
+                broker_order_id=None,
+                client_order_id=None,
+            )
+        ]
+        eff_snap, _ = tj._effective_snapshot_and_diagnostics(
+            persisted_no_order_snapshot,
+            empty_timeline_diagnostics,
+            contradictory_timeline,
+        )
+        assert "risk_evaluation" not in eff_snap["stages"]
+        assert "risk_evaluation" in eff_snap["completeness"]["missing_stages"]
+        assert (
+            tj._read_state(
+                persisted_no_order_snapshot,
+                empty_timeline_diagnostics,
+                contradictory_timeline,
+            )
+            == "partial"
+        )
+
+    for contra_extra in (
+        {"broker_order_id": "broker-real"},
+        {"broker_trade_id": "trade-real"},
+        {"ledger_entry_id": "ledger-real"},
+        {"reconciliation_id": "recon-real"},
+        {"fill_id": "fill-real"},
+        {"filled_quantity": "invalid"},
+        {"metadata": {"broker_order_id": "broker-nested"}},
+        {"metadata": {"fill_id": "fill-nested"}},
+        {"metadata": {"filled_quantity": "invalid"}},
+        {"metrics": {"reconciliation_id": "recon-nested"}},
+        {"metrics": {"fill_quantity": "invalid"}},
+        {"metrics": {"submitted_to_broker": True}},
+    ):
+        contra_tl = [
+            {
+                **_event(
+                    "contra-id-o",
+                    "tj_contra_id",
+                    "order_submission",
+                    "skipped",
+                    3,
+                    tenant="tenant-dev",
+                    event_type="paper_order_simulated",
+                    decision_status="no_order",
+                    order_status="not_submitted",
+                    reason_code="hold_signal",
+                    quantity=0.0,
+                    submitted_to_broker=False,
+                    broker_order_id=None,
+                    client_order_id=None,
+                ),
+                **contra_extra,
+            }
+        ]
+        eff_snap, _ = tj._effective_snapshot_and_diagnostics(
+            persisted_no_order_snapshot,
+            empty_timeline_diagnostics,
+            contra_tl,
+        )
+        assert "risk_evaluation" not in eff_snap["stages"]
+        assert "risk_evaluation" in eff_snap["completeness"]["missing_stages"]
+        assert (
+            tj._read_state(
+                persisted_no_order_snapshot,
+                empty_timeline_diagnostics,
+                contra_tl,
+            )
+            == "partial"
+        )
+
+    for snap, sub_ev in (
+        (
+            persisted_no_order_snapshot,
+            _event(
+                "up-o-noop",
+                "tj_up_contra",
+                "order_submission",
+                "skipped",
+                3,
+                tenant="tenant-dev",
+                event_type="paper_order_simulated",
+                decision_status="no_order",
+                order_status="not_submitted",
+                reason_code="hold_signal",
+                quantity=0.0,
+                submitted_to_broker=False,
+                broker_order_id=None,
+                client_order_id=None,
+            ),
+        ),
+        (
+            empty_timeline_snapshot,
+            _event(
+                "up-o-rej",
+                "tj_up_contra",
+                "order_submission",
+                "failed",
+                3,
+                tenant="tenant-dev",
+                event_type="order_rejection",
+                reason_code="sell_without_holdings",
+                quantity=0.0,
+                submitted_to_broker=False,
+                broker_order_id=None,
+                client_order_id=None,
+            ),
+        ),
+    ):
+        for upstream_stage in ("signal_generation", "trade_decision"):
+            for extra_fill in (
+                {"fill_quantity": 5},
+                {"filled_quantity": 5},
+                {"metadata": {"fill_quantity": 5}},
+                {"metadata": {"filled_quantity": 5}},
+                {"metrics": {"fill_quantity": 5}},
+                {"metrics": {"filled_quantity": 5}},
+            ):
+                sig_ev = {
+                    **_event(
+                        "up-s",
+                        "tj_up_contra",
+                        "signal_generation",
+                        "succeeded",
+                        1,
+                        tenant="tenant-dev",
+                        quantity=10,
+                        requested_quantity=10,
+                        broker_order_id=None,
+                        client_order_id=None,
+                    ),
+                    **(extra_fill if upstream_stage == "signal_generation" else {}),
+                }
+                dec_ev = {
+                    **_event(
+                        "up-d",
+                        "tj_up_contra",
+                        "trade_decision",
+                        snap["stages"]["trade_decision"]["status"],
+                        2,
+                        tenant="tenant-dev",
+                        quantity=10,
+                        requested_quantity=10,
+                        broker_order_id=None,
+                        client_order_id=None,
+                    ),
+                    **(extra_fill if upstream_stage == "trade_decision" else {}),
+                }
+                up_tl = [sig_ev, dec_ev, sub_ev]
+                eff_snap, _ = tj._effective_snapshot_and_diagnostics(
+                    snap,
+                    empty_timeline_diagnostics,
+                    up_tl,
+                )
+                assert "risk_evaluation" not in eff_snap["stages"]
+                assert "risk_evaluation" in eff_snap["completeness"]["missing_stages"]
+                assert tj._read_state(snap, empty_timeline_diagnostics, up_tl) == "partial"
+
+
+
+
+

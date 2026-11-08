@@ -5,10 +5,23 @@ Based on Pantheon_Market_Data_Scope_and_Source_Plan_v1 §6.2
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
-from datetime import datetime, timezone
+from typing import Any, Mapping, Optional
+from datetime import date, datetime, timezone
 from enum import Enum
 import json
+import math
+import re
+
+
+TAIFEX_STF_SPEC_URL = "https://www.taifex.com.tw/cht/2/sTF"
+TAIFEX_STF_TICK_AMENDMENT = "台期交字第1150001529號函 (issued 2026-05-26, effective 2026-07-06)"
+TAIFEX_STF_TICK_AMENDMENT_URL = (
+    "https://www.taifex.com.tw/file/taifex/CHINESE/11/attach/"
+    "%E5%8F%B0%E6%9C%9F%E4%BA%A4%E5%AD%97%E7%AC%AC1150001529%E8%99%9F%E5%87%BD.pdf"
+)
+TAIFEX_STF_TICK_SIZE_SOURCE = (
+    f"{TAIFEX_STF_SPEC_URL} ; {TAIFEX_STF_TICK_AMENDMENT} {TAIFEX_STF_TICK_AMENDMENT_URL}"
+)
 
 
 class ContractType(str, Enum):
@@ -43,6 +56,85 @@ class MarginType(str, Enum):
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _as_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    digits = re.sub(r"\D", "", text)
+    if re.fullmatch(r"\d{7}", text) or (len(digits) == 7 and "/" in text):
+        text = f"{int(digits[:3]) + 1911:04d}-{digits[3:5]}-{digits[5:7]}"
+    elif re.fullmatch(r"\d{8}", text) or (len(digits) == 8 and "/" in text):
+        text = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+    return date.fromisoformat(text)
+
+
+def _optional_date(value: Any) -> Optional[date]:
+    if value in (None, ""):
+        return None
+    try:
+        return _as_date(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _iso_epoch(raw: Any) -> float:
+    text = str(raw or "").strip()
+    if not text:
+        return float("-inf")
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        parsed_date = _optional_date(text)
+        if parsed_date is not None:
+            return datetime(parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=timezone.utc).timestamp()
+        return float("-inf")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _snapshot_market_date(row: Mapping[str, Any]) -> Optional[date]:
+    raw_market = row.get("raw_market_row")
+    return (
+        _optional_date(row.get("price_date"))
+        or _optional_date(row.get("date"))
+        or _optional_date(row.get("Date"))
+        or (_optional_date(raw_market.get("Date")) if isinstance(raw_market, Mapping) else None)
+    )
+
+
+def _snapshot_margin_date(row: Mapping[str, Any]) -> Optional[date]:
+    raw_margin = row.get("raw_margin_row")
+    return _optional_date(row.get("margin_date")) or (
+        _optional_date(raw_margin.get("Date")) if isinstance(raw_margin, Mapping) else None
+    )
+
+
+def _ssf_snapshot_run_key(row: Mapping[str, Any]) -> tuple[date, date, float, str, float, str, int]:
+    market_date = _snapshot_market_date(row)
+    margin_date = _snapshot_margin_date(row)
+    effective_market_date = market_date or margin_date or date.min
+    effective_margin_date = margin_date or effective_market_date
+    avail = str(row.get("available_time") or "").strip()
+    avail_epoch = _iso_epoch(avail)
+    ingest = str(row.get("ingest_time") or "").strip()
+    ingest_epoch = _iso_epoch(ingest)
+    file_seq = int(row.get("_file_run_seq") or 0)
+    return (
+        effective_market_date,
+        effective_margin_date,
+        avail_epoch,
+        avail,
+        ingest_epoch,
+        ingest,
+        file_seq,
+    )
 
 
 @dataclass
@@ -125,6 +217,216 @@ class ContractMaster:
         )
 
     @staticmethod
+    def ssf_tick_size(underlying_kind: Any, price: Any) -> float:
+        """Minimum price fluctuation for TAIFEX single-stock / ETF futures (sTF).
+
+        Official specification: https://www.taifex.com.tw/cht/2/sTF (amended by
+        台期交字第1150001529號函, issued 2026-05-26, effective 2026-07-06).
+        Stock underlying:
+          < 10 -> 0.01; 10 <= p < 50 -> 0.05; 50 <= p < 100 -> 0.1;
+          100 <= p < 500 -> 0.5; 500 <= p < 2500 -> 1.0; >= 2500 -> 5.0.
+        ETF underlying:
+          < 50 -> 0.01; >= 50 -> 0.05.
+        """
+        if price is None or isinstance(price, bool):
+            raise ValueError("settlement_price is required to derive TAIFEX SSF tick_size")
+        try:
+            numeric_price = float(price)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid settlement_price for TAIFEX SSF tick_size: {price!r}") from exc
+        if not math.isfinite(numeric_price) or numeric_price <= 0:
+            raise ValueError(f"settlement_price must be positive to derive TAIFEX SSF tick_size: {price!r}")
+        kind = str(underlying_kind or "").strip().lower()
+        if kind == "etf":
+            return 0.01 if numeric_price < 50.0 else 0.05
+        if kind == "stock":
+            if numeric_price < 10.0:
+                return 0.01
+            if numeric_price < 50.0:
+                return 0.05
+            if numeric_price < 100.0:
+                return 0.1
+            if numeric_price < 500.0:
+                return 0.5
+            if numeric_price < 2500.0:
+                return 1.0
+            return 5.0
+        raise ValueError(f"Unsupported underlying_kind for TAIFEX SSF tick_size: {underlying_kind!r}")
+
+    @classmethod
+    def from_ssf_normalized_row(cls, row: dict[str, Any]) -> "ContractMaster":
+        """Build the master record for one ``taifex_ssf_contracts`` normalized row.
+
+        ``contract_id`` is ``ssf:<code>:<month>``; ``underlying_id`` is the
+        normalised security code; ``multiplier`` is the contract unit. Rate-based
+        margins are ``portfolio`` margin type, fixed amounts are ``fixed``. The
+        margin figures, the latest regular session settlement price and its date
+        go to ``metadata_json``. ``tick_size`` is derived from ``underlying_kind``
+        and ``settlement_price`` per the official TAIFEX ``sTF`` price-tier rules
+        (``https://www.taifex.com.tw/cht/2/sTF``, amended by 台期交字第1150001529號函
+        issued 2026-05-26 / effective 2026-07-06) and recorded in ``tick_size_source``.
+        """
+        fixed = row.get("margin_mode") == "fixed"
+        margin = (
+            {
+                "clearing_margin_amount": row.get("clearing_margin_amount"),
+                "maintenance_margin_amount": row.get("maintenance_margin_amount"),
+                "initial_margin_amount": row.get("initial_margin_amount"),
+            }
+            if fixed
+            else {
+                "margin_tier": row.get("margin_tier"),
+                "clearing_margin_rate": row.get("clearing_margin_rate"),
+                "maintenance_margin_rate": row.get("maintenance_margin_rate"),
+                "initial_margin_rate": row.get("initial_margin_rate"),
+            }
+        )
+        stamp = row.get("available_time") or _utc_now_iso()
+        tick_size = cls.ssf_tick_size(row.get("underlying_kind"), row.get("settlement_price"))
+        market_date = _snapshot_market_date(row)
+        margin_date = _snapshot_margin_date(row)
+        settlement_price_date = market_date.isoformat() if market_date is not None else row.get("price_date")
+        resolved_margin_date = margin_date.isoformat() if margin_date is not None else row.get("margin_date")
+        return cls(
+            contract_id=f"ssf:{row['contract']}:{row['contract_month']}",
+            underlying_id=str(row["underlying_code"]),
+            market="TW",
+            venue="TAIFEX",
+            contract_type=ContractType.FUTURE.value,
+            expiry=str(row["last_trading_day"]),
+            multiplier=float(row["unit"]),
+            tick_size=tick_size,
+            settlement_type=SettlementType.CASH.value,
+            margin_type=MarginType.FIXED.value if fixed else MarginType.PORTFOLIO.value,
+            metadata_json={
+                "dataset": "taifex_ssf_contracts",
+                "contract": row["contract"],
+                "contract_family": row.get("contract_family"),
+                "contract_month": row["contract_month"],
+                "contract_name": row.get("contract_name"),
+                "underlying_kind": row.get("underlying_kind"),
+                "margin_mode": row.get("margin_mode"),
+                **margin,
+                "settlement_price": row.get("settlement_price"),
+                "settlement_price_date": settlement_price_date,
+                "margin_date": resolved_margin_date,
+                "volume": row.get("volume"),
+                "open_interest": row.get("open_interest"),
+                "last_trading_day_basis": row.get("last_trading_day_basis"),
+                "tick_size_source": TAIFEX_STF_TICK_SIZE_SOURCE,
+            },
+            created_at=stamp,
+            updated_at=stamp,
+        )
+
+    @classmethod
+    def from_ssf_normalized_rows(cls, rows: Any) -> list["ContractMaster"]:
+        """Latest record per ``contract_id`` (newest snapshot wins; removed contracts are evicted)."""
+        row_list = [dict(row) for row in rows]
+        underlyings = {
+            str(row.get("underlying_code") or "").strip()
+            for row in row_list
+            if str(row.get("underlying_code") or "").strip()
+        }
+        for row in row_list:
+            for key in ("snapshot_scope", "snapshot_underlyings"):
+                for item in (row.get(key) or ()):
+                    if str(item or "").strip():
+                        underlyings.add(str(item).strip())
+        latest_run_by_underlying: dict[str, tuple[date, date, float, str, float, str, int]] = {}
+        newest_rows_by_underlying: dict[str, list[dict[str, Any]]] = {}
+        for row in row_list:
+            run_key = _ssf_snapshot_run_key(row)
+            row_underlying = str(row.get("underlying_code") or "").strip()
+            scope_mode = str(row.get("snapshot_scope_mode") or "").strip()
+            scope_set = {str(item).strip() for item in (row.get("snapshot_scope") or ()) if str(item).strip()}
+            for code in underlyings:
+                covers = (
+                    row_underlying == code
+                    or scope_mode == "all"
+                    or (scope_mode == "scoped" and code in scope_set)
+                )
+                if not covers:
+                    continue
+                prev = latest_run_by_underlying.get(code)
+                if prev is None or run_key > prev:
+                    latest_run_by_underlying[code] = run_key
+                    newest_rows_by_underlying[code] = [row]
+                elif run_key == prev:
+                    newest_rows_by_underlying.setdefault(code, []).append(row)
+
+        allowed_contracts_by_underlying: dict[str, set[str] | None] = {}
+        absent_contracts_by_underlying: dict[str, set[str]] = {}
+        for code, newest_rows in newest_rows_by_underlying.items():
+            absent = {
+                str(c)
+                for r in newest_rows
+                for c in (r.get("snapshot_absent_contracts") or ())
+                if c
+            }
+            absent_contracts_by_underlying[code] = absent
+            if any(r.get("tombstone") or r.get("_snapshot_truncated") for r in newest_rows):
+                allowed_contracts_by_underlying[code] = set()
+            else:
+                direct_contracts = {
+                    str(r["contract"])
+                    for r in newest_rows
+                    if str(r.get("underlying_code") or "").strip() == code and r.get("contract")
+                }
+                if direct_contracts and (len(newest_rows) > 1 or any("_file_contracts" in r for r in newest_rows)):
+                    allowed = set(direct_contracts)
+                    file_sets = [
+                        {str(c) for c in (r.get("_file_contracts") or ()) if c}
+                        for r in newest_rows
+                        if "_file_contracts" in r
+                    ]
+                    if file_sets:
+                        allowed &= set().union(*file_sets)
+                    allowed_contracts_by_underlying[code] = allowed - absent
+                elif any("snapshot_contracts" in r or "_file_contracts" in r for r in newest_rows):
+                    allowed = set()
+                    for r in newest_rows:
+                        if r.get("contract"):
+                            allowed.add(str(r["contract"]))
+                        row_contracts = r.get("_file_contracts") if "_file_contracts" in r else r.get("snapshot_contracts")
+                        for c in row_contracts or ():
+                            if c:
+                                allowed.add(str(c))
+                    allowed_contracts_by_underlying[code] = allowed - absent
+                else:
+                    allowed_contracts_by_underlying[code] = None
+
+        latest: dict[str, tuple[tuple[date, date, float, str, float, str, int, int], dict[str, Any]]] = {}
+        for index, row in enumerate(row_list):
+            if row.get("tombstone") or row.get("_snapshot_truncated") or not row.get("contract") or not row.get("contract_month"):
+                continue
+            contract = str(row["contract"])
+            code = str(row.get("underlying_code") or "").strip()
+            if contract in absent_contracts_by_underlying.get(code, set()):
+                continue
+            allowed = allowed_contracts_by_underlying.get(code)
+            if allowed is not None and contract not in allowed:
+                continue
+            key = f"ssf:{contract}:{row['contract_month']}"
+            sort_key = (*_ssf_snapshot_run_key(row), index)
+            if key not in latest or sort_key >= latest[key][0]:
+                latest[key] = (sort_key, row)
+        masters: list[ContractMaster] = []
+        for key in sorted(latest):
+            winner = latest[key][1]
+            price = winner.get("settlement_price")
+            if price is None or isinstance(price, bool):
+                continue
+            try:
+                numeric_price = float(price)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(numeric_price) or numeric_price <= 0:
+                continue
+            masters.append(cls.from_ssf_normalized_row(winner))
+        return masters
+
+    @staticmethod
     def validate(contract: "ContractMaster") -> tuple[bool, list[str]]:
         errors = []
         if not contract.contract_id:
@@ -143,8 +445,28 @@ class ContractMaster:
             errors.append("Missing expiry")
         if contract.multiplier is None or contract.multiplier <= 0:
             errors.append("Invalid multiplier: must be positive")
-        if contract.tick_size is None or contract.tick_size <= 0:
+        if (
+            contract.tick_size is None
+            or isinstance(contract.tick_size, bool)
+            or not math.isfinite(contract.tick_size)
+            or contract.tick_size <= 0
+        ):
             errors.append("Invalid tick_size: must be positive")
+        elif isinstance(contract.metadata_json, dict) and contract.metadata_json.get("dataset") == "taifex_ssf_contracts":
+            if contract.metadata_json.get("tick_size_source") in (None, "", "not_sourced"):
+                errors.append("Invalid tick_size_source for TAIFEX SSF contract: official source required")
+            try:
+                expected_tick = ContractMaster.ssf_tick_size(
+                    contract.metadata_json.get("underlying_kind"),
+                    contract.metadata_json.get("settlement_price"),
+                )
+            except ValueError as exc:
+                errors.append(f"Invalid TAIFEX SSF tick_size inputs: {exc}")
+            else:
+                if contract.tick_size != expected_tick:
+                    errors.append(
+                        f"Invalid tick_size for TAIFEX SSF contract: got {contract.tick_size}, expected {expected_tick}"
+                    )
         if contract.option_right is not None and contract.option_right not in {item.value for item in OptionRight}:
             errors.append(f"Invalid option_right: {contract.option_right}")
         if contract.settlement_type not in {item.value for item in SettlementType}:

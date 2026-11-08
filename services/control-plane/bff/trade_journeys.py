@@ -406,11 +406,191 @@ def _projection_reader_meta(
     }
 
 
-def _read_state(snapshot: Mapping[str, Any], diagnostics: Sequence[Mapping[str, Any]]) -> str:
-    codes = {item.get("code") for item in diagnostics}
+def _is_nonfill_unsubmitted_event(
+    item: Mapping[str, Any], *, check_quantity_zero: bool = True
+) -> bool:
+    metrics = item.get("metrics") if isinstance(item.get("metrics"), Mapping) else {}
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+    for flag in (
+        item.get("submitted_to_broker"),
+        metrics.get("submitted_to_broker"),
+        metadata.get("submitted_to_broker"),
+    ):
+        if flag is not None and flag is not False:
+            return False
+    for field in (
+        "broker_order_id",
+        "fill_id",
+        "broker_trade_id",
+        "ledger_entry_id",
+        "reconciliation_id",
+    ):
+        if (
+            item.get(field) not in (None, "", [], {})
+            or metadata.get(field) not in (None, "", [], {})
+            or metrics.get(field) not in (None, "", [], {})
+        ):
+            return False
+    for raw_qty in (
+        item.get("fill_quantity"),
+        item.get("filled_quantity"),
+        metrics.get("fill_quantity"),
+        metrics.get("filled_quantity"),
+        metadata.get("fill_quantity"),
+        metadata.get("filled_quantity"),
+    ):
+        if raw_qty is None:
+            continue
+        if isinstance(raw_qty, bool):
+            return False
+        try:
+            parsed_qty = float(raw_qty)
+        except (TypeError, ValueError):
+            return False
+        if parsed_qty != 0.0 or parsed_qty != parsed_qty or parsed_qty in (float("inf"), float("-inf")):
+            return False
+    for raw_qty in (
+        item.get("quantity"),
+        metrics.get("quantity"),
+        metadata.get("quantity"),
+    ):
+        if raw_qty is None:
+            continue
+        if isinstance(raw_qty, bool):
+            return False
+        try:
+            parsed_qty = float(raw_qty)
+        except (TypeError, ValueError):
+            return False
+        if parsed_qty != parsed_qty or parsed_qty in (float("inf"), float("-inf")):
+            return False
+        if check_quantity_zero and parsed_qty != 0.0:
+            return False
+    return True
+
+
+def _effective_snapshot_and_diagnostics(
+    snapshot: Mapping[str, Any],
+    diagnostics: Sequence[Mapping[str, Any]],
+    timeline: Sequence[Mapping[str, Any]] = (),
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    raw_stages = snapshot.get("stages")
+    stages: Dict[str, Any] = (
+        {str(k): dict(v) if isinstance(v, Mapping) else {"status": str(v)} for k, v in raw_stages.items()}
+        if isinstance(raw_stages, Mapping)
+        else {}
+    )
+    diag_list: List[Dict[str, Any]] = [
+        dict(item) for item in diagnostics if isinstance(item, Mapping)
+    ]
+    if "risk_evaluation" in stages:
+        return dict(snapshot), diag_list
+    if stages.get("signal_generation", {}).get("status") != "succeeded":
+        return dict(snapshot), diag_list
+    if stages.get("trade_decision", {}).get("status") not in {"succeeded", "skipped"}:
+        return dict(snapshot), diag_list
+    if {"broker_acknowledgement", "fill_management", "ledger_booking", "reconciliation"} & set(stages):
+        return dict(snapshot), diag_list
+    identifiers = snapshot.get("identifiers") if isinstance(snapshot.get("identifiers"), Mapping) else {}
+    if any(
+        identifiers.get(field)
+        for field in (
+            "broker_order_id",
+            "fill_id",
+            "broker_trade_id",
+            "ledger_entry_id",
+            "reconciliation_id",
+        )
+    ):
+        return dict(snapshot), diag_list
+    if not all(
+        isinstance(item, Mapping)
+        and _is_nonfill_unsubmitted_event(
+            item, check_quantity_zero=(item.get("stage") == "order_submission")
+        )
+        for item in (timeline or ())
+    ):
+        return dict(snapshot), diag_list
+    order_stage = stages.get("order_submission")
+    if not isinstance(order_stage, Mapping):
+        return dict(snapshot), diag_list
+    order_status = order_stage.get("status")
+    if order_status not in {"failed", "rejected", "skipped"}:
+        return dict(snapshot), diag_list
+    submission_events = [
+        item
+        for item in (timeline or ())
+        if isinstance(item, Mapping) and item.get("stage") == "order_submission"
+    ]
+    inferred_status: Optional[str] = None
+    if submission_events:
+        if (
+            order_status == "skipped"
+            and all(item.get("event_type") == "paper_order_simulated" for item in submission_events)
+            and (
+                stages.get("trade_decision", {}).get("status") == "skipped"
+                or any(
+                    str(item.get("decision_status") or "").strip().lower() == "no_order"
+                    or str(item.get("order_status") or "").strip().lower() == "not_submitted"
+                    or str(item.get("risk_status") or "").strip().lower() == "skipped"
+                    or bool(item.get("noop_reason") or item.get("reason_code"))
+                    for item in submission_events
+                )
+            )
+        ):
+            inferred_status = "skipped"
+        elif order_status in {"failed", "rejected"} and any(
+            item.get("event_type") in {"order_rejection", "order_rejection_simulated"}
+            and str(
+                item.get("reason_code")
+                or item.get("reject_reason")
+                or item.get("reason")
+                or item.get("risk_reason")
+                or item.get("broker_submission_status")
+                or ""
+            ).strip()
+            == "sell_without_holdings"
+            for item in submission_events
+        ):
+            inferred_status = "rejected"
+    if inferred_status is None:
+        return dict(snapshot), diag_list
+    stages["risk_evaluation"] = {
+        "status": inferred_status,
+        "updated_at": order_stage.get("updated_at"),
+        "revision": order_stage.get("revision", 1),
+    }
+    raw_completeness = snapshot.get("completeness")
+    completeness = dict(raw_completeness) if isinstance(raw_completeness, Mapping) else {}
+    missing_stages = [
+        stage
+        for stage in (completeness.get("missing_stages") or [])
+        if stage != "risk_evaluation"
+    ]
+    completeness["missing_stages"] = missing_stages
+    completeness["complete"] = not missing_stages
+    normalized_diagnostics: List[Dict[str, Any]] = []
+    for item in diag_list:
+        if item.get("code") == "missing_stages":
+            if missing_stages:
+                normalized_diagnostics.append({**item, "stages": missing_stages})
+        else:
+            normalized_diagnostics.append(item)
+    return {**snapshot, "stages": stages, "completeness": completeness}, normalized_diagnostics
+
+
+def _read_state(
+    snapshot: Mapping[str, Any],
+    diagnostics: Sequence[Mapping[str, Any]],
+    timeline: Sequence[Mapping[str, Any]] = (),
+) -> str:
+    effective_snapshot, effective_diagnostics = _effective_snapshot_and_diagnostics(
+        snapshot, diagnostics, timeline
+    )
+    codes = {item.get("code") for item in effective_diagnostics}
     if codes & _ANOMALY_DIAGNOSTIC_CODES:
         return "degraded"
-    missing = (snapshot.get("completeness") or {}).get("missing_stages") or []
+    missing = (effective_snapshot.get("completeness") or {}).get("missing_stages") or []
     if any(stage in _OBSERVABLE_STAGES for stage in missing):
         return "partial"
     return "formal"
@@ -500,8 +680,9 @@ def _compose_summary_fields(timeline: Sequence[Mapping[str, Any]], identifiers: 
 
 
 def _list_row(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]:
-    snapshot = projection.snapshot
-    diagnostics = projection.diagnostics
+    snapshot, diagnostics = _effective_snapshot_and_diagnostics(
+        projection.snapshot, projection.diagnostics, projection.timeline
+    )
     summary = _compose_summary_fields(projection.timeline, snapshot.get("identifiers"))
     current_stage = _current_stage(snapshot)
     stages = snapshot.get("stages") or {}
@@ -526,7 +707,7 @@ def _list_row(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]
         "total_elapsed_seconds": (now - created_dt).total_seconds() if created_dt else None,
         "flags": flags,
         "completeness": snapshot.get("completeness"),
-        "read_state": _read_state(snapshot, diagnostics),
+        "read_state": _read_state(snapshot, diagnostics, projection.timeline),
         "revision": snapshot.get("revision"),
     }
 
@@ -542,14 +723,16 @@ def _stage_events(timeline: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, 
 
 def _detail(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]:
     row = _list_row(projection, now=now)
-    snapshot = projection.snapshot
+    snapshot, diagnostics = _effective_snapshot_and_diagnostics(
+        projection.snapshot, projection.diagnostics, projection.timeline
+    )
     return {
         **row,
         "identifiers": snapshot.get("identifiers"),
         "stages": snapshot.get("stages"),
         "stage_events": _stage_events(projection.timeline),
         "graph_edges": projection.graph_edges,
-        "diagnostics": projection.diagnostics,
+        "diagnostics": diagnostics,
         "event_count": len(projection.timeline),
     }
 
@@ -580,6 +763,9 @@ def _graph(projection: JourneyProjection) -> Dict[str, Any]:
 
 
 def _evidence(projection: JourneyProjection) -> Dict[str, Any]:
+    snapshot, diagnostics = _effective_snapshot_and_diagnostics(
+        projection.snapshot, projection.diagnostics, projection.timeline
+    )
     by_stage: Dict[str, Dict[str, Any]] = {}
     for event in projection.timeline:
         stage = event.get("stage") or "unstaged"
@@ -592,11 +778,20 @@ def _evidence(projection: JourneyProjection) -> Dict[str, Any]:
             values = event.get(ref_key)
             if isinstance(values, list):
                 bucket[ref_key].extend(str(item) for item in values)
+    stages = snapshot.get("stages") or {}
+    if "risk_evaluation" in stages and "risk_evaluation" not in by_stage and "order_submission" in by_stage:
+        by_stage["risk_evaluation"] = {
+            "evidence_refs": list(by_stage["order_submission"]["evidence_refs"]),
+            "input_refs": list(by_stage["order_submission"]["input_refs"]),
+            "output_refs": list(by_stage["order_submission"]["output_refs"]),
+            "policy_refs": list(by_stage["order_submission"]["policy_refs"]),
+            "event_ids": list(by_stage["order_submission"]["event_ids"]),
+        }
     return {
         "journey_id": projection.journey_id,
         "by_stage": by_stage,
-        "completeness": projection.snapshot.get("completeness"),
-        "diagnostics": projection.diagnostics,
+        "completeness": snapshot.get("completeness"),
+        "diagnostics": diagnostics,
     }
 
 
@@ -1333,7 +1528,7 @@ def create_trade_journeys_router(
             },
             "meta": _projection_reader_meta(
                 snapshot_at,
-                _read_state(projection.snapshot, projection.diagnostics),
+                _read_state(projection.snapshot, projection.diagnostics, projection.timeline),
                 reader,
                 tenant_id=tenant_id,
                 environment=environment,
@@ -1375,7 +1570,7 @@ def create_trade_journeys_router(
             ),
             "meta": _projection_reader_meta(
                 snapshot_at,
-                _read_state(projection.snapshot, projection.diagnostics),
+                _read_state(projection.snapshot, projection.diagnostics, projection.timeline),
                 reader,
                 tenant_id=tenant_id,
                 environment=environment,
@@ -1415,7 +1610,7 @@ def create_trade_journeys_router(
             "data": _evidence(projection),
             "meta": _projection_reader_meta(
                 snapshot_at,
-                _read_state(projection.snapshot, projection.diagnostics),
+                _read_state(projection.snapshot, projection.diagnostics, projection.timeline),
                 reader,
                 tenant_id=tenant_id,
                 environment=environment,
