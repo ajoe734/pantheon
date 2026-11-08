@@ -1092,3 +1092,30 @@ Read-only; no new route. These fields extend the existing `GET /bff/management/p
 ### Decision projection
 
 `subject.asset_class` of a projected trading-room decision event follows the chosen instrument kind (`cash_share` -> `equity`, `stock_future` -> `future`); a decision with no instrument stays `equity`, and an unknown kind is rejected instead of being labelled equity.
+
+## Retire a provisioned paper Persona case (BFF-PERSONA-CASE-RETIRE-COMMAND-20261108)
+
+`POST /bff/v1/commands` with `command: "PersonaAction"`, `action: "RetirePaperPersonaCase"` (verb aliases `retire`, `retire_case`) and `target: {"type": "Persona", "id": "<persona_id>"}`. No new HTTP route is added; `POST /bff/personas/{persona_id}/actions/{action_id}` keeps returning the deprecation response for `retire`.
+
+Admission is the existing command admission: operator role, `Idempotency-Key` header, non-empty `audit_context.reason`, and an `X-Confirm-Token` issued for `RetirePaperPersonaCase` on that Persona (the catalog entry has `requires_confirm_token`). The tenant is taken from the authenticated claims only.
+
+Execution calls the existing `retire_persona_provisioning_case(tenant_id, persona_id, reason=audit_context.reason)`; the coordinator owns every retirement step (schedule, compensation, saga, runtime bindings, persona capital binding, pool, persona archive).
+
+Receipt (`domain_receipt`, repeated in `authoritative_readback`):
+
+```json
+{"persona_id": "persona-…", "state": "retired | <unchanged ledger state>",
+ "retirement": {"status": "retired | pending", "pending_step": "…", "pending_reason": "…"}}
+```
+
+`pending_step` and `pending_reason` are present only when `retirement.status` is `pending`; replaying the command continues from that step.
+
+Failed receipts (no owner write happens):
+
+| code | downstream_status | meaning |
+| --- | --- | --- |
+| `persona_case_not_found` | 404 | the Persona has no provisioning ledger |
+| `release_case_use_release_retire` | 409 | the ledger idempotency key starts with `dev-paper-release-`; use `scripts/retire_dev_paper_release_cases.py` |
+| `tenant_required` | 403 | the authenticated caller has no tenant claim |
+
+Dry run (`dryRun: true`, the existing command-admission mechanism) reads the provisioning record only and never calls the coordinator. The response is the usual dry-run submission with `meta.plan`: `persona_id`, `state`, `release_case`, `retirement_status`, `planned_steps` (steps not yet confirmed, in coordinator order) and `confirmed_steps`. A missing ledger or a release case is refused with the same codes as above.

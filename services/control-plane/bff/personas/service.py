@@ -1491,6 +1491,53 @@ def retire_persona_provisioning_case(
     }
 
 
+# --- plan_persona_provisioning_case_retirement ---
+# Release cases (dev-paper-release-*) keep their own BFF-hosted retire script.
+RELEASE_CASE_KEY_PREFIX = "dev-paper-release-"
+
+# Order in which PersonaProvisioningCoordinator.retire_case proves its steps.
+# Read-only mirror used for the dry-run plan; a test pins it to the coordinator.
+PERSONA_CASE_RETIREMENT_STEP_ORDER = (
+    "first_evaluation_schedule",
+    "compensation",
+    "deployment_saga",
+    "runtime_bindings",
+    "persona_capital_binding",
+    "capital_pool",
+    "persona",
+)
+
+
+def plan_persona_provisioning_case_retirement(
+    tenant_id: str, persona_id: str
+) -> Optional[Dict[str, Any]]:
+    """Read-only retirement plan from the provisioning record (no coordinator call).
+
+    Returns ``None`` when the Persona has no provisioning ledger.
+    """
+
+    record = _persona_provisioning_store().get_by_persona(tenant_id, persona_id)
+    if record is None:
+        return None
+    retirement = record.references.get("retirement")
+    retirement = retirement if isinstance(retirement, Mapping) else {}
+    confirmed = [
+        name
+        for name in PERSONA_CASE_RETIREMENT_STEP_ORDER
+        if isinstance(retirement.get(name), Mapping)
+    ]
+    return {
+        "persona_id": persona_id,
+        "state": record.state,
+        "release_case": str(record.idempotency_key).startswith(RELEASE_CASE_KEY_PREFIX),
+        "retirement_status": retirement.get("status"),
+        "planned_steps": [
+            name for name in PERSONA_CASE_RETIREMENT_STEP_ORDER if name not in confirmed
+        ],
+        "confirmed_steps": confirmed,
+    }
+
+
 _PERSONA_CLEANUP_BACKOFF: Dict[Tuple[int, str], Tuple[int, float]] = {}
 
 
