@@ -1053,3 +1053,36 @@ resumed in place at startup, so the same item reaches a terminal state.
 - persona_fleet projects each persona with the app-scoped `PersonaService` bound as the current service (bound by the `project_persona_fleet_item` callback that `main.py` passes to `wire_management_runtime_projections`), the same binding `PersonaService.build_persona_health_items` uses. No module global or second persona projection is added.
 - A persona whose projection raises is reported as an unavailable item with an owner observation `degradation_reason=persona_projection_failed:<ExceptionClass>`; other personas still project. The persona_fleet error branch logs one warning with the exception class.
 - The cockpit human inbox count reads `data.items` of the wired human inbox payload and passes the caller identity, so `human_inbox_summary.total` and the `approval_queue` surface follow the inbox read for the same caller.
+
+## Instrument-aware portfolio holdings and performance attribution (INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107)
+
+Read-only; no new route. These fields extend the existing `GET /bff/management/portfolio-book/holdings` items and the performance-attribution facts and `summary` from the telemetry runtime summary `positions` rows. A cash share row is unchanged apart from the new fields reading `null` / `1.0`.
+
+### Holdings item fields
+
+| Field | Meaning |
+| --- | --- |
+| `symbol` | Underlying or native symbol (for a stock future, the underlying, e.g. `2330.TWSE`). |
+| `instrument_id` | Traded instrument (`ssf:QFF:202611`, or `eq:2330` when the fill carried it); `null` for a cash share whose fills carried none. |
+| `instrument_kind` | `cash_share` or `stock_future`; `null` when the fill reported none. |
+| `contract_month` | `YYYYMM` for a stock future, else `null`. |
+| `multiplier` | Contract multiplier; `1.0` for a cash share or when none was reported. |
+| `margin_reserved` | Initial margin the ledger reserved for the open contracts (currency units); `null` for a cash share. |
+| `asset_class` | An explicit value wins; otherwise derived from `instrument_kind` (`stock_future` -> `future`, `cash_share` -> `equity`), else `other`. |
+| `holding_id` | `{runtime_id}:{key}`; the key is the position's own id, else the `instrument_id` of a non-cash instrument, else the symbol, so a future never shares an id with its underlying's cash row. |
+
+### Valuation
+
+- `market_value` = `quantity` x `multiplier` x `mark_price`, signed by quantity. `unrealized_pnl` is taken from the telemetry row, which computes `quantity` x `multiplier` x (`mark_price` - `average_price`).
+- `average_price` is the cost per unit (a share or a contract). Realized PnL is in currency and is scaled by the fill multiplier when the position is reduced.
+- When the mark is stale or unavailable (`mark_status` is `stale` or `unavailable`), `mark_price`, `market_value` **and `unrealized_pnl`** are all `null`; only the last known quote provenance (`last_mark_at`, `mark_source_ref`) is kept.
+- Expiry settlement (`paper_futures_settled`) closes the contract row and books the ledger's realized PnL; it is not a fill and does not change fill counts.
+
+### Performance attribution
+
+- Each fact carries the same instrument fields and values `market_value` / `notional` with the multiplier.
+- `data.summary.instrument_breakdown` is an additive list grouped by traded instrument (`instrument_key` is the `instrument_id`, else the symbol) with `holding_count`, `market_value`, `total_notional`, `total_pnl`, `unrealized_pnl`, `realized_pnl`, `multiplier` and `margin_reserved`. `supported_dimensions` is unchanged.
+
+### Decision projection
+
+`subject.asset_class` of a projected trading-room decision event follows the chosen instrument kind (`cash_share` -> `equity`, `stock_future` -> `future`); a decision with no instrument stays `equity`, and an unknown kind is rejected instead of being labelled equity.
