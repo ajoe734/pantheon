@@ -3876,3 +3876,59 @@ class TestInstrumentAwarePositionProjection(unittest.TestCase):
         self.assertEqual(
             again["_cost_by_symbol"][self._FUTURE_ID]["realized_pnl"], 2000.0
         )
+
+
+class TestInstrumentCounterfactualRows(unittest.TestCase):
+    """INSTRUMENT-DECISION-LEARNING-COUNTERFACTUAL-20261107 (AC 3)."""
+
+    @staticmethod
+    def _row_event(row: dict[str, Any], *, event_id: str) -> dict[str, Any]:
+        event = TestPositionCostCurrencyBrokerProjection._ledger_fill(
+            symbol="0050.TWSE",
+            quantity=0.0,
+            price=1.0,
+            ledger_fill_count=None,
+            created_at="2026-11-09T05:30:00Z",
+            event_id=event_id,
+            extra_metadata=dict(row),
+        )
+        event["event_type"] = "persona_instrument_counterfactual"
+        event["metrics"] = {}
+        return event
+
+    def test_rows_fold_keyed_by_decision_and_instrument_and_leave_cash_summary_alone(self) -> None:
+        from services.execution.lean_runtime import expression_replay as er
+        from services.execution.lean_runtime.test_expression_replay import _cash, _fut, _record
+
+        record = _record(
+            "d-0050", "0050", "SHORT", 1.0,
+            [_cash("0050", 104.95, 952), _fut("ssf:SRF:202611", "0050", 1000, 104.95, 8700.0, 2)],
+            300000.0, {"eq:0050": [92.5], "ssf:SRF:202611": [92.5]},
+        )
+        result = er.replay([record], None)["decisions"][0]
+        rows = er.counterfactual_rows(record, result)
+
+        store = RuntimeSummaryProjectionStore()
+        base = store.project_event(TestInstrumentAwarePositionProjection._fill(lfc=1, quantity=-5.0, price=2299.0))
+        before = {k: v for k, v in base.items() if k not in ("health_summary",)}
+        for index, row in enumerate(rows):
+            summary = store.project_event(self._row_event(row, event_id=f"evt-cf-{index}"))
+        # Redelivery of the same (decision, instrument) overwrites, never duplicates.
+        summary = store.project_event(self._row_event(rows[0], event_id="evt-cf-redelivered"))
+
+        stored = summary["instrument_counterfactuals"]
+        self.assertEqual([(r["decision_id"], r["instrument_id"]) for r in stored],
+                         [("d-0050", "eq:0050"), ("d-0050", "ssf:SRF:202611")])
+        chosen = next(r for r in stored if r["chosen"])
+        self.assertEqual((chosen["instrument_id"], chosen["pnl_cf"], chosen["units"]), ("ssf:SRF:202611", 24900.0, 2))
+        self.assertEqual(stored[0]["event_id"], "evt-cf-redelivered")
+        # Fills, positions, trade counts and cost basis are untouched.
+        after = {k: v for k, v in summary.items() if k not in ("health_summary", "instrument_counterfactuals")}
+        for key in ("positions", "position_count", "executed_trade_count", "ledger_fill_count", "_cost_by_symbol"):
+            self.assertEqual(after.get(key), before.get(key), key)
+        self.assertNotIn("instrument_counterfactuals", base)
+
+    def test_row_without_decision_or_instrument_key_is_ignored(self) -> None:
+        store = RuntimeSummaryProjectionStore()
+        summary = store.project_event(self._row_event({"decision_id": "d-1"}, event_id="evt-bad"))
+        self.assertNotIn("instrument_counterfactuals", summary)

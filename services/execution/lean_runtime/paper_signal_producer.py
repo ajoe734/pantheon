@@ -296,6 +296,8 @@ def apply_expression_record(
     metadata["view_direction"] = view.get("direction")
     metadata["decision_id"] = record.get("decision_id") or decision.get("decision_id")
     metadata["expression_decision"] = record
+    if stored.get("replay_input") is not None:
+        metadata["expression_replay_input"] = dict(stored["replay_input"])
     metadata["reason_code"] = record.get("reason_code")
     if is_no_trade(record):
         decision["action"] = "HOLD"
@@ -423,6 +425,16 @@ class CurrentArtifactStrategy:
                 "multiplier": chosen_candidate.get("multiplier"),
             },
             "decision": record,
+            # Exactly what the policy was given, so expression_replay input can
+            # be rebuilt from recorded events (dev plan section 6).
+            "replay_input": {
+                "decision_id": decision_id,
+                "view": dict(decision_view),
+                "candidates": [dict(c) for c in candidates],
+                "book_before": book,
+                "budget": budget,
+                "parameters": params,
+            },
         }
 
     @staticmethod
@@ -1387,6 +1399,7 @@ class PaperSignalProducer:
                             "record": dict(evaluated["decision"]),
                             "kind": expression_view.get("kind"),
                             "multiplier": expression_view.get("multiplier"),
+                            "replay_input": evaluated.get("replay_input"),
                         },
                     )
                 apply_expression_record(out, expression_view, stored)
