@@ -1,0 +1,171 @@
+{
+  "task_id": "BFF-MALLOC-ARENA-LIMIT-20261107",
+  "title": "BFF memory grows to 2 GB in glibc per-thread malloc arenas",
+  "before": {
+    "measured_on": "2026-11-07 hosted dev BFF 1e4bc7ce5 (single uvicorn process, no --workers, 8 vCPU VM)",
+    "rss_mb": 1974,
+    "glibc_thread_arena_rss_mb": 1527,
+    "glibc_thread_arenas_aligned_64mb": 61,
+    "pymalloc_arenas_rss_mb": 18,
+    "rss_growth_within_1h_of_restart_mb": {
+      "from_mb": 947,
+      "to_mb": 1974
+    },
+    "sequential_vs_parallel_behavior": "Sequential reads keep RSS flat (60 consecutive reads stayed at 1973 MB) and RSS sometimes falls (2086 MB to 1926 MB), whereas 3 parallel callers raise RSS (persona-management detail +157 MB; jobs +85 MB). Default glibc MALLOC_ARENA_MAX cap is 8 * core_count (64 arenas on 8 vCPU)."
+  },
+  "changes": [
+    "services/control-plane/bff/Dockerfile: added ENV MALLOC_ARENA_MAX=2 next to the existing ENV block (PYTHONDONTWRITEBYTECODE=1, PYTHONUNBUFFERED=1) so the BFF image starts uvicorn with MALLOC_ARENA_MAX=2",
+    "No other image or service changes",
+    "No existing test modified, weakened, or deleted"
+  ],
+  "acceptance_verification": {
+    "1_bff_image_starts_uvicorn_with_malloc_arena_max_2": {
+      "build_command": "DOCKER_CONFIG=/tmp/bff-docker-cfg BUILDX_CONFIG=/tmp/bff-buildx-cfg docker build -q -f services/control-plane/bff/Dockerfile -t pantheon-bff-arena-test:20261107 .",
+      "image_config_env": [
+        "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG=C.UTF-8",
+        "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+        "PYTHON_VERSION=3.12.16",
+        "PYTHON_SHA256=b5796915dc45ff745cfb4e990a7e7c93d6f546328a102ce31448d69ebc37575c",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "PYTHONUNBUFFERED=1",
+        "MALLOC_ARENA_MAX=2",
+        "GIT_SHA=unknown",
+        "BUILD_TIME=unknown"
+      ],
+      "image_config_cmd": [
+        "uvicorn",
+        "services.control_plane.bff.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8001",
+        "--timeout-graceful-shutdown",
+        "8"
+      ],
+      "running_container_pid1_probe": {
+        "pid1_cmdline": [
+          "/usr/local/bin/python3.12",
+          "/usr/local/bin/uvicorn",
+          "services.control_plane.bff.main:app",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "8001",
+          "--timeout-graceful-shutdown",
+          "8"
+        ],
+        "MALLOC_ARENA_MAX": "2",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    "2_python_3_12_slim_40_threads_x_50_iterations_1mb_json_reproduction": {
+      "image": "python:3.12-slim (sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54, Python 3.12.16, glibc 2.41)",
+      "workload_description": "40 threads synchronized via threading.Barrier(40), each building and serializing a >= 1 MB (>= 1,048,576 bytes) JSON payload 50 times with realistic BFF jobs/persona-management row shapes (job_id, id, native_id, source, job_type, status, started_at, created_at, updated_at, persona_id, runtime_id, progress, allowedActions, summary/detail_blob).",
+      "reproduction_with_post_response_outcome_pinning": {
+        "description": "280 BFF job rows per response (>= 1.05 MB serialized JSON) plus a 1 KB post-serialization outcome allocation per iteration that pins the thread arena top chunk",
+        "default_malloc_arena_max_unset": {
+          "malloc_arena_max": "default",
+          "wall_time_s": 28.449,
+          "peak_rss_mb": 258.2,
+          "ru_maxrss_mb": 258.2,
+          "end_rss_mb": 213.11,
+          "aligned_64mb_arenas": 40,
+          "aligned_64mb_arena_rss_mb": 186.14
+        },
+        "with_malloc_arena_max_2": {
+          "malloc_arena_max": "2",
+          "wall_time_s": 38.644,
+          "peak_rss_mb": 182.32,
+          "ru_maxrss_mb": 182.32,
+          "end_rss_mb": 105.95,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 39.04
+        },
+        "delta": {
+          "peak_rss_mb_change": -75.88,
+          "end_rss_mb_change": -107.16,
+          "aligned_64mb_arena_rss_mb_change": -147.1,
+          "aligned_64mb_arenas_change": -39,
+          "wall_time_s_change": 10.195
+        }
+      },
+      "reproduction_indented_json_serialization": {
+        "description": "50 BFF job/persona-detail rows per response serialized with json.dumps(..., indent=2) (>= 1.05 MB serialized JSON) plus a 2 KB outcome record",
+        "default_malloc_arena_max_unset": {
+          "malloc_arena_max": "default",
+          "wall_time_s": 31.65,
+          "peak_rss_mb": 227.14,
+          "ru_maxrss_mb": 227.14,
+          "end_rss_mb": 144.34,
+          "aligned_64mb_arenas": 40,
+          "aligned_64mb_arena_rss_mb": 123.6
+        },
+        "with_malloc_arena_max_2": {
+          "malloc_arena_max": "2",
+          "wall_time_s": 35.719,
+          "peak_rss_mb": 152.61,
+          "ru_maxrss_mb": 152.61,
+          "end_rss_mb": 144.63,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 61.6
+        },
+        "delta": {
+          "peak_rss_mb_change": -74.53,
+          "aligned_64mb_arena_rss_mb_change": -62.0,
+          "aligned_64mb_arenas_change": -39,
+          "wall_time_s_change": 4.069
+        }
+      },
+      "reproduction_pure_build_and_serialize_no_retention": {
+        "description": "450 BFF job rows per response (>= 1.05 MB serialized JSON) built and serialized 50 times per thread across 40 threads with no post-request retained object",
+        "default_malloc_arena_max_unset": {
+          "malloc_arena_max": "default",
+          "wall_time_s": 33.561,
+          "peak_rss_mb": 210.41,
+          "ru_maxrss_mb": 210.41,
+          "end_rss_mb": 65.37,
+          "aligned_64mb_arenas": 40,
+          "aligned_64mb_arena_rss_mb": 42.04
+        },
+        "with_malloc_arena_max_2": {
+          "malloc_arena_max": "2",
+          "wall_time_s": 36.483,
+          "peak_rss_mb": 180.75,
+          "ru_maxrss_mb": 180.75,
+          "end_rss_mb": 64.42,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 8.21
+        },
+        "delta": {
+          "peak_rss_mb_change": -29.66,
+          "aligned_64mb_arena_rss_mb_change": -33.83,
+          "aligned_64mb_arenas_change": -39,
+          "wall_time_s_change": 2.922
+        }
+      }
+    },
+    "3_no_other_image_or_service_changes": {
+      "touched_files": [
+        "services/control-plane/bff/Dockerfile",
+        "docs/deployment/evidence/BFF-MALLOC-ARENA-LIMIT-20261107/evidence.json"
+      ]
+    },
+    "4_no_existing_test_weakened_or_deleted": {
+      "modified_test_files": [],
+      "changed_assertions": []
+    }
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_check_service_lock_shared_deps.py scripts/test_ci_stage0.py scripts/test_deploy_nonprod_vm.py",
+      "result": "101 passed, 2 skipped, 65 subtests passed in 142.77s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/events/test_router.py && .venv-pantheon/bin/python3 scripts/check_service_lock_shared_deps.py",
+      "result": "51 passed, 3 warnings in 67.60s; check_service_lock_shared_deps.py exited 0"
+    }
+  ],
+  "hosted_verification": "NOT RUN. Per task brief, no VM or SSH access is permitted; hosted verification is performed by the downstream operator acceptance task BFF-HEALTH-STALL-MEMORY-ACCEPTANCE-20261107."
+}
