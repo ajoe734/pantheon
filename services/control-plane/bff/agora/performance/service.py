@@ -916,6 +916,38 @@ def pm12_performance_attribution_facts(sources: Dict[str, Any]) -> List[Dict[str
                 )
                 or ""
             )
+            instrument_id = str(
+                _pm12_management_first_non_empty(
+                    _pm12_management_dict_value(position, "instrument_id"),
+                    _pm12_management_dict_value(instrument, "instrument_id"),
+                )
+                or ""
+            )
+            instrument_kind = str(
+                _pm12_management_first_non_empty(
+                    _pm12_management_dict_value(position, "kind", "instrument_kind"),
+                    _pm12_management_dict_value(instrument, "kind", "instrument_kind"),
+                )
+                or ""
+            )
+            contract_month = str(
+                _pm12_management_first_non_empty(
+                    _pm12_management_dict_value(position, "contract_month"),
+                    _pm12_management_dict_value(instrument, "contract_month"),
+                )
+                or ""
+            )
+            raw_multiplier = _pm12_management_as_float(
+                _pm12_management_first_non_empty(
+                    _pm12_management_dict_value(position, "multiplier"),
+                    _pm12_management_dict_value(instrument, "multiplier"),
+                )
+            )
+            # A cash share, or a row that never reported one, is valued one for one.
+            multiplier = raw_multiplier if raw_multiplier is not None and raw_multiplier > 0 else 1.0
+            margin_reserved = _pm12_management_as_float(
+                _pm12_management_dict_value(position, "margin_reserved", "initial_margin_reserved")
+            )
             broker_id = str(
                 _pm12_management_first_non_empty(
                     _pm12_management_dict_value(position, "broker_id", "broker", "broker_ref"),
@@ -957,7 +989,7 @@ def pm12_performance_attribution_facts(sources: Dict[str, Any]) -> List[Dict[str
                 )
             )
             if market_value is None and quantity is not None and mark_price is not None:
-                market_value = round(quantity * mark_price, 6)
+                market_value = round(quantity * multiplier * mark_price, 6)
             notional = _pm12_management_as_float(
                 _pm12_management_first_non_empty(
                     _pm12_management_dict_value(position, "notional", "gross_notional"),
@@ -1068,6 +1100,11 @@ def pm12_performance_attribution_facts(sources: Dict[str, Any]) -> List[Dict[str
                 "persona_id": persona_id,
                 "strategy_id": strategy_id,
                 "symbol": symbol,
+                "instrument_id": instrument_id or None,
+                "instrument_kind": instrument_kind or None,
+                "contract_month": contract_month or None,
+                "multiplier": multiplier,
+                "margin_reserved": margin_reserved,
                 "broker_id": broker_id,
                 "regime": regime,
                 "deployment_stage": str(
@@ -1095,6 +1132,9 @@ def pm12_performance_attribution_facts(sources: Dict[str, Any]) -> List[Dict[str
                     "broker": pm12_dimension_key(broker_id),
                     "runtime": pm12_dimension_key(runtime_id or runtime_binding_id),
                     "regime": pm12_dimension_key(regime),
+                    # A cash share keeps its symbol; a derivative is its own
+                    # instrument so it never merges into its underlying.
+                    "instrument": pm12_dimension_key(instrument_id or symbol),
                 },
             })
 
@@ -1183,6 +1223,39 @@ def pm12_attribution_metrics(facts: List[Dict[str, Any]]) -> Dict[str, Any]:
         "total_trades": int(trade_total) if trade_total is not None else 0,
         "latest_telemetry_at": _pm12_management_latest_timestamp(facts, "collected_at"),
     }
+
+
+def pm12_attribution_instrument_breakdown(facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Group attribution facts by traded instrument.
+
+    A cash share is grouped under its symbol; a derivative is its own group
+    under its ``instrument_id`` so it never merges into its underlying. Values
+    in each group already carry the contract multiplier.
+    """
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for fact in facts:
+        key = pm12_dimension_key(fact.get("instrument_id") or fact.get("symbol"))
+        grouped.setdefault(key, []).append(fact)
+    breakdown: List[Dict[str, Any]] = []
+    for key in sorted(grouped):
+        group = grouped[key]
+        head = group[0]
+        breakdown.append({
+            "instrument_key": key,
+            "instrument_id": head.get("instrument_id"),
+            "symbol": head.get("symbol"),
+            "instrument_kind": head.get("instrument_kind"),
+            "contract_month": head.get("contract_month"),
+            "multiplier": head.get("multiplier") if head.get("multiplier") is not None else 1.0,
+            "margin_reserved": pm12_metric_sum(group, "margin_reserved"),
+            "holding_count": len(group),
+            "market_value": pm12_metric_sum(group, "market_value"),
+            "total_notional": pm12_metric_sum(group, "notional"),
+            "total_pnl": pm12_metric_sum(group, "total_pnl"),
+            "unrealized_pnl": pm12_metric_sum(group, "unrealized_pnl"),
+            "realized_pnl": pm12_metric_sum(group, "realized_pnl"),
+        })
+    return breakdown
 
 
 def pm12_performance_attribution_group_entries(
@@ -1540,6 +1613,7 @@ def pm12_performance_attribution_response(
         "basis": PM12_ATTRIBUTION_PERIOD_BASIS,
         "requested_period": period_scope["requested"],
         "period_windowed": period_scope["windowed"],
+        "instrument_breakdown": pm12_attribution_instrument_breakdown(facts),
     }
     data = {
         "id": data_id,
