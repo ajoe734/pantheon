@@ -77,6 +77,12 @@ def pair_title(backend_sha, frontend_sha):
     return f"Dev release {backend_sha} + {frontend_sha}"
 
 
+def drill_title(backend_sha, frontend_sha):
+    # Mirrors the compensation drill run-name; it must never equal pair_title so a
+    # failed drill is not counted as a failed attempt of the pair.
+    return f"Dev compensation drill {backend_sha} + {frontend_sha}"
+
+
 def runs(client, workflow, **filters):
     query = urlencode({"branch": "dev", "per_page": 100, **filters})
     return client.request("GET", f"/repos/{client.repository}/actions/workflows/{workflow}/runs?{query}")["workflow_runs"]

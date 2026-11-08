@@ -1,0 +1,15 @@
+{
+  "task_id": "DEV-DEPLOY-COMPENSATION-DRILL-20261107",
+  "kind": "functional-contract-evidence",
+  "hosted_verification": "not performed; coordinator verifies after merge by operator-dispatched drill",
+  "record_against": "HOSTED-DEPLOY-WINDOW-ATTRIBUTION-ACCEPTANCE-20261106 item 4 (labelled drill)",
+  "changes": [
+    "nonprod-deploy.yml: compensation_drill input (default false), distinct run-name, validation in deploy/isolated/hosted-chain jobs, served-pair refusal before lease, drill step between candidate seal and paper baseline, compensation conditions include the drill, drill labelled in summary and marker artifact",
+    "auto_deploy_dev_pair.py: drill_title mirror; drill run never matches pair_title",
+    "tests: 5 contract tests (branch-ci wired) and 4 auto_deploy tests"
+  ],
+  "tests": {
+    "scripts/test_auto_deploy_dev_pair.py": "all pass",
+    "scripts/test_dev_environment_lease_deploy_contract.py": "new tests pass; remaining failures are pre-existing in this sandbox and identical to the unmodified base"
+  }
+}
