@@ -1,0 +1,314 @@
+{
+  "schema_version": "pantheon.compat-cleanup-acceptance.v1",
+  "task_id": "COMPAT-CLEANUP-ACCEPT-20261107",
+  "verified_at": "2026-11-08T18:34:00.515Z",
+  "operator_authorization": {
+    "authorized_on": "2026-11-07",
+    "audit_baseline_files": [
+      "/tmp/pantheon-retirement-audit-20261107/report.md",
+      "/tmp/pantheon-retirement-audit-20261107/findings.json"
+    ],
+    "scope": [
+      "A01",
+      "A02",
+      "A03",
+      "A04",
+      "A05",
+      "A06",
+      "A07",
+      "A08",
+      "A09",
+      "A10",
+      "A11",
+      "A12",
+      "A13",
+      "A14",
+      "A15",
+      "A16",
+      "A17"
+    ],
+    "posture": "Verified against current protected dev and accepted hosted dev release without production/cloud provisioning, live-capital actions, secret disclosure, fabricated MFA/approvals, or accepted-loop replay."
+  },
+  "served_dev_release": {
+    "deployment_state": "accepted",
+    "accepted_at": "2026-11-08T18:05:17Z",
+    "controller_run_id": "42502558089",
+    "integration_gate_run_id": "42504913993",
+    "pair_id": "ef216b82d0f67c95828a0c006ac73ce45471f703cc9e8f4b5f5d6a8c689a3289",
+    "backend": {
+      "repository": "ajoe734/pantheon",
+      "branch": "dev",
+      "deployment_json_bff_commit": "78a37e06c7bfe43a6f2023729a0798b452e2f646",
+      "bff_version_commit": "78a37e06c7bfe43a6f2023729a0798b452e2f646",
+      "bff_image_digest": "sha256:778ff0f874e87b9deb045eb6ba46b5cc5702911024189b11912ca24806b78a29",
+      "readyz": {
+        "status": 200,
+        "status_field": "ok"
+      }
+    },
+    "frontend": {
+      "repository": "ajoe734/execute-plans",
+      "branch": "dev",
+      "deployment_json_frontend_sha": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "artifact_digest_sha256": "2c6bd18596cc0318bd3e539c9a7f419b22e621c6ef69ac162526c1ee43b2dd64",
+      "build_mode": {
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_REAL_WRITES": "true",
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+      }
+    },
+    "probes": {
+      "candidatePreSwitch": "passed",
+      "postSwitch": "passed",
+      "rollbackRequired": false
+    }
+  },
+  "upstream_deliveries": [
+    {
+      "task_id": "SOURCE-COMPAT-CLEANUP-20261107",
+      "repository": "ajoe734/pantheon",
+      "pr": 7056,
+      "head_sha": "76b7e872feeda7279eb0e5e92994fb36a4ce4db8",
+      "merge_commit_sha": "757a804536d5d10710a6f1e07d53bba767efaad3",
+      "ancestor_of_served_bff": true,
+      "findings": [
+        "A01"
+      ],
+      "test_evidence": "services/source_ingestion/tests (1081 passed, 4 skipped), services/source_ingestion/*.py (59 passed, 9 skipped), services/search/test_index_pipeline.py (26 passed), BFF source-ingest read tests (22 passed)"
+    },
+    {
+      "task_id": "CORE-COMPAT-CLEANUP-20261107",
+      "repository": "ajoe734/pantheon",
+      "pr": 7053,
+      "head_sha": "f3963b5916d881ef87a07c85b4378a73a9d114e6",
+      "merge_commit_sha": "83ebb82ec33c5d5d31eb60b59bc1564dae9c2dad",
+      "ancestor_of_served_bff": true,
+      "findings": [
+        "A02",
+        "A09",
+        "A10",
+        "A12"
+      ],
+      "test_evidence": "test_agora_audit_store, b6_management_nl_ask, experiments_frontend_cron (141 passed), tests/run_internal_api_smoke.py (SMOKE OK), dormant_matrix wandb row passed"
+    },
+    {
+      "task_id": "FE-COMPAT-CLEANUP-20261107",
+      "repository": "ajoe734/execute-plans",
+      "pr": 970,
+      "head_sha": "d62f0e4f4f2f32b1ed5d94a90e0e9afd1d90ea7d",
+      "merge_commit_sha": "7aa32465bdda0a90914220df04e8213a6b396996",
+      "ancestor_of_served_fe": true,
+      "findings": [
+        "A03",
+        "A04",
+        "A05",
+        "A14",
+        "A15"
+      ],
+      "test_evidence": "vitest management routes/centers, deploymentRuntime/runtimeEnv/devLoginHelper, asyncTransitionPolicy, StrategyWorkshopPage/WorkshopSessionView, Idempotency-Key and /bff/ranking-formulas* callers passed"
+    },
+    {
+      "task_id": "OPS-COMPAT-CLEANUP-20261107",
+      "repository": "ajoe734/pantheon",
+      "pr": 7059,
+      "head_sha": "f112d7b3860ef4a63d08f168bac16854e7f83fac",
+      "merge_commit_sha": "a41a5780308af70e7e308e87633f96cf1768b8cf",
+      "ancestor_of_served_bff": true,
+      "findings": [
+        "A07",
+        "A08",
+        "A11",
+        "A17"
+      ],
+      "test_evidence": "worker_runner state.json receipt tests, wave_workflow fallback removal tests, TaskStore load_snapshot(observational=True) caller/test suites passed"
+    },
+    {
+      "task_id": "RUNTIME-COMPAT-CLEANUP-20261107",
+      "repository": "ajoe734/pantheon",
+      "pr": 7058,
+      "head_sha": "edf96609748d9d54ac4784d42f1ba864afece5f7",
+      "merge_commit_sha": "e6c3c76e24db1e7c30bc25d7ee5358228f94c9b7",
+      "ancestor_of_served_bff": true,
+      "findings": [
+        "A06",
+        "A16"
+      ],
+      "test_evidence": "test_dev_environment_lease_deploy_contract, test_paper_runtime, test_artifact_loader, test_current_artifact_signal, promotion gate projection tests passed"
+    },
+    {
+      "task_id": "BFF-FINAL-COMPAT-20261107",
+      "repository": "ajoe734/pantheon",
+      "pr": 7070,
+      "head_sha": "0cac38b86870bbf07845d9377b1ef1180c6b3ad4",
+      "merge_commit_sha": "b9aefbfede3ede522f7204459aa75e0f3f3fee8e",
+      "ancestor_of_served_bff": true,
+      "findings": [
+        "A13",
+        "A15"
+      ],
+      "test_evidence": "bff_route_manifest_backend.py --check (623 routes), test_execute_plans_contract_registry, test_bff_path_dedupe, idempotency/governance/session suites (188+ passed)"
+    }
+  ],
+  "findings_disposition": {
+    "A01": {
+      "disposition": "removed_compat",
+      "owner_task": "SOURCE-COMPAT-CLEANUP-20261107",
+      "summary": "SourceIngestionRuntime owns stores/locks/config as plain attributes; _active_attr, sys.modules lookup, __code__ dispatch, and main.py forwarding aliases removed; callers and tests migrated."
+    },
+    "A02": {
+      "disposition": "unified_writer_retained_jsonl",
+      "owner_task": "CORE-COMPAT-CLEANUP-20261107",
+      "summary": "AgoraService and management_service write audit events solely through AgoraAuditStore; read_store writer fallbacks removed; existing JSONL store retained because Governance decision store has different schema/semantics."
+    },
+    "A03": {
+      "disposition": "migrated_links_kept_embedded_views",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107",
+      "summary": "Embedded PortfolioBook/PerformanceAttribution/PersonaLeague/QuarterlyRanking retained inside canonical centers; all frontend-generated legacy management links migrated; PromotionAllocation dead files removed; LEGACY_REDIRECTS kept for external/bookmark URL compatibility."
+    },
+    "A04": {
+      "disposition": "retained_runtime_config_removed_legacy_globals",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107",
+      "summary": "Same-origin /runtime-config.js (__PANTHEON_DEPLOYMENT_CONFIG__) retained for immutable cross-env bundles; legacy __PANTHEON_BFF_RUNTIME__, __PANTHEON_ENV__, and window.VITE_BFF_* readers removed."
+    },
+    "A05": {
+      "disposition": "consolidated_timeout_policy",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107",
+      "summary": "Frontend timeout policies consolidated into src/lib/v4/asyncTransitionPolicy.ts; src/lib/v5/timeoutPolicy.ts and src/lib/v4/asyncTransitions.ts shims deleted."
+    },
+    "A06": {
+      "disposition": "retired_root_static_kept_fleet_and_exec_split",
+      "owner_task": "RUNTIME-COMPAT-CLEANUP-20261107",
+      "summary": "Retired root docker-compose.yml pantheon-paper-runtime service and static-paper-runtime profile; retained paper-fleet-reconciler and docker-compose.exec.yml split-topology service; dev VM docker ps confirms only pantheon-paper-fleet-reconciler-1 is present."
+    },
+    "A07": {
+      "disposition": "retained_safety_fence",
+      "owner_task": "OPS-COMPAT-CLEANUP-20261107",
+      "summary": "Retained retired-path FIFO fence upgrade in promote_supervisor_runtime to fail-closed against unaudited historical writers during supervisor promotion/rollback."
+    },
+    "A08": {
+      "disposition": "removed_legacy_receipt_fallback",
+      "owner_task": "OPS-COMPAT-CLEANUP-20261107",
+      "summary": "Removed legacy .orchestrator/state.json fallback from worker_runner; migrated fixtures to worker-runtime/state.json."
+    },
+    "A09": {
+      "disposition": "deleted_unused_aliases",
+      "owner_task": "CORE-COMPAT-CLEANUP-20261107",
+      "summary": "Deleted unused SSEReconciler alias, Cron promotion_gate_factory parameter, and TwelveLoopProjector._recompute_observation_status wrapper."
+    },
+    "A10": {
+      "disposition": "deleted_outer_wrappers_kept_hyphen_shim",
+      "owner_task": "CORE-COMPAT-CLEANUP-20261107",
+      "summary": "Deleted services/control_plane/internal_api.py and internal_api_min.py; updated CI py_compile to services/control_plane/internal/internal_api.py; retained hyphen-directory loader shim."
+    },
+    "A11": {
+      "disposition": "removed_wave_config_fallbacks",
+      "owner_task": "OPS-COMPAT-CLEANUP-20261107",
+      "summary": "Removed wave_workflow config fallbacks across supervisor, auto_integrator, check_commit_trailers, publish_promote, and release_branch_discipline."
+    },
+    "A12": {
+      "disposition": "removed_wandb_deferred_prep_alias",
+      "owner_task": "CORE-COMPAT-CLEANUP-20261107",
+      "summary": "Removed PANTHEON_ENABLE_WANDB_DEFERRED_PREP alias and helper; migrated smoke/tests to PANTHEON_ENABLE_WANDB_OFFLINE_STORE."
+    },
+    "A13": {
+      "disposition": "removed_immediate_wrappers_retained_410_guards",
+      "owner_task": "BFF-FINAL-COMPAT-20261107",
+      "summary": "Removed 4 /bff/ranking/formulas* deprecation wrappers (hosted GET /bff/ranking/formulas returns 404); retained business retirement guards (hosted POST /bff/ranking/formulas/{id}/actions/retire returns 410 ACTION_RETIRED) and 7-day access-log-gated tombstones."
+    },
+    "A14": {
+      "disposition": "removed_hidden_test_dom",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107",
+      "summary": "Removed display:none completeness-grade and workshop-readiness DOM nodes from WorkshopSessionView.tsx and migrated tests to visible UI; hosted /agora/strategy-workshop has 0 hidden test-id nodes."
+    },
+    "A15": {
+      "disposition": "migrated_clients_removed_x_idempotency_key",
+      "owner_task": "FE-COMPAT-CLEANUP-20261107 + BFF-FINAL-COMPAT-20261107",
+      "summary": "Migrated execute-plans callers to Idempotency-Key and removed X-Idempotency-Key support across BFF; hosted POST /bff/v1/commands?dryRun=true with X-Idempotency-Key only returns 400 VALIDATION_FAILED while canonical Idempotency-Key passes header validation."
+    },
+    "A16": {
+      "disposition": "migrated_producers_retained_reader",
+      "owner_task": "RUNTIME-COMPAT-CLEANUP-20261107",
+      "summary": "Migrated in-repo artifact metadata producers off promotion_state to artifact_state + deployment_stage; retained promotion_state reader fallback in artifact_loader because persisted object-store inventory is external."
+    },
+    "A17": {
+      "disposition": "renamed_parameter_and_callers",
+      "owner_task": "OPS-COMPAT-CLEANUP-20261107",
+      "summary": "Renamed TaskStore.load_snapshot(refresh_checkpoint=False) to load_snapshot(observational=True) across all callers and tests."
+    }
+  },
+  "hosted_verification": {
+    "authenticated_reads": {
+      "GET /bff/personas": {
+        "status": 200,
+        "count": 20
+      },
+      "GET /bff/deployments": {
+        "status": 200
+      },
+      "GET /bff/ranking-formulas": {
+        "status": 200
+      },
+      "GET /bff/rankings": {
+        "status": 200
+      }
+    },
+    "a06_dev_vm_paper_containers": [
+      "pantheon-paper-fleet-reconciler-1\tUp About an hour (healthy)\tpantheon-paper-fleet-reconciler"
+    ],
+    "a13_route_checks": {
+      "GET /bff/ranking/formulas": {
+        "status": 404,
+        "code": "RESOURCE_NOT_FOUND"
+      },
+      "POST /bff/ranking/formulas/{id}/actions/retire": {
+        "status": 410,
+        "code": "ACTION_RETIRED"
+      }
+    },
+    "a15_header_checks": {
+      "POST /bff/v1/commands?dryRun=true (X-Idempotency-Key only)": {
+        "status": 400,
+        "code": "VALIDATION_FAILED",
+        "reason": "Final contract routes require a non-empty Idempotency-Key header"
+      },
+      "POST /bff/v1/commands?dryRun=true (canonical Idempotency-Key)": {
+        "status": 428,
+        "code": "CONFIRMATION_REQUIRED",
+        "header_accepted": true
+      },
+      "POST /bff/logout (canonical Idempotency-Key)": {
+        "status": 200,
+        "idempotency_recorded": true
+      }
+    },
+    "browser_navigation_and_workshop": {
+      "checked_at": "2026-11-08T18:34:00.515Z",
+      "post_login_url": "https://app.dev.mvl-cap.tw/management/cockpit",
+      "a04_runtime_globals": {
+        "hasDeploymentConfig": false,
+        "hasLegacyBffRuntime": false,
+        "hasLegacyEnv": false
+      },
+      "a03_navigation": {
+        "legacy_portfolio_book_redirected_to": "https://app.dev.mvl-cap.tw/management/performance?tab=overview",
+        "performance_center_main_text_length": 1315,
+        "ranking_formula_url": "https://app.dev.mvl-cap.tw/management/ranking/formulas/pm12-quarterly-ranking-formula",
+        "ranking_formula_main_text_length": 325
+      },
+      "a14_workshop_visible_state": {
+        "workshop_url": "https://app.dev.mvl-cap.tw/agora/strategy-workshop",
+        "visible_text_length": 191,
+        "visible_text_snippet": "A\nAGORA\n⚡\n交易僕人\n尚未建立\n建立交易僕人\nSign out\nTrading Room\nStrategy Workshop\nPerformance\nStrategy Workshops\n+ Create Workshop\nNo workshops found. Click \"+ Create Workshop\" to begin.\nJobs\nShadow\nJournal",
+        "retired_hidden_completeness_grade_count": 0,
+        "retired_hidden_workshop_readiness_count": 0
+      }
+    }
+  },
+  "remaining_constraints": [
+    "A13: Remaining 410 notification routes outside /bff/ranking/formulas* stay gated on external 7-day BFF access-log confirmation as documented in docs/conventions/CANONICAL_PATH_NAMING.md.",
+    "A16: artifact_loader retains the promotion_state reader fallback until a full persisted object-store metadata inventory confirms zero legacy-only objects.",
+    "A12/A17: Historical evidence and out-of-contract reference docs mentioning PANTHEON_ENABLE_WANDB_DEFERRED_PREP or refresh_checkpoint are documentary only and do not affect runtime behavior."
+  ]
+}
