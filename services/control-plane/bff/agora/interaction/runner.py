@@ -13,6 +13,7 @@ from .provider import (
     authority_boundary,
     build_participant_admission,
     build_provider_prompt,
+    hydrate_persona_operating_context,
     validate_provider_opinion,
 )
 from .store import InteractionLifecycleStore
@@ -295,13 +296,30 @@ def run_selected_persona_interaction(
     from services.control_plane.bff.agora.strategy_workshop.events import ws_publish
 
     frozen: List[tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
+    evidence_cutoff = str(human_submitted_at or occurred_at)
     if frozen_participants is not None:
         by_id = {str(item["participant"]["persona_id"]): item for item in frozen_participants}
         for persona_id in participants:
             item = by_id.get(persona_id)
             if item is None:
                 raise ValueError(f"persisted frozen Persona admission missing for {persona_id}")
-            frozen.append((item["persona_profile"], item["participant"], item["admission"]))
+            persona_profile = json.loads(json.dumps(item["persona_profile"], default=str))
+            if (
+                not isinstance(persona_profile.get("operating_context"), dict)
+                and isinstance(item.get("operating_context"), dict)
+            ):
+                persona_profile["operating_context"] = json.loads(
+                    json.dumps(item["operating_context"], default=str)
+                )
+            if not isinstance(persona_profile.get("operating_context"), dict):
+                persona_profile["operating_context"] = hydrate_persona_operating_context(
+                    persona=persona_profile,
+                    read_store=read_store,
+                    tenant_id=tenant_id,
+                    captured_at=str(item["participant"].get("captured_at") or occurred_at),
+                    evidence_cutoff=evidence_cutoff,
+                )
+            frozen.append((persona_profile, item["participant"], item["admission"]))
     else:
         personas = {
             str(persona.get("persona_id") or persona.get("id") or ""): persona
@@ -320,7 +338,15 @@ def run_selected_persona_interaction(
                 tenant_id=tenant_id,
                 captured_at=occurred_at,
             )
-            frozen.append((persona, participant, admission))
+            persona_profile = json.loads(json.dumps(persona, default=str))
+            persona_profile["operating_context"] = hydrate_persona_operating_context(
+                persona=persona_profile,
+                read_store=read_store,
+                tenant_id=tenant_id,
+                captured_at=occurred_at,
+                evidence_cutoff=evidence_cutoff,
+            )
+            frozen.append((persona_profile, participant, admission))
 
     opinions: List[Dict[str, Any]] = []
     invocations: List[Dict[str, Any]] = []
@@ -427,6 +453,11 @@ def run_selected_persona_interaction(
             context_refs=context_refs,
             tenant_id=tenant_id,
             submitted_at=human_submitted_at or occurred_at,
+            operating_context=(
+                persona.get("operating_context")
+                if isinstance(persona.get("operating_context"), dict)
+                else None
+            ),
         )
         invocation = {
             "invocation_id": invocation_id,
