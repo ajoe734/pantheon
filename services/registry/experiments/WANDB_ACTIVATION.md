@@ -126,8 +126,7 @@ The repo now has a selector in `services/registry/experiments/config.py`, and it
 selectable only behind explicit W&B gates. The current state is:
 
 - `EXPERIMENT_BACKEND` exists and defaults to `"mlflow"`.
-- `EXPERIMENT_BACKEND=wandb` requires `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1`; legacy
-  `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` is accepted as a compatibility alias for offline
+- `EXPERIMENT_BACKEND=wandb` requires `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` for offline
   local-store mode.
 - `PANTHEON_WANDB_MODE=online` requires `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1`, a test project
   via `PANTHEON_WANDB_PROJECT` or `WANDB_PROJECT`, and `WANDB_API_KEY`.
@@ -253,7 +252,7 @@ Additional context from OSS ecosystem gap analysis (`docs/reviews/2026-04-16-oss
 
 The following work from BP5-OSS-004 and OSS-003 remains intact and does not regress:
 
-- `EXPERIMENT_BACKEND` env-var selector in `services/registry/experiments/config.py` (default `"mlflow"`, `wandb` offline mode available only behind `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` or legacy `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1`; `wandb` online mode available only behind `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1` plus test project/API-key config).
+- `EXPERIMENT_BACKEND` env-var selector in `services/registry/experiments/config.py` (default `"mlflow"`, `wandb` offline mode available only behind `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1`; `wandb` online mode available only behind `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1` plus test project/API-key config).
 - `services/registry/experiments/adapter.py` now carries pluggable backend wiring plus `OfflineWandbLocalBackend` for local run/artifact ref parity checks and `WandbOnlineBackend` for explicit-gated SDK upload/readback smoke.
 - `services/registry/experiments/adapter.py` mirrors canonical `artifact_state` and derived `deployment_stage`; legacy `lifecycle_state` is accepted only as `pantheon.compat.lifecycle_state` / `promoted_metadata.compat` during migration.
 - `services/registry/experiments/smoke_test.py --backend wandb` now proves offline metadata-shape parity for the local-store lane using canonical state fields.

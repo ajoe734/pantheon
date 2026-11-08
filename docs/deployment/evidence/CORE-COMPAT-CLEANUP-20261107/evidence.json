@@ -1,0 +1,16 @@
+{
+  "task_id": "CORE-COMPAT-CLEANUP-20261107",
+  "findings": {
+    "A02": "AgoraService and management_service now write audit events only through AgoraAuditStore (the append-only JSONL writer); the read_store fallbacks are removed. Governance decision store was not adopted as owner: it records decisions, not append-only Agora audit events with tenant-scoped readback, and replacing it would require a data migration. No second writer store, no data migration; existing JSONL data retained.",
+    "A09": "Removed unused SSEReconciler alias, Cron promotion_gate_factory parameter, and TwelveLoopProjector._recompute_observation_status wrapper (no remaining callers).",
+    "A10": "Deleted services/control_plane/internal_api.py and internal_api_min.py wrappers; CI py_compile entry now targets services/control_plane/internal/internal_api.py; the hyphen-directory loader shim is retained.",
+    "A12": "Removed PANTHEON_ENABLE_WANDB_DEFERRED_PREP alias and is_wandb_deferred_prep_enabled helper; dormant smoke, W&B tests and docs use PANTHEON_ENABLE_WANDB_OFFLINE_STORE. services/learning/DEFERRED_OSS_ACTIVATION_MAP.md line ~312 still mentions the alias; it is outside the task artifact contract and needs a follow-up doc edit. docker-compose PANTHEON_DEFERRED_PREP_GATE is a different, documentary variable and was left alone."
+  },
+  "verification": {
+    "bff_focused": "test_agora_audit_store, b6_management_nl_ask, management_nl_assistant_provider, b6_003 refusal, b6_001 security: pass except 3 pre-existing baseline failures (test_nl_ask_tenant_scopes_portfolio_summary, test_isolated_fresh_process_seeded_readback_and_rollback_recovery, test_main_py_all_read_store_attributes_are_inventoried_and_mapped)",
+    "experiments_frontend_cron": "141 passed",
+    "internal_api_smoke": "tests/run_internal_api_smoke.py SMOKE OK",
+    "dormant_matrix": "wandb row now passes; finrl and rllib rows fail identically on baseline (environment)",
+    "not_run": "services/control-plane/tests/agora/test_cross_user_isolation.py needs a Postgres DSN (collection error, environment)"
+  }
+}

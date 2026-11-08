@@ -1,0 +1,225 @@
+{
+  "at": "2026-11-07T23:20:17.339868+00:00",
+  "task_id": "HUMAN-INBOX-OWNER-FILTERED-READ-ACCEPTANCE-20261107",
+  "exact_pair": {
+    "fe": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+    "bff": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
+    "pair": "c327f5c2e586913afa2ed78d464bbc9c0b760313915ff9ef7218e7c409a30388",
+    "acceptedAt": "2026-11-07T22:42:46Z"
+  },
+  "acceptance": {
+    "AC1": {
+      "status": "pass",
+      "count": 20,
+      "start": "2026-11-07T23:11:06.560Z",
+      "end": "2026-11-07T23:11:14.975Z",
+      "max_ms": 760.7999999523163,
+      "within_original_30min": true,
+      "all_contributors_ok": true,
+      "VMload1_5_15": [
+        5.79443359375,
+        5.14453125,
+        5.556640625
+      ],
+      "load_measured_at": "2026-11-07T23:11:28.467318Z",
+      "load_sample_after_batch_seconds": 13.492
+    },
+    "AC2": {
+      "status": "supported_by_actual_isolation_and_source_attribution_pending_independent_review",
+      "original_mixed_window": "22filtered approvals +22filtered proposals;1unfilteredeach present, retained unchanged. Same BFF window has exactly1shell-summary GET.",
+      "isolation": "3inboxbefore +3inboxafter each generate exactly1filteredownerGETperrequest and0unfiltered; sole isolatedshell-summary GET reproduces1unfilteredapproval+1unfilteredproposal and1filteredapproval. Source9a46 build_shell_summary_counts calls unfiltered default reads. No product source edits.",
+      "limits": "The original mixed 20-read window has no per-owner correlation header logging, so source attribution uses same version isolated A/B/A plus route timestamps; all original unfiltered lines are retained."
+    },
+    "AC3": {
+      "status": "pass",
+      "actual_incidents": [
+        "agent-c0be28c2c638-0002",
+        "infra-bff-c0c7d46419976f1c51db4581"
+      ],
+      "pending_governance": 0,
+      "pending_evolution": 0,
+      "all_decision_owner_count": 587,
+      "all_decision_API_IDs_exact_owner_match": true,
+      "all_decision_visible_DOM_rows": 587,
+      "screenshots": [
+        "goal-inbox-followup-66V03q/human-inbox.png",
+        "goal-inbox-followup-66V03q/all-approvals-first.png",
+        "goal-inbox-followup-66V03q/all-approvals-last.png"
+      ]
+    },
+    "AC4": {
+      "status": "pass",
+      "before_after_exact_pair_unchanged": true,
+      "FE": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+      "BFF": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c"
+    }
+  },
+  "evidence_files": [
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/goal-inbox20-1794093075530.json",
+      "sha256": "9b4843a8cf4e7e7c2c2482ada3639984657e251d836a3b13899695fcff1c55a8"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/goal-inbox20-real-VM-load-20261107.json",
+      "sha256": "e2779b8b9d1dfd47a543625e9a14eaf71b66758652b8a2e486cc875e992669fe"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/goal-inbox20-same-window-owner-HTTP-20261107.json",
+      "sha256": "b1f58c1230f9c9ac3537b8886f4d179520354f8d7bd487014256ce6c9b69e14e"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/goal-inbox20-same-window-BFF-HTTP-20261107.json",
+      "sha256": "9f8287f0e92855be59799c7b639d96d5c35974be340e2df33c6eb2599ce0e5eb"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/goal-inbox-followup-66V03q/result.json",
+      "sha256": "48ced8c493815c7ca1bf73b9c0f57233dcf94adda53d95fa36e9c83754f69bfd"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/goal-inbox-owner-attribution-isolated-phases-20261107.json",
+      "sha256": "0278f37c55a6db6e91bd2ab88edf6dcbfa365f4ab7cb3f0f82962acb7e61ffe2"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/goal-governance-independent-owner-231546.json",
+      "sha256": "9e3c564110284a0eb7f3a5d2e1074b4043fb2a7ab6cc308d410bc9abc1a1d469"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/actual-incident-postmortem-owner-231546.json",
+      "sha256": "b937a46e9e0413a2f6b09bfd8792811f1929e11ed53be044c335427d433c6ab2"
+    },
+    {
+      "path": "/tmp/pantheon-dev-operable-20261104/actual-research-evolution-owner-231734.json",
+      "sha256": "8ee874d70fb723d7ea1f4d23100a5e5d338ed744ae3259e8304a36cbe168547f"
+    }
+  ],
+  "business_writes": false,
+  "repository_delivery": "Evidence-only packaging in this PR; independent Codex review required, no whole-task PASS from GitHub green alone.",
+  "source_implementation": "No root product source changes; no new task or publisher; original Supervisor owns remaining source.",
+  "sample_timings": [
+    {
+      "index": 1,
+      "at": "2026-11-07T23:11:06.566Z",
+      "status": 200,
+      "elapsed_ms": 354.8
+    },
+    {
+      "index": 2,
+      "at": "2026-11-07T23:11:06.935Z",
+      "status": 200,
+      "elapsed_ms": 760.8
+    },
+    {
+      "index": 3,
+      "at": "2026-11-07T23:11:07.702Z",
+      "status": 200,
+      "elapsed_ms": 646.9
+    },
+    {
+      "index": 4,
+      "at": "2026-11-07T23:11:08.354Z",
+      "status": 200,
+      "elapsed_ms": 352.5
+    },
+    {
+      "index": 5,
+      "at": "2026-11-07T23:11:08.713Z",
+      "status": 200,
+      "elapsed_ms": 579.3
+    },
+    {
+      "index": 6,
+      "at": "2026-11-07T23:11:09.299Z",
+      "status": 200,
+      "elapsed_ms": 501.1
+    },
+    {
+      "index": 7,
+      "at": "2026-11-07T23:11:09.808Z",
+      "status": 200,
+      "elapsed_ms": 628.4
+    },
+    {
+      "index": 8,
+      "at": "2026-11-07T23:11:10.443Z",
+      "status": 200,
+      "elapsed_ms": 352.1
+    },
+    {
+      "index": 9,
+      "at": "2026-11-07T23:11:10.802Z",
+      "status": 200,
+      "elapsed_ms": 302.4
+    },
+    {
+      "index": 10,
+      "at": "2026-11-07T23:11:11.114Z",
+      "status": 200,
+      "elapsed_ms": 345.2
+    },
+    {
+      "index": 11,
+      "at": "2026-11-07T23:11:11.465Z",
+      "status": 200,
+      "elapsed_ms": 252.5
+    },
+    {
+      "index": 12,
+      "at": "2026-11-07T23:11:11.725Z",
+      "status": 200,
+      "elapsed_ms": 563.8
+    },
+    {
+      "index": 13,
+      "at": "2026-11-07T23:11:12.295Z",
+      "status": 200,
+      "elapsed_ms": 241
+    },
+    {
+      "index": 14,
+      "at": "2026-11-07T23:11:12.543Z",
+      "status": 200,
+      "elapsed_ms": 208.1
+    },
+    {
+      "index": 15,
+      "at": "2026-11-07T23:11:12.758Z",
+      "status": 200,
+      "elapsed_ms": 180.1
+    },
+    {
+      "index": 16,
+      "at": "2026-11-07T23:11:12.946Z",
+      "status": 200,
+      "elapsed_ms": 323.3
+    },
+    {
+      "index": 17,
+      "at": "2026-11-07T23:11:13.276Z",
+      "status": 200,
+      "elapsed_ms": 693.5
+    },
+    {
+      "index": 18,
+      "at": "2026-11-07T23:11:13.976Z",
+      "status": 200,
+      "elapsed_ms": 304.1
+    },
+    {
+      "index": 19,
+      "at": "2026-11-07T23:11:14.290Z",
+      "status": 200,
+      "elapsed_ms": 423.1
+    },
+    {
+      "index": 20,
+      "at": "2026-11-07T23:11:14.720Z",
+      "status": 200,
+      "elapsed_ms": 249.8
+    }
+  ],
+  "recorded_by": "Claude (evidence packaging only; source hashes re-verified at packaging time)",
+  "invariance": {
+    "approach": "same exact FE/BFF pair before and after; no business writes",
+    "note": "AC2 original mixed window retained unchanged: 1 unfiltered approval + 1 unfiltered proposal alongside 1 shell-summary GET and 22 filtered each; no per-owner header tracing in that window. Isolated A/B/A on same code: 6 inbox GETs each issue exactly 1 filtered governance + 1 filtered evolution read and ZERO unfiltered; 1 isolated shell-summary GET reproduces 1 unfiltered each; 9a46 build_shell_summary_counts default call chain agrees. Total-zero is NOT claimed; independent reviewer must assess attribution."
+  }
+}

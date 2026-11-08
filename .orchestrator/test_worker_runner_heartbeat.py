@@ -185,7 +185,6 @@ def _write_status(path: Path) -> None:
     (path / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
     (path / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
     (path / ".orchestrator" / "worker-runtime" / "approval-queue.json").write_text("[]", encoding="utf-8")
-    (path / ".orchestrator" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
     (path / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
     (path / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
     (path / ".orchestrator" / "runtime-admission.lock").touch()
@@ -668,8 +667,8 @@ class TestCoordinationRootValidation(unittest.TestCase):
                 "blockers": []
             }
             (central / "ai-status.json").write_text(json.dumps(status_data) + "\n", encoding="utf-8")
-            (central / ".orchestrator").mkdir(parents=True, exist_ok=True)
-            (central / ".orchestrator" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
+            (central / ".orchestrator" / "worker-runtime").mkdir(parents=True, exist_ok=True)
+            (central / ".orchestrator" / "worker-runtime" / "state.json").write_text(json.dumps(runtime_state.default_state()), encoding="utf-8")
             (central / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
             (central / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
 
@@ -2610,7 +2609,7 @@ class TestCanonicalWorkerEntryProcess(unittest.TestCase):
             "from rewrite.task_state_store import load_snapshot; "
             "print(json.dumps({'status':json.loads(Path(sys.argv[1]).read_text()), "
             "'heartbeat':json.loads(Path(sys.argv[2]).read_text()), "
-            "'task':load_snapshot(sys.argv[3],refresh_checkpoint=False)['state']['tasks'][0]}))"
+            "'task':load_snapshot(sys.argv[3],observational=True)['state']['tasks'][0]}))"
         )
         reload_result = subprocess.run(
             [sys.executable, "-B", "-c", program, str(self.runner_status), str(self.heartbeat),

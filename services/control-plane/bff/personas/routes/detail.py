@@ -536,13 +536,14 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
     def bff_get_persona_memory(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ):
         """BFF: canonical Memory Plane entries for a persona."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        memory, source = _retrieve_canonical_persona_memory(persona_id, identity)
+        memory, source = _retrieve_canonical_persona_memory(persona_id, identity, authorization, (x_tenant_id or '').strip() or None)
         surface_status = "ok" if source["available"] else "degraded"
         return {
             "data": memory,

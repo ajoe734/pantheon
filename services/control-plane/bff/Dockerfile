@@ -4,6 +4,7 @@ WORKDIR /workspace
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
+ENV MALLOC_ARENA_MAX=2
 
 COPY dependencies/locks/services-control-plane-bff.txt /tmp/requirements.lock
 RUN pip install --no-cache-dir -r /tmp/requirements.lock

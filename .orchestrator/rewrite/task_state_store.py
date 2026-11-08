@@ -1031,16 +1031,15 @@ def _public_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def load_snapshot(
-    path: str | Path, *, refresh_checkpoint: bool = True
+    path: str | Path, *, observational: bool = False
 ) -> dict[str, Any]:
     """Read the V2 head and, only when needed, replay its uncommitted tail.
 
-    ``refresh_checkpoint`` remains as a compatibility argument.  False selects
-    a strictly observational read requiring provisioned journal/head/lock files.
-    V2 has no checkpoint and a read never hashes the historical prefix.
+    ``observational=True`` selects a strictly observational read requiring
+    provisioned journal/head/lock files.  V2 has no checkpoint and a read never
+    hashes the historical prefix.
     """
 
-    observational = not refresh_checkpoint
     event_path = (
         _require_existing_authority(Path(path))
         if observational
@@ -1424,7 +1423,7 @@ def verify_archive_anchor(
             byte_size += len(chunk)
     finally:
         os.close(descriptor)
-    snapshot = load_snapshot(path, refresh_checkpoint=False)
+    snapshot = load_snapshot(path, observational=True)
     bound_anchor = snapshot.get("archive_anchor_sha256")
     ok = (
         anchor["anchor_sha256"] == bound_anchor
