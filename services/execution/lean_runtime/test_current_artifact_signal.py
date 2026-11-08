@@ -90,7 +90,6 @@ def _projection(
         "artifact_type": "execution_bundle",
         "artifact_state": "approved",
         "deployment_stage": "paper",
-        "promotion_state": "paper",
         "lineage": copy.deepcopy(artifact["lineage"]),
         "created_at": "2026-08-14T07:59:00Z",
     }

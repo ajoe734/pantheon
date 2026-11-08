@@ -33,7 +33,6 @@ from services.source_ingestion.connector_definitions import (
     DEPLOYED_CONNECTOR_DEFINITIONS,
     get_connector_definition,
 )
-from services.source_ingestion.main import app, controller_token
 from services.source_ingestion.registry.data_source_registry import (
     DataSourceEntryV2,
     DataSourceLifecycleState,
@@ -124,12 +123,12 @@ def test_client(temp_dir, monkeypatch):
     fresh_store = JsonlSourceManagementStore(temp_dir)
     fresh_engine = SourceCommandEngine(
         store=fresh_store,
-        connector_store=main_mod.connector_store,
-        schedule_config_store=main_mod.schedule_config_store,
-        evidence_builder=main_mod.evidence_builder,
+        connector_store=main_mod.runtime.connector_store,
+        schedule_config_store=main_mod.runtime.schedule_config_store,
+        evidence_builder=main_mod.runtime.evidence_builder,
     )
-    monkeypatch.setattr(main_mod, "source_management_store", fresh_store)
-    monkeypatch.setattr(main_mod, "source_command_engine", fresh_engine)
+    monkeypatch.setattr(main_mod.runtime, "source_management_store", fresh_store)
+    monkeypatch.setattr(main_mod.runtime, "source_command_engine", fresh_engine)
     return TestClient(main_mod.app)
 
 
@@ -784,7 +783,9 @@ class TestSourceManagementHTTPAPI:
         assert resp.status_code == 401
 
     def test_authorized_command_execution_over_http(self, test_client):
-        from services.source_ingestion.main import CONTROLLER_TOKEN_PATH, load_controller_token
+        from services.source_ingestion.controller_auth import load_controller_token
+        import services.source_ingestion.main as main_mod
+        CONTROLLER_TOKEN_PATH = main_mod.runtime.CONTROLLER_TOKEN_PATH
         active_token = load_controller_token(token_path=CONTROLLER_TOKEN_PATH, create=True)
         headers = {"Authorization": f"Bearer {active_token}"}
         resp = test_client.post(

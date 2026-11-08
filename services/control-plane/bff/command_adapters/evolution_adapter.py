@@ -502,7 +502,6 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         dispatch_headers: Dict[str, str] = {"X-Tenant-Id": tenant_id}
         if idempotency_key:
             dispatch_headers["Idempotency-Key"] = str(idempotency_key)
-            dispatch_headers["X-Idempotency-Key"] = str(idempotency_key)
 
         if clean_action == "submit_evolution_review":
             # Submitting creates (or reuses) the one governance approval

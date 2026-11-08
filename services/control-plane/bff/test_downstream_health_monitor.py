@@ -1113,3 +1113,206 @@ class TestLoop12RealWriterCapture:
         assert rec["desired_state"]["present"] is False
         assert "last_success_at" not in rec and "last_tick_at" not in rec
         assert rec["last_heartbeat_at"] and rec["lease_token"]
+
+
+class TestBoundedHealthPruneAtHostedScale:
+    """AC 1 & AC 5: >=500k real-shape outbox rows & 872,489 dead-letter backlog drain under 500ms."""
+
+    @staticmethod
+    def _real_body_866() -> str:
+        prefix = (
+            '{"component":{"component_id":"telemetry-ingest-svc","component_kind":"http_service",'
+            '"FailureBoundary":"edge_bff","health_url":"http://telemetry:8083/__health__"},'
+            '"event_id":"infra-health-00000000000000000000000000000000","event_type":"infrastructure_health",'
+            '"health":{"consecutive_failures":3,"error_rate":0.0,"failure_count":0,'
+            '"failure_reason":"HTTP 503","healthy":false,"latency_ms":12.4,"probe_kind":"interval_probe",'
+            '"sample_count":0,"status":"degraded","status_code":503,'
+            '"window_started_at":"2026-09-02T00:00:00Z"},"incident_ref":null,'
+            '"observed_at":"2026-09-02T00:00:05Z","producer":"control-plane-bff",'
+            '"schema_version":"pantheon.infrastructure-health/1","tenant_id":"default",'
+            '"detail":"'
+        )
+        suffix = '"}'
+        body = prefix + ("x" * (866 - len(prefix) - len(suffix))) + suffix
+        assert len(body) == 866
+        return body
+
+    def test_500k_plus_outbox_and_870k_dead_letter_backlog_drain_under_500ms(self, tmp_path):
+        import sqlite3
+        import threading
+        import time
+        from downstream_health_monitor import _DurableHealthStore
+
+        db_path = str(tmp_path / "hosted_scale_health.sqlite3")
+        store = _DurableHealthStore(db_path)
+        body_866 = self._real_body_866()
+        dep1_fmt = '["telemetry:infra-health-%032x"]'
+        dep2_fmt = '["incident-open:infra-health-%032x", "telemetry:infra-health-%032x"]'
+
+        conn = sqlite3.connect(db_path, isolation_level=None)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=OFF")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA cache_size=-131072")
+        conn.executescript(
+            """
+            DROP TRIGGER IF EXISTS delivery_outbox_count_insert;
+            DROP INDEX IF EXISTS delivery_outbox_due_idx;
+            DROP INDEX IF EXISTS delivery_outbox_event_idx;
+            DROP INDEX IF EXISTS delivery_outbox_prune_idx;
+            DROP INDEX IF EXISTS delivery_outbox_deps_idx;
+            """
+        )
+        # Seed 872,489 old dead_letter rows + 10,477 old quarantined rows + 12 pending rows
+        # (882,978 non-delivered rows with exact 2,167,626 bytes of dependency_ids_json:
+        # 7,030 * 59 + 8 * 122 + 875,940 * 2 = 2,167,626 bytes).
+        conn.execute("BEGIN")
+        conn.execute(
+            """
+            WITH RECURSIVE seq(i) AS (
+                VALUES(1)
+                UNION ALL
+                SELECT i + 1 FROM seq WHERE i < 882978
+            )
+            INSERT INTO delivery_outbox(
+                delivery_id, event_id, channel, target_name, url,
+                body_json, dependency_ids_json, status, attempt_count,
+                max_attempts, next_attempt_at, claim_owner, claim_token,
+                claim_until, last_error, created_at, updated_at
+            )
+            SELECT
+                CASE WHEN i <= 7030 THEN printf('incident-open:infra-health-%032x', i)
+                     WHEN i <= 7038 THEN printf('incident-resolve:infra-health-%032x', i)
+                     ELSE printf('telemetry:infra-health-%032x', i) END,
+                printf('infra-health-%032x', i),
+                CASE WHEN i <= 7030 THEN 'incident_open'
+                     WHEN i <= 7038 THEN 'incident_resolve'
+                     ELSE 'telemetry' END,
+                'telemetry',
+                'http://telemetry:8083/api/v1/telemetry/infrastructure-health',
+                ?,
+                CASE WHEN i <= 7030 THEN printf(?, i)
+                     WHEN i <= 7038 THEN printf(?, i, i)
+                     ELSE '[]' END,
+                CASE WHEN i <= 872489 THEN 'dead_letter'
+                     WHEN i <= 882966 THEN 'quarantined'
+                     ELSE 'pending' END,
+                5, 5, 0.0, NULL, NULL, NULL, 'HTTP 503',
+                printf('2026-09-%02dT%02d:%02d:%02dZ', 1 + ((i / 31600) % 28), (i / 3600) % 24, (i / 60) % 60, i % 60),
+                printf('2026-09-%02dT%02d:%02d:%02dZ', 1 + ((i / 31600) % 28), (i / 3600) % 24, (i / 60) % 60, i % 60)
+            FROM seq
+            """,
+            (body_866, dep1_fmt, dep2_fmt),
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS delivery_outbox_due_idx
+                ON delivery_outbox(status, next_attempt_at, claim_until);
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS delivery_outbox_event_idx
+                ON delivery_outbox(event_id);
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS delivery_outbox_prune_idx
+                ON delivery_outbox(updated_at)
+                WHERE status IN ('delivered', 'dead_letter', 'quarantined');
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS delivery_outbox_deps_idx
+                ON delivery_outbox(status, updated_at, delivery_id, dependency_ids_json)
+                WHERE dependency_ids_json <> '[]';
+            """
+        )
+        conn.execute("COMMIT")
+        store._initialize()
+
+        non_delivered_count = conn.execute(
+            "SELECT SUM(count) FROM delivery_status_counts WHERE status <> 'delivered'"
+        ).fetchone()[0]
+        non_empty_row = conn.execute(
+            "SELECT COUNT(*), SUM(LENGTH(dependency_ids_json)) "
+            "FROM delivery_outbox INDEXED BY delivery_outbox_deps_idx "
+            "WHERE dependency_ids_json <> '[]' AND status <> 'delivered'"
+        ).fetchone()
+        assert non_delivered_count == 882978
+        assert non_empty_row[1] + (non_delivered_count - non_empty_row[0]) * 2 == 2167626
+
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+        for p in (db_path, db_path + "-wal", db_path + "-shm"):
+            if os.path.exists(p):
+                fd = os.open(p, os.O_RDONLY)
+                os.fsync(fd)
+                os.close(fd)
+
+        # Measure concurrent record_outcome writer lock wait during the initial prune burst
+        writer_waits_ms: List[float] = []
+        stop_writer = threading.Event()
+
+        def _concurrent_writer() -> None:
+            idx = 0
+            while not stop_writer.is_set():
+                idx += 1
+                probe = DownstreamProbeResult(
+                    target_name="telemetry",
+                    ok=True,
+                    status_code=200,
+                    latency_ms=4.0,
+                    checked_at="2026-11-07T15:13:21Z",
+                )
+                t_w0 = time.perf_counter()
+                store.record_outcome(
+                    target_name="telemetry",
+                    window_started_at="2026-11-07T15:13:00Z",
+                    ok=True,
+                    latency_ms=4.0,
+                    status_code=200,
+                    detail=None,
+                    observed_at="2026-11-07T15:13:21Z",
+                    probe=probe,
+                )
+                writer_waits_ms.append((time.perf_counter() - t_w0) * 1000.0)
+                time.sleep(0.02)
+
+        prune_holds_ms: List[float] = []
+        total_pruned = 0
+        writer_thread = threading.Thread(target=_concurrent_writer, daemon=True)
+        writer_thread.start()
+        try:
+            for _ in range(10):
+                t0 = time.perf_counter()
+                pruned = store.prune_retained_history()
+                prune_holds_ms.append((time.perf_counter() - t0) * 1000.0)
+                total_pruned += pruned["delivery_outbox"]
+                time.sleep(0.05)
+        finally:
+            stop_writer.set()
+            writer_thread.join(timeout=5.0)
+
+        assert writer_waits_ms, "concurrent writer must execute during prune"
+        assert max(writer_waits_ms) < 500.0, f"concurrent writer waited {max(writer_waits_ms):.1f}ms >= 500ms"
+
+        # Continue draining the remaining backlog to completion
+        while True:
+            t0 = time.perf_counter()
+            pruned = store.prune_retained_history()
+            hold_ms = (time.perf_counter() - t0) * 1000.0
+            prune_holds_ms.append(hold_ms)
+            total_pruned += pruned["delivery_outbox"]
+            if pruned["delivery_outbox"] == 0:
+                break
+
+        assert total_pruned == 872489 + 10477
+        assert max(prune_holds_ms) < 500.0, f"max prune hold {max(prune_holds_ms):.1f}ms >= 500ms"
+        final_counts = store.delivery_counts()
+        assert final_counts["dead_letter"] == 0
+        assert final_counts["quarantined"] == 0
+        assert final_counts["pending"] == 12
+

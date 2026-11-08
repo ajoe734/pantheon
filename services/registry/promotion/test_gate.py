@@ -115,7 +115,6 @@ class TestPromotionGate(unittest.TestCase):
             projection.artifact_key,
             "openclaw/registry/strat-001/1.0.0/artifact.bin",
         )
-        self.assertEqual(projection.metadata["promotion_state"], "live")
         self.assertEqual(projection.metadata["rollback"]["target_version"], "0.9.0")
         self.assertEqual(projection.metadata["lineage"]["source_run_ids"], ["replication-run-001"])
 

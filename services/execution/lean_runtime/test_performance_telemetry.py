@@ -1411,6 +1411,63 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         )
         self.assertIsNone(restored.observe_unchanged_provenance(bad_pin_sample))
 
+    def test_stock_future_positions_contribute_unrealized_pnl_and_require_entry_price(self):
+        mark_time = "2026-07-14T11:00:00Z"
+        valued = value_portfolio(
+            initial_cash=100_000.0,
+            cash=100_000.0 - 9.494,
+            positions=[
+                {
+                    "symbol": "ssf:QFF:202611",
+                    "instrument_id": "ssf:QFF:202611",
+                    "kind": "stock_future",
+                    "quantity": -1.0,
+                    "multiplier": 100.0,
+                    "average_entry_price": 2247.0,
+                }
+            ],
+            marks={
+                "ssf:QFF:202611": MarketMark(
+                    "ssf:QFF:202611",
+                    2237.0,
+                    mark_time,
+                    "source-ingest://taifex/QFF",
+                )
+            },
+            fill_count=1,
+            last_fill_at="2026-07-14T10:00:00Z",
+            now=_NOW,
+        )
+        self.assertEqual(valued.status, "valued")
+        self.assertAlmostEqual(valued.sample.portfolio_value, 100_000.0 - 9.494 + 1000.0, places=4)
+        self.assertAlmostEqual(valued.sample.pnl, 1000.0 - 9.494, places=4)
+
+        missing_entry = value_portfolio(
+            initial_cash=100_000.0,
+            cash=100_000.0,
+            positions=[
+                {
+                    "symbol": "ssf:QFF:202611",
+                    "kind": "stock_future",
+                    "quantity": 1.0,
+                    "multiplier": 100.0,
+                }
+            ],
+            marks={
+                "ssf:QFF:202611": MarketMark(
+                    "ssf:QFF:202611",
+                    2247.0,
+                    mark_time,
+                    "source-ingest://taifex/QFF",
+                )
+            },
+            fill_count=1,
+            last_fill_at="2026-07-14T10:00:00Z",
+            now=_NOW,
+        )
+        self.assertEqual(missing_entry.status, "invalid_ledger")
+        self.assertEqual(missing_entry.diagnostic["code"], "futures_position_missing_entry_price")
+
 
 if __name__ == "__main__":
     unittest.main()

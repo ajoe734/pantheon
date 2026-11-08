@@ -1,0 +1,75 @@
+{
+  "task_id": "PAPER-DRAWDOWN-REBASELINE-INSTRUMENT-CLASS-20261107",
+  "title": "Re-baseline paper drawdown per artifact and instrument class",
+  "hosted_behaviour_exercised": false,
+  "hosted_statement": "Hosted behaviour was not exercised. All baseline derivations and threshold_sweep_worker validations were executed locally in the isolated task worktree.",
+  "trigger_multiple": 1.25,
+  "existing_seven_entries_unchanged": true,
+  "baselines_by_instrument_class": {
+    "artifact-persona-paper-298e138c136c9840b0e4": {
+      "underlying": "2330.TWSE",
+      "input_file": "docs/deployment/evidence/PAPER-DRAWDOWN-REBASELINE-INSTRUMENT-CLASS-20261107/input-2330.json",
+      "cash_share": {
+        "expected_drawdown": 0.00235,
+        "worst_equity_twd": 99765,
+        "breach_trigger_1_25x": 0.0029375
+      },
+      "stock_future": {
+        "instrument_code": "QFF",
+        "multiplier": 100,
+        "expected_drawdown": 0.235,
+        "worst_equity_twd": 76500,
+        "breach_trigger_1_25x": 0.29375
+      }
+    },
+    "artifact-persona-paper-01390a4b72713295b001": {
+      "underlying": "0050.TWSE",
+      "input_file": "docs/deployment/evidence/PAPER-DRAWDOWN-REBASELINE-INSTRUMENT-CLASS-20261107/input-0050.json",
+      "cash_share": {
+        "expected_drawdown": 0.0001245,
+        "worst_equity_twd": 99987.55,
+        "breach_trigger_1_25x": 0.000155625
+      },
+      "stock_future": {
+        "instrument_code": "SRF",
+        "multiplier": 1000,
+        "expected_drawdown": 0.1245,
+        "worst_equity_twd": 87550,
+        "breach_trigger_1_25x": 0.155625
+      }
+    },
+    "artifact-persona-paper-8ae996980eeccb80d928": {
+      "underlying": "2317.TWSE",
+      "input_file": "docs/deployment/evidence/PAPER-DRAWDOWN-REBASELINE-INSTRUMENT-CLASS-20261107/input-2317.json",
+      "cash_share": {
+        "expected_drawdown": 0.00021,
+        "worst_equity_twd": 99979,
+        "breach_trigger_1_25x": 0.0002625
+      },
+      "stock_future": {
+        "instrument_code": "DHF",
+        "multiplier": 2000,
+        "expected_drawdown": 0.42,
+        "worst_equity_twd": 58000,
+        "breach_trigger_1_25x": 0.525
+      }
+    }
+  },
+  "artifacts_requiring_reprovisioning_before_stock_future_applies": [
+    "artifact-persona-paper-298e138c136c9840b0e4",
+    "artifact-persona-paper-01390a4b72713295b001",
+    "artifact-persona-paper-8ae996980eeccb80d928"
+  ],
+  "commands_and_results": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/evolution/test_threshold_sweep_worker.py -k 'instrument_class or cash_share or stock_future' -q",
+      "exit_code": 0,
+      "result": "4 passed, 89 deselected, 3 warnings in 4.39s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q",
+      "exit_code": 0,
+      "result": "93 passed, 3 warnings in 29.8s"
+    }
+  ]
+}

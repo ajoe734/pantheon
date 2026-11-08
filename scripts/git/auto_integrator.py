@@ -411,7 +411,7 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
     config = load_json(path, {})
     if not isinstance(config, dict):
         config = {}
-    workflow = config.get("branch_workflow") or config.get("wave_workflow") or {}
+    workflow = config.get("branch_workflow") or {}
     if not isinstance(workflow, dict):
         workflow = {}
     auto = workflow.get("auto_integrator") or config.get("auto_integrator") or {}

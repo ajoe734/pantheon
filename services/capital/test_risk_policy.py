@@ -193,3 +193,75 @@ def test_runtime_action_future_order_gate_enforces_2x_gross_limit_rejecting_2_13
     assert accepted_eval.decision == RiskPolicyDecision.ALLOWED.value
     assert accepted_eval.blocking_reasons == ()
 
+
+def test_stdlib_risk_policy_loader_and_bound_pool_resolver(tmp_path, monkeypatch) -> None:
+    import json
+    import pytest
+    from services.capital.risk_policy import (
+        RiskPolicyLoadError,
+        load_risk_policy,
+        normalize_risk_policy,
+        read_capital_pool_record,
+        resolve_bound_pool_risk_policy,
+    )
+
+    policy_dir = tmp_path / "policies"
+    policy_dir.mkdir()
+    (policy_dir / "rp-paper-futures.json").write_text(
+        json.dumps(
+            {
+                "risk_policy_id": "rp-paper-futures",
+                "version": "1.0",
+                "status": "active",
+                "allowed_stages": ["paper"],
+                "allowed_asset_classes": ["equity", "future"],
+                "exposure_limits": {
+                    "gross_limit": 2.0,
+                    "net_limit": 2.0,
+                    "max_leverage": 2.0,
+                    "max_single_name_weight": 0.5,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    pool_store = tmp_path / "capital_pools.json"
+    pool_store.write_text(
+        json.dumps(
+            {
+                "pools": [
+                    {
+                        "pool_id": "pool-paper-01",
+                        "risk_policy_ref": "rp-paper-futures",
+                        "status": "active",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(policy_dir))
+    monkeypatch.setenv("PANTHEON_CAPITAL_POOL_STORE_PATH", str(pool_store))
+
+    raw = load_risk_policy("rp-paper-futures")
+    assert raw["gross_limit"] == 2.0
+    assert raw["max_single_name_weight"] == 0.5
+
+    pool_rec = read_capital_pool_record("pool-paper-01")
+    assert pool_rec is not None
+    assert pool_rec["risk_policy_ref"] == "rp-paper-futures"
+
+    resolved = resolve_bound_pool_risk_policy(capital_pool_id="pool-paper-01")
+    assert resolved is not None
+    assert resolved.risk_policy_id == "rp-paper-futures"
+    assert resolved.gross_limit == 2.0
+    assert resolved.max_single_name_weight == 0.5
+
+    norm = normalize_risk_policy({"exposure_limits": {"gross_limit": 1.5}}, default_id="rp-default")
+    assert norm.risk_policy_id == "rp-default"
+    assert norm.gross_limit == 1.5
+
+    with pytest.raises(RiskPolicyLoadError):
+        load_risk_policy("missing-policy-ref")
+
+

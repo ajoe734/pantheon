@@ -398,7 +398,7 @@ def test_symlink_event_log_is_rejected(tmp_path: Path) -> None:
 def test_observational_read_never_provisions_files(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     with pytest.raises(store.TaskStateStoreError, match="must be an existing"):
-        store.load_snapshot(path, refresh_checkpoint=False)
+        store.load_snapshot(path, observational=True)
     assert list(tmp_path.iterdir()) == []
 
 

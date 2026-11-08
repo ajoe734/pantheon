@@ -312,7 +312,7 @@ def build_consolidated_cross_cutting_app(read_surface: Any) -> FastAPI:
             split_csv_query=lambda q: [x.strip() for x in q.split(",") if x.strip()] if q else None,
             meta_staleness=lambda: None,
             stable_json_hash=lambda p: "",
-            resolve_final_idempotency_key=lambda h, b: "",
+            resolve_final_idempotency_key=lambda h: "",
             reject_body_idempotency_key=lambda p: None,
             request_dry_run_requested=lambda **kw: False,
             publish_event=lambda *a, **k: "",
@@ -342,7 +342,7 @@ def build_consolidated_cross_cutting_app(read_surface: Any) -> FastAPI:
         "_snapshot_meta": lambda s: {"snapshot_at": s},
         "_page_slice": lambda items, token, limit: (items[:limit], None),
         "_stable_json_hash": lambda p: "",
-        "_resolve_final_idempotency_key": lambda h, b: "",
+        "_resolve_final_idempotency_key": lambda h: "",
         "_reject_body_idempotency_key": lambda p: None,
         "_meta_staleness": lambda: None,
         "_read_surface_meta": lambda dataset, surface_key, snapshot_at=None, surface=None, **kwargs: {
@@ -469,7 +469,7 @@ def build_consolidated_cross_cutting_app(read_surface: Any) -> FastAPI:
             dataset_surface_status=lambda dataset, **kw: {"status": "ok"},
             raise_if_read_surface_unavailable=lambda surface, label="": None,
             reject_body_idempotency_key=lambda payload: None,
-            resolve_final_idempotency_key=lambda h, b: "",
+            resolve_final_idempotency_key=lambda h: "",
             submit_job_action=lambda *a, **k: {},
         )
     )

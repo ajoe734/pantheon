@@ -132,7 +132,7 @@ def create_strategies_router(
         page_slice=_page_slice,
         read_surface_meta=_read_surface_meta,
         reject_body_idempotency_key=reject_body_idempotency_key or (lambda p: None),
-        resolve_final_idempotency_key=resolve_final_idempotency_key or (lambda ik, xik: str(ik or xik or "")),
+        resolve_final_idempotency_key=resolve_final_idempotency_key or (lambda ik: str(ik or "")),
         stable_json_hash=stable_json_hash or (lambda d: ""),
         request_dry_run_requested=request_dry_run_requested or (lambda: False),
         dry_run_success_response=dry_run_success_response or (lambda *a, **kw: {}),

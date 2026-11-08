@@ -62,6 +62,7 @@ from services.control_plane.bff.ports import (
     create_persona_registry_write_owner,
 )
 from services.control_plane.bff.runtime.router import create_runtime_router
+from services.control_plane.bff.tools_integrations.service import deprecated_bff_path_response
 
 _sse_buffers: dict[str, list[tuple[int, dict[str, Any]]]] = {
     "signal": [],
@@ -1005,7 +1006,7 @@ def _isolated_deployment_plan_bff() -> Iterator[TestClient]:
         sse_buffers=_sse_buffers,
         sse_subscribers=_sse_subscribers,
         gov_bff_action_command=lambda *a, **kw: {},
-        deprecated_bff_path_response=lambda *a, **kw: None,
+        deprecated_bff_path_response=deprecated_bff_path_response,
         sem_command_response=lambda **kwargs: reject_retired_command(kwargs["command_type"].value),
         stream_generic_events=lambda *a, **kw: None,
         surface_degradation_reason=lambda *a, **kw: None,
@@ -1027,12 +1028,20 @@ def test_deployment_plan_create_routes_are_retired_without_side_effects(path: st
             "/api/v1/deployment-plans",
             headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
         )
+        deployments = client.get(
+            "/bff/deployments",
+            headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
+        )
 
     assert response.status_code == 410, response.text
     error = response.json()["error"]
     assert error["code"] == "ACTION_RETIRED"
     assert "POST /api/deployment/plans/validate" in error["details"]["replacement"]
-    assert plans.json()["data"] == []
+    assert plans.status_code == 410, plans.text
+    assert plans.headers["X-Pantheon-Replacement-Route"] == "/bff/deployments"
+    assert plans.json()["detail"]["error"]["details"]["replacement"] == "/bff/deployments"
+    assert deployments.status_code == 200, deployments.text
+    assert deployments.json()["data"] == []
     assert _sse_buffers["audit"] == []
 
 

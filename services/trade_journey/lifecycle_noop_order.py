@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 
 SELL_WITHOUT_HOLDINGS_REASON = "sell_without_holdings"
+PAPER_FUTURES_TERMINAL_NONFILL_EVENT_TYPES = frozenset(
+    {
+        "paper_futures_settled",
+        "paper_margin_call",
+        "paper_forced_liquidation",
+    }
+)
 
 
 def _first(*values: Any) -> Any:
@@ -21,21 +29,26 @@ def _has_no_fill_or_broker_submission(
     if _first(event.get("fill_id"), metadata.get("fill_id")) is not None:
         return False
     metrics = event.get("metrics") if isinstance(event.get("metrics"), Mapping) else {}
-    if metrics.get("submitted_to_broker") is True or metadata.get("submitted_to_broker") is True:
-        return False
-    if event.get("submitted_to_broker") is True:
-        return False
-    quantity = _first(
-        metrics.get("fill_quantity"),
-        event.get("quantity"),
-        metadata.get("fill_quantity"),
-    )
-    if quantity is not None:
-        try:
-            if float(quantity) != 0.0:
-                return False
-        except (TypeError, ValueError):
+    for flag in (
+        metrics.get("submitted_to_broker"),
+        metadata.get("submitted_to_broker"),
+        event.get("submitted_to_broker"),
+    ):
+        if flag is not None and flag is not False:
             return False
+    for qty_field in ("fill_quantity", "filled_quantity", "quantity"):
+        for container in (metrics, event, metadata):
+            raw_qty = container.get(qty_field)
+            if raw_qty is None:
+                continue
+            if isinstance(raw_qty, bool):
+                return False
+            try:
+                parsed_qty = float(raw_qty)
+            except (TypeError, ValueError):
+                return False
+            if not math.isfinite(parsed_qty) or parsed_qty != 0.0:
+                return False
     return True
 
 
@@ -57,9 +70,36 @@ def is_sell_without_holdings_rejection(
     return _has_no_fill_or_broker_submission(event, metadata)
 
 
-def is_noop_order(event: Mapping[str, Any], metadata: Mapping[str, Any]) -> bool:
-    """True for a ``paper_order_simulated`` or ``sell_without_holdings`` event with no fill or submission."""
+def is_paper_futures_terminal_nonfill(
+    event: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> bool:
+    """True for a paper futures lifecycle terminal non-fill event."""
+    if metadata is None:
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+    if event.get("event_type") not in PAPER_FUTURES_TERMINAL_NONFILL_EVENT_TYPES:
+        return False
+    metrics = event.get("metrics") if isinstance(event.get("metrics"), Mapping) else {}
+    for field in (
+        "broker_order_id",
+        "fill_id",
+        "broker_trade_id",
+        "ledger_entry_id",
+        "reconciliation_id",
+    ):
+        if _first(event.get(field), metadata.get(field), metrics.get(field)) is not None:
+            return False
+    return _has_no_fill_or_broker_submission(event, metadata)
+
+
+def is_noop_order(
+    event: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> bool:
+    """True for a ``paper_order_simulated``, ``sell_without_holdings``, or paper futures terminal non-fill event with no fill or submission."""
+    if metadata is None:
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
     if is_sell_without_holdings_rejection(event, metadata):
+        return True
+    if is_paper_futures_terminal_nonfill(event, metadata):
         return True
     if event.get("event_type") != "paper_order_simulated":
         return False

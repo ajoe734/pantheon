@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
+    get_management_nl_module,
     get_management_nl_read_store,
     get_management_nl_sse_buffer,
     management_nl_test_client,
@@ -185,7 +186,6 @@ def _seeded_client(
     store.get_sessions_for_persona = lambda persona_id: json.loads(
         json.dumps(persona_sessions_by_persona.get(str(persona_id), []))
     )
-    store.record_agora_audit_event = lambda event: event
     store.get_agora_session = lambda session_id: None
 
     def _rec_matches_tenant(rec, tid, include_tenant_agnostic=True):
@@ -345,7 +345,7 @@ def test_happy_path_audit_failure_fails_closed_before_session_side_effects(tmp_p
         def fail_audit(event: dict) -> dict:
             raise OSError("audit store unavailable")
 
-        monkeypatch.setattr(store, "record_agora_audit_event", fail_audit)
+        monkeypatch.setattr(get_management_nl_module().get_agora_audit_store(), "record_agora_audit_event", fail_audit)
         resp = client.post(
             "/bff/management/nl/ask",
             json={"question": "What is the scoped portfolio?", "focus": "portfolio", "session_id": "audit-fail-session"},

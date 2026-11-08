@@ -205,7 +205,7 @@ def _fresh_client() -> TestClient:
             dataset_surface_status=dataset_surface_status,
             raise_if_read_surface_unavailable=raise_if_read_surface_unavailable,
             reject_body_idempotency_key=lambda b: None,
-            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            resolve_final_idempotency_key=lambda k1: k1 or "",
             submit_job_action=lambda *a, **kw: {},
         )
     )
@@ -537,7 +537,7 @@ def _setup_synthetic_training_owner(monkeypatch):
             dataset_surface_status=persona_service._dataset_surface_status,
             raise_if_read_surface_unavailable=persona_service._raise_if_read_surface_unavailable,
             reject_body_idempotency_key=lambda b: None,
-            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            resolve_final_idempotency_key=lambda k1: k1 or "",
             submit_job_action=lambda *a, **kw: {},
         )
     )
@@ -840,7 +840,7 @@ def test_job_detail_and_logs_surface_metadata_derived_from_canonical_owner_acros
             dataset_surface_status=dataset_surface_status,
             raise_if_read_surface_unavailable=raise_if_read_surface_unavailable,
             reject_body_idempotency_key=lambda b: None,
-            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            resolve_final_idempotency_key=lambda k1: k1 or "",
             submit_job_action=lambda *a, **kw: {},
         )
     )
@@ -912,7 +912,7 @@ def test_job_detail_and_logs_do_not_swallow_helper_type_error_into_legacy_fallba
                 dataset_surface_status=ds_fn,
                 raise_if_read_surface_unavailable=persona_service._raise_if_read_surface_unavailable,
                 reject_body_idempotency_key=lambda b: None,
-                resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+                resolve_final_idempotency_key=lambda k1: k1 or "",
                 submit_job_action=lambda *a, **kw: {},
             )
         )
@@ -959,7 +959,7 @@ def _build_jobs_list_client(store: Any) -> TestClient:
             dataset_surface_status=dataset_surface_status,
             raise_if_read_surface_unavailable=raise_if_read_surface_unavailable,
             reject_body_idempotency_key=lambda b: None,
-            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            resolve_final_idempotency_key=lambda k1: k1 or "",
             submit_job_action=lambda *a, **kw: {},
         )
     )

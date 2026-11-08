@@ -205,7 +205,6 @@ def create_ranking_formulas_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Retired: formula creation has no executing owner."""
         identity = _extract_ident(authorization)
@@ -219,7 +218,6 @@ def create_ranking_formulas_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         """Retired: formula mutation has no executing owner."""
         identity = _extract_ident(authorization)
@@ -234,15 +232,12 @@ def create_ranking_formulas_router(
 # ACG-01-012 (follow-up): Rankings long-tail + PM-12 performance attribution
 # ---------------------------------------------------------------------------
 #
-# Extracted from bff/main.py (OPGAP-BE-STRATEGY-RANKING-20260830). Pure
-# code-motion: route bodies, error messages, and status codes are preserved
-# exactly as they were in main.py, including the deprecated `/bff/ranking/
-# formulas*` handlers whose bodies are unreachable dead code after their
-# immediate `return _deprecated_bff_path_response(...)` (kept as-is to avoid
-# behavior drift). Widely shared main.py helpers (identity/role checks,
-# read_store, idempotency helpers, PM-12 attribution response builder, tenant
-# resolution) are threaded through explicit factory parameters instead of
-# being duplicated here or imported back from main (which would be circular).
+# Extracted from bff/main.py (OPGAP-BE-STRATEGY-RANKING-20260830).
+# The four immediate /bff/ranking/formulas* deprecation notification wrappers
+# were retired in BFF-FINAL-COMPAT-20261107 after execute-plans completed its
+# migration to /bff/ranking-formulas*; the rejected action guard
+# POST /bff/ranking/formulas/{formula_id}/actions/{action_id} remains mounted
+# to enforce operator role and return ACTION_RETIRED (410).
 
 from fastapi import Response
 
@@ -258,22 +253,17 @@ def create_rankings_long_tail_router(
     utc_now: Optional[Callable[[], str]] = None,
     page_slice: Optional[Callable[..., Any]] = None,
     read_surface_meta: Optional[Callable[..., Dict[str, Any]]] = None,
-    deprecated_bff_path_response: Optional[Callable[..., Any]] = None,
     reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
     resolve_final_idempotency_key: Optional[Callable[..., str]] = None,
     capital_bff_action_command: Optional[Callable[..., Any]] = None,
     object_type: Any = None,
     command_type: Any = None,
 ) -> APIRouter:
-    """Create the router for the deprecated ``/bff/ranking/formulas*`` compatibility
-    surface and the full-spec ``/bff/rankings*`` long tail.
+    """Create the router for the retired ranking-formula action guard and the
+    full-spec ``/bff/rankings*`` long tail.
 
     Handles:
-      GET    /bff/ranking/formulas                        (deprecated)
-      POST   /bff/ranking/formulas                         (deprecated)
-      GET    /bff/ranking/formulas/{formula_id}             (deprecated)
-      PATCH  /bff/ranking/formulas/{formula_id}              (deprecated)
-      POST   /bff/ranking/formulas/{formula_id}/actions/{action_id} (deprecated)
+      POST   /bff/ranking/formulas/{formula_id}/actions/{action_id} (retired command guard)
       GET    /bff/rankings
       GET    /bff/rankings/{ranking_id}
       POST   /bff/rankings/{ranking_id}/actions/{action_id}
@@ -294,61 +284,6 @@ def create_rankings_long_tail_router(
             return get_read_store()
         raise NotImplementedError("get_read_store dependency was not supplied")
 
-    @router.get("/bff/ranking/formulas")
-    def bff_deprecated_list_ranking_formulas(
-        status: Optional[str] = None,
-        page_token: Optional[str] = None,
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ):
-        """BFF: ranking formula list."""
-        return deprecated_bff_path_response(
-            route="/bff/ranking/formulas",
-            replacement="/bff/ranking-formulas",
-        )
-
-
-    @router.post("/bff/ranking/formulas", status_code=201)
-    def bff_deprecated_create_ranking_formula(
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ):
-        """BFF: create ranking formula — Idempotency-Key required."""
-        return deprecated_bff_path_response(
-            route="/bff/ranking/formulas",
-            replacement="/bff/ranking-formulas",
-        )
-
-
-    @router.get("/bff/ranking/formulas/{formula_id}")
-    def bff_deprecated_get_ranking_formula(
-        formula_id: str,
-        authorization: Optional[str] = Header(default=None),
-    ):
-        """BFF: ranking formula detail."""
-        return deprecated_bff_path_response(
-            route="/bff/ranking/formulas/{formula_id}",
-            replacement="/bff/ranking-formulas/{formula_id}",
-        )
-
-
-    @router.patch("/bff/ranking/formulas/{formula_id}")
-    def bff_deprecated_patch_ranking_formula(
-        formula_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ):
-        """BFF: patch ranking formula — Idempotency-Key required."""
-        return deprecated_bff_path_response(
-            route="/bff/ranking/formulas/{formula_id}",
-            replacement="/bff/ranking-formulas/{formula_id}",
-        )
-
-
     @router.post("/bff/ranking/formulas/{formula_id}/actions/{action_id}", status_code=202)
     def bff_deprecated_ranking_formula_action(
         formula_id: str,
@@ -356,7 +291,6 @@ def create_rankings_long_tail_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         identity = _extract_identity(authorization)
         _require_op(identity)
@@ -420,7 +354,6 @@ def create_rankings_long_tail_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         identity = _extract_identity(authorization)
         _require_op(identity)

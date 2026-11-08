@@ -3,7 +3,7 @@
 Design unit:
 - OPGAP-DEPLOY-RELIABILITY-V2-20260830: Full domain router extraction handling 12
   deployment domain routes:
-  1. GET /api/v1/deployment-plans: Deployment plan list (DP-01)
+  1. GET /api/v1/deployment-plans: Retired (410); use /bff/deployments (DP-01)
   2. POST /api/v1/deployment-plans: Retired (410 ACTION_RETIRED); use the governed deployment owner
      approval -> /api/deployment/plans/validate -> /api/deployment/plans flow
   3. GET /api/v1/deployment-plans/{plan_id}: Deployment plan detail with stage truth
@@ -59,7 +59,7 @@ def create_deployment_router(
     split_csv_query: Callable[[Optional[str]], Optional[List[str]]],
     meta_staleness: Callable[[], Optional[Dict[str, Any]]],
     stable_json_hash: Callable[[Dict[str, Any]], str],
-    resolve_final_idempotency_key: Callable[[Optional[str], Optional[str]], str],
+    resolve_final_idempotency_key: Callable[[Optional[str]], str],
     reject_body_idempotency_key: Callable[[Dict[str, Any]], None],
     request_dry_run_requested: Callable[..., bool],
     publish_event: Callable[..., str],
@@ -91,25 +91,11 @@ def create_deployment_router(
         capital_pool_id: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ):
-        """DP-01: Deployment plan list."""
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-
-        plans = service.queries.list_deployment_plans(
-            status=status,
-            capital_pool_id=capital_pool_id,
-            include_fixture_pack=False,
+        """DP-01: Deployment plan list (retired; use /bff/deployments)."""
+        return deprecated_bff_path_response(
+            route="/api/v1/deployment-plans",
+            replacement="/bff/deployments",
         )
-        snapshot_at = utc_now()
-        return {
-            "data": plans,
-            "meta": read_surface_meta(
-                "deployment_plans",
-                "deployment_plan_list",
-                snapshot_at=snapshot_at,
-                total=len(plans),
-            ),
-        }
 
     @router.post("/api/v1/deployment-plans", status_code=201)
     def create_deployment_plan_v1(
@@ -117,7 +103,6 @@ def create_deployment_router(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
@@ -524,7 +509,6 @@ def create_deployment_router(
         action_id: str,
         request: Request,
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF: submit an action against a deployment plan."""
@@ -539,7 +523,6 @@ def create_deployment_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         identity = extract_identity(authorization)
         require_operator_role(identity)
@@ -551,7 +534,6 @@ def create_deployment_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         identity = extract_identity(authorization)
         require_operator_role(identity)
@@ -563,7 +545,6 @@ def create_deployment_router(
             payload=payload,
             identity=identity,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     return router

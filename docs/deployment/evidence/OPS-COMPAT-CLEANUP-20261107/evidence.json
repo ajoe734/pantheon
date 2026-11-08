@@ -1,0 +1,30 @@
+{
+  "task_id": "OPS-COMPAT-CLEANUP-20261107",
+  "delivery_class": "tooling",
+  "findings": {
+    "A07": {
+      "disposition": "retained",
+      "reason": "Retired-path FIFO fence upgrade in promote_supervisor_runtime stays: historical writers on installed hosts were not fully audited, so fail-closed fence upgrade and rollback protection are unchanged."
+    },
+    "A08": {
+      "disposition": "removed",
+      "change": "worker_runner no longer reads legacy .orchestrator/state.json (receipt reader and supervisor-marker fallback); fixtures migrated to worker-runtime/state.json; atomic-snapshot retry and binding checks kept."
+    },
+    "A11": {
+      "disposition": "removed",
+      "change": "wave_workflow fallbacks removed from supervisor, auto_integrator, check_commit_trailers, publish_promote, release_branch_discipline. Repo, example, local and installed coordination-root configs contain no wave_workflow key. wave-merge/close/open subject prefixes kept for historical commit recognition."
+    },
+    "A17": {
+      "disposition": "renamed",
+      "change": "load_snapshot(refresh_checkpoint=False) -> load_snapshot(observational=True); all callers, tests and docs migrated; no alias.",
+      "follow_up": "Docs/historical evidence outside the task artifact contract still mention refresh_checkpoint (supervisor-authority-v2.md, bff-test-migration-b14 doc, SUP-L12 bench script); needs a docs follow-up task."
+    }
+  },
+  "validation": [
+    "pytest .orchestrator/rewrite/test_task_state_store.py scripts/test_verify_task_state_store.py scripts/git: 704 passed",
+    "unittest test_worker_runner_receipt test_worker_runner_heartbeat: passed",
+    "pytest scripts/test_promote_supervisor_runtime.py: passed",
+    "pytest .orchestrator/test_supervisor.py: all passed after fixture migration"
+  ],
+  "reviewer_attestation": "none; pending independent review by Antigravity"
+}

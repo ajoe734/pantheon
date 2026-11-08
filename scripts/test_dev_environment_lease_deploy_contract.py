@@ -1141,7 +1141,8 @@ def test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant
     assert "paper-fleet-reconciler" in deploy_script
     assert "evolution-daily-sweep-scheduler" in deploy_script
     assert "operator-bff" in deploy_script
-    assert "FORBIDDEN_DUPLICATE_WORKERS=(\n  pantheon-paper-runtime\n)" in deploy_script
+    assert "FORBIDDEN_DUPLICATE_WORKERS" not in deploy_script
+    assert "static-paper-runtime" not in deploy_script
 
 
 def test_dev_root_deploy_migration_cleanup_retires_inactive_profile_containers() -> None:
@@ -1244,7 +1245,6 @@ def test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profile
         "openclaw-activation-ready-e2e",
         "source-search-bounded-smoke",
         "lifecycle-projector-capacity-benchmark",
-        "pantheon-paper-runtime",
     ]
     for dormant_svc in dormant_and_one_off_services:
         assert dormant_svc not in active_services, f"Dormant/smoke service {dormant_svc} must NOT be in active persistent runtime"
@@ -1329,7 +1329,6 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
         'rollback_dev_bff_on_failure "projector_recreate"',
         'rollback_dev_bff_on_failure "source_refresh_readback"',
         'rollback_dev_bff_on_failure "shared_model_pool"',
-        'rollback_dev_bff_on_failure "retire_legacy_paper"',
         'rollback_dev_bff_on_failure "paper_fleet"',
         'rollback_dev_bff_on_failure "bff_lifecycle_readiness"',
         'rollback_dev_bff_on_failure "bff_source_sha"',
@@ -1399,10 +1398,6 @@ def test_validate_required_loop_workers_logic() -> None:
     assert "paper-fleet-reconciler" in required
     assert "agora-interaction-worker" in required
 
-    # Verify duplicate worker detection logic
-    forbidden_lines = deploy_script.split("FORBIDDEN_DUPLICATE_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
-    forbidden = [line.split("#")[0].strip() for line in forbidden_lines if line.split("#")[0].strip()]
-    assert "pantheon-paper-runtime" in forbidden
 
 
 def _evaluate_github_actions_condition(condition_expr: str, context: dict) -> bool:
@@ -3329,3 +3324,63 @@ def test_prior_images_are_held_before_any_prune_and_compose_containers_survive_i
     # Pruning happens before the candidate build/mutation in the root flow.
     flow = deploy[deploy.index("prune_dev_release_artifacts_for_build\n"):]
     assert flow.index("prune_dev_docker_storage_for_build") < flow.index("compose", flow.index("prune_dev_docker_storage_for_build"))
+
+
+def test_compensation_drill_input_defaults_false_and_is_rejected_with_incompatible_modes() -> None:
+    workflow = _workflow()
+    inputs = workflow.split("compensation_drill:\n", 1)[1].split("\n      chain_id:", 1)[0]
+    assert "default: false" in inputs and "type: boolean" in inputs
+    deploy = _job(workflow, "deploy-dev", "isolated-l12-provider-qualification")
+    target = deploy.split("id: target", 1)[1].split("- name:", 1)[0]
+    guard = target.split('case "${COMPENSATION_DRILL}" in', 1)[1].split("echo \"sha=", 1)[0]
+    for term in ("DRILL_ISOLATED", "DRILL_HOSTED_CHAIN", "DRILL_ROUNDTRIP",
+                 "BOOTSTRAP_EMPTY_HOST", 'DEV_AUTH_PROFILE}" != "strict"'):
+        assert term in guard
+    isolated = _job(workflow, "isolated-l12-provider-qualification", "hosted-all12-chain-phase")
+    assert "compensation_drill is rejected together with the isolated gate" in isolated
+    assert "compensation_drill is rejected together with the hosted chain" in workflow.split("  hosted-all12-chain-phase:\n", 1)[1]
+
+
+def test_compensation_drill_refuses_the_served_pair_before_the_lease() -> None:
+    deploy = _job(_workflow(), "deploy-dev", "isolated-l12-provider-qualification")
+    names = re.findall(r"^      - name: (.+)$", deploy, re.M)
+    refuse = "Refuse compensation drill when the pair is already served"
+    assert names.index("Capture exact hosted FE and BFF rollback baseline") < names.index(refuse)
+    assert names.index(refuse) < names.index("Acquire shared dev environment lease")
+    step = deploy.split(f"- name: {refuse}", 1)[1].split("\n      - name:", 1)[0]
+    assert "steps.rollback_baseline.outputs.sha" in step and "steps.rollback_baseline.outputs.frontend_sha" in step
+    assert "steps.target.outputs.sha" in step and "steps.frontend.outputs.sha" in step
+    assert "exit 1" in step and "ssh" not in step.lower()
+
+
+def test_compensation_drill_step_runs_after_candidate_seal_and_before_paper_baseline() -> None:
+    deploy = _job(_workflow(), "deploy-dev", "isolated-l12-provider-qualification")
+    names = re.findall(r"^      - name: (.+)$", deploy, re.M)
+    drill = "Intentional compensation drill failure after candidate stack is up"
+    order = ["Deploy dev VM stack under lease", "Validate retained candidate image seal for evidence upload",
+             "Upload candidate image admission receipt", drill, "Ensure governed dev paper baseline under lease",
+             "Compensate dev deployment failure to exact hosted baseline"]
+    assert [names.index(n) for n in order] == sorted(names.index(n) for n in order)
+    step = deploy.split(f"- name: {drill}", 1)[1].split("\n      - name:", 1)[0]
+    assert "if: ${{ env.COMPENSATION_DRILL == 'true' }}" in step
+    assert "INTENTIONAL COMPENSATION DRILL" in step and "exit 1" in step
+    assert "continue-on-error" not in step and "ssh" not in step.lower()
+
+
+def test_compensation_drill_feeds_the_existing_compensation_step_only() -> None:
+    workflow = _workflow()
+    deploy = _job(workflow, "deploy-dev", "isolated-l12-provider-qualification")
+    comp = deploy.split("id: deploy_compensation", 1)[1].split("- name:", 1)[0]
+    assert "steps.compensation_drill.outcome == 'failure'" in comp
+    assert "steps.deploy.outcome != 'success'" in comp and "steps.agora.outcome != 'success'" in comp
+    assert "COMPENSATION DRILL" in comp and "compensation-drill.json" in comp
+    assert deploy.count("Compensate dev deployment failure") == 1
+    assert workflow.count("--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}") == 1
+    assert "id: deploy_compensation_drill" not in workflow
+
+
+def test_compensation_drill_has_its_own_run_name() -> None:
+    head = _workflow().split("\non:\n", 1)[0]
+    assert "format('Dev compensation drill {0} + {1}'" in head
+    assert "inputs.compensation_drill &&" in head
+    assert "format('Dev release {0} + {1}'" in head

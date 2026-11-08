@@ -26,6 +26,9 @@ from services.execution.lean_runtime.taifex_fee_schedule import (
     fee_row_for,
 )
 from services.execution.shioaji_adapter import normalize_taiwan_symbol
+from services.source_ingestion.connectors.taiwan_official import (
+    governed_taiwan_calendar_evidence,
+)
 
 SSF_DATASET = "taifex_ssf_contracts"
 NORMALIZED_DATASET_PATH = "normalized/taifex_ssf_contracts"
@@ -434,8 +437,185 @@ def _snapshot_sort_key(
     )
 
 
-def _is_trading_day(day: date, holidays: Collection[date]) -> bool:
-    return day.weekday() < 5 and day not in holidays
+def governed_twse_holidays(trade_date: str | date | None = None) -> frozenset[date]:
+    """Return holidays from the repository's governed TWSE calendar catalog for ``trade_date``."""
+    day = _optional_date(trade_date) if trade_date is not None else date(2026, 11, 6)
+    if day is None:
+        return frozenset()
+    try:
+        evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+    except Exception:
+        return frozenset()
+    if not isinstance(evidence, Mapping):
+        return frozenset()
+    result: set[date] = set()
+    holidays_map = evidence.get("holidays")
+    if isinstance(holidays_map, Mapping):
+        for raw_key in holidays_map:
+            parsed = _optional_date(raw_key)
+            if parsed is not None:
+                result.add(parsed)
+    trading_days_raw = evidence.get("trading_days")
+    if isinstance(trading_days_raw, Sequence) and not isinstance(trading_days_raw, (str, bytes)):
+        trading_days = {
+            parsed
+            for item in trading_days_raw
+            for parsed in (_optional_date(item),)
+            if parsed is not None
+        }
+        if day.weekday() < 5 and day not in trading_days:
+            result.add(day)
+    return frozenset(result)
+
+
+def _is_trading_day(day: date, holidays: Collection[date] = ()) -> bool:
+    if day.weekday() >= 5 or day in holidays:
+        return False
+    return day not in governed_twse_holidays(day)
+
+
+def is_trading_day(day: str | date, holidays: Collection[date] = ()) -> bool:
+    """True when ``day`` is a Taiwan trading day under the governed calendar and ``holidays``."""
+    return _is_trading_day(_as_date(day), holidays)
+
+
+def parse_instrument_id(instrument_id: str) -> dict[str, Any]:
+    """Parse ``eq:<code>`` or ``ssf:<code>:<YYYYMM>`` into structured fields."""
+    text = str(instrument_id or "").strip()
+    parts = text.split(":")
+    if len(parts) == 2 and parts[0] == "eq" and parts[1]:
+        code = normalize_underlying_code(parts[1])
+        return {
+            "instrument_id": f"eq:{code}",
+            "kind": "cash_share",
+            "underlying": code,
+            "contract": None,
+            "contract_month": None,
+        }
+    if (
+        len(parts) == 3
+        and parts[0] == "ssf"
+        and CONTRACT_CODE.match(parts[1])
+        and CONTRACT_MONTH.match(parts[2])
+    ):
+        return {
+            "instrument_id": f"ssf:{parts[1]}:{parts[2]}",
+            "kind": "stock_future",
+            "underlying": None,
+            "contract": parts[1],
+            "contract_month": parts[2],
+        }
+    raise ValueError(f"invalid instrument_id: {instrument_id!r}")
+
+
+def lookup_final_settlement_price(
+    contract: str,
+    contract_month: str,
+    source: Any,
+    *,
+    settlement_day: str | date | None = None,
+) -> dict[str, Any] | None:
+    """Resolve ``FinalSettlementPriceSSF`` for ``(contract, contract_month)``.
+
+    Accepts raw ``FinalSettlementPriceSSF`` rows, a payload mapping containing
+    ``FinalSettlementPriceSSF``, normalized SSF rows carrying
+    ``last_final_settlement``, or an explicit mapping keyed by
+    ``ssf:<contract>:<month>``, ``(contract, month)``, or ``month``.
+    Returns ``None`` when no valid positive finite settlement price is present.
+    """
+    clean_contract = str(contract or "").strip().upper()
+    clean_month = str(contract_month or "").strip()
+    if not CONTRACT_CODE.match(clean_contract) or not CONTRACT_MONTH.match(clean_month):
+        return None
+    expected_day = _optional_date(settlement_day) if settlement_day is not None else None
+    inst_id = f"ssf:{clean_contract}:{clean_month}"
+
+    def _coerce_result(price_val: Any, day_val: Any = None) -> dict[str, Any] | None:
+        if price_val is None or isinstance(price_val, bool):
+            return None
+        try:
+            dec = _decimal(price_val)
+        except Exception:
+            return None
+        if not dec.is_finite() or dec <= 0:
+            return None
+        parsed_day = _optional_date(day_val) if day_val not in (None, "") else expected_day
+        return {
+            "instrument_id": inst_id,
+            "contract": clean_contract,
+            "contract_month": clean_month,
+            "settlement_day": parsed_day.isoformat() if parsed_day is not None else None,
+            "final_settlement_price": float(dec),
+        }
+
+    if source is None:
+        return None
+    if isinstance(source, Mapping):
+        if "FinalSettlementPriceSSF" in source:
+            return lookup_final_settlement_price(
+                clean_contract,
+                clean_month,
+                source.get("FinalSettlementPriceSSF"),
+                settlement_day=settlement_day,
+            )
+        for key in (inst_id, (clean_contract, clean_month), f"{clean_contract}:{clean_month}", clean_month):
+            if key in source:
+                entry = source[key]
+                if isinstance(entry, Mapping):
+                    return _coerce_result(
+                        entry.get("final_settlement_price")
+                        or entry.get("TheFinalSettlementPrice")
+                        or entry.get("price"),
+                        entry.get("settlement_day")
+                        or entry.get("TheFinalSettlementDay")
+                        or entry.get("day"),
+                    )
+                return _coerce_result(entry, expected_day)
+    if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
+        for item in source:
+            if not isinstance(item, Mapping):
+                continue
+            row_contract = str(
+                item.get("Contract")
+                or item.get("ContractCode")
+                or item.get("contract")
+                or ""
+            ).strip().upper()
+            row_month = str(
+                item.get("ContractDeliveryMonth")
+                or item.get("SettlementMonth")
+                or item.get("contract_month")
+                or item.get("ContractMonth")
+                or ""
+            ).strip()
+            if row_contract == clean_contract and row_month == clean_month:
+                raw_price = (
+                    item.get("TheFinalSettlementPrice")
+                    if "TheFinalSettlementPrice" in item
+                    else (
+                        item.get("SettlementPrice")
+                        if "SettlementPrice" in item
+                        else item.get("final_settlement_price")
+                    )
+                )
+                if raw_price is not None:
+                    res = _coerce_result(
+                        raw_price,
+                        item.get("TheFinalSettlementDay")
+                        or item.get("Date")
+                        or item.get("settlement_day")
+                        or item.get("day"),
+                    )
+                    if res is not None:
+                        return res
+            last_final = item.get("last_final_settlement")
+            if isinstance(last_final, Mapping) and row_contract == clean_contract:
+                lf_month = str(last_final.get("contract_month") or "").strip()
+                if lf_month == clean_month:
+                    res = _coerce_result(last_final.get("price"), last_final.get("day"))
+                    if res is not None:
+                        return res
+    return None
 
 
 def previous_trading_day(decision_day: date, holidays: Collection[date] = ()) -> date:

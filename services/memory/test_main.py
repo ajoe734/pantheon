@@ -555,6 +555,8 @@ def _retrieve_auth_params(**overrides) -> dict:
 def memory_client(tmp_path, monkeypatch):
     monkeypatch.setenv("PANTHEON_MEMORY_STORE_PATH", str(tmp_path / "memory-store.json"))
     monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE_PATH", str(tmp_path / "persona-store.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "memory-store.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "persona-store.json"))
     monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
     main._STORE = None
     main._PERSONA_STORE = None
@@ -883,3 +885,77 @@ def test_memory_auth_env_forwards_oidc_and_role_map(memory_client, monkeypatch, 
 if __name__ == "__main__":
     unittest.main()
 
+
+
+def test_memory_retrieve_persona_entries_are_tenant_scoped(memory_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    ids = {}
+    for tenant in ("tenant-alpha", "tenant-beta"):
+        token = _make_jwt(tenant_id=tenant, roles=["operator"])
+        entry = _persona_auth_payload(tenant_id=tenant, content={"summary": f"{tenant} private", "tags": ["auth"]})
+        ids[tenant] = entry["memory_id"]
+        assert memory_client.post(
+            "/api/memory/persona-entries", json=entry, headers={"Authorization": f"Bearer {token}"}
+        ).status_code == 201
+    params = _retrieve_auth_params(scope="persona", persona_id="persona-alpha", query="")
+    alpha = _make_jwt(tenant_id="tenant-alpha", roles=["operator"])
+    resp = memory_client.get("/api/memory/retrieve", params=params, headers={"Authorization": f"Bearer {alpha}"})
+    assert resp.status_code == 200, resp.text
+    got = {h["entry"]["memory_id"] for h in resp.json()["hits"]}
+    assert ids["tenant-alpha"] in got and ids["tenant-beta"] not in got
+    assert {h["entry"]["tenant_id"] for h in resp.json()["hits"]} == {"tenant-alpha"}
+    # unauthenticated in strict mode stays rejected
+    assert memory_client.get("/api/memory/retrieve", params=params).status_code == 401
+    # tenant with no entries sees nothing
+    gamma = _make_jwt(tenant_id="tenant-gamma", roles=["operator"])
+    resp = memory_client.get("/api/memory/retrieve", params=params, headers={"Authorization": f"Bearer {gamma}"})
+    assert resp.status_code == 200 and not any(
+        h["entry"]["memory_id"] in ids.values() for h in resp.json()["hits"]
+    )
+
+
+def test_persona_retrieve_tenant_filter_precedes_ranking_limit(memory_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    owned_id = None
+    for tenant, count, reuse in [("tenant-alpha", 1, 0), ("tenant-beta", 100, 1000)]:
+        token = _make_jwt(tenant_id=tenant, roles=["operator"])
+        for _ in range(count):
+            entry = _persona_auth_payload(tenant_id=tenant, reuse_count=reuse)
+            response = memory_client.post(
+                "/api/memory/persona-entries", json=entry,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response.status_code == 201, response.text
+            if tenant == "tenant-alpha":
+                owned_id = entry["memory_id"]
+    response = memory_client.get(
+        "/api/memory/retrieve",
+        params=_retrieve_auth_params(scope="persona", persona_id="persona-alpha", query=""),
+        headers={"Authorization": f"Bearer {_make_jwt(tenant_id='tenant-alpha', roles=['operator'])}"},
+    )
+    assert response.status_code == 200, response.text
+    assert owned_id in {h["entry"]["memory_id"] for h in response.json()["hits"]}
+
+
+def test_persona_retrieve_backend_context_uses_verified_tenant(memory_client, monkeypatch):
+    from services.memory import search_retrieval
+
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    seen = []
+
+    class Backend:
+        def search(self, **kwargs):
+            seen.append(kwargs["context"].tenant_id)
+            return []
+
+    monkeypatch.setattr(search_retrieval, "get_search_retrieval_backend", lambda: Backend())
+    response = memory_client.get(
+        "/api/memory/retrieve",
+        params=_retrieve_auth_params(scope="persona", persona_id="persona-alpha", query="lesson"),
+        headers={"Authorization": f"Bearer {_make_jwt(tenant_id='tenant-alpha', roles=['operator'])}"},
+    )
+    assert response.status_code == 200, response.text
+    assert seen == ["tenant-alpha"], seen

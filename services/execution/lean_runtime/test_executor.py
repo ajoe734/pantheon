@@ -1024,8 +1024,15 @@ class ExpressionEnvelopeExecutorTests(unittest.TestCase):
             "metadata": {"decision_id": "dec-expr-1", **metadata},
         }
 
-    def test_chosen_stock_future_is_rejected_by_the_ledger_with_no_fill(self):
+    def test_chosen_stock_future_flows_to_taiwan_broker_order_with_expression_context(self):
         algo = _TaiwanAlgo()
+        captured_contexts = []
+
+        def _capture_submit(symbol, **kwargs):
+            captured_contexts.append(dict(algo.context))
+            algo.submissions.append((symbol, kwargs))
+
+        algo.SubmitTaiwanBrokerOrder = _capture_submit
         record = {"decision_id": "dec-expr-1", "instrument_id": "ssf:SRF:202611", "units": 1}
         execute(
             self._signal(
@@ -1033,7 +1040,33 @@ class ExpressionEnvelopeExecutorTests(unittest.TestCase):
                 kind="stock_future",
                 units=1,
                 multiplier=1000,
+                contract_month="202611",
                 reason_code="short_via_future",
+                expression_decision=record,
+            ),
+            algo,
+        )
+        self.assertEqual(algo.order_rejections, [])
+        [(symbol, kwargs)] = algo.submissions
+        self.assertEqual((symbol, kwargs["side"], kwargs["quantity"]), ("0050.TW", "sell", 1.0))
+        context = captured_contexts[0]
+        self.assertEqual(context["instrument_id"], "ssf:SRF:202611")
+        self.assertEqual(context["kind"], "stock_future")
+        self.assertEqual(context["multiplier"], 1000)
+        self.assertEqual(context["contract_month"], "202611")
+        self.assertEqual(context["decision_id"], "dec-expr-1")
+        self.assertEqual(context["expression_decision"], record)
+
+    def test_unsupported_instrument_kind_is_rejected_by_the_ledger_with_no_fill(self):
+        algo = _TaiwanAlgo()
+        record = {"decision_id": "dec-expr-1", "instrument_id": "opt:CDO:202611", "units": 1}
+        execute(
+            self._signal(
+                instrument_id="opt:CDO:202611",
+                kind="stock_option",
+                units=1,
+                multiplier=2000,
+                reason_code="short_via_option",
                 expression_decision=record,
             ),
             algo,
@@ -1044,9 +1077,9 @@ class ExpressionEnvelopeExecutorTests(unittest.TestCase):
         self.assertEqual(rejection["computed_quantity"], 0.0)
         self.assertFalse(rejection["submitted_to_broker"])
         context = algo.rejection_contexts[0]
-        self.assertEqual(context["instrument_id"], "ssf:SRF:202611")
-        self.assertEqual(context["kind"], "stock_future")
-        self.assertEqual(context["multiplier"], 1000)
+        self.assertEqual(context["instrument_id"], "opt:CDO:202611")
+        self.assertEqual(context["kind"], "stock_option")
+        self.assertEqual(context["multiplier"], 2000)
         self.assertEqual(context["decision_id"], "dec-expr-1")
         self.assertEqual(context["expression_decision"], record)
 
@@ -1076,6 +1109,53 @@ class ExpressionEnvelopeExecutorTests(unittest.TestCase):
         self.assertEqual(
             algo.rejection_contexts[0]["expression_decision"], {"reason_code": "no_feasible_instrument"}
         )
+
+    def test_stock_future_candidate_metadata_forwarded_and_signal_risk_policy_stripped(self):
+        algo = _TaiwanAlgo()
+        captured_contexts = []
+
+        def _capture_submit(symbol, **kwargs):
+            captured_contexts.append(dict(algo.context))
+            algo.submissions.append((symbol, kwargs))
+
+        algo.SubmitTaiwanBrokerOrder = _capture_submit
+        execute(
+            self._signal(
+                instrument_id="ssf:QFF:202611",
+                kind="stock_future",
+                units=1,
+                trade_date="2026-11-06",
+                candidates=[
+                    {
+                        "instrument_id": "ssf:QFF:202611",
+                        "kind": "stock_future",
+                        "contract": "QFF",
+                        "contract_month": "202611",
+                        "multiplier": 100,
+                        "price_basis": "futures_daily_settlement_prev_session",
+                        "futures_settlement_price": 2247.0,
+                        "price_date": "2026-11-05",
+                        "settlement_date": "2026-11-18",
+                    }
+                ],
+                risk_policy={"risk_policy_id": "forged-signal-policy", "max_leverage": 10.0},
+                risk_policy_id="forged-signal-policy",
+            ),
+            algo,
+        )
+        self.assertEqual(len(algo.submissions), 1)
+        ctx = captured_contexts[0]
+        self.assertEqual(ctx["instrument_id"], "ssf:QFF:202611")
+        self.assertEqual(ctx["contract"], "QFF")
+        self.assertEqual(ctx["contract_month"], "202611")
+        self.assertEqual(ctx["multiplier"], 100)
+        self.assertEqual(ctx["price_basis"], "futures_daily_settlement_prev_session")
+        self.assertEqual(ctx["futures_settlement_price"], 2247.0)
+        self.assertEqual(ctx["price_date"], "2026-11-05")
+        self.assertEqual(ctx["trade_date"], "2026-11-06")
+        self.assertEqual(ctx["settlement_date"], "2026-11-18")
+        self.assertNotIn("risk_policy", ctx)
+        self.assertNotIn("risk_policy_id", ctx)
 
 
 if __name__ == "__main__":

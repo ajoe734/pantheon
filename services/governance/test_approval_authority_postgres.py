@@ -720,3 +720,237 @@ def test_two_distinct_voters_complete_target_and_first_vote_stays_under_review(o
     assert replay.json() == first.json()
     second = op_owner.post("/api/governance/approvals/d1/decide", **op_vote("rk-1", "risk_owner", 2, key="v3"))
     assert second.status_code == 200 and second.json()["decision_state"] == "decided" and second.json()["version"] == 3
+
+
+@pytest.fixture()
+def dual_auth_owner(monkeypatch, tmp_path):
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub_nums = priv.public_key().public_numbers()
+    b64u = lambda b: base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
+    jwk = {
+        "kty": "RSA",
+        "kid": "gov-dual-kid-1",
+        "use": "sig",
+        "alg": "RS256",
+        "n": b64u(pub_nums.n.to_bytes((pub_nums.n.bit_length() + 7) // 8, "big")),
+        "e": b64u(pub_nums.e.to_bytes((pub_nums.e.bit_length() + 7) // 8, "big")),
+    }
+    jwks_path = tmp_path / "jwks.json"
+    jwks_path.write_text(json.dumps({"keys": [jwk]}), encoding="utf-8")
+    jwks_uri = f"file://{jwks_path}"
+    discovery_path = tmp_path / "openid-configuration.json"
+    discovery_path.write_text(
+        json.dumps({"issuer": "https://idp.pantheon.internal", "jwks_uri": jwks_uri}),
+        encoding="utf-8",
+    )
+    discovery_uri = f"file://{discovery_path}"
+
+    env_Cfg = {
+        "AUTH_MODE": "strict",
+        "JWT_SECRET": OP_SECRET,
+        "JWT_ISSUER": "https://auth.pantheon.internal",
+        "JWT_AUDIENCE": "pantheon-runtime",
+        "OIDC_ISSUER": "https://idp.pantheon.internal",
+        "OIDC_AUDIENCE": "pantheon-oidc-aud",
+        "JWKS_URI": jwks_uri,
+        "OIDC_DISCOVERY_URL": discovery_uri,
+        "ROLE_CLAIMS": "roles,groups",
+        "ROLE_MAP": (
+            "pantheon-operator=operator;"
+            "pantheon-reviewer=governance_reviewer;"
+            "pantheon-risk=risk_owner;"
+            "pantheon-viewer=viewer"
+        ),
+        "ROLE_MAP_MODE": "strict",
+        "REQUIRE_EMAIL_VERIFIED": "true",
+    }
+    for name, value in env_Cfg.items():
+        monkeypatch.setenv(f"PANTHEON_GOVERNANCE_{name}", value)
+    monkeypatch.setattr(_gov_main, "store", OperatorMemoryStore())
+
+    def sign_rs256(**overrides):
+        claims = {
+            "iss": "https://idp.pantheon.internal",
+            "aud": "pantheon-oidc-aud",
+            "sub": "idp-op-1",
+            "tenant_id": OP_TENANT,
+            "groups": ["pantheon-operator"],
+            "email_verified": True,
+            "exp": time.time() + 900,
+        }
+        claims.update(overrides)
+        claims = {k: v for k, v in claims.items() if v is not None}
+        hdr = b64u(json.dumps({"alg": "RS256", "typ": "JWT", "kid": "gov-dual-kid-1"}, separators=(",", ":")).encode())
+        pld = b64u(json.dumps(claims, separators=(",", ":")).encode())
+        sig = priv.sign(f"{hdr}.{pld}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+        return f"{hdr}.{pld}.{b64u(sig)}"
+
+    def sign_hs256(secret=OP_SECRET, **overrides):
+        claims = {
+            "iss": "https://auth.pantheon.internal",
+            "aud": "pantheon-runtime",
+            "sub": "svc-op-1",
+            "tenant_id": OP_TENANT,
+            "roles": ["operator"],
+            "exp": time.time() + 900,
+        }
+        claims.update(overrides)
+        return token(secret, **claims)
+
+    return _TestClient(_gov_main.app), sign_rs256, sign_hs256
+
+
+def test_dual_auth_idp_rs256_via_jwks_and_discovery_plus_role_map(dual_auth_owner, monkeypatch):
+    client, sign_rs256, _ = dual_auth_owner
+    op_hdr = lambda key=None, **claims: {
+        "Authorization": f"Bearer {sign_rs256(**claims)}",
+        **({"Idempotency-Key": key} if key else {}),
+    }
+
+    created = client.post(
+        "/api/governance/approvals",
+        json=op_proposal(decision_id="d-rs256", owner_user_id="idp-op-1"),
+        headers=op_hdr("k-prop"),
+    )
+    assert created.status_code == 201, created.text
+    assert client.get("/api/governance/approvals/d-rs256", headers=op_hdr()).status_code == 200
+    assert len(client.get("/api/governance/approvals", headers=op_hdr()).json()) == 1
+
+    # Also verify OIDC discovery resolution when JWKS_URI is unset.
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_JWKS_URI", "")
+    v1 = client.post(
+        "/api/governance/approvals/d-rs256/decide",
+        json={
+            "expected_version": 1,
+            "actor_role": "governance_reviewer",
+            "actor_id": "idp-rev-1",
+            "outcome": "approved",
+            "rationale": "rs256 review 1",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+        headers=op_hdr("k-v1", sub="idp-rev-1", groups=["pantheon-reviewer"]),
+    )
+    assert v1.status_code == 200 and v1.json()["decision_state"] == "under_review"
+    v2 = client.post(
+        "/api/governance/approvals/d-rs256/decide",
+        json={
+            "expected_version": 2,
+            "actor_role": "risk_owner",
+            "actor_id": "idp-risk-1",
+            "outcome": "approved",
+            "rationale": "rs256 review 2",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+        headers=op_hdr("k-v2", sub="idp-risk-1", groups=["pantheon-risk"]),
+    )
+    assert v2.status_code == 200 and v2.json()["decision_state"] == "decided"
+
+    # Forwarded PANTHEON_GOVERNANCE_REQUIRE_EMAIL_VERIFIED rejects unverified IdP tokens.
+    for unverified in ({'email_verified': False}, {'email_verified': None}):
+        r = client.get("/api/governance/approvals/d-rs256", headers=op_hdr(**unverified))
+        assert r.status_code == 401, r.text
+
+    # Strict role-map and claim checks remain fail-closed; viewer has no approval read/write role.
+    assert client.get("/api/governance/approvals/d-rs256", headers=op_hdr(groups=["unmapped-group"])).status_code == 401
+    assert client.get("/api/governance/approvals/d-rs256", headers=op_hdr(groups=["pantheon-viewer"])).status_code == 403
+    for bad_claims in (
+        {"sub": None},
+        {"sub": "  "},
+        {"tenant_id": None},
+        {"tenant_id": "  "},
+        {"groups": []},
+        {"iss": "https://wrong.idp.internal"},
+        {"aud": "wrong-aud"},
+        {"exp": time.time() - 10},
+    ):
+        r = client.get("/api/governance/approvals/d-rs256", headers=op_hdr(**bad_claims))
+        assert r.status_code == 401, (bad_claims, r.text)
+
+    # Body owner/tenant/actor mismatch remains 403; cross-tenant read remains 404.
+    assert client.post(
+        "/api/governance/approvals",
+        json=op_proposal(decision_id="d-bad-owner", owner_user_id="other-op"),
+        headers=op_hdr("k-bad-owner"),
+    ).status_code == 403
+    assert client.get("/api/governance/approvals/d-rs256", headers=op_hdr(tenant_id="other-tenant")).status_code == 404
+
+
+def test_dual_auth_internal_hs256_accepted_when_jwks_and_discovery_configured(dual_auth_owner, monkeypatch):
+    client, _, sign_hs256 = dual_auth_owner
+    hs_hdr = lambda key=None, secret=OP_SECRET, **claims: {
+        "Authorization": f"Bearer {sign_hs256(secret=secret, **claims)}",
+        **({"Idempotency-Key": key} if key else {}),
+    }
+
+    # Internal HS256 tokens (without email_verified or external group claims) work alongside JWKS + discovery.
+    created = client.post(
+        "/api/governance/approvals",
+        json=op_proposal(decision_id="d-hs256", owner_user_id="svc-op-1"),
+        headers=hs_hdr("k-hs-prop"),
+    )
+    assert created.status_code == 201, created.text
+
+    read_res = client.get(
+        "/api/governance/approvals/d-hs256",
+        headers=hs_hdr(sub="svc-reader-1", roles=["approval_reader"]),
+    )
+    assert read_res.status_code == 200 and read_res.json()["decision_id"] == "d-hs256"
+
+    # Also verify when JWKS_URI is empty and only OIDC_DISCOVERY_URL is set.
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_JWKS_URI", "")
+    v1 = client.post(
+        "/api/governance/approvals/d-hs256/decide",
+        json={
+            "expected_version": 1,
+            "actor_role": "governance_reviewer",
+            "actor_id": "svc-rev-1",
+            "outcome": "approved",
+            "rationale": "internal hs256 vote 1",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+        headers=hs_hdr("k-hs-v1", sub="svc-rev-1", roles=["governance_reviewer"]),
+    )
+    assert v1.status_code == 200 and v1.json()["decision_state"] == "under_review"
+    decided = client.post(
+        "/api/governance/approvals/d-hs256/decide",
+        json={
+            "expected_version": 2,
+            "actor_role": "risk_owner",
+            "actor_id": "svc-risk-1",
+            "outcome": "approved",
+            "rationale": "internal hs256 vote 2",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+        headers=hs_hdr("k-hs-v2", sub="svc-risk-1", roles=["risk_owner"]),
+    )
+    assert decided.status_code == 200 and decided.json()["decision"] == "approved"
+
+    # Every strict claim and body check is preserved on the internal HS256 path.
+    for bad_claims in (
+        {"sub": None},
+        {"sub": "  "},
+        {"tenant_id": None},
+        {"tenant_id": "  "},
+        {"roles": []},
+        {"iss": "https://idp.pantheon.internal"},
+        {"aud": "pantheon-oidc-aud"},
+        {"exp": time.time() - 10},
+    ):
+        r = client.get("/api/governance/approvals/d-hs256", headers=hs_hdr(**bad_claims))
+        assert r.status_code in (401, 403), (bad_claims, r.text)
+    assert client.get(
+        "/api/governance/approvals/d-hs256",
+        headers=hs_hdr(secret="wrong-secret-" + OP_SECRET),
+    ).status_code == 401
+    assert client.get(
+        "/api/governance/approvals/d-hs256",
+        headers=hs_hdr(sub="svc-reader-1", roles=["approval_reader"], tenant_id="other-tenant"),
+    ).status_code == 404
+    assert client.post(
+        "/api/governance/approvals/d-hs256/revoke",
+        json={"expected_version": 3, "actor_id": "svc-rev-1", "actor_role": "risk_owner"},
+        headers=hs_hdr("k-hs-rev", sub="svc-rev-1", roles=["governance_reviewer"]),
+    ).status_code == 403

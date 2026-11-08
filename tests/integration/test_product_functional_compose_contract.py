@@ -115,12 +115,11 @@ def test_only_dynamic_executable_paper_fleet_is_default_and_is_source_bound() ->
     services = _compose()["services"]
     fleet = services["paper-fleet-reconciler"]
     producer = services["paper-signal-producer"]
-    static_runtime = services["pantheon-paper-runtime"]
+    assert "pantheon-paper-runtime" not in services
 
     fleet_env = _environment(fleet)
     producer_env = _environment(producer)
     assert "root" in fleet["profiles"]
-    assert static_runtime["profiles"] == ["static-paper-runtime"]
     assert fleet_env["PANTHEON_SOURCE_INGEST_URL"] == "http://source-ingest:8097"
     assert fleet_env["PANTHEON_PERFORMANCE_STATE_ROOT"] == "/data/runtime/paper-performance"
     assert "runtime-data:/data/runtime" in fleet["volumes"]
@@ -135,7 +134,7 @@ def test_only_dynamic_executable_paper_fleet_is_default_and_is_source_bound() ->
     _healthy_dependency(producer, "signal-store")
     _healthy_dependency(producer, "source-ingest")
 
-    for service in (fleet, producer, static_runtime, services["runtime-manager"]):
+    for service in (fleet, producer, services["runtime-manager"]):
         environment = _environment(service)
         assert environment.get("PANTHEON_LIVE_BROKER_ENABLED", "false") == "false" or environment.get(
             "PANTHEON_LIVE_BROKER_ENABLED"
@@ -149,9 +148,9 @@ def test_legacy_profiles_remain_explicit_compatibility_or_operator_paths() -> No
     services = _compose()["services"]
 
     # No legacy profile is silently made part of the root topology.  The static
-    # runtime remains an explicit compatibility/test path while the dynamic
+    # runtime service is retired; the dynamic
     # reconciler is the sole default paper owner.
-    assert services["pantheon-paper-runtime"]["profiles"] == ["static-paper-runtime"]
+    assert "pantheon-paper-runtime" not in services
     assert services["source-ingest-agora-projector"]["profiles"] == [
         "source-ingest-scheduler",
         "workers",

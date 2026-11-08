@@ -186,7 +186,7 @@ def test_snapshot_read_performs_no_provider_egress_or_scheduler_work(
         def __getattr__(self, name: str) -> Any:
             raise AssertionError(f"snapshot read must not access scheduler.{name}")
 
-    monkeypatch.setattr(module, "scheduler", ForbiddenScheduler())
+    monkeypatch.setattr(module.runtime, "scheduler", ForbiddenScheduler())
     with patch("urllib.request.urlopen", side_effect=AssertionError("snapshot read must not egress")):
         response = client.get("/api/source-ingest/snapshots/latest?symbol=AAPL.US")
 
@@ -210,7 +210,7 @@ def test_source_snapshot_persists_and_publishes_governed_calendar_evidence(
         trace_id="trace-source-api-governed-calendar",
     )
     evidence = records[-1].metadata["calendar_evidence"]
-    updated = module.latest_market_snapshot_store.append_normalized_records(
+    updated = module.runtime.latest_market_snapshot_store.append_normalized_records(
         records,
         ingest_run_id="ingest-twse-lny-calendar",
         observed_at="2026-02-23T02:00:00Z",
@@ -224,7 +224,7 @@ def test_source_snapshot_persists_and_publishes_governed_calendar_evidence(
     snapshot = response.json()
     assert snapshot["symbol"] == "2330.TW"
     assert snapshot["calendar_evidence"] == evidence
-    assert module.latest_market_snapshot_store.get("2330.TW").calendar_evidence == evidence
+    assert module.runtime.latest_market_snapshot_store.get("2330.TW").calendar_evidence == evidence
 
     # The public contract is checksummed and durable through a new Source
     # store instance; it is not merely attached to an in-process fixture.
@@ -289,7 +289,7 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
     client = TestClient(module.app)
     configured = client.post(
         "/api/source-ingest/connectors",
-        headers={"Authorization": f"Bearer {module.controller_token}"},
+        headers={"Authorization": f"Bearer {module.runtime.controller_token}"},
         json={
             "connector": {
                 "connector_id": "tw-twse-tpex-official-market",
@@ -349,7 +349,7 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
     assert configured.status_code == 201, configured.text
     ingested = client.post(
         "/api/source-ingest/jobs",
-        headers={"Authorization": f"Bearer {module.controller_token}"},
+        headers={"Authorization": f"Bearer {module.runtime.controller_token}"},
         json={
             "connector_id": "tw-twse-tpex-official-market",
             "trace_id": "tw-read-alias-contract",
@@ -370,7 +370,7 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
         key: value for key, value in official_body.items() if key != "symbol"
     }
     assert alias_body["snapshot_id"] == official_body["snapshot_id"]
-    assert module.latest_market_snapshot_store.get("2330.TW").symbol == "2330.TWSE"
+    assert module.runtime.latest_market_snapshot_store.get("2330.TW").symbol == "2330.TWSE"
     assert alias_body["closes"] == [950.0, 955.0]
     assert alias_body["lineage"]["source_ids"] == [
         "tw-official:tw_price_daily:TWSE:2330:official",

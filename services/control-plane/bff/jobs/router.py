@@ -47,7 +47,7 @@ def create_jobs_router(
     raise_if_read_surface_unavailable: Callable[..., None],
     get_job_overlay: Optional[JobOverlay] = None,
     reject_body_idempotency_key: Callable[[Dict[str, Any]], None],
-    resolve_final_idempotency_key: Callable[[Optional[str], Optional[str]], str],
+    resolve_final_idempotency_key: Callable[[Optional[str]], str],
     submit_job_action: SubmitJobAction,
 ) -> APIRouter:
     """Build the canonical Jobs router. Mount with ``app.include_router(...)``."""
@@ -226,13 +226,12 @@ def create_jobs_router(
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: job action."""
         identity = extract_identity(authorization)
         (require_operator_role or _policy_operator_role)(identity)
         reject_body_idempotency_key(payload)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = resolve_final_idempotency_key(idempotency_key)
         job = _lookup_job(job_id)
         if not job:
             raise bff_error(

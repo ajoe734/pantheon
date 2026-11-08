@@ -99,7 +99,6 @@ def create_auth_router(
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         x_refresh_token: Optional[str] = Header(default=None, alias="X-Refresh-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         _require_cookie_origin(request, pantheon_refresh_token, pantheon_refresh)
         return await service.invoke(
@@ -113,7 +112,6 @@ def create_auth_router(
             x_mfa_token=x_mfa_token,
             x_refresh_token=x_refresh_token,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     # The refresh cookie is path-scoped to /bff/auth, so logout normally revokes the
@@ -128,7 +126,6 @@ def create_auth_router(
         pantheon_refresh_token: Optional[str] = Cookie(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         _require_cookie_origin(request, pantheon_refresh_token)
         return await service.invoke(
@@ -140,7 +137,6 @@ def create_auth_router(
             pantheon_refresh_token=pantheon_refresh_token,
             x_mfa_token=x_mfa_token,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
         )
 
     @router.post("/bff/switch-tenant")

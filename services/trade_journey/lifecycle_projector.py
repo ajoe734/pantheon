@@ -28,7 +28,9 @@ from services.trade_journey.correlation_envelope import (
     validate_envelope,
 )
 from services.trade_journey.lifecycle_noop_order import (
+    PAPER_FUTURES_TERMINAL_NONFILL_EVENT_TYPES,
     is_noop_order,
+    is_paper_futures_terminal_nonfill,
     is_sell_without_holdings_rejection,
 )
 from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
@@ -75,6 +77,9 @@ LIFECYCLE_EVENT_TYPES = frozenset(
         "trade_decision",
         "risk_evaluation",
         "paper_order_simulated",
+        "paper_futures_settled",
+        "paper_margin_call",
+        "paper_forced_liquidation",
         "order_submitted",
         "order_accepted",
         "order_partially_filled",
@@ -1013,12 +1018,18 @@ class RelationalLifecycleProjector:
                 source.get("reason_code"),
                 metadata.get("reason_code"),
             )
+            is_futures_terminal_nonfill = (
+                not has_contradictory_fill_or_broker
+                and nonzero_generic_qty is None
+                and is_paper_futures_terminal_nonfill(source, metadata)
+            )
             is_explicit_no_trade = (
                 not is_no_holdings_reject
                 and is_noop
                 and status == "skipped"
                 and (
-                    str(
+                    is_futures_terminal_nonfill
+                    or str(
                         _first(
                             source.get("decision_status"),
                             metadata.get("decision_status"),
@@ -1076,7 +1087,16 @@ class RelationalLifecycleProjector:
                 if reject_reason is not None:
                     event["reason_code"] = str(reject_reason)
             elif is_explicit_no_trade:
-                event["reason_code"] = str(explicit_noop_reason or "no_order")
+                event["reason_code"] = str(
+                    explicit_noop_reason
+                    or reject_reason
+                    or (
+                        source.get("event_type")
+                        if is_futures_terminal_nonfill
+                        else None
+                    )
+                    or "no_order"
+                )
                 event["decision_status"] = "no_order"
                 event["order_status"] = "not_submitted"
                 event["risk_status"] = "skipped"
@@ -1154,6 +1174,16 @@ class RelationalLifecycleProjector:
             return [
                 ("order_submission", _stage_status(metadata.get("order_status") or "succeeded")),
             ]
+        if event_type in PAPER_FUTURES_TERMINAL_NONFILL_EVENT_TYPES:
+            order_stage_status = _stage_status(metadata.get("order_status") or "skipped")
+            if order_stage_status == "skipped" and is_paper_futures_terminal_nonfill(
+                event, metadata
+            ):
+                return [
+                    ("risk_evaluation", _stage_status(metadata.get("risk_status") or "skipped")),
+                    ("order_submission", "skipped"),
+                ]
+            return [("order_submission", order_stage_status)]
         if event_type == "order_submitted":
             return [("order_submission", "succeeded")]
         if event_type == "order_accepted":

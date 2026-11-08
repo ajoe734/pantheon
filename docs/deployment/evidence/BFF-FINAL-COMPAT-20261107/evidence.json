@@ -1,0 +1,115 @@
+{
+  "task_id": "BFF-FINAL-COMPAT-20261107",
+  "audit_source": "/tmp/pantheon-retirement-audit-20261107/findings.json",
+  "prerequisites": {
+    "CORE-COMPAT-CLEANUP-20261107": {
+      "status": "done",
+      "pr": 7053,
+      "summary": "Consolidated BFF idempotency key resolution onto services/control-plane/bff/command_adapters/contracts.py::resolve_final_idempotency_key."
+    },
+    "FE-COMPAT-CLEANUP-20261107": {
+      "status": "done",
+      "repo": "ajoe734/execute-plans",
+      "pr": 970,
+      "merge_commit": "d62f0e4f4f2f32b1ed5d94a90e0e9afd1d90ea7d",
+      "summary": "Migrated maintained execute-plans frontend callers and tests to canonical Idempotency-Key and canonical /bff/ranking-formulas* routes."
+    }
+  },
+  "findings": {
+    "A15": {
+      "status": "resolved",
+      "summary": "Removed legacy X-Idempotency-Key header support across BFF idempotency resolvers, route handlers, services, CORS allowed headers, smoke scripts, and contract documentation after execute-plans client migration. Retained canonical Idempotency-Key header resolution, replay semantics, conflict detection, and 400/422 missing-key error semantics.",
+      "changed_files": [
+        "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md",
+        "services/control-plane/bff/agora/router.py",
+        "services/control-plane/bff/agora/service.py",
+        "services/control-plane/bff/assistant/command_idempotency.py",
+        "services/control-plane/bff/assistant/management_service.py",
+        "services/control-plane/bff/assistant/routes.py",
+        "services/control-plane/bff/auth/handlers.py",
+        "services/control-plane/bff/auth/router.py",
+        "services/control-plane/bff/capital/router.py",
+        "services/control-plane/bff/command_adapters/contracts.py",
+        "services/control-plane/bff/command_adapters/evolution_adapter.py",
+        "services/control-plane/bff/command_adapters/receipts.py",
+        "services/control-plane/bff/command_adapters/router.py",
+        "services/control-plane/bff/command_adapters/service.py",
+        "services/control-plane/bff/console_gap/datasources.py",
+        "services/control-plane/bff/control_loops/router.py",
+        "services/control-plane/bff/core/app_factory.py",
+        "services/control-plane/bff/core/http_security.py",
+        "services/control-plane/bff/deployment/router.py",
+        "services/control-plane/bff/evolution/CHARACTERIZATION.md",
+        "services/control-plane/bff/evolution/router.py",
+        "services/control-plane/bff/governance/router.py",
+        "services/control-plane/bff/incidents/router.py",
+        "services/control-plane/bff/jobs/router.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/management_read_models/ranking_router.py",
+        "services/control-plane/bff/personas/router.py",
+        "services/control-plane/bff/personas/routes/collection.py",
+        "services/control-plane/bff/personas/routes/common.py",
+        "services/control-plane/bff/personas/routes/detail.py",
+        "services/control-plane/bff/personas/routes/lifecycle.py",
+        "services/control-plane/bff/personas/service.py",
+        "services/control-plane/bff/ports/evolution_program_commands.py",
+        "services/control-plane/bff/research/routes/common.py",
+        "services/control-plane/bff/research/routes/experiments.py",
+        "services/control-plane/bff/research/routes/ops.py",
+        "services/control-plane/bff/runtime/router.py",
+        "services/control-plane/bff/smoke_test.py",
+        "services/control-plane/bff/smoke_test_incident.py",
+        "services/control-plane/bff/strategies/router.py",
+        "services/control-plane/bff/strategies/routes/collection.py",
+        "services/control-plane/bff/strategies/routes/common.py",
+        "services/control-plane/bff/strategies/routes/detail.py",
+        "services/control-plane/bff/strategies/routes/seeds.py",
+        "services/control-plane/bff/tools_integrations/router.py",
+        "services/control-plane/bff/tools_integrations/service.py",
+        "docs/conventions/CANONICAL_PATH_NAMING.md"
+      ]
+    },
+    "A13": {
+      "status": "resolved",
+      "summary": "Inventoried all retired 410 route families in services/control-plane/bff/. Removed the 4 immediate /bff/ranking/formulas* deprecation notification wrappers (GET/POST /bff/ranking/formulas, GET/PATCH /bff/ranking/formulas/{formula_id}) and their deprecated_bff_path_response helper injection into create_rankings_long_tail_router, removed the 4 /bff/ranking/formulas* alias overrides from scripts/bff_route_manifest_backend.py, and updated execute_plans_bff_routes.json and backend_routes_manifest.json. Preserved canonical /bff/ranking-formulas* and /bff/rankings* routes, preserved business retirement guards (POST /bff/ranking/formulas/{formula_id}/actions/{action_id} via reject_retired_command('RankingFormulaAction') and POST /bff/personas/{persona_id}/ranking-profile/actions/promote via reject_retired_command('PersonaRankingProfilePromote')), and documented remaining 410 notification routes gated on the external 7-day access-log window.",
+      "removed_routes": [
+        "GET /bff/ranking/formulas",
+        "POST /bff/ranking/formulas",
+        "GET /bff/ranking/formulas/{formula_id}",
+        "PATCH /bff/ranking/formulas/{formula_id}"
+      ],
+      "preserved_business_retirement_guards": [
+        "POST /bff/ranking/formulas/{formula_id}/actions/{action_id}",
+        "POST /bff/personas/{persona_id}/ranking-profile/actions/promote"
+      ],
+      "external_prerequisites": {
+        "access_log_window_7d": {
+          "status": "unavailable_in_repo_checkout",
+          "note": "Hosted 7-day BFF access-log telemetry is an external runtime prerequisite not available inside the repository worktree. No zero-traffic claim is fabricated; routes whose retirement depends on external 7-day access-log confirmation are inventoried and retained in docs/conventions/CANONICAL_PATH_NAMING.md."
+        }
+      },
+      "changed_files": [
+        "services/control-plane/bff/management_read_models/ranking_router.py",
+        "services/control-plane/bff/core/app_factory.py",
+        "scripts/bff_route_manifest_backend.py",
+        "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
+        "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+        "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+        "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+        "services/control-plane/bff/tests/test_strategy_ranking_router.py",
+        "docs/conventions/CANONICAL_PATH_NAMING.md"
+      ]
+    }
+  },
+  "verification": {
+    "route_manifest_check": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check (passed: 623 routes match snapshot)",
+    "pytest_suites": [
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/tests/test_bff_path_dedupe.py -q (8 passed)",
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_assistant_security.py -k 'idempotency or logout or write' -q (10 passed)",
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_final_contract_primitives.py services/control-plane/bff/tests/test_command_adapters_router.py -k 'idempotency' -q (1 passed)",
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/tests/test_evolution_program_action_receipts.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/test_datastrat_seed_replication_bff.py services/control-plane/bff/test_datastrat_seed_review_bff.py -q (142 passed)",
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_tools_integrations_router.py -q (27 passed)",
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_two_man_sign_race_contract.py services/control-plane/bff/test_management_data_sources_v2.py services/control-plane/bff/test_openclaw_ops_surface.py -q (passed)"
+    ]
+  }
+}

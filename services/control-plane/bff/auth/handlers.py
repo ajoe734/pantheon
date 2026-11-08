@@ -556,7 +556,6 @@ async def bff_auth_refresh(
     x_mfa_token: Optional[str] = None,
     x_refresh_token: Optional[str] = None,
     idempotency_key: Optional[str] = None,
-    x_idempotency_key: Optional[str] = None,
     response: Any = None,
     refresh_store: Optional[RefreshSessionStore] = None,
     deps: AuthDependencies,
@@ -573,7 +572,7 @@ async def bff_auth_refresh(
         identity = _assert_identity(None, deps, mfa=x_mfa_token, cookie=str(credential))
     else:
         identity = _assert_identity(bearer, deps, mfa=x_mfa_token, cookie=pantheon_session)
-    idem = idempotency_key or x_idempotency_key
+    idem = idempotency_key
     record_key = _idempotency_key("POST /bff/auth/refresh", identity, idem)
     request_hash = _request_hash({"route": "POST /bff/auth/refresh", "payload": payload or {}, "source": source})
     if record_key:
@@ -608,7 +607,6 @@ async def bff_logout(
     pantheon_session: Optional[str] = None,
     x_mfa_token: Optional[str] = None,
     idempotency_key: Optional[str] = None,
-    x_idempotency_key: Optional[str] = None,
     pantheon_refresh_token: Optional[str] = None,
     refresh_store: Optional[RefreshSessionStore] = None,
     deps: AuthDependencies,
@@ -631,7 +629,7 @@ async def bff_logout(
     chain_id = _claims(identity).get("refresh_chain")
     if refresh_store is not None and chain_id:
         refresh_store.revoke_chain(str(chain_id))
-    idem = idempotency_key or x_idempotency_key
+    idem = idempotency_key
     record_key = _idempotency_key("POST /bff/logout", identity, idem)
     request_hash = _request_hash({"route": "POST /bff/logout", "payload": payload or {}})
     if record_key:
@@ -817,7 +815,6 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
         x_mfa_token: Optional[str] = None,
         x_refresh_token: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         return await bff_auth_refresh(
             payload=payload,
@@ -828,7 +825,6 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
             x_mfa_token=x_mfa_token,
             x_refresh_token=x_refresh_token,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             response=response,
             refresh_store=refresh_store,
             deps=deps,
@@ -843,7 +839,6 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
         pantheon_session: Optional[str] = None,
         x_mfa_token: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         return await bff_logout(
             response=response,
@@ -852,7 +847,6 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
             pantheon_session=pantheon_session,
             x_mfa_token=x_mfa_token,
             idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
             pantheon_refresh_token=pantheon_refresh_token,
             refresh_store=refresh_store,
             deps=deps,

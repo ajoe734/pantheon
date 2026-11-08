@@ -371,17 +371,6 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
     # PANTHEON_PAPER_FLEET_RECONCILER_URL would otherwise raise instead of
     # falling back to the persona-session-store path PM12 eligibility uses.
     store.list_authoritative_paper_runtime_monitoring_sessions = lambda: []
-    def _record_agora_audit_event(event: dict) -> dict:
-        event_id = str(event.get("auditId") or event.get("eventId") or f"aud-agora-{uuid.uuid4().hex[:12]}")
-        record = {
-            "auditId": event_id,
-            "eventId": event_id,
-            "recordedAt": event.get("recordedAt") or "2026-05-25T12:00:00Z",
-            **json.loads(json.dumps(event)),
-        }
-        store._data.setdefault("agora_audit_events", {})[event_id] = record
-        return json.loads(json.dumps(record))
-    store.record_agora_audit_event = _record_agora_audit_event
     set_management_nl_read_store(store)
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main._sse_buffers["ask"].clear()
@@ -667,7 +656,6 @@ def test_management_nl_request_exception_marks_reservation_uncertain_immediately
             "payload": payload,
             "authorization": OPERATOR_HEADERS["Authorization"],
             "idempotency_key": "mgmt-command-exception-key",
-            "x_idempotency_key": None,
             "x_tenant_id": None,
             "x_pantheon_tenant": None,
         }
@@ -724,7 +712,6 @@ def test_management_nl_concurrent_exact_request_invokes_provider_once_and_replay
                 "payload": payload,
                 "authorization": OPERATOR_HEADERS["Authorization"],
                 "idempotency_key": key,
-                "x_idempotency_key": None,
                 "x_tenant_id": None,
                 "x_pantheon_tenant": None,
             }
@@ -781,7 +768,6 @@ def test_management_nl_concurrent_conflict_returns_409_before_second_side_effect
             common = {
                 "authorization": OPERATOR_HEADERS["Authorization"],
                 "idempotency_key": key,
-                "x_idempotency_key": None,
                 "x_tenant_id": None,
                 "x_pantheon_tenant": None,
             }

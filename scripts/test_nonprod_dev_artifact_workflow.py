@@ -285,10 +285,16 @@ def test_unrequested_paper_success_outcome_is_not_a_valid_completion(tmp_path):
 
 
 def test_inline_retirement_only_for_requested_case_after_compensation():
-    retire = next(item for item in DEPLOY["steps"] if item.get("id") == "retire_release_cases")
-    base = {"steps.deploy_compensation.outcome": "success"}
-    assert evaluate(retire["if"], {**base, "env.PAPER_BOOTSTRAP_REQUESTED": "true"})
-    assert not evaluate(retire["if"], {**base, "env.PAPER_BOOTSTRAP_REQUESTED": "false"})
+    order = [item.get("id") for item in DEPLOY["steps"]]
+    assert order.index("retire_release_cases") < order.index("deploy_compensation") < order.index("lease_cleanup")
+    retire = step(DEPLOY, "retire_release_cases")
+    assert retire["env"]["RELEASE_OUTCOME"] == "pre_restore"
+    assert "steps.deploy_compensation.outcome" not in retire["if"]
+    base = {f"steps.{k}.outcome": "success" for k in (*MANDATORY, "lease", "artifact_baseline")}
+    failed = {**base, "steps.public_smoke.outcome": "failure"}
+    assert evaluate(retire["if"], {**failed, "env.PAPER_BOOTSTRAP_REQUESTED": "true"})
+    assert not evaluate(retire["if"], {**failed, "env.PAPER_BOOTSTRAP_REQUESTED": "false"})
+    assert not evaluate(retire["if"], {**base, "env.PAPER_BOOTSTRAP_REQUESTED": "true"})
     assert not evaluate(retire["if"], {"env.PAPER_BOOTSTRAP_REQUESTED": "true"})
 
 
@@ -383,6 +389,11 @@ def _eval_gha(expression, outcomes, roundtrip, requested="true"):
     if expr.startswith("${{"):
         expr = expr[3:-2].strip()
     expr = re.sub(r"steps\.(\w+)\.outputs\.evidence_dir", "'x'", expr)
+    expr = re.sub(
+        r"steps\.(\w+)\.conclusion",
+        lambda m: repr("skipped" if outcomes.get(m.group(1), "skipped") == "skipped" else "failure"),
+        expr,
+    )
     expr = re.sub(r"steps\.(\w+)\.outcome", lambda m: repr(outcomes.get(m.group(1), "skipped")), expr)
     expr = expr.replace("inputs.run_exact_artifact_roundtrip", repr(roundtrip))
     expr = expr.replace("needs.deploy-dev.outputs.paper_bootstrap_requested", repr(requested))
@@ -392,29 +403,346 @@ def _eval_gha(expression, outcomes, roundtrip, requested="true"):
 
 
 def test_retirement_requires_complete_roundtrip_or_successful_compensation():
-    retire = step(COORDINATE, "retire_release_cases")
+    ids = [item.get("id") for item in COORDINATE["steps"]]
+    assert (
+        ids.index("final_artifact_verify")
+        < ids.index("roundtrip_retire_release_case")
+        < ids.index("roundtrip_baseline_restore")
+        < ids.index("roundtrip_final_return")
+        < ids.index("rollback_retire_release_case")
+        < ids.index("compensation")
+        < ids.index("retire_release_cases")
+        < ids.index("release_evidence_upload")
+    )
+    roundtrip_retire = step(COORDINATE, "roundtrip_retire_release_case")
+    rollback_retire = step(COORDINATE, "rollback_retire_release_case")
+    accepted_retire = step(COORDINATE, "retire_release_cases")
+    assert roundtrip_retire["env"]["RELEASE_OUTCOME"] == "pre_restore"
+    assert rollback_retire["env"]["RELEASE_OUTCOME"] == "pre_restore"
+    assert accepted_retire["env"]["RELEASE_OUTCOME"] == "accepted"
+    assert "steps.compensation.outcome" not in rollback_retire["if"]
+
     base = {"frontend_release": "success", "final_artifact_verify": "success"}
 
-    def decide(outcomes, roundtrip, requested="true"):
-        admitted = bool(_eval_gha(retire["if"], outcomes, roundtrip, requested))
-        outcome = _eval_gha(retire["env"]["RELEASE_OUTCOME"], outcomes, roundtrip)
-        return admitted, outcome
+    # Roundtrip opt-in retires current run case before roundtrip_baseline_restore.
+    assert bool(_eval_gha(roundtrip_retire["if"], base, True, "true")) is True
+    assert bool(_eval_gha(roundtrip_retire["if"], base, False, "true")) is False
+    assert bool(_eval_gha(roundtrip_retire["if"], base, True, "false")) is False
 
-    # Opted-in baseline leg failed, final skipped, compensation failed: never retire.
-    failed = {**base, "roundtrip_baseline_restore": "failure", "compensation": "failure"}
-    assert decide(failed, True)[0] is False
-    # Same failure with successful compensation: compensated retirement only.
-    assert decide({**failed, "compensation": "success"}, True) == (True, "compensated")
-    # Final leg failure without successful compensation does not retire either.
-    final_failed = {**base, "roundtrip_baseline_restore": "success", "roundtrip_final_return": "failure", "compensation": "failure"}
-    assert decide(final_failed, True)[0] is False
-    # Complete opted-in roundtrip is accepted; opt-out normal success is accepted.
-    complete = {**base, "roundtrip_baseline_restore": "success", "roundtrip_final_return": "success"}
-    assert decide(complete, True) == (True, "accepted")
-    assert decide(base, False) == (True, "accepted")
-    # Ordinary release never requested a run case: no retirement, accepted or compensated.
-    assert decide(base, False, "false")[0] is False
-    assert decide({**failed, "compensation": "success"}, True, "false")[0] is False
+    # Rejected release retires current run case before compensation, without waiting for compensation success.
+    failed = {**base, "roundtrip_baseline_restore": "failure"}
+    assert bool(_eval_gha(rollback_retire["if"], failed, True, "true")) is True
+    assert bool(_eval_gha(rollback_retire["if"], {"frontend_release": "failure"}, False, "true")) is True
+    assert bool(_eval_gha(rollback_retire["if"], failed, True, "false")) is False
+    assert bool(_eval_gha(rollback_retire["if"], base, False, "true")) is False
+
+    # Accepted cleanup of non-served cases runs only on accepted non-roundtrip releases with paper requested.
+    assert bool(_eval_gha(accepted_retire["if"], base, False, "true")) is True
+    assert bool(_eval_gha(accepted_retire["if"], base, True, "true")) is False
+    assert bool(_eval_gha(accepted_retire["if"], failed, True, "true")) is False
+    assert bool(_eval_gha(accepted_retire["if"], base, False, "false")) is False
+
+
+def test_circular_wait_with_active_forward_case_and_recovery_via_pre_restore_retirement(tmp_path):
+    import json
+    import sys
+    from scripts import dev_release_artifacts as artifacts
+
+    store_file = tmp_path / "provisioning-store.json"
+    store_file.write_text(
+        json.dumps(
+            [
+                {
+                    "idempotency_key": "dev-paper-release-42390000000-1",
+                    "created_at": "2026-11-06T00:00:00Z",
+                    "state": "succeeded",
+                    "tenant_id": "tenant-dev",
+                    "persona_id": "persona-prior",
+                    "has_expression_policy": False,
+                },
+                {
+                    "idempotency_key": "dev-paper-release-42397678868-1",
+                    "created_at": "2026-11-07T18:00:00Z",
+                    "state": "succeeded",
+                    "tenant_id": "tenant-dev",
+                    "persona_id": "persona-current",
+                    "has_expression_policy": True,
+                },
+                {
+                    "idempotency_key": "operator-manual-case-1",
+                    "created_at": "2026-11-07T12:00:00Z",
+                    "state": "succeeded",
+                    "tenant_id": "tenant-dev",
+                    "persona_id": "persona-operator",
+                    "has_expression_policy": True,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    bff_Img = "sha256:" + "1" * 64
+    prod_img = "sha256:" + "2" * 64
+    stack = {
+        "schema_version": artifacts.STACK_SCHEMA,
+        "source_sha": "e9a1a196805663b175423964c2ccdc21bf2d24ea",
+        "services": {
+            "operator-bff": {
+                "image_id": bff_Img,
+                "state": "running",
+                "has_healthcheck": True,
+                "env": {"PANTHEON_TENANT_ID": "tenant-dev", "GIT_SHA": "e9a1a196805663b175423964c2ccdc21bf2d24ea"},
+            },
+            "market-signal-producer": {
+                "image_id": prod_img,
+                "state": "running",
+                "has_healthcheck": True,
+                "env": {"PANTHEON_TENANT_ID": "tenant-dev", "GIT_SHA": "e9a1a196805663b175423964c2ccdc21bf2d24ea"},
+            },
+        },
+    }
+
+    class _BaselineDocker:
+        def call(self, *args):
+            records = json.loads(store_file.read_text(encoding="utf-8"))
+            unsupported_active = any(
+                r["idempotency_key"].startswith("dev-paper-release-")
+                and r["state"] != "retired"
+                and r.get("has_expression_policy")
+                for r in records
+            )
+            producer_health = "unhealthy" if unsupported_active else "healthy"
+            if args[:2] == ("ps", "--all"):
+                return f"{1:064x}\n{2:064x}\n"
+            if args[:2] == ("inspect", "--format") and "com.docker.compose.service" in args[2]:
+                if args[-1] == f"{1:064x}":
+                    return json.dumps(
+                        {
+                            "service": "operator-bff",
+                            "oneoff": "False",
+                            "image_id": bff_Img,
+                            "status": "running",
+                            "exit_code": 0,
+                            "health_test": ["CMD", "true"],
+                            "health": "healthy",
+                        }
+                    )
+                return json.dumps(
+                    {
+                        "service": "market-signal-producer",
+                        "oneoff": "False",
+                        "image_id": prod_img,
+                        "status": "running",
+                        "exit_code": 0,
+                        "health_test": ["CMD", "true"],
+                        "health": producer_health,
+                    }
+                )
+            return '"PANTHEON_TENANT_ID=tenant-dev"\n"GIT_SHA=e9a1a196805663b175423964c2ccdc21bf2d24ea"\n'
+
+    # 1. Without pre-restore retirement, older baseline producer rejects active expression_policy case.
+    ticks = iter([0.0, 10.0, 20.0])
+    with pytest.raises(artifacts.StackMixedError) as exc_info:
+        artifacts.readback_stack(
+            stack,
+            docker=_BaselineDocker(),
+            check_lease=lambda: None,
+            sleep=lambda _: None,
+            monotonic=lambda: next(ticks),
+            budget_seconds=5,
+        )
+    assert exc_info.value.services == ("market-signal-producer",)
+
+    # 2. Run the actual workflow pre-restore retirement steps against the store.
+    workspace = tmp_path / "ws"
+    for subdir in (".agora-gate-controller/scripts", ".target/scripts"):
+        ctrl_scripts = workspace / subdir
+        ctrl_scripts.mkdir(parents=True)
+        (ctrl_scripts / "retire_dev_paper_release_cases.py").write_bytes(
+            (ROOT / "scripts/retire_dev_paper_release_cases.py").read_bytes()
+        )
+    runner_py = tmp_path / "container_runner.py"
+    runner_py.write_text(
+        "import json, pathlib, sys, types\n"
+        "from dataclasses import dataclass\n"
+        f"store_path = pathlib.Path({str(store_file)!r})\n"
+        "@dataclass\n"
+        "class _Rec:\n"
+        "    idempotency_key: str\n"
+        "    created_at: str\n"
+        "    state: str\n"
+        "    tenant_id: str\n"
+        "    persona_id: str\n"
+        "class _Store:\n"
+        "    def list_all(self):\n"
+        "        return [\n"
+        "            _Rec(r['idempotency_key'], r['created_at'], r['state'], r['tenant_id'], r['persona_id'])\n"
+        "            for r in json.loads(store_path.read_text(encoding='utf-8'))\n"
+        "        ]\n"
+        "def _retire_case(tenant_id, persona_id, *, reason):\n"
+        "    rows = json.loads(store_path.read_text(encoding='utf-8'))\n"
+        "    for r in rows:\n"
+        "        if r['tenant_id'] == tenant_id and r['persona_id'] == persona_id:\n"
+        "            r['state'] = 'retired'\n"
+        "            r['retire_reason'] = reason\n"
+        "    store_path.write_text(json.dumps(rows), encoding='utf-8')\n"
+        "    return {'persona_id': persona_id, 'state': 'retired', 'retirement': {'status': 'retired'}}\n"
+        "code = sys.stdin.read()\n"
+        "mod = types.ModuleType('retire_mod')\n"
+        "exec(compile(code, 'retire_dev_paper_release_cases.py', 'exec'), mod.__dict__)\n"
+        "mod._build_runtime = lambda: (_Store(), _retire_case)\n"
+        "raise SystemExit(mod.main(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    for subdir in (".agora-gate-controller/scripts", ".target/scripts"):
+        transport = workspace / subdir / "dev_vm_ssh.sh"
+        transport.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "if [[ \"${1:-}\" == \"prepare\" ]]; then\n"
+            "  mkdir -p \"$2\" && touch \"$2/deploy_key\" \"$2/known_hosts\"\n"
+            "  exit 0\n"
+            "fi\n"
+            "cmd=\"$2\"\n"
+            "args=\"${cmd#*python - }\"\n"
+            f"exec \"{sys.executable}\" \"{runner_py}\" ${{args}}\n",
+            encoding="utf-8",
+        )
+        transport.chmod(0o755)
+    creds = tmp_path / "pantheon-dev-ssh-42397678868-1"
+    creds.mkdir()
+    (creds / "deploy_key").write_text("k", encoding="utf-8")
+    (creds / "known_hosts").write_text("h", encoding="utf-8")
+    evidence_dir = tmp_path / "evidence"
+    summary_file = tmp_path / "summary.md"
+    initial_store_json = store_file.read_text(encoding="utf-8")
+    for job, step_id in (
+        (DEPLOY, "retire_release_cases"),
+        (COORDINATE, "roundtrip_retire_release_case"),
+        (COORDINATE, "rollback_retire_release_case"),
+    ):
+        store_file.write_text(initial_store_json, encoding="utf-8")
+        retire_step = step(job, step_id)
+        env = {
+            **os.environ,
+            "GITHUB_WORKSPACE": str(workspace),
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_RUN_ID": "42397678868",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "RETIRE_EVIDENCE_DIR": str(evidence_dir),
+            "RELEASE_OUTCOME": retire_step["env"]["RELEASE_OUTCOME"],
+            "GITHUB_STEP_SUMMARY": str(summary_file),
+        }
+        proc = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-uo", "pipefail", "-c", retire_step["run"]],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        evidence = json.loads((evidence_dir / "dev-paper-release-case-retire.json").read_text(encoding="utf-8"))
+        assert evidence["outcome"] == "pre_restore"
+        assert evidence["preparation_only"] is True
+        assert evidence["status"] == "retired"
+        assert evidence["retire"] == ["dev-paper-release-42397678868-1"]
+        assert evidence["results"] == {"dev-paper-release-42397678868-1": "retired"}
+
+    rows_after = {r["idempotency_key"]: r for r in json.loads(store_file.read_text(encoding="utf-8"))}
+    assert rows_after["dev-paper-release-42397678868-1"]["state"] == "retired"
+    assert rows_after["dev-paper-release-42390000000-1"]["state"] == "succeeded"
+    assert rows_after["operator-manual-case-1"]["state"] == "succeeded"
+
+    # 3. Baseline stack readback now succeeds without circular wait.
+    readback = artifacts.readback_stack(
+        stack,
+        docker=_BaselineDocker(),
+        check_lease=lambda: None,
+        sleep=lambda _: None,
+        monotonic=lambda: 0.0,
+        budget_seconds=5,
+    )
+    assert readback["scope"] == "stack"
+    assert set(readback["services"]) == {"operator-bff", "market-signal-producer"}
+
+
+def test_pre_restore_retirement_failure_records_error_evidence_and_never_blocks_restore(tmp_path):
+    import json
+    retire_step = step(DEPLOY, "retire_release_cases")
+    evidence_dir = tmp_path / "evidence"
+    summary_file = tmp_path / "summary.md"
+    env = {
+        **os.environ,
+        "GITHUB_WORKSPACE": str(tmp_path / "missing-ws"),
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_RUN_ID": "42397678868",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "RETIRE_EVIDENCE_DIR": str(evidence_dir),
+        "RELEASE_OUTCOME": retire_step["env"]["RELEASE_OUTCOME"],
+        "GITHUB_STEP_SUMMARY": str(summary_file),
+    }
+    proc = subprocess.run(
+        ["/bin/bash", "--noprofile", "--norc", "-uo", "pipefail", "-c", retire_step["run"]],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+    evidence = json.loads((evidence_dir / "dev-paper-release-case-retire.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "error"
+    assert evidence["outcome"] == "pre_restore"
+    assert evidence["preparation_only"] is True
+    assert "retirement script or transport missing" in evidence["error"]
+
+    # Also verify remote runner failure records fallback error JSON and appends to GITHUB_STEP_SUMMARY without blocking.
+    workspace = tmp_path / "ws"
+    ctrl_scripts = workspace / ".agora-gate-controller/scripts"
+    ctrl_scripts.mkdir(parents=True)
+    (ctrl_scripts / "retire_dev_paper_release_cases.py").write_bytes(
+        (ROOT / "scripts/retire_dev_paper_release_cases.py").read_bytes()
+    )
+    transport = ctrl_scripts / "dev_vm_ssh.sh"
+    transport.write_text("#!/usr/bin/env bash\nexit 17\n", encoding="utf-8")
+    transport.chmod(0o755)
+    creds = tmp_path / "pantheon-dev-ssh-42397678868-1"
+    creds.mkdir()
+    (creds / "deploy_key").write_text("k", encoding="utf-8")
+    (creds / "known_hosts").write_text("h", encoding="utf-8")
+    env["GITHUB_WORKSPACE"] = str(workspace)
+    proc_fail = subprocess.run(
+        ["/bin/bash", "--noprofile", "--norc", "-uo", "pipefail", "-c", retire_step["run"]],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_fail.returncode == 0
+    evidence_fail = json.loads((evidence_dir / "dev-paper-release-case-retire.json").read_text(encoding="utf-8"))
+    assert evidence_fail["status"] == "error"
+    assert evidence_fail["outcome"] == "pre_restore"
+    assert evidence_fail["preparation_only"] is True
+    assert evidence_fail["error"] == "retirement produced no parseable evidence"
+
+    # And when remote helper emits structured JSON error evidence, it is preserved and summarized without blocking.
+    transport.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '{\"schema_version\":\"pantheon.dev-paper-release-case-retire.v2\",\"status\":\"error\",\"outcome\":\"pre_restore\",\"preparation_only\":true,\"error\":\"RuntimeError: store unavailable\"}\\n'\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    proc_json_err = subprocess.run(
+        ["/bin/bash", "--noprofile", "--norc", "-uo", "pipefail", "-c", retire_step["run"]],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_json_err.returncode == 0
+    evidence_json_err = json.loads((evidence_dir / "dev-paper-release-case-retire.json").read_text(encoding="utf-8"))
+    assert evidence_json_err["status"] == "error"
+    assert evidence_json_err["preparation_only"] is True
+    assert "pre_restore" in summary_file.read_text(encoding="utf-8")
 
 
 def test_roundtrip_legs_share_final_verify_candidate_compose_context():

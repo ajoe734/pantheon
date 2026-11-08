@@ -394,6 +394,11 @@ class InteractionLifecycleStore:
                 self._audit_locked(interaction_id, f"audit:{interaction_id}:submitted", {
                     "audit_id": f"audit:{interaction_id}:submitted", "action": "interaction_submitted",
                     "actor_id": saved["human_request"]["operator_id"], "occurred_at": saved["created_at"],
+                    **(
+                        {"operating_context": copy.deepcopy(saved["_operating_context"])}
+                        if saved.get("_operating_context") is not None
+                        else {}
+                    ),
                 })
                 self._enqueue_locked(interaction_id, {
                     "outbox_id": f"iob:interaction_queued:{interaction_id}",
@@ -407,6 +412,11 @@ class InteractionLifecycleStore:
                         "created_at": record["created_at"],
                         "trace_id": trace_id,
                         "demo_run_id": demo_run_id,
+                        **(
+                            {"operating_context": copy.deepcopy(record["_operating_context"])}
+                            if record.get("_operating_context") is not None
+                            else {}
+                        ),
                     },
                 })
                 self._persist_locked()
@@ -442,6 +452,11 @@ class InteractionLifecycleStore:
                 self._insert_audit_pg(conn, interaction_id, f"audit:{interaction_id}:submitted", {
                     "audit_id": f"audit:{interaction_id}:submitted", "action": "interaction_submitted",
                     "actor_id": record["human_request"]["operator_id"], "occurred_at": record["created_at"],
+                    **(
+                        {"operating_context": copy.deepcopy(record["_operating_context"])}
+                        if record.get("_operating_context") is not None
+                        else {}
+                    ),
                 })
                 self._enqueue_pg(conn, interaction_id, {
                     "outbox_id": f"iob:interaction_queued:{interaction_id}",
@@ -455,6 +470,11 @@ class InteractionLifecycleStore:
                         "created_at": record["created_at"],
                         "trace_id": trace_id,
                         "demo_run_id": demo_run_id,
+                        **(
+                            {"operating_context": copy.deepcopy(record["_operating_context"])}
+                            if record.get("_operating_context") is not None
+                            else {}
+                        ),
                     },
                 })
         loaded = self.get(existing_id, record["tenant_id"], record["owner_user_id"])

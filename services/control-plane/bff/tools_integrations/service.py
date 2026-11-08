@@ -384,10 +384,10 @@ class IntegrationsService:
         raise self.bff_error(
             400,
             ErrorCode.VALIDATION_FAILED,
-            "X-Idempotency-Key is required for OpenClaw operator commands",
+            "Idempotency-Key is required for OpenClaw operator commands",
             "OpenClaw session lifecycle commands must be idempotent at the BFF boundary",
             precondition_failed="idempotency_key",
-            suggestion="Retry with a stable X-Idempotency-Key for this operator action",
+            suggestion="Retry with a stable Idempotency-Key for this operator action",
         )
 
     def openclaw_ops_meta(
@@ -769,13 +769,12 @@ class IntegrationsService:
         payload: Dict[str, Any],
         identity: Any,
         idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str],
         x_request_id: Optional[str],
     ) -> CommandResponse[McpToolImportData]:
         clean_server_id = self.validate_mcp_server_id(server_id)
         self.require_mcp_tool_write_role(identity)
         resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=self.bff_error
+            idempotency_key, bff_error_fn=self.bff_error
         )
         reject_body_idempotency_key(payload, bff_error_fn=self.bff_error)
         request = self.parse_mcp_import_payload(payload)
@@ -907,7 +906,6 @@ class IntegrationsService:
         payload: Dict[str, Any],
         identity: Any,
         idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str],
         x_request_id: Optional[str],
     ) -> CommandResponse[McpToolActionData]:
         clean_server_id = self.validate_mcp_server_id(server_id)
@@ -922,7 +920,7 @@ class IntegrationsService:
             )
         self.require_mcp_tool_write_role(identity)
         resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=self.bff_error
+            idempotency_key, bff_error_fn=self.bff_error
         )
         reject_body_idempotency_key(payload, bff_error_fn=self.bff_error)
         request = self.parse_mcp_tool_action_payload(payload)
