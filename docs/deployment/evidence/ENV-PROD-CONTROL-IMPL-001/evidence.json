@@ -55,6 +55,66 @@
     "same_bytes_limit": "No new D77-vs-9a46 cross-version/full-owner compatibility claim; 107 is pure Dev-qualified artifact baseline metadata with no claimed historical Stage/Prod health; 108 rolls back to 107 and 109 rolls back to 108; no retarget to 21cbd9987 or future latest.",
     "stage_or_prod_dispatched": false
   },
+  "additional_release_declarations_20261108": {
+    "accepted_cohort": {
+      "accepted_at": "2026-11-08T18:05:17Z",
+      "backend_commit": "78a37e06c7bfe43a6f2023729a0798b452e2f646",
+      "compatibility_manifest_sha256": "sha256:fa366444aa7f83432fcfb8554aaf910bde7037adbb2eba71ec065c8e69625c42",
+      "dev_verification_workflow_run": "ajoe734/pantheon/actions/runs/42502558089",
+      "fe_deployment_manifest_sha256": "sha256:f7eab4196cdff3a30b377b32bcb789248efba1a5225428fa4658feac16d37843",
+      "frontend_artifact_sha256": "sha256:5cb97f1a340a2192a979e621ecceed8636c35b3fab3c360cdca1f3640ce6a06a",
+      "frontend_commit": "f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6",
+      "governance_dual_auth_source": "PR7069 (c597c48cf)",
+      "migration_set_sha256": "sha256:b54198cc799fa126b955f9ea383969152ac45e59ed18d94849ed04342d2d22e2",
+      "owners": 24,
+      "unique_images": 22
+    },
+    "declarations": [
+      {
+        "canonical_manifest_sha256": "sha256:15ddac7865b97f0e39dc7ddaee0c7bd0280eb8c0ea51670e557bae906bef8740",
+        "file_sha256": "64b89996781088ce6128eca00f18f74e7deecdd6d9314867760c3c1d59095e20",
+        "path": "deploy/staging/releases/pantheon-20261108-110.json",
+        "release_id": "pantheon-20261108-110",
+        "role": "new Dev-qualified artifact baseline metadata only, NOT historical Stage/Prod healthy",
+        "rollback_previous_release_id": "pantheon-20261107-109"
+      },
+      {
+        "canonical_manifest_sha256": "sha256:d4f07346d2bf5d17bb42caf370ba0d218cde72d794a66694e5703945d02c9e00",
+        "file_sha256": "e7f17169713ba464903b3149f2844680f77ad73a00e3efe4f893e967211c01b7",
+        "path": "deploy/staging/releases/pantheon-20261108-111.json",
+        "release_id": "pantheon-20261108-111",
+        "role": "Stage candidate A",
+        "rollback_previous_release_id": "pantheon-20261108-110"
+      },
+      {
+        "canonical_manifest_sha256": "sha256:c3b2c83a0e308e29075fb40505f1ac568ce31ffcc85acda5c9d875eb3325a5bc",
+        "file_sha256": "b9e193303f46aab4cffc3f0669bf331e7d4098252a4098276f778992bf251804",
+        "path": "deploy/staging/releases/pantheon-20261108-112.json",
+        "release_id": "pantheon-20261108-112",
+        "role": "Stage candidate B / later Prod candidate",
+        "rollback_previous_release_id": "pantheon-20261108-111"
+      }
+    ],
+    "hosted_acceptance": "external_wait",
+    "old_declarations_immutable": [
+      "deploy/staging/releases/pantheon-20261107-103.json",
+      "deploy/staging/releases/pantheon-20261107-104.json",
+      "deploy/staging/releases/pantheon-20261107-105.json",
+      "deploy/staging/releases/pantheon-20261107-106.json",
+      "deploy/staging/releases/pantheon-20261107-107.json",
+      "deploy/staging/releases/pantheon-20261107-108.json",
+      "deploy/staging/releases/pantheon-20261107-109.json"
+    ],
+    "prepared_receipts": [
+      "/tmp/pantheon-stage-7ad4-artifacts-20261108/export-receipt.json",
+      "/tmp/pantheon-stage-7ad4-artifacts-20261108/offline-verification-receipt.json",
+      "/tmp/pantheon-stage-7ad4-artifacts-20261108/publication-receipt.json",
+      "/tmp/pantheon-stage-7ad4-artifacts-20261108/fe-export-receipt.json",
+      "/tmp/pantheon-stage-7ad4-artifacts-20261108/prepared-declarations-receipt.json"
+    ],
+    "stage_dispatcher": "Claude chat session stays the sole Stage dispatcher and runs 111 then 112 after merge; seed v5 expires 2026-11-09T02:18Z",
+    "stage_or_prod_dispatched": false
+  },
   "dry_run": false,
   "evidence_kind": "local_source_validation",
   "final_head_verification": {
@@ -292,6 +352,14 @@
     {
       "id": "governance_approval_dual_auth_source_20261108",
       "summary": "Source fix in services/governance/main.py under G56-GOVERNANCE-DUALAUTH-RESUME-20261108: _approval_principal opts validate_request_auth into the existing allow_shared_secret=True dual path (services/runtime_auth_inbound.py dual branch) and _governance_auth_env forwards PANTHEON_GOVERNANCE_REQUIRE_EMAIL_VERIFIED while preserving every strict sub, tenant_id, role, issuer, audience, exp, and body check (no adapter, no relaxed roles, no new dependencies) and keeping merged PR #7063 Persona PG and Stage/Prod governance env wiring as is. Added focused regressions in services/governance/test_approval_authority_postgres.py (and aligned Stage/Prod contract assertions in tests/deployment/test_staging_release.py and tests/deployment/test_production_release.py) covering both an IdP RS256 token via JWKS/discovery plus role map and an internal HS256 token when JWKS/discovery is configured. Because the governance binary changed, a new Governance image and truthful release declarations are required before the Stage rerun; the Claude chat session stays the sole Stage dispatcher and hosted_acceptance remains external_wait."
+    },
+    {
+      "id": "same_env_declarations_110_111_112_20261108",
+      "summary": "Copied exact prepared release declarations deploy/staging/releases/pantheon-20261108-110.json, 111.json, and 112.json for accepted Dev cohort 78a37e06c7bfe43a6f2023729a0798b452e2f646 / FE f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6 (root run 42502558089, accepted 2026-11-08T18:05:17Z, FE artifact sha256:5cb97f1a340a2192a979e621ecceed8636c35b3fab3c360cdca1f3640ce6a06a, 24 owner image keys across 22 unique published digests including governance sha256:5225375f5d46f5a94973342165f729ad1f56c0c66d7528d3b35571a70e4e0d53 carrying PR7069 c597c48cf dual-auth fix, migration_set_sha256 sha256:b54198cc799fa126b955f9ea383969152ac45e59ed18d94849ed04342d2d22e2). Verified byte-identical file SHA-256 (110: 64b89996..., 111: e7f17169..., 112: b9e19330...) and canonical manifest SHA-256 against prepared-declarations-receipt.json and native release_manifest.verify_promotion_eligibility. 110 is Dev-qualified artifact baseline metadata only (rollback 109, no Stage/Prod health claim); 111 is Stage A (rollback 110); 112 is Stage B and later Prod candidate (rollback 111); 103-109 stay immutable. Source-only; Claude chat session stays sole Stage dispatcher and hosted_acceptance remains external_wait."
+    },
+    {
+      "id": "stage111_bff_inprocess_store_posture_20261108",
+      "summary": "Compose/bootstrap-only wiring under STAGE111-BFF-INPROCESS-STORE-POSTURE-20261108 for the Stage/Prod operator-bff in-process owner store persistence posture gap surfaced by real Stage run 42514233815 (release pantheon-20261108-111, dev 7924be0c0, where POST /bff/strategies returned 503 DEPENDENCY_UNAVAILABLE because REGISTRY_STORE_BACKEND was unset on operator-bff): audited and wired all 16 BFF in-process owner stores (registry strategy writes, agora dashboard, trading room, workshop, research, research plan, dataset, agora governance, candidate decision, management AI/assistant conversation, governance decision journal/record store, source management, rankings, twelve-loop, trade-journey projection, and action ledger, alongside persona provisioning from PR #7063) across deploy/staging/docker-compose.staging.yml, deploy/production/docker-compose.prod-control.yml, deploy/staging/bootstrap.sh, and deploy/production/bootstrap.sh. Stage operator-bff and Prod operator-bff-blue/operator-bff-green explicitly configure postgres backends and matching schemas/tables (including REGISTRY_ENTRIES_TABLE=registry.entries and REGISTRY_RECEIPTS_TABLE=registry.command_receipts matching the registry owner service, and GOVERNANCE_STORE_BACKEND=postgres + GOVERNANCE_AUDIT_BACKEND=postgres on Prod governance matching Stage), and Stage/Prod bootstrap.sh populate and validate all 18 BFF store DSN keys from the isolated Postgres credentials without modifying owner images or release declarations 110-112."
     }
   ],
   "scope_limits": {
@@ -346,10 +414,10 @@
   "task_id": "ENV-PROD-CONTROL-IMPL-001",
   "track": "functional",
   "validation": {
-    "command": ".venv-pantheon/bin/python3 -m pytest -q services/governance/test_approval_authority_postgres.py -k 'op_owner or operator or dual_auth' && .venv-pantheon/bin/python3 -m pytest -q services/governance/test_human_gate_api.py services/governance/test_record_store_isolation.py services/test_runtime_auth_inbound_attack_matrix.py",
-    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_staging_release.py -k 'test_stage_persona_provisioning_store_and_governance_approval_auth_contract' && .venv-pantheon/bin/python3 -m pytest -q tests/deployment/test_production_release.py -k 'test_prod_persona_provisioning_store_and_governance_approval_auth_contract'",
-    "result": "Governance dual-auth regressions (IdP RS256 via JWKS/discovery + role map + email_verified and internal HS256 with JWKS/discovery configured, preserving all strict sub/tenant/role/issuer/audience/exp/body checks): 4 passed in test_approval_authority_postgres.py; 46 passed in test_human_gate_api.py + test_record_store_isolation.py + test_runtime_auth_inbound_attack_matrix.py; Stage and Prod governance approval auth contract tests: 2 passed (local source validation only; governance binary changed so a new Governance image and truthful release declarations are required before Stage rerun; Claude chat session stays sole Stage dispatcher)",
-    "scope": "services/governance/main.py (_approval_principal allow_shared_secret=True dual path + _governance_auth_env PANTHEON_GOVERNANCE_REQUIRE_EMAIL_VERIFIED forwarding) and focused regressions in services/governance/test_approval_authority_postgres.py (preserving merged PR #7063 Persona PG and governance env wiring as is)"
+    "command": "bash -n deploy/staging/bootstrap.sh deploy/production/bootstrap.sh && git diff --check && .venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release",
+    "pytest_command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_staging_release -k test_stage_bff_inprocess_stores_all_wired_to_isolated_postgres -k test_stage_persona_provisioning_store_and_governance_approval_auth_contract -k test_bff_and_worker_share_durable_agora_stores && .venv-pantheon/bin/python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+    "result": "test_production_release (100 tests OK including test_prod_bff_inprocess_stores_all_wired_to_isolated_postgres); test_staging_release focused BFF store + persona/governance + Agora shared store + DSN routing override tests (3 tests OK); bash -n clean; git diff --check clean; diff_budget passed (compose/bootstrap-only wiring, no owner image or release declaration changes)",
+    "scope": "deploy/staging/docker-compose.staging.yml, deploy/staging/bootstrap.sh, deploy/production/docker-compose.prod-control.yml, deploy/production/bootstrap.sh, tests/deployment/test_staging_release.py, tests/deployment/test_production_release.py, and docs/deployment/evidence/ENV-PROD-CONTROL-IMPL-001/evidence.json"
   },
   "workflow_run_id": "41581135775"
 }

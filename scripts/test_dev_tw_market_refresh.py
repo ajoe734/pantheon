@@ -581,6 +581,11 @@ elif args[0] == "exec":
         sys.exit(0)
     sys.exit(0)
 
+elif args[0] == "logs":
+    if state.get("container_logs"):
+        sys.stdout.write(str(state["container_logs"]))
+    sys.exit(0)
+
 sys.exit(0)
 """
     (bin_dir / "docker").write_text(docker_script)
@@ -2153,6 +2158,8 @@ def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_conne
     assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
     assert taifex_step["env"]["SOURCE_INGEST_BOUNDED_DATASET"] == "taifex_ssf_contracts"
     assert taifex_step["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+    assert taifex_step.get("continue-on-error") is True
+    assert "--non-blocking" in taifex_step["run"]
     assert "--connector-id tw-taifex-futures-options-chip" in taifex_step["run"]
     assert "--allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw" in taifex_step["run"]
     assert "--dataset taifex_ssf_contracts" in taifex_step["run"]
@@ -2524,3 +2531,164 @@ def test_refresh_entrypoint_taifex_rejects_merged_or_wrong_hosts(tmp_path: Path,
         e.get("event") == "compose_up" and e.get("env", {}).get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
         for e in events
     )
+
+
+def test_refresh_entrypoint_taifex_weekend_skip_records_outcome_without_container_mutation(tmp_path: Path):
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    fresh_twse_snapshot = {
+        "snapshot_id": "snap-2026-11-06",
+        "event_time": "2026-11-06T06:30:00Z",
+        "observed_at": "2026-11-06T07:05:00Z",
+        "calendar_evidence": governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-11-06"),
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:receipt-2026-11-06"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    }
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "snapshots": {"2330.TW": fresh_twse_snapshot},
+        "readback_connectors": [],
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    # Sunday 2026-11-08 22:21:20 Asia/Taipei (run 42488948670)
+    test_env["PANTHEON_REFRESH_PREFLIGHT_NOW"] = "2026-11-08T14:21:20Z"
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY_SCRIPT),
+            "--refresh-only",
+            "--non-blocking",
+            "--connector-id",
+            "tw-taifex-futures-options-chip",
+            "--allowed-hosts",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "--dataset",
+            "taifex_ssf_contracts",
+            "--output",
+            str(output_file),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Expected weekend TAIFEX skip to exit 0, got:\n{proc.stderr}"
+    assert output_file.exists()
+    out_data = json.loads(output_file.read_text(encoding="utf-8"))
+    assert out_data["status"] == "skipped"
+    assert out_data["reason"] == "weekend"
+    assert out_data["log"] == ""
+    assert out_data["connector_id"] == "tw-taifex-futures-options-chip"
+    assert out_data["dataset"] == "taifex_ssf_contracts"
+
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line] if events_file.exists() else []
+    assert not any(e.get("event") in ("compose_up", "compose_run", "docker_stop") for e in events)
+
+
+def test_refresh_entrypoint_taifex_non_blocking_failure_continues_and_records_redacted_log_while_twse_fails_closed(
+    tmp_path: Path,
+):
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZXYifQ.c2lnbmF0dXJlLXZhbHVl"
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": [
+            "PANTHEON_EXTERNAL_EGRESS=deny",
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+            "PORT=8097",
+        ],
+        "dlq_entries": [dict(CANONICAL_TW_PENDING_DLQ_ENTRIES[0])],
+        "container_logs": (
+            "ControllerTickError: desired-state reconcile failed closed: conflicts=1 unsupported=0\n"
+            f"Authorization: Bearer secret-taifex-token-999 jwt={jwt}\n"
+        ),
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    patched_script = _deploy_script_without_readback(tmp_path)
+
+    # 1. TAIFEX with --non-blocking continues (exit 0), records status/reason/redacted log, and restores egress=deny
+    proc_taifex = subprocess.run(
+        [
+            "bash",
+            str(patched_script),
+            "--refresh-only",
+            "--non-blocking",
+            "--connector-id",
+            "tw-taifex-futures-options-chip",
+            "--allowed-hosts",
+            "openapi.taifex.com.tw,www.taifex.com.tw",
+            "--dataset",
+            "taifex_ssf_contracts",
+            "--output",
+            str(output_file),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc_taifex.returncode == 0, f"Expected non-blocking TAIFEX failure to exit 0, got {proc_taifex.returncode}:\n{proc_taifex.stderr}"
+    assert output_file.exists()
+    taifex_outcome = json.loads(output_file.read_text(encoding="utf-8"))
+    assert taifex_outcome["status"] == "failed"
+    assert "bounded source refresh service source-ingest-scheduler exited with code 1" in taifex_outcome["reason"]
+    assert "ControllerTickError: desired-state reconcile failed closed: conflicts=1 unsupported=0" in taifex_outcome["log"]
+    assert "Bearer [REDACTED]" in taifex_outcome["log"]
+    assert "[REDACTED_JWT]" in taifex_outcome["log"]
+    assert "secret-taifex-token-999" not in taifex_outcome["log"]
+    assert "eyJhbGciOiJIUzI1NiJ9" not in taifex_outcome["log"]
+
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    bounded_up = next(
+        e
+        for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
+    )
+    assert bounded_up["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.taifex.com.tw,www.taifex.com.tw"
+    restore_ups = [
+        e
+        for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+    ]
+    assert restore_ups, "TAIFEX failure must still restore external egress to deny"
+    assert restore_ups[-1]["env"].get("SOURCE_INGEST_CONTROLLER_MODE") == "reconcile_only"
+    assert restore_ups[-1]["env"].get("PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS") == ""
+
+    # 2. TWSE refresh failure on the same state keeps today's fail-closed behaviour (returncode != 0)
+    twse_output = tmp_path / "twse_output.json"
+    proc_twse = subprocess.run(
+        [
+            "bash",
+            str(patched_script),
+            "--refresh-only",
+            "--output",
+            str(twse_output),
+        ],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc_twse.returncode != 0, "TWSE refresh failure must remain fail-closed"

@@ -1,0 +1,105 @@
+{
+  "task_id": "OPS-REVIEW-GATE-SHARED-IDENTITY-20261108",
+  "title": "Restore the GitHub review proof gate under the shared GitHub account by recording decisions as comment reviews",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "recorded_at_utc": "2026-11-08T12:16:00Z",
+  "design_note": {
+    "root_cause_of_2026_09_08_shutdown": "OPS-REVIEW-PROOF-001 (commit 43a78c7ee) removed the fallback that allowed bridge_review_decision to proceed when GitHub refused self-approval (422 'Can not approve your own pull request'). Because every Pantheon worker shares the ajoe734 GitHub account, every approval failed and the operator disabled the bridge the same day (OPS-GITHUB-REVIEW-GATE-001).",
+    "shared_identity_mode": "Added review_gate.github_review_identity accepting only 'shared' or 'independent' (missing defaults to 'independent'; common.validate_review_bridge_policy rejects any other value). In 'shared' mode, bridge_review_decision records both approve and reopen as a COMMENT pull request review (event='COMMENT', matched state='COMMENTED') on the exact PR head carrying the existing <!-- pantheon-review-bridge ... --> marker, never submits APPROVE or REQUEST_CHANGES, preserves intent ordering across approve/reopen retries, pushes the refs/tags/pantheon-review/<decision>/<head_sha> proof tag via _push_review_proof_tag, and dispatches canonical-review-gate.yml via _dispatch_canonical_review_gate_workflow. No PAT commit status is posted in either mode; the GitHub Actions workflow remains the sole issuer of the 'Pantheon canonical review gate' status.",
+    "integrator_self_heal": "In scripts/git/auto_integrator.py, when review_bridge_is_required is true, the 'Pantheon canonical review gate' check is not green, no approve, operator-accept, or reopen proof tag exists for the exact head, and the active TaskStore holds a review_approved for that exact head by an assigned reviewer distinct from the owner, the integrator publishes the approve proof through bridge_review_decision with that reviewer as actor, dispatches the workflow, and reports 'waiting' instead of falling through to checks.state == 'red' and opening a ci-red unblock task. It never publishes a proof without a task-store exact-head approval by a reviewer different from the owner and never publishes when a reopen tag exists.",
+    "cutover_and_rollback": ".orchestrator/config.json sets review_gate.github_review_bridge_required to true, review_gate.github_review_identity to 'shared', and adds 'Pantheon canonical review gate' to branch_workflow.task_pr.required_status_checks. GitHub branch protection is not modified by this change and does not currently require the gate; after merge and runtime promotion, the coordinator verifies live PRs in both ajoe734/pantheon and ajoe734/execute-plans receive a green gate check and merge normally, then adds 'Pantheon canonical review gate' (bound to the GitHub Actions app) to branch protection on pantheon dev and execute-plans dev only (master and main stay unchanged because promote PRs do not run the gate workflow). Rollback is setting review_gate.github_review_bridge_required back to false.",
+    "residual_risk_and_direct_delivery_rule": "Shared identity mode blocks merges without a proof tag at the GitHub layer only once branch protection requires the gate. Once required, operator-directed direct deliveries must use a task/<TASK-ID> branch with the existing operator acceptance proof (operator-accept). Any holder of the shared ajoe734 GitHub credential can still push a proof tag or add the delivery:tooling label directly; only a separate review identity (github_review_identity='independent') closes that."
+  },
+  "unchanged_boundaries": [
+    "No changes to scripts/git/canonical_review_gate_ci.py decision logic.",
+    "No changes to the delivery:tooling path.",
+    "No changes to GitHub branch protection."
+  ],
+  "validation": {
+    "counts": {
+      "scripts/git/test_github_review_bridge.py": {
+        "passed": 70,
+        "subtests_passed": 11,
+        "failed": 0
+      },
+      "scripts/git/test_canonical_review_gate_workflow.py": {
+        "passed": 55,
+        "subtests_passed": 15,
+        "failed": 0
+      },
+      "scripts/git/test_auto_integrator.py": {
+        "passed": 174,
+        "subtests_passed": 667,
+        "failed": 0
+      },
+      ".orchestrator/test_common.py": {
+        "passed": 147,
+        "subtests_passed": 77,
+        "failed": 0
+      },
+      "scripts/test_ai_status.py (touched review bridge & dashboard gate tests)": {
+        "passed": 6,
+        "subtests_passed": 0,
+        "failed": 0
+      },
+      "scripts/test_provision_live_supervisor_config.py": {
+        "passed": 74,
+        "subtests_passed": 0,
+        "failed": 0
+      },
+      "scripts/test_check_config_drift.py": {
+        "passed": 50,
+        "subtests_passed": 0,
+        "failed": 0
+      },
+      "scripts/git/test_task_review_merge_gate.py": {
+        "passed": 125,
+        "subtests_passed": 8,
+        "failed": 0
+      }
+    },
+    "runs": [
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest scripts/git/test_github_review_bridge.py -v",
+        "exit_code": 0,
+        "result": "70 passed, 11 subtests passed in 6.53s"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/git/test_canonical_review_gate_workflow.py",
+        "exit_code": 0,
+        "result": "55 passed, 15 subtests passed in 6.46s"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest scripts/git/test_auto_integrator.py -k \"CandidateSelectionTests or CheckClassifierTests or CrossRepoIntegrationTests or MultiTaskPerRunOrderingTests or BlockedWithInflightCheckTests or BehindReturnToOwnerTests or AutoIntegratorProcessE2ETests or IntegrationReceiptWiringTests or MakeIntegratorTagLookupTests\" -v",
+        "exit_code": 0,
+        "result": "106 passed, 68 deselected, 18 subtests passed in 18.80s"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest scripts/git/test_auto_integrator.py -k \"not (CandidateSelectionTests or CheckClassifierTests or CrossRepoIntegrationTests or MultiTaskPerRunOrderingTests or BlockedWithInflightCheckTests or BehindReturnToOwnerTests or AutoIntegratorProcessE2ETests or IntegrationReceiptWiringTests or MakeIntegratorTagLookupTests)\" -v",
+        "exit_code": 0,
+        "result": "68 passed, 106 deselected, 649 subtests passed in 9.68s"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py",
+        "exit_code": 0,
+        "result": "147 passed, 77 subtests passed in 35.35s"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k \"dashboard_flags_internal_approval or dashboard_suppresses_legacy_gate or dashboard_accepts_matching_branch_policy or bridge_github_review_decision\"",
+        "exit_code": 0,
+        "result": "6 passed, 503 deselected in 2.40s"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py -v",
+        "exit_code": 0,
+        "result": "124 passed (74 in test_provision_live_supervisor_config.py + 50 in test_check_config_drift.py)"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
+        "exit_code": 0,
+        "result": "125 passed, 8 subtests passed"
+      }
+    ]
+  }
+}

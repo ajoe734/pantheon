@@ -66,6 +66,7 @@ class CommandType(str, Enum):
     REBALANCE_TWO_MAN_SIGN = "RebalanceTwoManSign"
     APPROVED_APPLY = "ApprovedApply"
     EMERGENCY_CONTAINMENT = "EmergencyContainment"
+    RETIRE_PAPER_PERSONA_CASE = "RetirePaperPersonaCase"
 
 
 class ObjectType(str, Enum):

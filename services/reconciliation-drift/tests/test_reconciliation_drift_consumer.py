@@ -673,3 +673,137 @@ def test_last_success_recorded_with_old_dead_letters_present() -> None:
     assert result["delivered_event_count"] == 1
     assert result["last_success_at"] == "2026-10-17T03:00:00Z"
     assert result["dead_letter_count"] == 1
+
+
+# INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 5).  The events below mirror
+# what paper_runtime publishes: a committed fill, a risk-gate order_rejection and
+# a recorded no-trade (paper_order_simulated) all report ``fill_quantity``
+# (0.0 for the last two), and only the fill carries an order id and a status.
+def _drift_event(event_id: str, event_type: str, **overrides: object) -> dict[str, object]:
+    event: dict[str, object] = {
+        "event_id": event_id,
+        "event_type": event_type,
+        "created_at": "2026-11-05T01:00:00Z",
+        "tenant_id": "tenant-a",
+        "binding_id": "rb-1",
+        "runtime_id": "rt-1",
+        "artifact_id": "art-1",
+        "artifact_version": "v1",
+        "plan_id": "plan-1",
+        "capital_pool_id": "pool-1",
+        "signal_id": "sig-1",
+        "run_id": "run-1",
+        "symbol": "2330.TWSE",
+        "deployment_stage": "paper",
+        "persona_capital_binding_id": "pcb-1",
+        "trace_id": f"trace-{event_id}",
+    }
+    event.update(overrides)
+    return event
+
+
+def _drift_fill(event_id: str, order_id: str, *, instrument_id: str | None = None, qty: float = -5.0):
+    metadata: dict[str, object] = {
+        "requested_quantity": 5.0,
+        "broker_submission_status": "filled",
+        "ledger_committed": True,
+        "broker_order_id": order_id,
+        "market_price_as_of": "2026-11-04T00:00:00Z",
+        "currency": "TWD",
+    }
+    if instrument_id:
+        metadata.update({"instrument_id": instrument_id, "kind": "stock_future", "multiplier": 100.0})
+    return _drift_event(
+        event_id,
+        "paper_fill_simulated",
+        order_id=order_id,
+        metrics={"action": "SELL", "fill_quantity": qty, "fill_price": 2299.0, "submitted_to_broker": True},
+        metadata=metadata,
+    )
+
+
+def _drift_rejection(event_id: str):
+    return _drift_event(
+        event_id,
+        "order_rejection",
+        metrics={
+            "rejected_order_count": 1,
+            "fill_quantity": 0.0,
+            "fill_rate": 0.0,
+            "action": "SELL",
+            "submitted_to_broker": False,
+        },
+        metadata={
+            "broker_submission_status": "leverage_limit",
+            "reason": "leverage_limit",
+            "instrument_id": "ssf:QFF:202611",
+            "risk_status": "rejected",
+            "requested_quantity": 2.0,
+        },
+    )
+
+
+def _drift_no_trade(event_id: str):
+    return _drift_event(
+        event_id,
+        "paper_order_simulated",
+        metrics={"noop_count": 1, "fill_quantity": 0.0, "fill_rate": 0.0, "action": "SELL", "submitted_to_broker": False},
+        metadata={"noop_reason": "already_at_target", "decision_status": "no_order", "order_status": "not_submitted"},
+    )
+
+
+def _analyse(events: list[dict[str, object]]):
+    with tempfile.TemporaryDirectory() as data_dir:
+        service = _load_service_module(data_dir)
+        by_id = {e["event_id"]: e for e in events}
+        with mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry"}), mock.patch(
+            "telemetry_client.fetch_accepted_event",
+            side_effect=lambda url, event_id, **kwargs: by_id.get(event_id),
+        ):
+            return service._duplicate_execution_analysis(
+                tenant_id="tenant-a",
+                event_ids=list(by_id),
+                discovered_at="2026-11-05T02:00:00Z",
+                deployment_stage="paper",
+            )
+
+
+def test_day_with_one_fill_one_rejection_and_one_no_trade_is_measured_and_not_duplicate() -> None:
+    result = _analyse(
+        [_drift_fill("evt-fill", "ord-1"), _drift_rejection("evt-rej"), _drift_no_trade("evt-skip")]
+    )
+    assert result["measurement"] == "measured"
+    assert result["status"] == "ok"
+    assert result["duplicate_detected"] is False
+
+
+def test_rejection_and_no_trade_alone_are_not_reported_as_unmeasured_fill_evidence() -> None:
+    result = _analyse([_drift_rejection("evt-rej"), _drift_no_trade("evt-skip")])
+    # No comparable fill exists; that is the honest "unmeasured", never ambiguity.
+    assert result["reason"] == "fewer_than_two_comparable_execution_events"
+
+
+def test_non_fill_event_that_reports_a_fill_is_still_ambiguous() -> None:
+    rejection = _drift_rejection("evt-rej")
+    rejection["metrics"] = {**rejection["metrics"], "fill_quantity": -1.0}
+    result = _analyse([_drift_fill("evt-fill", "ord-1"), rejection])
+    assert result["measurement"] == "unmeasured"
+    assert result["reason"] == "ambiguous_fill_evidence"
+
+
+def test_cash_share_and_future_fills_for_one_decision_are_not_duplicates() -> None:
+    cash = _drift_fill("evt-cash", "ord-cash")
+    future = _drift_fill("evt-future", "ord-future", instrument_id="ssf:QFF:202611", qty=-2.0)
+    future["metadata"] = {**future["metadata"], "requested_quantity": 5.0}
+    result = _analyse([cash, future])
+    assert result["measurement"] == "measured"
+    assert result["duplicate_detected"] is False
+
+
+def test_two_orders_for_the_same_instrument_still_report_a_duplicate() -> None:
+    first = _drift_fill("evt-a", "ord-1", instrument_id="ssf:QFF:202611", qty=-5.0)
+    second = _drift_fill("evt-b", "ord-2", instrument_id="ssf:QFF:202611", qty=-5.0)
+    second["created_at"] = "2026-11-05T01:05:00Z"
+    result = _analyse([first, second])
+    assert result["duplicate_detected"] is True
+    assert result["decision"]["instrument_id"] == "ssf:QFF:202611"

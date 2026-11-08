@@ -1725,3 +1725,73 @@ def test_taifex_ssf_fetch_reads_only_the_two_reviewed_hosts(monkeypatch) -> None
     assert len(seen) == 5
     rows = _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(fetched, dataset="taifex_ssf_contracts")
     assert _ssf_row(rows, "QFF")["settlement_price"] == 2133.0
+
+
+def _taifex_reconciler(tmp_path):
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.ingest_manager import IngestManager
+    from services.source_ingestion.persona_source_reconciler import SourceProvisioningReconciler
+
+    connector_store = JsonlConfiguredConnectorStore(tmp_path / "connector_config.jsonl")
+    schedule_store = JsonlConnectorScheduleStore(tmp_path / "connector_schedule.jsonl")
+    reconciler = SourceProvisioningReconciler(
+        manager=IngestManager(), connector_store=connector_store, schedule_store=schedule_store
+    )
+    return reconciler, connector_store, schedule_store
+
+
+def _taifex_ssf_persona(connector_id: str) -> dict:
+    return {
+        "persona_id": "persona-taifex-gate",
+        "name": "TAIFEX gate",
+        "mandate": "bounded refresh gate",
+        "lifecycle_state": "research_only",
+        "created_at": "2026-06-01T00:00:00Z",
+        "required_data_sources": [
+            {
+                "dataset": "taifex_ssf_contracts",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": [connector_id],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_source_health_ok",
+                    "no_live_capital",
+                ],
+            }
+        ],
+    }
+
+
+def test_registered_taifex_ssf_connector_passes_reconcile_approval_gate(tmp_path) -> None:
+    from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
+
+    # Reproducer for nonprod-deploy 42479186876: the bounded TAIFEX refresh registers the
+    # public connector and reconcile failed closed with conflicts=1 on require_connector_approved.
+    reconciler, connector_store, schedule_store = _taifex_reconciler(tmp_path)
+    adapter = TaifexDerivativesChipAdapter(dataset="taifex_ssf_contracts", contracts=("2317", "0050", "2330"))
+    connector_store.upsert_config(adapter.connector(), adapter.fetch_config())
+
+    action = reconciler.reconcile_persona(_taifex_ssf_persona(adapter.connector_id)).actions[0]
+
+    assert action.status != "conflict", action.details
+    assert schedule_store.get_schedule(adapter.connector_id) is not None
+
+
+def test_unapproved_custom_derivatives_connector_still_fails_reconcile_approval_gate(tmp_path) -> None:
+    from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
+
+    reconciler, connector_store, _ = _taifex_reconciler(tmp_path)
+    adapter = TaifexDerivativesChipAdapter(
+        connector_id="custom-unapproved-derivatives",
+        dataset="taifex_ssf_contracts",
+        connector_metadata={"approval_status": "pending"},
+    )
+    connector_store.upsert_config(adapter.connector(), adapter.fetch_config())
+
+    action = reconciler.reconcile_persona(_taifex_ssf_persona(adapter.connector_id)).actions[0]
+
+    assert action.status == "conflict"
+    assert action.details["failed_policy_gates"] == ["require_connector_approved"]

@@ -358,6 +358,19 @@ def test_workflow_candidate_deploy_requires_predecessor_served_identity_readback
     assert '--rollback-sha "${{ steps.rollback_baseline.outputs.sha }}"' in deploy_step
 
 
+def test_workflow_taifex_refresh_runs_after_candidate_deploy_while_twse_refresh_stays_pre_mutation() -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+
+    twse_refresh_index = dev_job.index("- name: Refresh Taiwan market session under lease before stack mutation")
+    pred_step_index = dev_job.index("- name: Deploy bootstrap predecessor pair in strict live read-only mode under lease")
+    deploy_step_index = dev_job.index("- name: Deploy dev VM stack under lease")
+    taifex_refresh_index = dev_job.index("- name: Refresh TAIFEX contract dataset under lease after candidate stack deploy")
+    paper_bootstrap_index = dev_job.index("- name: Ensure governed dev paper baseline under lease")
+
+    assert twse_refresh_index < pred_step_index < deploy_step_index < taifex_refresh_index < paper_bootstrap_index
+
+
 def test_workflow_coordinate_release_passes_predecessor_pair_shas() -> None:
     workflow = _workflow_text()
     coordinate_job = _extract_job(workflow, "coordinate-dev-release")
@@ -1093,3 +1106,45 @@ def test_validate_source_refresh_profile_rejects_invalid_hosts_wildcards_or_conn
     proc = _run_validate_source_refresh_profile(connector_id, allowed_hosts, dataset)
     assert proc.returncode != 0, f"Expected reject for {connector_id} ({allowed_hosts})"
     assert expected_err in proc.stderr
+
+
+def test_workflow_and_preflight_paper_expression_layer_contract(tmp_path: Path) -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+    bootstrap_step = dev_job[
+        dev_job.index("- name: Deploy bootstrap predecessor pair in strict live read-only mode under lease") :
+        dev_job.index("- name: Deploy dev VM stack under lease")
+    ]
+    deploy_step_index = dev_job.index("- name: Deploy dev VM stack under lease")
+    deploy_step = dev_job[
+        deploy_step_index :
+        dev_job.index("- name: Ensure governed dev paper baseline under lease", deploy_step_index)
+    ]
+    expected_line = "PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}"
+    assert expected_line in bootstrap_step
+    assert expected_line in deploy_step
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    ssh_args = tmp_path / "ssh_args.txt"
+    stub_ssh = bin_dir / "ssh"
+    stub_ssh.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{ssh_args}'\nexit 0\n", encoding="utf-8")
+    stub_ssh.chmod(0o755)
+
+    env = dict(VALID_NEUTRAL_DEV_ENV)
+    env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    env.pop("PANTHEON_DEV_PAPER_EXPRESSION_LAYER", None)
+    env.pop("DEV_PAPER_EXPRESSION_LAYER", None)
+
+    invalid_proc = subprocess.run(
+        [str(DEPLOY_SCRIPT), "--environment", "dev", "--sha", DUMMY_SHA],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**env, "PANTHEON_DEV_PAPER_EXPRESSION_LAYER": "enabled"},
+        cwd=ROOT,
+    )
+    assert invalid_proc.returncode != 0
+    assert "PANTHEON_DEV_PAPER_EXPRESSION_LAYER must be on or off (got: enabled)" in invalid_proc.stderr
+    assert not ssh_args.exists()
+

@@ -244,6 +244,7 @@ _FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, Tuple[ObjectType, ...]] = {
     CommandType.CAPITAL_POOL_ACTION: (ObjectType.CAPITAL_POOL,),
     CommandType.PAUSE_PAPER_RUNTIME: (ObjectType.RUNTIME,),
     CommandType.RESUME_PAPER_RUNTIME: (ObjectType.RUNTIME,),
+    CommandType.RETIRE_PAPER_PERSONA_CASE: (ObjectType.PERSONA,),
 }
 
 _SERVER_MANAGED_REBALANCE_EVIDENCE_TYPES = {

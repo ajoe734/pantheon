@@ -847,6 +847,21 @@ def _validate_terminal_readback(
                 continue
             wanted_requirements.setdefault(str(action["connector_id"]), []).append(dict(action))
     wanted = set(wanted_requirements)
+    if exclusive_connector_ids:
+        # An exclusive tick pulls only the selected connector(s); unselected
+        # connectors were not refreshed, so their freshness cannot be proven
+        # (or required) here. The selected connectors must be reconciled.
+        unreconciled = sorted(exclusive_connector_ids - wanted)
+        if unreconciled:
+            raise ControllerTickError(
+                "actual_readback",
+                "terminal source readback failed closed: "
+                + ", ".join(f"{connector_id}:exclusive_connector_not_reconciled" for connector_id in unreconciled),
+                reconcile=reconcile,
+                schedule=schedule,
+                actual_readback=actual,
+            )
+        wanted &= exclusive_connector_ids
     actual_connectors = {
         str(item.get("connector_id")): item
         for item in actual.get("connectors") or []

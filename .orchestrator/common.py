@@ -178,6 +178,41 @@ def cmdline_is_worker_runner(parts: list[str]) -> bool:
     return worker_runner_script(parts) is not None
 
 
+GITHUB_REVIEW_IDENTITY_INDEPENDENT = "independent"
+GITHUB_REVIEW_IDENTITY_SHARED = "shared"
+VALID_GITHUB_REVIEW_IDENTITIES = frozenset(
+    {
+        GITHUB_REVIEW_IDENTITY_INDEPENDENT,
+        GITHUB_REVIEW_IDENTITY_SHARED,
+    }
+)
+
+
+def github_review_identity(config: Mapping[str, Any]) -> str:
+    """Resolve and validate ``review_gate.github_review_identity``.
+
+    Accepts only ``"shared"`` or ``"independent"``; a missing key defaults to
+    ``"independent"``. Any other value (including ``None`` when explicitly set
+    or non-string values) raises ``ValueError``.
+    """
+
+    if not isinstance(config, Mapping):
+        raise ValueError("config must be a mapping")
+    review_gate = config.get("review_gate")
+    if review_gate is None:
+        return GITHUB_REVIEW_IDENTITY_INDEPENDENT
+    if not isinstance(review_gate, Mapping):
+        raise ValueError("review_gate configuration is required and must be a mapping")
+    if "github_review_identity" not in review_gate:
+        return GITHUB_REVIEW_IDENTITY_INDEPENDENT
+    identity = review_gate.get("github_review_identity")
+    if not isinstance(identity, str) or identity not in VALID_GITHUB_REVIEW_IDENTITIES:
+        raise ValueError(
+            "review_gate.github_review_identity must be 'shared' or 'independent'"
+        )
+    return identity
+
+
 def validate_review_bridge_policy(
     config: Mapping[str, Any],
 ) -> tuple[bool, tuple[str, ...]]:
@@ -203,6 +238,7 @@ def validate_review_bridge_policy(
         raise ValueError("review_gate.github_review_bridge_required is required")
     if not isinstance(bridge_required, bool):
         raise ValueError("review_gate.github_review_bridge_required must be a boolean")
+    github_review_identity(config)
 
     branch_workflow = config.get("branch_workflow")
     if not isinstance(branch_workflow, Mapping):

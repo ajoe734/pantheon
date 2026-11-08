@@ -2964,6 +2964,8 @@ class StagingControllerLifecycleTests(unittest.TestCase):
                 self.assertIn(key, bff, key)
                 self.assertEqual(bff[key], worker[key], key)
             self.assertEqual(bff[f"AGORA_{kind}_STORE_BACKEND"], "postgres")
+        self.assertEqual(bff["AGORA_RESEARCH_PLAN_STORE_BACKEND"], "postgres")
+        self.assertEqual(worker["AGORA_RESEARCH_PLAN_STORE_BACKEND"], "postgres")
 
     def test_collector_rejects_corrupt_runtime_owner_state(self) -> None:
         subprocess.run(
@@ -5299,6 +5301,291 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
                 self.assertEqual(hs_ctx.actor_id, "svc:governance-internal-reader")
                 self.assertEqual(hs_ctx.claims["tenant_id"], "tenant-a")
                 self.assertIn("approval_reader", hs_ctx.roles)
+
+    def test_stage_bff_inprocess_stores_all_wired_to_isolated_postgres(self) -> None:
+        import sys
+        from unittest import mock
+
+        bff_dir = str(REPO_ROOT / "services" / "control-plane" / "bff")
+        if bff_dir not in sys.path:
+            sys.path.append(bff_dir)
+
+        from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+        from services.registry.storage import build_registry_store
+        from services.registry.pg_store import PostgresRegistryStore
+        from services.governance.decision_journal import (
+            build_decision_journal_stores,
+            resolve_decision_journal_backend,
+        )
+        from services.governance.record_store import PostgresGovernanceRecordStore
+        from services.source_ingestion.source_management_store import (
+            PostgresSourceManagementStore,
+            build_source_management_store,
+        )
+        from services.rankings.store import RankingReadStore, build_rankings_read_store
+        from services.research.write_owner import ResearchWriteOwner, build_research_write_owner
+        from services.trade_journey.action_ledger import PostgresActionLedger, make_action_ledger
+        from agora.trading_room.store import PostgresTradingRoomStore, make_trading_room_store
+        from agora.strategy_workshop.store import PostgresWorkshopStore, make_workshop_store
+        from agora.research.store import PostgresResearchPlanStore, make_research_plan_store
+        from agora.dataset_extraction.extractor import AgoraDatasetStore
+        from agora.governance.store import ProposalStore
+        from agora.candidate_decisions.store import CandidateDecisionStore
+        from agora.interaction.store import InteractionLifecycleStore
+        from assistant_conversation_store import (
+            AssistantConversationStore,
+            PostgresAssistantConversationStore,
+            build_assistant_conversation_store,
+        )
+        from migrations.twelve_loop_truth import PostgresTwelveLoopStore, build_twelve_loop_store
+        from trade_journey_projection_store import TradeJourneyProjectionStore
+
+        compose = yaml.safe_load(COMPOSE_STAGING.read_text(encoding="utf-8"))["services"]
+        bff_env = compose["operator-bff"]["environment"]
+        reg_env = compose["registry"]["environment"]
+        gov_env = compose["governance"]["environment"]
+
+        required_backends = (
+            "REGISTRY_STORE_BACKEND",
+            "GOVERNANCE_STORE_BACKEND",
+            "PANTHEON_DECISION_JOURNAL_REQUIRED_BACKEND",
+            "SOURCE_MANAGEMENT_STORE_BACKEND",
+            "MANAGEMENT_AI_STORE_BACKEND",
+            "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND",
+            "PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND",
+            "LIFECYCLE_PROJECTOR_WRITER_BACKEND",
+            "PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND",
+            "AGORA_DASHBOARD_STORE_BACKEND",
+            "AGORA_TRADING_ROOM_STORE_BACKEND",
+            "AGORA_WORKSHOP_STORE_BACKEND",
+            "AGORA_DATASET_STORE_BACKEND",
+            "AGORA_GOVERNANCE_STORE_BACKEND",
+            "AGORA_CANDIDATE_DECISION_STORE_BACKEND",
+            "AGORA_RESEARCH_STORE_BACKEND",
+            "AGORA_RESEARCH_PLAN_STORE_BACKEND",
+        )
+        for key in required_backends:
+            self.assertEqual(bff_env.get(key), "postgres", key)
+        for k, v in bff_env.items():
+            if k.endswith("_BACKEND"):
+                self.assertNotIn(
+                    str(v).strip().lower(),
+                    {"memory", "json", "jsonl", "off", "sqlite", "file", "local", "stub"},
+                    f"{k}={v!r} must not use a dev-only backend",
+                )
+        self.assertEqual(bff_env["REGISTRY_ENTRIES_TABLE"], "registry.entries")
+        self.assertEqual(bff_env["REGISTRY_RECEIPTS_TABLE"], "registry.command_receipts")
+        self.assertEqual(reg_env["REGISTRY_STORE_BACKEND"], "postgres")
+        self.assertEqual(reg_env["REGISTRY_ENTRIES_TABLE"], bff_env["REGISTRY_ENTRIES_TABLE"])
+        self.assertEqual(reg_env["REGISTRY_RECEIPTS_TABLE"], bff_env["REGISTRY_RECEIPTS_TABLE"])
+        self.assertEqual(gov_env["GOVERNANCE_STORE_BACKEND"], "postgres")
+        self.assertEqual(gov_env["GOVERNANCE_AUDIT_BACKEND"], "postgres")
+        self.assertEqual(bff_env["MANAGEMENT_AI_STORE_SCHEMA"], "management_ai")
+        self.assertEqual(bff_env["RANKING_STORE_TABLE"], "rankings.rankings")
+        self.assertEqual(bff_env["PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA"], "trade_journey_projection")
+        self.assertEqual(bff_env["PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_SCHEMA"], "public")
+        self.assertEqual(bff_env["AGORA_DASHBOARD_STORE_SCHEMA"], "agora")
+        self.assertEqual(bff_env["AGORA_TRADING_ROOM_STORE_SCHEMA"], "agora")
+        self.assertEqual(bff_env["AGORA_CANDIDATE_DECISION_STORE_SCHEMA"], "agora")
+
+        expected_dsn_keys = (
+            "DATABASE_URL",
+            "REGISTRY_STORE_DSN",
+            "PANTHEON_PERSONA_PROVISIONING_STORE_DSN",
+            "AGORA_DASHBOARD_STORE_DSN",
+            "AGORA_TRADING_ROOM_STORE_DSN",
+            "AGORA_WORKSHOP_STORE_DSN",
+            "AGORA_DATASET_STORE_DSN",
+            "AGORA_GOVERNANCE_STORE_DSN",
+            "AGORA_CANDIDATE_DECISION_STORE_DSN",
+            "AGORA_RESEARCH_STORE_DSN",
+            "RESEARCH_STORE_DSN",
+            "GOVERNANCE_STORE_DSN",
+            "SOURCE_MANAGEMENT_STORE_DSN",
+            "MANAGEMENT_AI_STORE_DSN",
+            "MANAGEMENT_AI_DATABASE_URL",
+            "RANKING_STORE_DSN",
+            "PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN",
+            "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN",
+        )
+        for dsn_key in expected_dsn_keys:
+            self.assertNotIn(dsn_key, bff_env, f"{dsn_key} must come from secrets env, not compose")
+
+        boot_raw = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
+        validate_py = boot_raw.split("cat > \"${LOCAL_WORK_DIR}/validate_secrets.py\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        mint_py = boot_raw.split("cat > \"${LOCAL_WORK_DIR}/mint_runtime_manager_token.py\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            validate_script = td_path / "validate_secrets.py"
+            validate_script.write_text(validate_py, encoding="utf-8")
+            pg_pw = td_path / "pg_pw"
+            pg_pw.write_text("stg-strong-db-pw\n", encoding="utf-8")
+            mint_script = td_path / "mint_runtime_manager_token.py"
+            mint_script.write_text(mint_py, encoding="utf-8")
+            secrets_env = td_path / "staging-secrets.env"
+            isolated_dsn = "postgresql://pantheon_stg_u:stg-secret@postgres:5432/pantheon_stg_iso"
+            full_base_lines = [
+                "PANTHEON_BFF_JWT_SECRET=stg-bff-jwt-secret-0123456789abcdef",
+                "PANTHEON_RUNTIME_JWT_SECRET=stg-runtime-jwt-secret-0123456789abcdef",
+                f"PANTHEON_DATABASE_URL={isolated_dsn}",
+                f"TELEMETRY_DB_DSN={isolated_dsn}",
+                f"LIFECYCLE_PROJECTOR_PROJECTION_DSN={isolated_dsn}",
+                *(f"{k}={isolated_dsn}" for k in PRODUCT_DSN_KEYS),
+                *(f"{k}=stg-secret-{k.lower()}-val" for k in PRODUCT_SECRET_KEYS),
+            ]
+            for bad_key, bad_dsn, expected_err in (
+                ("REGISTRY_STORE_DSN", f"{isolated_dsn}?dbname=pantheon_prod", "routing override"),
+                ("AGORA_TRADING_ROOM_STORE_DSN", "postgresql://pantheon_stg_u:stg-secret@postgres:5432/pantheon_dev", "isolated staging db"),
+            ):
+                secrets_env.write_text("\n".join([*full_base_lines, f"{bad_key}={bad_dsn}"]) + "\n", encoding="utf-8")
+                bad_res = subprocess.run(
+                    [sys.executable, str(validate_script), str(secrets_env), str(pg_pw), "pantheon_stg_u", "pantheon_stg_iso"],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(bad_res.returncode, 0, bad_key)
+                self.assertIn(expected_err, bad_res.stderr + bad_res.stdout)
+
+            secrets_env.write_text(
+                "\n".join(
+                    [
+                        "PANTHEON_BFF_JWT_SECRET=stg-bff-jwt-secret-0123456789abcdef",
+                        "PANTHEON_RUNTIME_JWT_SECRET=stg-runtime-jwt-secret-0123456789abcdef",
+                        f"PANTHEON_DATABASE_URL={isolated_dsn}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(mint_script),
+                    str(secrets_env),
+                    "https://auth.pantheon-stg.internal",
+                    "pantheon-runtime",
+                    "tenant-a",
+                    "3600",
+                    "pantheon-stg-oidc-aud",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            rendered_kv = dict(
+                line.split("=", 1)
+                for line in secrets_env.read_text(encoding="utf-8").splitlines()
+                if "=" in line and not line.startswith("#")
+            )
+            for dsn_key in expected_dsn_keys:
+                self.assertEqual(rendered_kv.get(dsn_key), isolated_dsn, dsn_key)
+
+            runtime_env = {**rendered_kv, **{k: str(v) for k, v in bff_env.items()}, "PANTHEON_ENV": "staging"}
+            reg_runtime_env = {**rendered_kv, **{k: str(v) for k, v in reg_env.items()}, "PANTHEON_ENV": "staging"}
+            with mock.patch.dict(os.environ, runtime_env, clear=True), \
+                 mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
+                 mock.patch.object(PostgresSourceManagementStore, "_bootstrap", return_value=None), \
+                 mock.patch.object(PostgresActionLedger, "_bootstrap", return_value=None), \
+                 mock.patch.object(PostgresTradingRoomStore, "_bootstrap", return_value=None), \
+                 mock.patch.object(PostgresWorkshopStore, "_bootstrap", return_value=None), \
+                 mock.patch.object(PostgresResearchPlanStore, "_bootstrap", return_value=None), \
+                 mock.patch.object(AgoraDatasetStore, "_bootstrap", return_value=None), \
+                 mock.patch.object(ProposalStore, "_bootstrap", return_value=None), \
+                 mock.patch.object(CandidateDecisionStore, "_bootstrap", return_value=None), \
+                 mock.patch.object(InteractionLifecycleStore, "_bootstrap", return_value=None), \
+                 mock.patch.object(PostgresAssistantConversationStore, "bootstrap", return_value=None):
+                bff_reg = build_registry_store()
+                self.assertIsInstance(bff_reg, PostgresRegistryStore)
+                self.assertEqual(bff_reg._entries.dsn, isolated_dsn)
+                self.assertEqual(bff_reg._entries.table_name, "registry.entries")
+                self.assertEqual(bff_reg._receipts.table_name, "registry.command_receipts")
+
+                tr = make_trading_room_store()
+                self.assertIsInstance(tr, PostgresTradingRoomStore)
+                self.assertEqual(tr.dsn, isolated_dsn)
+                self.assertEqual(tr.schema, "agora")
+
+                ws = make_workshop_store()
+                self.assertIsInstance(ws, PostgresWorkshopStore)
+                self.assertEqual(ws.dsn, isolated_dsn)
+                self.assertEqual(ws.schema, "agora")
+
+                rp = make_research_plan_store()
+                self.assertIsInstance(rp, PostgresResearchPlanStore)
+                self.assertEqual(rp.dsn, isolated_dsn)
+                self.assertEqual(rp.schema, "agora_research")
+
+                rw = build_research_write_owner()
+                self.assertIsInstance(rw, ResearchWriteOwner)
+                self.assertEqual(rw.dsn, isolated_dsn)
+                self.assertEqual(rw.schema, "research")
+
+                ds = AgoraDatasetStore()
+                self.assertEqual(ds.backend, "postgres")
+                self.assertEqual(ds.dsn, isolated_dsn)
+                self.assertEqual(ds.schema, "agora")
+
+                ps = ProposalStore()
+                self.assertEqual(ps.backend, "postgres")
+                self.assertEqual(ps.dsn, isolated_dsn)
+                self.assertEqual(ps.schema, "agora")
+
+                cd = CandidateDecisionStore()
+                self.assertEqual(cd.backend, "postgres")
+                self.assertEqual(cd.dsn, isolated_dsn)
+                self.assertEqual(cd.schema, "agora")
+
+                il = InteractionLifecycleStore(
+                    backend=os.environ["AGORA_GOVERNANCE_STORE_BACKEND"],
+                    dsn=os.environ["AGORA_GOVERNANCE_STORE_DSN"],
+                    schema=os.environ["AGORA_GOVERNANCE_STORE_SCHEMA"],
+                )
+                self.assertEqual(il.backend, "postgres")
+                self.assertEqual(il.dsn, isolated_dsn)
+                self.assertEqual(il.schema, "agora")
+
+                ac = build_assistant_conversation_store()
+                self.assertIsInstance(ac, AssistantConversationStore)
+                self.assertEqual(ac.backend, "postgres")
+                self.assertIsInstance(ac._impl, PostgresAssistantConversationStore)
+                self.assertEqual(ac._impl.dsn, isolated_dsn)
+                self.assertEqual(ac._impl.schema, "management_ai")
+
+                self.assertEqual(resolve_decision_journal_backend(), "postgres")
+                dj = build_decision_journal_stores(td_path / "dj")
+                self.assertIsInstance(dj.entries, PostgresGovernanceRecordStore)
+                self.assertEqual(dj.entries._records.dsn, isolated_dsn)
+
+                sm = build_source_management_store()
+                self.assertIsInstance(sm, PostgresSourceManagementStore)
+                self.assertEqual(sm.dsn, isolated_dsn)
+
+                rk = build_rankings_read_store()
+                self.assertIsInstance(rk, RankingReadStore)
+                self.assertEqual(rk._records_table.dsn, isolated_dsn)
+                self.assertEqual(rk._records_table.table_name, "rankings.rankings")
+
+                tl = build_twelve_loop_store()
+                self.assertIsInstance(tl, PostgresTwelveLoopStore)
+                self.assertEqual(tl.dsn, isolated_dsn)
+
+                tj = TradeJourneyProjectionStore.from_environment()
+                self.assertIsInstance(tj, TradeJourneyProjectionStore)
+                self.assertEqual(tj.dsn, isolated_dsn)
+                self.assertEqual(tj.schema, "trade_journey_projection")
+
+                al = make_action_ledger()
+                self.assertIsInstance(al, PostgresActionLedger)
+                self.assertEqual(al.dsn, isolated_dsn)
+                self.assertEqual(al.schema, "public")
+
+            with mock.patch.dict(os.environ, reg_runtime_env, clear=True), \
+                 mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None):
+                owner_reg = build_registry_store()
+                self.assertIsInstance(owner_reg, PostgresRegistryStore)
+                self.assertEqual(bff_reg._entries.dsn, owner_reg._entries.dsn)
+                self.assertEqual(bff_reg._entries.table_name, owner_reg._entries.table_name)
+                self.assertEqual(bff_reg._receipts.table_name, owner_reg._receipts.table_name)
 
 
 if __name__ == "__main__":

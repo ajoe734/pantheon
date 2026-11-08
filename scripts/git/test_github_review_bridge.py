@@ -157,16 +157,20 @@ class FakeRunner:
         if joined.endswith("/pulls/4269/reviews?per_page=100"):
             return list(self.reviews)
         if "/pulls/4269/reviews" in joined and "--method POST" in joined:
-            if self.review_error:
-                raise bridge.GitHubReviewBridgeError(self.review_error)
             assert payload is not None
+            if self.review_error and payload["event"] in ("APPROVE", "REQUEST_CHANGES"):
+                raise bridge.GitHubReviewBridgeError(self.review_error)
             self.reviews.append(
                 {
-                    "id": 91,
+                    "id": 91 + len(self.reviews),
                     "state": (
                         "APPROVED"
                         if payload["event"] == "APPROVE"
-                        else "CHANGES_REQUESTED"
+                        else (
+                            "COMMENTED"
+                            if payload["event"] == "COMMENT"
+                            else "CHANGES_REQUESTED"
+                        )
                     ),
                     "commit_id": payload["commit_id"],
                     "body": payload["body"],
@@ -1763,6 +1767,185 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 binding=b,
                 runner=runner_drift,
             )
+
+    def test_shared_identity_records_approve_and_reopen_as_comment_review_pushes_tag_and_dispatches_workflow(
+        self,
+    ) -> None:
+        for decision, nonce in (("approve", "1" * 32), ("reopen", "2" * 32)):
+            with self.subTest(decision=decision):
+                runner = FakeRunner(
+                    review_error="Can not approve your own pull request",
+                )
+                result = bridge.bridge_review_decision(
+                    repository=REPOSITORY,
+                    task_id="AUDIT-001",
+                    actor="Codex2",
+                    decision=decision,
+                    message=f"Shared identity {decision} decision.",
+                    binding=binding(),
+                    intent_nonce=nonce,
+                    identity="shared",
+                    runner=runner,
+                )
+                self.assertEqual(result.mode, "pull_request_review")
+                self.assertEqual(result.decision, decision)
+                self.assertEqual(result.github_review_id, 91)
+                self.assertEqual(
+                    result.review_proof_ref,
+                    f"refs/tags/pantheon-review/{decision}/{HEAD}",
+                )
+                self.assertEqual(len(runner.reviews), 1)
+                self.assertEqual(runner.reviews[0]["state"], "COMMENTED")
+                self.assertEqual(runner.reviews[0]["commit_id"], HEAD)
+                expected_marker = bridge._review_marker(
+                    task_id="AUDIT-001",
+                    actor="Codex2",
+                    decision=decision,
+                    head_sha=HEAD,
+                    intent_nonce=nonce,
+                )
+                self.assertIn(expected_marker, runner.reviews[0]["body"])
+                review_posts = [
+                    payload
+                    for cmd, payload in runner.calls
+                    if "/pulls/4269/reviews" in " ".join(cmd) and "--method POST" in " ".join(cmd)
+                ]
+                self.assertEqual(len(review_posts), 1)
+                assert review_posts[0] is not None
+                self.assertEqual(review_posts[0]["event"], "COMMENT")
+                self.assertNotIn(review_posts[0]["event"], ("APPROVE", "REQUEST_CHANGES"))
+                self.assertIn(f"refs/tags/pantheon-review/{decision}/{HEAD}", runner.tag_refs)
+                self.assertEqual(len(runner.dispatches), 1)
+                self.assertEqual(
+                    runner.dispatches[0]["inputs"],
+                    {"head_ref": "task/AUDIT-001", "head_sha": HEAD},
+                )
+
+    def test_shared_identity_intent_ordering_rejects_stale_approve_after_reopen_and_allows_newer_approve(
+        self,
+    ) -> None:
+        runner = FakeRunner(review_error="Can not approve your own pull request")
+        nonce1 = "1" * 32
+        nonce2 = "2" * 32
+        nonce3 = "3" * 32
+        approve_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.APPROVE, head_sha=HEAD)}"
+        reopen_ref = f"refs/tags/{bridge.review_proof_tag_name(decision=bridge.REOPEN, head_sha=HEAD)}"
+
+        # 1. Initial approve in shared mode
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Initial approval.",
+            binding=binding(),
+            intent_nonce=nonce1,
+            identity="shared",
+            runner=runner,
+        )
+        self.assertIn(approve_ref, runner.tag_refs)
+        self.assertNotIn(reopen_ref, runner.tag_refs)
+
+        # 2. Reopen in shared mode supersedes initial approval and replaces tag
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="reopen",
+            message="Reopening after finding regression.",
+            binding=binding(),
+            intent_nonce=nonce2,
+            identity="shared",
+            runner=runner,
+        )
+        self.assertIn(reopen_ref, runner.tag_refs)
+        self.assertNotIn(approve_ref, runner.tag_refs)
+
+        # 3. Retried older approve (nonce1) fails closed and keeps reopen tag
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError,
+            "has been superseded by newer review intent",
+        ):
+            bridge.bridge_review_decision(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Codex2",
+                decision="approve",
+                message="Stale retry of older approve.",
+                binding=binding(),
+                intent_nonce=nonce1,
+                identity="shared",
+                runner=runner,
+            )
+        self.assertIn(reopen_ref, runner.tag_refs)
+        self.assertNotIn(approve_ref, runner.tag_refs)
+
+        # 4. Newer approve (nonce3) replaces the reopen tag
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Re-approved after fix verification.",
+            binding=binding(),
+            intent_nonce=nonce3,
+            identity="shared",
+            runner=runner,
+        )
+        self.assertIn(approve_ref, runner.tag_refs)
+        self.assertNotIn(reopen_ref, runner.tag_refs)
+        self.assertTrue(all(rev["state"] == "COMMENTED" for rev in runner.reviews))
+
+    def test_shared_identity_never_posts_commit_status(self) -> None:
+        runner = FakeRunner(review_error="Can not approve your own pull request")
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Shared mode approval.",
+            binding=binding(),
+            intent_nonce="a" * 32,
+            identity="shared",
+            runner=runner,
+        )
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="reopen",
+            message="Shared mode reopen.",
+            binding=binding(),
+            intent_nonce="b" * 32,
+            identity="shared",
+            runner=runner,
+        )
+        self.assertEqual(runner.statuses, [])
+        status_posts = [
+            cmd
+            for cmd, _ in runner.calls
+            if "/statuses/" in " ".join(cmd) and "--method POST" in " ".join(cmd)
+        ]
+        self.assertEqual(status_posts, [])
+
+    def test_invalid_identity_fails_closed(self) -> None:
+        runner = FakeRunner()
+        for bad_identity in ("", "SHARED", "bot", None):
+            with self.subTest(identity=bad_identity):
+                with self.assertRaisesRegex(
+                    bridge.GitHubReviewBridgeError,
+                    "GitHub review bridge identity must be one of",
+                ):
+                    bridge.bridge_review_decision(
+                        repository=REPOSITORY,
+                        task_id="AUDIT-001",
+                        actor="Codex2",
+                        decision="approve",
+                        message="Invalid identity.",
+                        binding=binding(),
+                        identity=bad_identity,  # type: ignore[arg-type]
+                        runner=runner,
+                    )
 
 
 if __name__ == "__main__":

@@ -64,7 +64,31 @@ REQUIRED_EVENT_TYPES = (
     "position_snapshot",
 )
 RECONCILIATION_TYPES = ("reconciliation_completed", "reconciliation_failed")
-QUERY_TYPES = (*REQUIRED_EVENT_TYPES, "order_rejection", *RECONCILIATION_TYPES)
+# Reasons the paper order risk gate can reject an order for (dev plan section
+# 4.5) plus the pre-existing sell_without_holdings. Any other reason, for example
+# a broker error, is not a terminal outcome and keeps failing closed. The dev
+# probe (scripts/probe_dev_runtime_paper_lifecycle.py) and the persona
+# validation modules hold the same closed set; a parity test keeps them equal.
+PAPER_GATE_REJECTION_REASONS = frozenset(
+    {
+        "sell_without_holdings",
+        "leverage_limit",
+        "gross_limit",
+        "net_limit",
+        "asset_class_not_allowed",
+        "insufficient_initial_margin",
+        "price_stale",
+        "instrument_not_in_candidates",
+    }
+)
+# Terminal outcomes that never fill: a risk-gate rejection, a recorded no trade
+# and a futures expiry settlement. Each ends its journey without reconciliation.
+NONFILL_TERMINAL_EVENT_TYPES = (
+    "order_rejection",
+    "paper_order_simulated",
+    "paper_futures_settled",
+)
+QUERY_TYPES = (*REQUIRED_EVENT_TYPES, *NONFILL_TERMINAL_EVENT_TYPES, *RECONCILIATION_TYPES)
 EXPECTED_STAGES = {
     "signal_generation": "signal_generation",
     "trade_decision": "trade_decision",
@@ -74,12 +98,14 @@ EXPECTED_STAGES = {
     "paper_fill_simulated": "fill_management",
     "position_snapshot": "ledger_booking",
     "order_rejection": "order_submission",
+    "paper_order_simulated": "order_submission",
+    "paper_futures_settled": "order_submission",
     "reconciliation_completed": "reconciliation",
     "reconciliation_failed": "reconciliation",
 }
 EXPECTED_PRODUCERS = {
     **{event_type: "execution.paper_runtime" for event_type in REQUIRED_EVENT_TYPES},
-    "order_rejection": "execution.paper_runtime",
+    **{event_type: "execution.paper_runtime" for event_type in NONFILL_TERMINAL_EVENT_TYPES},
     **{
         event_type: "reconciliation-drift.scheduled"
         for event_type in RECONCILIATION_TYPES
@@ -422,6 +448,11 @@ def _complete_candidates(
             "producer": str(envelope["producer"]),
             "causal_parent_event_id": causal_parent_id,
             "rejection_reason": str(metadata.get("reason") or event.get("reason") or ""),
+            "no_trade_evidence": bool(
+                metadata.get("noop_reason")
+                or metadata.get("decision_status") == "no_order"
+                or event.get("noop_reason")
+            ),
             "reconciliation_evaluation_id": str(
                 metadata.get("reconciliation_evaluation_id") or ""
             ),
@@ -451,8 +482,9 @@ def _complete_candidates(
         selected = sorted(group["events"], key=lambda item: item["sequence_no"])
         event_types = [item["event_type"] for item in selected]
         is_sell_without_holdings_terminal = (
-            event_types == ["signal_generation", "trade_decision", "order_rejection"]
-            and selected[2].get("rejection_reason") == "sell_without_holdings"
+            len(event_types) == 3
+            and event_types[:2] == ["signal_generation", "trade_decision"]
+            and _is_nonfill_terminal_event(selected[2])
             and [item["sequence_no"] for item in selected] == [1, 2, 3]
             and all(
                 current["ingested_seq"] < following["ingested_seq"]
@@ -534,6 +566,21 @@ def _complete_candidates(
             group["max_ingested_seq"] = max(item["ingested_seq"] for item in selected)
             complete.append(group)
     return sorted(complete, key=lambda item: item["max_ingested_seq"], reverse=True)
+
+
+def _is_nonfill_terminal_event(item: Mapping[str, Any]) -> bool:
+    """True for a journey-ending event that never fills or reconciles.
+
+    A rejection counts only for a risk-gate reason (an unrelated reason such as
+    a broker error is not a terminal outcome); a ``paper_order_simulated`` counts
+    only when it records an explicit no trade.
+    """
+    event_type = item.get("event_type")
+    if event_type == "order_rejection":
+        return item.get("rejection_reason") in PAPER_GATE_REJECTION_REASONS
+    if event_type == "paper_order_simulated":
+        return item.get("no_trade_evidence") is True
+    return event_type == "paper_futures_settled"
 
 
 def _bind_source_snapshot(snap: Mapping[str, Any], prov: Mapping[str, Any]) -> None:
@@ -1104,7 +1151,11 @@ def _correlate(
         event = projected_by_id.get(source_event["event_id"])
         if not event:
             raise ProbeError("journey_event_missing", "committed lifecycle event is absent from Trade Journey")
-        if event.get("stage") != EXPECTED_STAGES[source_event["event_type"]]:
+        expected_stages = {EXPECTED_STAGES[source_event["event_type"]]}
+        if source_event["event_type"] == "paper_futures_settled":
+            # A settlement projects a skipped risk stage and a skipped order stage.
+            expected_stages.add("risk_evaluation")
+        if event.get("stage") not in expected_stages:
             raise ProbeError("journey_stage_mismatch", "Trade Journey stage does not match committed lifecycle event")
         if event.get("source_mode") != "live" or event.get("accepted_live") is not True:
             raise ProbeError("journey_event_not_live", "Trade Journey event is not accepted live truth")
@@ -1125,6 +1176,8 @@ def _correlate(
     allowed_loop_statuses = (
         {"failed"}
         if terminal_event_type == "order_rejection"
+        else {"no_order"}
+        if terminal_event_type in {"paper_order_simulated", "paper_futures_settled"}
         else {"completed", "completed_with_variance"}
     )
     if loop.get("status") not in allowed_loop_statuses:
