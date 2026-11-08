@@ -1,0 +1,61 @@
+{
+  "task_id": "BFF-DEPLOYMENT-PLANS-LIST-RETIRE-20261107",
+  "title": "GET /api/v1/deployment-plans has no caller and fails every request with a TypeError",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "summary": "Retire GET /api/v1/deployment-plans (DP-01) so it returns HTTP 410 via deprecated_bff_path_response(route=\"/api/v1/deployment-plans\", replacement=\"/bff/deployments\") without calling DeploymentPlanPort.list_deployment_plans(). Synchronize BFF_API_CONTRACT.md, scripts/bff_route_manifest_backend.py ROUTE_STATUS_OVERRIDES, services/control-plane/bff/contract_snapshots/backend_routes_manifest.json, and docs/bff/contract_snapshots/route-diff-baseline.json (486 -> 485 backend_missing_frontend via scripts/bff_route_diff.py --write-baseline). Migrate obsolete GET /api/v1/deployment-plans 200 assertions to 410 across scoped contract tests while preserving GET /bff/deployments 200 list behavior, GET /api/v1/deployment-plans/{plan_id} detail behavior, POST /api/v1/deployment-plans 410 ACTION_RETIRED side-effect checks, and composition_sources labels.",
+  "scoped_artifacts": [
+    "services/control-plane/bff/deployment/router.py",
+    "services/control-plane/bff/tests/test_deployment_router.py",
+    "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py",
+    "services/control-plane/bff/tests/test_bff_main_composition.py",
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "services/control-plane/bff/BFF_API_CONTRACT.md",
+    "docs/deployment/evidence/BFF-DEPLOYMENT-PLANS-LIST-RETIRE-20261107/evidence.json",
+    "services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py",
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+    "scripts/bff_route_manifest_backend.py",
+    "docs/bff/contract_snapshots/route-diff-baseline.json"
+  ],
+  "acceptance_criteria_evidence": {
+    "ac_1_410_and_never_reads_plans": {
+      "route": "GET /api/v1/deployment-plans",
+      "status_code": 410,
+      "helper": "deprecated_bff_path_response(route=\"/api/v1/deployment-plans\", replacement=\"/bff/deployments\")",
+      "never_reads_deployment_plans": true,
+      "covered_by_tests": [
+        "services/control-plane/bff/tests/test_deployment_router.py::test_deployment_plans_list_route_returns_410_and_never_reads_plans",
+        "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py::test_prod_catalog_read_does_not_mask_cutoff_with_local_snapshot",
+        "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py::test_dev_catalog_snapshot_fallback_is_explicitly_degraded",
+        "services/control-plane/bff/tests/test_bff_main_composition.py::test_all_canonical_domain_routers_mounted",
+        "services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py::test_pkt004_deployment_approval_drilldowns_filters_follow_canonical_contract",
+        "services/control-plane/bff/test_bff_write_gap_2026_05_28.py::test_deployment_plan_create_routes_are_retired_without_side_effects"
+      ]
+    },
+    "ac_2_sibling_and_replacement_routes_unchanged": {
+      "get_deployment_plan_detail": "GET /api/v1/deployment-plans/{plan_id} unchanged and green",
+      "post_deployment_plans": "POST /api/v1/deployment-plans returns 410 ACTION_RETIRED without side effects",
+      "get_bff_deployments": "GET /bff/deployments returns 200 and serves active deployment-plan list"
+    },
+    "ac_3_manifest_contract_and_test_migrations": {
+      "backend_routes_manifest": "GET /api/v1/deployment-plans marked status=superseded, covered_by=\"GET /bff/deployments\"",
+      "route_manifest_generator": "scripts/bff_route_manifest_backend.py ROUTE_STATUS_OVERRIDES updated with GET /api/v1/deployment-plans superseded override",
+      "route_diff_baseline": "docs/bff/contract_snapshots/route-diff-baseline.json regenerated via scripts/bff_route_diff.py --write-baseline (backend_missing_frontend 486 -> 485)",
+      "api_contract_doc": "services/control-plane/bff/BFF_API_CONTRACT.md marks GET /api/v1/deployment-plans Retired (DP-01) returning 410 with replacement GET /bff/deployments",
+      "deleted_tests": []
+    },
+    "ac_4_no_other_route_or_port_changes": {
+      "deployment_plan_port_unchanged": true,
+      "composition_sources_labels_unchanged": [
+        "services/control-plane/bff/agora/performance/service.py",
+        "services/control-plane/bff/management_read_models/service.py"
+      ]
+    }
+  },
+  "verification": {
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "smoke_test_command": ".venv-pantheon/bin/python3 -m services.control_plane.bff.smoke_test",
+    "route_diff_baseline_command": ".venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline --strict-warnings"
+  }
+}
