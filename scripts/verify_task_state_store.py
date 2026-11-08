@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
             # after its recorded offset.  It never hashes the journal prefix.
             snapshot = load_snapshot(
                 Path(args.event_log).expanduser(),
-                refresh_checkpoint=False,
+                observational=True,
             )
         report = verify_snapshot(snapshot, status)
         if args.full_replay:

@@ -6,8 +6,7 @@ Used by:
   - .github/workflows/branch-ci.yml (commits in PR and push ranges)
 
 Reads required trailers from .orchestrator/config.json:
-  branch_workflow.task_pr.require_commit_trailers   (preferred, post-2026-05-17)
-  wave_workflow.wave_merge.require_commit_trailers  (legacy fallback)
+  branch_workflow.task_pr.require_commit_trailers
 
 Default required trailers: LLM-Agent, Task-ID, Reviewer.
 (The legacy `Wave:` trailer was dropped in OPS-GIT-REDESIGN-001; it is
@@ -63,15 +62,11 @@ def load_settings() -> tuple[tuple[str, ...], bool]:
         payload = json.loads(CONFIG_FILE.read_text())
     except json.JSONDecodeError:
         return DEFAULT_REQUIRED, True
-    # Prefer the new branch_workflow location; fall back to the legacy
-    # wave_workflow path so commits made during the migration window
-    # do not blow up.
     bw = (payload.get("branch_workflow") or {}).get("task_pr") or {}
-    legacy = (payload.get("wave_workflow") or {}).get("wave_merge") or {}
-    trailers = bw.get("require_commit_trailers") or legacy.get("require_commit_trailers")
+    trailers = bw.get("require_commit_trailers")
     if not isinstance(trailers, list) or not trailers:
         trailers = list(DEFAULT_REQUIRED)
-    prefix_required = bw.get("subject_prefix_required", legacy.get("subject_prefix_required", True))
+    prefix_required = bw.get("subject_prefix_required", True)
     return tuple(str(t) for t in trailers), bool(prefix_required)
 
 
