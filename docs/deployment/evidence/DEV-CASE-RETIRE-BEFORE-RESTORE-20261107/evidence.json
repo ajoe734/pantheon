@@ -1,0 +1,106 @@
+{
+  "schema_version": "pantheon.dev-case-retire-before-restore-evidence.v1",
+  "task_id": "DEV-CASE-RETIRE-BEFORE-RESTORE-20261107",
+  "title": "Repair current dev probe cleanup before baseline restore health",
+  "agent": "Antigravity",
+  "reviewer": "Codex",
+  "base_sha": "642f42ae286bcab0c2f8cfc70597eafc2f122b78",
+  "frozen_source_sha": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
+  "prerequisite": {
+    "task_id": "DEV-EGRESS-TAIFEX-CONNECTOR-GATE-20261107",
+    "status": "done",
+    "satisfied": true
+  },
+  "evidence_posture": "source_only_not_hosted_acceptance",
+  "live_baseline_posture": {
+    "old57_health_already_restored": true,
+    "baseline_backend_sha": "e9a1a196805663b175423964c2ccdc21bf2d24ea",
+    "baseline_frontend_sha": "9d17b54be42581d62a50d2dd6a154d9468cefe94",
+    "next_publish_inevitably_fails_claimed": false,
+    "live_actions_performed": false,
+    "note": "Historical run 24097678868 already retired dev-paper-release-24097678868-1 and restored old57 health; this source-only repair removes the pre-restore ordering hazard when a current run creates an incompatible dev-paper-release-<run_id>-<run_attempt> probe case and then enters baseline restore."
+  },
+  "repair_plan_artifact": {
+    "supplied_path": "/tmp/pantheon-stage-retention-proposal-20261106/existing-case-retire-before-restore-20261107/repair_plan.json",
+    "committed_path": "docs/deployment/evidence/DEV-CASE-RETIRE-BEFORE-RESTORE-20261107/repair_plan.json",
+    "sha256": "87a4c0054cdcbcf66391fe1eb1a5faa197b8292fe2b260da2a6333385bbd044d",
+    "byte_for_byte_verified": true
+  },
+  "workflow_baseline_return_inventory": [
+    {
+      "job": "deploy-dev",
+      "restore_step_id": "deploy_compensation",
+      "pre_restore_retire_step_id": "retire_release_cases",
+      "release_outcome": "pre_restore",
+      "preparation_only": true,
+      "target_case_key": "dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+      "gating": "Runs before deploy_compensation only when env.PAPER_BOOTSTRAP_REQUESTED == 'true' and deploy_compensation's failure condition is true; continue-on-error: true so retirement failure never blocks baseline restore or lease quarantine."
+    },
+    {
+      "job": "coordinate-dev-release",
+      "restore_step_id": "roundtrip_baseline_restore",
+      "pre_restore_retire_step_id": "roundtrip_retire_release_case",
+      "release_outcome": "pre_restore",
+      "preparation_only": true,
+      "target_case_key": "dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+      "gating": "Runs immediately before roundtrip_baseline_restore when steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && inputs.run_exact_artifact_roundtrip && needs.deploy-dev.outputs.paper_bootstrap_requested == 'true'; continue-on-error: true."
+    },
+    {
+      "job": "coordinate-dev-release",
+      "restore_step_id": "compensation",
+      "pre_restore_retire_step_id": "rollback_retire_release_case",
+      "release_outcome": "pre_restore",
+      "preparation_only": true,
+      "target_case_key": "dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+      "gating": "Runs after 'Prepare pinned direct SSH transport for rollback' and immediately before 'compensation' when needs.deploy-dev.outputs.paper_bootstrap_requested == 'true' and any release/verify/roundtrip step failed; continue-on-error: true."
+    },
+    {
+      "job": "coordinate-dev-release",
+      "restore_step_id": "none_accepted_non_roundtrip_cleanup",
+      "post_release_retire_step_id": "retire_release_cases",
+      "release_outcome": "accepted",
+      "preparation_only": false,
+      "target_case_key": "all prior dev-paper-release-* cases except dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+      "gating": "Runs only on accepted non-roundtrip releases (steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && !inputs.run_exact_artifact_roundtrip) after the served case is verified succeeded, preserving served_refusal without any business-status alias."
+    }
+  ],
+  "invariants_preserved": {
+    "deployment_owner_helper_only": "scripts/retire_dev_paper_release_cases.py -> PersonaProvisioningService.retire_persona_provisioning_case",
+    "exact_current_run_case_only_on_pre_restore": true,
+    "unrelated_and_operator_cases_untouched": true,
+    "saved_records_and_telemetry_not_deleted": true,
+    "sealed_image_env_cas_auth_health_checks_intact": true,
+    "lease_and_quarantine_semantics_intact": true,
+    "no_schema_relaxation_or_health_skip_or_status_alias": true
+  },
+  "diff_budget": {
+    "change_class": "bugfix",
+    "net_prod_line_budget": 100,
+    "production_files": {
+      ".github/workflows/nonprod-deploy.yml": {
+        "added": 132,
+        "deleted": 63,
+        "net": 69
+      },
+      "scripts/retire_dev_paper_release_cases.py": {
+        "added": 14,
+        "deleted": 5,
+        "net": 9
+      }
+    },
+    "total_net_prod_lines": 78,
+    "within_budget": true
+  },
+  "validation": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_retire_dev_paper_release_cases.py",
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_nonprod_dev_artifact_workflow.py",
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py::test_whole_stack_scope_is_forwarded_and_only_the_roundtrip_keeps_three_images scripts/test_dev_direct_ssh_workflow_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_dev_release_artifact_driver.py scripts/test_dev_release_artifacts.py"
+    ],
+    "results": {
+      "scripts/test_retire_dev_paper_release_cases.py": "48 passed",
+      "scripts/test_nonprod_dev_artifact_workflow.py": "181 passed",
+      "workflow_and_artifact_contracts": "403 passed, 1 skipped"
+    }
+  }
+}
