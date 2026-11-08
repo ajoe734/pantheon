@@ -236,6 +236,45 @@ def _extract_mark_ref_provenance(
     return obs_text, obs_dt, lineage_obj, calendar_obj, has_malformed
 
 
+def _finite_positive(value: Any) -> Optional[float]:
+    number = _finite_number(value)
+    return number if number is not None and number > 0.0 else None
+
+
+def _fill_instrument_descriptor(
+    meta: dict[str, Any], symbol: Any
+) -> tuple[Any, dict[str, Any]]:
+    """Return ``(position_key, descriptor)`` for one fill's metadata.
+
+    Cash shares stay keyed by their symbol, which keeps persisted summaries and
+    the 11/06 hosted holdings unchanged. A stock future is keyed by its
+    ``instrument_id`` so a future and its underlying share never net together.
+    The descriptor carries only what the fill itself reported.
+    """
+    descriptor: dict[str, Any] = {}
+    instrument_id = meta.get("instrument_id")
+    if isinstance(instrument_id, str) and instrument_id.strip():
+        descriptor["instrument_id"] = instrument_id.strip()
+    kind = meta.get("kind")
+    if isinstance(kind, str) and kind.strip():
+        descriptor["kind"] = kind.strip()
+    multiplier = _finite_positive(meta.get("multiplier"))
+    if multiplier is not None:
+        descriptor["multiplier"] = multiplier
+    contract_month = meta.get("contract_month")
+    if isinstance(contract_month, (str, int)) and not isinstance(contract_month, bool):
+        if str(contract_month).strip():
+            descriptor["contract_month"] = str(contract_month).strip()
+    margin = _finite_number(meta.get("initial_margin_reserved"))
+    if margin is not None and margin >= 0.0:
+        descriptor["margin_reserved"] = margin
+    if isinstance(symbol, str) and symbol.strip():
+        descriptor["symbol"] = symbol.strip()
+    if descriptor.get("kind") == "stock_future" and descriptor.get("instrument_id"):
+        return descriptor["instrument_id"], descriptor
+    return symbol, descriptor
+
+
 def _round6(val: float) -> float:
     rounded = round(float(val), 6)
     return 0.0 if rounded == 0.0 else rounded
@@ -245,8 +284,14 @@ def _fold_symbol_cost(
     entry: Optional[dict[str, Any]],
     fill_qty: float,
     fill_price: float,
+    multiplier: float = 1.0,
 ) -> dict[str, Any]:
-    """Fold one symbol fill into unrounded moving-average cost and realized PnL."""
+    """Fold one instrument fill into unrounded moving-average cost and realized PnL.
+
+    ``average_price`` is the cost per unit (a share or a contract). Realized PnL
+    is expressed in currency, so it is scaled by ``multiplier`` (1.0 for a cash
+    share, the contract multiplier for a stock future).
+    """
     old_qty = float((entry or {}).get("quantity") or 0.0)
     raw_old_avg = (entry or {}).get("average_price")
     old_avg = (
@@ -257,6 +302,7 @@ def _fold_symbol_cost(
     realized = float((entry or {}).get("realized_pnl") or 0.0)
     qty = float(fill_qty)
     price = float(fill_price)
+    mult = float(multiplier)
 
     if abs(old_qty) <= 1e-12 or old_avg is None:
         new_qty = qty
@@ -278,7 +324,7 @@ def _fold_symbol_cost(
 
     position_sign = 1.0 if old_qty > 0.0 else -1.0
     closed_quantity = min(abs(old_qty), abs(qty))
-    new_realized = realized + closed_quantity * (price - old_avg) * position_sign
+    new_realized = realized + closed_quantity * mult * (price - old_avg) * position_sign
     raw_new_qty = old_qty + qty
     if abs(raw_new_qty) <= 1e-12 or abs(qty) == abs(old_qty):
         return {
@@ -350,6 +396,7 @@ def _rebuild_positions(
         # stale open position as current, so withhold them instead.
         current["positions"] = []
         current["position_count"] = None
+        current.pop("positions_by_underlying", None)
         current["positions_status"] = "unavailable"
         current["positions_unavailable_reason"] = (
             f"fill_event_gap: runtime ledger fill_count={ledger_fill_count} "
@@ -380,23 +427,46 @@ def _rebuild_positions(
         if isinstance(current.get("_broker_by_symbol"), dict)
         else {}
     )
+    instrument_by_key = (
+        current.get("_instrument_by_key")
+        if isinstance(current.get("_instrument_by_key"), dict)
+        else {}
+    )
     binding_id = str(current.get("binding_id") or "")
     failure = current.get("_valuation_failure")
     latest_event_at = reference_at or _parse_rfc3339(
         current.get("_binding_latest_event_at") or current.get("last_event_at")
     )
     rows = []
-    for symbol, quantity in sorted(positions.items()):
+    for position_key, quantity in sorted(positions.items()):
         if not quantity:
             continue
+        # ``position_key`` is the symbol for a cash share and the instrument_id
+        # for a stock future; ``symbol`` is always the underlying/native symbol.
+        descriptor = instrument_by_key.get(position_key)
+        if not isinstance(descriptor, dict):
+            descriptor = {}
+        symbol = descriptor.get("symbol") or position_key
+        multiplier = _finite_positive(descriptor.get("multiplier")) or 1.0
         row: dict[str, Any] = {"symbol": symbol, "quantity": quantity}
-        fill_currency = currency_by_symbol.get(symbol)
+        if descriptor.get("instrument_id"):
+            row["instrument_id"] = descriptor["instrument_id"]
+            if descriptor.get("kind"):
+                row["kind"] = descriptor["kind"]
+            row["multiplier"] = multiplier
+            if descriptor.get("contract_month"):
+                row["contract_month"] = descriptor["contract_month"]
+            if descriptor.get("kind") == "stock_future":
+                row["margin_reserved"] = _round6(
+                    float(descriptor.get("margin_reserved") or 0.0)
+                )
+        fill_currency = currency_by_symbol.get(position_key)
         if isinstance(fill_currency, str) and fill_currency.strip():
             row["currency"] = fill_currency.strip()
-        fill_broker = broker_by_symbol.get(symbol)
+        fill_broker = broker_by_symbol.get(position_key)
         if isinstance(fill_broker, str) and fill_broker.strip():
             row["broker_id"] = fill_broker.strip()
-        sym_cost = cost_by_symbol.get(symbol) if isinstance(cost_by_symbol, dict) else None
+        sym_cost = cost_by_symbol.get(position_key) if isinstance(cost_by_symbol, dict) else None
         raw_avg = sym_cost.get("average_price") if isinstance(sym_cost, dict) else None
         unrounded_avg: Optional[float] = (
             float(raw_avg)
@@ -410,10 +480,14 @@ def _rebuild_positions(
             unrounded_realized = float(sym_cost.get("realized_pnl") or 0.0)
             row["average_price"] = _round6(unrounded_avg)
             row["realized_pnl"] = _round6(unrounded_realized)
-        mark = marks.get(symbol)
+        mark = marks.get(position_key)
         if isinstance(mark, dict) and str(mark.get("binding_id") or "") == binding_id:
             failed_symbols = failure.get("symbols") if isinstance(failure, dict) else None
-            if isinstance(failure, dict) and (not failed_symbols or symbol in failed_symbols):
+            if isinstance(failure, dict) and (
+                not failed_symbols
+                or symbol in failed_symbols
+                or position_key in failed_symbols
+            ):
                 # The producer's latest valuation attempt failed: keep the last
                 # known quote only as explicitly unavailable provenance.
                 row["mark_unavailable_reason"] = failure.get("code") or failure.get("status")
@@ -478,10 +552,12 @@ def _rebuild_positions(
             row["mark_price"] = mark["price"]
             row["mark_as_of"] = mark["as_of"]
             row["mark_source_ref"] = mark["source_ref"]
-            row["market_value"] = round(float(quantity) * float(mark["price"]), 6)
+            row["market_value"] = round(
+                float(quantity) * multiplier * float(mark["price"]), 6
+            )
             if unrounded_avg is not None:
                 row["unrealized_pnl"] = _round6(
-                    float(quantity) * (float(mark["price"]) - unrounded_avg)
+                    float(quantity) * multiplier * (float(mark["price"]) - unrounded_avg)
                 )
             if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
                 row["mark_observed_at"] = mark["observed_at"]
@@ -499,6 +575,34 @@ def _rebuild_positions(
         rows.append(row)
     current["positions"] = rows
     current["position_count"] = len(rows)
+    by_underlying: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        group = by_underlying.setdefault(
+            str(row["symbol"]), {"net_delta_units": 0.0, "instruments": []}
+        )
+        group["net_delta_units"] = _round6(
+            group["net_delta_units"]
+            + float(row["quantity"]) * float(row.get("multiplier") or 1.0)
+        )
+        group["instruments"].append(
+            {
+                key: row[key]
+                for key in (
+                    "instrument_id",
+                    "kind",
+                    "quantity",
+                    "multiplier",
+                    "contract_month",
+                    "margin_reserved",
+                    "currency",
+                )
+                if key in row
+            }
+        )
+    if by_underlying:
+        current["positions_by_underlying"] = by_underlying
+    else:
+        current.pop("positions_by_underlying", None)
 
 
 def _summary_identity(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
@@ -698,7 +802,7 @@ class RuntimeSummaryProjectionStore:
                     "_positions_by_symbol", "_marks_by_symbol", "_valuation_failure", "_valuation_attempt_at", "positions", "position_count",
                     "ledger_fill_count", "positions_status", "positions_unavailable_reason",
                     "_cost_by_symbol", "_cost_applied_fill_count", "_cost_pending_fills", "_cost_withheld",
-                    "_currency_by_symbol", "_broker_by_symbol",
+                    "_currency_by_symbol", "_broker_by_symbol", "_instrument_by_key",
                     "last_heartbeat_at", "last_heartbeat_event_id",
                     "state", "connectivity_status", "broker_status",
                     "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
@@ -932,6 +1036,10 @@ class RuntimeSummaryProjectionStore:
                 symbol = metadata.get("symbol") or metrics.get("symbol")
                 fill_qty = metrics.get("fill_quantity")
                 fill_price = metrics.get("fill_price")
+                pos_key, fill_descriptor = _fill_instrument_descriptor(
+                    metadata, symbol
+                )
+                fill_multiplier = float(fill_descriptor.get("multiplier") or 1.0)
                 raw_lfc = metadata.get("ledger_fill_count")
                 usable_lfc = (
                     isinstance(raw_lfc, int)
@@ -977,6 +1085,11 @@ class RuntimeSummaryProjectionStore:
                         if not usable_lfc or raw_lfc >= max(applied_lfc, max_pending_lfc):
                             current["last_fill"] = {
                                 "symbol": symbol,
+                                **(
+                                    {"instrument_id": fill_descriptor["instrument_id"]}
+                                    if fill_descriptor.get("instrument_id")
+                                    else {}
+                                ),
                                 "quantity": fill_qty,
                                 "fill_price": fill_price,
                                 "action": metrics.get("action"),
@@ -991,23 +1104,29 @@ class RuntimeSummaryProjectionStore:
                                 currency_by_symbol = current.get("_currency_by_symbol")
                                 if not isinstance(currency_by_symbol, dict):
                                     currency_by_symbol = {}
-                                currency_by_symbol[symbol] = raw_currency.strip()
+                                currency_by_symbol[pos_key] = raw_currency.strip()
                                 current["_currency_by_symbol"] = currency_by_symbol
                             raw_broker = metadata.get("broker")
                             if isinstance(raw_broker, str) and raw_broker.strip():
                                 broker_by_symbol = current.get("_broker_by_symbol")
                                 if not isinstance(broker_by_symbol, dict):
                                     broker_by_symbol = {}
-                                broker_by_symbol[symbol] = raw_broker.strip()
+                                broker_by_symbol[pos_key] = raw_broker.strip()
                                 current["_broker_by_symbol"] = broker_by_symbol
+                            if fill_descriptor.get("instrument_id"):
+                                instrument_meta = current.get("_instrument_by_key")
+                                if not isinstance(instrument_meta, dict):
+                                    instrument_meta = {}
+                                instrument_meta[pos_key] = dict(fill_descriptor)
+                                current["_instrument_by_key"] = instrument_meta
                         positions = current.get("_positions_by_symbol")
                         if not isinstance(positions, dict):
                             positions = {}
                         if isinstance(fill_qty, (int, float)) and not isinstance(
                             fill_qty, bool
                         ):
-                            positions[symbol] = float(
-                                positions.get(symbol, 0.0)
+                            positions[pos_key] = float(
+                                positions.get(pos_key, 0.0)
                             ) + float(fill_qty)
                         current["_positions_by_symbol"] = positions
 
@@ -1024,10 +1143,11 @@ class RuntimeSummaryProjectionStore:
                         else:
                             cost_by_symbol = dict(cost_by_symbol)
                         if raw_lfc == applied_lfc + 1:
-                            cost_by_symbol[symbol] = _fold_symbol_cost(
-                                cost_by_symbol.get(symbol),
+                            cost_by_symbol[pos_key] = _fold_symbol_cost(
+                                cost_by_symbol.get(pos_key),
                                 float(fill_qty),
                                 float(fill_price),
+                                fill_multiplier,
                             )
                             applied_lfc += 1
                             while str(applied_lfc + 1) in pending_fills:
@@ -1037,6 +1157,7 @@ class RuntimeSummaryProjectionStore:
                                     cost_by_symbol.get(next_sym),
                                     float(next_fill["quantity"]),
                                     float(next_fill["price"]),
+                                    float(next_fill.get("multiplier") or 1.0),
                                 )
                                 applied_lfc += 1
                             current["_cost_by_symbol"] = cost_by_symbol
@@ -1050,9 +1171,10 @@ class RuntimeSummaryProjectionStore:
                                 _withhold_cost(current)
                             else:
                                 pending_fills[str(raw_lfc)] = {
-                                    "symbol": symbol,
+                                    "symbol": pos_key,
                                     "quantity": float(fill_qty),
                                     "price": float(fill_price),
+                                    "multiplier": fill_multiplier,
                                 }
                                 current["_cost_pending_fills"] = pending_fills
                                 current["_cost_by_symbol"] = cost_by_symbol
@@ -1062,6 +1184,53 @@ class RuntimeSummaryProjectionStore:
 
                     if symbol is not None:
                         _rebuild_positions(current)
+
+            # Expiry settlement closes a stock-future position at the final
+            # settlement price. It is not a fill (the ledger fill count does not
+            # move), so it only zeroes that contract's quantity and books the
+            # realized PnL the ledger computed with the contract multiplier.
+            if event_type == "paper_futures_settled":
+                settled_id = metadata.get("instrument_id")
+                if isinstance(settled_id, str) and settled_id.strip():
+                    settled_key = settled_id.strip()
+                    positions = current.get("_positions_by_symbol")
+                    cost_by_symbol = current.get("_cost_by_symbol")
+                    event_id = str(event.get("event_id") or "")
+                    if isinstance(positions, dict) and settled_key in positions:
+                        already = False
+                        if isinstance(cost_by_symbol, dict):
+                            prior = cost_by_symbol.get(settled_key)
+                            already = bool(
+                                event_id
+                                and isinstance(prior, dict)
+                                and event_id in (prior.get("settled_event_ids") or [])
+                            )
+                        if not already:
+                            positions = dict(positions)
+                            positions[settled_key] = 0.0
+                            current["_positions_by_symbol"] = positions
+                            realized_delta = _finite_number(metadata.get("realized_pnl"))
+                            if (
+                                isinstance(cost_by_symbol, dict)
+                                and not current.get("_cost_withheld")
+                                and realized_delta is not None
+                            ):
+                                cost_by_symbol = dict(cost_by_symbol)
+                                prior = cost_by_symbol.get(settled_key) or {}
+                                cost_by_symbol[settled_key] = {
+                                    "quantity": 0.0,
+                                    "average_price": None,
+                                    "realized_pnl": float(prior.get("realized_pnl") or 0.0)
+                                    + realized_delta,
+                                    "settled_event_ids": [
+                                        *(prior.get("settled_event_ids") or []),
+                                        *([event_id] if event_id else []),
+                                    ],
+                                }
+                                current["_cost_by_symbol"] = cost_by_symbol
+                            else:
+                                _withhold_cost(current)
+                            _rebuild_positions(current)
 
             # The producer reports a failed/expired valuation attempt through its
             # heartbeat performance_telemetry. Only its own attempt time orders
@@ -1517,6 +1686,11 @@ class RuntimeSummaryProjectionStore:
                     else {}
                 )
 
+                instrument_by_key: dict[str, dict[str, Any]] = (
+                    dict(current.get("_instrument_by_key"))
+                    if isinstance(current.get("_instrument_by_key"), dict)
+                    else {}
+                )
                 fills_by_lfc: dict[int, dict[str, Any]] = {}
                 has_invalid_fill = False
 
@@ -1537,9 +1711,12 @@ class RuntimeSummaryProjectionStore:
                 for ev in sorted(retained_events, key=_sort_key):
                     meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
                     metrics = ev.get("metrics") if isinstance(ev.get("metrics"), dict) else {}
-                    sym = meta.get("symbol") or metrics.get("symbol")
-                    usable_sym = isinstance(sym, str) and bool(sym.strip())
+                    raw_sym = meta.get("symbol") or metrics.get("symbol")
+                    sym, ev_descriptor = _fill_instrument_descriptor(meta, raw_sym)
+                    usable_sym = isinstance(raw_sym, str) and bool(raw_sym.strip())
                     if usable_sym:
+                        if ev_descriptor.get("instrument_id"):
+                            instrument_by_key[sym] = dict(ev_descriptor)
                         raw_curr = meta.get("currency")
                         if isinstance(raw_curr, str) and raw_curr.strip():
                             currency_by_symbol[sym] = raw_curr.strip()
@@ -1577,12 +1754,14 @@ class RuntimeSummaryProjectionStore:
                         ev = fills_by_lfc[lfc]
                         meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
                         metrics = ev.get("metrics") if isinstance(ev.get("metrics"), dict) else {}
-                        sym = meta.get("symbol") or metrics.get("symbol")
+                        raw_sym = meta.get("symbol") or metrics.get("symbol")
+                        sym, ev_descriptor = _fill_instrument_descriptor(meta, raw_sym)
+                        fill_mult = float(ev_descriptor.get("multiplier") or 1.0)
                         qty = metrics.get("fill_quantity")
                         price = metrics.get("fill_price")
                         if (
-                            not isinstance(sym, str)
-                            or not sym.strip()
+                            not isinstance(raw_sym, str)
+                            or not raw_sym.strip()
                             or not isinstance(qty, (int, float))
                             or isinstance(qty, bool)
                             or not math.isfinite(float(qty))
@@ -1601,6 +1780,7 @@ class RuntimeSummaryProjectionStore:
                             cost_by_symbol.get(sym),
                             float(qty),
                             float(price),
+                            fill_mult,
                         )
 
                 if fold_ok:
@@ -1622,6 +1802,8 @@ class RuntimeSummaryProjectionStore:
                     current["_currency_by_symbol"] = currency_by_symbol
                 if broker_by_symbol:
                     current["_broker_by_symbol"] = broker_by_symbol
+                if instrument_by_key:
+                    current["_instrument_by_key"] = instrument_by_key
 
                 if fold_ok:
                     expected_int = int(raw_expected)

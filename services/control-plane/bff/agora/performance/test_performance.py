@@ -1610,3 +1610,122 @@ def test_assembled_bff_app_attribution_route_uses_configured_projection_reader(
     assert other_user.status_code == 200, other_user.text
     assert other_user.json()["data"]["items"] == []
     assert other_user.json()["meta"]["availability"] == "available"
+
+
+def test_pm12_attribution_values_stock_future_with_multiplier_and_groups_by_instrument() -> None:
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 4): real position shape."""
+    from services.control_plane.bff.agora.performance import service as perf
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    future_id = "ssf:QFF:202611"
+    scope = {
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "runtime_id": "rt-instr-perf",
+        "binding_id": "rb-instr-perf",
+    }
+    store = RuntimeSummaryProjectionStore(path=None)
+    cash_meta = {"symbol": "2330.TWSE", "currency": "TWD", "broker": "shioaji_paper"}
+    future_meta = {
+        **cash_meta,
+        "instrument_id": future_id,
+        "kind": "stock_future",
+        "multiplier": 100.0,
+        "contract_month": "202611",
+        "initial_margin_reserved": 92000.0,
+    }
+    for lfc, qty, price, meta in (
+        (1, -5.0, 2299.0, cash_meta),
+        (2, 2.0, 2300.0, future_meta),
+    ):
+        store.project_event(
+            {
+                **scope,
+                "event_id": f"evt-perf-fill-{lfc}",
+                "event_type": "paper_fill_simulated",
+                "created_at": f"2026-11-05T01:00:0{lfc}Z",
+                "metrics": {"fill_quantity": qty, "fill_price": price},
+                "metadata": {**meta, "ledger_fill_count": lfc},
+            }
+        )
+
+    def _ref(symbol: str, price: float) -> dict:
+        return {
+            "symbol": symbol,
+            "price": price,
+            "as_of": "2026-11-04T00:00:00Z",
+            "source_ref": "source-ingest://snapshots/mss-perf-001",
+            "observed_at": "2026-11-04T06:00:00Z",
+            "lineage": {
+                "source_ids": ["tw-official:tw_price_daily:TWSE:2330:test"],
+                "connector_ids": ["tw-twse-tpex-official-market"],
+            },
+        }
+
+    summary = store.project_event(
+        {
+            **scope,
+            "event_id": "evt-perf-pnl",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-11-05T02:00:00Z",
+            "pnl_as_of": "2026-11-04T00:00:00Z",
+            "metrics": {"pnl": 0.0, "fill_count": 2},
+            "metadata": {"mark_refs": [_ref("2330.TWSE", 2240.0), _ref(future_id, 2250.0)]},
+        }
+    )
+    runtime = {
+        "runtime_id": "rt-instr-perf",
+        "persona_id": "p-instr",
+        "status": "active",
+        "strategy_id": "strategy-instr",
+        "capital_pool_id": "pool-instr",
+    }
+    persona = {"persona_id": "p-instr"}
+    sources = {
+        "tenant_id": None,
+        "runtime_bindings": [runtime],
+        "plans_by_id": {},
+        "bindings_by_id": {},
+        "pools_by_id": {},
+        "personas_by_id": {"p-instr": persona},
+        "telemetry_by_runtime_id": {"rt-instr-perf": summary},
+    }
+    facts = perf.pm12_performance_attribution_facts(sources)
+    by_instrument = {fact["instrument_id"] or fact["symbol"]: fact for fact in facts}
+    assert set(by_instrument) == {"2330.TWSE", future_id}
+
+    cash = by_instrument["2330.TWSE"]
+    assert cash["multiplier"] == 1.0
+    assert cash["market_value"] == -11200.0
+    assert cash["unrealized_pnl"] == 295.0
+
+    future = by_instrument[future_id]
+    assert future["instrument_kind"] == "stock_future"
+    assert future["contract_month"] == "202611"
+    assert future["multiplier"] == 100.0
+    assert future["margin_reserved"] == 92000.0
+    # 2 contracts * 100 * 2250 ; 2 * 100 * (2250 - 2300)
+    assert future["market_value"] == 450000.0
+    assert future["unrealized_pnl"] == -10000.0
+    assert future["notional"] == 450000.0
+
+    breakdown = {row["instrument_key"]: row for row in perf.pm12_attribution_instrument_breakdown(facts)}
+    assert set(breakdown) == {"2330.TWSE", future_id}
+    assert breakdown[future_id]["market_value"] == 450000.0
+    assert breakdown[future_id]["multiplier"] == 100.0
+    assert breakdown[future_id]["margin_reserved"] == 92000.0
+    assert breakdown["2330.TWSE"]["market_value"] == -11200.0
+
+    payload = perf.pm12_performance_attribution_response(
+        period="latest",
+        sources_fn=lambda _tenant: sources,
+        utc_now=lambda: "2026-11-05T05:00:00Z",
+        dimensions=["runtime"],
+        page_size=50,
+        page_token=None,
+    )
+    assert {row["instrument_key"] for row in payload["data"]["summary"]["instrument_breakdown"]} == {
+        "2330.TWSE",
+        future_id,
+    }
