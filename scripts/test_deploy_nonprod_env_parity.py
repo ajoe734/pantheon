@@ -125,6 +125,7 @@ def _build_test_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
     env["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] = ""
     env["PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] = "300"
     env["PANTHEON_DEV_BFF_CORS_ORIGINS"] = "https://app.dev.mvl-cap.tw"
+    env["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] = "off"
     env["PANTHEON_DEV_BFF_AUTH_STUB"] = "false"
     env["PANTHEON_DEV_BFF_AUTH_MODE"] = "strict"
     env["PANTHEON_DEV_BFF_JWT_SECRET"] = "dev-secret-jwt"
@@ -242,6 +243,7 @@ cleanup_stale_compose_replacement_containers() {{ :; }}
         "AGORA_WORKSHOP_STORE_SCHEMA": "agora",
         "PANTHEON_BFF_AUTH_MODE": "strict",
         "PANTHEON_BFF_AUTH_STUB": "false",
+        "PANTHEON_PAPER_EXPRESSION_LAYER": "off",
         "MANAGEMENT_AI_STORE_BACKEND": "postgres",
         "RECONCILIATION_DRIFT_URL": "http://recon:8102",
         "PANTHEON_RECONCILIATION_DRIFT_API_URL": "http://recon:8102",
@@ -327,6 +329,7 @@ cleanup_stale_compose_replacement_containers() {{ :; }}
         "AGORA_WORKSHOP_STORE_SCHEMA": "agora",
         "PANTHEON_BFF_AUTH_MODE": "strict",
         "PANTHEON_BFF_AUTH_STUB": "false",
+        "PANTHEON_PAPER_EXPRESSION_LAYER": "off",
         "MANAGEMENT_AI_STORE_BACKEND": "postgres",
         "RECONCILIATION_DRIFT_URL": "http://recon:8102",
         "PANTHEON_RECONCILIATION_DRIFT_API_URL": "http://recon:8102",
@@ -404,6 +407,7 @@ with_dev_bff_runtime_env "${{runtime_sha}}" false \
 
     rec_env = driver_events[0]["env"]
     assert rec_env["PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED"] == "false"
+    assert rec_env["PANTHEON_PAPER_EXPRESSION_LAYER"] == "off"
     assert rec_env["COMPOSE_PROFILES"] == ""
     assert "PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED" not in rec_env or rec_env["PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED"] == ""
 
@@ -611,3 +615,121 @@ def test_source_refresh_taifex_and_twse_env_transport_and_unmerged_host_parity()
     init_block = source.split("SOURCE_REFRESH_CONNECTOR_ID=", 1)[1].split("DEV_APP_DB_USER=", 1)[0]
     assert '"${SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market"' in init_block
     assert "taifex.com.tw" not in init_block
+
+
+@pytest.mark.parametrize("flag_value", ["off", "on"])
+def test_paper_expression_layer_env_parity_across_root_bff_and_compensation_paths(
+    tmp_path: Path, flag_value: str
+) -> None:
+    """Verify PANTHEON_DEV_PAPER_EXPRESSION_LAYER passes PANTHEON_PAPER_EXPRESSION_LAYER
+    into every dev compose environment path that receives PANTHEON_BFF_CORS_ORIGINS
+    (root rollout, bff-only recreate, and compensation/artifact driver)."""
+    bin_dir, events_file = _setup_stub_bin(tmp_path)
+    env = _build_test_env(tmp_path, bin_dir)
+    env["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] = flag_value
+
+    driver_stub = tmp_path / "stub_driver.py"
+    driver_stub.write_text(
+        f"""#!/usr/bin/env python3
+import json, os, sys
+events_file = {repr(str(events_file))}
+with open(events_file, "a", encoding="utf-8") as f:
+    f.write(json.dumps({{"command": "artifact_driver", "argv": sys.argv[1:], "env": dict(os.environ)}}) + "\\n")
+""",
+        encoding="utf-8",
+    )
+    driver_stub.chmod(0o755)
+    env["PANTHEON_DEV_ARTIFACT_DRIVER_PATH"] = str(driver_stub)
+    env["PANTHEON_DEPLOY_PROJECT_ID"] = "pantheon-dev-20260902"
+    env["PANTHEON_DEV_BFF_PUBLIC_HOST"] = "api.dev.mvl-cap.tw"
+    env["PANTHEON_DEV_FE_PUBLIC_HOST"] = "app.dev.mvl-cap.tw"
+    env["PANTHEON_DEV_ARTIFACT_COMPOSE_FILE"] = str(tmp_path / "docker-compose.yml")
+    env["PANTHEON_DEV_ARTIFACT_CANDIDATE_ID"] = "cand-1"
+    env["PANTHEON_DEV_ARTIFACT_RUN_ID"] = "100"
+    env["PANTHEON_DEV_ARTIFACT_ATTEMPT"] = "1"
+    env["PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA"] = "c" * 40
+    env["PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA"] = "a" * 40
+    env["PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA"] = "b" * 40
+    env["PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA"] = "d" * 40
+    env["PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA"] = "e" * 40
+    env["PANTHEON_DEV_ARTIFACT_MANIFEST_PATH"] = str(tmp_path / "manifest.json")
+    env["PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256"] = "0" * 64
+    env["PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD"] = "3"
+
+    source = _read_deploy_script()
+    with_env_func = _extract_function(source, "with_dev_bff_runtime_env")
+    run_candidate_func = _extract_function(source, "run_dev_candidate_compose")
+    root_invocation = _extract_root_rollout_invocation(source)
+    bff_invocation = _extract_bff_recreate_invocation(source)
+
+    for invocation in (root_invocation, bff_invocation):
+        script_payload = f"""#!/bin/bash
+set -euo pipefail
+info() {{ :; }}
+error() {{ echo "$*" >&2; exit 1; }}
+rollback_dev_bff_on_failure() {{ echo "rollback: $*" >&2; exit 1; }}
+validate_dev_candidate_override() {{ return 0; }}
+cleanup_stale_compose_replacement_containers() {{ :; }}
+
+{with_env_func}
+{run_candidate_func}
+
+{invocation}
+"""
+        result = subprocess.run(["bash", "-s"], input=script_payload, env=env, text=True, capture_output=True)
+        assert result.returncode == 0, f"Compose invocation failed: {result.stderr}"
+
+    driver_payload = f"""#!/bin/bash
+set -euo pipefail
+{with_env_func}
+
+runtime_sha="${{PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}}"
+compose_file="${{PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}}"
+artifact_scope="auto"
+operation="restore"
+candidate_args=()
+
+with_dev_bff_runtime_env "${{runtime_sha}}" false \
+  python3 "${{PANTHEON_DEV_ARTIFACT_DRIVER_PATH}}" "${{operation}}" \
+    --scope "${{artifact_scope}}" \
+    --environment dev --project-id "${{PANTHEON_DEPLOY_PROJECT_ID}}" --vm pantheon-dev-deploy \
+    --candidate-id "${{PANTHEON_DEV_ARTIFACT_CANDIDATE_ID}}" \
+    --run-id "${{PANTHEON_DEV_ARTIFACT_RUN_ID}}" --attempt "${{PANTHEON_DEV_ARTIFACT_ATTEMPT}}" \
+    --controller-sha "${{PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA}}" \
+    --candidate-backend-sha "${{PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}}" \
+    --candidate-frontend-sha "${{PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA}}" \
+    --previous-backend-sha "${{PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}}" \
+    --previous-frontend-sha "${{PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA}}" \
+    --compose-file "${{compose_file}}" \
+    --manifest "${{PANTHEON_DEV_ARTIFACT_MANIFEST_PATH}}" \
+    --manifest-sha256 "${{PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256}}" \
+    --bff-url "https://${{PANTHEON_DEV_BFF_PUBLIC_HOST}}" \
+    --fe-url "https://${{PANTHEON_DEV_FE_PUBLIC_HOST}}" \
+    --guard-channel-fd "${{PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}}" \
+    "${{candidate_args[@]}}"
+"""
+    driver_res = subprocess.run(["bash", "-s"], input=driver_payload, env=env, text=True, capture_output=True)
+    assert driver_res.returncode == 0, f"Compensation driver invocation failed: {driver_res.stderr}"
+
+    events = _read_recorded_events(events_file)
+    assert len(events) == 3
+    for idx, label in enumerate(("root_rollout", "bff_recreate", "compensation_driver")):
+        _assert_expected_env_parity(
+            events[idx]["env"],
+            {
+                "PANTHEON_BFF_CORS_ORIGINS": "https://app.dev.mvl-cap.tw",
+                "PANTHEON_PAPER_EXPRESSION_LAYER": flag_value,
+            },
+            (),
+            f"{label}_{flag_value}",
+        )
+
+    ssh_bash_prefix = source.split("ssh_bash() {\n", 1)[1].split("  run_remote_payload() {\n", 1)[0]
+    assert (
+        'command_prefix+=" PANTHEON_DEV_PAPER_EXPRESSION_LAYER=$(shell_quote "$PANTHEON_DEV_PAPER_EXPRESSION_LAYER")"'
+        in ssh_bash_prefix
+    )
+    remote_case = source.split('case "${PANTHEON_DEPLOY_COMPONENT}" in', 1)[1]
+    control_case = remote_case.split("\n  control)\n", 1)[1].split("\n  refresh-only)\n", 1)[0]
+    assert "PANTHEON_PAPER_EXPRESSION_LAYER" not in control_case
+

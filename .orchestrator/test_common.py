@@ -4431,6 +4431,62 @@ class ReviewBridgePolicyValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "branch_workflow configuration is required and must be a mapping"):
                 common.load_config(cfg_path)
 
+    def test_github_review_identity_accepts_shared_independent_or_missing_and_rejects_others(
+        self,
+    ) -> None:
+        base_branch_workflow = {
+            "task_pr": {
+                "required_status_checks": [
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                    "Pantheon canonical review gate",
+                ]
+            }
+        }
+
+        missing_identity_cfg = {
+            "review_gate": {"github_review_bridge_required": True},
+            "branch_workflow": base_branch_workflow,
+        }
+        self.assertEqual(common.github_review_identity(missing_identity_cfg), "independent")
+        self.assertEqual(common.github_review_identity({}), "independent")
+        bridge_required, _ = common.validate_review_bridge_policy(missing_identity_cfg)
+        self.assertTrue(bridge_required)
+
+        for valid_identity in ("independent", "shared"):
+            with self.subTest(identity=valid_identity):
+                cfg = {
+                    "review_gate": {
+                        "github_review_bridge_required": True,
+                        "github_review_identity": valid_identity,
+                    },
+                    "branch_workflow": base_branch_workflow,
+                }
+                self.assertEqual(common.github_review_identity(cfg), valid_identity)
+                bridge_required, _ = common.validate_review_bridge_policy(cfg)
+                self.assertTrue(bridge_required)
+
+        for invalid_identity in (None, "", "SHARED", "bot", True, False, 123, ["shared"], {"mode": "shared"}):
+            with self.subTest(invalid_identity=invalid_identity):
+                cfg = {
+                    "review_gate": {
+                        "github_review_bridge_required": True,
+                        "github_review_identity": invalid_identity,
+                    },
+                    "branch_workflow": base_branch_workflow,
+                }
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "review_gate.github_review_identity must be 'shared' or 'independent'",
+                ):
+                    common.github_review_identity(cfg)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "review_gate.github_review_identity must be 'shared' or 'independent'",
+                ):
+                    common.validate_review_bridge_policy(cfg)
+
 
 class RunCommandStdinIsolationTests(unittest.TestCase):
     def test_run_command_defaults_to_devnull_stdin(self) -> None:

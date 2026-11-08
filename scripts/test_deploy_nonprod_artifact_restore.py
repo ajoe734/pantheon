@@ -147,6 +147,7 @@ def fixture(tmp_path: Path):
         "PANTHEON_DEV_FE_PUBLIC_HOST": "app.dev.mvl-cap.tw",
         "PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID": "fixture-viewer",
         "PANTHEON_BFF_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/fixture.jwt",
+        "PANTHEON_DEV_PAPER_EXPRESSION_LAYER": "off",
         "PANTHEON_DEV_ARTIFACT_MANIFEST_PATH": str(manifest),
         "PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "PANTHEON_DEV_ARTIFACT_DRIVER_PATH": str(driver),

@@ -2528,3 +2528,277 @@ def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
     )
     assert (fresh_res["status"], fresh_res["reason"]) == ("noop", "already_fresh")
     assert fresh_res["dataset"] == "taifex_ssf_contracts"
+
+
+def test_nonprod_deploy_workflow_dev_paper_expression_layer_default_and_steps() -> None:
+    deploy_wf = yaml.safe_load((ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8"))
+    expected_expr = "${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}"
+
+    dev_steps = deploy_wf["jobs"]["deploy-dev"]["steps"]
+    dev_by_id = {s.get("id"): s for s in dev_steps if s.get("id")}
+    dev_by_name = {s.get("name"): s for s in dev_steps if s.get("name")}
+
+    assert dev_by_id["deploy"]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+    assert dev_by_id["deploy_compensation"]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+    assert (
+        dev_by_name["Deploy bootstrap predecessor pair in strict live read-only mode under lease"]["env"][
+            "PANTHEON_DEV_PAPER_EXPRESSION_LAYER"
+        ]
+        == expected_expr
+    )
+
+    frontend_steps = deploy_wf["jobs"]["coordinate-dev-release"]["steps"]
+    frontend_by_id = {s.get("id"): s for s in frontend_steps if s.get("id")}
+    for step_id in ("final_artifact_verify", "roundtrip_baseline_restore", "roundtrip_final_return", "compensation"):
+        assert frontend_by_id[step_id]["env"]["PANTHEON_DEV_PAPER_EXPRESSION_LAYER"] == expected_expr
+
+    for job_name, job in deploy_wf["jobs"].items():
+        if "staging" in job_name or "prod" in job_name:
+            job_dump = json.dumps(job)
+            assert "DEV_PAPER_EXPRESSION_LAYER" not in job_dump
+
+    plan_doc = (ROOT / "docs" / "deployment" / "vm-dev-staging-prod-management-plan.md").read_text(encoding="utf-8")
+    sec_3_1 = plan_doc.split("### 3.1 Dev", 1)[1].split("### 3.2 Staging", 1)[0]
+    assert "| `DEV_PAPER_EXPRESSION_LAYER` |" in sec_3_1
+    assert "`off`" in sec_3_1
+
+
+def test_deploy_nonprod_vm_preflight_paper_expression_layer_flag(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    ssh_args_file = tmp_path / "ssh_args.txt"
+    stub_ssh = bin_dir / "ssh"
+    stub_ssh.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{ssh_args_file}'\nexit 0\n",
+        encoding="utf-8",
+    )
+    stub_ssh.chmod(0o755)
+
+    base_env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "DEV_BFF_AUTH_MODE": "permissive",
+        "DEV_BFF_AUTH_STUB": "true",
+    }
+    base_env.pop("PANTHEON_DEV_PAPER_EXPRESSION_LAYER", None)
+    base_env.pop("DEV_PAPER_EXPRESSION_LAYER", None)
+
+    # Unset resolves to off
+    unset_res = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40, "--dry-run"],
+        cwd=ROOT,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert unset_res.returncode == 0, unset_res.stderr
+    assert "dev_paper_expression_layer=off" in unset_res.stdout
+    assert not ssh_args_file.exists()
+
+    # Explicit 'off' and 'on' succeed preflight
+    for valid_val in ("off", "on"):
+        res = subprocess.run(
+            ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40, "--dry-run"],
+            cwd=ROOT,
+            env={**base_env, "PANTHEON_DEV_PAPER_EXPRESSION_LAYER": valid_val},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr
+        assert f"dev_paper_expression_layer={valid_val}" in res.stdout
+        assert not ssh_args_file.exists()
+
+    # Invalid values fail preflight with an explicit message before any VM/SSH step
+    for invalid_val in ("true", "1", "invalid", ""):
+        res = subprocess.run(
+            ["bash", str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "root", "--sha", "a" * 40],
+            cwd=ROOT,
+            env={**base_env, "PANTHEON_DEV_PAPER_EXPRESSION_LAYER": invalid_val},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode != 0
+        assert (
+            f"PANTHEON_DEV_PAPER_EXPRESSION_LAYER must be on or off (got: {invalid_val})"
+            in res.stderr
+        )
+        assert not ssh_args_file.exists()
+
+
+
+def _bounded_refresh_wait_harness(tmp_path: Path, state: str, exit_code: str) -> subprocess.CompletedProcess[str]:
+    """Run the real wait/dump/redact functions against a fake docker."""
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("redact_bounded_refresh_log() {")
+    end = source.index("\nresolve_bounded_source_refresh_active_symbols()")
+    functions = source[start:end]
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZXYifQ.c2lnbmF0dXJlLXZhbHVl"
+    log_lines = [f"line-{i}" for i in range(1, 301)]
+    log_lines[-1] = f"ERROR Authorization: Bearer supersecretbearer123 token={jwt}"
+    (tmp_path / "container.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+    script = tmp_path / "harness.sh"
+    script.write_text(
+        "set -uo pipefail\n"
+        f'FAKE_STATE="{state}"\nFAKE_EXIT="{exit_code}"\nLOG_FILE="{tmp_path / "container.log"}"\n'
+        'SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=30\n'
+        'SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX=pantheon-bounded-refresh\n'
+        'error() { echo "[remote-deploy] ERROR: $*" >&2; exit 1; }\n'
+        'sleep() { :; }\n'
+        'docker() {\n'
+        '  case "$1" in\n'
+        '    ps) echo cid123 ;;\n'
+        '    inspect) if [[ "$*" == *State.Status* ]]; then echo "$FAKE_STATE"; else echo "$FAKE_EXIT"; fi ;;\n'
+        '    logs) shift; [[ "$1" == "--tail" ]] && tail -n "$2" "$LOG_FILE" ;;\n'
+        '  esac\n'
+        '}\n'
+        + functions
+        + '\nwait_for_bounded_source_refresh_service source-ingest-scheduler\n',
+        encoding="utf-8",
+    )
+    return subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.parametrize("state,exit_code", [("exited", "1"), ("dead", "0")])
+def test_bounded_refresh_failure_prints_last_200_log_lines_redacted(
+    tmp_path: Path, state: str, exit_code: str
+) -> None:
+    result = _bounded_refresh_wait_harness(tmp_path, state, exit_code)
+    assert result.returncode == 1
+    assert "last 200 log lines (redacted)" in result.stderr
+    assert "line-101" in result.stderr and "line-299" in result.stderr
+    assert "line-100\n" not in result.stderr  # only the last 200 lines
+    assert "supersecretbearer123" not in result.stderr
+    assert "eyJhbGciOiJIUzI1NiJ9" not in result.stderr
+    assert "Bearer [REDACTED]" in result.stderr
+    assert "[REDACTED_JWT]" in result.stderr or "token=" in result.stderr
+    # Logs are printed before the terminal error so they survive container removal.
+    assert result.stderr.index("last 200 log lines") < result.stderr.index("ERROR:")
+
+
+def test_bounded_refresh_success_does_not_print_container_logs(tmp_path: Path) -> None:
+    result = _bounded_refresh_wait_harness(tmp_path, "exited", "0")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "cid123"
+    assert "log lines" not in result.stderr
+
+
+def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_and_records_evidence(tmp_path: Path) -> None:
+    import yaml
+    from scripts.deploy.release_manifest import (
+        ReleaseManifestError,
+        _validate_dev_verification,
+        build_manifest,
+    )
+
+    workflow_path = DEPLOY_SCRIPT.resolve().parents[1] / ".github" / "workflows" / "nonprod-deploy.yml"
+    wf = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    steps = wf["jobs"]["deploy-dev"]["steps"]
+    by_id = {step.get("id"): (idx, step) for idx, step in enumerate(steps) if step.get("id")}
+
+    market_idx, market_step = by_id["market_refresh"]
+    deploy_idx, deploy_step = by_id["deploy"]
+    candidate_upload_idx, _ = by_id["artifact_candidate_upload"]
+    taifex_idx, taifex_step = by_id["taifex_market_refresh"]
+    bounded_taifex_idx, bounded_taifex_step = by_id["bounded_taifex_refresh"]
+    taifex_upload_idx, taifex_upload_step = by_id["taifex_market_refresh_upload"]
+    paper_idx, _ = by_id["paper_bootstrap"]
+    retire_idx, retire_step = by_id["retire_release_cases"]
+    comp_idx, comp_step = by_id["deploy_compensation"]
+
+    assert deploy_step["name"] == "Deploy dev VM stack under lease"
+    assert (
+        market_idx
+        < deploy_idx
+        < candidate_upload_idx
+        < taifex_idx
+        < bounded_taifex_idx
+        < taifex_upload_idx
+        < paper_idx
+        < retire_idx
+        < comp_idx
+    )
+    assert "continue-on-error" not in market_step
+    assert "--non-blocking" not in market_step["run"]
+    assert taifex_step.get("continue-on-error") is True
+    assert "--non-blocking" in taifex_step["run"]
+    assert "taifex-market-refresh.json" in taifex_step["run"]
+    assert "if log_text:\n    print(log_text)" in taifex_step["run"]
+    assert bounded_taifex_step.get("continue-on-error") is True
+    assert "--force" in bounded_taifex_step["run"]
+    assert "--non-blocking" in bounded_taifex_step["run"]
+    assert "taifex-market-refresh.json" in bounded_taifex_step["run"]
+    assert "if log_text:\n    print(log_text)" in bounded_taifex_step["run"]
+    assert "always()" in taifex_upload_step["if"]
+    assert taifex_upload_step["with"]["path"] == "${{ steps.release_admission.outputs.evidence_dir }}/taifex-market-refresh.json"
+    assert "taifex_market_refresh" not in retire_step["if"]
+    assert "taifex_market_refresh" not in comp_step["if"]
+    assert "bounded_taifex_refresh" not in retire_step["if"]
+    assert "bounded_taifex_refresh" not in comp_step["if"]
+
+    fe_sha = "f" * 40
+    bff_sha = "b" * 40
+    for refresh_status, refresh_reason, refresh_log in (
+        ("failed", "bounded source refresh service source-ingest-scheduler exited with code 1", "ControllerTickError: conflicts=1"),
+        ("skipped", "weekend", ""),
+        ("completed", "refreshed", ""),
+    ):
+        evidence_file = tmp_path / f"taifex-market-refresh-{refresh_status}.json"
+        evidence_file.write_text(
+            json.dumps(
+                {
+                    "connector_id": "tw-taifex-futures-options-chip",
+                    "dataset": "taifex_ssf_contracts",
+                    "status": refresh_status,
+                    "reason": refresh_reason,
+                    "log": refresh_log,
+                }
+            ),
+            encoding="utf-8",
+        )
+        manifest = build_manifest(
+            release_id="pantheon-20261108-001",
+            release_state="dev_verified",
+            frontend_commit=fe_sha,
+            frontend_artifact_sha256="sha256:" + "1" * 64,
+            backend_commit=bff_sha,
+            operator_bff_image="asia-east1-docker.pkg.dev/pantheon/operator-bff@sha256:" + "2" * 64,
+            compatibility_manifest_sha256="sha256:" + "4" * 64,
+            migration_set_sha256="sha256:" + "5" * 64,
+            config_schema_version="2026-11-08",
+            created_by_workflow="ajoe734/pantheon/actions/runs/42488948670",
+            created_at="2026-11-08T14:35:00Z",
+            dev_verification={
+                "status": "dev_verified",
+                "verified_at": "2026-11-08T14:35:00Z",
+                "workflow_run": "ajoe734/pantheon/actions/runs/42488948670",
+                "frontend_commit": fe_sha,
+                "bff_version_commit": bff_sha,
+                "fe_deployment_manifest_sha256": "sha256:" + "3" * 64,
+            },
+            taifex_market_refresh=evidence_file,
+        )
+        assert manifest["dev_verification"]["taifex_market_refresh"] == {
+            "connector_id": "tw-taifex-futures-options-chip",
+            "dataset": "taifex_ssf_contracts",
+            "status": refresh_status,
+            "reason": refresh_reason,
+            "log": refresh_log,
+        }
+
+    with pytest.raises(ReleaseManifestError, match="dev_verification.taifex_market_refresh.reason"):
+        _validate_dev_verification(
+            {
+                "status": "dev_verified",
+                "verified_at": "2026-11-08T14:35:00Z",
+                "workflow_run": "ajoe734/pantheon/actions/runs/42488948670",
+                "frontend_commit": fe_sha,
+                "bff_version_commit": bff_sha,
+                "fe_deployment_manifest_sha256": "sha256:" + "3" * 64,
+                "taifex_market_refresh": {"status": "failed", "reason": "", "log": ""},
+            },
+            fe_sha,
+            bff_sha,
+        )

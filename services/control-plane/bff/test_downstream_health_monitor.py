@@ -252,6 +252,7 @@ class TestRecoveryReadBack:
 
 import importlib
 import sqlite3
+import time
 import threading
 import types
 from datetime import datetime, timedelta, timezone
@@ -1316,3 +1317,98 @@ class TestBoundedHealthPruneAtHostedScale:
         assert final_counts["quarantined"] == 0
         assert final_counts["pending"] == 12
 
+
+
+class TestResolveBlockedByDeadDependency:
+    """BFF-HEALTH-RESOLVE-BLOCKED-DEP-20261108."""
+
+    _INC = "infra-bff-c0c7d46419976f1c51db4581"
+    _OPEN = "incident-open:infra-health-2e6e848418d1ffbb97fbefd285c1ca5f"
+    _TEL = "telemetry:infra-health-f30c21907db13d4b24628aa19b52a7a4"
+    _RES = "incident-resolve:infra-health-f30c21907db13d4b24628aa19b52a7a4"
+
+    def _seed(self, tmp_path, dep_status, *, drop_dep=False, channel="incident_resolve"):
+        monitor = _safety_monitor(tmp_path)
+        store = monitor._store
+        store.queue_delivery(
+            delivery_id=self._TEL, event_id="infra-health-f30c", channel="telemetry",
+            target_name="governance", url="http://tel:8080/ingest",
+            body={"ok": True}, dependency_ids=[], max_attempts=5,
+        )
+        store.queue_delivery(
+            delivery_id=self._RES, event_id="infra-health-f30c", channel=channel,
+            target_name="governance",
+            url=f"http://inc:8090/api/incidents/{self._INC}/status",
+            body={"status": "resolved"},
+            dependency_ids=[self._OPEN, self._TEL], max_attempts=5,
+        )
+        store.queue_delivery(
+            delivery_id=self._OPEN, event_id="infra-health-2e6e", channel="incident_open",
+            target_name="other", url="http://inc:8090/api/incidents/consume-infrastructure-health",
+            body={"x": 1}, dependency_ids=[], max_attempts=5,
+        )
+        _set_rows(monitor, [self._OPEN], status="delivered")
+        _set_rows(monitor, [self._TEL], status=dep_status)
+        if drop_dep:
+            with sqlite3.connect(monitor.state_path) as c:
+                c.execute("DELETE FROM delivery_outbox WHERE delivery_id=?", (self._TEL,))
+        return monitor
+
+    def _active(self, monitor):
+        return monitor._store.has_active_incident_delivery(
+            target_name="governance", incident_id=self._INC
+        )
+
+    @pytest.mark.parametrize("resolve_status", ["pending", "retry", "claimed"])
+    @pytest.mark.parametrize(
+        ("dep_status", "expected"),
+        [
+            ("dead_letter", False),
+            ("quarantined", False),
+            ("pending", True),
+            ("retry", True),
+            ("claimed", True),
+            ("delivered", True),
+        ],
+    )
+    def test_resolve_activity_follows_dependency_status(
+        self, tmp_path, resolve_status, dep_status, expected
+    ):
+        monitor = self._seed(tmp_path, dep_status)
+        _set_rows(monitor, [self._RES], status=resolve_status)
+        assert self._active(monitor) is expected
+
+    def test_missing_dependency_row_is_not_active(self, tmp_path):
+        monitor = self._seed(tmp_path, "delivered", drop_dep=True)
+        assert self._active(monitor) is False
+
+    def test_incident_open_with_dead_dependency_stays_active(self, tmp_path):
+        monitor = self._seed(tmp_path, "dead_letter", channel="incident_open")
+        _set_rows(monitor, [self._RES], status="pending")
+        assert self._active(monitor) is True
+
+    def test_claim_due_never_sends_before_a_live_dependency(self, tmp_path):
+        monitor = self._seed(tmp_path, "retry")
+        _set_rows(monitor, [self._TEL], next_attempt_at=time.time() + 3600)
+        _set_rows(monitor, [self._RES], status="pending", next_attempt_at=0)
+        claimed = monitor._store.claim_due(owner_id="t", lease_seconds=30, limit=10)
+        assert self._RES not in [d["delivery_id"] for d in claimed]
+
+    def test_dependency_lookup_uses_primary_key(self, tmp_path):
+        monitor = self._seed(tmp_path, "dead_letter")
+        with sqlite3.connect(monitor.state_path) as c:
+            plan = " | ".join(
+                r[3]
+                for r in c.execute(
+                    """
+                    EXPLAIN QUERY PLAN
+                    SELECT 1 FROM delivery_outbox AS o
+                    WHERE EXISTS (
+                      SELECT 1 FROM json_each(o.dependency_ids_json) AS d
+                      LEFT JOIN delivery_outbox AS u ON u.delivery_id = d.value
+                      WHERE u.delivery_id IS NULL
+                         OR u.status IN ('dead_letter','quarantined'))
+                    """
+                )
+            )
+        assert "sqlite_autoindex_delivery_outbox_1" in plan or "PRIMARY KEY" in plan

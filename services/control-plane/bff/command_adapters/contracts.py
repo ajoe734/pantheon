@@ -397,6 +397,7 @@ _WRAPPER_CANONICALS = {
     "PersonaAction": {
         "AdvanceLifecycle": ("promote", "PromoteCandidate", "demote"),
         "EmergencyContainment": (),
+        "RetirePaperPersonaCase": ("retire", "retire_case"),
     },
     "ReviewAction": {
         "RequestReview": ("review",),

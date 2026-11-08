@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import uuid
 from datetime import datetime, timezone
@@ -47,6 +48,36 @@ class _RulesStub:
 
     def Every(self, *args: Any, **kwargs: Any) -> str:
         return "Every"
+
+
+def _extended_fill_fields(order_event: Any) -> dict[str, Any]:
+    """Optional instrument fields a fill may carry beyond price and quantity.
+
+    A stock-future fill reports its ``instrument_id`` (for example
+    ``ssf:QFF:202611``), contract ``multiplier``, ``kind`` and ``contract_month``.
+    They are read defensively (a LEAN order event has none of them) so an
+    unexpected, empty or non-numeric value is skipped instead of failing the
+    fill callback, and a cash-share fill yields an empty mapping.
+    """
+    fields: dict[str, Any] = {}
+    for name, keys in (
+        ("instrument_id", ("InstrumentId", "instrument_id")),
+        ("kind", ("Kind", "kind")),
+        ("contract_month", ("ContractMonth", "contract_month")),
+    ):
+        for key in keys:
+            value = getattr(order_event, key, None)
+            if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value).strip():
+                fields[name] = str(value).strip()
+                break
+    for key in ("Multiplier", "multiplier"):
+        value = getattr(order_event, key, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if math.isfinite(float(value)) and float(value) > 0.0:
+            fields["multiplier"] = float(value)
+            break
+    return fields
 
 
 class PersistentLeanObjectStore:
@@ -666,6 +697,7 @@ class EngineReplayAlgo(PantheonAlgoBase):
         fill_quantity = float(getattr(orderEvent, "FillQuantity", 0.0) or 0.0)
         order_id = str(getattr(orderEvent, "OrderId", ""))
         symbol_str = str(getattr(orderEvent, "Symbol", "SPY"))
+        extended_fields = _extended_fill_fields(orderEvent)
 
         order_record = {
             "order_id": order_id,
@@ -675,6 +707,7 @@ class EngineReplayAlgo(PantheonAlgoBase):
             "fill_price": fill_price,
             "fill_quantity": fill_quantity,
             "status": "FILLED",
+            **extended_fields,
         }
         self.executed_orders.append(order_record)
         if self._active_replay_signal_id:
@@ -706,6 +739,7 @@ class EngineReplayAlgo(PantheonAlgoBase):
                 "order_id": order_id,
                 "signal_id": self._active_replay_signal_id or "",
                 "symbol": symbol_str,
+                **extended_fields,
                 "model_id": self.model_id,
                 "tenant_id": self.tenant_id,
                 "session_id": self.session_id,

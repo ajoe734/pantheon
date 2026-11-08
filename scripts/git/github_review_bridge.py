@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Bridge governed task-review decisions to GitHub's PR gate.
 
-Pantheon agents currently share one GitHub account, so GitHub can reject an
-otherwise valid approving review as a self-review.  The bridge therefore:
+The bridge records a governed review decision on the exact PR head:
 
 1. verifies the exact PR, base, head branch, and head commit;
-2. attempts to submit a real GitHub pull-request review;
-3. when the base branch explicitly requires the canonical review status
-   context, records the decision on the exact head commit as a required status.
-
-The status path is not a generic fallback.  It is accepted only when GitHub's
-current branch-protection response names the exact context, making the
-alternative visible to and enforced by branch policy.
+2. submits a GitHub pull-request review carrying the Pantheon review marker
+   (in ``"independent"`` identity mode using ``APPROVE`` / ``REQUEST_CHANGES``;
+   in ``"shared"`` identity mode using ``COMMENT`` so a shared GitHub account
+   does not fail on GitHub's self-approval restriction);
+3. pushes the git-native review-proof tag for the exact head SHA and
+   dispatches the ``Canonical Review Gate`` GitHub Actions workflow, which is
+   the sole issuer of the ``Pantheon canonical review gate`` commit status.
 """
 
 from __future__ import annotations
@@ -53,6 +52,11 @@ DECISIONS = {APPROVE, REOPEN}
 # to consume another reviewer pass.  Keeping its tag name distinct prevents a
 # later reader from mistaking it for independent review evidence.
 OPERATOR_ACCEPT = "operator-accept"
+IDENTITY_INDEPENDENT = "independent"
+IDENTITY_SHARED = "shared"
+IDENTITIES = {IDENTITY_INDEPENDENT, IDENTITY_SHARED}
+SHARED_REVIEW_STATE = "COMMENTED"
+SHARED_REVIEW_EVENT = "COMMENT"
 REVIEW_STATES = {
     APPROVE: "APPROVED",
     REOPEN: "CHANGES_REQUESTED",
@@ -1112,8 +1116,18 @@ def _submit_review(
     task_id: str = "",
     intent_nonce: str = "",
     actor: str = "",
+    identity: str = IDENTITY_INDEPENDENT,
 ) -> dict[str, Any]:
-    expected_state = REVIEW_STATES[decision]
+    if not isinstance(identity, str) or identity not in IDENTITIES:
+        raise GitHubReviewBridgeError(
+            f"GitHub review bridge identity must be one of {sorted(IDENTITIES)}"
+        )
+    if identity == IDENTITY_SHARED:
+        expected_state = SHARED_REVIEW_STATE
+        review_event = SHARED_REVIEW_EVENT
+    else:
+        expected_state = REVIEW_STATES[decision]
+        review_event = REVIEW_EVENTS[decision]
     all_reviews = _reviews(runner, repository=repository, pr=binding.pr)
 
     caller_nonce = str(intent_nonce or "").strip().lower()
@@ -1172,7 +1186,7 @@ def _submit_review(
         ],
         payload={
             "body": body,
-            "event": REVIEW_EVENTS[decision],
+            "event": review_event,
             "commit_id": binding.head_sha,
         },
     )
@@ -1986,6 +2000,7 @@ def bridge_review_decision(
     message: str,
     binding: Mapping[str, Any] | ReviewBinding,
     intent_nonce: str = "",
+    identity: str = IDENTITY_INDEPENDENT,
     runner: JsonRunner | None = None,
 ) -> BridgeResult:
     """Record one governed decision on the exact GitHub PR head."""
@@ -2001,6 +2016,10 @@ def bridge_review_decision(
     if decision not in DECISIONS:
         raise GitHubReviewBridgeError(
             f"GitHub review bridge decision must be one of {sorted(DECISIONS)}"
+        )
+    if not isinstance(identity, str) or identity not in IDENTITIES:
+        raise GitHubReviewBridgeError(
+            f"GitHub review bridge identity must be one of {sorted(IDENTITIES)}"
         )
     intent_nonce = str(intent_nonce or "").strip().lower()
     if intent_nonce and not re.fullmatch(r"[0-9a-f]{32}", intent_nonce):
@@ -2047,6 +2066,7 @@ def bridge_review_decision(
             task_id=task_id,
             intent_nonce=intent_nonce,
             actor=actor,
+            identity=identity,
         )
     except GitHubReviewBridgeError as exc:
         review_error = str(exc)[:600]
@@ -2124,6 +2144,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--head-branch", required=True)
     parser.add_argument("--base", required=True)
     parser.add_argument("--intent-nonce", default="")
+    parser.add_argument("--identity", choices=sorted(IDENTITIES), default=IDENTITY_INDEPENDENT)
     return parser
 
 
@@ -2142,6 +2163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "base": args.base,
         },
         intent_nonce=args.intent_nonce,
+        identity=args.identity,
     )
     print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     return 0

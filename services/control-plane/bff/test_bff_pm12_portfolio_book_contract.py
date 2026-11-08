@@ -2643,3 +2643,137 @@ def test_portfolio_holdings_projects_cost_unrealized_realized_currency_and_broke
     assert stale_item["mark_price"] is None
     assert stale_item["market_value"] is None
     assert stale_item["unrealized_pnl"] is None
+
+
+def test_portfolio_holdings_value_stock_future_with_multiplier_beside_cash_share(monkeypatch) -> None:
+    """INSTRUMENT-AWARE-TELEMETRY-BFF-DRIFT-20261107 (AC 3): real position shape."""
+    from datetime import datetime, timezone
+
+    from services.control_plane.bff.pm12 import service as pm12_service
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    runtime_id = "rt-instr-001"
+    binding_id = "rb-instr-001"
+    future_id = "ssf:QFF:202611"
+    runtime_record = {
+        "id": binding_id,
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "capital_pool_id": "pool-tw-equities-core",
+        "artifact_id": "artifact-tw-equities",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "persona_id": "persona-tw-swing-trader",
+        "strategy_id": "strat-tw-swing-breakout",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+    scope = {
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "runtime_id": runtime_id,
+        "binding_id": binding_id,
+    }
+    store = RuntimeSummaryProjectionStore(path=None)
+    cash_meta = {
+        "symbol": "2330.TWSE",
+        "currency": "TWD",
+        "broker": "shioaji_paper",
+        "sec_type": "equity",
+    }
+    future_meta = {
+        **cash_meta,
+        "sec_type": "future",
+        "instrument_id": future_id,
+        "kind": "stock_future",
+        "multiplier": 100.0,
+        "contract_month": "202611",
+        "fee": 40.0,
+        "tax": 10.0,
+    }
+    for lfc, qty, price, meta in (
+        (1, -5.0, 2299.0, cash_meta),
+        (2, 2.0, 2300.0, {**future_meta, "initial_margin_reserved": 92000.0}),
+    ):
+        store.project_event(
+            {
+                **scope,
+                "event_id": f"evt-instr-fill-{lfc}",
+                "event_type": "paper_fill_simulated",
+                "created_at": f"2026-11-05T01:00:0{lfc}Z",
+                "metrics": {"fill_quantity": qty, "fill_price": price, "action": "market_order"},
+                "metadata": {**meta, "ledger_fill_count": lfc},
+            }
+        )
+
+    def _ref(symbol, price):
+        return {
+            "symbol": symbol,
+            "price": price,
+            "as_of": "2026-11-04T00:00:00Z",
+            "source_ref": "source-ingest://snapshots/mss-instr-001",
+            "observed_at": "2026-11-04T06:00:00Z",
+            "lineage": {
+                "source_ids": ["tw-official:tw_price_daily:TWSE:2330:test"],
+                "connector_ids": ["tw-twse-tpex-official-market"],
+            },
+        }
+
+    summary = store.project_event(
+        {
+            **scope,
+            "event_id": "evt-instr-pnl-2",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-11-05T02:00:00Z",
+            "pnl_as_of": "2026-11-04T00:00:00Z",
+            "metrics": {"pnl": 0.0, "fill_count": 2},
+            "metadata": {
+                "mark_refs": [_ref("2330.TWSE", 2240.0), _ref(future_id, 2250.0)],
+            },
+        }
+    )
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-05T05:00:00Z")
+    body = _holdings_for(monkeypatch, [runtime_record], {runtime_id: summary})
+    items = {item["instrument_id"] or item["symbol"]: item for item in body["data"]["items"]}
+    assert set(items) == {"2330.TWSE", future_id}
+    # Two rows on one underlying must not share a holding id.
+    assert len({item["holding_id"] for item in body["data"]["items"]}) == 2
+
+    cash = items["2330.TWSE"]
+    assert cash["quantity"] == -5.0
+    assert cash["multiplier"] == 1.0
+    assert cash["instrument_kind"] is None
+    assert cash["market_value"] == -11200.0
+    assert cash["unrealized_pnl"] == 295.0
+    assert cash["margin_reserved"] is None
+
+    future = items[future_id]
+    assert future["symbol"] == "2330.TWSE"
+    assert future["instrument_kind"] == "stock_future"
+    assert future["asset_class"] == "future"
+    assert future["contract_month"] == "202611"
+    assert future["multiplier"] == 100.0
+    assert future["margin_reserved"] == 92000.0
+    assert future["quantity"] == 2.0
+    # market value = 2 contracts * 100 * 2250 ; unrealized = 2 * 100 * (2250 - 2300)
+    assert future["market_value"] == 450000.0
+    assert future["unrealized_pnl"] == -10000.0
+    assert future["average_price"] == 2300.0
+    assert future["mark_status"] == "available"
+
+    # Once the marks are stale, unrealized is cleared with mark and value.
+    stale_summary = store.get(
+        runtime_id,
+        tenant_id="tenant-dev",
+        now=datetime(2026, 11, 20, 0, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-20T00:00:00Z")
+    stale = _holdings_for(monkeypatch, [runtime_record], {runtime_id: stale_summary})
+    for item in stale["data"]["items"]:
+        assert item["mark_status"] == "stale"
+        assert item["mark_price"] is None
+        assert item["market_value"] is None
+        assert item["unrealized_pnl"] is None

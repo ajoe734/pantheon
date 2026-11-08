@@ -1307,6 +1307,28 @@ class CommandAdapterService:
         }
         return result
 
+    @staticmethod
+    def _plan_paper_persona_case_retirement(
+        cmd: OperatorCommand, identity: OperatorIdentity, trusted_tenant: Optional[str]
+    ) -> Dict[str, Any]:
+        """Dry run: read the provisioning record only; never call retire_case."""
+        from ..personas import service as persona_service
+        from .persona_adapter import assert_case_retirable
+
+        claims = getattr(identity, "claims", None) or {}
+        tenant_id = str(trusted_tenant or claims.get("tenant_id") or "").strip()
+        if not tenant_id:
+            raise ActionUnavailableError(
+                "Persona case retirement requires the caller's tenant claim",
+                action_id="RetirePaperPersonaCase", entity_type="Persona",
+                error_code="tenant_required", downstream_status=403,
+            )
+        plan = persona_service.plan_persona_provisioning_case_retirement(
+            tenant_id, cmd.target.id
+        )
+        assert_case_retirable(plan)
+        return plan
+
     def submit_command_admission(
         self,
         *,
@@ -1513,13 +1535,18 @@ class CommandAdapterService:
         staleness_warning = self.check_read_surface_state()
         if _truthy_header(payload.get("dryRun") or payload.get("dry_run")) or _truthy_header(os.getenv("BFF_REQUEST_DRY_RUN")):
             command_envelope = foundation_context["command_envelope"]
+            dry_run_meta = command_response_dry_run_meta(resolved_key)
+            if cmd.command == CommandType.RETIRE_PAPER_PERSONA_CASE:
+                dry_run_meta["plan"] = self._plan_paper_persona_case_retirement(
+                    cmd, identity, trusted_tenant
+                )
             return project_final_command_response(
                 command_id=command_envelope.command_id,
                 command=cmd.command,
                 accepted_at=self._utc_now(),
                 status=CommandStatus.SUBMITTED,
                 staleness_warning=staleness_warning,
-                meta=command_response_dry_run_meta(resolved_key),
+                meta=dry_run_meta,
                 deprecation=response_deprecation,
             )
 
@@ -1859,6 +1886,14 @@ def _resolve_execution_params_for_record(
                 params["entity_id"] = rt_id
                 params.pop("runtimeId", None)
                 params.pop("entityId", None)
+        elif command_type == CommandType.RETIRE_PAPER_PERSONA_CASE:
+            persona_id = str((record.get("target") or {}).get("id") or "").strip()
+            audit_reason = str((record.get("audit") or {}).get("reason") or "").strip()
+            params.update(
+                persona_id=persona_id, entity_type="Persona",
+                action_id=command_type.value, actionId=command_type.value,
+                reason=audit_reason or params.get("reason"),
+            )
         elif command_type == CommandType.ADVANCE_LIFECYCLE:
             evidence = (record.get("audit") or {}).get("precondition_evidence") or {}
             params["confirm_token"] = str(evidence.get("confirm_token_id") or params.get("confirm_token_id") or "")

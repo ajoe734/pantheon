@@ -147,11 +147,26 @@ if require_full:
             raise SystemExit(f"{token_key} carries a well-known Dev default credential")
     from urllib.parse import parse_qs
     pg_db = sys.argv[4]
+    OPTIONAL_BFF_STORE_DSN_KEYS = (
+        "REGISTRY_STORE_DSN",
+        "PANTHEON_PERSONA_PROVISIONING_STORE_DSN",
+        "AGORA_DASHBOARD_STORE_DSN",
+        "AGORA_TRADING_ROOM_STORE_DSN",
+        "AGORA_CANDIDATE_DECISION_STORE_DSN",
+        "RESEARCH_STORE_DSN",
+        "GOVERNANCE_STORE_DSN",
+        "SOURCE_MANAGEMENT_STORE_DSN",
+        "MANAGEMENT_AI_STORE_DSN",
+        "MANAGEMENT_AI_DATABASE_URL",
+        "RANKING_STORE_DSN",
+        "PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN",
+        "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN",
+    )
     for dsn_key in (
         "TELEMETRY_DB_DSN",
         "LIFECYCLE_PROJECTOR_PROJECTION_DSN",
         *PRODUCT_DSN_KEYS,
-        *(("PANTHEON_PERSONA_PROVISIONING_STORE_DSN",) if kv.get("PANTHEON_PERSONA_PROVISIONING_STORE_DSN") else ()),
+        *(k for k in OPTIONAL_BFF_STORE_DSN_KEYS if kv.get(k)),
     ):
         dsn_base, _, dsn_query = kv[dsn_key].partition("?")
         if dsn_query:
@@ -192,11 +207,41 @@ if not kv.get("PANTHEON_GOVERNANCE_JWT_SECRET"):
         added.append(f"PANTHEON_GOVERNANCE_JWT_SECRET={gov_secret}")
         kv["PANTHEON_GOVERNANCE_JWT_SECRET"] = gov_secret
 
-if not kv.get("PANTHEON_PERSONA_PROVISIONING_STORE_DSN"):
-    persona_prov_dsn = kv.get("DATABASE_URL") or kv.get("PANTHEON_DATABASE_URL") or ""
-    if persona_prov_dsn:
-        added.append(f"PANTHEON_PERSONA_PROVISIONING_STORE_DSN={persona_prov_dsn}")
-        kv["PANTHEON_PERSONA_PROVISIONING_STORE_DSN"] = persona_prov_dsn
+BFF_STORE_DSN_KEYS = (
+    "DATABASE_URL",
+    "REGISTRY_STORE_DSN",
+    "PANTHEON_PERSONA_PROVISIONING_STORE_DSN",
+    "AGORA_DASHBOARD_STORE_DSN",
+    "AGORA_TRADING_ROOM_STORE_DSN",
+    "AGORA_WORKSHOP_STORE_DSN",
+    "AGORA_DATASET_STORE_DSN",
+    "AGORA_GOVERNANCE_STORE_DSN",
+    "AGORA_CANDIDATE_DECISION_STORE_DSN",
+    "AGORA_RESEARCH_STORE_DSN",
+    "RESEARCH_STORE_DSN",
+    "GOVERNANCE_STORE_DSN",
+    "SOURCE_MANAGEMENT_STORE_DSN",
+    "MANAGEMENT_AI_STORE_DSN",
+    "MANAGEMENT_AI_DATABASE_URL",
+    "RANKING_STORE_DSN",
+    "PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN",
+)
+shared_db_dsn = kv.get("DATABASE_URL") or kv.get("PANTHEON_DATABASE_URL") or ""
+if shared_db_dsn:
+    for store_dsn_key in BFF_STORE_DSN_KEYS:
+        if not kv.get(store_dsn_key):
+            added.append(f"{store_dsn_key}={shared_db_dsn}")
+            kv[store_dsn_key] = shared_db_dsn
+
+if not kv.get("PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN"):
+    tj_proj_dsn = (
+        kv.get("LIFECYCLE_PROJECTOR_PROJECTION_DSN")
+        or kv.get("TELEMETRY_DB_DSN")
+        or shared_db_dsn
+    )
+    if tj_proj_dsn:
+        added.append(f"PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN={tj_proj_dsn}")
+        kv["PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN"] = tj_proj_dsn
 
 if added:
     st = env_path.stat()
