@@ -255,34 +255,237 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 missing_message="Persona health surface unavailable.",
             )
 
-        # BFF-WRITE-P0-WIZARD-008 / P0-8: deploymentPlans and approvals filtered for
-        # this persona via binding_ids so wizard F4 can render plan + approval status.
+        # BFF-WRITE-P0-WIZARD-008 / P0-8 & BFF-PERSONA-OPERATING-CONTEXT-20261107:
+        # Resolve deploymentPlans and approvals for this persona via authoritative
+        # references (plan_id, persona_id, persona_capital_binding_id, runtime_binding_id,
+        # capital_pool_id, artifact_id, registry_id, approval_decision_id) and owner reads.
+        persona_meta = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        auth_readback = (
+            persona_meta.get("provisioning_authoritative_readback")
+            if isinstance(persona_meta.get("provisioning_authoritative_readback"), dict)
+            else {}
+        )
+        dep_readback = auth_readback.get("deployment") if isinstance(auth_readback.get("deployment"), dict) else {}
+        gov_readback = auth_readback.get("governance") if isinstance(auth_readback.get("governance"), dict) else {}
+        reg_readback = auth_readback.get("registry") if isinstance(auth_readback.get("registry"), dict) else {}
+
         persona_binding_ids = {
             str(b.get("id") or b.get("binding_id") or "").strip()
             for b in persona_bindings
             if str(b.get("id") or b.get("binding_id") or "").strip()
         }
+        for meta_key in ("persona_capital_binding_id", "binding_id"):
+            val = str(persona_meta.get(meta_key) or "").strip()
+            if val:
+                persona_binding_ids.add(val)
+
+        runtime_binding_ids = {
+            str(rb.get("binding_id") or rb.get("runtime_binding_id") or rb.get("id") or "").strip()
+            for rb in runtime_bindings_for_persona
+            if isinstance(rb, dict)
+            and str(rb.get("binding_id") or rb.get("runtime_binding_id") or rb.get("id") or "").strip()
+        }
+        for meta_key in ("runtime_binding_id", "runtime_id"):
+            val = str(persona_meta.get(meta_key) or "").strip()
+            if val:
+                runtime_binding_ids.add(val)
+
+        persona_capital_pool_ids = {
+            str(b.get("capital_pool_id") or "").strip()
+            for b in persona_bindings
+            if isinstance(b, dict) and str(b.get("capital_pool_id") or "").strip()
+        } | {
+            str(p.get("pool_id") or p.get("id") or "").strip()
+            for p in capital_pools_for_persona
+            if isinstance(p, dict) and str(p.get("pool_id") or p.get("id") or "").strip()
+        } | {
+            str(rb.get("capital_pool_id") or "").strip()
+            for rb in runtime_bindings_for_persona
+            if isinstance(rb, dict) and str(rb.get("capital_pool_id") or "").strip()
+        }
+        for meta_key in ("capital_pool_id", "internal_paper_capital_pool_id", "legacy_paper_capital_pool_id"):
+            val = str(persona_meta.get(meta_key) or "").strip()
+            if val:
+                persona_capital_pool_ids.add(val)
+
+        known_plan_ids = {
+            str(rb.get("plan_id") or rb.get("deployment_plan_id") or "").strip()
+            for rb in runtime_bindings_for_persona
+            if isinstance(rb, dict) and str(rb.get("plan_id") or rb.get("deployment_plan_id") or "").strip()
+        }
+        for candidate_plan_id in (
+            persona_meta.get("deployment_plan_id"),
+            dep_readback.get("plan_id"),
+        ):
+            val = str(candidate_plan_id or "").strip()
+            if val:
+                known_plan_ids.add(val)
+
+        all_candidate_binding_ids = persona_binding_ids | runtime_binding_ids
+
+        def _record_tenant_matches(record: Dict[str, Any]) -> bool:
+            rec_meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            rec_tenant = str(
+                record.get("tenant_id")
+                or record.get("tenantId")
+                or record.get("owner_tenant")
+                or rec_meta.get("tenant_id")
+                or rec_meta.get("tenantId")
+                or ""
+            ).strip()
+            return not rec_tenant or rec_tenant == caller_tenant
+
+        def _plan_matches_persona(plan: Dict[str, Any]) -> bool:
+            if not isinstance(plan, dict) or not _record_tenant_matches(plan):
+                return False
+            pid = str(plan.get("id") or plan.get("plan_id") or "").strip()
+            if pid and pid in known_plan_ids:
+                return True
+            plan_meta = plan.get("metadata") if isinstance(plan.get("metadata"), dict) else {}
+            plan_persona = str(
+                plan.get("sponsor_persona_id")
+                or plan.get("persona_id")
+                or plan_meta.get("persona_id")
+                or ""
+            ).strip()
+            if plan_persona and plan_persona == persona_id:
+                return True
+            plan_pcb = str(
+                plan.get("persona_capital_binding_id")
+                or plan_meta.get("persona_capital_binding_id")
+                or ""
+            ).strip()
+            if plan_pcb and plan_pcb in persona_binding_ids:
+                return True
+            plan_binding_id = str(plan.get("binding_id") or plan.get("runtime_binding_id") or "").strip()
+            if plan_binding_id and plan_binding_id in all_candidate_binding_ids:
+                return True
+            if all_candidate_binding_ids & {
+                str(bid).strip() for bid in (plan.get("binding_ids") or []) if str(bid).strip()
+            }:
+                return True
+            plan_pool_id = str(plan.get("capital_pool_id") or plan.get("target_pool_id") or "").strip()
+            if plan_pool_id and plan_pool_id in persona_capital_pool_ids:
+                return True
+            return False
+
         deployment_plans_for_persona: List[Dict[str, Any]] = []
         approvals_for_persona: List[Dict[str, Any]] = []
         try:
             all_plans = _service.list_deployment_plans()
-            deployment_plans_for_persona = [
-                plan for plan in all_plans
-                if persona_binding_ids & {
-                    str(bid) for bid in (plan.get("binding_ids") or [])
-                }
-                or str(plan.get("binding_id") or "") in persona_binding_ids
-            ]
-            plan_ids = {
-                str(plan.get("id") or plan.get("plan_id") or "").strip()
-                for plan in deployment_plans_for_persona
-                if str(plan.get("id") or plan.get("plan_id") or "").strip()
-            }
+            seen_plan_ids: set[str] = set()
+            for plan in all_plans:
+                if _plan_matches_persona(plan):
+                    pid = str(plan.get("id") or plan.get("plan_id") or "").strip()
+                    if pid:
+                        if pid in seen_plan_ids:
+                            continue
+                        seen_plan_ids.add(pid)
+                    deployment_plans_for_persona.append(plan)
+
+            get_plan_fn = getattr(_service, "get_deployment_plan", None)
+            if callable(get_plan_fn):
+                for pid in sorted(known_plan_ids - seen_plan_ids):
+                    fetched_plan = get_plan_fn(pid)
+                    if isinstance(fetched_plan, dict) and _plan_matches_persona(fetched_plan):
+                        seen_plan_ids.add(pid)
+                        deployment_plans_for_persona.append(fetched_plan)
+
+            plan_ids = set(seen_plan_ids) | known_plan_ids
+            artifact_and_registry_ids: set[str] = set()
+            known_approval_ids: set[str] = set()
+            for candidate_target in (
+                persona_meta.get("strategy_artifact_id"),
+                persona_meta.get("artifact_id"),
+                persona_meta.get("strategy_registry_id"),
+                persona_meta.get("registry_id"),
+                reg_readback.get("artifact_id"),
+                reg_readback.get("registry_id"),
+                dep_readback.get("artifact_id"),
+            ):
+                val = str(candidate_target or "").strip()
+                if val:
+                    artifact_and_registry_ids.add(val)
+
+            for candidate_apv in (
+                persona_meta.get("approval_decision_id"),
+                persona_meta.get("strategy_artifact_approval_decision_id"),
+                gov_readback.get("approval_decision_id"),
+                gov_readback.get("decision_id"),
+                dep_readback.get("approval_decision_id"),
+            ):
+                val = str(candidate_apv or "").strip()
+                if val:
+                    known_approval_ids.add(val)
+
+            for rb in runtime_bindings_for_persona:
+                if not isinstance(rb, dict):
+                    continue
+                for rb_target in (rb.get("artifact_id"), rb.get("registry_id")):
+                    val = str(rb_target or "").strip()
+                    if val:
+                        artifact_and_registry_ids.add(val)
+                rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), dict) else {}
+                attestation = (
+                    rb_meta.get("authoritative_loader_attestation")
+                    if isinstance(rb_meta.get("authoritative_loader_attestation"), dict)
+                    else {}
+                )
+                for rb_apv in (
+                    rb.get("approval_decision_id"),
+                    rb_meta.get("approval_decision_id"),
+                    attestation.get("approval_decision_id"),
+                ):
+                    val = str(rb_apv or "").strip()
+                    if val:
+                        known_approval_ids.add(val)
+                for rb_att_target in (attestation.get("artifact_id"), attestation.get("registry_id")):
+                    val = str(rb_att_target or "").strip()
+                    if val:
+                        artifact_and_registry_ids.add(val)
+
+            for plan in deployment_plans_for_persona:
+                if not isinstance(plan, dict):
+                    continue
+                for plan_target in (plan.get("artifact_id"), plan.get("registry_id")):
+                    val = str(plan_target or "").strip()
+                    if val:
+                        artifact_and_registry_ids.add(val)
+                plan_apv = str(plan.get("approval_decision_id") or "").strip()
+                if plan_apv:
+                    known_approval_ids.add(plan_apv)
+
+            approval_target_ids = plan_ids | artifact_and_registry_ids
             all_approvals = _service.list_approval_decisions()
-            approvals_for_persona = [
-                decision for decision in all_approvals
-                if str(decision.get("target_id") or decision.get("plan_id") or "") in plan_ids
-            ]
+            seen_approval_ids: set[str] = set()
+
+            def _approval_matches_persona(decision: Dict[str, Any]) -> bool:
+                if not isinstance(decision, dict) or not _record_tenant_matches(decision):
+                    return False
+                did = str(decision.get("decision_id") or decision.get("id") or decision.get("item_id") or "").strip()
+                if did and did in known_approval_ids:
+                    return True
+                target_id = str(decision.get("target_id") or decision.get("plan_id") or "").strip()
+                if target_id and target_id in approval_target_ids:
+                    return True
+                return False
+
+            for decision in all_approvals:
+                if _approval_matches_persona(decision):
+                    did = str(decision.get("decision_id") or decision.get("id") or decision.get("item_id") or "").strip()
+                    if did:
+                        if did in seen_approval_ids:
+                            continue
+                        seen_approval_ids.add(did)
+                    approvals_for_persona.append(decision)
+
+            get_apv_fn = getattr(_service, "get_approval_decision", None)
+            if callable(get_apv_fn):
+                for aid in sorted(known_approval_ids - seen_approval_ids):
+                    fetched_apv = get_apv_fn(aid)
+                    if isinstance(fetched_apv, dict) and _approval_matches_persona(fetched_apv):
+                        seen_approval_ids.add(aid)
+                        approvals_for_persona.append(fetched_apv)
         except Exception:  # pragma: no cover - defensive: never break detail page
             pass
         surfaces["deployment_plans"] = _dataset_surface_status(
