@@ -1342,6 +1342,7 @@ _EXECUTORS = {
     CommandType.REBALANCE_PROPOSAL: _make_adapter_executor(CommandType.REBALANCE_PROPOSAL),
     CommandType.APPROVED_APPLY: _execute_approved_rebalance_apply,
     CommandType.EMERGENCY_CONTAINMENT: _execute_emergency_containment_authority,
+    CommandType.RETIRE_PAPER_PERSONA_CASE: _make_adapter_executor(CommandType.RETIRE_PAPER_PERSONA_CASE),
     CommandType.RECORD_SPONSOR_DECISION: _make_adapter_executor(CommandType.RECORD_SPONSOR_DECISION),
     CommandType.DEPLOYMENT_PATCH: _make_adapter_executor(CommandType.DEPLOYMENT_PATCH),
     CommandType.REBALANCE_PATCH: _make_adapter_executor(CommandType.REBALANCE_PATCH),

@@ -1037,10 +1037,43 @@ def _management_portfolio_holding_entry(
         )
         or ""
     )
+    instrument_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "instrument_id"),
+            _management_dict_value(instrument, "instrument_id"),
+        )
+        or ""
+    )
+    instrument_kind = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "kind", "instrument_kind"),
+            _management_dict_value(instrument, "kind", "instrument_kind"),
+        )
+        or ""
+    )
+    contract_month = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "contract_month"),
+            _management_dict_value(instrument, "contract_month"),
+        )
+        or ""
+    )
+    raw_multiplier = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "multiplier"),
+            _management_dict_value(instrument, "multiplier"),
+        )
+    )
+    # A cash share (or a row that never reported one) is valued one for one.
+    multiplier = raw_multiplier if raw_multiplier is not None and raw_multiplier > 0 else 1.0
+    margin_reserved = _management_as_float(
+        _management_dict_value(position, "margin_reserved", "initial_margin_reserved")
+    )
     asset_class = _management_first_non_empty(
         _management_dict_value(position, "asset_class"),
         _management_dict_value(instrument, "asset_class"),
         _management_dict_value(telemetry_dict, "asset_class"),
+        {"stock_future": "future", "cash_share": "equity"}.get(instrument_kind),
     )
     currency = _management_first_non_empty(
         _management_dict_value(position, "currency"),
@@ -1077,7 +1110,7 @@ def _management_portfolio_holding_entry(
         )
     )
     if market_value is None and quantity is not None and mark_price is not None:
-        market_value = round(quantity * mark_price, 6)
+        market_value = round(quantity * multiplier * mark_price, 6)
     notional = _management_as_float(
         _management_first_non_empty(
             _management_dict_value(position, "notional", "gross_notional"),
@@ -1142,6 +1175,9 @@ def _management_portfolio_holding_entry(
     holding_key = str(
         _management_first_non_empty(
             _management_dict_value(position, "holding_id", "position_id", "id"),
+            # A derivative shares its underlying's symbol, so its own
+            # instrument_id keeps it from colliding with the cash share row.
+            instrument_id if instrument_kind not in ("", "cash_share") else None,
             symbol,
             artifact_id,
             position_index,
@@ -1254,6 +1290,8 @@ def _management_portfolio_holding_entry(
     if mark_status != "available":
         mark_price = None
         market_value = None
+        # Unrealized PnL is mark minus cost; without a usable mark it is unknown.
+        unrealized_pnl = None
         if (
             _management_first_non_empty(
                 _management_dict_value(position, "notional", "gross_notional"),
@@ -1309,6 +1347,11 @@ def _management_portfolio_holding_entry(
         "strategy_id": strategy_id,
         "persona_id": persona_id,
         "symbol": symbol,
+        "instrument_id": instrument_id or None,
+        "instrument_kind": instrument_kind or None,
+        "contract_month": contract_month or None,
+        "multiplier": multiplier,
+        "margin_reserved": margin_reserved,
         "asset_class": asset_class or "other",
         "side": side,
         "quantity": quantity,

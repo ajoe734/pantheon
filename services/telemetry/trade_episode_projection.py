@@ -65,7 +65,65 @@ def _extract_fee_evidence(ev: dict[str, Any]) -> float | None:
                 v = _valid_fee(src.get(k))
                 if v is not None:
                     return v
+    # A stock-future fill reports its cost as ``fee`` plus transaction ``tax``.
+    meta = ev.get("metadata")
+    if isinstance(meta, dict) and meta.get("kind") == "stock_future":
+        fee = _valid_fee(meta.get("fee"))
+        tax = _valid_fee(meta.get("tax"))
+        if fee is not None and tax is not None:
+            return fee + tax
     return None
+
+
+def _positive_finite(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) and v > 0 else None
+
+
+def _apply_instrument_fields(proj: dict[str, Any], ev: dict[str, Any]) -> None:
+    """Carry instrument identity, multiplier and reason code onto an episode.
+
+    Fields are only written when the event reports them, so an episode built
+    from cash share events without these fields is unchanged. A stock-future
+    episode takes the ``instrument_id`` of its contract (the event ``symbol``
+    stays the underlying and is kept as ``underlying_symbol``); a cash share
+    episode keeps its symbol as ``instrument_id``.
+    """
+    meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+    payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+
+    def pick(key: str) -> Any:
+        for src in (meta, payload):
+            value = src.get(key)
+            if value is not None and str(value).strip():
+                return value
+        return None
+
+    kind = pick("kind")
+    kind = str(kind).strip() if kind is not None else None
+    if kind:
+        proj["instrument_kind"] = kind
+    multiplier = _positive_finite(pick("multiplier"))
+    if multiplier is not None:
+        proj["multiplier"] = multiplier
+    contract_month = pick("contract_month")
+    if contract_month is not None:
+        proj["contract_month"] = str(contract_month).strip()
+    reason_code = pick("reason_code")
+    if reason_code is not None:
+        proj["reason_code"] = str(reason_code).strip()
+    if kind == "stock_future":
+        instrument = pick("instrument_id")
+        if instrument is not None:
+            underlying = meta.get("symbol") or ev.get("symbol")
+            if underlying and str(underlying).strip() != str(instrument).strip():
+                proj["underlying_symbol"] = str(underlying).strip()
+            proj["instrument_id"] = str(instrument).strip()
 
 
 def _valid_fee(value: Any) -> float | None:
@@ -573,6 +631,7 @@ class TradeEpisodeProjectionStore:
         sorted_events = [ev for _, ev in sorted(enumerate(filtered_events), key=sort_key)]
 
         proj: dict[str, Any] = {}
+        pre_episode_events: list[dict[str, Any]] = []
         for ev in sorted_events:
             event_type = ev.get("event_type")
             payload = ev.get("payload") or {}
@@ -864,6 +923,15 @@ class TradeEpisodeProjectionStore:
                     "rejected_at": ev.get("occurred_at") or ev.get("created_at"),
                     "reason": str(reason),
                 })
+                if (
+                    proj["filled_quantity"] == 0.0
+                    and not proj["fill_ids"]
+                    and proj["status"] == "open"
+                    and event_type == "order_rejection"
+                ):
+                    # A rejection that opened this episode never had an order
+                    # in the book; it must not read as an open position.
+                    proj["status"] = "rejected"
                 if proj["filled_quantity"] == 0.0 and proj["status"] in ("proposed", "approved", "submitted", "partially_filled"):
                     proj["status"] = "cancelled" if "cancel" in event_type else "rejected"
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
@@ -906,6 +974,16 @@ class TradeEpisodeProjectionStore:
                 if "mfe" in metrics:
                     proj["mfe"] = float(metrics["mfe"])
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
+
+            if proj:
+                # Decision events that precede the first episode-creating event
+                # (e.g. ``trade_decision``) still contribute their reason code.
+                for earlier in pre_episode_events:
+                    _apply_instrument_fields(proj, earlier)
+                pre_episode_events.clear()
+                _apply_instrument_fields(proj, ev)
+            else:
+                pre_episode_events.append(ev)
 
             seq = _extract_event_sequence(ev)
             if seq is not None and proj:

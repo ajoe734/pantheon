@@ -69,6 +69,50 @@ _COOLDOWN_PROGRAM_STATUSES = frozenset({"stopped"})
 # Policy
 # ---------------------------------------------------------------------------
 
+# --- expression replay gate (INSTRUMENT-DECISION-LEARNING-COUNTERFACTUAL-20261107) ---
+
+#: Controls that change which instrument the policy picks. The two view-strength
+#: controls change the view itself, which replay never recomputes.
+EXPRESSION_REPLAY_POLICY_CONTROLS = ("lever_min_strength", "notional_fraction_at_full_strength")
+
+
+def expression_replay_gate(
+    parent_parameters: Mapping[str, Any],
+    child_parameters: Mapping[str, Any],
+    records: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Evaluate a mutated expression policy on recorded decisions before it is proposed.
+
+    Both parameter sets are replayed over the same recorded decisions
+    (``expression_replay.replay``; deterministic, offline, direction never
+    recomputed).  The child passes only when there is at least one recorded
+    decision, at least one graded (marked) decision and its replayed total PnL
+    is not below the parent's.  Qualification never sees a child that fails.
+    """
+    from services.execution.lean_runtime.expression_replay import replay
+
+    recorded = [dict(r) for r in records or []]
+    if not recorded:
+        return {"passed": False, "reason": "no_recorded_decisions", "decision_count": 0}
+    parent = replay(recorded, parent_parameters)
+    child = replay(recorded, child_parameters)
+    graded = child["summary"]["graded_count"] + parent["summary"]["graded_count"]
+    base = {
+        "decision_count": len(recorded),
+        "parent_total_pnl": parent["summary"]["total_pnl"],
+        "child_total_pnl": child["summary"]["total_pnl"],
+        "parent_no_trade_count": parent["summary"]["no_trade_count"],
+        "child_no_trade_count": child["summary"]["no_trade_count"],
+        "parent_policy_parameters_digest": parent["policy_parameters_digest"],
+        "child_policy_parameters_digest": child["policy_parameters_digest"],
+    }
+    if graded == 0:
+        return {**base, "passed": False, "reason": "no_marked_decisions"}
+    if child["summary"]["total_pnl"] < parent["summary"]["total_pnl"]:
+        return {**base, "passed": False, "reason": "child_replay_worse_than_parent"}
+    return {**base, "passed": True, "reason": "child_replay_not_worse_than_parent"}
+
+
 class PolicyError(ValueError):
     """The qualification policy is missing or invalid (fail closed)."""
 

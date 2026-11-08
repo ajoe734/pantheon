@@ -1,0 +1,74 @@
+{
+  "task_id": "DEV-DEPLOY-TAIFEX-REFRESH-FAILURE-20261108",
+  "title": "TAIFEX refresh before stack mutation fails every dev deploy",
+  "status": "functional_validation_only",
+  "recorded_at_utc": "2026-11-08T13:20:00Z",
+  "author": "Claude",
+  "reviewer": "Antigravity",
+  "hosted_execution_disclaimer": "Local reproduction and local tests only. Hosted verification was NOT run: no hosted workflow was dispatched, no VM or SSH connection was opened, no operator key or service secret was read. The coordinator verifies through the normal auto deploy after merge.",
+  "hosted_workflow_dispatched": false,
+  "vm_or_ssh_accessed": false,
+  "reproduced_error": {
+    "reproduced_before_code_change": true,
+    "stage": "reconcile",
+    "error": "ControllerTickError: desired-state reconcile failed closed: conflicts=1 unsupported=0",
+    "raised_at": "services/source_ingestion/controller_worker.py:355 (HEAD 8e53d0ff2 numbering; the raise inside reconcile_desired_state)",
+    "root_cause": "The bounded TAIFEX one-shot reconciles the deployment desired state that prepare_bounded_source_refresh_dataset extended with a tw-taifex-futures-options-chip live_pull requirement carrying policy gate require_connector_approved. The reconciler's gate (services/source_ingestion/persona_source_reconciler.py:383 at HEAD, a file outside this task's scoped artifacts, so it was not edited) passed only for connector ids in provider_factories (FinMind, TW official) or connectors whose metadata says approved. The registered TAIFEX connector has neither, so the action was status=conflict, connector_action=policy_gate_failed, failed_policy_gates=[require_connector_approved]. The tick aborts at reconcile, before frontier recovery and before run-scheduled, so the frontier item stays queued with attempts 0 and last_error null, no source_health line is written, and the one-shot exits 1. This matches every VM observation in the task brief.",
+    "second_defect_found_after_first_fix": "With the gate fixed, the same local run then failed in services/source_ingestion/controller_worker.py _validate_terminal_readback because an exclusive TAIFEX tick still demanded freshness, health and a normalized record for tw-twse-tpex-official-market, which is in the desired state but is never pulled by that tick (freshness_not_accepted, freshness_outside_cadence, normalized_record_missing, source_health_not_ok). It would have been the next hosted failure.",
+    "ruled_out": "HTTP fetch, 100 record cap, weekend condition, egress hosts and slow startup were not the cause: with the fix the TAIFEX run completed with raw_count=25 normalized_count=25 rejected_count=0 using SOURCE_INGEST_MAX_RECORDS=100 and live TAIFEX hosts."
+  },
+  "local_reproduction_method": "In-process uvicorn real services.source_ingestion.main app on a temp data dir; the exact PREPARE_DATASET_PY snippet extracted from scripts/deploy_nonprod_vm.sh was run against it with connector tw-taifex-futures-options-chip, dataset taifex_ssf_contracts, symbols 2317.TWSE,0050.TWSE,2330.TWSE,2330.TW; its output was used as SOURCE_INGEST_DESIRED_STATE_PATH; then controller_worker.run_controller_tick ran with mode reconcile_and_pull, truth reconciled_live_proof, exclusive and force connector tw-taifex-futures-options-chip, max concurrency 1, PANTHEON_EXTERNAL_EGRESS=allowlist with openapi.taifex.com.tw,www.taifex.com.tw, SOURCE_INGEST_MAX_RECORDS=100. Final run result: status=ok, schedule total_ran=1 total_failed=0.",
+  "changes": [
+    {
+      "file": "services/source_ingestion/connectors/taiwan_official.py",
+      "summary": "TaifexDerivativesChipAdapter.connector() metadata now declares approval_status=approved with approval_authority=code_reviewed_public_official_reference, which the existing require_connector_approved gate already honors for registered connectors. Chosen over editing persona_source_reconciler.py because that file is outside the scoped artifacts. The connector is public (auth none, no secret); all other gates are unchanged and a connector with approval_status other than approved still fails closed."
+    },
+    {
+      "file": "services/source_ingestion/controller_worker.py",
+      "summary": "_validate_terminal_readback with an exclusive scope validates only the selected connectors, and fails closed (exclusive_connector_not_reconciled) if a selected connector was not reconciled. Selected connectors keep every freshness, health, record and provenance check."
+    },
+    {
+      "file": "scripts/deploy_nonprod_vm.sh",
+      "summary": "wait_for_bounded_source_refresh_service prints the last 200 container log lines, with Bearer values and JWT-like strings redacted, when a bounded one-shot exits non-zero or enters dead state, before the error and before the container is removed."
+    }
+  ],
+  "gates_not_weakened": "Egress allowlist unchanged, lease and preflight unchanged, restore_bounded_source_refresh (egress deny and reconcile_only) unchanged and its existing tests green. The TAIFEX step was not removed and PAPER_BOOTSTRAP_REQUESTED was not touched. Safe skips (weekend, holiday, session_not_closed) are still reported by check_taiwan_refresh_preflight as skipped with a reason (test_preflight_weekend_skip, test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh); fetch, contract and authority failures still fail closed (test_refresh_entrypoint_taifex_fails_closed_on_token_or_desired_state_exec_failure, the new reconciler negative tests).",
+  "not_done": "No readiness wait before docker compose run was added: slow startup was not proven as a cause (task brief item 3) and the local reproduction does not need it.",
+  "commands": [
+    {
+      "command": "pytest services/source_ingestion/tests/test_taiwan_official_connectors.py -q",
+      "exit_code": 0,
+      "summary": "39 passed, 1 skipped (2 new: registered TAIFEX SSF connector passes reconcile approval gate; custom unapproved derivatives connector still conflicts)"
+    },
+    {
+      "command": "pytest services/source_ingestion/tests/test_market_data_foundation.py test_provider_management_coverage.py test_active_universe.py test_financial_source_catalog.py -q",
+      "exit_code": 0,
+      "summary": "51 passed; regression check of other TAIFEX users after the metadata change"
+    },
+    {
+      "command": "pytest services/source_ingestion/tests/test_controller_worker.py -q",
+      "exit_code": 0,
+      "summary": "103 passed (3 new exclusive-scope readback tests)"
+    },
+    {
+      "command": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_bootstrap_contract.py scripts/test_deploy_nonprod_env_parity.py -q",
+      "exit_code": 0,
+      "summary": "190 passed, 4 skipped (3 new: exited/dead print last 200 redacted lines, success prints none)"
+    },
+    {
+      "command": "pytest scripts/test_dev_tw_market_refresh.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/tests/test_source_ingest_scheduler_once.py services/source_ingestion/tests/test_taiwan_official_connectors.py -q",
+      "exit_code": 1,
+      "summary": "first run: 117 passed, 1 failed (test_bounded_source_refresh_wait_rejects_nonzero_exit extracted only the wait function and missed the new helpers); test updated to include helpers and assert redacted logs"
+    },
+    {
+      "command": "pytest scripts/test_source_ingest_deploy_diagnostics_contract.py -q",
+      "exit_code": 0,
+      "summary": "20 passed after the test fix"
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "exit_code": 0,
+      "summary": "syntax ok"
+    }
+  ]
+}

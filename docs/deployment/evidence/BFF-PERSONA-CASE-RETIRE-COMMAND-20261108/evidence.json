@@ -1,0 +1,21 @@
+{
+  "task_id": "BFF-PERSONA-CASE-RETIRE-COMMAND-20261108",
+  "evidence_kind": "functional_in_process",
+  "hosted_behaviour_exercised": false,
+  "hosted_statement": "No hosted environment, VM, or deployed service was contacted. The provisioning store, coordinator and Persona owner are replaced by in-process fakes. No persona was retired. Hosted verification belongs to PAPER-PERSONA-INSTRUMENT-CUTOVER-20261107 and INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107.",
+  "change": {
+    "command": "PersonaAction / RetirePaperPersonaCase (aliases retire, retire_case) on target type Persona via POST /bff/v1/commands",
+    "gate": "existing command admission: catalog requires_confirm_token, idempotency key, audit_context.reason; roles [operator]",
+    "execution": "PersonaCommandAdapter -> personas.service.retire_persona_provisioning_case(tenant from authenticated claims, persona_id, reason)",
+    "dry_run": "dryRun payload flag returns meta.plan from plan_persona_provisioning_case_retirement (reads the record only)",
+    "refusals": {"persona_case_not_found": 404, "release_case_use_release_retire": 409, "tenant_required": 403},
+    "unchanged": ["PersonaProvisioningCoordinator.retire_case steps", "scripts/retire_dev_paper_release_cases.py", "/bff/personas/{id}/actions/{action} deprecation for retire", "no new HTTP route"]
+  },
+  "commands": [
+    {"cmd": "PYTHONPATH=. /tmp/svc-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_case_retire_command.py", "result": "23 passed"},
+    {"cmd": "pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_action_catalog.py", "result": "50 passed"},
+    {"cmd": "pytest -q services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_persona_lifecycle_forward.py services/control-plane/bff/test_persona_provisioning_readback.py", "result": "283 passed"},
+    {"cmd": "pytest -q services/control-plane/bff/tests/test_command_adapters_router.py", "result": "539 passed, 1 skipped (includes the parametrised alias/token/malformed-params parity cases that now cover the new alias)"}
+  ],
+  "no_assertion_weakened": true
+}

@@ -1,0 +1,205 @@
+{
+  "task_id": "MGMT-AI-TRUTH-ACCEPTANCE-20261107",
+  "title": "Hosted acceptance that Management AI health answers and the alert feed match the owners",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "verdict": "pass",
+  "measured_at": "2026-11-07T22:46:00Z to 2026-11-07T23:00:00Z (Run 3 full acceptance on BFF 9a46cd188 / FE 4759795f3) and 2026-11-08T14:46:52.055Z to 2026-11-08T14:46:58.469Z (E5 normal un-intercepted /management/alerts browser load + intercepted timeout_fallback + restored normal load on FE 4759795f3 / BFF 21cbd9987)",
+  "measured_by": "Human/Ops through a real admintest login on the hosted dev environment (Antigravity recorded the operator's staged hosted acceptance findings in git without rerunning hosted checks or accessing any VM/SSH)",
+  "staged_evidence_sources": {
+    "/tmp/pantheon-dev-operable-20261104/mgmt-ai-truth-acceptance-20261107/run3/accept_result.json": "2b1410570bf31a2ade24c5364a3492b9320bfafd1246de3ae0c4171d5fea39fd",
+    "/tmp/pantheon-dev-operable-20261104/mgmt-ai-truth-acceptance-20261107/run3/accept.out": "b87d13d4097cc02f619ce85cdc61f1c17deb7557782021d817668e7d3c89cbe2",
+    "/tmp/pantheon-dev-operable-20261104/mgmt-ai-truth-acceptance-20261107/run3/accept_surfaces.json": "5d18debb5a21b81465abc1f37e3d6620e870ead99dc3819405441e4293bbff56",
+    "/tmp/pantheon-dev-operable-20261104/mgmt-ai-truth-acceptance-20261107/run3/surfaces.out": "488ff288eb3017e2d323e33ae46173cb1e28b939a1a6231490552f5cb9531262",
+    "/tmp/pantheon-dev-operable-20261104/mgmt-ai-truth-acceptance-20261107/run3/surfaces2.out": "96708c80e50aa2a88923ea0a3f8a668d53dcf68f3e5dfc9e0cee367264af59c8",
+    "/tmp/pantheon-dev-operable-20261104/mgmt-ai-truth-acceptance-20261107/alerts-normal-load-20261108/result.json": "546cd953ff6ec17349a14b96bc43cc6746a3a7c47edbd730a352c0e82af4e3e7"
+  },
+  "operator_acceptance_text": "Pair: BFF 9a46cd188 (container GIT_SHA equal) and FE 4759795f3, deploy run https://github.com/ajoe734/pantheon/actions/runs/42416671176 success at 22:45Z. It contains BFF-ANOMALIES-OPEN-ONLY (#7014), BFF-ALERTS-CURRENT (#7016), BFF-AI-LOOP-HEALTH (#7022), BFF-AI-CURRENT-STATE (#7024), BFF-AI-FLEET-INBOX (#7031), BFF-AI-INBOX-OWNER (#7036) and execute-plans #959.\nE1 pass: the pair above, read from the public deployment.json and the container.\nE2 pass: 30 consecutive GET /bff/alerts through the admintest login gave 30 bff_composed ok, 0 timeout_fallback, 395-2356 ms. Each read returned 2 alerts: a critical alert for the open incident infra-bff-c0c7d46419976f1c51db4581 and a critical runtime alert for the current runtime rt-4b73b71a. The retired failed runtimes rt-fae0166d, rt-0354501c and rt-43344296 never appear.\nE3 pass: the question 目前 12 個 loop 的健康狀況如何？有哪些不正常？只要查詢，不要做任何變更。 was asked in the panel at 22:46Z. Full verbatim answer text and contemporaneous owner responses from run3/accept_result.json, accept.out, accept_surfaces.json and surfaces2.out are recorded below and reconciled claim-by-claim in claim_table. 12 of 12 accepted and overall ok matches /bff/v5/loop-health (12 rows, 12 accepted); 11 ready and 1 ok (telemetry_reconciliation) matches the downstream statuses exactly; telemetry 4 bindings evaluated with 0 skipped and capital_pool_execution 4 of 4 match the 4 active runtimes; bff_health 33 of 33 matches; 2 critical active alerts (1 incident, 1 runtime) matches /bff/alerts. No healthy paper_running persona was called degraded and no retired runtime was called a current failure. The non-stream ask context for the same caller showed trading pulse 4 current runtimes and 138 retired, alerts 2 critical, human_inbox total 1 equal to GET /bff/management/human-inbox (1 item), anomalies 2, persona_fleet 10 current personas (paper_running 4, research_only 3, draft 3) with 140 retired and healthy 4, degraded 0, critical 0, which equals /bff/personas. Surfaces: management_cockpit ok, trading_pulse ok, portfolio_book ok, loop_health ok, persona_fleet degraded.\nE4 pass: the real open incident infra-bff-c0c7d46419976f1c51db4581 (high) appears in the answer as 1 incident alert, and the alert count of 2 matches the feed. Run 1 at 12:10Z also passed E4, with incident agent-2e0cc89b4ea8-0001.\nE5 pass: on the accepted cohort (FE 4759795f3 / BFF 21cbd9987, linear dev descendant of 9a46cd188 containing all 7 source tasks), an un-intercepted browser load of /management/alerts returned HTTP 200 (meta.surfaces.alerts status=ok, source=bff_composed) and rendered the 2 real active critical runtime alerts (alert-runtime-rt-d21716b9 and alert-runtime-rt-ad81501b) matching the contemporaneous /bff/alerts feed; with the timeout_fallback payload intercepted in the browser, the page showed 暫時無法取得警報資料。 (unavailable_visible=true, healthy_empty_visible=false, 0 rows); restoring normal load again rendered the real result (alerts_normal_restored=true). In run 2 a normal healthy empty load showed 目前沒有警報。. In run 3 the page's own first load hit a real read_timeout (BFF log: bff.alerts degraded fallback: read_timeout, once in 31 reads in 40 minutes) and the page showed the unavailable state, not an empty list.\nE6: no password or token was written anywhere, and unverified claims (specifically the verbatim stale-cache wording 「另 BFF 管理資料由快取提供並標記 stale/degraded，因此結論信心為 partial。」 as well as per-loop sub-metric counts not expanded in the compact rows_detail tuple projection) are explicitly named.\nHistory: run 1 at 12:10Z on 004a9a4ec found that persona_fleet always raised a RuntimeError and that the inbox read the wrong layer, which became BFF-AI-FLEET-INBOX. Run 2 at 15:15Z on 1e4bc7ce5 found that an empty approval queue was called unavailable and that empty open incidents counted as degraded, which became BFF-AI-INBOX-OWNER. Run 3 passed.\nLimitations: persona_fleet stays degraded because the existing rule marks a persona whose sessions, teaching sessions, allowed actions, strategies or bindings are empty as degraded, which is normal for draft and research_only personas; this is out of scope and was reported to the operator. The answer's phrase about stale cache is unverified. The alerts route can still time out at its 3.0 second budget under page-load fan-out, but the page shows that honestly.",
+  "hosted_pair": {
+    "bff_commit": "9a46cd1883c5441ef9fe17bced5df23a8a09a96c",
+    "bff_short": "9a46cd188",
+    "container_git_sha_equal": true,
+    "frontend_commit": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+    "frontend_short": "4759795f3",
+    "deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/42416671176",
+    "deploy_status": "success at 22:45Z",
+    "e5_normal_load_followup_cohort": {
+      "measured_at": "2026-11-08T14:46:52.055Z to 2026-11-08T14:46:58.469Z",
+      "frontend_commit": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+      "bff_commit": "21cbd9987a3a8ea86dfcd3d3708fdd400870746a",
+      "pair_digest": "91b5261750218df1d2afa7673d11d28cf385903bf53cd3907834b9d4d35f9c7f",
+      "profile": "operator-live",
+      "relationship_to_run3_pair": "FE commit 4759795f3e58f4e51ce33fce5af0ab3591650b8f is identical; BFF 21cbd9987a3a8ea86dfcd3d3708fdd400870746a is the next linear merge commit on dev after 9a46cd1883c5441ef9fe17bced5df23a8a09a96c and contains all 7 declared depends_on merges."
+    },
+    "contains": [
+      { "task_id": "BFF-ANOMALIES-OPEN-ONLY-20261107", "repository": "ajoe734/pantheon", "pr": 7014, "merge_commit": "5f76058d9" },
+      { "task_id": "BFF-ALERTS-CURRENT-20261107", "repository": "ajoe734/pantheon", "pr": 7016, "merge_commit": "992a3344a" },
+      { "task_id": "BFF-AI-LOOP-HEALTH-20261107", "repository": "ajoe734/pantheon", "pr": 7022, "merge_commit": "b1ff41d8d" },
+      { "task_id": "BFF-AI-CURRENT-STATE-20261107", "repository": "ajoe734/pantheon", "pr": 7024, "merge_commit": "8b331f141" },
+      { "task_id": "BFF-AI-FLEET-INBOX-20261107", "repository": "ajoe734/pantheon", "pr": 7031, "merge_commit": "1e4bc7ce5" },
+      { "task_id": "BFF-AI-INBOX-OWNER-20261107", "repository": "ajoe734/pantheon", "pr": 7036, "merge_commit": "d8fc86208" },
+      { "task_id": "FE-ALERTS-NOT-EMPTY-20261107", "repository": "ajoe734/execute-plans", "pr": 959, "merge_commit": "257c5132c" }
+    ]
+  },
+  "acceptance": {
+    "E1_accepted_pair": {
+      "status": "pass",
+      "summary": "BFF 9a46cd188 (container GIT_SHA equal) and FE 4759795f3, deploy run https://github.com/ajoe734/pantheon/actions/runs/42416671176 success at 22:45Z, read from the public deployment.json and the container."
+    },
+    "E2_alerts_consecutive_reads": {
+      "status": "pass",
+      "login": "admintest",
+      "consecutive_reads": 30,
+      "bff_composed_ok": 30,
+      "timeout_fallback": 0,
+      "latency_ms_range": "395-2356 ms",
+      "latency_ms_samples_csv": "1805,2356,908,747,904,652,645,950,965,552,456,436,717,497,554,566,470,625,1135,457,459,398,461,793,804,903,404,933,442,395",
+      "alerts_per_read": 2,
+      "sample_ids": [
+        "alert-runtime-rt-4b73b71a:critical",
+        "alert-incident-infra-bff-c0c7d46419976f1c51db4581:critical"
+      ],
+      "alerts_returned": [
+        "critical alert for the open incident infra-bff-c0c7d46419976f1c51db4581",
+        "critical runtime alert for the current runtime rt-4b73b71a"
+      ],
+      "retired_failed_alerted": false,
+      "retired_failed_runtimes_absent": [
+        "rt-fae0166d",
+        "rt-0354501c",
+        "rt-43344296"
+      ]
+    },
+    "E3_management_ai_panel_and_owner_comparison": {
+      "status": "pass",
+      "asked_at": "2026-11-07T22:46:46Z",
+      "question": "目前 12 個 loop 的健康狀況如何？有哪些不正常？只要查詢，不要做任何變更。",
+      "answer_verbatim": "截至 2026-11-07 22:46:46 UTC 的快照：\n\n12/12 個 loop 紀錄均已接受，整體狀態為 ok\n11 個 ready，1 個 ok\n沒有任何 loop 顯示 degraded、failed、blocked、DLQ、dead letter 或執行錯誤\n\n唯一為 ok 的是：\n\ntelemetry_reconciliation：評估 4 個 binding、跳過 0，tick 正常\n\n其餘 11 個皆為 ready，關鍵檢查也正常：\n\n資料來源：6 connectors、638 records、未解 DLQ 0\n策略蒸餾：dead letters 0\nAlpha replication：pending 0、DLQ 0\n部署：errors / retry / dead-letter 皆 0\nCapital pool execution：4/4 binding 各有且僅有一個 worker\nEvolution：pending、dead-letter、reconcile error 皆無\nBFF 健康監控：33/33 下游探測健康\n\n結論：12 個 loop 本身目前沒有不正常。\n\n但需注意：管理面另有 2 個 critical active alerts（1 個 incident、1 個 runtime），且 Persona Fleet 資料面為 degraded；這些不等於 loop 健康異常。另 BFF 管理資料由快取提供並標記 stale/degraded，因此結論信心為 partial。未進行任何變更。",
+      "answer_verbatim_sha256": "abe792700f7b31585e7a0324f45989143d77393620be03b04d7f7be7de1d376c",
+      "panel_capture_verbatim_sha256": "41fa820429408858162129b3b072fab08dcd0ed5854dfac9b8fe665b183ec14c",
+      "answer_summary": "12 of 12 loops accepted and overall ok; 11 ready and 1 ok (telemetry_reconciliation); telemetry 4 bindings evaluated with 0 skipped and capital_pool_execution 4 of 4 active runtimes; bff_health 33 of 33; 2 critical active alerts (1 incident infra-bff-c0c7d46419976f1c51db4581, 1 runtime rt-4b73b71a). No healthy paper_running persona was called degraded and no retired runtime was called a current failure. Included an unverified phrase about stale cache (「另 BFF 管理資料由快取提供並標記 stale/degraded，因此結論信心為 partial。」).",
+      "claim_table": [
+        { "verbatim_claim": "截至 2026-11-07 22:46:46 UTC 的快照", "owner_surface": "POST /bff/management/nl/ask and contemporaneous owner surface reads", "owner_evidence": "Panel question asked during the 2026-11-07T22:46Z Run 3 acceptance window on BFF 9a46cd188 / FE 4759795f3.", "match": true },
+        { "verbatim_claim": "12/12 個 loop 紀錄均已接受，整體狀態為 ok", "owner_surface": "GET /bff/v5/loop-health (accept_result.json loop_health & accept_surfaces.json summary.loop_health)", "owner_evidence": "http=200, rows=12, accepted=12, surface={status:\"ok\", source:\"controller_store\", truth_level:\"controller_store\", accepted_live:true}, non_ok=[], non_ok_count=0; all 12 rows have operator_truth.accepted_as_live=true and truth_level=\"reconciled_live_proof\".", "match": true },
+        { "verbatim_claim": "11 個 ready，1 個 ok", "owner_surface": "GET /bff/v5/loop-health rows_detail", "owner_evidence": "11 rows have status \"ready\" (source_ingestion, strategy_distillation, alpha_replication, persona_teaching, agora_interaction_evidence, human_imitation_shadow_evaluation, consultation, promotion_deployment, capital_pool_execution, evolution, bff_health_monitoring) and 1 row has status \"ok\" (telemetry_reconciliation).", "match": true },
+        { "verbatim_claim": "沒有任何 loop 顯示 degraded、failed、blocked、DLQ、dead letter 或執行錯誤", "owner_surface": "GET /bff/v5/loop-health rows_detail & accept_surfaces.json summary.loop_health", "owner_evidence": "All 12 rows have operator_truth.degraded=false, degraded_reason=null, is_reconciled=true, has_live_evidence=true, and status in {\"ready\", \"ok\"}; summary.loop_health has status=\"ok\", non_ok=[], non_ok_count=0.", "match": true },
+        { "verbatim_claim": "唯一為 ok 的是：telemetry_reconciliation：評估 4 個 binding、跳過 0，tick 正常", "owner_surface": "GET /bff/v5/loop-health (telemetry_reconciliation), GET /bff/runtimes, and surfaces2.out cockpit_summary.trading_pulse_summary", "owner_evidence": "telemetry_reconciliation is the sole loop with status \"ok\" (is_reconciled=true, has_live_evidence=true, degraded=false); GET /bff/runtimes shows active=4 current runtimes (rt-c98e4223, rt-8b0d8649, rt-535a82a3, rt-4b73b71a) and trading_pulse_summary shows runtimeCount=4, telemetryCoverageCount=4.", "match": true },
+        { "verbatim_claim": "其餘 11 個皆為 ready，關鍵檢查也正常（含未單獨列點之 persona_teaching、agora_interaction_evidence、human_imitation_shadow_evaluation、consultation）", "owner_surface": "GET /bff/v5/loop-health rows_detail", "owner_evidence": "All 11 non-telemetry_reconciliation loops report status=\"ready\", is_reconciled=true, has_live_evidence=true, operator_truth.accepted_as_live=true, degraded=false.", "match": true },
+        { "verbatim_claim": "資料來源：6 connectors、638 records、未解 DLQ 0", "owner_surface": "GET /bff/v5/loop-health (source_ingestion row)", "owner_evidence": "source_ingestion row status=\"ready\", is_reconciled=true, has_live_evidence=true, degraded=false in accept_result.json. Granular sub-counts (6 connectors, 638 records, unresolved DLQ 0) come from the loop-health context pack and are not separately expanded in accept_result.json's [loop_id, live_status, status] tuple projection; marked in unverified_claims for completeness.", "match": "partial_unverified_submetrics" },
+        { "verbatim_claim": "策略蒸餾：dead letters 0", "owner_surface": "GET /bff/v5/loop-health (strategy_distillation row)", "owner_evidence": "strategy_distillation row status=\"ready\", is_reconciled=true, has_live_evidence=true, degraded=false in accept_result.json. Granular dead_letters=0 counter is not separately expanded in accept_result.json's tuple projection; marked in unverified_claims for completeness.", "match": "partial_unverified_submetrics" },
+        { "verbatim_claim": "Alpha replication：pending 0、DLQ 0", "owner_surface": "GET /bff/v5/loop-health (alpha_replication row)", "owner_evidence": "alpha_replication row status=\"ready\", is_reconciled=true, has_live_evidence=true, degraded=false in accept_result.json. Granular pending=0, DLQ=0 counters are not separately expanded in accept_result.json's tuple projection; marked in unverified_claims for completeness.", "match": "partial_unverified_submetrics" },
+        { "verbatim_claim": "部署：errors / retry / dead-letter 皆 0", "owner_surface": "GET /bff/v5/loop-health (promotion_deployment row)", "owner_evidence": "promotion_deployment row status=\"ready\", is_reconciled=true, has_live_evidence=true, degraded=false in accept_result.json. Granular errors/retry/dead-letter=0 counters are not separately expanded in accept_result.json's tuple projection; marked in unverified_claims for completeness.", "match": "partial_unverified_submetrics" },
+        { "verbatim_claim": "Capital pool execution：4/4 binding 各有且僅有一個 worker", "owner_surface": "GET /bff/v5/loop-health (capital_pool_execution row), GET /bff/runtimes, and surfaces2.out fleet_summary", "owner_evidence": "capital_pool_execution row status=\"ready\", is_reconciled=true, has_live_evidence=true, degraded=false; GET /bff/runtimes shows active=4 current runtimes bound 1-to-1 to the 4 paper_running personas ([rt-c98e4223 -> persona-d9363cffc0efbbbcbeb9], [rt-8b0d8649 -> persona-9d4fb3f44cbc5e7cb84f], [rt-535a82a3 -> persona-be19a1fac471247f2b2a], [rt-4b73b71a -> persona-1f752ba975fed2efef19]); fleet_summary.runtime_bound_personas=4.", "match": true },
+        { "verbatim_claim": "Evolution：pending、dead-letter、reconcile error 皆無", "owner_surface": "GET /bff/v5/loop-health (evolution row)", "owner_evidence": "evolution row status=\"ready\", is_reconciled=true, has_live_evidence=true, degraded=false in accept_result.json. Granular pending/dead-letter/reconcile_error=0 counters are not separately expanded in accept_result.json's tuple projection; marked in unverified_claims for completeness.", "match": "partial_unverified_submetrics" },
+        { "verbatim_claim": "BFF 健康監控：33/33 下游探測健康", "owner_surface": "GET /bff/v5/loop-health (bff_health_monitoring row)", "owner_evidence": "bff_health_monitoring row status=\"ready\", is_reconciled=true, has_live_evidence=true, degraded=false, and operator_acceptance_text confirms bff_health 33 of 33 matches /bff/v5/loop-health.", "match": true },
+        { "verbatim_claim": "結論：12 個 loop 本身目前沒有不正常。", "owner_surface": "GET /bff/v5/loop-health", "owner_evidence": "12/12 accepted, 11 ready + 1 ok, surface.status=\"ok\", non_ok_count=0.", "match": true },
+        { "verbatim_claim": "但需注意：管理面另有 2 個 critical active alerts（1 個 incident、1 個 runtime）", "owner_surface": "GET /bff/alerts, GET /bff/incidents?status=open, and surfaces2.out alerts_summary", "owner_evidence": "30 consecutive GET /bff/alerts reads returned count=2 with sample_ids=[\"alert-runtime-rt-4b73b71a:critical\", \"alert-incident-infra-bff-c0c7d46419976f1c51db4581:critical\"]; alerts_summary={total_active:2, highest_severity:\"critical\", by_severity:{critical:2,high:0,medium:0,low:0}, by_category:{incident:1,kill_switch:0,governance:0,runtime:1}}; GET /bff/incidents?status=open returned count=1, ids=[\"infra-bff-c0c7d46419976f1c51db4581:high:open\"].", "match": true },
+        { "verbatim_claim": "且 Persona Fleet 資料面為 degraded；這些不等於 loop 健康異常。（且未把健康 paper_running persona 誤報為 degraded、未把退役 runtime 誤報為當前失敗）", "owner_surface": "GET /bff/personas, GET /bff/runtimes, and accept_surfaces.json / surfaces2.out", "owner_evidence": "surfaces.persona_fleet has status=\"degraded\" (non_ok_count=40 due to empty persona_sessions, persona_teaching_sessions, persona_allowed_actions, persona_strategies, persona_bindings on draft/research_only personas), while GET /bff/personas and fleet_summary show total_personas=10 (paper_running:4, research_only:3, draft:3), retired_persona_count=140, healthy_personas=4, degraded_personas=0, critical_personas=0, and GET /bff/runtimes shows active=4, retired_at_set=138 with retired failed runtimes rt-fae0166d, rt-0354501c, rt-43344296 excluded from current failures/alerts.", "match": true },
+        { "verbatim_claim": "另 BFF 管理資料由快取提供並標記 stale/degraded，因此結論信心為 partial。", "owner_surface": "POST /bff/management/nl/ask surfaces & confidence (accept_surfaces.json, surfaces2.out)", "owner_evidence": "confidence=\"partial\" and persona_fleet.status=\"degraded\" match surfaces2.out, but the specific claim that BFF management data was served from a cache marked stale (「由快取提供並標記 stale」) is UNVERIFIED: management_cockpit, management_trading_pulse, and portfolio_book all have status=\"ok\", source=\"bff_composed\", non_ok=[]; loop_health has status=\"ok\", source=\"controller_store\"; human_inbox surfaces are all status=\"ok\"; and persona_fleet is degraded from empty child-table reads on non-running personas rather than a stale cache.", "match": "unverified" },
+        { "verbatim_claim": "未進行任何變更。", "owner_surface": "Management AI panel & POST /bff/management/nl/ask", "owner_evidence": "Panel status is \"kernel on · control inactive\" and no write/control actions were executed.", "match": true }
+      ],
+      "contemporaneous_owner_responses_summary": {
+        "loop_health": "http=200, rows=12, accepted=12, surface={status:ok, source:controller_store, accepted_live:true}, ready_loops=11 (source_ingestion, strategy_distillation, alpha_replication, persona_teaching, agora_interaction_evidence, human_imitation_shadow_evaluation, consultation, promotion_deployment, capital_pool_execution, evolution, bff_health_monitoring), ok_loops=1 (telemetry_reconciliation), all 12 rows is_reconciled=true, has_live_evidence=true, accepted_as_live=true, degraded=false",
+        "runtimes": "total=142, by_status={retired:135, failed:3, active:4}, retired_at_set=138, current=[[rt-c98e4223, active, persona-d9363cffc0efbbbcbeb9], [rt-8b0d8649, active, persona-9d4fb3f44cbc5e7cb84f], [rt-535a82a3, active, persona-be19a1fac471247f2b2a], [rt-4b73b71a, active, persona-1f752ba975fed2efef19]]",
+        "personas": "total=150, by_state={retired:140, research_only:3, draft:3, paper_running:4}, paper_running=[persona-d9363cffc0efbbbcbeb9, persona-9d4fb3f44cbc5e7cb84f, persona-be19a1fac471247f2b2a, persona-1f752ba975fed2efef19], research_only=[agora-servant-fbeaee01e8f34c786555, agora-servant-4eef59cbdf80a6b9fea0, persona-dev-lifecycle-39057282435], draft=[persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715, persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8, persona-strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a]",
+        "incidents_open": "http=200, count=1, statuses={open:1}, ids=[infra-bff-c0c7d46419976f1c51db4581:high:open]",
+        "human_inbox": "http=200, items=1, surfaces={approval_queue:ok/service, governance_review_queue:ok/read_store, incidents:ok/read_store, persona_readiness:ok/bff_composed, human_inbox:ok/bff_composed} at snapshot_at 2026-11-07T22:52:37Z",
+        "cockpit_and_fleet_summary": "trading_pulse={runtimeCount:4, retiredRuntimeCount:138, telemetryCoverageCount:4, byStatus:{active:4}, byStage:{paper:4}, totalPnl:905.65, averageFillRate:0.75, totalTrades:18}; alerts_summary={total_active:2, highest_severity:critical, by_category:{incident:1, runtime:1}}; human_inbox_summary={total:1}; anomalies_summary={total:2}; fleet_summary={total_personas:10, retired_persona_count:140, retired_runtime_count:138, healthy_personas:4, degraded_personas:0, critical_personas:0, bound_personas:6, runtime_bound_personas:4}",
+        "ask_surfaces_and_confidence": "management_cockpit=ok/bff_composed, management_trading_pulse=ok/bff_composed, portfolio_book=ok/bff_composed, loop_health=ok/controller_store, persona_fleet=degraded/bff_composed (non_ok_count=40 from empty child tables on non-running personas), ask_confidence=partial, ask_sources=[cockpit,trading_pulse,portfolio,persona_fleet,loop_health]",
+        "raw_digests_sha256": {
+          "contemporaneous_owner_responses_bundle": "5a4769281e05725a9ed7a3d6254c87ee632636853fd4e7fe8f9b6cb7bea6075f",
+          "loop_health": "8405ef1f0989f27e0b045204bdbbc3dcdee98f5a4bf3385a9b97b8fa431131f2",
+          "runtimes": "ac6b8ebb1bda51146e8a0af290827c8c380326ce9e0e94a691337cc11d59b705",
+          "personas": "a23b50bf5dad79a552d67a76f91090aea3ab6441c8d5cf8a25432bb6d8d43572",
+          "incidents_open": "fe6a1d1397217b0cece7a902d69d2e20b025d9a0c74a9c3176b7798a5401937f",
+          "human_inbox": "b390762da666ddeb00d765309ffb733321a18d59a96bdeebabaefd87e0c1e1cc",
+          "cockpit_summary": "3afa867e97d16f1f975f91af42831cc45d6b956586c333cfc29d3f2f42d51ed0",
+          "fleet_summary": "e9e4d6e38cc62509967aefc91f826d0666a01140829908a8794d189ff897b013",
+          "ask_surfaces_detail": "e61245ac56829e2dc2ff9c684ade5457bbd4bf534789c26053282607068f15a6",
+          "non_stream_ask_context": "04ebd117f9a81a2fd8b271bd6e1f946b31d3cc32c45f5adec78d54197e7e1f27"
+        }
+      }
+    },
+    "E4_real_open_incident": {
+      "status": "pass",
+      "open_incident_id": "infra-bff-c0c7d46419976f1c51db4581",
+      "severity": "high",
+      "appears_in_answer": "1 incident alert (within 「管理面另有 2 個 critical active alerts（1 個 incident、1 個 runtime）」)",
+      "alert_count_in_answer": 2,
+      "matches_alert_feed": true,
+      "earlier_run_note": "Run 1 at 12:10Z also passed E4, with incident agent-2e0cc89b4ea8-0001."
+    },
+    "E5_alerts_page_browser_states": {
+      "status": "pass",
+      "normal_unintercepted_and_fallback_browser_proof_20261108": {
+        "at": "2026-11-08T14:46:52.055Z",
+        "finished_at": "2026-11-08T14:46:58.469Z",
+        "scope": "Original MGMT-AI AC5 only: real normal Alerts page plus browser-intercepted timeout_fallback unavailable state; no AI question/model call or alert acknowledgement.",
+        "cohort": {
+          "fe": "4759795f3e58f4e51ce33fce5af0ab3591650b8f",
+          "bff": "21cbd9987a3a8ea86dfcd3d3708fdd400870746a",
+          "pair": "91b5261750218df1d2afa7673d11d28cf385903bf53cd3907834b9d4d35f9c7f",
+          "profile": "operator-live",
+          "unchanged_before_and_after": true
+        },
+        "reads": "2 GET /bff/alerts requests from route /management/alerts, both HTTP 200 (observed_query=\"\")",
+        "alerts_normal": {
+          "count": 2,
+          "ids": [ "alert-runtime-rt-d21716b9", "alert-runtime-rt-ad81501b" ],
+          "summary": "total_active=2, highest_severity=critical, by_severity={critical:2,high:0,medium:0,low:0}, by_category={incident:0,kill_switch:0,governance:0,runtime:2}",
+          "contemporaneous_feed_meta_surfaces": "snapshot_at=2026-11-08T14:46:57Z, acknowledgement_supported=true, alerts=ok/bff_composed, incident_feed=ok/service_client, review_queue=ok/service, approval_queue=ok/service, kill_switch=ok/typed_store, runtime_roster=ok/service, telemetry_summary=ok/service",
+          "contemporaneous_feed_response_sha256": "a16f5a28a40dc9a6e489366c171b86ca8befef001d431bd594afe911fbe78eb6"
+        },
+        "alerts_fallback": {
+          "unavailable_visible": true,
+          "healthy_empty_visible": false,
+          "interception": "Browser only, exact original timeout_fallback meta.surfaces.alerts; no owner/service/data mutation"
+        },
+        "alerts_normal_restored": true,
+        "errors": [],
+        "page_errors": [],
+        "blocked_writes": [],
+        "passed_recorded_subset": true,
+        "logout_status": 200,
+        "raw_result_json_sha256": "546cd953ff6ec17349a14b96bc43cc6746a3a7c47edbd730a352c0e82af4e3e7"
+      },
+      "intercepted_fallback_payload": {
+        "shown_text": "暫時無法取得警報資料。\nAlert aggregation timed out under concurrent read fanout; degraded empty response returned.",
+        "rows": 0,
+        "state": "unavailable"
+      },
+      "run_2_normal_healthy_empty_load": {
+        "shown_text": "目前沒有警報。",
+        "state": "empty"
+      },
+      "run_3_real_read_timeout_on_first_load": {
+        "bff_log": "bff.alerts degraded fallback: read_timeout (once in 31 reads in 40 minutes)",
+        "alertCard": [
+          "暫時無法取得警報資料。\nAlert aggregation timed out under concurrent read fanout; degraded empty response returned."
+        ],
+        "rows": 0,
+        "bodyHas_empty": false,
+        "shown_state": "unavailable (not an empty list)"
+      }
+    },
+    "E6_no_secrets_and_unverified_claims": {
+      "status": "pass",
+      "password_or_token_written": false,
+      "unverified_claims": [
+        "Verbatim stale-cache clause in the Management AI answer: 「另 BFF 管理資料由快取提供並標記 stale/degraded，因此結論信心為 partial。」 — while confidence=\"partial\" and persona_fleet.status=\"degraded\" match the owner surfaces, the claim that BFF management data was served from a stale cache (「由快取提供並標記 stale」) is unverified because management_cockpit, management_trading_pulse, portfolio_book, loop_health, and human_inbox all reported status=\"ok\" from live/composed sources (bff_composed, controller_store, service, read_store) and persona_fleet was degraded due to empty child tables on non-running personas rather than a stale cache.",
+        "Granular per-loop counter sub-claims in the 5 ready-loop bullets (「資料來源：6 connectors、638 records、未解 DLQ 0」、「策略蒸餾：dead letters 0」、「Alpha replication：pending 0、DLQ 0」、「部署：errors / retry / dead-letter 皆 0」、「Evolution：pending、dead-letter、reconcile error 皆無」) — each loop's status=\"ready\", is_reconciled=true, has_live_evidence=true, and degraded=false is verified in accept_result.json, but the raw per-loop metric sub-counters were not separately expanded in accept_result.json's [loop_id, live_status, status] tuple projection."
+      ]
+    }
+  },
+  "history": [
+    "Run 1 at 12:10Z on 004a9a4ec found that persona_fleet always raised a RuntimeError and that the inbox read the wrong layer, which became BFF-AI-FLEET-INBOX.",
+    "Run 2 at 15:15Z on 1e4bc7ce5 found that an empty approval queue was called unavailable and that empty open incidents counted as degraded, which became BFF-AI-INBOX-OWNER.",
+    "Run 3 on BFF 9a46cd188 and FE 4759795f3 passed.",
+    "Follow-up browser verification on 2026-11-08T14:46Z on FE 4759795f3 / BFF 21cbd9987 captured the un-intercepted /management/alerts normal load (2 active critical runtime alerts rendered in DOM matching GET /bff/alerts), browser-intercepted timeout_fallback unavailable state, and restored normal load."
+  ],
+  "limitations": [
+    "persona_fleet stays degraded because the existing rule marks a persona whose sessions, teaching sessions, allowed actions, strategies or bindings are empty as degraded, which is normal for draft and research_only personas; this is out of scope and was reported to the operator.",
+    "The answer's verbatim phrase about stale cache (「另 BFF 管理資料由快取提供並標記 stale/degraded，因此結論信心為 partial。」) is unverified as to the stale-cache attribution.",
+    "The alerts route can still time out at its 3.0 second budget under page-load fan-out, but the page shows that honestly."
+  ]
+}

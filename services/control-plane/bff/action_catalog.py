@@ -806,6 +806,22 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         required_roles=["operator", "reviewer", "approver"],
         description="Immediately reduce exposure or pause runtime execution under threat.",
     ),
+    BffActionCatalogEntry(
+        action_id="RetirePaperPersonaCase",
+        entity_type="Persona",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["operator"],
+        description=(
+            "Retire a provisioned paper Persona case through its provisioning "
+            "coordinator; dev-paper-release cases keep their own retire script."
+        ),
+    ),
 ]
 
 # Build an O(1) lookup by action_id

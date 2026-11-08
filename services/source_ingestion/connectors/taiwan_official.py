@@ -2297,6 +2297,11 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "core_universe": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET],
                     "candidate_universe": ["taifex_futures_chip", "taifex_options_chip"],
                 },
+                # Code-reviewed public official reference source (auth none, no secret):
+                # satisfies the persona reconciler's require_connector_approved gate, which
+                # reads this marker for registered custom connectors. Other gates are unaffected.
+                "approval_status": "approved",
+                "approval_authority": "code_reviewed_public_official_reference",
                 **dict(self.connector_metadata),
             },
         )

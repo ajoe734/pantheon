@@ -49,6 +49,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         git_head: str = "abc123",
         symbolic_ref_returncode: int = 1,
         merge_sha: str = "merge123",
+        self_review_error: str = "",
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -70,6 +71,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.git_head = git_head
         self.symbolic_ref_returncode = symbolic_ref_returncode
         self.merge_sha = merge_sha
+        self.self_review_error = self_review_error
         # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: outcome of the
         # disposable `git merge origin/dev` test-merge run against a behind
         # gated PR's exact reviewed head. 0 = clean (default); non-zero
@@ -83,6 +85,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.requiredness_nodes = [dict(node) for node in (requiredness_nodes or [])]
         self.requiredness_query_fails = requiredness_query_fails
         self.api_payloads: list[dict[str, Any]] = []
+        self.reviews: list[dict[str, Any]] = []
         self.tag_refs: set[str] = set()
         self.tag_payloads: dict[str, dict[str, Any]] = {}
         self.tag_objects: dict[str, dict[str, Any]] = {}
@@ -123,7 +126,8 @@ class FakeRunner(auto_integrator.CommandRunner):
             number = command[3]
             for pr in (self.pr, self.merged_pr):
                 if pr is not None and str(pr.get("number")) == number:
-                    return completed(command, stdout=auto_integrator.json.dumps(dict(pr)))
+                    pr_payload = {"state": "OPEN", **dict(pr)}
+                    return completed(command, stdout=auto_integrator.json.dumps(pr_payload))
             return completed(command, stdout="{}")
         if command[:3] == ["gh", "api", "graphql"]:
             if self.requiredness_query_fails:
@@ -143,8 +147,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         if (
             command[:2] == ["gh", "api"]
             and len(command) == 3
-            and command[2]
-            == "repos/ajoe734/pantheon/actions/workflows?per_page=100"
+            and command[2].endswith("/actions/workflows?per_page=100")
         ):
             return completed(
                 command,
@@ -161,6 +164,37 @@ class FakeRunner(auto_integrator.CommandRunner):
                 ),
             )
         if (
+            command[:2] == ["gh", "api"]
+            and "/pulls/" in joined
+            and command[-1].endswith("/reviews?per_page=100")
+            and "--method" not in command
+        ):
+            return completed(command, stdout=auto_integrator.json.dumps(self.reviews))
+        if (
+            command[:4] == ["gh", "api", "--method", "POST"]
+            and "/pulls/" in joined
+            and "/reviews" in joined
+        ):
+            assert api_payload is not None
+            event = str(api_payload.get("event") or "").upper()
+            if self.self_review_error and event in ("APPROVE", "REQUEST_CHANGES"):
+                if check:
+                    raise auto_integrator.CommandFailure(command, 1, self.self_review_error)
+                return completed(command, stderr=self.self_review_error, returncode=1)
+            state = (
+                "COMMENTED"
+                if event == "COMMENT"
+                else ("APPROVED" if event == "APPROVE" else "CHANGES_REQUESTED")
+            )
+            review_obj = {
+                "id": 91 + len(self.reviews),
+                "state": state,
+                "commit_id": api_payload.get("commit_id") or "",
+                "body": api_payload.get("body") or "",
+            }
+            self.reviews.append(review_obj)
+            return completed(command, stdout=auto_integrator.json.dumps(review_obj))
+        if (
             command[:4] == ["gh", "api", "--method", "PUT"]
             and "/pulls/" in joined
             and "/merge" in joined
@@ -176,9 +210,13 @@ class FakeRunner(auto_integrator.CommandRunner):
             else:
                 payload = {"merged": False, "message": "not directly mergeable"}
             return completed(command, stdout=auto_integrator.json.dumps(payload))
-        commit_prefix = "repos/ajoe734/pantheon/commits/"
-        if command[:2] == ["gh", "api"] and len(command) == 3 and command[2].startswith(commit_prefix):
-            head_sha = command[2][len(commit_prefix) :].partition("?")[0]
+        if (
+            command[:2] == ["gh", "api"]
+            and len(command) == 3
+            and command[2].startswith("repos/")
+            and "/commits/" in command[2]
+        ):
+            head_sha = command[2].rsplit("/commits/", 1)[-1].partition("?")[0]
             return completed(command, stdout=auto_integrator.json.dumps(self.commits.get(head_sha, {})))
         if (
             command[:2] == ["gh", "api"]
@@ -211,10 +249,11 @@ class FakeRunner(auto_integrator.CommandRunner):
             tag_obj = {
                 "sha": tag_sha,
                 "tag": api_payload.get("tag") if api_payload else "",
+                "message": api_payload.get("message") if api_payload else "",
                 "object": {"sha": api_payload.get("object") or self.git_head, "type": "commit"} if api_payload else {"sha": self.git_head, "type": "commit"},
             }
             self.tag_objects[tag_sha] = tag_obj
-            return completed(command, stdout=auto_integrator.json.dumps({"sha": tag_sha}))
+            return completed(command, stdout=auto_integrator.json.dumps(tag_obj))
         if command[:2] == ["gh", "api"] and "/git/refs" in joined and "POST" in command:
             assert api_payload is not None
             ref = api_payload["ref"]
@@ -339,6 +378,7 @@ def green_pr(number: int = 44, *, task_id: str = "ABC-001") -> dict[str, Any]:
             {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED"},
             {"name": "Smoke acceptance", "state": "SUCCESS"},
             {"name": "Service suites", "conclusion": "SUCCESS", "status": "COMPLETED"},
+            {"name": "Pantheon canonical review gate", "state": "SUCCESS"},
         ],
     }
 
@@ -2633,6 +2673,7 @@ class CheckClassifierTests(unittest.TestCase):
                     {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
                     {"name": "Smoke acceptance", "state": "SUCCESS", "isRequired": True},
                     {"name": "Service suites", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
+                    {"name": "Pantheon canonical review gate", "state": "SUCCESS", "isRequired": True},
                     {
                         "name": "Audit signed canonical review (not required issuer) (4741)",
                         "conclusion": "FAILURE",
@@ -2749,6 +2790,8 @@ class CheckClassifierTests(unittest.TestCase):
             },
         }
         runner = FakeRunner(pr=pr)
+        reopen_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=APPROVED_HEAD)}"
+        runner.tag_payloads[reopen_ref] = {"ref": reopen_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
         result = auto_integrator.integrate_candidate(
             candidate,
             auto_integrator.Settings(),
@@ -2942,13 +2985,14 @@ class CheckClassifierTests(unittest.TestCase):
                 }
             },
         }
-        # FakeRunner with no proof tags will see canonical review gate fail and fall through to red checks
+        # FakeRunner with no operator-accept proof tag on an operator-accepted task
+        # cannot self-heal a reviewer approve proof and falls through to red checks.
         result = auto_integrator.integrate_candidate(
             candidate,
             auto_integrator.Settings(),
             FakeRunner(pr=pr),
             execute=False,
-            gate=approved_gate(),
+            gate=operator_accepted_gate(),
             config=valid_true_config,
         )
         self.assertEqual(result.action, "blocked")
@@ -3490,6 +3534,7 @@ def green_ep_pr(number: int = 99, *, task_id: str = "FE-001") -> dict[str, Any]:
         "statusCheckRollup": [
             {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
             {"name": "Frontend tests", "state": "SUCCESS"},
+            {"name": "Pantheon canonical review gate", "state": "SUCCESS"},
         ],
     }
 
@@ -5971,6 +6016,11 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             branch="task/ABC-001",
         )
         pr = green_pr(number=44)
+        pr["statusCheckRollup"] = [
+            item
+            for item in pr["statusCheckRollup"]
+            if item.get("name") != auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT
+        ]
         runner = FakeRunner(pr=pr)
         tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
         runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
@@ -6026,7 +6076,9 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             self.assertEqual(len(runner.dispatches), 0)
             self.assertIsNotNone(result.unblock_task_id)
 
-    def test_canonical_review_gate_red_without_proof_tag_opens_ci_red(self) -> None:
+    def test_canonical_review_gate_red_without_proof_tag_self_heals_from_task_store_review_approval_and_waits(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             status_root = Path(tmp_dir)
             candidate = auto_integrator.TaskCandidate(
@@ -6041,8 +6093,159 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
             pr["statusCheckRollup"].append(
                 {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
             )
-            runner = FakeRunner(pr=pr)
+            runner = FakeRunner(
+                pr=pr,
+                self_review_error="Can not approve your own pull request",
+            )
+            shared_policy = {
+                "review_gate": {
+                    "github_review_bridge_required": True,
+                    "github_review_identity": "shared",
+                },
+                "branch_workflow": self.REQUIRED_TRUE_REVIEW_POLICY["branch_workflow"],
+            }
 
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                runner,
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+                config=shared_policy,
+            )
+
+            approve_ref = (
+                f"refs/tags/"
+                f"{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+            )
+            self.assertEqual(result.action, "waiting")
+            self.assertIn("published approve proof", result.detail)
+            self.assertIn("by Claude", result.detail)
+            self.assertIsNone(result.unblock_task_id)
+            self.assertEqual(len(runner.reviews), 1)
+            self.assertEqual(runner.reviews[0]["state"], "COMMENTED")
+            self.assertIn("actor=Claude", runner.reviews[0]["body"])
+            self.assertIn(approve_ref, runner.tag_payloads)
+            self.assertEqual(len(runner.dispatches), 1)
+            self.assertEqual(
+                runner.dispatches[0]["inputs"],
+                {"head_ref": "task/ABC-001", "head_sha": APPROVED_HEAD},
+            )
+            self.assertEqual(
+                list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")),
+                [],
+            )
+
+    def test_canonical_review_gate_red_without_proof_tag_refuses_without_independent_reviewer_approval_or_with_reopen_tag(
+        self,
+    ) -> None:
+        approve_ref = (
+            f"refs/tags/"
+            f"{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+        )
+        reopen_ref = (
+            f"refs/tags/"
+            f"{auto_integrator.github_review_bridge.review_proof_tag_name(decision='reopen', head_sha=APPROVED_HEAD)}"
+        )
+
+        # Refusal 1: No task-store exact-head approval by a reviewer different from the owner
+        # (both operator_accepted_gate without an independent reviewer approval, and self-owned merge_then_review / same owner==reviewer).
+        for subcase, candidate, gate in (
+            (
+                "operator_accepted_without_reviewer_approval",
+                auto_integrator.TaskCandidate(
+                    task_id="ABC-001",
+                    title="Ready",
+                    owner="Codex",
+                    reviewer="Claude",
+                    branch="task/ABC-001",
+                    raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+                ),
+                operator_accepted_gate(),
+            ),
+            (
+                "merge_then_review_same_owner_and_reviewer",
+                auto_integrator.TaskCandidate(
+                    task_id="ABC-001",
+                    title="Ready",
+                    owner="Codex",
+                    reviewer="Codex",
+                    branch="task/ABC-001",
+                    raw_task={
+                        "generation": 7,
+                        "status": "in_progress",
+                        "owner": "Codex",
+                        "reviewer": "Codex",
+                        "merge_policy": "merge_then_review",
+                        "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                    },
+                ),
+                auto_integrator.ReviewGate(
+                    state={
+                        "tasks": [
+                            {
+                                "id": "ABC-001",
+                                "title": "Ready",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Codex",
+                                "merge_policy": "merge_then_review",
+                            }
+                        ]
+                    },
+                    events=[],
+                ),
+            ),
+        ):
+            with self.subTest(refusal=subcase), tempfile.TemporaryDirectory() as tmp_dir:
+                status_root = Path(tmp_dir)
+                pr = green_pr(number=44)
+                pr["statusCheckRollup"].append(
+                    {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+                )
+                runner = FakeRunner(pr=pr)
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(
+                        status_identity_sha256="d" * 64,
+                        command_runtime_sha="b" * 40,
+                    ),
+                    runner,
+                    status_root=status_root,
+                    execute=True,
+                    gate=gate,
+                    config=self.REQUIRED_TRUE_REVIEW_POLICY,
+                )
+                self.assertEqual(result.action, "blocked")
+                self.assertEqual(runner.reviews, [])
+                self.assertNotIn(approve_ref, runner.tag_payloads)
+                self.assertEqual(len(runner.dispatches), 0)
+                self.assertIsNotNone(result.unblock_task_id)
+
+        # Refusal 2: Reopen tag exists for the exact head (even when TaskStore holds approved_gate)
+        with self.subTest(refusal="reopen_tag_exists"), tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            pr = green_pr(number=44)
+            pr["statusCheckRollup"].append(
+                {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+            )
+            runner = FakeRunner(pr=pr)
+            runner.tag_payloads[reopen_ref] = {
+                "ref": reopen_ref,
+                "object": {"sha": APPROVED_HEAD, "type": "commit"},
+            }
             result = auto_integrator.integrate_candidate(
                 candidate,
                 auto_integrator.Settings(
@@ -6055,10 +6258,152 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 gate=approved_gate(),
                 config=self.REQUIRED_TRUE_REVIEW_POLICY,
             )
-
             self.assertEqual(result.action, "blocked")
+            self.assertEqual(runner.reviews, [])
+            self.assertNotIn(approve_ref, runner.tag_payloads)
             self.assertEqual(len(runner.dispatches), 0)
             self.assertIsNotNone(result.unblock_task_id)
+
+    def test_end_to_end_shared_identity_approval_to_proof_tag_dispatch_and_merge_across_pantheon_and_execute_plans(
+        self,
+    ) -> None:
+        shared_policy = {
+            "review_gate": {
+                "github_review_bridge_required": True,
+                "github_review_identity": "shared",
+            },
+            "branch_workflow": {
+                "task_pr": {
+                    "required_status_checks": [
+                        "Commit trailers",
+                        "Runtime mirror guard",
+                        "Smoke acceptance",
+                        "Service suites",
+                        "Pantheon canonical review gate",
+                    ]
+                }
+            },
+        }
+        cases = (
+            (
+                "pantheon",
+                "ajoe734/pantheon",
+                "ABC-001",
+                44,
+                green_pr(number=44, task_id="ABC-001"),
+            ),
+            (
+                "execute_plans",
+                "ajoe734/execute-plans",
+                "FE-001",
+                99,
+                {
+                    **green_ep_pr(number=99, task_id="FE-001"),
+                    "statusCheckRollup": [
+                        {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                        {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                        {"name": "Smoke acceptance", "state": "SUCCESS"},
+                        {"name": "Service suites", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                    ],
+                },
+            ),
+        )
+        for repo_id, repo_slug, task_id, pr_num, initial_pr in cases:
+            with self.subTest(repository=repo_slug), tempfile.TemporaryDirectory() as tmp_dir:
+                repo_root = Path(tmp_dir) / repo_id
+                repo_root.mkdir()
+                candidate = auto_integrator.TaskCandidate(
+                    task_id=task_id,
+                    title=f"Product task in {repo_slug}",
+                    owner="Codex",
+                    reviewer="Claude",
+                    branch=f"task/{task_id}",
+                    repository_id=repo_id,
+                    repository_slug=repo_slug,
+                    repository_root=repo_root,
+                    target_branch="dev",
+                )
+                base_rollup = [
+                    item
+                    for item in initial_pr["statusCheckRollup"]
+                    if item.get("name")
+                    != auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT
+                ]
+                pr = dict(initial_pr)
+                pr["url"] = f"https://github.com/{repo_slug}/pull/{pr_num}"
+                pr["statusCheckRollup"] = list(base_rollup) + [
+                    {
+                        "name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT,
+                        "state": "FAILURE",
+                        "isRequired": True,
+                    }
+                ]
+                runner = FakeRunner(
+                    pr=pr,
+                    origin_remote_slug=repo_slug,
+                    git_head=APPROVED_HEAD,
+                    self_review_error="Can not approve your own pull request",
+                )
+                gate = approved_gate(task_id=task_id, pr_number=pr_num)
+
+                # Step 1: Shared-mode approval publishes COMMENTED review, proof tag, and dispatches workflow;
+                # integrator waits while the gate check is still not green.
+                first_result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(smoke_commands=()),
+                    runner,
+                    execute=True,
+                    gate=gate,
+                    config=shared_policy,
+                )
+                approve_ref = (
+                    f"refs/tags/"
+                    f"{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+                )
+                self.assertEqual(first_result.action, "waiting")
+                self.assertEqual(len(runner.reviews), 1)
+                self.assertEqual(runner.reviews[0]["state"], "COMMENTED")
+                self.assertIn(approve_ref, runner.tag_payloads)
+                self.assertEqual(len(runner.dispatches), 1)
+                self.assertEqual(
+                    runner.dispatches[0]["inputs"],
+                    {"head_ref": f"task/{task_id}", "head_sha": APPROVED_HEAD},
+                )
+                self.assertFalse(
+                    any(
+                        cmd[:4] == ["gh", "api", "--method", "PUT"] and "/merge" in " ".join(cmd)
+                        for cmd in runner.commands
+                    )
+                )
+
+                # Step 2: Dispatched gate workflow evaluates the pushed proof tag and reports green check.
+                json_runner = auto_integrator.GitHubJsonCommandRunner(runner, root=repo_root)
+                gate_payload = auto_integrator.canonical_review_gate_ci.build_status_payload(
+                    repository=repo_slug,
+                    head_ref=f"task/{task_id}",
+                    head_sha=APPROVED_HEAD,
+                    lookup=auto_integrator.make_integrator_tag_lookup(json_runner),
+                )
+                self.assertEqual(gate_payload["state"], "success")
+                runner.pr["statusCheckRollup"] = list(base_rollup) + [
+                    {
+                        "name": gate_payload["context"],
+                        "state": gate_payload["state"].upper(),
+                        "isRequired": True,
+                    }
+                ]
+
+                # Step 3: Once the gate check is green, the integrator merges the PR.
+                second_result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(smoke_commands=()),
+                    runner,
+                    execute=True,
+                    gate=gate,
+                    config=shared_policy,
+                )
+                self.assertEqual(second_result.action, "merged")
+                self.assertEqual(runner.pr["state"], "MERGED")
 
     def test_canonical_review_gate_red_with_opposing_reopen_tag_opens_ci_red(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
